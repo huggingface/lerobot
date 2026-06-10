@@ -205,3 +205,149 @@ class WandBLogger:
 
         wandb_video = self._wandb.Video(video_path, fps=self.env_fps, format="mp4")
         self._wandb.log({f"{mode}/video": wandb_video}, step=step)
+
+    def log_training_examples(
+        self,
+        batch: dict,
+        step: int,
+        *,
+        camera_keys: list[str],
+        n_samples: int = 4,
+        policy=None,
+        predict_actions: bool = False,
+        mode: str = "train",
+    ) -> None:
+        """Push a ``wandb.Table`` of training-example rows for the current batch.
+
+        Each row is one batch element with:
+          * one ``wandb.Image`` column per camera in ``camera_keys`` (CHW or
+            HWC, uint8 or float in [0,1] — auto-detected),
+          * any text fields present in the batch (``task`` / ``subtask`` /
+            ``memory`` / ``instruction``),
+          * ground-truth action first/last frame (the action chunk's
+            endpoints — gives a quick sense of trajectory direction),
+          * if ``predict_actions=True`` and ``policy`` is supplied, the model's
+            ``predict_action_chunk`` first/last frame alongside.
+
+        This is opt-in via ``--wandb.log_examples_freq=N`` on the CLI; the
+        training loop calls it once every N steps. Cheap to keep on: with
+        N=4 samples and 3 cameras you upload 12 small PNGs per dump and (if
+        enabled) run one extra inference forward pass.
+        """
+        import logging  # noqa: PLC0415
+        import numpy as np  # noqa: PLC0415
+        import torch  # noqa: PLC0415
+
+        if mode not in {"train", "eval"}:
+            raise ValueError(mode)
+
+        # Batch size — first tensor-like value wins.
+        bsz = next(
+            (int(v.shape[0]) for v in batch.values() if hasattr(v, "shape") and v.ndim > 0),
+            None,
+        )
+        if not bsz:
+            return
+        n = min(int(n_samples), bsz)
+
+        # Optional predicted-action forward pass on the first n samples.
+        pred_actions: np.ndarray | None = None
+        if predict_actions and policy is not None:
+            was_training = policy.training
+            try:
+                policy.eval()
+                sub_batch = {}
+                for k, v in batch.items():
+                    if isinstance(v, torch.Tensor):
+                        sub_batch[k] = v[:n]
+                    elif isinstance(v, (list, tuple)):
+                        sub_batch[k] = list(v[:n])
+                    else:
+                        sub_batch[k] = v
+                with torch.no_grad():
+                    pred = policy.predict_action_chunk(sub_batch)
+                pred_actions = pred.detach().cpu().float().numpy()
+            except Exception as exc:  # noqa: BLE001
+                logging.warning(
+                    "log_training_examples: predict_action_chunk failed (%s) — "
+                    "skipping predicted-action columns",
+                    exc,
+                )
+                pred_actions = None
+            finally:
+                if was_training:
+                    policy.train()
+
+        present_cameras = [c for c in camera_keys if c in batch]
+        text_keys = [k for k in ("task", "subtask", "memory", "instruction") if k in batch]
+
+        columns = ["sample"]
+        columns.extend(c.removeprefix("observation.images.") or c for c in present_cameras)
+        columns.extend(text_keys)
+        columns.append("gt_action_first")
+        columns.append("gt_action_last")
+        if pred_actions is not None:
+            columns.append("pred_action_first")
+            columns.append("pred_action_last")
+
+        table = self._wandb.Table(columns=columns)
+
+        def _to_uint8_hwc(t: torch.Tensor) -> np.ndarray:
+            # Strip an outer time dim if present: (T, C, H, W) -> first frame.
+            if t.ndim == 4:
+                t = t[0]
+            # CHW -> HWC.
+            if t.ndim == 3 and t.shape[0] in (1, 3, 4) and t.shape[-1] not in (1, 3, 4):
+                t = t.permute(1, 2, 0)
+            arr = t.detach().cpu().float().numpy()
+            if arr.size and float(arr.max()) <= 1.5:
+                arr = arr * 255.0
+            return np.clip(arr, 0, 255).astype(np.uint8)
+
+        def _action_endpoints(a: torch.Tensor) -> tuple[str, str]:
+            arr = a.detach().cpu().float().numpy()
+            if arr.ndim == 2:  # (T, D)
+                return (
+                    str(np.round(arr[0], 3).tolist()),
+                    str(np.round(arr[-1], 3).tolist()),
+                )
+            if arr.ndim == 1:
+                rounded = np.round(arr, 3).tolist()
+                return (str(rounded), str(rounded))
+            return (str(arr.tolist()), str(arr.tolist()))
+
+        for i in range(n):
+            row: list = [i]
+            for cam in present_cameras:
+                try:
+                    row.append(self._wandb.Image(_to_uint8_hwc(batch[cam][i])))
+                except Exception as exc:  # noqa: BLE001
+                    logging.warning(
+                        "log_training_examples: camera %s sample %d failed (%s)",
+                        cam,
+                        i,
+                        exc,
+                    )
+                    row.append(None)
+            for tk in text_keys:
+                v = batch[tk]
+                if isinstance(v, (list, tuple)):
+                    row.append(str(v[i]) if i < len(v) else "")
+                else:
+                    row.append(str(v))
+            action = batch.get("action")
+            if isinstance(action, torch.Tensor) and action.ndim >= 1:
+                first, last = _action_endpoints(action[i])
+                row.append(first)
+                row.append(last)
+            else:
+                row.append("")
+                row.append("")
+            if pred_actions is not None:
+                p = torch.from_numpy(pred_actions[i])
+                pfirst, plast = _action_endpoints(p)
+                row.append(pfirst)
+                row.append(plast)
+            table.add_data(*row)
+
+        self._wandb.log({f"{mode}/examples": table}, step=step)

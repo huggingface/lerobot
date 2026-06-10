@@ -178,7 +178,6 @@ N_COLOR_CHANNELS = 3
 
 
 # config
-@strict
 class GR00TN15Config(PretrainedConfig):
     model_type = "gr00t_n1_5"
 

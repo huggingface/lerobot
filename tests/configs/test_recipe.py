@@ -29,6 +29,15 @@ def test_message_recipe_validates_unknown_binding():
         )
 
 
+def test_canonical_recipe_loads():
+    """The canonical PI052 blend YAML loads + validates."""
+    recipe = TrainingRecipe.from_yaml(
+        Path("src/lerobot/configs/recipes/subtask_mem_vqa_speech.yaml")
+    )
+    assert recipe.blend is not None
+    assert sum(c.weight for c in recipe.blend.values()) == pytest.approx(1.0)
+
+
 def test_message_turn_requires_a_stream():
     """Every turn must declare a stream — None is rejected at construction.
 

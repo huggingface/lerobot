@@ -1,0 +1,179 @@
+#!/usr/bin/env python
+
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Unit tests for :class:`VideoFrameProvider` method bindings.
+
+These were prompted by a real regression: ``video_for_episode`` was once
+indented one level too deep so it ended up nested *inside* a module-level
+helper (after that function's ``return`` statement) — silently dead code
+that meant production runs with ``use_video_url=False`` would
+``AttributeError`` on ``self.frame_provider.video_for_episode(...)``. The
+existing module tests didn't catch it because they exercise stub providers.
+
+The tests below assert on the class itself (not on an instance), so a
+future reindent regression flips them to red without needing a real
+LeRobot dataset on disk.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+import torch
+
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+from lerobot.annotations.steerable_pipeline.frames import (  # noqa: E402
+    VideoFrameProvider,
+    _decode_frames_av,
+    _decode_frames_ffmpeg,
+)
+
+
+class _FakeMeta:
+    """Minimal metadata stub exposing ``video_keys`` / ``camera_keys``."""
+
+    def __init__(self, video_keys: list[str], image_keys: list[str]) -> None:
+        self.video_keys = video_keys
+        self.camera_keys = [*video_keys, *image_keys]
+
+
+def test_default_camera_key_skips_image_only_cameras(tmp_path: Path, monkeypatch) -> None:
+    """The default camera must be a *video* key — image-stored cameras have no
+    ``videos/<key>/from_timestamp`` and would KeyError in the clip/decode path.
+
+    Regression: a dataset whose first ``camera_keys`` entry was an image-stored
+    camera (e.g. ``observation.images.wrist``) crashed at clip extraction.
+    """
+    fake = _FakeMeta(
+        video_keys=["observation.images.robot0_agentview_right"],
+        image_keys=["observation.images.wrist"],
+    )
+    import lerobot.datasets.dataset_metadata as meta_mod
+
+    monkeypatch.setattr(meta_mod, "LeRobotDatasetMetadata", lambda *a, **k: fake, raising=True)
+    provider = VideoFrameProvider(root=tmp_path)
+    assert provider.camera_key == "observation.images.robot0_agentview_right"
+    assert "observation.images.wrist" not in provider.camera_keys
+
+
+def test_video_for_episode_is_a_method_of_videoframeprovider():
+    """``video_for_episode`` must be a bound method, not nested dead code."""
+    assert callable(getattr(VideoFrameProvider, "video_for_episode", None))
+
+
+def test_episode_clip_path_is_a_method_of_videoframeprovider():
+    """``episode_clip_path`` is now a method (was a free function reaching
+    into ``provider._meta`` from outside the class)."""
+    assert callable(getattr(VideoFrameProvider, "episode_clip_path", None))
+
+
+def test_videoframeprovider_has_a_lock_for_concurrent_use():
+    """A ``ThreadPoolExecutor`` runs the plan / interjections / vqa phases
+    concurrently; the cache + warn-flag accesses must be guarded.
+    """
+    import threading
+
+    # Fresh-instance check via a minimal fake to avoid touching the hub.
+    # The lock is declared with ``init=False`` and has a default factory,
+    # so a constructed instance must own a real ``threading.Lock``.
+    lock_field = next(
+        (f for f in VideoFrameProvider.__dataclass_fields__.values() if f.name == "_lock"),
+        None,
+    )
+    assert lock_field is not None
+    assert lock_field.default_factory is threading.Lock
+
+
+@pytest.fixture
+def sample_video(tmp_path: Path) -> Path:
+    """A 3 s 10 fps test-pattern mp4, written with ffmpeg."""
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not available")
+    out = tmp_path / "sample.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=3:size=160x120:rate=10",
+            "-pix_fmt",
+            "yuv420p",
+            str(out),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return out
+
+
+def test_decode_frames_av_returns_one_uint8_frame_per_timestamp(sample_video: Path) -> None:
+    """``_decode_frames_av`` decodes via PyAV directly — no torchcodec/torchvision.
+
+    This is the always-available fallback: torchcodec is unusable in some
+    containers and lerobot's ``pyav`` backend routes through the removed
+    ``torchvision.io.VideoReader``.
+    """
+    timestamps = [0.0, 1.0, 2.5]
+    frames = _decode_frames_av(sample_video, timestamps)
+
+    assert len(frames) == len(timestamps)
+    for frame in frames:
+        assert isinstance(frame, torch.Tensor)
+        assert frame.dtype == torch.uint8
+        assert frame.shape == (3, 120, 160)
+
+
+def test_decode_frames_av_picks_nearest_frame(sample_video: Path) -> None:
+    """Repeated and out-of-order timestamps each resolve to the nearest frame."""
+    frames = _decode_frames_av(sample_video, [2.0, 0.0, 2.0])
+
+    assert len(frames) == 3
+    assert torch.equal(frames[0], frames[2])
+    assert not torch.equal(frames[0], frames[1])
+
+
+def test_decode_frames_av_raises_on_missing_file(tmp_path: Path) -> None:
+    """A missing video surfaces as an exception the caller can fall back on."""
+    with pytest.raises(Exception):  # noqa: B017, PT011
+        _decode_frames_av(tmp_path / "does_not_exist.mp4", [0.0])
+
+
+def test_decode_frames_ffmpeg_returns_one_uint8_frame_per_timestamp(sample_video: Path) -> None:
+    """``_decode_frames_ffmpeg`` shells out to the ffmpeg CLI — the always-
+    available fallback that decodes AV1 and isolates crashes to a child
+    process.
+    """
+    timestamps = [0.0, 1.0, 2.5]
+    frames = _decode_frames_ffmpeg(sample_video, timestamps)
+
+    assert len(frames) == len(timestamps)
+    for frame in frames:
+        assert isinstance(frame, torch.Tensor)
+        assert frame.dtype == torch.uint8
+        assert frame.shape == (3, 120, 160)
+
+
+def test_decode_frames_ffmpeg_raises_on_missing_file(tmp_path: Path) -> None:
+    """A missing video raises (non-zero ffmpeg exit), never crashes the job."""
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not available")
+    with pytest.raises(Exception):  # noqa: B017, PT011
+        _decode_frames_ffmpeg(tmp_path / "does_not_exist.mp4", [0.0])
