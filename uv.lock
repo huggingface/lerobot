@@ -2712,7 +2712,6 @@ all = [
     { name = "mock-serial", marker = "sys_platform != 'win32'" },
     { name = "motorbridge" },
     { name = "motorbridge-smart-servo" },
-    { name = "mujoco" },
     { name = "mypy" },
     { name = "num2words" },
     { name = "pandas" },
@@ -2750,7 +2749,6 @@ aloha = [
     { name = "datasets" },
     { name = "gym-aloha" },
     { name = "jsonlines" },
-    { name = "mujoco" },
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "scipy" },
@@ -2866,7 +2864,6 @@ hilserl = [
     { name = "grpcio" },
     { name = "gym-hil" },
     { name = "jsonlines" },
-    { name = "mujoco" },
     { name = "pandas" },
     { name = "placo" },
     { name = "protobuf" },
@@ -2898,7 +2895,6 @@ libero = [
     { name = "datasets" },
     { name = "hf-libero", marker = "sys_platform == 'linux'" },
     { name = "jsonlines" },
-    { name = "mujoco" },
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "scipy" },
@@ -2914,7 +2910,6 @@ metaworld = [
     { name = "datasets" },
     { name = "jsonlines" },
     { name = "metaworld" },
-    { name = "mujoco" },
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "scipy" },
@@ -2930,9 +2925,6 @@ motorbridge-dep = [
 ]
 motorbridge-smart-servo-dep = [
     { name = "motorbridge-smart-servo" },
-]
-mujoco-dep = [
-    { name = "mujoco" },
 ]
 multi-task-dit = [
     { name = "diffusers" },
@@ -3158,10 +3150,6 @@ requires-dist = [
     { name = "lerobot", extras = ["molmoact2"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["motorbridge-dep"], marker = "extra == 'rebot'" },
     { name = "lerobot", extras = ["motorbridge-smart-servo-dep"], marker = "extra == 'rebot'" },
-    { name = "lerobot", extras = ["mujoco-dep"], marker = "extra == 'aloha'" },
-    { name = "lerobot", extras = ["mujoco-dep"], marker = "extra == 'hilserl'" },
-    { name = "lerobot", extras = ["mujoco-dep"], marker = "extra == 'libero'" },
-    { name = "lerobot", extras = ["mujoco-dep"], marker = "extra == 'metaworld'" },
     { name = "lerobot", extras = ["multi-task-dit"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["notebook"], marker = "extra == 'dev'" },
     { name = "lerobot", extras = ["openarms"], marker = "extra == 'all'" },
@@ -3235,7 +3223,6 @@ requires-dist = [
     { name = "mock-serial", marker = "sys_platform != 'win32' and extra == 'test'", specifier = ">=0.0.1,<0.1.0" },
     { name = "motorbridge", marker = "extra == 'motorbridge-dep'", specifier = ">=0.3.2,<0.4.0" },
     { name = "motorbridge-smart-servo", marker = "extra == 'motorbridge-smart-servo-dep'", specifier = ">=0.0.4,<0.1.0" },
-    { name = "mujoco", marker = "extra == 'mujoco-dep'", specifier = "<3.9.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.19.1" },
     { name = "ninja", marker = "extra == 'groot'", specifier = ">=1.11.1,<2.0.0" },
     { name = "num2words", marker = "extra == 'smolvla'", specifier = ">=0.5.14,<0.6.0" },
@@ -3289,7 +3276,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.6.0" },
     { name = "wandb", marker = "extra == 'training'", specifier = ">=0.24.0,<0.25.0" },
 ]
-provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "hilserl", "vla-jepa", "async", "peft", "dev", "notebook", "test", "video-benchmark", "mujoco-dep", "aloha", "pusht", "libero", "metaworld", "all"]
+provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "hilserl", "vla-jepa", "async", "peft", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
 [[package]]
 name = "librt"
