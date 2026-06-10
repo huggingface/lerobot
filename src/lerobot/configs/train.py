@@ -97,6 +97,8 @@ class TrainPipelineConfig(HubMixin):
     # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8
+    # Number of microbatches to accumulate before each optimizer update.
+    gradient_accumulation_steps: int = 1
     prefetch_factor: int = 4
     persistent_workers: bool = True
     steps: int = 100_000
@@ -175,6 +177,9 @@ class TrainPipelineConfig(HubMixin):
                 "Neither policy nor reward_model is configured. "
                 "Please specify one with `--policy.path` or `--reward_model.path`."
             )
+
+        if self.gradient_accumulation_steps < 1:
+            raise ValueError("gradient_accumulation_steps must be greater than or equal to 1.")
 
         active_cfg = self.trainable_config
         if self.rename_map and active_cfg.pretrained_path is None:

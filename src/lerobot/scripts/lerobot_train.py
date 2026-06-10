@@ -75,10 +75,11 @@ def update_policy(
     sample_weighter=None,
 ) -> tuple[MetricsTracker, dict | None]:
     """
-    Performs a single training step to update the policy's weights.
+    Performs a single training microbatch and updates weights when accumulation is complete.
 
-    This function executes the forward and backward passes, clips gradients, and steps the optimizer and
-    learning rate scheduler. Accelerator handles mixed-precision training automatically.
+    This function executes the forward and backward passes, then clips gradients and steps the optimizer
+    and learning rate scheduler only when `accelerator.sync_gradients` is true. Accelerator handles
+    mixed-precision training automatically.
 
     Args:
         train_metrics: A MetricsTracker instance to record training statistics.
@@ -96,7 +97,6 @@ def update_policy(
         - The updated MetricsTracker with new statistics for this step.
         - A dictionary of outputs from the policy's forward pass, for logging purposes.
     """
-    start_time = time.perf_counter()
     policy.train()
 
     # Compute sample weights if a weighter is provided
@@ -132,32 +132,33 @@ def update_policy(
     # Use accelerator's backward method
     accelerator.backward(loss)
 
-    # Clip gradients if specified
-    if grad_clip_norm > 0:
-        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
-    else:
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            policy.parameters(), float("inf"), error_if_nonfinite=False
-        )
+    if accelerator.sync_gradients:
+        # Clip gradients once all accumulated microbatches have contributed.
+        if grad_clip_norm > 0:
+            grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
+        else:
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                policy.parameters(), float("inf"), error_if_nonfinite=False
+            )
 
-    # Optimizer step
-    with lock if lock is not None else nullcontext():
-        optimizer.step()
+        # Optimizer/scheduler updates happen once per accumulated training step.
+        with lock if lock is not None else nullcontext():
+            optimizer.step()
 
-    optimizer.zero_grad()
+        optimizer.zero_grad()
 
-    # Step through pytorch scheduler at every batch instead of epoch
-    if lr_scheduler is not None:
-        lr_scheduler.step()
+        # Step through pytorch scheduler at every optimizer update instead of epoch.
+        if lr_scheduler is not None:
+            lr_scheduler.step()
 
-    # Update internal buffers if policy has update method
-    if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
-        accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
+        # Update internal buffers if policy has update method.
+        if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
+            accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
+
+        train_metrics.grad_norm = grad_norm.item()
+        train_metrics.lr = optimizer.param_groups[0]["lr"]
 
     train_metrics.loss = loss.item()
-    train_metrics.grad_norm = grad_norm.item()
-    train_metrics.lr = optimizer.param_groups[0]["lr"]
-    train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
 
 
@@ -198,6 +199,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         force_cpu = cfg.trainable_config.device == "cpu"
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,
+            gradient_accumulation_steps=cfg.gradient_accumulation_steps,
             kwargs_handlers=[ddp_kwargs],
             cpu=force_cpu,
         )
@@ -358,7 +360,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             dataset_repo_id=cfg.dataset.repo_id,
         )
 
-    step = 0  # number of policy updates (forward + backward + optim)
+    step = 0  # number of optimizer updates
 
     if cfg.resume:
         step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
@@ -378,8 +380,11 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
         num_processes = accelerator.num_processes
-        effective_bs = cfg.batch_size * num_processes
-        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
+        effective_bs = cfg.batch_size * num_processes * cfg.gradient_accumulation_steps
+        logging.info(
+            "Effective batch size: "
+            f"{cfg.batch_size} x {num_processes} x {cfg.gradient_accumulation_steps} = {effective_bs}"
+        )
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
@@ -432,9 +437,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     }
 
     # Keep global batch size for logging; MetricsTracker handles world size internally.
-    effective_batch_size = cfg.batch_size * accelerator.num_processes
+    samples_per_update_per_process = cfg.batch_size * cfg.gradient_accumulation_steps
+    effective_batch_size = samples_per_update_per_process * accelerator.num_processes
     train_tracker = MetricsTracker(
-        cfg.batch_size,
+        samples_per_update_per_process,
         dataset.num_frames,
         dataset.num_episodes,
         train_metrics,
@@ -455,7 +461,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}"
         )
 
-    for _ in range(step, cfg.steps):
+    output_dict = None
+    accumulated_update_s = 0.0
+    while step < cfg.steps:
         start_time = time.perf_counter()
         batch = next(dl_iter)
         for cam_key in dataset.meta.camera_keys:
@@ -464,16 +472,26 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
-        train_tracker, output_dict = update_policy(
-            train_tracker,
-            policy,
-            batch,
-            optimizer,
-            cfg.optimizer.grad_clip_norm,
-            accelerator=accelerator,
-            lr_scheduler=lr_scheduler,
-            sample_weighter=sample_weighter,
-        )
+        update_start_time = time.perf_counter()
+        with accelerator.accumulate(policy):
+            train_tracker, output_dict = update_policy(
+                train_tracker,
+                policy,
+                batch,
+                optimizer,
+                cfg.optimizer.grad_clip_norm,
+                accelerator=accelerator,
+                lr_scheduler=lr_scheduler,
+                sample_weighter=sample_weighter,
+            )
+            did_optimizer_update = accelerator.sync_gradients
+
+        accumulated_update_s += time.perf_counter() - update_start_time
+        if not did_optimizer_update:
+            continue
+
+        train_tracker.update_s = accumulated_update_s
+        accumulated_update_s = 0.0
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
@@ -550,7 +568,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     "eval_s": AverageMeter("eval_s", ":.3f"),
                 }
                 eval_tracker = MetricsTracker(
-                    cfg.batch_size,
+                    samples_per_update_per_process,
                     dataset.num_frames,
                     dataset.num_episodes,
                     eval_metrics,

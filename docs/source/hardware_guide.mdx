@@ -25,7 +25,7 @@ Robotics imitation learning typically converges in **5–10 epochs over the data
 
 ```text
 total_frames    = sum of frames over all episodes      # 50 ep × 30 fps × 30 s ≈ 45,000
-steps_per_epoch = ceil(total_frames / (num_gpus × batch_size))
+steps_per_epoch = ceil(total_frames / (num_gpus × batch_size × gradient_accumulation_steps))
 total_steps     = epochs × steps_per_epoch
 wall_clock      ≈ total_steps × per_step_time
 ```
@@ -52,7 +52,7 @@ These are order-of-magnitude figures. Real runs deviate by ±50% depending on im
 
 ### Multi-GPU matters a lot
 
-`accelerate launch --num_processes=N` is the easiest way to cut training time. Each optimizer step processes `N × batch_size` samples in roughly the same wall-clock as a single-GPU step, so 4 GPUs ≈ 4× speedup for compute-bound runs. See the [Multi GPU training](./multi_gpu_training) guide for the full setup.
+`accelerate launch --num_processes=N` is the easiest way to cut training time. Each optimizer step processes `N × batch_size × gradient_accumulation_steps` samples, though accumulation increases wall-clock per optimizer step because it runs multiple microbatches before updating weights. See the [Multi GPU training](./multi_gpu_training) guide for the full setup.
 
 Reference data points on a 4×H100 80 GB cluster (`accelerate launch --num_processes=4`), 5000 steps, batch 32, AdamW, dataset [`imstevenpmwork/super_poulain_draft`](https://huggingface.co/datasets/imstevenpmwork/super_poulain_draft) (~50 episodes, ~640×480 images):
 

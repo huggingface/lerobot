@@ -72,6 +72,7 @@ accelerate launch \
   --output_dir=$OUTPUT_DIR \
   --save_checkpoint=true \
   --batch_size=$BATCH_SIZE \
+  --gradient_accumulation_steps=$GRADIENT_ACCUMULATION_STEPS \
   --steps=$NUM_STEPS \
   --save_freq=$SAVE_FREQ \
   --log_freq=$LOG_FREQ \

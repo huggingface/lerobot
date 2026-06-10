@@ -273,7 +273,7 @@ Robotics imitation learning usually converges in a **few epochs over the dataset
 
 ```
 total_frames     = sum of frames over all episodes      # e.g. 50 eps × 30 fps × 30 s ≈ 45,000
-steps_per_epoch  = ceil(total_frames / batch_size)
+steps_per_epoch  = ceil(total_frames / (num_gpus × batch_size × gradient_accumulation_steps))
 total_steps      = epochs × steps_per_epoch
 ```
 
