@@ -113,36 +113,26 @@ def to_hwc_uint8_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
 def build_blueprint_from_dataset(dataset: LeRobotDataset):
     """Build a Rerun blueprint laying out camera images and time series for the given dataset.
 
-    Camera images are arranged in a grid on the left, and the available scalar signals
-    (action, state, reward, done, success) are stacked as time series views on the right.
-    The per-dimension series names and colors for ``action`` and ``state`` are applied
-    directly via blueprint overrides.
+    Camera images and scalar signals (action, state, reward, done, success) are arranged in a grid.
+    The per-dimension series names and colors for ``action`` and ``state`` are applied directly
+    via blueprint overrides.
     """
     import rerun as rr
     import rerun.blueprint as rrb
 
-    image_views = [rrb.Spatial2DView(origin=key, name=key) for key in dataset.meta.camera_keys]
+    views = [rrb.Spatial2DView(origin=key, name=key) for key in dataset.meta.camera_keys]
 
-    timeseries_views = []
     # Style multi-dimensional signals (action, state) with per-dimension names and colors.
     for origin, key in ((ACTION, ACTION), ("state", OBS_STATE)):
         if key in dataset.features:
             names = get_feature_names(dataset, key)
             styling = rr.SeriesLines(names=names, colors=get_sequential_colors(len(names)))
-            timeseries_views.append(
-                rrb.TimeSeriesView(origin=origin, name=origin, overrides={origin: styling})
-            )
+            views.append(rrb.TimeSeriesView(origin=origin, name=origin, overrides={origin: styling}))
     for key in (DONE, REWARD, "next.success"):
         if key in dataset.features:
-            timeseries_views.append(rrb.TimeSeriesView(origin=key, name=key))
+            views.append(rrb.TimeSeriesView(origin=key, name=key))
 
-    contents = []
-    if image_views:
-        contents.append(rrb.Grid(*image_views, name="images"))
-    if timeseries_views:
-        contents.append(rrb.Vertical(*timeseries_views, name="time series"))
-
-    return rrb.Blueprint(rrb.Horizontal(*contents) if contents else rrb.Grid())
+    return rrb.Blueprint(rrb.Grid(*views))
 
 
 def visualize_dataset(

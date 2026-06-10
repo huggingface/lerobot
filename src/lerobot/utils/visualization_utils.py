@@ -66,25 +66,18 @@ def _is_scalar(x):
 def _build_blueprint(observation_paths: set[str], action_paths: set[str], image_paths: set[str]):
     """Build a Rerun blueprint laying out camera images, observation and action scalars in separate views.
 
-    Camera images are arranged in a grid on the left, and the observation and action scalars are stacked as time series views on the right.
+    Camera images, observation and action scalars are arranged in a grid.
     """
     import rerun.blueprint as rrb
 
-    image_views = [rrb.Spatial2DView(origin=path, name=path) for path in sorted(image_paths)]
+    views = [rrb.Spatial2DView(origin=path, name=path) for path in sorted(image_paths)]
 
-    timeseries_views = []
     if observation_paths:
-        timeseries_views.append(rrb.TimeSeriesView(name="observation", contents=sorted(observation_paths)))
+        views.append(rrb.TimeSeriesView(name="observation", contents=sorted(observation_paths)))
     if action_paths:
-        timeseries_views.append(rrb.TimeSeriesView(name="action", contents=sorted(action_paths)))
+        views.append(rrb.TimeSeriesView(name="action", contents=sorted(action_paths)))
 
-    contents = []
-    if image_views:
-        contents.append(rrb.Grid(*image_views, name="images"))
-    if timeseries_views:
-        contents.append(rrb.Vertical(*timeseries_views, name="time series"))
-
-    return rrb.Blueprint(rrb.Horizontal(*contents) if contents else rrb.Grid())
+    return rrb.Blueprint(rrb.Grid(*views))
 
 
 def _ensure_blueprint(observation_paths: set[str], action_paths: set[str], image_paths: set[str], rr) -> None:
