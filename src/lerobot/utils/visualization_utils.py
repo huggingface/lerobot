@@ -140,7 +140,7 @@ def log_rerun_data(
                 if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
                     arr = np.transpose(arr, (1, 2, 0))
                 if arr.ndim == 1:
-                    rr.log(key, rr.Scalars(arr.reshape(-1).astype(float)))
+                    rr.log(key, rr.Scalars(arr.astype(float)))
                     observation_paths.add(key)
                 else:
                     img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
