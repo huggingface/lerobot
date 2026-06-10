@@ -62,7 +62,6 @@ local$ rerun rerun+http://IP:GRPC_PORT/proxy
 """
 
 import argparse
-import colorsys
 import gc
 import logging
 import time
@@ -91,16 +90,6 @@ def get_feature_names(dataset: LeRobotDataset, key: str) -> list[str]:
     return [f"{key}_{d}" for d in range(feature["shape"][-1])]
 
 
-def get_sequential_colors(num_dims: int) -> list[list[int]]:
-    """Return a deterministic list of distinct RGB colors, one per dimension."""
-    colors = []
-    for d in range(num_dims):
-        hue = d / max(num_dims, 1)
-        r, g, b = colorsys.hsv_to_rgb(hue, 0.7, 0.9)
-        colors.append([int(r * 255), int(g * 255), int(b * 255)])
-    return colors
-
-
 def to_hwc_uint8_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
     assert chw_float32_torch.dtype == torch.float32
     assert chw_float32_torch.ndim == 3
@@ -114,7 +103,7 @@ def build_blueprint_from_dataset(dataset: LeRobotDataset):
     """Build a Rerun blueprint laying out camera images and time series for the given dataset.
 
     Camera images and scalar signals (action, state, reward, done, success) are arranged in a grid.
-    The per-dimension series names and colors for ``action`` and ``state`` are applied directly
+    The per-dimension series names for ``action`` and ``state`` are applied directly
     via blueprint overrides.
     """
     import rerun as rr
@@ -122,11 +111,11 @@ def build_blueprint_from_dataset(dataset: LeRobotDataset):
 
     views = [rrb.Spatial2DView(origin=key, name=key) for key in dataset.meta.camera_keys]
 
-    # Style multi-dimensional signals (action, state) with per-dimension names and colors.
+    # Style multi-dimensional signals (action, state) with per-dimension names.
     for origin, key in ((ACTION, ACTION), ("state", OBS_STATE)):
         if key in dataset.features:
             names = get_feature_names(dataset, key)
-            styling = rr.SeriesLines(names=names, colors=get_sequential_colors(len(names)))
+            styling = rr.SeriesLines(names=names)
             views.append(rrb.TimeSeriesView(origin=origin, name=origin, overrides={origin: styling}))
     for key in (DONE, REWARD, "next.success"):
         if key in dataset.features:
