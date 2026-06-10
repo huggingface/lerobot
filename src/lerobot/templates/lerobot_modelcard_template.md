@@ -20,25 +20,13 @@
 {% elif model_name == "vqbet" %}
 [VQ-BET](https://huggingface.co/papers/2403.03181) combines vector-quantised action tokens with Behaviour Transformers to discretise control and achieve data-efficient imitation across diverse skills.
 {% elif model_name == "pi0" %}
-**π₀ (Pi0)**
-
-π₀ is a Vision-Language-Action model for general robot control, from Physical Intelligence. The LeRobot implementation is adapted from their open source OpenPI repository.
-
-**Model Overview**
-
-π₀ represents a breakthrough in robotics as the first general-purpose robot foundation model developed by Physical Intelligence. Unlike traditional robots that are narrow specialists programmed for repetitive motions, π₀ is designed to be a generalist policy that can understand visual inputs, interpret natural language instructions, and control a variety of different robots across diverse tasks.
-
-For more details, see the [Physical Intelligence π₀ blog post](https://www.physicalintelligence.company/blog/pi0).
+[π₀ (Pi0)](https://www.physicalintelligence.company/blog/pi0) is a general-purpose robot foundation model from Physical Intelligence: a generalist Vision-Language-Action policy that understands visual inputs, interprets natural language instructions, and controls a variety of different robots across diverse tasks. The LeRobot implementation is adapted from their open-source OpenPI repository.
 {% elif model_name == "pi05" %}
-**π₀.₅ (Pi05) Policy**
-
-π₀.₅ is a Vision-Language-Action model with open-world generalization, from Physical Intelligence. The LeRobot implementation is adapted from their open source OpenPI repository.
-
-**Model Overview**
-
-π₀.₅ represents a significant evolution from π₀, developed by Physical Intelligence to address a big challenge in robotics: open-world generalization. While robots can perform impressive tasks in controlled environments, π₀.₅ is designed to generalize to entirely new environments and situations that were never seen during training.
-
-For more details, see the [Physical Intelligence π₀.₅ blog post](https://www.physicalintelligence.company/blog/pi05).
+[π₀.₅ (Pi05)](https://www.physicalintelligence.company/blog/pi05) is a Vision-Language-Action model from Physical Intelligence designed for open-world generalization: it evolves π₀ to generalize to entirely new environments and situations that were never seen during training. The LeRobot implementation is adapted from their open-source OpenPI repository.
+{% elif model_name == "molmoact2" %}
+[MolmoAct2](https://allenai.org/blog/molmoact2) is an open robotics foundation model from the Allen Institute for AI (Ai2) that maps camera images and language instructions to robot action chunks. The LeRobot implementation supports training and evaluation of the regular MolmoAct2 model.
+{% elif model_name == "vla_jepa" %}
+[VLA-JEPA](https://arxiv.org/abs/2602.10098) is a Vision-Language-Action model that combines a Qwen3-VL language backbone with a self-supervised video world model (V-JEPA2) and a flow-matching DiT action head.
 {% elif model_name == "gaussian_actor" %}
 This is a Gaussian Actor policy (Gaussian policy with a tanh squash) — the policy-side component used by [Soft Actor-Critic (SAC)](https://huggingface.co/papers/1801.01290) and related maximum-entropy continuous-control algorithms.
 {% elif model_name == "pi0_fast" %}
@@ -72,7 +60,20 @@ This is a **{{ model_name }}** policy trained with [LeRobot](https://github.com/
 {% endif %}
 
 This policy has been trained and pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot).
-{% set policy_docs = {"act": "act", "smolvla": "smolvla", "pi0": "pi0", "pi0_fast": "pi0fast", "pi05": "pi05", "eo1": "eo1", "groot": "groot"} %}
+{% set policy_docs = {
+  "act": "act",
+  "smolvla": "smolvla",
+  "pi0": "pi0",
+  "pi0_fast": "pi0fast",
+  "pi05": "pi05",
+  "molmoact2": "molmoact2",
+  "vla_jepa": "vla_jepa",
+  "eo1": "eo1",
+  "groot": "groot",
+  "xvla": "xvla",
+  "multi_task_dit": "multi_task_dit",
+  "wall_x": "walloss"
+} %}
 {% if policy_docs.get(model_name) %}Learn how to train and run it in the [LeRobot {{ model_name }} guide](https://huggingface.co/docs/lerobot/main/en/{{ policy_docs[model_name] }}), or browse the [full documentation](https://huggingface.co/docs/lerobot/index).
 {% else %}See the [full LeRobot documentation](https://huggingface.co/docs/lerobot/index).
 {% endif %}
