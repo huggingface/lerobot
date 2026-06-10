@@ -68,6 +68,8 @@ def _build_blueprint(observation_paths: set[str], action_paths: set[str], image_
 
     Camera images, observation and action scalars are arranged in a grid.
     """
+
+    # Safe + zero-overhead: `log_rerun_data` already ran the `require_package` guard and imported rerun.
     import rerun.blueprint as rrb
 
     views = [rrb.Spatial2DView(origin=path, name=path) for path in sorted(image_paths)]
@@ -80,10 +82,13 @@ def _build_blueprint(observation_paths: set[str], action_paths: set[str], image_
     return rrb.Blueprint(rrb.Grid(*views))
 
 
-def _ensure_blueprint(observation_paths: set[str], action_paths: set[str], image_paths: set[str], rr) -> None:
+def _ensure_blueprint(observation_paths: set[str], action_paths: set[str], image_paths: set[str]) -> None:
     """Build and send the blueprint once, from the first observation and action data."""
     if getattr(log_rerun_data, "blueprint", None) is not None:
         return
+
+    # Safe + zero-overhead: `log_rerun_data` already ran the `require_package` guard and imported rerun.
+    import rerun as rr
 
     blueprint = _build_blueprint(observation_paths, action_paths, image_paths)
     log_rerun_data.blueprint = blueprint
@@ -160,4 +165,4 @@ def log_rerun_data(
                 rr.log(key, rr.Scalars(v.reshape(-1).astype(float)))
                 action_paths.add(key)
 
-    _ensure_blueprint(observation_paths, action_paths, image_paths, rr)
+    _ensure_blueprint(observation_paths, action_paths, image_paths)
