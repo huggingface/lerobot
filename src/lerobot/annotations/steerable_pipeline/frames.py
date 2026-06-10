@@ -24,8 +24,11 @@ querying the same timestamp pay decode cost once.
 
 from __future__ import annotations
 
+import io
 import logging
+import math
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -496,3 +499,85 @@ def to_video_url_block(url: str | None, fps: float = 2.0) -> list[dict[str, Any]
     if not url:
         return []
     return [{"type": "video_url", "video_url": {"url": url}, "fps": fps}]
+
+
+def _draw_timestamp_badge(image: PIL.Image.Image, timestamp: float) -> PIL.Image.Image:
+    """Burn ``timestamp`` (seconds) into the top-left corner of ``image``.
+
+    A solid black badge with white text, so a VLM reading a contact sheet can
+    cite the exact source time of each tile (e.g. ``012.50s``) directly,
+    instead of the caller having to map tile position back to time. Mirrors
+    the macrodata/refiner contact-sheet convention.
+    """
+    from PIL import ImageDraw, ImageFont
+
+    result = image.copy()
+    draw = ImageDraw.Draw(result)
+    font = ImageFont.load_default()
+    label = f"{timestamp:06.2f}s"
+    left, top, right, bottom = draw.textbbox((0, 0), label, font=font)
+    text_w, text_h = right - left, bottom - top
+    pad = max(3, round(min(image.width, image.height) * 0.018))
+    draw.rectangle((0, 0, text_w + pad * 2, text_h + pad * 2), fill=(0, 0, 0))
+    draw.text((pad - left, pad - top), label, fill=(255, 255, 255), font=font)
+    return result
+
+
+def to_contact_sheet_blocks(
+    frames: Sequence[Any],
+    timestamps: Sequence[float],
+    *,
+    columns: int = 5,
+    frames_per_sheet: int = 20,
+    frame_width: int = 224,
+    quality: int = 84,
+) -> list[dict[str, Any]]:
+    """Pack decoded frames into timestamped JPEG contact-sheet image blocks.
+
+    Each frame is resized to ``frame_width`` wide, stamped with its
+    episode-relative timestamp, and tiled row-major into grids of
+    ``frames_per_sheet`` (``columns`` wide). One ``{"type":"image", ...}``
+    block is returned per grid; many frames collapse into a few images, so a
+    long episode's temporal coverage stays dense at a fraction of the vision
+    tokens N separate frames would cost. ``frames`` and ``timestamps`` must be
+    aligned and equal length. Returns ``[]`` for empty input.
+    """
+    from PIL import Image
+
+    if not frames:
+        return []
+    columns = max(1, columns)
+    frames_per_sheet = max(1, frames_per_sheet)
+    rows_per_sheet = math.ceil(frames_per_sheet / columns)
+
+    tiles: list[PIL.Image.Image] = []
+    for ts, frame in zip(timestamps, frames, strict=False):
+        img = _frame_to_pil(frame)
+        if not isinstance(img, PIL.Image.Image):
+            continue
+        img = img.convert("RGB")
+        if img.width != frame_width:
+            height = max(1, round(img.height * frame_width / img.width))
+            img = img.resize((frame_width, height), resample=Image.Resampling.BILINEAR)
+        tiles.append(_draw_timestamp_badge(img, float(ts)))
+    if not tiles:
+        return []
+
+    blocks: list[dict[str, Any]] = []
+    for start in range(0, len(tiles), frames_per_sheet):
+        chunk = tiles[start : start + frames_per_sheet]
+        cell_w = max(tile.width for tile in chunk)
+        cell_h = max(tile.height for tile in chunk)
+        sheet = Image.new("RGB", (cell_w * columns, cell_h * rows_per_sheet), color=(0, 0, 0))
+        for i, tile in enumerate(chunk):
+            x = (i % columns) * cell_w
+            y = (i // columns) * cell_h
+            sheet.paste(tile, (x, y))
+        # JPEG round-trip at ``quality`` to match the refiner convention and
+        # shrink the wire payload; vision-token count is set by resolution, so
+        # the real saving is the grid packing, not the codec.
+        buf = io.BytesIO()
+        sheet.save(buf, format="JPEG", quality=quality)
+        buf.seek(0)
+        blocks.append({"type": "image", "image": Image.open(buf).convert("RGB")})
+    return blocks
