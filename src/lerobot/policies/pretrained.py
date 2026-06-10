@@ -336,6 +336,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         context = _build_card_context(
             cfg, dataset_repo_id, self.config.input_features, self.config.output_features
         )
+        # Used by the template to pre-fill commands and the "Fine-tuned from" line.
+        context["policy_repo_id"] = getattr(self.config, "repo_id", None)
+        context["base_model"] = base_model_mapping.get(model_type)
 
         template_card = (
             files("lerobot.templates").joinpath("lerobot_modelcard_template.md").read_text(encoding="utf-8")

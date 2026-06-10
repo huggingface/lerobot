@@ -55,6 +55,13 @@ This is a **{{ model_name }}** policy trained with [LeRobot](https://github.com/
 </p>
 {% endif %}
 
+<!-- A short demo is worth more than any description! Record a GIF/video of the policy
+running on your robot, upload it to this repo, and embed it here:
+<p align="center">
+  <img src="https://huggingface.co/<hf_user>/<policy_repo_id>/resolve/main/demo.gif" width="60%"/>
+</p>
+-->
+
 This policy has been trained and pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot).
 {% set policy_docs = {
   "act": "act",
@@ -79,7 +86,8 @@ This policy has been trained and pushed to the Hub using [LeRobot](https://githu
 ## Model Details
 
 - **License:** {{ license | default("\[More Information Needed]", true) }}
-{% if robot_type %}- **Robot type:** `{{ robot_type }}`
+{% if base_model %}- **Fine-tuned from:** [{{ base_model }}](https://huggingface.co/{{ base_model }})
+{% endif %}{% if robot_type %}- **Robot type:** `{{ robot_type }}`
 {% endif %}{% if cameras %}- **Cameras:** {% for camera in cameras %}`{{ camera }}`{% if not loop.last %}, {% endif %}{% endfor %}
 {% endif %}
 {% if input_features or output_features %}
@@ -136,45 +144,68 @@ New to LeRobot? These guides cover the full workflow:
 - **[Record data & train a policy](https://huggingface.co/docs/lerobot/en/il_robots)** — the end-to-end imitation-learning walkthrough.
 - **[CLI cheat-sheet](https://huggingface.co/docs/lerobot/main/en/cheat-sheet)** — quick reference for the `lerobot-*` commands.
 
-The short version to train and run this policy:
+The short version to run and train this policy:
 
-### Train from scratch
+### Run the policy on your robot
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --robot.type={{ robot_type | default("<your_robot_type>", true) }} \
+  --robot.port=<your_robot_port> \
+  --robot.cameras="{ <camera_1>: {type: opencv, index_or_path: <index_or_path>, width: 640, height: 480, fps: 30}, <camera_2>: {type: opencv, index_or_path: <index_or_path>, width: 640, height: 480, fps: 30}}" \
+  --policy.path={{ policy_repo_id | default("<hf_user>/<policy_repo_id>", true) }} \
+  --task="{% if dataset and dataset.tasks %}{{ dataset.tasks[0] }}{% else %}<your_task_description>{% endif %}" \
+  --duration=60
+```
+
+Replace the remaining `<...>` placeholders with your own values: `--robot.port` and the camera names/indices are specific to your machine, and the camera names must match the observation keys this policy was trained on.
+
+When `--strategy.type=base` is used the script doesn't record the episodes. Skipping duration will make the policy run indefinitely. For more information look at [rollout documentation](https://huggingface.co/docs/lerobot/main/en/inference).
+
+{% if base_model %}### Train your own policy
+
+This policy type is usually fine-tuned from the pretrained base model [{{ base_model }}](https://huggingface.co/{{ base_model }}):
+
+```bash
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/<dataset> \
+  --policy.path={{ base_model }} \
+  --output_dir=outputs/train/<policy_repo_id> \
+  --job_name=lerobot_training \
+  --policy.device=cuda \
+  --policy.repo_id=${HF_USER}/<policy_repo_id> \
+  --wandb.enable=true
+```
+{% else %}### Train your own policy
 
 ```bash
 lerobot-train \
   --dataset.repo_id=${HF_USER}/<dataset> \
   --policy.type={{ model_name }} \
-  --output_dir=outputs/train/<desired_policy_repo_id> \
+  --output_dir=outputs/train/<policy_repo_id> \
   --job_name=lerobot_training \
   --policy.device=cuda \
-  --policy.repo_id=${HF_USER}/<desired_policy_repo_id> \
+  --policy.repo_id=${HF_USER}/<policy_repo_id> \
   --wandb.enable=true
 ```
-
-_Writes checkpoints to `outputs/train/<desired_policy_repo_id>/checkpoints/`._
-
-### Evaluate the policy/run inference
-
-```bash
-lerobot-rollout \
-  --strategy.type=base \
-  --robot.type=<your_robot_type> \
-  --robot.port=<your_robot_port> \
-  --robot.cameras="{ <camera_1>: {type: opencv, index_or_path: <index_or_path>, width: 640, height: 480, fps: 30}, <camera_2>: {type: opencv, index_or_path: <index_or_path>, width: 640, height: 480, fps: 30}}" \
-  --policy.path=<hf_user>/<desired_policy_repo_id> \
-  --task="<your_task_description>" \
-  --duration=60
-```
-
-Replace every `<...>` placeholder with your own values. The `--robot.type`, `--robot.port`, and camera names/indices must match the robot and observation keys this policy was trained on, and `--task` should describe what you want the policy to do.
-
-When `--strategy.type=base` is used the script doesn't record the episodes. Skipping duration will make the policy run indefinitely. For more information look at [rollout documentation](https://huggingface.co/docs/lerobot/main/en/inference).
+{% endif %}
+_Writes checkpoints to `outputs/train/<policy_repo_id>/checkpoints/`._
 
 ---
 
 ## Evaluation
 
-<!-- Add evaluation results here: success rate, number of trials, and the conditions (robot, task, environment). -->
+<!-- Report real-robot results here: run the policy several times per task and count the
+successes. Delete the "No evaluation results" line and fill in this table instead:
+
+| Task | Trials | Successes | Success rate |
+| ---- | ------ | --------- | ------------ |
+| pick the lego brick | 10 | 8 | 80% |
+
+Also worth noting: anything that affects difficulty (new object positions, lighting,
+distractors, a different robot of the same type, ...).
+-->
 
 _No evaluation results have been provided for this policy yet._
 
