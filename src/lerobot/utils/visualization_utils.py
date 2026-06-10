@@ -63,6 +63,40 @@ def _is_scalar(x):
     )
 
 
+def _build_blueprint(observation_paths: set[str], action_paths: set[str], image_paths: set[str]):
+    """Build a Rerun blueprint laying out camera images, observation and action scalars in separate views.
+
+    Camera images are arranged in a grid on the left, and the observation and action scalars are stacked as time series views on the right.
+    """
+    import rerun.blueprint as rrb
+
+    image_views = [rrb.Spatial2DView(origin=path, name=path) for path in sorted(image_paths)]
+
+    timeseries_views = []
+    if observation_paths:
+        timeseries_views.append(rrb.TimeSeriesView(name="observation", contents=sorted(observation_paths)))
+    if action_paths:
+        timeseries_views.append(rrb.TimeSeriesView(name="action", contents=sorted(action_paths)))
+
+    contents = []
+    if image_views:
+        contents.append(rrb.Grid(*image_views, name="images"))
+    if timeseries_views:
+        contents.append(rrb.Vertical(*timeseries_views, name="time series"))
+
+    return rrb.Blueprint(rrb.Horizontal(*contents) if contents else rrb.Grid())
+
+
+def _ensure_blueprint(observation_paths: set[str], action_paths: set[str], image_paths: set[str], rr) -> None:
+    """Build and send the blueprint once, from the first observation and action data."""
+    if getattr(log_rerun_data, "blueprint", None) is not None:
+        return
+
+    blueprint = _build_blueprint(observation_paths, action_paths, image_paths)
+    log_rerun_data.blueprint = blueprint
+    rr.send_blueprint(blueprint)
+
+
 def log_rerun_data(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
@@ -82,6 +116,9 @@ def log_rerun_data(
 
     Keys are automatically namespaced with "observation." or "action." if not already present.
 
+    On the first call, a blueprint is built and sent so observation and action scalars get separate
+    time-series views and each image gets its own spatial view.
+
     Args:
         observation: An optional dictionary containing observation data to log.
         action: An optional dictionary containing action data to log.
@@ -91,14 +128,9 @@ def log_rerun_data(
     require_package("rerun-sdk", extra="viz", import_name="rerun")
     import rerun as rr
 
-    def _log_vector(key: str, arr: np.ndarray) -> None:
-        """
-        Logs an array as one batch so all dimensions share a single view, while keeping the per-dimension `{key}_{i}` names via SeriesLines.
-        Arrays with more than one dimension are flattened.
-        """
-        arr = arr.reshape(-1).astype(float)
-        rr.log(key, rr.SeriesLines(names=[f"{key}_{i}" for i in range(arr.shape[0])]), static=True)
-        rr.log(key, rr.Scalars(arr))
+    observation_paths: set[str] = set()
+    action_paths: set[str] = set()
+    image_paths: set[str] = set()
 
     if observation:
         for k, v in observation.items():
@@ -108,16 +140,19 @@ def log_rerun_data(
 
             if _is_scalar(v):
                 rr.log(key, rr.Scalars(float(v)))
+                observation_paths.add(key)
             elif isinstance(v, np.ndarray):
                 arr = v
                 # Convert CHW -> HWC when needed
                 if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
                     arr = np.transpose(arr, (1, 2, 0))
                 if arr.ndim == 1:
-                    _log_vector(key, arr)
+                    rr.log(key, rr.Scalars(arr.reshape(-1).astype(float)))
+                    observation_paths.add(key)
                 else:
                     img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
                     rr.log(key, entity=img_entity, static=True)
+                    image_paths.add(key)
 
     if action:
         for k, v in action.items():
@@ -127,5 +162,9 @@ def log_rerun_data(
 
             if _is_scalar(v):
                 rr.log(key, rr.Scalars(float(v)))
+                action_paths.add(key)
             elif isinstance(v, np.ndarray):
-                _log_vector(key, v)
+                rr.log(key, rr.Scalars(v.reshape(-1).astype(float)))
+                action_paths.add(key)
+
+    _ensure_blueprint(observation_paths, action_paths, image_paths, rr)
