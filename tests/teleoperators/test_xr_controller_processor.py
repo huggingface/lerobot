@@ -14,32 +14,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pure-numpy/scipy unit tests for ``MapXRControllerActionToRobotAction``.
+"""Pure-numpy unit tests for the Isaac Teleop XR -> SO-101 processor steps.
 
-These tests deliberately do NOT import ``isaacteleop`` — the processor is the
-pure-math bridge between the XR teleoperator and the closed-loop IK pipeline,
+These tests deliberately do NOT import ``isaacteleop`` — the processor steps are
+the pure-math bridge between the XR teleoperator and the closed-loop IK pipeline,
 and must be testable without the XR runtime.
 """
 
 import numpy as np
 import pytest
-from scipy.spatial.transform import Rotation
 
+from lerobot.teleoperators.isaac_teleop.wrist_roll_processor import OverwriteWristRollFromAngle
 from lerobot.teleoperators.isaac_teleop.xr_controller_processor import (
     _OPENXR_TO_ROBOT,
     MapXRControllerActionToRobotAction,
-    _remap_openxr_to_robot,
 )
 
 # Identity quaternion (x, y, z, w).
-_IDENTITY_QUAT = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+_IDENTITY_QUAT = (0.0, 0.0, 0.0, 1.0)
 
 
-def _make_action(pos, quat=_IDENTITY_QUAT, gripper=1.0, enabled=True):
+def _make_action(pos, quat=_IDENTITY_QUAT, closedness=1.0, wrist_roll=0.0, enabled=True):
+    ee_pose = np.asarray([*pos, *quat], dtype=np.float32)
     return {
-        "ee_pos": np.asarray(pos, dtype=np.float32),
-        "ee_quat": np.asarray(quat, dtype=np.float32),
-        "gripper": float(gripper),
+        "ee_pose": ee_pose,
+        "wrist_roll": float(wrist_roll),
+        "closedness": float(closedness),
         "enabled": bool(enabled),
     }
 
@@ -63,23 +63,9 @@ def test_openxr_to_robot_is_proper_rotation():
     assert np.allclose(_OPENXR_TO_ROBOT @ _OPENXR_TO_ROBOT.T, np.eye(3))
 
 
-def test_quaternion_change_of_basis_round_trips():
-    # A rotation expressed in the robot frame, mapped back to OpenXR and forward
-    # again, must be unchanged.
-    rng = np.random.default_rng(0)
-    quat = Rotation.from_rotvec(rng.normal(size=3)).as_quat().astype(np.float32)
-    pos = rng.normal(size=3).astype(np.float32)
-
-    pos_r, quat_r = _remap_openxr_to_robot(pos, quat)
-    # Map the robot-frame rotation back to OpenXR via the inverse (transpose).
-    r_back = Rotation.from_matrix(
-        _OPENXR_TO_ROBOT.T @ Rotation.from_quat(quat_r).as_matrix() @ _OPENXR_TO_ROBOT
-    )
-    assert np.allclose(r_back.as_matrix(), Rotation.from_quat(quat).as_matrix(), atol=1e-5)
-    assert np.allclose(_OPENXR_TO_ROBOT.T @ pos_r, pos, atol=1e-5)
-
-
 def test_engage_frame_has_zero_delta():
+    # On the rising edge of enabled the engage-home is latched, so the first
+    # engaged frame emits a zero delta regardless of where the controller is.
     step = MapXRControllerActionToRobotAction()
     out = step.action(_make_action([1.0, 2.0, 3.0], enabled=True))
     assert out["enabled"] is True
@@ -88,43 +74,23 @@ def test_engage_frame_has_zero_delta():
 
 def test_delta_accumulates_after_engage():
     step = MapXRControllerActionToRobotAction()
-    step.action(_make_action([0.0, 0.0, 0.0], enabled=True))  # captures origin
+    step.action(_make_action([0.0, 0.0, 0.0], enabled=True))  # latches engage-home
     out = step.action(_make_action([1.0, 0.0, 0.0], enabled=True))
 
-    # OpenXR (1,0,0) -> robot frame via _OPENXR_TO_ROBOT.
+    # Base-frame delta = _OPENXR_TO_ROBOT @ (ee_pose[:3] - engage_home).
     expected = _OPENXR_TO_ROBOT @ np.array([1.0, 0.0, 0.0])
     assert np.allclose(_targets(out)[:3], expected, atol=1e-5)
     assert not np.allclose(_targets(out)[:3], 0.0)
 
 
-def test_engage_frame_zero_rotation_with_nonidentity_orientation():
-    # Even with a non-identity controller orientation, the engage frame captures
-    # that orientation as the origin so the emitted rotvec delta is exactly zero
-    # (the arm must not jump in orientation on engage).
+def test_orientation_delta_is_always_zero():
+    # The orientation channel is intentionally unused on the 5-DOF position-only
+    # arm; target_w* must be zero even with a non-identity controller orientation.
     step = MapXRControllerActionToRobotAction()
-    quat = Rotation.from_euler("xyz", [30, -45, 60], degrees=True).as_quat().astype(np.float32)
-    out = step.action(_make_action([0.5, -0.2, 1.0], quat=quat, enabled=True))
-    assert np.allclose(_targets(out)[3:], 0.0, atol=1e-6)
-
-
-def test_orientation_delta_matches_origin_rot_inv_times_rot():
-    # After engage, the emitted rotvec equals (origin_rot_inv * rot) computed in
-    # the ROBOT frame (the processor remaps the quaternion before accumulating).
-    step = MapXRControllerActionToRobotAction()
-    quat0 = Rotation.from_euler("xyz", [10, 20, 30], degrees=True).as_quat().astype(np.float32)
-    quat1 = Rotation.from_euler("xyz", [40, -15, 5], degrees=True).as_quat().astype(np.float32)
-
-    step.action(_make_action([0.0, 0.0, 0.0], quat=quat0, enabled=True))  # captures origin
-    out = step.action(_make_action([0.0, 0.0, 0.0], quat=quat1, enabled=True))
-
-    # Reproduce the expected delta in the robot frame using the same remap.
-    _, quat0_r = _remap_openxr_to_robot(np.zeros(3, dtype=np.float32), quat0)
-    _, quat1_r = _remap_openxr_to_robot(np.zeros(3, dtype=np.float32), quat1)
-    expected = (Rotation.from_quat(quat0_r).inv() * Rotation.from_quat(quat1_r)).as_rotvec()
-
-    assert np.allclose(_targets(out)[3:], expected, atol=1e-5)
-    # And it is a genuinely non-zero rotation, so the channel is exercised.
-    assert not np.allclose(_targets(out)[3:], 0.0)
+    quat = (0.1, 0.2, 0.3, 0.927)  # arbitrary non-identity
+    step.action(_make_action([0.0, 0.0, 0.0], quat=quat, enabled=True))
+    out = step.action(_make_action([1.0, 2.0, 3.0], quat=quat, enabled=True))
+    assert np.allclose(_targets(out)[3:], 0.0, atol=1e-12)
 
 
 def test_disabled_zeroes_targets():
@@ -135,44 +101,74 @@ def test_disabled_zeroes_targets():
     assert np.allclose(_targets(out), 0.0, atol=1e-6)
 
 
-def test_rising_edge_recaptures_origin():
+def test_rising_edge_recaptures_engage_home():
     step = MapXRControllerActionToRobotAction()
-    # First engage at origin A.
+    # First engage at home A.
     step.action(_make_action([0.0, 0.0, 0.0], enabled=True))
     step.action(_make_action([1.0, 0.0, 0.0], enabled=True))
     # Disengage, controller drifts away.
     step.action(_make_action([10.0, 10.0, 10.0], enabled=False))
-    # Re-engage at a brand new pose -> this is a rising edge -> zero delta.
+    # Re-engage at a brand new pose -> rising edge -> zero delta.
     out = step.action(_make_action([10.0, 10.0, 10.0], enabled=True))
     assert np.allclose(_targets(out), 0.0, atol=1e-6)
 
 
-def test_reset_clears_origin_and_edge():
+def test_reset_clears_engage_home_and_edge():
     step = MapXRControllerActionToRobotAction()
     step.action(_make_action([0.0, 0.0, 0.0], enabled=True))
     step.action(_make_action([2.0, 0.0, 0.0], enabled=True))
 
     step.reset()
-    assert step._origin_pos is None
-    assert step._origin_rot_inv is None
+    assert step._engage_home is None
     assert step._prev_enabled is False
 
     # The first engaged frame after reset is a true rising edge -> zero delta,
-    # no stale origin carried across the episode boundary.
+    # no stale engage-home carried across the episode boundary.
     out = step.action(_make_action([7.0, 8.0, 9.0], enabled=True))
     assert np.allclose(_targets(out), 0.0, atol=1e-6)
 
 
 @pytest.mark.parametrize(
-    ("gripper", "expected"),
-    [(1.0, 2.0), (-1.0, 0.0), (0.0, 2.0)],
+    ("closedness", "expected"),
+    [(0.0, 0.0), (1.0, 100.0), (0.5, 50.0)],
 )
-def test_gripper_state_maps_to_discrete_index(gripper, expected):
-    # +1 (open) -> 2, -1 (closed) -> 0, with NO pre-negation (the downstream
-    # discrete_gripper mode encodes the SO100 sign).
+def test_gripper_pos_is_closedness_times_100(closedness, expected):
     step = MapXRControllerActionToRobotAction()
-    out = step.action(_make_action([0.0, 0.0, 0.0], gripper=gripper, enabled=True))
-    assert out["gripper_vel"] == expected
+    out = step.action(_make_action([0.0, 0.0, 0.0], closedness=closedness, enabled=True))
+    assert out["ee.gripper_pos"] == pytest.approx(expected)
+
+
+def test_wrist_roll_passes_through_and_gripper_vel_zero():
+    step = MapXRControllerActionToRobotAction()
+    out = step.action(_make_action([0.0, 0.0, 0.0], wrist_roll=0.7, enabled=True))
+    assert out["wrist_roll"] == pytest.approx(0.7)
+    assert out["gripper_vel"] == 0.0
+
+
+def test_wrist_roll_held_when_disabled_after_engage():
+    # The clutch gates the whole arm pose: on release the wrist_roll holds the
+    # last commanded value (not the live controller roll), so the arm freezes.
+    step = MapXRControllerActionToRobotAction()
+    step.action(_make_action([0.0, 0.0, 0.0], wrist_roll=0.5, enabled=True))  # commands 0.5
+    out = step.action(_make_action([5.0, 5.0, 5.0], wrist_roll=0.9, enabled=False))
+    assert out["wrist_roll"] == pytest.approx(0.5)  # held, not 0.9
+    assert np.allclose(_targets(out), 0.0, atol=1e-6)
+
+
+def test_wrist_roll_absent_before_first_engage():
+    # Before any engage there is no commanded roll to hold, so the bridge emits no
+    # wrist_roll key and the post-IK overwrite leaves the IK-produced joint alone.
+    step = MapXRControllerActionToRobotAction()
+    out = step.action(_make_action([0.0, 0.0, 0.0], wrist_roll=0.9, enabled=False))
+    assert "wrist_roll" not in out
+
+
+def test_overwrite_wrist_roll_noop_when_absent():
+    # No-op (leaves an existing wrist_roll.pos untouched) when no roll command is present.
+    step = OverwriteWristRollFromAngle()
+    out = step.action({"wrist_roll.pos": 12.0})
+    assert out["wrist_roll.pos"] == pytest.approx(12.0)
+    assert "wrist_roll" not in out
 
 
 def test_transform_features_swaps_keys():
@@ -181,14 +177,50 @@ def test_transform_features_swaps_keys():
 
     features = {
         PipelineFeatureType.ACTION: {
-            "ee_pos": PolicyFeature(type=FeatureType.ACTION, shape=(3,)),
-            "ee_quat": PolicyFeature(type=FeatureType.ACTION, shape=(4,)),
-            "gripper": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+            "ee_pose": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+            "wrist_roll": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+            "closedness": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
             "enabled": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
         }
     }
     out = step.transform_features(features)[PipelineFeatureType.ACTION]
-    for popped in ["ee_pos", "ee_quat", "gripper"]:
+    for popped in ["ee_pose", "closedness"]:
         assert popped not in out
-    for added in ["target_x", "target_y", "target_z", "target_wx", "target_wy", "target_wz", "gripper_vel"]:
+    for added in [
+        "enabled",
+        "target_x",
+        "target_y",
+        "target_z",
+        "target_wx",
+        "target_wy",
+        "target_wz",
+        "gripper_vel",
+        "wrist_roll",
+        "ee.gripper_pos",
+    ]:
         assert added in out
+
+
+@pytest.mark.parametrize(
+    ("wrist_roll_rad", "expected_deg"),
+    [(np.pi, 180.0), (0.0, 0.0), (-np.pi / 2, -90.0)],
+)
+def test_overwrite_wrist_roll_from_angle(wrist_roll_rad, expected_deg):
+    step = OverwriteWristRollFromAngle()
+    out = step.action({"wrist_roll": float(wrist_roll_rad)})
+    assert out["wrist_roll.pos"] == pytest.approx(expected_deg)
+    assert "wrist_roll" not in out
+
+
+def test_overwrite_wrist_roll_transform_features():
+    step = OverwriteWristRollFromAngle()
+    from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+
+    features = {
+        PipelineFeatureType.ACTION: {
+            "wrist_roll": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+        }
+    }
+    out = step.transform_features(features)[PipelineFeatureType.ACTION]
+    assert "wrist_roll" not in out
+    assert "wrist_roll.pos" in out

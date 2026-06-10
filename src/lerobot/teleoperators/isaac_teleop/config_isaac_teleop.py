@@ -70,9 +70,11 @@ class IsaacTeleopConfig(TeleoperatorConfig):
 class XRControllerConfig(IsaacTeleopConfig):
     """Config for Isaac Teleop XR (VR) controller teleoperation.
 
-    Produces an absolute end-effector pose (position + quaternion) and a
-    gripper command from a VR controller via NVIDIA Isaac Teleop's
-    ``ControllersSource``, ``Se3AbsRetargeter``, and ``GripperRetargeter``.
+    Produces a clutch-rebased end-effector pose, a wrist-roll angle, and an
+    analog gripper closedness from a VR controller via NVIDIA Isaac Teleop's
+    ``ControllersSource`` and the three SO-101 retargeters
+    (``SO101ClutchRetargeter``, ``SO101RollRetargeter``,
+    ``SO101GripperRetargeter``).
     """
 
     hand_side: Literal["left", "right"] = "right"

@@ -25,12 +25,14 @@ are the natural next devices (add a ``teleop_<device>.py`` + device config).
 from .base import IsaacTeleopTeleoperator
 from .config_isaac_teleop import IsaacTeleopConfig, XRControllerConfig
 from .teleop_xr_controller import XRController
+from .wrist_roll_processor import OverwriteWristRollFromAngle
 from .xr_controller_processor import MapXRControllerActionToRobotAction
 
 __all__ = [
     "IsaacTeleopConfig",
     "IsaacTeleopTeleoperator",
     "MapXRControllerActionToRobotAction",
+    "OverwriteWristRollFromAngle",
     "XRController",
     "XRControllerConfig",
 ]

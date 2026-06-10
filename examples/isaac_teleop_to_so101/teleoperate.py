@@ -19,16 +19,18 @@
 This mirrors ``examples/phone_to_so100/teleoperate.py`` but swaps the phone for
 an XR controller. The pipeline is::
 
-    XRController.get_action()                       # absolute EE pose + gripper + clutch
-      -> MapXRControllerActionToRobotAction         # OpenXR->robot frame, relative deltas, clutch
+    XRController.get_action()                       # clutch EE pose + wrist roll + closedness + clutch
+      -> MapXRControllerActionToRobotAction         # engage-home delta, ee.gripper_pos, wrist_roll [rad]
       -> EEReferenceAndDelta                         # latch FK reference on enable rising edge
       -> EEBoundsAndSafety                           # workspace + per-step clamps
-      -> GripperVelocityToJoint(discrete_gripper=True)
-      -> InverseKinematicsEEToJoints                 # closed-loop Placo IK
+      -> InverseKinematicsEEToJoints                 # closed-loop Placo IK (passes ee.gripper_pos -> gripper.pos)
+      -> OverwriteWristRollFromAngle                 # wrist_roll [rad] -> wrist_roll.pos [deg]
 
 Squeeze (and hold) the controller grip past ``clutch_threshold`` to engage; on
-each engage the origin re-arms in lock-step with the FK reference latch so the
-arm does not jump.
+each engage the engage-home re-arms in lock-step with the FK reference latch so
+the arm does not jump. The analog gripper closedness is emitted as an absolute
+``ee.gripper_pos`` joint target (so there is no gripper-velocity step), and the
+wrist roll is written directly onto the joint after IK.
 
 Requires the ``isaac-teleop`` extra (``isaacteleop``) and an OpenXR runtime.
 """
@@ -46,11 +48,11 @@ from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
 from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     EEReferenceAndDelta,
-    GripperVelocityToJoint,
     InverseKinematicsEEToJoints,
 )
 from lerobot.teleoperators.isaac_teleop import (
     MapXRControllerActionToRobotAction,
+    OverwriteWristRollFromAngle,
     XRController,
     XRControllerConfig,
 )
@@ -82,9 +84,7 @@ CLOUDXR_ENV_FILE = str(Path(__file__).parent / "webxr.env")
 
 
 def main():
-    robot_config = SO100FollowerConfig(
-        port="/dev/ttyACM0", id="jiwenc_follower_arm", use_degrees=True
-    )
+    robot_config = SO100FollowerConfig(port="/dev/ttyACM0", id="jiwenc_follower_arm", use_degrees=True)
     teleop_config = XRControllerConfig(
         hand_side="right",
         clutch_threshold=0.5,
@@ -110,7 +110,14 @@ def main():
     # Build pipeline: XR action -> EE pose action -> joint action.
     xr_to_robot_joints_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
         steps=[
+            # Run with LEROBOT_XR_DEBUG=1 to trace clutch/closedness/roll/deltas.
             MapXRControllerActionToRobotAction(),
+            # use_latched_reference=True co-arms the no-teleport FK latch with the
+            # bridge's engage-home: both re-latch on the squeeze rising edge so the
+            # commanded delta is zero at engage and the arm does not jump. (This step
+            # also re-emits ee.gripper_vel, which is now a benign orphan: nobody
+            # consumes it downstream since GripperVelocityToJoint was removed, and
+            # robot.send_action keeps only *.pos keys, so it is silently dropped.)
             EEReferenceAndDelta(
                 kinematics=kinematics_solver,
                 end_effector_step_sizes=EE_STEP_SIZES,
@@ -121,15 +128,19 @@ def main():
                 end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
                 max_ee_step_m=MAX_EE_STEP_M,
             ),
-            GripperVelocityToJoint(
-                speed_factor=20.0,
-                discrete_gripper=True,
-            ),
+            # No GripperVelocityToJoint: the bridge emits an absolute ee.gripper_pos
+            # (motor units [0,100]) that the IK step passes straight to gripper.pos.
+            # initial_guess_current_joints=True is REQUIRED here: it re-seeds the IK
+            # from the measured joints every frame, so OverwriteWristRollFromAngle
+            # writing wrist_roll.pos after IK does not drift the IK seed.
             InverseKinematicsEEToJoints(
                 kinematics=kinematics_solver,
                 motor_names=list(robot.bus.motors.keys()),
                 initial_guess_current_joints=True,
             ),
+            # Post-IK: write the operator's wrist roll [rad] onto wrist_roll.pos [deg],
+            # overriding the under-determined IK roll on the 5-DOF arm.
+            OverwriteWristRollFromAngle(),
         ],
         to_transition=robot_action_observation_to_transition,
         to_output=transition_to_robot_action,

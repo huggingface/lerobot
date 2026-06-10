@@ -18,9 +18,10 @@
 
 ``XRController`` is the first concrete :class:`IsaacTeleopTeleoperator` device
 (see :mod:`lerobot.teleoperators.isaac_teleop.base` for the multi-device
-pattern). It wires an Isaac Teleop retargeting pipeline that turns a single XR
-controller into an absolute end-effector pose, a gripper command, and a clutch
-(``enabled``) signal. The output dict from :meth:`XRController.get_action` is
+pattern). It wires an Isaac Teleop retargeting pipeline (the three SO-101
+retargeters) that turns a single XR controller into a clutch-rebased
+end-effector pose, a wrist-roll angle, an analog gripper closedness, and a
+clutch (``enabled``) signal. The output dict from :meth:`XRController.get_action` is
 designed to feed LeRobot's existing closed-loop IK pipeline (the same one phone
 teleoperation uses) via :class:`MapXRControllerActionToRobotAction`.
 
@@ -47,11 +48,13 @@ if TYPE_CHECKING:
 
 
 class XRController(IsaacTeleopTeleoperator):
-    """XR controller -> EE pose + gripper + clutch teleoperator.
+    """XR controller -> EE pose + wrist roll + gripper + clutch teleoperator.
 
-    Wraps Isaac Teleop's ``ControllersSource`` + ``Se3AbsRetargeter`` +
-    ``GripperRetargeter`` into a single pipeline.  Squeezing the controller
-    grip past :attr:`XRControllerConfig.clutch_threshold` engages the clutch
+    Wraps Isaac Teleop's three SO-101 retargeters (``SO101ClutchRetargeter``,
+    ``SO101RollRetargeter``, ``SO101GripperRetargeter``) plus the raw
+    ``ControllersSource`` passthrough (for the squeeze clutch) into a single
+    pipeline. Squeezing the controller grip past
+    :attr:`XRControllerConfig.clutch_threshold` engages the clutch
     (``enabled``); releasing it freezes the robot, exactly like the phone
     teleoperator's hold-to-enable button.
     """
@@ -70,59 +73,52 @@ class XRController(IsaacTeleopTeleoperator):
     def _build_pipeline(self) -> OutputCombiner:
         """Build the XR controller retargeting pipeline.
 
-        Pipeline graph::
+        Reuses the three Isaac Teleop SO-101 retargeters (5-DOF arm), one
+        ``ControllersSource`` feeding all of them, plus a raw controller
+        passthrough for the squeeze clutch::
 
-            ControllersSource ─┬─ Se3AbsRetargeter ──── ee_pose (7D)
-                               │
-                               ├─ GripperRetargeter ─── gripper_command (scalar)
-            HandsSource ───────┘
-                               │
-            ControllersSource ─┴─ (passthrough) ─────── controller (raw inputs)
+            ControllersSource ─┬─ SO101ClutchRetargeter ──── ee_pose (7D, base frame)
+                               ├─ SO101RollRetargeter ────── roll_command (rad)
+                               ├─ SO101GripperRetargeter ─── gripper_command (closedness [0,1])
+                               └─ (passthrough) ──────────── controller (raw inputs)
 
-        ``HandsSource`` is required: ``GripperRetargeter.input_spec()``
-        declares both ``controller_{side}`` and ``hand_{side}`` (it can fall
-        back to hand pinch-distance when controller trigger data is absent).
-        The raw ``controller_{side}`` output is also passed through so
-        :meth:`get_action` can read ``SQUEEZE_VALUE`` for the clutch.
+        The clutch retargeter latches its own controller origin on the connect
+        frame; the downstream :class:`MapXRControllerActionToRobotAction`
+        re-latches an engage-home on the squeeze rising edge so the emitted
+        delta is zero at engage (no teleport). The raw ``controller_{side}``
+        passthrough is read in :meth:`get_action` for ``SQUEEZE_VALUE`` (the
+        sole clutch — see :class:`XRControllerConfig.clutch_threshold`).
         """
         from isaacteleop.retargeters import (
-            GripperRetargeter,
-            GripperRetargeterConfig,
-            Se3AbsRetargeter,
-            Se3RetargeterConfig,
+            SO101ClutchRetargeter,
+            SO101GripperRetargeter,
+            SO101RollRetargeter,
         )
-        from isaacteleop.retargeting_engine.deviceio_source_nodes import (
-            ControllersSource,
-            HandsSource,
-        )
+        from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource
         from isaacteleop.retargeting_engine.interface import OutputCombiner
 
         side = self.config.hand_side
+        controller_key = f"controller_{side}"
         controllers = ControllersSource(name="controllers")
-        hands = HandsSource(name="hands")
 
-        # Se3 absolute pose retargeter: controller aim pose -> 7D EE pose.
-        # zero_out_xy_rotation defaults to True, which matches intent for the
-        # position-dominant 5-DOF SO-101 IK.
-        se3_cfg = Se3RetargeterConfig(input_device=f"controller_{side}")
-        se3 = Se3AbsRetargeter(se3_cfg, name="ee_pose")
-        connected_se3 = se3.connect({f"controller_{side}": controllers.output(f"controller_{side}")})
+        # Clutch-rebased absolute EE pose -> 7D ee_pose (output key "ee_pose").
+        clutch = SO101ClutchRetargeter(name="ee_pose", input_device=controller_key)
+        connected_clutch = clutch.connect({controller_key: controllers.output(controller_key)})
 
-        # Gripper retargeter: trigger/pinch -> scalar command.
-        gripper_cfg = GripperRetargeterConfig(hand_side=side)
-        gripper = GripperRetargeter(gripper_cfg, name="gripper")
-        connected_gripper = gripper.connect(
-            {
-                f"controller_{side}": controllers.output(f"controller_{side}"),
-                f"hand_{side}": hands.output(f"hand_{side}"),
-            }
-        )
+        # Absolute swing-twist wrist roll [rad] (output group "roll_command").
+        roll = SO101RollRetargeter(name="roll", input_device=controller_key)
+        connected_roll = roll.connect({controller_key: controllers.output(controller_key)})
+
+        # Proportional jaw closedness [0,1] (output group "gripper_command").
+        gripper = SO101GripperRetargeter(name="gripper", input_device=controller_key)
+        connected_gripper = gripper.connect({controller_key: controllers.output(controller_key)})
 
         return OutputCombiner(
             {
-                "ee_pose": connected_se3.output("ee_pose"),
+                "ee_pose": connected_clutch.output("ee_pose"),
+                "roll": connected_roll.output("roll_command"),
                 "gripper": connected_gripper.output("gripper_command"),
-                "controller": controllers.output(f"controller_{side}"),
+                "controller": controllers.output(controller_key),
             }
         )
 
@@ -133,19 +129,19 @@ class XRController(IsaacTeleopTeleoperator):
     @property
     def action_features(self) -> dict:
         return {
-            "ee_pos": {
+            "ee_pose": {
                 "dtype": "float32",
-                "shape": (3,),
-                "names": {"x": 0, "y": 1, "z": 2},
+                "shape": (7,),
+                "names": {"x": 0, "y": 1, "z": 2, "qx": 3, "qy": 4, "qz": 5, "qw": 6},
             },
-            "ee_quat": {
-                "dtype": "float32",
-                "shape": (4,),
-                "names": {"qx": 0, "qy": 1, "qz": 2, "qw": 3},
-            },
-            # ``get_action`` returns scalars for these two, so the advertised
+            # ``get_action`` returns scalars for these three, so the advertised
             # shape is () (0-d) to stay consistent with the returned values.
-            "gripper": {
+            "wrist_roll": {
+                "dtype": "float32",
+                "shape": (),
+                "names": None,
+            },
+            "closedness": {
                 "dtype": "float32",
                 "shape": (),
                 "names": None,
@@ -166,16 +162,18 @@ class XRController(IsaacTeleopTeleoperator):
     # ------------------------------------------------------------------
 
     def get_action(self) -> RobotAction:
-        """Step the Isaac Teleop session and return EE pose + gripper + clutch.
+        """Step the Isaac Teleop session and return EE pose + roll + gripper + clutch.
 
         Returns:
             A ``RobotAction`` dict with keys:
 
-            - ``"ee_pos"``: ``np.ndarray`` shape ``(3,)`` — position in metres
-              (absolute, OpenXR frame).
-            - ``"ee_quat"``: ``np.ndarray`` shape ``(4,)`` — quaternion
-              ``(x, y, z, w)`` (absolute, OpenXR frame).
-            - ``"gripper"``: ``float`` — ``-1.0`` (closed) or ``1.0`` (open).
+            - ``"ee_pose"``: ``np.ndarray`` shape ``(7,)`` — clutch-rebased
+              absolute pose ``[x, y, z, qx, qy, qz, qw]`` in the robot base
+              frame (position in metres).
+            - ``"wrist_roll"``: ``float`` — absolute wrist-roll angle in
+              **radians** (swing-twist about world Z).
+            - ``"closedness"``: ``float`` — jaw closedness in ``[0, 1]``
+              (``0`` = open, ``1`` = closed).
             - ``"enabled"``: ``bool`` — clutch state (squeeze held past
               ``clutch_threshold``).
         """
@@ -185,10 +183,12 @@ class XRController(IsaacTeleopTeleoperator):
 
         # Retargeter outputs are batched (leading slot/batch dim); index [0]
         # selects the single tracked controller and drops that dim.
-        # Se3AbsRetargeter outputs a 7D array: [x, y, z, qx, qy, qz, qw].
+        # SO101ClutchRetargeter outputs a 7D array: [x, y, z, qx, qy, qz, qw].
         ee_pose = np.asarray(result["ee_pose"][0], dtype=np.float32)
-        # gripper is a binary command, not a velocity: -1.0 (closed) / +1.0 (open).
-        gripper_val = float(result["gripper"][0])
+        # SO101RollRetargeter emits a single absolute roll angle [rad].
+        wrist_roll = float(result["roll"][0])
+        # SO101GripperRetargeter emits a single closedness scalar in [0, 1].
+        closedness = float(result["gripper"][0])
 
         # Raw controller passthrough -> clutch from the squeeze analog. When
         # the controller is not tracked the optional group is None; treat that
@@ -196,18 +196,22 @@ class XRController(IsaacTeleopTeleoperator):
         from isaacteleop.retargeting_engine.tensor_types.indices import ControllerInputIndex
 
         controller = result["controller"]
-        # Defensive default: a passthrough controller group may not be tracked
-        # every frame, and not all output wrappers guarantee an ``is_none``
-        # attribute, so fall back to "tracked" rather than crash.
+        # Defensive: a passthrough controller group may not be tracked every frame
+        # (untracked/odd frame, missing squeeze axis, unexpected wrapper shape). Any
+        # failure to read the squeeze is treated as "not engaged" (squeeze = 0.0) so
+        # the arm freezes safely instead of crashing the teleop loop.
         if getattr(controller, "is_none", False):
             squeeze = 0.0
         else:
-            squeeze = float(controller[ControllerInputIndex.SQUEEZE_VALUE])
+            try:
+                squeeze = float(controller[ControllerInputIndex.SQUEEZE_VALUE])
+            except (IndexError, KeyError, TypeError, ValueError):
+                squeeze = 0.0
         enabled = bool(squeeze > self.config.clutch_threshold)
 
         return {
-            "ee_pos": ee_pose[:3],
-            "ee_quat": ee_pose[3:],
-            "gripper": gripper_val,
+            "ee_pose": ee_pose,
+            "wrist_roll": wrist_roll,
+            "closedness": closedness,
             "enabled": enabled,
         }
