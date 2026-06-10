@@ -216,6 +216,12 @@ robometer = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]", "lerobot
 topreward = ["lerobot[transformers-dep]"]
 xvla = ["lerobot[transformers-dep]"]
 eo1 = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]"]
+fastwam = [
+    "lerobot[transformers-dep]",
+    "lerobot[diffusers-dep]",
+    "ftfy>=6.1.1,<7.0.0",
+    "regex>=2024.0.0,<2027.0.0",
+]
 hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]
 
@@ -280,6 +286,7 @@ all = [
     "lerobot[pi]",
     "lerobot[molmoact2]",
     "lerobot[smolvla]",
+    "lerobot[fastwam]",
     # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
     "lerobot[xvla]",
     "lerobot[hilserl]",
