@@ -31,7 +31,12 @@ CMD_TEMPLATE = (
     "pip install --no-deps "
     f"'lerobot @ git+https://github.com/huggingface/lerobot.git@{BRANCH}' && "
     "pip install --upgrade-strategy only-if-needed "
-    "datasets pyarrow av jsonlines draccus gymnasium torchcodec mergedeep pyyaml-include toml typing-inspect "
+    # av pinned to <16: PyAV 17.x dropped ``av.option`` which lerobot's
+    # pyav_utils imports at module load. draccus pinned to lerobot's required
+    # 0.10.0 (the CLI config parser). Both must be pinned because lerobot is
+    # installed with --no-deps, so its own constraints aren't enforced.
+    "datasets pyarrow 'av>=15.0.0,<16.0.0' jsonlines 'draccus==0.10.0' gymnasium torchcodec "
+    "mergedeep pyyaml-include toml typing-inspect "
     "openai && "
     "export VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 && "
     "export VLLM_VIDEO_BACKEND=pyav && "
