@@ -32,3 +32,4 @@ __all__ = [
     "SOFollowerRobotConfig",
 ]
 from .so_follower_dragontactile import SO101FollowerDragontactile
+from .so_follower_dragon_multitactile import SO101FollowerDragonMultitactile

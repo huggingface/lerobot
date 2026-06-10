@@ -43,7 +43,7 @@ class SO101FollowerDragontactile(SOFollower):
         self._sampling_rate_hz = 20_000 # fs = 20 kHz
 
         self._crop_data = 10 # crop the data with this factor from 0 Hz to 10/self._crop_data kHz
-        self._begin_crop_freq = 0 # crop from this frequency (Hz)
+        self._begin_crop_freq = 5000 # crop from this frequency (Hz)
         self._nfft = 1024
         self._width, self._height = 224, 224 # For ResNet
         self._target_size = (self._width, self._height)
@@ -156,7 +156,7 @@ class SO101FollowerDragontactile(SOFollower):
             noverlap=noverlap,
         )
 
-        nyquist = self._sampling_rate / 2.0
+        nyquist = self._sampling_rate_hz / 2.0
         upper_crop_freq = min(nyquist, self._begin_crop_freq + nyquist / max(self._crop_data, 1e-6))
         start_bin = int(np.searchsorted(frequencies, self._begin_crop_freq, side="left"))
         end_bin = int(np.searchsorted(frequencies, upper_crop_freq, side="right"))
@@ -180,15 +180,9 @@ class SO101FollowerDragontactile(SOFollower):
     def get_observation(self) -> RobotObservation:
         tick_start = time.perf_counter()
 
-        # sensor_sensitivity_voltage_per_unit=10.8
-        # tactile_value_mum_m = np.array([self._display_buffer[-1]/sensor_sensitivity_voltage_per_unit], dtype=np.float32)
-        
         spectrogram = self._read_tactile_spectrogram()
         obs = super().get_observation()
 
-        # 4. Assemble the synchronized dictionary
-        # obs["tactile_display_"] = tactile_value_mum_m
-        
         if spectrogram is not None:
             obs[self._tactile_obs_key] = spectrogram
 
