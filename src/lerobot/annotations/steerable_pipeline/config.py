@@ -35,14 +35,28 @@ class PlanConfig:
     derive_task_from_video: str = "if_short"
     derive_task_min_words: int = 3
 
-    # Frames sampled uniformly, capped at max_video_frames — a hard context cap
-    # (~300 tokens/frame, so 32 fit a 32k VLM; 128 overflow).
-    frames_per_second: float = 1.0
-    max_video_frames: int = 32
-
-    # >0: split long episodes into windows of this length (constant fps density)
-    # instead of subsampling the whole episode; spans merged + stitched. 0 disables.
-    subtask_window_seconds: float = 0.0
+    # --- Frame input: timestamped contact sheets (always on) ---------------
+    # The subtask describe/segment passes ALWAYS render the episode as
+    # macrodata/refiner-style contact sheets: sampled frames packed into JPEG
+    # grids with each frame's timestamp burned into its corner, so the VLM
+    # cites the exact source time of a boundary directly. This is far cheaper
+    # in vision tokens than one image per frame (≈2× faster subtask generation
+    # in practice), which is why the sampling is dense by default.
+    #
+    # ``frames_per_second`` is the sampling rate: 2.0 = one frame every 0.5s.
+    frames_per_second: float = 2.0
+    # Frame budget per VLM call (= columns × rows × sheets). When a whole
+    # episode sampled at ``frames_per_second`` exceeds this, the episode is
+    # AUTOMATICALLY split into consecutive windows of
+    # ``max_frames_per_prompt`` frames each (one describe→segment call per
+    # window, still at the full ``frames_per_second`` density), and the
+    # per-window spans are merged + stitched into one contiguous cover. So an
+    # episode of any length is always covered at the full sampling density.
+    max_frames_per_prompt: int = 60
+    contact_sheet_columns: int = 5
+    contact_sheet_frames_per_sheet: int = 20
+    contact_sheet_frame_width: int = 224
+    contact_sheet_quality: int = 84
 
     min_subtask_seconds: float = 1.5
     plan_max_steps: int = 8
@@ -50,30 +64,6 @@ class PlanConfig:
     # Narrate-only grounding pass before segmenting — best defense against subtasks
     # invented from the task text (+1 VLM call/episode).
     subtask_describe_first: bool = True
-
-    # Frame-input mode for the subtask describe/segment passes:
-    #   "embedded"      — one image per sampled frame (default; current behavior),
-    #                     capped at ``max_video_frames``.
-    #   "contact_sheet" — pack sampled frames into timestamped JPEG grids
-    #                     (macrodata/refiner-style). The model cites the
-    #                     burned-in per-tile timestamp directly; far fewer vision
-    #                     tokens per frame, so coverage can stay dense over long
-    #                     episodes without windowing.
-    frame_input_mode: str = "embedded"
-    # contact_sheet sampling/layout. Frame budget is independent of (and usually
-    # higher than) ``max_video_frames`` because grids are cheap.
-    contact_sheet_max_frames: int = 60
-    contact_sheet_columns: int = 5
-    contact_sheet_frames_per_sheet: int = 20
-    contact_sheet_frame_width: int = 224
-    contact_sheet_quality: int = 84
-
-    # Append refiner-style causal "one event = one world-state change" boundary
-    # rules to the describe (and segment) prompts. Sharpens WHERE subtask cuts
-    # land — boundaries fire when an object becomes held / is released / reaches
-    # a new location / a lid changes state / contents move — while keeping the
-    # existing imperative phrasing. Off = byte-identical baseline prompts.
-    causal_boundary_rules: bool = False
 
     # Emit ``style="plan"`` rows at each boundary; False = subtasks + memory only.
     emit_plan: bool = True
@@ -83,10 +73,6 @@ class PlanConfig:
     emit_memory: bool = True
 
     # (subtask spans are always stitched to a contiguous full-episode cover; not configurable.)
-
-    # Send a server-side ``video_url`` clip (at use_video_url_fps) instead of embedded frames.
-    use_video_url: bool = False
-    use_video_url_fps: float = 1.0
 
     # Optional EgoMimic-style 5-axis task augmentation; replaces n_task_rephrasings.
     task_aug_axes: TaskAugAxesConfig = field(default_factory=lambda: TaskAugAxesConfig())

@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import PIL.Image
 import pytest
 
 # ``lerobot.annotations`` imports pull in ``lerobot.datasets`` (-> the HF
@@ -51,7 +52,10 @@ from ._helpers import make_canned_responder  # noqa: E402
 class _StubFrameProvider:
     """Returns one sentinel object per requested timestamp."""
 
-    sentinel: Any = field(default_factory=lambda: object())
+    # A real (tiny) PIL image so the contact-sheet builder, which resizes and
+    # tiles frames, has something to draw. VQA still passes it through by
+    # identity via ``to_image_blocks``.
+    sentinel: Any = field(default_factory=lambda: PIL.Image.new("RGB", (32, 24)))
     cameras: tuple[str, ...] = ("observation.images.top",)
     calls: list[tuple[int, tuple[float, ...], str | None]] = field(default_factory=list)
     video_calls: list[tuple[int, int, str | None]] = field(default_factory=list)
@@ -264,8 +268,8 @@ def test_module3_vqa_unique_per_frame_and_camera(single_episode_root: Path, tmp_
         assert ts in frame_set
 
 
-def test_module1_attaches_video_block_to_subtask_prompt(fixture_dataset_root: Path, tmp_path: Path) -> None:
-    """Module 1 sends one ``type=video`` block covering the whole episode."""
+def test_module1_attaches_contact_sheets_to_subtask_prompt(fixture_dataset_root: Path, tmp_path: Path) -> None:
+    """Module 1 sends timestamped contact-sheet image blocks (not a raw video block)."""
     captured: list[list[dict[str, Any]]] = []
     payload = {
         "subtasks": [
@@ -293,7 +297,7 @@ def test_module1_attaches_video_block_to_subtask_prompt(fixture_dataset_root: Pa
         # call is the subtask one — keeps the assertions below focused on
         # ``_generate_subtasks`` rather than fighting the order of unrelated
         # text-only Module-1 sub-prompts.
-        config=PlanConfig(max_video_frames=5, frames_per_second=10.0, n_task_rephrasings=0),
+        config=PlanConfig(frames_per_second=2.0, max_frames_per_prompt=60, n_task_rephrasings=0),
         frame_provider=provider,
     )
     record = next(iter_episodes(fixture_dataset_root))
@@ -318,16 +322,14 @@ def test_module1_attaches_video_block_to_subtask_prompt(fixture_dataset_root: Pa
     video_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "video"]
     image_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "image"]
     text_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
-    assert len(video_blocks) == 1, f"expected exactly 1 video block, got {content}"
-    assert image_blocks == [], "subtask prompt must not mix image blocks with the video block"
+    assert video_blocks == [], "contact-sheet mode must not emit a raw video block"
+    assert len(image_blocks) >= 1, f"expected >=1 contact-sheet image block, got {content}"
+    assert all(isinstance(b["image"], PIL.Image.Image) for b in image_blocks)
     assert len(text_blocks) == 1
-    # video block must wrap a list of frames covering the episode
-    assert isinstance(video_blocks[0]["video"], list)
-    assert len(video_blocks[0]["video"]) <= 5
-    # provider is called with target_count = min(duration * fps, max). With
-    # fps=10 on a ~1s episode that requests >max, so max=5 wins.
-    assert provider.video_calls and provider.video_calls[0][0] == record.episode_index
-    assert provider.video_calls[0][1] <= 5
+    # the prompt is prefixed with the contact-sheet reading instructions
+    assert text_blocks[0]["text"].startswith("CONTACT SHEETS")
+    # frames were decoded for this episode at episode-relative timestamps
+    assert provider.calls and provider.calls[0][0] == record.episode_index
 
 
 def test_module3_attaches_frame_image_block_to_prompt(single_episode_root: Path, tmp_path: Path) -> None:

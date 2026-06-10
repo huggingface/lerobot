@@ -70,16 +70,12 @@ CMD = (
     "--vlm.chat_template_kwargs='{\"enable_thinking\": false}' "
     "--vlm.camera_key=observation.images.robot0_agentview_right "
     # Phase 1 — plan module (subtasks + memory).
-    # Embed decoded frames (not a file:// clip): if clip extraction fails,
-    # the video_url path silently sends no video and the VLM hallucinates.
-    "--plan.use_video_url=false "
-    "--plan.frames_per_second=1.0 "
-    # 32 frames ≈ 8-10k vision tokens, fits the 32768 context. Don't push
-    # toward 128 — that overflows the context (BadRequestError 400).
-    "--plan.max_video_frames=32 "
-    # Window long episodes into 32s chunks (constant 1 fps density) so they
-    # get more subtasks; per-window spans are merged + stitched. 0 disables.
-    "--plan.subtask_window_seconds=32 "
+    # Frames are always rendered as timestamped contact-sheet grids (cheap in
+    # vision tokens; the VLM cites the burned-in timestamps). Sample at 0.5s
+    # (2 fps); episodes longer than max_frames_per_prompt are auto-windowed at
+    # the same density, so coverage stays dense without tuning a window size.
+    "--plan.frames_per_second=2.0 "
+    "--plan.max_frames_per_prompt=60 "
     # RoboCasa: the dataset task string is authoritative (eval uses it), so
     # keep it driving subtasks. ``always`` would throw it away and hallucinate.
     "--plan.derive_task_from_video=off "

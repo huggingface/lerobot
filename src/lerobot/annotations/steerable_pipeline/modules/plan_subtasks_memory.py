@@ -20,17 +20,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from ..config import PlanConfig
 from ..frames import (
     FrameProvider,
-    VideoFrameProvider,
     null_provider,
     to_contact_sheet_blocks,
-    to_video_block,
-    to_video_url_block,
 )
 from ..prompts import load as load_prompt
 from ..reader import EpisodeRecord, reconstruct_subtask_spans, snap_to_frame
@@ -40,10 +36,9 @@ from ..vlm_client import VlmClient
 logger = logging.getLogger(__name__)
 
 
-# Prepended to the describe / segment prompt text when
-# ``frame_input_mode == "contact_sheet"`` so the VLM knows the images are
-# timestamped grids, not a single video, and reads the burned-in per-tile
-# timestamp when choosing boundaries.
+# Prepended to every describe / segment prompt so the VLM knows the images are
+# timestamped contact-sheet grids, not a single video, and reads the burned-in
+# per-tile timestamp when choosing boundaries.
 def _contact_sheet_preamble(columns: int) -> str:
     return (
         "CONTACT SHEETS — how to read the images below:\n"
@@ -59,10 +54,10 @@ def _contact_sheet_preamble(columns: int) -> str:
     )
 
 
-# Appended to the describe (and segment) prompt when
-# ``causal_boundary_rules`` is set. A visual, causal definition of where one
-# event ends and the next begins — adapted from macrodata/refiner — to sharpen
-# cut points while the existing prompt keeps owning the imperative phrasing.
+# Appended to every describe (and segment) prompt. A visual, causal definition
+# of where one event ends and the next begins — adapted from macrodata/refiner —
+# to sharpen cut points while the existing prompt keeps owning the imperative
+# phrasing.
 _CAUSAL_BOUNDARY_RULES = (
     "EVENT BOUNDARIES — where one event ends and the next begins:\n"
     "- Start a new event whenever the world state changes: an object becomes "
@@ -262,15 +257,13 @@ class PlanSubtasksMemoryModule:
         prompt: str,
         window: tuple[float, float] | None = None,
     ) -> list[dict[str, Any]]:
-        """User message combining the (optionally windowed) video block with ``prompt``.
+        """User message combining the (optionally windowed) contact sheets with ``prompt``.
 
-        In ``contact_sheet`` frame-input mode the prompt is prefixed with a
-        short explanation of how to read the timestamped grids, so the model
-        treats them as one ordered sequence of frames rather than unrelated
-        images.
+        The prompt is always prefixed with a short explanation of how to read
+        the timestamped grids, so the model treats them as one ordered
+        sequence of frames rather than unrelated images.
         """
-        if self.config.frame_input_mode == "contact_sheet":
-            prompt = _contact_sheet_preamble(self.config.contact_sheet_columns) + prompt
+        prompt = _contact_sheet_preamble(self.config.contact_sheet_columns) + prompt
         content = [*self._episode_video_block(record, window=window), {"type": "text", "text": prompt}]
         return [{"role": "user", "content": content}]
 
@@ -343,65 +336,41 @@ class PlanSubtasksMemoryModule:
     def _episode_video_block(
         self, record: EpisodeRecord, window: tuple[float, float] | None = None
     ) -> list[dict[str, Any]]:
-        """Video block for the segmentation / describe prompts.
+        """Timestamped contact sheets for the describe / segmentation prompts.
 
-        Always returns a block that actually carries the video. When
-        ``use_video_url`` is set we try the server-side ``video_url``
-        path first, but if clip extraction fails we FALL BACK to
-        decoding + embedding frames rather than returning an empty
-        block — an empty block would leave the VLM with no visual
-        grounding at all and it would hallucinate subtasks purely from
-        the task text.
+        Always renders the (optionally windowed) episode as contact sheets:
+        frames sampled at ``frames_per_second`` and packed into timestamped
+        JPEG grids. ``max_frames_per_prompt`` caps the frame count; whole
+        episodes that exceed it are windowed upstream in
+        :meth:`_generate_subtasks` so each call stays within budget while the
+        full episode keeps its sampling density.
 
-        When ``window=(w0, w1)`` is given (windowed subtask generation,
-        ``subtask_window_seconds > 0``), embed frames sampled at the FIXED
-        ``frames_per_second`` rate within ``[w0, w1]`` — constant temporal
-        density regardless of episode length, so long episodes are split
-        into windows rather than subsampled to a sparse 32-frame whole-
-        episode view. The ``video_url`` path is skipped for windows (it is
-        a whole-episode clip). ``max_video_frames`` still caps each window
-        as a context-budget safety net.
+        When ``window=(w0, w1)`` is given the badges are WINDOW-RELATIVE
+        (``ts - w0``) to match the window-relative time frame the
+        segmentation prompt works in (spans are offset back to absolute time
+        afterwards).
         """
         if not record.frame_timestamps:
             return []
-        contact_sheet = self.config.frame_input_mode == "contact_sheet"
         if window is not None:
             w0, w1 = float(window[0]), float(window[1])
             dur = max(0.0, w1 - w0)
-            cap = self.config.contact_sheet_max_frames if contact_sheet else self.config.max_video_frames
             n = max(1, int(round(dur * self.config.frames_per_second)) + 1)
-            n = min(n, cap)
+            n = min(n, self.config.max_frames_per_prompt)
             if n <= 1 or dur <= 0.0:
                 timestamps = [0.5 * (w0 + w1)]
             else:
                 step = dur / (n - 1)
                 timestamps = [w0 + i * step for i in range(n)]
             frames = self.frame_provider.frames_at(record, timestamps)
-            if contact_sheet:
-                # Window-relative badges so they match the window-relative time
-                # frame the segmentation prompt works in (offset back later).
-                rel = [ts - w0 for ts in timestamps[: len(frames)]]
-                return self._contact_sheet_blocks(frames, rel)
-            return to_video_block(frames)
-        if not contact_sheet and self.config.use_video_url and isinstance(self.frame_provider, VideoFrameProvider):
-            cache_dir = Path(self.frame_provider.root) / ".annotate_staging" / ".video_clips"
-            clip = self.frame_provider.episode_clip_path(record, cache_dir)
-            if clip is not None:
-                return to_video_url_block(f"file://{clip}", fps=self.config.use_video_url_fps)
-            logger.warning(
-                "episode %d: video_url clip extraction failed — falling back to "
-                "embedded frames so the VLM still sees the demonstration",
-                record.episode_index,
-            )
+            rel = [ts - w0 for ts in timestamps[: len(frames)]]
+            return self._contact_sheet_blocks(frames, rel)
         episode_duration = record.frame_timestamps[-1] - record.frame_timestamps[0]
-        cap = self.config.contact_sheet_max_frames if contact_sheet else self.config.max_video_frames
-        target_count = max(1, int(round(episode_duration * self.config.frames_per_second)))
-        target_count = min(target_count, cap)
-        timestamps = self._uniform_episode_timestamps(record, target_count)
+        n = max(1, int(round(episode_duration * self.config.frames_per_second)) + 1)
+        n = min(n, self.config.max_frames_per_prompt)
+        timestamps = self._uniform_episode_timestamps(record, n)
         frames = self.frame_provider.frames_at(record, timestamps)
-        if contact_sheet:
-            return self._contact_sheet_blocks(frames, timestamps[: len(frames)])
-        return to_video_block(frames)
+        return self._contact_sheet_blocks(frames, timestamps[: len(frames)])
 
     @staticmethod
     def _uniform_episode_timestamps(record: EpisodeRecord, n: int) -> list[float]:
@@ -490,12 +459,17 @@ class PlanSubtasksMemoryModule:
         episode_duration = record.frame_timestamps[-1] - record.frame_timestamps[0]
         effective_task = task if task is not None else record.episode_task
 
-        # ---- Windowed path (constant temporal density) ---------------
-        # If subtask_window_seconds > 0 and the episode exceeds one window,
-        # process fixed-length windows so the VLM always sees
-        # frames_per_second density; results are merged + stitched.
-        window_s = float(getattr(self.config, "subtask_window_seconds", 0.0) or 0.0)
-        if window_s > 0.0 and episode_duration > window_s:
+        # ---- Auto-windowing (keeps the full sampling density) --------
+        # Contact sheets are cheap, but a whole long episode sampled at
+        # ``frames_per_second`` can still exceed ``max_frames_per_prompt``.
+        # When it does, split into consecutive windows of exactly that many
+        # frames (one describe→segment call each, still at the full sampling
+        # density), then merge + stitch — so an episode of any length is
+        # covered at full density rather than subsampled into one sparse call.
+        fps = max(1e-6, float(self.config.frames_per_second))
+        n_whole = int(round(episode_duration * fps)) + 1
+        if n_whole > self.config.max_frames_per_prompt:
+            window_s = self.config.max_frames_per_prompt / fps
             return self._generate_subtasks_windowed(record, effective_task, window_s)
 
         # ---- Pass 1 (optional): grounding description ----------------
@@ -649,11 +623,10 @@ class PlanSubtasksMemoryModule:
                 s["end"] = float(s["start"])
         return spans
 
-    def _with_causal_rules(self, prompt: str) -> str:
-        """Append the causal event-boundary rules when the flag is set."""
-        if self.config.causal_boundary_rules:
-            return f"{prompt}\n\n{_CAUSAL_BOUNDARY_RULES}"
-        return prompt
+    @staticmethod
+    def _with_causal_rules(prompt: str) -> str:
+        """Append the causal event-boundary rules to a describe/segment prompt."""
+        return f"{prompt}\n\n{_CAUSAL_BOUNDARY_RULES}"
 
     def _clean_spans(
         self,
