@@ -93,7 +93,7 @@ def log_rerun_data(
 
     def _log_vector(key: str, arr: np.ndarray) -> None:
         """
-        Logs an array as one batch so all dimensions share a single view, while keeping the per-dimension `{key}_{i}` names via SeriesLines. 
+        Logs an array as one batch so all dimensions share a single view, while keeping the per-dimension `{key}_{i}` names via SeriesLines.
         Arrays with more than one dimension are flattened.
         """
         arr = arr.reshape(-1).astype(float)
