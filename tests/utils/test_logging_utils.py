@@ -229,3 +229,7 @@ def test_metrics_tracker_reduce_across_ranks_invokes_reduce():
     assert tracker.update_s.avg == pytest.approx(0.9)
     # Metrics without a reduction stay untouched.
     assert tracker.loss.avg == 1.0
+    # Invariant: avg == sum / count must hold after reduce, so subsequent .update() calls
+    # accumulate against the cluster view rather than the stale per-rank sum.
+    meter = tracker.update_s
+    assert meter.sum / meter.count == pytest.approx(meter.avg)

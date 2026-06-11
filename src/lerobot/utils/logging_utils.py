@@ -181,7 +181,11 @@ class MetricsTracker:
             tensor = torch.tensor([self.metrics[n].avg for n in names], dtype=torch.float32, device=device)
             reduced = self.accelerator.reduce(tensor, reduction=reduction)
             for name, value in zip(names, reduced.tolist(), strict=True):
-                self.metrics[name].avg = value
+                meter = self.metrics[name]
+                # Preserve avg == sum / count so a later .update() on this meter accumulates
+                # against the cluster view, not the stale per-rank history.
+                meter.avg = value
+                meter.sum = value * meter.count
 
     def __str__(self) -> str:
         display_list = [
