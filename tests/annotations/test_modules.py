@@ -268,7 +268,9 @@ def test_module3_vqa_unique_per_frame_and_camera(single_episode_root: Path, tmp_
         assert ts in frame_set
 
 
-def test_module1_attaches_contact_sheets_to_subtask_prompt(fixture_dataset_root: Path, tmp_path: Path) -> None:
+def test_module1_attaches_contact_sheets_to_subtask_prompt(
+    fixture_dataset_root: Path, tmp_path: Path
+) -> None:
     """Module 1 sends timestamped contact-sheet image blocks (not a raw video block)."""
     captured: list[list[dict[str, Any]]] = []
     payload = {
