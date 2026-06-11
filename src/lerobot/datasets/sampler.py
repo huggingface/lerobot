@@ -22,41 +22,33 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-_MASK_64 = (1 << 64) - 1
-_FEISTEL_ROUNDS = 4
-
-
-def _mix64(x: int) -> int:
-    """SplitMix64 finalizer (64-bit integer hash)."""
-    x = (x + 0x9E3779B97F4A7C15) & _MASK_64
-    x ^= x >> 30
-    x = (x * 0xBF58476D1CE4E5B9) & _MASK_64
-    x ^= x >> 27
-    x = (x * 0x94D049BB133111EB) & _MASK_64
-    x ^= x >> 31
-    return x
-
 
 class EpisodeAwareSampler:
-    """Sampler over episode frames with O(num_episodes) memory.
+    """Sampler over episode frames that stores only per-episode boundaries.
 
-    Only episode boundaries are stored; logical positions map to frame indices on the fly, so
-    memory does not grow with the number of frames.
+    Logical positions map to frame indices on the fly (O(num_episodes) construction memory)
+    instead of materializing a Python list of every frame index.
 
-    By default (`deterministic=True`) shuffling uses a seeded Feistel permutation over
-    `[0, num_frames)`: the data order is a pure function of `(seed, epoch)`, needs no RNG
-    synchronization across distributed ranks, and any position can be sought in O(1), enabling
-    sample-exact resume via `state_dict` / `load_state_dict`. Each completed `__iter__`
-    advances the epoch. The shuffle is pseudo-random rather than truly uniform — the standard
-    large-scale trade-off. During a resumed epoch, `__len__` still reports the full length.
+    Each epoch is shuffled with a `torch.randperm` seeded from `(seed, epoch)`, so the data order
+    is a pure function of `(seed, epoch)`: it reproduces on every rank without synchronizing the
+    global RNG (no `generator` to sync across distributed ranks), and `state_dict` /
+    `load_state_dict` resume a run sample-exactly by regenerating the epoch's permutation and
+    continuing from the saved offset. Each call to `__iter__` advances the epoch. During a
+    resumed epoch, `__len__` still reports the full length.
 
-    With `deterministic=False`, shuffling falls back to `torch.randperm` driven by `generator`
-    (accelerate synchronizes the generator across ranks when preparing the dataloader).
+    Epoch advancement: `__iter__` eagerly advances the epoch, and `set_epoch` / `load_state_dict`
+    set it explicitly. Within a single run callers should rely on exactly one of these mechanisms,
+    not both: advancing the epoch by hand *and* letting `__iter__` auto-advance over the same
+    iterations would skip or repeat epochs. The training loop drives it purely through `__iter__`
+    (via `cycle`); `set_epoch` / `load_state_dict` are used only to (re)position before iteration
+    starts (e.g. on resume or in tests).
 
-    In deterministic mode, `shard_rank`/`shard_world_size` shard the shared permutation inside
-    the sampler: shard r yields positions r, r + world, r + 2 * world, ... — disjoint by
-    construction, no accelerate batch sharding needed. `__len__`, `start_index` and
-    `compute_sampler_state` (with `num_processes=1`) then live in shard-local positions.
+    `shard_rank`/`shard_world_size` shard the shared permutation inside the sampler: shard r yields
+    positions r, r + world, r + 2 * world, ... — disjoint by construction, with no accelerate batch
+    sharding needed. Because the order is a pure function of `(seed, epoch)`, every shard derives the
+    same permutation and the strided slices tile it exactly. `__len__`, `start_index` and
+    `compute_sampler_state` (with `num_processes=1`) then live in shard-local positions. The default
+    (`shard_world_size=1`) is a single shard over the whole permutation.
     """
 
     def __init__(
@@ -67,8 +59,6 @@ class EpisodeAwareSampler:
         drop_n_first_frames: int = 0,
         drop_n_last_frames: int = 0,
         shuffle: bool = False,
-        generator: torch.Generator | None = None,
-        deterministic: bool = True,
         seed: int = 0,
         shard_rank: int = 0,
         shard_world_size: int = 1,
@@ -81,10 +71,8 @@ class EpisodeAwareSampler:
             drop_n_first_frames: Frames to drop from the start of each episode.
             drop_n_last_frames: Frames to drop from the end of each episode.
             shuffle: Whether to shuffle the indices.
-            generator: Generator for non-deterministic shuffling (global torch RNG when None).
-            deterministic: Use the seeded Feistel permutation instead of `torch.randperm`.
-            seed: Seed the deterministic permutation is derived from (together with the epoch).
-                  Must be identical on all shards of the same data for shards to stay disjoint.
+            seed: Seed the permutation is derived from (together with the epoch). Must be identical
+                  on all shards of the same data for shards to stay disjoint.
             shard_rank: This sampler's shard of the permutation (e.g. the local process index).
             shard_world_size: Total number of shards (e.g. processes sharing this dataset).
         """
@@ -92,14 +80,10 @@ class EpisodeAwareSampler:
             raise ValueError(f"drop_n_first_frames must be >= 0, got {drop_n_first_frames}")
         if drop_n_last_frames < 0:
             raise ValueError(f"drop_n_last_frames must be >= 0, got {drop_n_last_frames}")
-        if deterministic and generator is not None:
-            raise ValueError("generator is unused in deterministic mode; pass seed instead.")
         if not 0 <= shard_rank < shard_world_size:
             raise ValueError(
                 f"shard_rank must be in [0, shard_world_size), got {shard_rank=} {shard_world_size=}"
             )
-        if shard_world_size > 1 and not deterministic:
-            raise ValueError("Sharding requires deterministic=True to keep shards disjoint.")
 
         from_indices = np.asarray(dataset_from_indices, dtype=np.int64)
         to_indices = np.asarray(dataset_to_indices, dtype=np.int64)
@@ -144,17 +128,9 @@ class EpisodeAwareSampler:
         self._shard_world_size = shard_world_size
         self._shard_len = (self._num_frames - shard_rank + shard_world_size - 1) // shard_world_size
         self.shuffle = shuffle
-        self.generator = generator
-        self.deterministic = deterministic
         self.seed = seed
         self._epoch = 0
         self._start_index = 0
-
-        # Smallest even-bit-width power-of-two domain >= num_frames: equal Feistel halves,
-        # cycle-walking converges in <4 expected steps.
-        bits = max((self._num_frames - 1).bit_length(), 2)
-        self._half_bits = (bits + 1) // 2
-        self._half_mask = (1 << self._half_bits) - 1
 
     @property
     def indices(self) -> list[int]:
@@ -162,40 +138,20 @@ class EpisodeAwareSampler:
         return [self._frame_index(k) for k in range(self._num_frames)]
 
     def set_epoch(self, epoch: int) -> None:
-        self._require_deterministic("set_epoch")
         self._epoch = epoch
 
     def state_dict(self) -> dict:
-        self._require_deterministic("state_dict")
         return {"epoch": self._epoch, "start_index": self._start_index}
 
     def load_state_dict(self, state: dict) -> None:
-        self._require_deterministic("load_state_dict")
         self._epoch = state["epoch"]
         self._start_index = state["start_index"]
 
-    def _require_deterministic(self, method: str) -> None:
-        if not self.deterministic:
-            raise RuntimeError(f"{method} requires deterministic=True: an RNG order cannot be sought.")
-
-    def _round_keys(self, epoch: int) -> list[int]:
-        state = _mix64(_mix64(self.seed) ^ _mix64(epoch))
-        keys = []
-        for _ in range(_FEISTEL_ROUNDS):
-            state = _mix64(state)
-            keys.append(state)
-        return keys
-
-    def _permute(self, index: int, keys: list[int]) -> int:
-        # Feistel network with cycle-walking: a bijection on [0, num_frames).
-        half_bits, half_mask = self._half_bits, self._half_mask
-        while True:
-            left, right = index >> half_bits, index & half_mask
-            for key in keys:
-                left, right = right, left ^ (_mix64(right ^ key) & half_mask)
-            index = (left << half_bits) | right
-            if index < self._num_frames:
-                return index
+    def _epoch_generator(self, epoch: int) -> torch.Generator:
+        # Derive a per-epoch seed from (seed, epoch) so the permutation is a pure function of both
+        # and reproduces identically on every rank without touching the global RNG.
+        epoch_seed = int(np.random.SeedSequence([self.seed, epoch]).generate_state(1, dtype=np.uint64)[0])
+        return torch.Generator().manual_seed(epoch_seed)
 
     def _frame_index(self, position: int) -> int:
         episode = int(np.searchsorted(self._cum_lengths, position, side="right"))
@@ -203,27 +159,21 @@ class EpisodeAwareSampler:
         return int(self._starts[episode]) + position_in_episode
 
     def __iter__(self) -> Iterator[int]:
-        if not self.deterministic:
-            return self._iter_default()
         # Advance epoch state eagerly, not on first consumption of the generator.
         epoch, start = self._epoch, self._start_index
         self._epoch += 1
         self._start_index = 0
-        return self._iter_deterministic_epoch(epoch, start)
+        return self._iter_epoch(epoch, start)
 
-    def _iter_default(self) -> Iterator[int]:
-        if self.shuffle:
-            for i in torch.randperm(self._num_frames, generator=self.generator):
-                yield self._frame_index(int(i))
-        else:
-            for k in range(self._num_frames):
-                yield self._frame_index(k)
-
-    def _iter_deterministic_epoch(self, epoch: int, start: int) -> Iterator[int]:
-        keys = self._round_keys(epoch) if self.shuffle else None
+    def _iter_epoch(self, epoch: int, start: int) -> Iterator[int]:
+        # Take this shard's strided slice of the shared permutation. With shard_world_size=1 this is
+        # the whole permutation (positions 0, 1, 2, ...), i.e. the non-sharded default.
+        order = (
+            torch.randperm(self._num_frames, generator=self._epoch_generator(epoch)) if self.shuffle else None
+        )
         for local_k in range(start, self._shard_len):
             k = self._shard_rank + local_k * self._shard_world_size
-            yield self._frame_index(self._permute(k, keys) if self.shuffle else k)
+            yield self._frame_index(int(order[k]) if order is not None else k)
 
     def __len__(self) -> int:
         return self._shard_len
@@ -236,6 +186,14 @@ def compute_sampler_state(step: int, num_frames: int, batch_size: int, num_proce
     positions and each rank sees `ceil(ceil(num_frames / batch_size) / num_processes)` batches
     per epoch (`even_batches` padding included). The start index provably stays below
     `num_frames`; the `min` is defensive.
+
+    Assumptions (resume is only sample-exact when they hold):
+        - `num_processes` and `batch_size` match the run that wrote the checkpoint. Both scale how
+          many positions a step consumes, so the epoch/offset are wrong if either changed. The
+          caller passes the checkpoint's `num_processes` and `batch_size` and warns on a mismatch.
+        - accelerate uses `even_batches=True` (its default). The `ceil(... / num_processes)` term
+          mirrors that padding; with `even_batches=False` the per-epoch batch count differs and
+          the boundary is off.
     """
     batches_per_epoch = math.ceil(math.ceil(num_frames / batch_size) / num_processes)
     epoch, batches_into_epoch = divmod(step, batches_per_epoch)

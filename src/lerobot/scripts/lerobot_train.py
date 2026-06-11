@@ -37,6 +37,8 @@ from tqdm import tqdm
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
+    load_training_batch_size,
+    load_training_num_processes,
     load_training_state,
     save_checkpoint,
     update_last_checkpoint,
@@ -480,8 +482,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     # create dataloader for offline training
     if cfg.data_partition == "node":
-        # Local ranks shard the node-local permutation inside the sampler, so the dataloader
-        # is NOT prepared with accelerate; resume is sample-exact per rank.
+        # Local ranks shard the node-local permutation inside the (always deterministic) sampler, so
+        # the dataloader is NOT prepared with accelerate; resume is sample-exact per rank.
         shuffle = False
         num_nodes, node_index, local_world_size = node_topology(accelerator)
         sampler = EpisodeAwareSampler(
@@ -490,7 +492,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             episode_indices_to_use=dataset.episodes,
             drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
             shuffle=True,
-            deterministic=True,
             seed=(cfg.seed if cfg.seed is not None else 0) + node_index,
             shard_rank=accelerator.local_process_index,
             shard_world_size=local_world_size,
@@ -507,8 +508,15 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 "Sample-exact resume requires the same topology as the interrupted run "
                 f"({num_nodes} nodes x {local_world_size} processes)."
             )
-    elif cfg.deterministic_sampler and not cfg.dataset.streaming:
-        # Deterministic data order: no cross-rank RNG sync needed, sample-exact resume.
+    elif not cfg.dataset.streaming:
+        # All non-streaming (map-style) datasets use EpisodeAwareSampler. This is broader than the
+        # historical `hasattr(active_cfg, "drop_n_last_frames")` guard: configs that previously fell
+        # back to DataLoader's default random shuffle now get this sampler instead, so their data
+        # order changes for a given seed (a deliberate, reproducibility-breaking improvement).
+        #
+        # The order is a pure function of (seed, epoch), so every rank independently produces the
+        # same permutation. accelerate then shards it disjointly across ranks via BatchSamplerShard
+        # without needing a `generator` attribute to synchronize an RNG, and resume is sample-exact.
         shuffle = False
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
@@ -519,30 +527,32 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             seed=cfg.seed if cfg.seed is not None else 0,
         )
         if cfg.resume and step > 0:
-            sampler_state = compute_sampler_state(
-                step, len(sampler), cfg.batch_size, accelerator.num_processes
-            )
+            # The resume offset depends on the (num_processes, batch_size) that produced `step`, so
+            # use the values recorded in the checkpoint (falling back to the current ones for older
+            # ckpts that did not store them).
+            saved_num_processes = load_training_num_processes(cfg.checkpoint_path)
+            saved_batch_size = load_training_batch_size(cfg.checkpoint_path)
+            ckpt_num_processes = saved_num_processes or accelerator.num_processes
+            ckpt_batch_size = saved_batch_size or cfg.batch_size
+            if is_main_process and saved_num_processes not in (None, accelerator.num_processes):
+                logging.warning(
+                    f"Resuming with num_processes={accelerator.num_processes} but the checkpoint was "
+                    f"written with num_processes={saved_num_processes}. The data order resumes at the "
+                    "right epoch/offset, but per-rank sample-exactness requires the same world size."
+                )
+            if is_main_process and saved_batch_size not in (None, cfg.batch_size):
+                logging.warning(
+                    f"Resuming with batch_size={cfg.batch_size} but the checkpoint was written with "
+                    f"batch_size={saved_batch_size}. The data order resumes at the right epoch/offset, "
+                    "but per-rank sample-exactness requires the same batch size."
+                )
+            sampler_state = compute_sampler_state(step, len(sampler), ckpt_batch_size, ckpt_num_processes)
             sampler.load_state_dict(sampler_state)
             if is_main_process:
                 logging.info(
                     f"Resuming data order at epoch {sampler_state['epoch']}, "
                     f"sample {sampler_state['start_index']}"
                 )
-    elif hasattr(active_cfg, "drop_n_last_frames"):
-        shuffle = False
-        # Legacy RNG shuffle: a dedicated generator lets accelerate synchronize it across ranks.
-        sampler_generator = torch.Generator()
-        if cfg.seed is not None:
-            sampler_generator.manual_seed(cfg.seed)
-        sampler = EpisodeAwareSampler(
-            dataset.meta.episodes["dataset_from_index"],
-            dataset.meta.episodes["dataset_to_index"],
-            episode_indices_to_use=dataset.episodes,
-            drop_n_last_frames=active_cfg.drop_n_last_frames,
-            shuffle=True,
-            deterministic=False,
-            generator=sampler_generator,
-        )
     else:
         shuffle = True
         sampler = None
@@ -671,6 +681,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     scheduler=lr_scheduler,
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
+                    num_processes=accelerator.num_processes,
+                    batch_size=cfg.batch_size,
                 )
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:

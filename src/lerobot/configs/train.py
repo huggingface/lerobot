@@ -99,15 +99,11 @@ class TrainPipelineConfig(HubMixin):
     batch_size: int = 8
     prefetch_factor: int = 4
     persistent_workers: bool = True
-    # Deterministic data order (pure function of seed and epoch): immune to cross-rank RNG
-    # desync and enables sample-exact resume. Set to false for the legacy RNG-based shuffle.
-    # Ignored when dataset.streaming is enabled.
-    deterministic_sampler: bool = True
     # Statically partition the dataset's episodes across nodes ("node") so each node downloads
     # and stores only its near-uniform share (greedy LPT on frame counts) instead of the full
-    # dataset. Implies deterministic_sampler; ranks within a node shard the node-local data
-    # arithmetically. Sample-exact resume requires resuming with the same topology (number of
-    # nodes and processes). "none" (default) keeps the current behavior: full dataset everywhere,
+    # dataset. Ranks within a node shard the node-local data arithmetically inside the (always
+    # deterministic) sampler. Sample-exact resume requires resuming with the same topology (number
+    # of nodes and processes). "none" (default) keeps the current behavior: full dataset everywhere,
     # batch-level sharding across all ranks via accelerate.
     data_partition: str = "none"
     steps: int = 100_000
