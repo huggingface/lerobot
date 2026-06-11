@@ -35,6 +35,13 @@ class EpisodeAwareSampler:
     `load_state_dict` resume a run sample-exactly by regenerating the epoch's permutation and
     continuing from the saved offset. Each call to `__iter__` advances the epoch. During a
     resumed epoch, `__len__` still reports the full length.
+
+    Epoch advancement: `__iter__` eagerly advances the epoch, and `set_epoch` / `load_state_dict`
+    set it explicitly. Within a single run callers should rely on exactly one of these mechanisms,
+    not both: advancing the epoch by hand *and* letting `__iter__` auto-advance over the same
+    iterations would skip or repeat epochs. The training loop drives it purely through `__iter__`
+    (via `cycle`); `set_epoch` / `load_state_dict` are used only to (re)position before iteration
+    starts (e.g. on resume or in tests).
     """
 
     def __init__(
@@ -158,7 +165,7 @@ def compute_sampler_state(step: int, num_frames: int, batch_size: int, num_proce
     Assumptions (resume is only sample-exact when they hold):
         - `num_processes` and `batch_size` match the run that wrote the checkpoint. Both scale how
           many positions a step consumes, so the epoch/offset are wrong if either changed. The
-          caller passes the checkpoint's `num_processes` and warns on a mismatch.
+          caller passes the checkpoint's `num_processes` and `batch_size` and warns on a mismatch.
         - accelerate uses `even_batches=True` (its default). The `ceil(... / num_processes)` term
           mirrors that padding; with `even_batches=False` the per-epoch batch count differs and
           the boundary is off.
