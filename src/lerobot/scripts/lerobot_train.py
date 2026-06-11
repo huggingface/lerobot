@@ -410,9 +410,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     f"written with num_processes={saved_num_processes}. The data order resumes at the "
                     "right epoch/offset, but per-rank sample-exactness requires the same world size."
                 )
-            sampler_state = compute_sampler_state(
-                step, len(sampler), cfg.batch_size, ckpt_num_processes
-            )
+            sampler_state = compute_sampler_state(step, len(sampler), cfg.batch_size, ckpt_num_processes)
             sampler.load_state_dict(sampler_state)
             if is_main_process:
                 logging.info(
