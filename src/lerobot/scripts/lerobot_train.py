@@ -387,7 +387,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
-    if cfg.deterministic_sampler:
+    if cfg.deterministic_sampler and not cfg.dataset.streaming:
         # Data order is a pure function of (seed, epoch): nothing to synchronize across ranks,
         # O(1) memory in dataset size, and a resumed run continues at the exact sample where the
         # checkpoint left off (up to accelerate's even_batches padding at epoch boundaries).
