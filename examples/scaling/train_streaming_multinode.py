@@ -27,9 +27,9 @@ streaming features of :class:`StreamingLeRobotDataset`:
 Launch with Accelerate (single node, N GPUs):
 
     accelerate launch --num_processes=8 examples/scaling/train_streaming_multinode.py \
-        --repo_id=pepijn223/robocasa_pretrain_human300_v4 --batch_size=64
+        --repo_id=lerobot/droid_1.0.1 --batch_size=64
 
-Multinode runs use the same script under SLURM; see ``slurm/train_streaming_robocasa.sh``.
+Multinode runs launch the same script with your cluster's accelerate/SLURM setup.
 
 Pass ``--dummy`` to skip the model entirely and measure pure dataloading throughput.
 """
