@@ -480,10 +480,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     # create dataloader for offline training
     if cfg.data_partition == "node":
-        # Each node trains on its own statically-assigned episode share; the local ranks shard
-        # the node-local permutation arithmetically inside the sampler, so the dataloader is NOT
-        # prepared with accelerate (no batch-level sharding needed). Every rank's stream is an
-        # independent pure function of (seed, epoch, shard), giving sample-exact resume per rank.
+        # Local ranks shard the node-local permutation inside the sampler, so the dataloader
+        # is NOT prepared with accelerate; resume is sample-exact per rank.
         shuffle = False
         num_nodes, node_index, local_world_size = node_topology(accelerator)
         sampler = EpisodeAwareSampler(
@@ -510,9 +508,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 f"({num_nodes} nodes x {local_world_size} processes)."
             )
     elif cfg.deterministic_sampler and not cfg.dataset.streaming:
-        # Data order is a pure function of (seed, epoch): nothing to synchronize across ranks,
-        # O(1) memory in dataset size, and a resumed run continues at the exact sample where the
-        # checkpoint left off (up to accelerate's even_batches padding at epoch boundaries).
+        # Deterministic data order: no cross-rank RNG sync needed, sample-exact resume.
         shuffle = False
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
@@ -520,7 +516,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             episode_indices_to_use=dataset.episodes,
             drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
             shuffle=True,
-            deterministic=True,
             seed=cfg.seed if cfg.seed is not None else 0,
         )
         if cfg.resume and step > 0:
@@ -535,9 +530,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 )
     elif hasattr(active_cfg, "drop_n_last_frames"):
         shuffle = False
-        # A dedicated generator (rather than the global torch RNG) lets accelerator.prepare
-        # synchronize the shuffle permutation across ranks, keeping batch shards disjoint even
-        # when ranks consume the global RNG asymmetrically (e.g. eval on the main process only).
+        # Legacy RNG shuffle: a dedicated generator lets accelerate synchronize it across ranks.
         sampler_generator = torch.Generator()
         if cfg.seed is not None:
             sampler_generator.manual_seed(cfg.seed)
@@ -547,6 +540,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             episode_indices_to_use=dataset.episodes,
             drop_n_last_frames=active_cfg.drop_n_last_frames,
             shuffle=True,
+            deterministic=False,
             generator=sampler_generator,
         )
     else:
