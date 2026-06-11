@@ -1,0 +1,22 @@
+diff --git a/src/lerobot/configs/dataset.py b/src/lerobot/configs/dataset.py
+index c40c0fae..7fd83fe4 100644
+--- a/src/lerobot/configs/dataset.py
++++ b/src/lerobot/configs/dataset.py
+@@ -43,6 +43,8 @@ class DatasetRecordConfig:
+     push_to_hub: bool = True
+     # If True, upload as private; if None, defer to the org default on the Hub (only affects orgs).
+     private: bool | None = None
++    # Do not append a timestamp to repo_id on creation.
++    no_stamp: bool = False
+     # Add tags to your dataset on the hub.
+     tags: list[str] | None = None
+     # Number of subprocesses handling the saving of frames as PNG. Set to 0 to use threads only;
+@@ -76,6 +78,8 @@ class DatasetRecordConfig:
+         Must be called explicitly at dataset *creation* time — not on resume,
+         where the existing ``repo_id`` (already stamped) must be preserved.
+         """
++        if self.no_stamp:
++            return
+         if self.repo_id:
+             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+             self.repo_id = f"{self.repo_id}_{timestamp}"

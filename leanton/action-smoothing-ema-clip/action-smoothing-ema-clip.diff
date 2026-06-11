@@ -1,0 +1,93 @@
+diff --git a/src/lerobot/rollout/strategies/core.py b/src/lerobot/rollout/strategies/core.py
+index 9c897522..a19312ff 100644
+--- a/src/lerobot/rollout/strategies/core.py
++++ b/src/lerobot/rollout/strategies/core.py
+@@ -36,6 +36,81 @@ if TYPE_CHECKING:
+ 
+ logger = logging.getLogger(__name__)
+ 
++# ── Action smoothing ─────────────────────────────────────────────────────────
++# Post-hoc EMA + velocity clipping applied to every action before it reaches
++# the robot.  Reduces jerky movement caused by per-frame prediction noise
++# without retraining.  Tune these values per-robot.
++#
++# Actions are **absolute goal positions** (degrees for SO-101).  The EMA
++# smooths the commanded position trajectory; the clip limits the per-frame
++# *change* in commanded position (velocity), NOT the absolute position.
++
++# EMA alpha: 0.0 = raw (no smoothing), 1.0 = frozen (never move).
++# Lower = smoother but more perceptible lag.  At 10 fps, alpha=0.3 means the
++# commanded position reaches 90 % of target in ~6 frames (~600 ms).
++EMA_SMOOTHING_ALPHA = 0.3
++
++# Max per-frame change in commanded goal position, in the action's native
++# units.  SO-101 with use_degrees=True → degrees.  2.0° at 10 fps ≈ 20°/s
++# max joint velocity.  Increase if the arm feels sluggish; decrease if
++# single-frame jumps are still visible.
++MAX_JOINT_DELTA = 2.0
++
++# If the raw action differs from the stored EMA state by more than this
++# threshold (degrees), the EMA is reset — the raw action is accepted
++# directly and the state re-seeded.  This handles DAGGER correction
++# boundaries: during teleop the EMA state goes stale, and when autonomous
++# mode resumes there can be a large gap between the pre-correction _prev
++# and the post-correction physical pose.  Without this guard the EMA
++# would blend across the gap, causing a snap.
++SMOOTHING_RESET_THRESHOLD = 10.0
++
++
++def _smooth_action(action_dict: dict) -> dict:
++    """Apply EMA smoothing + per-joint velocity clipping to *action_dict*.
++
++    Modifies *action_dict* in place and returns it for convenience.
++    Smoothing state (previous frame's smoothed action) is stored as a
++    function attribute so it persists across calls within a rollout.
++
++    Call :func:`reset_action_smoothing` at the start of every new rollout.
++    """
++    prev = getattr(_smooth_action, "_prev", None)
++    alpha = EMA_SMOOTHING_ALPHA
++    limit = MAX_JOINT_DELTA
++
++    if prev is None:
++        # First frame: seed state, pass through unmodified.
++        # (The policy's first action — a jump from current physical pose
++        # to the initial commanded pose — is accepted as-is.)
++        _smooth_action._prev = {k: v for k, v in action_dict.items()}
++        return action_dict
++
++    for k, v in action_dict.items():
++        prev_v = prev.get(k, v)
++        # If the raw action has jumped far from the stored state
++        # (e.g. DAGGER correction boundary), reset EMA for this joint.
++        if abs(v - prev_v) > SMOOTHING_RESET_THRESHOLD:
++            action_dict[k] = v
++            prev[k] = v
++            continue
++        # EMA: blend new target position with previous target
++        sv = alpha * v + (1.0 - alpha) * prev_v
++        # Clip the CHANGE in commanded position (velocity limit),
++        # NOT the absolute position value.
++        delta = sv - prev_v
++        delta = max(-limit, min(limit, delta))
++        sv = prev_v + delta
++        action_dict[k] = sv
++
++    _smooth_action._prev = {k: v for k, v in action_dict.items()}
++    return action_dict
++
++
++def reset_action_smoothing() -> None:
++    """Reset EMA state.  Call at the start of each new rollout."""
++    _smooth_action._prev = None
++
+ 
+ class RolloutStrategy(abc.ABC):
+     """Abstract base for rollout execution strategies.
+@@ -300,5 +375,6 @@ def send_next_action(
+         raise ValueError(f"Interpolated tensor length ({len(interp)}) != action keys ({len(ordered_keys)})")
+     action_dict = {k: interp[i].item() for i, k in enumerate(ordered_keys)}
+     processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
++    _smooth_action(processed)
+     ctx.hardware.robot_wrapper.send_action(processed)
+     return action_dict

@@ -1,0 +1,63 @@
+diff --git a/src/lerobot/configs/policies.py b/src/lerobot/configs/policies.py
+index 91701af6..c9ff9604 100644
+--- a/src/lerobot/configs/policies.py
++++ b/src/lerobot/configs/policies.py
+@@ -79,6 +79,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
+     # Either the repo ID of a model hosted on the Hub or a path to a directory containing weights
+     # saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch.
+     pretrained_path: Path | None = None
++    # HuggingFace Hub revision (commit hash, branch, or tag) for loading a specific version.
++    revision: str | None = None
+ 
+     def __post_init__(self) -> None:
+         if not self.device or not is_torch_device_available(self.device):
+@@ -223,4 +225,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
+ 
+         cli_overrides = policy_kwargs.pop("cli_overrides", [])
+         with draccus.config_type("json"):
+-            return draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
++            config = draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
++        if revision:
++            config.revision = revision
++        return config
+diff --git a/src/lerobot/rollout/configs.py b/src/lerobot/rollout/configs.py
+index 60c47cfb..337ac79f 100644
+--- a/src/lerobot/rollout/configs.py
++++ b/src/lerobot/rollout/configs.py
+@@ -324,7 +324,10 @@ class RolloutConfig:
+         policy_path = parser.get_path_arg("policy")
+         if policy_path:
+             cli_overrides = parser.get_cli_overrides("policy")
+-            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
++            revision = parser.parse_arg("policy.revision")
++            self.policy = PreTrainedConfig.from_pretrained(
++                policy_path, cli_overrides=cli_overrides, revision=revision
++            )
+             self.policy.pretrained_path = policy_path
+         if self.policy is None:
+             raise ValueError("--policy.path is required for rollout")
+diff --git a/src/lerobot/rollout/context.py b/src/lerobot/rollout/context.py
+index bf5fa0fd..d8140542 100644
+--- a/src/lerobot/rollout/context.py
++++ b/src/lerobot/rollout/context.py
+@@ -191,13 +191,17 @@ def build_rollout_context(
+         from peft import PeftConfig, PeftModel
+ 
+         peft_path = policy_config.pretrained_path
+-        peft_config = PeftConfig.from_pretrained(peft_path)
++        peft_config = PeftConfig.from_pretrained(peft_path, revision=policy_config.revision)
+         policy = policy_class.from_pretrained(
+             pretrained_name_or_path=peft_config.base_model_name_or_path, config=policy_config
+         )
+-        policy = PeftModel.from_pretrained(policy, peft_path, config=peft_config)
++        policy = PeftModel.from_pretrained(
++            policy, peft_path, config=peft_config, revision=policy_config.revision
++        )
+     else:
+-        policy = policy_class.from_pretrained(policy_config.pretrained_path, config=policy_config)
++        policy = policy_class.from_pretrained(
++            policy_config.pretrained_path, config=policy_config, revision=policy_config.revision
++        )
+ 
+     if is_rtc:
+         policy.config.rtc_config = cfg.inference.rtc

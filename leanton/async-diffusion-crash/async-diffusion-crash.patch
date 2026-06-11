@@ -1,0 +1,26 @@
+diff --git a/src/lerobot/policies/diffusion/modeling_diffusion.py b/src/lerobot/policies/diffusion/modeling_diffusion.py
+index 9fbe1f70..0137255e 100644
+--- a/src/lerobot/policies/diffusion/modeling_diffusion.py
++++ b/src/lerobot/policies/diffusion/modeling_diffusion.py
+@@ -102,7 +102,20 @@ class DiffusionPolicy(PreTrainedPolicy):
+     @torch.no_grad()
+     def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+         """Predict a chunk of actions given environment observations."""
+-        # stack n latest observations from the queue
++        # Consolidate per-camera image keys into a single observation.images key,
++        # mirroring what select_action does before populate_queues.
++        if self.config.image_features:
++            batch = dict(batch)
++            batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
++
++        # Remove action from batch before populating queues (action is output, not input)
++        if ACTION in batch:
++            batch.pop(ACTION)
++
++        # Ensure queues are populated before stacking (needed for async inference
++        # which calls this directly, bypassing select_action's populate_queues step)
++        self._queues = populate_queues(self._queues, batch)
++        # stack n latest observations from the queue — only observation keys, not action
+         batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
+         actions = self.diffusion.generate_actions(batch, noise=noise)
+ 

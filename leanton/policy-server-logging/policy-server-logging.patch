@@ -1,0 +1,14 @@
+diff --git a/src/lerobot/async_inference/policy_server.py b/src/lerobot/async_inference/policy_server.py
+index 787d39ab..69817d28 100644
+--- a/src/lerobot/async_inference/policy_server.py
++++ b/src/lerobot/async_inference/policy_server.py
+@@ -261,7 +261,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
+             return services_pb2.Empty()
+ 
+         except Exception as e:
+-            self.logger.error(f"Error in StreamActions: {e}")
++            import traceback
++            self.logger.error(f"Error in StreamActions: {e}\n{traceback.format_exc()}")
+ 
+             return services_pb2.Empty()
+ 
