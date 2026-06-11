@@ -43,12 +43,7 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import (
-    DeterministicEpisodeAwareSampler,
-    EpisodeAwareSampler,
-    compute_sampler_state,
-    make_dataset,
-)
+from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state, make_dataset
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
@@ -397,12 +392,13 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         # O(1) memory in dataset size, and a resumed run continues at the exact sample where the
         # checkpoint left off (up to accelerate's even_batches padding at epoch boundaries).
         shuffle = False
-        sampler = DeterministicEpisodeAwareSampler(
+        sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
             dataset.meta.episodes["dataset_to_index"],
             episode_indices_to_use=dataset.episodes,
             drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
             shuffle=True,
+            deterministic=True,
             seed=cfg.seed if cfg.seed is not None else 0,
         )
         if cfg.resume and step > 0:

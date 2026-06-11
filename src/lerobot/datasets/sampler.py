@@ -38,97 +38,27 @@ def _mix64(x: int) -> int:
 
 
 class EpisodeAwareSampler:
-    def __init__(
-        self,
-        dataset_from_indices: list[int],
-        dataset_to_indices: list[int],
-        episode_indices_to_use: list | None = None,
-        drop_n_first_frames: int = 0,
-        drop_n_last_frames: int = 0,
-        shuffle: bool = False,
-        generator: torch.Generator | None = None,
-    ):
-        """Sampler that optionally incorporates episode boundary information.
+    """Sampler that incorporates episode boundary information.
 
-        Args:
-            dataset_from_indices: List of indices containing the start of each episode in the dataset.
-            dataset_to_indices: List of indices containing the end of each episode in the dataset.
-            episode_indices_to_use: List of episode indices to use. If None, all episodes are used.
-                                    Assumes that episodes are indexed from 0 to N-1.
-            drop_n_first_frames: Number of frames to drop from the start of each episode.
-            drop_n_last_frames: Number of frames to drop from the end of each episode.
-            shuffle: Whether to shuffle the indices.
-            generator: Generator used for shuffling. Exposing this attribute (even when None) lets
-                       `accelerate` register it as the synchronized RNG in distributed training, so
-                       every rank draws the same permutation and batch shards stay disjoint. When
-                       None, shuffling falls back to the global torch RNG.
-        """
-        if drop_n_first_frames < 0:
-            raise ValueError(f"drop_n_first_frames must be >= 0, got {drop_n_first_frames}")
-        if drop_n_last_frames < 0:
-            raise ValueError(f"drop_n_last_frames must be >= 0, got {drop_n_last_frames}")
+    Frame indices are never materialized: only per-episode boundaries are stored (a few numpy
+    int64 per episode) and the mapping from a logical position to a frame index is computed on
+    the fly via `searchsorted`, so memory does not grow with the number of frames.
 
-        indices = []
-        for episode_idx, (start_index, end_index) in enumerate(
-            zip(dataset_from_indices, dataset_to_indices, strict=True)
-        ):
-            if episode_indices_to_use is None or episode_idx in episode_indices_to_use:
-                ep_length = end_index - start_index
-                if drop_n_first_frames + drop_n_last_frames >= ep_length:
-                    logger.warning(
-                        "Episode %d has %d frames but drop_n_first_frames=%d and "
-                        "drop_n_last_frames=%d removes all frames. Skipping.",
-                        episode_idx,
-                        ep_length,
-                        drop_n_first_frames,
-                        drop_n_last_frames,
-                    )
-                    continue
-                indices.extend(range(start_index + drop_n_first_frames, end_index - drop_n_last_frames))
+    Two shuffling modes are supported:
 
-        if not indices:
-            raise ValueError(
-                "No valid frames remain after applying drop_n_first_frames and drop_n_last_frames. "
-                "All episodes were either filtered out or had too few frames."
-            )
-
-        self.indices = indices
-        self.shuffle = shuffle
-        self.generator = generator
-
-    def __iter__(self) -> Iterator[int]:
-        if self.shuffle:
-            for i in torch.randperm(len(self.indices), generator=self.generator):
-                yield self.indices[i]
-        else:
-            for i in self.indices:
-                yield i
-
-    def __len__(self) -> int:
-        return len(self.indices)
-
-
-class DeterministicEpisodeAwareSampler:
-    """Episode-aware sampler with O(num_episodes) memory and a deterministic, seekable shuffle.
-
-    Unlike `EpisodeAwareSampler`, frame indices are never materialized: only per-episode
-    boundaries are stored (a few numpy int64 per episode) and the mapping from a logical
-    position to a frame index is computed on the fly via `searchsorted`. Shuffling applies a
-    seeded Feistel permutation over `[0, num_frames)` (cycle-walking to the exact domain size)
-    instead of `torch.randperm`, so the data order is a pure function of `(seed, epoch)`:
-
-    - every distributed rank derives the identical order with no RNG state to synchronize,
-    - any position can be sought in O(1), enabling sample-exact resume of interrupted runs
-      (see `state_dict` / `load_state_dict`),
-    - memory and epoch-boundary cost do not grow with the number of frames.
-
-    The trade-off is that the shuffle is pseudo-random rather than a true uniform permutation,
-    which is the standard compromise in large-scale training loaders.
-
-    Each completed `__iter__` advances the internal epoch, so consecutive dataloader passes
-    yield different permutations without requiring `set_epoch` calls. During an epoch resumed
-    via `load_state_dict`, `__len__` still reports the full epoch length; the first pass simply
-    yields fewer samples.
+    - Default (`deterministic=False`): `torch.randperm` over positions, optionally driven by a
+      dedicated `generator`. Exposing the `generator` attribute (even when None) lets
+      `accelerate` register it as the synchronized RNG in distributed training, so every rank
+      draws the same permutation and batch shards stay disjoint.
+    - `deterministic=True`: a seeded Feistel permutation over `[0, num_frames)` (cycle-walking
+      to the exact domain size). The data order becomes a pure function of `(seed, epoch)`:
+      nothing to synchronize across ranks, O(1) seek to any position (enabling sample-exact
+      resume via `state_dict` / `load_state_dict`), and zero epoch-boundary cost at any dataset
+      size. The shuffle is pseudo-random rather than a true uniform permutation — the standard
+      trade-off in large-scale training loaders. Each completed `__iter__` advances the internal
+      epoch, so consecutive dataloader passes yield different permutations without `set_epoch`
+      calls. During an epoch resumed via `load_state_dict`, `__len__` still reports the full
+      epoch length; the first pass simply yields fewer samples.
     """
 
     def __init__(
@@ -138,7 +68,9 @@ class DeterministicEpisodeAwareSampler:
         episode_indices_to_use: list | None = None,
         drop_n_first_frames: int = 0,
         drop_n_last_frames: int = 0,
-        shuffle: bool = True,
+        shuffle: bool = False,
+        generator: torch.Generator | None = None,
+        deterministic: bool = False,
         seed: int = 0,
     ):
         """
@@ -149,13 +81,18 @@ class DeterministicEpisodeAwareSampler:
                                     Assumes that episodes are indexed from 0 to N-1.
             drop_n_first_frames: Number of frames to drop from the start of each episode.
             drop_n_last_frames: Number of frames to drop from the end of each episode.
-            shuffle: Whether to shuffle with the seeded Feistel permutation.
-            seed: Seed the permutation is derived from (together with the epoch).
+            shuffle: Whether to shuffle the indices.
+            generator: Generator used for default-mode shuffling. When None, shuffling falls
+                       back to the global torch RNG. Incompatible with `deterministic=True`.
+            deterministic: Use the seeded Feistel permutation instead of `torch.randperm`.
+            seed: Seed the deterministic permutation is derived from (together with the epoch).
         """
         if drop_n_first_frames < 0:
             raise ValueError(f"drop_n_first_frames must be >= 0, got {drop_n_first_frames}")
         if drop_n_last_frames < 0:
             raise ValueError(f"drop_n_last_frames must be >= 0, got {drop_n_last_frames}")
+        if deterministic and generator is not None:
+            raise ValueError("generator is unused in deterministic mode; pass seed instead.")
 
         from_indices = np.asarray(dataset_from_indices, dtype=np.int64)
         to_indices = np.asarray(dataset_to_indices, dtype=np.int64)
@@ -192,6 +129,8 @@ class DeterministicEpisodeAwareSampler:
         self._cum_lengths = np.cumsum(lengths[used])
         self._num_frames = int(self._cum_lengths[-1])
         self.shuffle = shuffle
+        self.generator = generator
+        self.deterministic = deterministic
         self.seed = seed
         self._epoch = 0
         self._start_index = 0
@@ -202,16 +141,34 @@ class DeterministicEpisodeAwareSampler:
         self._half_bits = (bits + 1) // 2
         self._half_mask = (1 << self._half_bits) - 1
 
+    @property
+    def indices(self) -> list[int]:
+        """Materialized frame indices, in unshuffled order (back-compat / introspection only).
+
+        This builds an O(num_frames) list — avoid on very large datasets; iteration never uses it.
+        """
+        return [self._frame_index(k) for k in range(self._num_frames)]
+
     def set_epoch(self, epoch: int) -> None:
         """Set the epoch the next `__iter__` will use (DistributedSampler convention)."""
+        self._require_deterministic("set_epoch")
         self._epoch = epoch
 
     def state_dict(self) -> dict:
+        self._require_deterministic("state_dict")
         return {"epoch": self._epoch, "start_index": self._start_index}
 
     def load_state_dict(self, state: dict) -> None:
+        self._require_deterministic("load_state_dict")
         self._epoch = state["epoch"]
         self._start_index = state["start_index"]
+
+    def _require_deterministic(self, method: str) -> None:
+        if not self.deterministic:
+            raise RuntimeError(
+                f"{method} is only meaningful with deterministic=True: in default mode the "
+                "order is drawn from the (generator) RNG and cannot be sought."
+            )
 
     def _round_keys(self, epoch: int) -> list[int]:
         state = _mix64(_mix64(self.seed) ^ _mix64(epoch))
@@ -238,14 +195,24 @@ class DeterministicEpisodeAwareSampler:
         return int(self._starts[episode]) + position_in_episode
 
     def __iter__(self) -> Iterator[int]:
+        if not self.deterministic:
+            return self._iter_default()
         # Capture and advance state eagerly so epoch bookkeeping is not deferred until the
         # returned generator is first consumed.
         epoch, start = self._epoch, self._start_index
         self._epoch += 1
         self._start_index = 0
-        return self._iter_epoch(epoch, start)
+        return self._iter_deterministic_epoch(epoch, start)
 
-    def _iter_epoch(self, epoch: int, start: int) -> Iterator[int]:
+    def _iter_default(self) -> Iterator[int]:
+        if self.shuffle:
+            for i in torch.randperm(self._num_frames, generator=self.generator):
+                yield self._frame_index(int(i))
+        else:
+            for k in range(self._num_frames):
+                yield self._frame_index(k)
+
+    def _iter_deterministic_epoch(self, epoch: int, start: int) -> Iterator[int]:
         keys = self._round_keys(epoch) if self.shuffle else None
         for k in range(start, self._num_frames):
             yield self._frame_index(self._permute(k, keys) if self.shuffle else k)
@@ -255,7 +222,7 @@ class DeterministicEpisodeAwareSampler:
 
 
 def compute_sampler_state(step: int, num_frames: int, batch_size: int, num_processes: int) -> dict:
-    """Map a global optimization step to a `DeterministicEpisodeAwareSampler` state for resume.
+    """Map a global optimization step to an `EpisodeAwareSampler` state for resume.
 
     Under accelerate's batch-level sharding, every rank iterates the same underlying sampler and
     keeps every `num_processes`-th batch, so one optimization step consumes
