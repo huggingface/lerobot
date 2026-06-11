@@ -115,8 +115,8 @@ dataset = [
 ]
 training = [
     "lerobot[dataset]",
+    "wandb>=0.24.0,<0.28.0",
     "lerobot[accelerate-dep]",
-    "wandb>=0.24.0,<0.25.0",
 ]
 hardware = [
     "lerobot[pynput-dep]",
@@ -142,8 +142,8 @@ pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 # (noble ships urdfdom 3.x). Cap below 0.9.16 until system urdfdom 4.x is broadly available.
 placo-dep = ["placo>=0.9.6,<0.9.16"]
 transformers-dep = ["transformers>=5.4.0,<5.6.0"]
+grpcio-dep = ["grpcio>=1.73.1,<2.0.0", "protobuf>=6.31.1,<8.0.0"]
 accelerate-dep = ["accelerate>=1.14.0,<2.0.0"]
-grpcio-dep = ["grpcio==1.73.1", "protobuf>=6.31.1,<6.32.0"]
 can-dep = ["python-can>=4.2.0,<5.0.0"]
 peft-dep = ["peft>=0.18.0,<1.0.0"]
 scipy-dep = ["scipy>=1.14.0,<2.0.0"]
@@ -178,7 +178,12 @@ unitree_g1 = [
     "lerobot[matplotlib-dep]",
     "lerobot[pygame-dep]",
 ]
-reachy2 = ["reachy2_sdk>=1.0.15,<1.1.0"]
+# reachy2-sdk caps grpcio<=1.73.1 and protobuf<=6.32.0; quarantined here so downstream users aren't held back. reachy2-sdk is unlikely to release new versions.
+reachy2 = [
+    "reachy2_sdk>=1.0.15,<1.1.0",
+    "grpcio<=1.73.1",
+    "protobuf<=6.32.0",
+]
 # Seeed Studio reBot B601-DM follower (motorbridge / CAN) + StarArm102 / reBot Arm 102
 # leader (motorbridge-smart-servo / FashionStar UART servos).
 rebot = ["lerobot[motorbridge-dep]", "lerobot[motorbridge-smart-servo-dep]"]
@@ -225,7 +230,7 @@ async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
 # Development
-dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1", "mypy>=1.19.1", "ruff>=0.14.1", "lerobot[notebook]"]
+dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools>=1.73.1,<2.0.0", "mypy>=1.19.1", "ruff>=0.14.1", "lerobot[notebook]"]
 notebook = ["jupyter>=1.0.0,<2.0.0", "ipykernel>=6.0.0,<7.0.0"]
 test = ["pytest>=8.1.0,<9.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.0.0,<8.0.0", "mock-serial>=0.0.1,<0.1.0 ; sys_platform != 'win32'"]
 video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
