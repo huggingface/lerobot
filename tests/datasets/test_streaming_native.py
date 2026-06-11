@@ -316,3 +316,40 @@ def test_shuffle_decorrelates_output_order(tmp_path, lerobot_dataset_factory):
     )
     assert sorted(shuffled) == sorted(ordered), "shuffling changed the set of frames"
     assert shuffled != ordered, "shuffle did not decorrelate output order"
+
+
+def test_fast_forward_resume_with_dataloader_workers(tmp_path, lerobot_dataset_factory):
+    """Resume must be exact under num_workers > 0: each worker re-derives its own skip."""
+    from torch.utils.data import DataLoader
+
+    repo_id = f"{DUMMY_REPO_ID}-resume-workers"
+    _make_local_dataset(lerobot_dataset_factory, tmp_path / "ds", repo_id, total_episodes=8, total_frames=120)
+
+    num_workers = 2
+
+    def fresh_ds():
+        return StreamingLeRobotDataset(
+            repo_id=repo_id,
+            root=tmp_path / "ds",
+            shuffle=True,
+            seed=11,
+            episode_pool_size=3,
+            max_num_shards=4,
+        )
+
+    def epoch_samples(ds):
+        # batch_size=None yields raw samples; the DataLoader round-robins them across workers,
+        # which is batch_size=1 in the resume arithmetic.
+        loader = DataLoader(ds, batch_size=None, num_workers=num_workers)
+        return [int(sample["index"]) for sample in loader]
+
+    full = epoch_samples(fresh_ds())
+
+    samples_consumed = 17
+    resumed_ds = fresh_ds()
+    resumed_ds.load_state_dict({"batches_consumed": samples_consumed, "batch_size": 1})
+    resumed = epoch_samples(resumed_ds)
+
+    assert resumed == full[samples_consumed:], (
+        "fast-forward resume with DataLoader workers did not continue at the exact sample"
+    )

@@ -74,7 +74,7 @@ frames/s/node at `--num_workers 3` (3 cameras, fps 20).
 `frames_per_s_node`, `samples_per_s`, `first_batch_latency_s`, `p50/p95/p99_sample_latency_ms`,
 `wallclock_s`, and `video_decoder_cache` (`hits`, `misses`, `evictions`, `hit_rate`, `size`). A low
 cache `hit_rate` with high `p99` is the decoder-thrash signature — raise `--video_decoder_cache_size`
-or `--buffer_size`, or reduce `num_workers`.
+or `--episode_pool_size`, or reduce `num_workers`.
 
 ## Bucket sources & prewarming (manual)
 

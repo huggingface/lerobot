@@ -463,7 +463,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         epoch = self._epoch
         self._epoch += 1
         rng = self._consumer_rng(epoch, worker_id)
-        self._consume_resume_state(worker_id, num_workers)
+        # Workers beyond the shard count yield nothing and are stopped by the DataLoader, so the
+        # batch round-robin effectively runs over min(num_workers, num_shards) active workers.
+        self._consume_resume_state(worker_id, min(num_workers, num_shards))
 
         # Round-robin episode admission across this consumer's shard streams (deterministic).
         streams = [self._iter_shard_episodes(safe_shard(ds, idx, num_shards)) for idx in shard_indices]
@@ -541,14 +543,16 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             "batch_size": int(state_dict["batch_size"]),
         }
 
-    def _consume_resume_state(self, worker_id: int, num_workers: int) -> None:
+    def _consume_resume_state(self, worker_id: int, active_workers: int) -> None:
         if self._resume_state is None:
             return
         batches = self._resume_state["batches_consumed"]
         batch_size = self._resume_state["batch_size"]
         self._resume_state = None
-        # DataLoader assigns batch j to worker j % num_workers.
-        my_batches = batches // num_workers + (1 if batches % num_workers > worker_id else 0)
+        if worker_id >= active_workers:
+            return  # this worker owns no shards and never delivered a batch
+        # The DataLoader assigns batch j to active worker j % active_workers.
+        my_batches = batches // active_workers + (1 if batches % active_workers > worker_id else 0)
         self._ff_remaining = my_batches * batch_size
         if self._ff_remaining:
             logger.info(
