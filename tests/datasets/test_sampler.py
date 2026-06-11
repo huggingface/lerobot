@@ -114,34 +114,17 @@ def test_shuffle():
     assert set(sampler) == {0, 1, 2, 3, 4, 5}
 
 
-def test_shuffle_with_generator_is_deterministic():
-    # Two samplers shuffling with same-seed generators must yield identical permutations.
-    # This is what keeps batch shards disjoint across ranks in distributed training, where
-    # accelerate synchronizes the sampler's generator state instead of the global torch RNG.
-    sampler_a = EpisodeAwareSampler(
-        [0], [6], shuffle=True, deterministic=False, generator=torch.Generator().manual_seed(42)
-    )
-    sampler_b = EpisodeAwareSampler(
-        [0], [6], shuffle=True, deterministic=False, generator=torch.Generator().manual_seed(42)
-    )
-    assert list(sampler_a) == list(sampler_b)
-
+def test_shuffle_is_reproducible_across_instances():
+    # The order is a pure function of (seed, epoch), so two fresh samplers (e.g. two ranks)
+    # produce the same permutation without any generator synchronization.
+    sampler_a = EpisodeAwareSampler([0], [6], shuffle=True, seed=42)
+    sampler_b = EpisodeAwareSampler([0], [6], shuffle=True, seed=42)
+    epoch_0 = list(sampler_a)
+    assert list(sampler_b) == epoch_0
     # Desyncing the global RNG must not affect the permutation.
-    sampler_c = EpisodeAwareSampler(
-        [0], [6], shuffle=True, deterministic=False, generator=torch.Generator().manual_seed(42)
-    )
-    order_before = list(sampler_c)
-    sampler_c.generator.manual_seed(42)
+    sampler_c = EpisodeAwareSampler([0], [6], shuffle=True, seed=42)
     torch.randperm(1000)  # consume global RNG, as rank-asymmetric code (e.g. eval) would
-    assert list(sampler_c) == order_before
-
-
-def test_generator_attribute_defaults_to_none():
-    # accelerate detects synchronizable samplers via `hasattr(sampler, "generator")`,
-    # so the attribute must exist even when no generator is passed.
-    sampler = EpisodeAwareSampler([0], [6], shuffle=True, deterministic=False)
-    assert sampler.generator is None
-    assert set(sampler) == {0, 1, 2, 3, 4, 5}
+    assert list(sampler_c) == epoch_0
 
 
 def test_negative_drop_first_frames_raises():
@@ -169,54 +152,23 @@ def test_partial_episode_drop_warns(caplog):
     assert "Episode 0" in caplog.text
 
 
-# --- deterministic mode (seeded torch.randperm) ---
-
-from functools import partial  # noqa: E402
+# --- seeded (seed, epoch) shuffling, resume, and state ---
 
 from lerobot.datasets.sampler import compute_sampler_state  # noqa: E402
 
-deterministic_sampler = partial(EpisodeAwareSampler, deterministic=True)
-
-
 EPISODE_BOUNDS = ([0, 2, 3], [2, 3, 6])  # episodes of 2, 1 and 3 frames
-
-
-def test_deterministic_mode_unshuffled_matches_default_mode():
-    for kwargs in (
-        {},
-        {"drop_n_first_frames": 1},
-        {"drop_n_last_frames": 1},
-        {"episode_indices_to_use": [0, 2]},
-    ):
-        reference = EpisodeAwareSampler(*EPISODE_BOUNDS, shuffle=False, **kwargs)
-        sampler = deterministic_sampler(*EPISODE_BOUNDS, shuffle=False, **kwargs)
-        assert list(sampler) == list(reference), kwargs
-        assert len(sampler) == len(reference), kwargs
-
-
-def test_deterministic_mode_rejects_generator():
-    with pytest.raises(ValueError, match="generator is unused in deterministic mode"):
-        deterministic_sampler(*EPISODE_BOUNDS, shuffle=True, generator=torch.Generator())
-
-
-def test_state_methods_require_deterministic_mode():
-    sampler = EpisodeAwareSampler(*EPISODE_BOUNDS, shuffle=True, deterministic=False)
-    with pytest.raises(RuntimeError, match="deterministic=True"):
-        sampler.set_epoch(1)
-    with pytest.raises(RuntimeError, match="deterministic=True"):
-        sampler.state_dict()
 
 
 @pytest.mark.parametrize("num_frames", [1, 2, 3, 37, 64, 100])
 def test_deterministic_sampler_shuffle_is_permutation(num_frames):
     for seed in (0, 1, 1234):
-        sampler = deterministic_sampler([0], [num_frames], shuffle=True, seed=seed)
+        sampler = EpisodeAwareSampler([0], [num_frames], shuffle=True, seed=seed)
         assert sorted(sampler) == list(range(num_frames))
 
 
 def test_deterministic_sampler_epochs_reproduce_and_differ():
-    sampler_a = deterministic_sampler([0], [100], shuffle=True, seed=42)
-    sampler_b = deterministic_sampler([0], [100], shuffle=True, seed=42)
+    sampler_a = EpisodeAwareSampler([0], [100], shuffle=True, seed=42)
+    sampler_b = EpisodeAwareSampler([0], [100], shuffle=True, seed=42)
     epoch_0 = list(sampler_a)
     assert list(sampler_b) == epoch_0  # same (seed, epoch) -> same order on any process
     epoch_1 = list(sampler_a)  # __iter__ auto-advances the epoch
@@ -224,15 +176,15 @@ def test_deterministic_sampler_epochs_reproduce_and_differ():
     assert sorted(epoch_1) == sorted(epoch_0)
     sampler_a.set_epoch(0)
     assert list(sampler_a) == epoch_0
-    assert list(deterministic_sampler([0], [100], shuffle=True, seed=7)) != epoch_0
+    assert list(EpisodeAwareSampler([0], [100], shuffle=True, seed=7)) != epoch_0
 
 
 def test_deterministic_sampler_resume_mid_epoch():
-    reference = deterministic_sampler(*EPISODE_BOUNDS, shuffle=True, seed=42)
+    reference = EpisodeAwareSampler(*EPISODE_BOUNDS, shuffle=True, seed=42)
     epoch_0 = list(reference)
     epoch_1 = list(reference)
     for start in (0, 1, 4, len(epoch_0)):
-        resumed = deterministic_sampler(*EPISODE_BOUNDS, shuffle=True, seed=42)
+        resumed = EpisodeAwareSampler(*EPISODE_BOUNDS, shuffle=True, seed=42)
         resumed.load_state_dict({"epoch": 0, "start_index": start})
         assert list(resumed) == epoch_0[start:]
         # the resumed sampler continues into the same epoch 1 as the uninterrupted one
@@ -243,7 +195,7 @@ def test_deterministic_sampler_construction_stores_only_boundaries():
     # Construction is O(num_episodes), not O(num_frames): a million-frame single episode
     # instantiates from just its boundaries without materializing a per-frame index list.
     num_frames = 1_000_000
-    sampler = deterministic_sampler([0], [num_frames], shuffle=True, seed=0)
+    sampler = EpisodeAwareSampler([0], [num_frames], shuffle=True, seed=0)
     assert len(sampler) == num_frames
     assert sampler._starts.shape == (1,) and sampler._cum_lengths.shape == (1,)
 
@@ -252,27 +204,27 @@ def test_deterministic_sampler_resume_is_exact_at_scale():
     # Seeded randperm makes resume sample-exact at non-trivial sizes: regenerating the epoch's
     # permutation and slicing from the saved offset reproduces the remaining order exactly.
     num_frames = 100_000
-    reference = deterministic_sampler([0], [num_frames], shuffle=True, seed=0)
+    reference = EpisodeAwareSampler([0], [num_frames], shuffle=True, seed=0)
     epoch_0 = list(reference)
     assert sorted(epoch_0) == list(range(num_frames))
     start = num_frames - 5
-    resumed = deterministic_sampler([0], [num_frames], shuffle=True, seed=0)
+    resumed = EpisodeAwareSampler([0], [num_frames], shuffle=True, seed=0)
     resumed.load_state_dict({"epoch": 0, "start_index": start})
     assert list(resumed) == epoch_0[start:]
 
 
 def test_deterministic_sampler_validation_matches_episode_aware():
     with pytest.raises(ValueError, match="drop_n_first_frames must be >= 0"):
-        deterministic_sampler([0], [10], drop_n_first_frames=-1)
+        EpisodeAwareSampler([0], [10], drop_n_first_frames=-1)
     with pytest.raises(ValueError, match="drop_n_last_frames must be >= 0"):
-        deterministic_sampler([0], [10], drop_n_last_frames=-1)
+        EpisodeAwareSampler([0], [10], drop_n_last_frames=-1)
     with pytest.raises(ValueError, match="No valid frames remain"):
-        deterministic_sampler([0, 1, 2], [1, 2, 3], drop_n_first_frames=1)
+        EpisodeAwareSampler([0, 1, 2], [1, 2, 3], drop_n_first_frames=1)
 
 
 def test_deterministic_sampler_partial_episode_drop_warns(caplog):
     with caplog.at_level(logging.WARNING, logger="lerobot.datasets.sampler"):
-        sampler = deterministic_sampler([0, 1], [1, 6], drop_n_first_frames=1, shuffle=False)
+        sampler = EpisodeAwareSampler([0, 1], [1, 6], drop_n_first_frames=1, shuffle=False)
     assert list(sampler) == [2, 3, 4, 5]
     assert "Episode 0" in caplog.text
 

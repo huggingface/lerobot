@@ -388,8 +388,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
-    if cfg.deterministic_sampler and not cfg.dataset.streaming:
-        # Deterministic data order: no cross-rank RNG sync needed, sample-exact resume.
+    if not cfg.dataset.streaming:
+        # Deterministic data order (pure function of seed and epoch): no cross-rank RNG sync
+        # needed and sample-exact resume.
         shuffle = False
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
@@ -417,21 +418,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     f"Resuming data order at epoch {sampler_state['epoch']}, "
                     f"sample {sampler_state['start_index']}"
                 )
-    elif hasattr(active_cfg, "drop_n_last_frames"):
-        shuffle = False
-        # Legacy RNG shuffle: a dedicated generator lets accelerate synchronize it across ranks.
-        sampler_generator = torch.Generator()
-        if cfg.seed is not None:
-            sampler_generator.manual_seed(cfg.seed)
-        sampler = EpisodeAwareSampler(
-            dataset.meta.episodes["dataset_from_index"],
-            dataset.meta.episodes["dataset_to_index"],
-            episode_indices_to_use=dataset.episodes,
-            drop_n_last_frames=active_cfg.drop_n_last_frames,
-            shuffle=True,
-            deterministic=False,
-            generator=sampler_generator,
-        )
     else:
         shuffle = True
         sampler = None

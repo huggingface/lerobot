@@ -29,15 +29,12 @@ class EpisodeAwareSampler:
     Logical positions map to frame indices on the fly (O(num_episodes) construction memory)
     instead of materializing a Python list of every frame index.
 
-    By default (`deterministic=True`) each epoch is shuffled with a `torch.randperm` seeded from
-    `(seed, epoch)`, so the data order is a pure function of `(seed, epoch)`: it reproduces on
-    every rank without synchronizing the global RNG, and `state_dict` / `load_state_dict` resume
-    a run sample-exactly by regenerating the epoch's permutation and continuing from the saved
-    offset. Each call to `__iter__` advances the epoch. During a resumed epoch, `__len__` still
-    reports the full length.
-
-    With `deterministic=False`, shuffling uses `torch.randperm` driven by `generator` instead
-    (accelerate synchronizes the generator across ranks when preparing the dataloader).
+    Each epoch is shuffled with a `torch.randperm` seeded from `(seed, epoch)`, so the data order
+    is a pure function of `(seed, epoch)`: it reproduces on every rank without synchronizing the
+    global RNG (no `generator` to sync across distributed ranks), and `state_dict` /
+    `load_state_dict` resume a run sample-exactly by regenerating the epoch's permutation and
+    continuing from the saved offset. Each call to `__iter__` advances the epoch. During a
+    resumed epoch, `__len__` still reports the full length.
     """
 
     def __init__(
@@ -48,8 +45,6 @@ class EpisodeAwareSampler:
         drop_n_first_frames: int = 0,
         drop_n_last_frames: int = 0,
         shuffle: bool = False,
-        generator: torch.Generator | None = None,
-        deterministic: bool = True,
         seed: int = 0,
     ):
         """
@@ -60,17 +55,12 @@ class EpisodeAwareSampler:
             drop_n_first_frames: Frames to drop from the start of each episode.
             drop_n_last_frames: Frames to drop from the end of each episode.
             shuffle: Whether to shuffle the indices.
-            generator: Generator for non-deterministic shuffling (global torch RNG when None).
-            deterministic: Seed the shuffle from `(seed, epoch)` for reproducible, resumable
-                order instead of a `generator`-driven `torch.randperm`.
-            seed: Seed the deterministic permutation is derived from (together with the epoch).
+            seed: Seed the permutation is derived from (together with the epoch).
         """
         if drop_n_first_frames < 0:
             raise ValueError(f"drop_n_first_frames must be >= 0, got {drop_n_first_frames}")
         if drop_n_last_frames < 0:
             raise ValueError(f"drop_n_last_frames must be >= 0, got {drop_n_last_frames}")
-        if deterministic and generator is not None:
-            raise ValueError("generator is unused in deterministic mode; pass seed instead.")
 
         from_indices = np.asarray(dataset_from_indices, dtype=np.int64)
         to_indices = np.asarray(dataset_to_indices, dtype=np.int64)
@@ -107,8 +97,6 @@ class EpisodeAwareSampler:
         self._cum_lengths = np.cumsum(lengths[used])
         self._num_frames = int(self._cum_lengths[-1])
         self.shuffle = shuffle
-        self.generator = generator
-        self.deterministic = deterministic
         self.seed = seed
         self._epoch = 0
         self._start_index = 0
@@ -119,21 +107,14 @@ class EpisodeAwareSampler:
         return [self._frame_index(k) for k in range(self._num_frames)]
 
     def set_epoch(self, epoch: int) -> None:
-        self._require_deterministic("set_epoch")
         self._epoch = epoch
 
     def state_dict(self) -> dict:
-        self._require_deterministic("state_dict")
         return {"epoch": self._epoch, "start_index": self._start_index}
 
     def load_state_dict(self, state: dict) -> None:
-        self._require_deterministic("load_state_dict")
         self._epoch = state["epoch"]
         self._start_index = state["start_index"]
-
-    def _require_deterministic(self, method: str) -> None:
-        if not self.deterministic:
-            raise RuntimeError(f"{method} requires deterministic=True: an RNG order cannot be sought.")
 
     def _epoch_generator(self, epoch: int) -> torch.Generator:
         # Derive a per-epoch seed from (seed, epoch) so the permutation is a pure function of both
@@ -147,23 +128,13 @@ class EpisodeAwareSampler:
         return int(self._starts[episode]) + position_in_episode
 
     def __iter__(self) -> Iterator[int]:
-        if not self.deterministic:
-            return self._iter_default()
         # Advance epoch state eagerly, not on first consumption of the generator.
         epoch, start = self._epoch, self._start_index
         self._epoch += 1
         self._start_index = 0
-        return self._iter_deterministic_epoch(epoch, start)
+        return self._iter_epoch(epoch, start)
 
-    def _iter_default(self) -> Iterator[int]:
-        if self.shuffle:
-            for i in torch.randperm(self._num_frames, generator=self.generator):
-                yield self._frame_index(int(i))
-        else:
-            for k in range(self._num_frames):
-                yield self._frame_index(k)
-
-    def _iter_deterministic_epoch(self, epoch: int, start: int) -> Iterator[int]:
+    def _iter_epoch(self, epoch: int, start: int) -> Iterator[int]:
         if self.shuffle:
             order = torch.randperm(self._num_frames, generator=self._epoch_generator(epoch))
             for k in range(start, self._num_frames):

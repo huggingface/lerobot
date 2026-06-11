@@ -99,10 +99,6 @@ class TrainPipelineConfig(HubMixin):
     batch_size: int = 8
     prefetch_factor: int = 4
     persistent_workers: bool = True
-    # Deterministic data order (pure function of seed and epoch): immune to cross-rank RNG
-    # desync and enables sample-exact resume. Set to false for the legacy RNG-based shuffle.
-    # Ignored when dataset.streaming is enabled.
-    deterministic_sampler: bool = True
     steps: int = 100_000
     eval_freq: int = 20_000
     log_freq: int = 200
