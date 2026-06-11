@@ -16,6 +16,7 @@
 import logging
 import os
 import shutil
+import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
@@ -175,7 +176,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         revision: str | None = None,
         force_cache_sync: bool = False,
         streaming: bool = True,
-        episode_pool_size: int = 64,
+        episode_pool_size: int | None = 64,
         buffer_size: int | None = None,
         max_num_shards: int | None = None,
         seed: int = 42,
@@ -254,7 +255,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 "StreamingLeRobotDataset: `buffer_size` is deprecated and ignored; "
                 "use `episode_pool_size` (whole episodes, not frames)."
             )
-        self.episode_pool_size = max(1, episode_pool_size)
+        self.episode_pool_size = max(1, episode_pool_size) if episode_pool_size else 64
         self.max_num_shards = max_num_shards
         self._return_uint8 = return_uint8
 
@@ -268,9 +269,10 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
         self.video_decoder_cache = None
         self._prefetcher: _VideoPrefetcher | None = None
-        # Shared [hits, misses, evictions] tensor so DataLoader workers aggregate decoder-cache stats into
-        # one place the main process can read after iteration (see video_decoder_cache_stats()).
-        self._cache_counters = torch.zeros(3, dtype=torch.int64).share_memory_()
+        # Shared [hits, misses, evictions, decode_ns, fetch_ns] tensor so DataLoader workers aggregate
+        # decoder-cache stats and component timings into one place the main process can read after
+        # iteration (see video_decoder_cache_stats() / timing_stats()).
+        self._cache_counters = torch.zeros(5, dtype=torch.int64).share_memory_()
         # Deterministic fast-forward resume (see load_state_dict): per-consumer epoch counter and
         # number of samples still to skip.
         self._epoch = 0
@@ -479,11 +481,14 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             admitted = 0
             while len(pool) < self.episode_pool_size and streams:
                 stream = streams[next_stream % len(streams)]
+                fetch_start = time.perf_counter_ns()
                 try:
                     ep_idx, rows = next(stream)
                 except StopIteration:
                     streams.remove(stream)
                     continue
+                finally:
+                    self._cache_counters[4] += time.perf_counter_ns() - fetch_start
                 next_stream += 1
                 episode = self._admit_episode(ep_idx, rows, prefetcher)
                 pool.append(episode)
@@ -567,7 +572,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         hits/misses/evictions over every worker. Counts are lock-free across processes, so treat them as
         approximate; the ``hit_rate`` ratio is preserved.
         """
-        hits, misses, evictions = (int(x) for x in self._cache_counters.tolist())
+        hits, misses, evictions = (int(x) for x in self._cache_counters[:3].tolist())
         total = hits + misses
         return {
             "hits": hits,
@@ -575,6 +580,14 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             "evictions": evictions,
             "hit_rate": round(hits / total, 4) if total else 0.0,
         }
+
+    def timing_stats(self) -> dict[str, float]:
+        """Cumulative seconds spent in video decode and episode (tabular) fetch, summed across
+        DataLoader workers via the shared counter tensor. These overlap in wall-clock (workers run
+        in parallel), so compare them to ``num_workers x wallclock`` for time fractions.
+        """
+        decode_ns, fetch_ns = (int(x) for x in self._cache_counters[3:5].tolist())
+        return {"decode_s_total": round(decode_ns / 1e9, 2), "fetch_s_total": round(fetch_ns / 1e9, 2)}
 
     def _make_pool_sample(self, episode: _PooledEpisode, frame_pos: int) -> dict:
         """Assemble a full training sample for one pooled frame (tabular slices + video decode)."""
@@ -603,7 +616,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             query_timestamps = self._get_query_timestamps(
                 current_ts, self.delta_indices, episode_boundaries_ts
             )
+            decode_start = time.perf_counter_ns()
             video_frames = self._query_videos(query_timestamps, ep_idx)
+            self._cache_counters[3] += time.perf_counter_ns() - decode_start
 
             if self.image_transforms is not None:
                 for cam in self.meta.camera_keys:

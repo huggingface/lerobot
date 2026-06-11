@@ -34,9 +34,14 @@ GPUS=${GPUS:-1}
 SERIAL=${SERIAL:-1}             # 1 = run one job at a time (correct for bandwidth measurement)
 CPU_WORKERS=${CPU_WORKERS:-8}
 GPU_WORKERS=${GPU_WORKERS:-2}   # low on purpose: each cuda worker holds a CUDA context + NVDEC session
-CPU_BUFFER=${CPU_BUFFER:-4000}
-GPU_BUFFER=${GPU_BUFFER:-1000}  # smaller buffer bounds on-GPU frame memory
+CPU_BUFFER=${CPU_BUFFER:-64}  # episode pool size (whole episodes per consumer; tabular-only RAM)
+GPU_BUFFER=${GPU_BUFFER:-32}  # smaller episode pool bounds in-flight decoded frames
+# Cap concurrently-open stream shards. Each open shard holds ~one parquet row group in RAM, and reading
+# from an hf:// bucket buffers ~5x more per shard than hf:// datasets (~1.2GB vs ~0.26GB). So for bucket
+# sources default to num_workers (1 shard/worker); hub keeps 16. Override globally with MAX_SHARDS.
+MAX_SHARDS=${MAX_SHARDS:-}
 BATCH_SIZE=${BATCH_SIZE:-64}
+PREFETCH=${PREFETCH:-2}          # DataLoader batches prefetched per worker (higher = more throughput + RAM)
 RUN=${RUN:-python}
 # CONDA_ENV=<name> runs each job via `conda run -n <name>` (no activation needed inside the dash --wrap;
 # --no-capture-output streams logs live). Set this to a conda env that has a MODERN torchcodec (>=0.11)
@@ -69,6 +74,7 @@ for SOURCE in $SOURCES; do
   for MODE in $MODES; do
     for DECODE in $DECODES; do
       if [ "$DECODE" = cpu ]; then W=$CPU_WORKERS; B=$CPU_BUFFER; else W=$GPU_WORKERS; B=$GPU_BUFFER; fi
+      if [ -n "$MAX_SHARDS" ]; then S=$MAX_SHARDS; elif [ "$SOURCE" = hub ]; then S=16; else S=$W; fi
       # Run strictly after the previous job so only one job touches the network at a time.
       DEPFLAG=""
       if [ "$SERIAL" = 1 ] && [ -n "$prev_jid" ]; then DEPFLAG="--dependency=afterany:$prev_jid"; fi
@@ -83,7 +89,8 @@ for SOURCE in $SOURCES; do
           $RUN benchmarks/streaming/benchmark_streaming.py \
             --repo_id $REPO_ID $ROOTFLAG \
             --mode $MODE --source $SOURCE --video_decode_device $DECODE \
-            --batch_size $BATCH_SIZE --num_workers $W --episode_pool_size $B \
+            --batch_size $BATCH_SIZE --num_workers $W --prefetch_factor $PREFETCH \
+            --episode_pool_size $B --max_num_shards $S \
             --num_batches $NUM_BATCHES --out_dir $OUT_DIR")
       jid=${jid%%;*}  # strip ';cluster' suffix on federated setups
       echo "submitted job $jid  bench_${SOURCE}_${MODE}_${DECODE}${DEPFLAG:+  (after $prev_jid)}"
@@ -96,5 +103,5 @@ done
 echo
 echo "Submitted $n jobs ($([ "$SERIAL" = 1 ] && echo 'serial chain — one runs at a time' || echo 'parallel'))."
 echo "Watch:  squeue -u \$USER         (later jobs show reason '(Dependency)' until their turn)"
-echo "Results: $OUT_DIR/<source>_<mode>_bs${BATCH_SIZE}_w<workers>_<decode>.{json,csv}"
+echo "Results: $OUT_DIR/<source>_<mode>_bs${BATCH_SIZE}_w<workers>_pf<prefetch>_<decode>.{json,csv}"
 echo "Summarize when done:  $RUN benchmarks/streaming/summarize_results.py $OUT_DIR"
