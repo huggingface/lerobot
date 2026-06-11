@@ -13,6 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import contextlib
+import inspect
 import logging
 import os
 import shutil
@@ -46,6 +48,10 @@ from .video_utils import (
 
 logger = logging.getLogger(__name__)
 
+# datasets >= 5 groups a stream into whole-episode batches natively (Arrow-side accumulation,
+# https://github.com/huggingface/datasets/pull/8172); older versions fall back to a Python row loop.
+_HAS_BATCH_BY_COLUMN = "by_column" in inspect.signature(datasets.IterableDataset.batch).parameters
+
 _MASK_64 = (1 << 64) - 1
 
 
@@ -58,6 +64,24 @@ def _mix64(x: int) -> int:
     x = (x * 0x94D049BB133111EB) & _MASK_64
     x ^= x >> 31
     return x
+
+
+@contextlib.contextmanager
+def _suppress_hf_worker_split():
+    """Hide the torch DataLoader worker context from `datasets` while we drain its streams.
+
+    `datasets` detects torch workers and re-splits its shards across them internally
+    (`_iter_pytorch`); this dataset already assigns disjoint shards per worker, so the second
+    split silently drops data whenever a per-worker stream has fewer internal shards than there
+    are workers — and on datasets 5.0 it also crashes `batch(by_column=...)`. The patch is local
+    to this DataLoader worker process and restored on exit.
+    """
+    original = torch.utils.data.get_worker_info
+    torch.utils.data.get_worker_info = lambda: None
+    try:
+        yield
+    finally:
+        torch.utils.data.get_worker_info = original
 
 
 class _PooledEpisode:
@@ -410,7 +434,19 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
     @staticmethod
     def _iter_shard_episodes(shard: datasets.IterableDataset) -> Iterator[tuple[int, list[dict]]]:
-        """Yield (episode_index, rows) for each complete episode of a shard stream."""
+        """Yield (episode_index, rows) for each complete episode of a shard stream.
+
+        On datasets >= 5 the grouping runs natively in Arrow via ``batch(by_column=...)``
+        (one accumulation per episode instead of one Python dict per row); older versions
+        use the equivalent row loop.
+        """
+        if _HAS_BATCH_BY_COLUMN:
+            for batch in shard.batch(by_column="episode_index"):
+                keys = list(batch.keys())
+                num_rows = len(batch["episode_index"])
+                rows = [{key: batch[key][i] for key in keys} for i in range(num_rows)]
+                yield int(batch["episode_index"][0]), rows
+            return
         rows: list[dict] = []
         current: int | None = None
         for item in shard:
@@ -496,37 +532,41 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 admitted += 1
             return admitted
 
+        worker_split_guard = (
+            _suppress_hf_worker_split() if worker_info is not None else contextlib.nullcontext()
+        )
         try:
-            admit()
-            while pool:
-                if self.shuffle:
-                    # Uniform draw over every remaining frame in the pool: pick the episode by
-                    # cumulative remaining count, then a random remaining position (swap-pop).
-                    draw = int(rng.integers(total_remaining))
-                    for episode in pool:
-                        if draw < len(episode.remaining):
-                            break
-                        draw -= len(episode.remaining)
-                    pick = int(rng.integers(len(episode.remaining)))
-                    frame_pos = episode.remaining[pick]
-                    episode.remaining[pick] = episode.remaining[-1]
-                    episode.remaining.pop()
-                else:
-                    episode = pool[0]
-                    frame_pos = episode.remaining.pop(0)
-                total_remaining -= 1
+            with worker_split_guard:
+                admit()
+                while pool:
+                    if self.shuffle:
+                        # Uniform draw over every remaining frame in the pool: pick the episode by
+                        # cumulative remaining count, then a random remaining position (swap-pop).
+                        draw = int(rng.integers(total_remaining))
+                        for episode in pool:
+                            if draw < len(episode.remaining):
+                                break
+                            draw -= len(episode.remaining)
+                        pick = int(rng.integers(len(episode.remaining)))
+                        frame_pos = episode.remaining[pick]
+                        episode.remaining[pick] = episode.remaining[-1]
+                        episode.remaining.pop()
+                    else:
+                        episode = pool[0]
+                        frame_pos = episode.remaining.pop(0)
+                    total_remaining -= 1
 
-                if self._ff_remaining > 0:
-                    self._ff_remaining -= 1
-                else:
-                    yield self._make_pool_sample(episode, frame_pos)
+                    if self._ff_remaining > 0:
+                        self._ff_remaining -= 1
+                    else:
+                        yield self._make_pool_sample(episode, frame_pos)
 
-                if not episode.remaining:
-                    pool.remove(episode)
-                    if prefetcher is not None:
-                        for rel in episode.video_rel_paths:
-                            prefetcher.release(rel)
-                    admit()
+                    if not episode.remaining:
+                        pool.remove(episode)
+                        if prefetcher is not None:
+                            for rel in episode.video_rel_paths:
+                                prefetcher.release(rel)
+                        admit()
         finally:
             if prefetcher is not None:
                 prefetcher.shutdown()

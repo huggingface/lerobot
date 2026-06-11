@@ -353,3 +353,28 @@ def test_fast_forward_resume_with_dataloader_workers(tmp_path, lerobot_dataset_f
     assert resumed == full[samples_consumed:], (
         "fast-forward resume with DataLoader workers did not continue at the exact sample"
     )
+
+
+def test_episode_grouping_native_and_fallback_agree(tmp_path, lerobot_dataset_factory, monkeypatch):
+    """The datasets>=5 batch(by_column=...) path must group episodes identically to the row loop."""
+    import lerobot.datasets.streaming_dataset as sd
+
+    repo_id = f"{DUMMY_REPO_ID}-grouping"
+    _make_local_dataset(lerobot_dataset_factory, tmp_path / "ds", repo_id, total_episodes=5, total_frames=100)
+    ds = StreamingLeRobotDataset(repo_id=repo_id, root=tmp_path / "ds", shuffle=False, max_num_shards=1)
+
+    def episode_signature(use_native):
+        monkeypatch.setattr(sd, "_HAS_BATCH_BY_COLUMN", use_native)
+        return [
+            (ep_idx, [int(row["index"]) for row in rows])
+            for ep_idx, rows in ds._iter_shard_episodes(ds.hf_dataset)
+        ]
+
+    fallback = episode_signature(False)
+    assert len(fallback) == 5
+    if not sd._HAS_BATCH_BY_COLUMN and "by_column" not in str(
+        type(ds.hf_dataset).batch.__doc__ or ""
+    ):  # datasets < 5: only the fallback path exists
+        return
+    native = episode_signature(True)
+    assert native == fallback
