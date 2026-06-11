@@ -49,6 +49,7 @@ from lerobot.datasets import (
     EpisodeAwareSampler,
     LeRobotDatasetMetadata,
     compute_sampler_state,
+    group_episodes_by_files,
     make_dataset,
     partition_episodes,
 )
@@ -191,8 +192,12 @@ def node_topology(accelerator: "Accelerator") -> tuple[int, int, int]:
 def make_node_dataset(cfg: TrainPipelineConfig, accelerator: "Accelerator"):
     """`make_dataset` restricted to this node's statically-assigned share of episodes.
 
-    All processes derive the identical partition from metadata alone (greedy LPT on frame
-    counts), so each node downloads and stores only its near-uniform share of the data.
+    All processes derive the identical partition from metadata alone, so each node downloads
+    and stores only its near-uniform share of the data. Because LeRobot v3 packs many episodes
+    into shared parquet/video files, the partition unit is a *file group* (connected component
+    of episodes sharing a storage file), not a raw episode: partitioning episodes individually
+    would scatter them across files and every node would download nearly all files anyway.
+    Greedy LPT on frame counts balances the groups across nodes.
     """
     import copy
 
@@ -204,11 +209,36 @@ def make_node_dataset(cfg: TrainPipelineConfig, accelerator: "Accelerator"):
     from_indices = meta.episodes["dataset_from_index"]
     to_indices = meta.episodes["dataset_to_index"]
     lengths = [to_indices[ep] - from_indices[ep] for ep in episodes]
-    bins = partition_episodes(lengths, num_nodes)
-    node_episodes = [episodes[i] for i in bins[node_index]]
+
+    data_chunk_indices = meta.episodes["data/chunk_index"]
+    data_file_indices = meta.episodes["data/file_index"]
+    video_file_columns = {
+        key: (meta.episodes[f"videos/{key}/chunk_index"], meta.episodes[f"videos/{key}/file_index"])
+        for key in meta.video_keys
+    }
+    episode_file_ids = [
+        [("data", data_chunk_indices[ep], data_file_indices[ep])]
+        + [
+            (key, chunk_indices[ep], file_indices[ep])
+            for key, (chunk_indices, file_indices) in video_file_columns.items()
+        ]
+        for ep in episodes
+    ]
+    groups = group_episodes_by_files(episode_file_ids)
+    if len(groups) < num_nodes:
+        logging.warning(
+            f"Only {len(groups)} file groups for {num_nodes} nodes: falling back to "
+            "episode-granularity partitioning. Training stays correct, but nodes will download "
+            "overlapping files, so the per-node disk savings are limited."
+        )
+        groups = [[i] for i in range(len(episodes))]
+    group_lengths = [sum(lengths[i] for i in group) for group in groups]
+    bins = partition_episodes(group_lengths, num_nodes)
+    node_episodes = sorted(episodes[i] for group_idx in bins[node_index] for i in groups[group_idx])
     logging.info(
         f"Data partition: node {node_index}/{num_nodes} gets {len(node_episodes)}/{len(episodes)} "
-        f"episodes ({sum(lengths[i] for i in bins[node_index])}/{sum(lengths)} frames)"
+        f"episodes in {len(bins[node_index])}/{len(groups)} file groups "
+        f"({sum(group_lengths[i] for i in bins[node_index])}/{sum(lengths)} frames)"
     )
     # Shallow-copy the pipeline config so the node-local episode subset is never persisted to
     # checkpoints: a resumed run must recompute its own node's share.

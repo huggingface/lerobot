@@ -14,6 +14,46 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import heapq
+from collections import defaultdict
+from collections.abc import Hashable, Sequence
+
+
+def group_episodes_by_files(episode_file_ids: list[Sequence[Hashable]]) -> list[list[int]]:
+    """Group episodes into connected components of shared storage files.
+
+    LeRobot v3 packs many episodes into shared parquet and video files, so a partition
+    only reduces per-node downloads if episodes that live in the same file are assigned
+    to the same bin. This computes the connected components induced by "shares a file
+    with" (union-find), which the partitioner can then treat as indivisible units.
+
+    Args:
+        episode_file_ids: For each episode, the hashable identifiers of every storage
+            file it touches (e.g. data parquet + one video file per camera).
+
+    Returns:
+        Groups of episode indices, each sorted, ordered by their smallest episode.
+        Two episodes are in the same group iff they are connected through shared files.
+    """
+    parent = list(range(len(episode_file_ids)))
+
+    def find(episode: int) -> int:
+        while parent[episode] != episode:
+            parent[episode] = parent[parent[episode]]
+            episode = parent[episode]
+        return episode
+
+    file_owner: dict[Hashable, int] = {}
+    for episode, file_ids in enumerate(episode_file_ids):
+        for file_id in file_ids:
+            if file_id in file_owner:
+                parent[find(episode)] = find(file_owner[file_id])
+            else:
+                file_owner[file_id] = episode
+
+    groups: dict[int, list[int]] = defaultdict(list)
+    for episode in range(len(episode_file_ids)):
+        groups[find(episode)].append(episode)
+    return sorted((sorted(group) for group in groups.values()), key=lambda group: group[0])
 
 
 def partition_episodes(episode_lengths: list[int], num_partitions: int) -> list[list[int]]:
