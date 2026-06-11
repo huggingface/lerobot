@@ -945,8 +945,17 @@ def _write_parquet(df: pd.DataFrame, path: Path, meta: LeRobotDatasetMetadata) -
         ep_dataset = embed_images(ep_dataset)
 
     table = ep_dataset.with_format("arrow")[:]
-    writer = pq.ParquetWriter(path, schema=table.schema, compression="snappy", use_dictionary=True)
-    writer.write_table(table)
+    # Emit several row groups with a page index instead of one giant row group. A single row group forces
+    # streaming readers to materialize the whole file's columns per open shard; with random-access streaming
+    # (shuffle + delta windows) across many workers x shards that dominates RAM. Targeting ~32MB-uncompressed
+    # groups bounds per-shard memory while keeping groups large enough to scan
+    # efficiently; the page index lets readers skip to the pages they need.
+    target_row_group_bytes = 32 * 1024 * 1024
+    row_group_size = max(1, min(table.num_rows, table.num_rows * target_row_group_bytes // max(table.nbytes, 1)))
+    writer = pq.ParquetWriter(
+        path, schema=table.schema, compression="snappy", use_dictionary=True, write_page_index=True
+    )
+    writer.write_table(table, row_group_size=row_group_size)
     writer.close()
 
 
