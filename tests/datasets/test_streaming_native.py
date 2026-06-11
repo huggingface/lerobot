@@ -378,3 +378,27 @@ def test_episode_grouping_native_and_fallback_agree(tmp_path, lerobot_dataset_fa
         return
     native = episode_signature(True)
     assert native == fallback
+
+
+def test_shard_order_permutation_properties(tmp_path, lerobot_dataset_factory):
+    """Shard order: a valid permutation, deterministic per (seed, epoch, rank), worker-independent
+    (workers stride the same list, so it must not depend on worker id), reshuffled across epochs,
+    and identity when shuffle is off."""
+    repo_id = f"{DUMMY_REPO_ID}-shardorder"
+    _make_local_dataset(lerobot_dataset_factory, tmp_path / "ds", repo_id, total_episodes=4, total_frames=80)
+
+    ds = StreamingLeRobotDataset(repo_id=repo_id, root=tmp_path / "ds", shuffle=True, seed=5)
+    num_shards = 32
+    order_epoch0 = ds._shard_order(0, num_shards)
+    assert sorted(order_epoch0) == list(range(num_shards))
+    assert ds._shard_order(0, num_shards) == order_epoch0  # deterministic
+    assert ds._shard_order(1, num_shards) != order_epoch0  # reshuffles per epoch
+    assert order_epoch0 != list(range(num_shards))  # actually permuted (P=1/32! of false alarm)
+
+    other_rank = StreamingLeRobotDataset(
+        repo_id=repo_id, root=tmp_path / "ds", shuffle=True, seed=5, rank=1, world_size=2
+    )
+    assert other_rank._shard_order(0, num_shards) != order_epoch0  # ranks decorrelated
+
+    unshuffled = StreamingLeRobotDataset(repo_id=repo_id, root=tmp_path / "ds", shuffle=False, seed=5)
+    assert unshuffled._shard_order(0, num_shards) == list(range(num_shards))

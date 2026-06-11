@@ -400,6 +400,21 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             state = _mix64(state ^ _mix64(salt))
         return np.random.default_rng(state)
 
+    def _shard_order(self, epoch: int, num_shards: int) -> list[int]:
+        """Seeded permutation of this rank's shard indices, re-drawn every epoch.
+
+        In a sub-epoch run over a corpus consolidated source-by-source, index-order shard
+        assignment means training on whatever the first N% of files contains; permuting the
+        shard order turns that into a uniform sample of files. Seeded by (seed, epoch, rank)
+        only — every DataLoader worker of the rank must agree on this list, because workers
+        stride it and disagreement would create overlapping shard assignments.
+        """
+        order = list(range(num_shards))
+        if self.shuffle:
+            state = _mix64(self.seed) ^ _mix64(0x5EED5EED) ^ _mix64(self.rank) ^ _mix64(epoch)
+            np.random.default_rng(_mix64(state)).shuffle(order)
+        return order
+
     def _make_video_decoder_cache(self) -> VideoDecoderCache:
         """Size the decoder cache to the pool's working set (pool episodes x cameras), capped at 128."""
         if self.video_decoder_cache_size is not None:
@@ -481,7 +496,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             ds = split_dataset_by_node(ds, rank=self.rank, world_size=self.world_size)
 
         num_shards = ds.num_shards if self.max_num_shards is None else min(ds.num_shards, self.max_num_shards)
-        shard_indices = list(range(num_shards))
+        epoch = self._epoch
+        self._epoch += 1
+        shard_indices = self._shard_order(epoch, num_shards)
 
         # DataLoader workers within this rank further split the shards so they don't yield duplicates.
         worker_info = torch.utils.data.get_worker_info()
@@ -498,8 +515,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         prefetcher = self._make_prefetcher()
         self._prefetcher = prefetcher
 
-        epoch = self._epoch
-        self._epoch += 1
         rng = self._consumer_rng(epoch, worker_id)
         # Workers beyond the shard count yield nothing and are stopped by the DataLoader, so the
         # batch round-robin effectively runs over min(num_workers, num_shards) active workers.
