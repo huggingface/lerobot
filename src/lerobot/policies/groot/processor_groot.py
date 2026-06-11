@@ -579,8 +579,8 @@ def make_groot_pre_post_processors(
     1. Optional key renaming (dataset-specific key mapping)
     2. Add batch dimension to unbatched data
     3. Pack video/state/action/language/embodiment and apply optional min-max normalization before padding
-    4. Encode video+language with Eagle VLM into intermediate eagle_content
-    5. Collate eagle_content into batched eagle_* tensors
+    4. Encode video+language with the GR00T N1.7 VLM backbone (Qwen3-VL) into intermediate VLM content
+    5. Collate the VLM content into batched backbone input tensors
     6. Move tensors to device (GPU)
 
     NOTE: We optionally apply min-max normalization to STATE and ACTION using
