@@ -20,6 +20,7 @@ Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wand
 
 import dataclasses
 import logging
+import os
 import time
 from contextlib import nullcontext
 from pprint import pformat
@@ -46,8 +47,10 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import (
     DeterministicEpisodeAwareSampler,
     EpisodeAwareSampler,
+    LeRobotDatasetMetadata,
     compute_sampler_state,
     make_dataset,
+    partition_episodes,
 )
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.optim.factory import make_optimizer_and_scheduler
@@ -166,6 +169,54 @@ def update_policy(
     return train_metrics, output_dict
 
 
+def node_topology(accelerator: "Accelerator") -> tuple[int, int, int]:
+    """Return (num_nodes, node_index, local_world_size) of the current distributed run.
+
+    Relies on LOCAL_WORLD_SIZE, which torchrun (and therefore `accelerate launch`) sets on every
+    process; when absent, all processes are assumed to live on a single node.
+    """
+    local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", accelerator.num_processes))
+    if accelerator.num_processes % local_world_size != 0:
+        raise RuntimeError(
+            f"Total processes ({accelerator.num_processes}) is not a multiple of "
+            f"LOCAL_WORLD_SIZE ({local_world_size}); cannot derive the node topology."
+        )
+    return (
+        accelerator.num_processes // local_world_size,
+        accelerator.process_index // local_world_size,
+        local_world_size,
+    )
+
+
+def make_node_dataset(cfg: TrainPipelineConfig, accelerator: "Accelerator"):
+    """`make_dataset` restricted to this node's statically-assigned share of episodes.
+
+    All processes derive the identical partition from metadata alone (greedy LPT on frame
+    counts), so each node downloads and stores only its near-uniform share of the data.
+    """
+    import copy
+
+    num_nodes, node_index, _ = node_topology(accelerator)
+    meta = LeRobotDatasetMetadata(cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision)
+    episodes = list(cfg.dataset.episodes) if cfg.dataset.episodes is not None else None
+    if episodes is None:
+        episodes = list(range(meta.total_episodes))
+    from_indices = meta.episodes["dataset_from_index"]
+    to_indices = meta.episodes["dataset_to_index"]
+    lengths = [to_indices[ep] - from_indices[ep] for ep in episodes]
+    bins = partition_episodes(lengths, num_nodes)
+    node_episodes = [episodes[i] for i in bins[node_index]]
+    logging.info(
+        f"Data partition: node {node_index}/{num_nodes} gets {len(node_episodes)}/{len(episodes)} "
+        f"episodes ({sum(lengths[i] for i in bins[node_index])}/{sum(lengths)} frames)"
+    )
+    # Shallow-copy the pipeline config so the node-local episode subset is never persisted to
+    # checkpoints: a resumed run must recompute its own node's share.
+    node_cfg = copy.copy(cfg)
+    node_cfg.dataset = dataclasses.replace(cfg.dataset, episodes=node_episodes)
+    return make_dataset(node_cfg)
+
+
 @parser.wrap()
 def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     """
@@ -240,16 +291,17 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # Dataset loading synchronization: each node's local main process downloads first to avoid
     # race conditions (the global main process only exists on node 0, so gating on it would let
     # all ranks of the other nodes download and build the Arrow cache concurrently).
+    create_dataset = make_node_dataset if cfg.data_partition == "node" else lambda c, _: make_dataset(c)
     if accelerator.is_local_main_process:
         if is_main_process:
             logging.info("Creating dataset")
-        dataset = make_dataset(cfg)
+        dataset = create_dataset(cfg, accelerator)
 
     accelerator.wait_for_everyone()
 
     # Now all other processes can safely load the dataset from the local cache
     if not accelerator.is_local_main_process:
-        dataset = make_dataset(cfg)
+        dataset = create_dataset(cfg, accelerator)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
@@ -392,7 +444,36 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
-    if cfg.deterministic_sampler:
+    if cfg.data_partition == "node":
+        # Each node trains on its own statically-assigned episode share; the local ranks shard
+        # the node-local permutation arithmetically inside the sampler, so the dataloader is NOT
+        # prepared with accelerate (no batch-level sharding needed). Every rank's stream is an
+        # independent pure function of (seed, epoch, shard), giving sample-exact resume per rank.
+        shuffle = False
+        num_nodes, node_index, local_world_size = node_topology(accelerator)
+        sampler = DeterministicEpisodeAwareSampler(
+            dataset.meta.episodes["dataset_from_index"],
+            dataset.meta.episodes["dataset_to_index"],
+            episode_indices_to_use=dataset.episodes,
+            drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
+            shuffle=True,
+            seed=(cfg.seed if cfg.seed is not None else 0) + node_index,
+            shard_rank=accelerator.local_process_index,
+            shard_world_size=local_world_size,
+        )
+        if cfg.resume and step > 0:
+            # Each rank's shard is an independent stream: one step consumes batch_size
+            # shard-local positions, hence num_processes=1 in the state arithmetic.
+            sampler_state = compute_sampler_state(step, len(sampler), cfg.batch_size, num_processes=1)
+            sampler.load_state_dict(sampler_state)
+            logging.info(
+                f"Resuming data order at epoch {sampler_state['epoch']}, "
+                f"shard-local sample {sampler_state['start_index']} "
+                f"(node {node_index}, local rank {accelerator.local_process_index}). "
+                "Sample-exact resume requires the same topology as the interrupted run "
+                f"({num_nodes} nodes x {local_world_size} processes)."
+            )
+    elif cfg.deterministic_sampler:
         # Data order is a pure function of (seed, epoch): nothing to synchronize across ranks,
         # O(1) memory in dataset size, and a resumed run continues at the exact sample where the
         # checkpoint left off (up to accelerate's even_batches padding at epoch boundaries).
@@ -454,9 +535,14 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     # Prepare everything with accelerator
     accelerator.wait_for_everyone()
-    policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
-        policy, optimizer, dataloader, lr_scheduler
-    )
+    if cfg.data_partition == "node":
+        # The dataloader stays unprepared: sharding lives in the sampler and the policy
+        # preprocessor pipeline (DeviceProcessorStep) moves batches to the right device.
+        policy, optimizer, lr_scheduler = accelerator.prepare(policy, optimizer, lr_scheduler)
+    else:
+        policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
+            policy, optimizer, dataloader, lr_scheduler
+        )
     dl_iter = cycle(dataloader)
 
     policy.train()
@@ -470,11 +556,16 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     }
 
     # Keep global batch size for logging; MetricsTracker handles world size internally.
+    # Under node partitioning, dataset.num_frames is node-local, so report global totals.
     effective_batch_size = cfg.batch_size * accelerator.num_processes
+    tracker_num_frames = dataset.meta.total_frames if cfg.data_partition == "node" else dataset.num_frames
+    tracker_num_episodes = (
+        dataset.meta.total_episodes if cfg.data_partition == "node" else dataset.num_episodes
+    )
     train_tracker = MetricsTracker(
         cfg.batch_size,
-        dataset.num_frames,
-        dataset.num_episodes,
+        tracker_num_frames,
+        tracker_num_episodes,
         train_metrics,
         initial_step=step,
         accelerator=accelerator,

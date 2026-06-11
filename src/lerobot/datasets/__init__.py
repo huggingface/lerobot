@@ -48,6 +48,7 @@ from .language import (
 )
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
+from .partition import partition_episodes
 from .pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from .pyav_utils import check_video_encoder_parameters_pyav, detect_available_encoders_pyav
 from .sampler import DeterministicEpisodeAwareSampler, EpisodeAwareSampler, compute_sampler_state
@@ -84,6 +85,7 @@ __all__ = [
     "convert_image_to_video_dataset",
     "create_initial_features",
     "compute_sampler_state",
+    "partition_episodes",
     "create_lerobot_dataset_card",
     "column_for_style",
     "delete_episodes",

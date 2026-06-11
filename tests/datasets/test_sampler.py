@@ -267,3 +267,76 @@ def test_compute_sampler_state():
         "epoch": 1,
         "start_index": 100,
     }
+
+
+# --- internal sharding (data_partition="node" path) ---
+
+
+def test_sharded_samplers_are_disjoint_and_cover_epoch():
+    num_frames, world = 13, 4
+    unsharded = DeterministicEpisodeAwareSampler([0], [num_frames], shuffle=True, seed=42)
+    full_epoch = list(unsharded)
+    shards = [
+        list(
+            DeterministicEpisodeAwareSampler(
+                [0], [num_frames], shuffle=True, seed=42, shard_rank=r, shard_world_size=world
+            )
+        )
+        for r in range(world)
+    ]
+    # every shard is the strided slice of the shared permutation
+    for r, shard in enumerate(shards):
+        assert shard == full_epoch[r::world]
+    # disjoint and complete
+    combined = [idx for shard in shards for idx in shard]
+    assert sorted(combined) == sorted(full_epoch)
+    assert sum(len(s) for s in shards) == num_frames
+    # __len__ reports the shard-local length
+    sampler = DeterministicEpisodeAwareSampler(
+        [0], [num_frames], shuffle=True, seed=42, shard_rank=1, shard_world_size=world
+    )
+    assert len(sampler) == len(full_epoch[1::world])
+
+
+def test_sharded_sampler_resume_is_shard_local():
+    kwargs = {"shuffle": True, "seed": 7, "shard_rank": 1, "shard_world_size": 3}
+    reference = DeterministicEpisodeAwareSampler(*EPISODE_BOUNDS, **kwargs)
+    epoch_0 = list(reference)
+    epoch_1 = list(reference)
+    resumed = DeterministicEpisodeAwareSampler(*EPISODE_BOUNDS, **kwargs)
+    resumed.load_state_dict({"epoch": 0, "start_index": 1})
+    assert list(resumed) == epoch_0[1:]
+    assert list(resumed) == epoch_1
+
+
+def test_sharded_sampler_validation():
+    with pytest.raises(ValueError, match="shard_rank must be in"):
+        DeterministicEpisodeAwareSampler([0], [10], shard_rank=2, shard_world_size=2)
+    with pytest.raises(ValueError, match="shard_rank must be in"):
+        DeterministicEpisodeAwareSampler([0], [10], shard_rank=-1, shard_world_size=2)
+    with pytest.raises(ValueError, match="every shard needs at least one frame"):
+        DeterministicEpisodeAwareSampler([0], [3], shard_rank=0, shard_world_size=4)
+
+
+def test_node_partition_end_to_end_coverage():
+    # Simulate 2 nodes x 2 local ranks over 5 episodes: union of all four rank streams
+    # must cover every frame exactly once per (node-)epoch.
+    from lerobot.datasets.partition import partition_episodes
+
+    from_indices, to_indices = [0, 5, 8, 10, 14], [5, 8, 10, 14, 15]
+    lengths = [t - f for f, t in zip(from_indices, to_indices, strict=True)]
+    bins = partition_episodes(lengths, num_partitions=2)
+    seen = []
+    for node_index, node_episodes in enumerate(bins):
+        for local_rank in range(2):
+            sampler = DeterministicEpisodeAwareSampler(
+                from_indices,
+                to_indices,
+                episode_indices_to_use=node_episodes,
+                shuffle=True,
+                seed=1000 + node_index,
+                shard_rank=local_rank,
+                shard_world_size=2,
+            )
+            seen.extend(sampler)
+    assert sorted(seen) == list(range(15))

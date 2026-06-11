@@ -105,6 +105,13 @@ class TrainPipelineConfig(HubMixin):
     # and enables sample-exact resume of interrupted runs. The shuffle is pseudo-random rather
     # than a true uniform permutation. Not compatible with dataset.streaming.
     deterministic_sampler: bool = False
+    # Statically partition the dataset's episodes across nodes ("node") so each node downloads
+    # and stores only its near-uniform share (greedy LPT on frame counts) instead of the full
+    # dataset. Implies deterministic_sampler; ranks within a node shard the node-local data
+    # arithmetically. Sample-exact resume requires resuming with the same topology (number of
+    # nodes and processes). "none" (default) keeps the current behavior: full dataset everywhere,
+    # batch-level sharding across all ranks via accelerate.
+    data_partition: str = "none"
     steps: int = 100_000
     eval_freq: int = 20_000
     log_freq: int = 200
@@ -144,6 +151,18 @@ class TrainPipelineConfig(HubMixin):
                 "deterministic_sampler requires a map-style dataset and is not compatible with "
                 "dataset.streaming=true."
             )
+        if self.data_partition not in ("none", "node"):
+            raise ValueError(f"data_partition must be 'none' or 'node', got '{self.data_partition}'")
+        if self.data_partition == "node":
+            if self.dataset.streaming:
+                raise ValueError("data_partition='node' is not compatible with dataset.streaming=true.")
+            if self.sample_weighting is not None:
+                raise ValueError(
+                    "data_partition='node' is not compatible with sample_weighting: per-node data "
+                    "subsets change the weighting semantics."
+                )
+            if not isinstance(self.dataset.repo_id, str):
+                raise ValueError("data_partition='node' currently supports a single dataset repo_id.")
 
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
         policy_path = parser.get_path_arg("policy")

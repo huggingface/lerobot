@@ -129,6 +129,12 @@ class DeterministicEpisodeAwareSampler:
     yield different permutations without requiring `set_epoch` calls. During an epoch resumed
     via `load_state_dict`, `__len__` still reports the full epoch length; the first pass simply
     yields fewer samples.
+
+    With `shard_rank`/`shard_world_size`, the sampler itself shards the (shared) permutation:
+    shard r yields positions r, r + world, r + 2 * world, ... — disjoint across shards by
+    construction, with no accelerate-level batch sharding (and therefore no `even_batches`
+    padding) needed. `__len__`, `start_index` and `compute_sampler_state` (with
+    `num_processes=1`) then all live in shard-local positions.
     """
 
     def __init__(
@@ -140,6 +146,8 @@ class DeterministicEpisodeAwareSampler:
         drop_n_last_frames: int = 0,
         shuffle: bool = True,
         seed: int = 0,
+        shard_rank: int = 0,
+        shard_world_size: int = 1,
     ):
         """
         Args:
@@ -150,8 +158,15 @@ class DeterministicEpisodeAwareSampler:
             drop_n_first_frames: Number of frames to drop from the start of each episode.
             drop_n_last_frames: Number of frames to drop from the end of each episode.
             shuffle: Whether to shuffle with the seeded Feistel permutation.
-            seed: Seed the permutation is derived from (together with the epoch).
+            seed: Seed the permutation is derived from (together with the epoch). Must be
+                  identical on all shards of the same data for shards to stay disjoint.
+            shard_rank: This sampler's shard of the permutation (e.g. the local process index).
+            shard_world_size: Total number of shards (e.g. processes sharing this dataset).
         """
+        if not 0 <= shard_rank < shard_world_size:
+            raise ValueError(
+                f"shard_rank must be in [0, shard_world_size), got {shard_rank=} {shard_world_size=}"
+            )
         if drop_n_first_frames < 0:
             raise ValueError(f"drop_n_first_frames must be >= 0, got {drop_n_first_frames}")
         if drop_n_last_frames < 0:
@@ -191,6 +206,15 @@ class DeterministicEpisodeAwareSampler:
         self._starts = starts[used]
         self._cum_lengths = np.cumsum(lengths[used])
         self._num_frames = int(self._cum_lengths[-1])
+        if self._num_frames < shard_world_size:
+            raise ValueError(
+                f"Cannot shard {self._num_frames} frames across {shard_world_size} processes: "
+                "every shard needs at least one frame."
+            )
+        self._shard_rank = shard_rank
+        self._shard_world_size = shard_world_size
+        # Positions shard_rank, shard_rank + world, ... that are < num_frames.
+        self._shard_len = (self._num_frames - shard_rank + shard_world_size - 1) // shard_world_size
         self.shuffle = shuffle
         self.seed = seed
         self._epoch = 0
@@ -247,11 +271,12 @@ class DeterministicEpisodeAwareSampler:
 
     def _iter_epoch(self, epoch: int, start: int) -> Iterator[int]:
         keys = self._round_keys(epoch) if self.shuffle else None
-        for k in range(start, self._num_frames):
+        for local_k in range(start, self._shard_len):
+            k = self._shard_rank + local_k * self._shard_world_size
             yield self._frame_index(self._permute(k, keys) if self.shuffle else k)
 
     def __len__(self) -> int:
-        return self._num_frames
+        return self._shard_len
 
 
 def compute_sampler_state(step: int, num_frames: int, batch_size: int, num_processes: int) -> dict:
