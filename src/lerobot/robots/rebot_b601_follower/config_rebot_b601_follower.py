@@ -75,8 +75,8 @@ class RebotB601FollowerConfig:
     # Soft joint limits (degrees). These are clipped against on every action.
     joint_limits: dict[str, tuple[float, float]] = field(
         default_factory=lambda: {
-            "shoulder_pan": (-145.0, 145.0),
-            "shoulder_lift": (-170.0, 1.0),
+            "shoulder_pan": (-150.0, 150.0),
+            "shoulder_lift": (-200.0, 1.0),
             "elbow_flex": (-200.0, 1.0),
             "wrist_flex": (-80.0, 90.0),
             "wrist_yaw": (-90.0, 90.0),

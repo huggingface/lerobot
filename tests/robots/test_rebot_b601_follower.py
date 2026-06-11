@@ -91,9 +91,9 @@ def test_get_observation_converts_to_degrees(follower):
 
 
 def test_send_action_clips_to_joint_limits(follower):
-    # shoulder_pan limit is (-145, 145); request beyond the upper bound.
+    # shoulder_pan limit is (-150, 150); request beyond the upper bound.
     returned = follower.send_action({"shoulder_pan.pos": 999.0})
-    assert returned["shoulder_pan.pos"] == 145.0
+    assert returned["shoulder_pan.pos"] == 150.0
     follower.motors["shoulder_pan"].send_pos_vel.assert_called_once()
 
 
