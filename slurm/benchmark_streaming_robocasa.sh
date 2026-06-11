@@ -33,7 +33,7 @@ for MODE in single sarm; do
         --mode $MODE \
         --batch_size 64 \
         --num_workers 12 \
-        --buffer_size 4000 \
+        --episode_pool_size 64 \
         --num_batches 300 \
         --out_dir '"$OUT_DIR"'/node${SLURM_NODEID}
 done

@@ -106,7 +106,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,
                 revision=cfg.dataset.revision,
-                buffer_size=cfg.dataset.streaming_buffer_size,
+                episode_pool_size=cfg.dataset.streaming_episode_pool_size,
                 tolerance_s=cfg.tolerance_s,
                 return_uint8=True,
             )

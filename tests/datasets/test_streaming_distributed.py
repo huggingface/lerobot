@@ -40,7 +40,7 @@ from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 root, repo_id, out_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 state = PartialState()
 ds = StreamingLeRobotDataset(
-    repo_id=repo_id, root=root, shuffle=False, buffer_size=8, max_num_shards=8
+    repo_id=repo_id, root=root, shuffle=False, episode_pool_size=8, max_num_shards=8
 )
 indices = [int(frame["index"]) for frame in ds]
 payload = {"rank": state.process_index, "world": state.num_processes, "indices": indices}

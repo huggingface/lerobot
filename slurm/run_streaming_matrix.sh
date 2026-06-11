@@ -83,7 +83,7 @@ for SOURCE in $SOURCES; do
           $RUN benchmarks/streaming/benchmark_streaming.py \
             --repo_id $REPO_ID $ROOTFLAG \
             --mode $MODE --source $SOURCE --video_decode_device $DECODE \
-            --batch_size $BATCH_SIZE --num_workers $W --buffer_size $B \
+            --batch_size $BATCH_SIZE --num_workers $W --episode_pool_size $B \
             --num_batches $NUM_BATCHES --out_dir $OUT_DIR")
       jid=${jid%%;*}  # strip ';cluster' suffix on federated setups
       echo "submitted job $jid  bench_${SOURCE}_${MODE}_${DECODE}${DEPFLAG:+  (after $prev_jid)}"

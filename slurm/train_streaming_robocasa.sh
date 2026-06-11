@@ -42,7 +42,7 @@ accelerate launch \
         --repo_id '"$REPO_ID"' \
         --batch_size 64 \
         --num_workers 12 \
-        --buffer_size 4000 \
+        --episode_pool_size 64 \
         --steps 200000 \
         --save_freq 2000 \
         --log_freq 50

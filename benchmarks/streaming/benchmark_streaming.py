@@ -62,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source", type=str, default="hub", help="Label only: hub | bucket | warmed_bucket.")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=8)
-    parser.add_argument("--buffer_size", type=int, default=2000)
+    parser.add_argument("--episode_pool_size", type=int, default=64)
     parser.add_argument("--video_decoder_cache_size", type=int, default=None)
     parser.add_argument(
         "--video_decode_device",
@@ -86,7 +86,7 @@ def build_dataset(args: argparse.Namespace, meta: LeRobotDatasetMetadata) -> Str
         root=args.root,
         data_files_root=args.data_files_root,
         delta_timestamps=delta_timestamps,
-        buffer_size=args.buffer_size,
+        episode_pool_size=args.episode_pool_size,
         video_decoder_cache_size=args.video_decoder_cache_size,
         video_decode_device=args.video_decode_device,
         tolerance_s=1e-3,
@@ -172,7 +172,7 @@ def main() -> None:
         "mode": args.mode,
         "batch_size": args.batch_size,
         "num_workers": args.num_workers,
-        "buffer_size": args.buffer_size,
+        "episode_pool_size": args.episode_pool_size,
         "num_cameras": len(meta.video_keys),
         "fps": meta.fps,
         "device": str(device),
