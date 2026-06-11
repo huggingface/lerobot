@@ -148,37 +148,6 @@ def test_sarm_window_covers_long_horizon_without_padding(tmp_path, lerobot_datas
     assert checked > 0, "test did not exercise any in-episode long-horizon frame"
 
 
-def test_fast_forward_resume_is_sample_exact(tmp_path, lerobot_dataset_factory):
-    """Resume replays the deterministic stream and continues at the exact sample."""
-    repo_id = f"{DUMMY_REPO_ID}-resume"
-    total_frames = 100
-    _make_local_dataset(
-        lerobot_dataset_factory, tmp_path / "ds", repo_id, total_episodes=5, total_frames=total_frames
-    )
-
-    def fresh_ds():
-        return StreamingLeRobotDataset(
-            repo_id=repo_id,
-            root=tmp_path / "ds",
-            shuffle=True,
-            seed=7,
-            episode_pool_size=3,
-            max_num_shards=1,
-        )
-
-    full_epoch = _stream_indices(fresh_ds())
-    assert sorted(full_epoch) == list(range(total_frames))
-
-    batches_consumed, batch_size = 5, 4  # 20 samples in
-    resumed_ds = fresh_ds()
-    resumed_ds.load_state_dict({"batches_consumed": batches_consumed, "batch_size": batch_size})
-    resumed = _stream_indices(resumed_ds)
-
-    assert resumed == full_epoch[batches_consumed * batch_size :], (
-        "fast-forward resume did not continue at the exact sample"
-    )
-
-
 def test_pool_order_is_deterministic_per_seed(tmp_path, lerobot_dataset_factory):
     repo_id = f"{DUMMY_REPO_ID}-seeds"
     _make_local_dataset(lerobot_dataset_factory, tmp_path / "ds", repo_id, total_episodes=6, total_frames=120)
@@ -224,27 +193,6 @@ def test_pool_mixes_episodes(tmp_path, lerobot_dataset_factory):
     )
     episodes_in_head = {int(frame["episode_index"]) for _, frame in zip(range(20), ds, strict=False)}
     assert len(episodes_in_head) >= 3, f"pool did not mix episodes: {episodes_in_head}"
-
-
-def test_video_prefetcher_refcounted_lifecycle(tmp_path):
-    from lerobot.datasets.streaming_dataset import _VideoPrefetcher
-
-    remote = tmp_path / "remote"
-    (remote / "videos").mkdir(parents=True)
-    payload = b"x" * 1024
-    (remote / "videos" / "a.mp4").write_bytes(payload)
-
-    prefetcher = _VideoPrefetcher(str(remote), cache_dir=tmp_path / "cache", max_workers=1)
-    prefetcher.acquire("videos/a.mp4")
-    prefetcher.acquire("videos/a.mp4")  # second pooled episode sharing the file
-    local = prefetcher.wait_local("videos/a.mp4")
-    assert local is not None and local.read_bytes() == payload
-
-    prefetcher.release("videos/a.mp4")
-    assert local.exists(), "file deleted while still referenced"
-    prefetcher.release("videos/a.mp4")
-    assert not local.exists(), "file not deleted at refcount zero"
-    prefetcher.shutdown()
 
 
 def test_schema_parity_with_map_style(tmp_path, lerobot_dataset_factory):
@@ -318,87 +266,49 @@ def test_shuffle_decorrelates_output_order(tmp_path, lerobot_dataset_factory):
     assert shuffled != ordered, "shuffle did not decorrelate output order"
 
 
-def test_fast_forward_resume_with_dataloader_workers(tmp_path, lerobot_dataset_factory):
-    """Resume must be exact under num_workers > 0: each worker re-derives its own skip."""
-    from torch.utils.data import DataLoader
-
-    repo_id = f"{DUMMY_REPO_ID}-resume-workers"
-    _make_local_dataset(lerobot_dataset_factory, tmp_path / "ds", repo_id, total_episodes=8, total_frames=120)
-
-    num_workers = 2
+def test_native_resume_never_repeats_and_loss_is_bounded(tmp_path, lerobot_dataset_factory):
+    """Native state_dict resume: no sample is re-yielded; loss is bounded by the shuffle buffers."""
+    repo_id = f"{DUMMY_REPO_ID}-native-resume"
+    total_frames = 100
+    _make_local_dataset(
+        lerobot_dataset_factory, tmp_path / "ds", repo_id, total_episodes=5, total_frames=total_frames
+    )
 
     def fresh_ds():
         return StreamingLeRobotDataset(
             repo_id=repo_id,
             root=tmp_path / "ds",
             shuffle=True,
-            seed=11,
-            episode_pool_size=3,
-            max_num_shards=4,
+            seed=7,
+            episode_pool_size=2,
+            frame_shuffle_buffer_size=8,
         )
 
-    def epoch_samples(ds):
-        # batch_size=None yields raw samples; the DataLoader round-robins them across workers,
-        # which is batch_size=1 in the resume arithmetic.
-        loader = DataLoader(ds, batch_size=None, num_workers=num_workers)
-        return [int(sample["index"]) for sample in loader]
+    ds = fresh_ds()
+    it = iter(ds)
+    consumed = [int(next(it)["index"]) for _ in range(30)]
+    state = ds.state_dict()
 
-    full = epoch_samples(fresh_ds())
-
-    samples_consumed = 17
     resumed_ds = fresh_ds()
-    resumed_ds.load_state_dict({"batches_consumed": samples_consumed, "batch_size": 1})
-    resumed = epoch_samples(resumed_ds)
+    resumed_ds.load_state_dict(state)
+    rest = [int(frame["index"]) for frame in resumed_ds]
 
-    assert resumed == full[samples_consumed:], (
-        "fast-forward resume with DataLoader workers did not continue at the exact sample"
-    )
-
-
-def test_episode_grouping_native_and_fallback_agree(tmp_path, lerobot_dataset_factory, monkeypatch):
-    """The datasets>=5 batch(by_column=...) path must group episodes identically to the row loop."""
-    import lerobot.datasets.streaming_dataset as sd
-
-    repo_id = f"{DUMMY_REPO_ID}-grouping"
-    _make_local_dataset(lerobot_dataset_factory, tmp_path / "ds", repo_id, total_episodes=5, total_frames=100)
-    ds = StreamingLeRobotDataset(repo_id=repo_id, root=tmp_path / "ds", shuffle=False, max_num_shards=1)
-
-    def episode_signature(use_native):
-        monkeypatch.setattr(sd, "_HAS_BATCH_BY_COLUMN", use_native)
-        return [
-            (ep_idx, [int(row["index"]) for row in rows])
-            for ep_idx, rows in ds._iter_shard_episodes(ds.hf_dataset)
-        ]
-
-    fallback = episode_signature(False)
-    assert len(fallback) == 5
-    if not sd._HAS_BATCH_BY_COLUMN and "by_column" not in str(
-        type(ds.hf_dataset).batch.__doc__ or ""
-    ):  # datasets < 5: only the fallback path exists
-        return
-    native = episode_signature(True)
-    assert native == fallback
+    assert not set(consumed) & set(rest), "resume re-yielded already-seen frames"
+    # in-flight buffer contents are skipped on resume (documented datasets behavior):
+    # bounded by the episode pool (2 episodes of <= ~30 frames here) + frame buffer (8)
+    covered = len(set(consumed) | set(rest))
+    max_in_flight = 2 * 30 + 8
+    assert covered >= total_frames - max_in_flight
+    assert covered + len(consumed) >= total_frames - max_in_flight
 
 
-def test_shard_order_permutation_properties(tmp_path, lerobot_dataset_factory):
-    """Shard order: a valid permutation, deterministic per (seed, epoch, rank), worker-independent
-    (workers stride the same list, so it must not depend on worker id), reshuffled across epochs,
-    and identity when shuffle is off."""
-    repo_id = f"{DUMMY_REPO_ID}-shardorder"
+def test_pipeline_uses_native_primitives(tmp_path, lerobot_dataset_factory):
+    """The tabular pipeline is pure datasets: batch(by_column) + shuffle + map + shuffle."""
+    repo_id = f"{DUMMY_REPO_ID}-native-pipe"
     _make_local_dataset(lerobot_dataset_factory, tmp_path / "ds", repo_id, total_episodes=4, total_frames=80)
+    ds = StreamingLeRobotDataset(repo_id=repo_id, root=tmp_path / "ds", shuffle=True, episode_pool_size=2)
+    import datasets as hf_datasets
 
-    ds = StreamingLeRobotDataset(repo_id=repo_id, root=tmp_path / "ds", shuffle=True, seed=5)
-    num_shards = 32
-    order_epoch0 = ds._shard_order(0, num_shards)
-    assert sorted(order_epoch0) == list(range(num_shards))
-    assert ds._shard_order(0, num_shards) == order_epoch0  # deterministic
-    assert ds._shard_order(1, num_shards) != order_epoch0  # reshuffles per epoch
-    assert order_epoch0 != list(range(num_shards))  # actually permuted (P=1/32! of false alarm)
-
-    other_rank = StreamingLeRobotDataset(
-        repo_id=repo_id, root=tmp_path / "ds", shuffle=True, seed=5, rank=1, world_size=2
-    )
-    assert other_rank._shard_order(0, num_shards) != order_epoch0  # ranks decorrelated
-
-    unshuffled = StreamingLeRobotDataset(repo_id=repo_id, root=tmp_path / "ds", shuffle=False, seed=5)
-    assert unshuffled._shard_order(0, num_shards) == list(range(num_shards))
+    assert isinstance(ds._pipeline, hf_datasets.IterableDataset)
+    state = ds._pipeline.state_dict()  # the native resume protocol is available end-to-end
+    assert state is not None

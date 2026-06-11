@@ -218,6 +218,11 @@ def test_frames_with_delta_consistency(tmp_path, lerobot_dataset_factory, state_
 
                 check = torch.allclose(left, right) and left.shape == right.shape
 
+            else:
+                # Scalar numerics: streaming yields python floats/ints where map-style yields
+                # 0-dim tensors (long-standing accepted difference). Compare by value.
+                check = float(left) == float(right)
+
             key_checks.append((key, check))
 
         assert all(t[1] for t in key_checks), (
