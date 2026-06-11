@@ -99,6 +99,9 @@ def update_policy(
     start_time = time.perf_counter()
     policy.train()
 
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
     # Compute sample weights if a weighter is provided
     sample_weights = None
     weight_stats = None
@@ -158,6 +161,8 @@ def update_policy(
     train_metrics.grad_norm = grad_norm.item()
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
+    if torch.cuda.is_available():
+        train_metrics.gpu_mem_gb = torch.cuda.max_memory_allocated() / (1024**3)
     return train_metrics, output_dict
 
 
@@ -232,15 +237,18 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    # Dataset loading synchronization: main process downloads first to avoid race conditions
-    if is_main_process:
-        logging.info("Creating dataset")
+    # Dataset loading synchronization: each node's local main process downloads first to avoid
+    # race conditions (the global main process only exists on node 0, so gating on it would let
+    # all ranks of the other nodes download and build the Arrow cache concurrently).
+    if accelerator.is_local_main_process:
+        if is_main_process:
+            logging.info("Creating dataset")
         dataset = make_dataset(cfg)
 
     accelerator.wait_for_everyone()
 
-    # Now all other processes can safely load the dataset
-    if not is_main_process:
+    # Now all other processes can safely load the dataset from the local cache
+    if not accelerator.is_local_main_process:
         dataset = make_dataset(cfg)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
@@ -292,19 +300,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     active_cfg = cfg.trainable_config
     processor_pretrained_path = active_cfg.pretrained_path
-    if (
-        getattr(active_cfg, "use_relative_actions", False)
-        and processor_pretrained_path is not None
-        and not cfg.resume
-    ):
-        logging.warning(
-            "use_relative_actions=true with pretrained processors can skip relative transforms if "
-            "the checkpoint processors do not define them. Building processors from current policy config."
-        )
-        processor_pretrained_path = None
 
     processor_kwargs = {}
-    postprocessor_kwargs = {}
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
         processor_kwargs["dataset_stats"] = dataset.meta.stats
 
@@ -312,24 +309,31 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         processor_kwargs["dataset_meta"] = dataset.meta
 
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:
-        processor_kwargs["preprocessor_overrides"] = {
+        preprocessor_overrides = {
             "device_processor": {"device": device.type},
             "normalizer_processor": {
                 "stats": dataset.meta.stats,
                 "features": {**policy.config.input_features, **policy.config.output_features},
                 "norm_map": policy.config.normalization_mapping,
             },
+            "rename_observations_processor": {"rename_map": cfg.rename_map},
         }
-        processor_kwargs["preprocessor_overrides"]["rename_observations_processor"] = {
-            "rename_map": cfg.rename_map
-        }
-        postprocessor_kwargs["postprocessor_overrides"] = {
+        postprocessor_overrides = {
             "unnormalizer_processor": {
                 "stats": dataset.meta.stats,
                 "features": policy.config.output_features,
                 "norm_map": policy.config.normalization_mapping,
             },
         }
+        if getattr(active_cfg, "use_relative_actions", False):
+            preprocessor_overrides["relative_actions_processor"] = {
+                "enabled": True,
+                "exclude_joints": getattr(active_cfg, "relative_exclude_joints", []),
+                "action_names": getattr(active_cfg, "action_feature_names", None),
+            }
+            postprocessor_overrides["absolute_actions_processor"] = {"enabled": True}
+        processor_kwargs["preprocessor_overrides"] = preprocessor_overrides
+        processor_kwargs["postprocessor_overrides"] = postprocessor_overrides
 
     if cfg.is_reward_model_training:
         preprocessor, postprocessor = make_reward_pre_post_processors(
@@ -341,7 +345,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             policy_cfg=cfg.policy,
             pretrained_path=processor_pretrained_path,
             **processor_kwargs,
-            **postprocessor_kwargs,
         )
 
     if is_main_process:
@@ -391,12 +394,19 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # create dataloader for offline training
     if hasattr(active_cfg, "drop_n_last_frames"):
         shuffle = False
+        # A dedicated generator (rather than the global torch RNG) lets accelerator.prepare
+        # synchronize the shuffle permutation across ranks, keeping batch shards disjoint even
+        # when ranks consume the global RNG asymmetrically (e.g. eval on the main process only).
+        sampler_generator = torch.Generator()
+        if cfg.seed is not None:
+            sampler_generator.manual_seed(cfg.seed)
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
             dataset.meta.episodes["dataset_to_index"],
             episode_indices_to_use=dataset.episodes,
             drop_n_last_frames=active_cfg.drop_n_last_frames,
             shuffle=True,
+            generator=sampler_generator,
         )
     else:
         shuffle = True
@@ -429,12 +439,22 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     policy.train()
 
     train_metrics = {
-        "loss": AverageMeter("loss", ":.3f"),
+        # Per-rank loss reflects only one shard of the global batch; mean recovers the loss DDP
+        # is actually optimizing. grad_norm and lr are already identical on every rank (post
+        # gradient sync / deterministic scheduler) so reducing them would be a no-op collective.
+        "loss": AverageMeter("loss", ":.3f", reduction="mean"),
         "grad_norm": AverageMeter("grdn", ":.3f"),
         "lr": AverageMeter("lr", ":0.1e"),
-        "update_s": AverageMeter("updt_s", ":.3f"),
-        "dataloading_s": AverageMeter("data_s", ":.3f"),
+        # Report the slowest rank for bottleneck-style timings so multi-GPU runs surface the
+        # true straggler instead of rank 0's view.
+        "update_s": AverageMeter("updt_s", ":.3f", reduction="max"),
+        "dataloading_s": AverageMeter("data_s", ":.3f", reduction="max"),
+        # Derived from the post-reduce max step time; set once per log window on the main rank.
+        "samples_per_s": AverageMeter("smp/s", ":.0f"),
     }
+    if torch.cuda.is_available():
+        # max() because headroom is gated by the worst-case rank.
+        train_metrics["gpu_mem_gb"] = AverageMeter("mem_gb", ":.2f", reduction="max")
 
     # Keep global batch size for logging; MetricsTracker handles world size internally.
     effective_batch_size = cfg.batch_size * accelerator.num_processes
@@ -486,21 +506,29 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         if is_main_process:
             progbar.update(1)
         train_tracker.step()
-        is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and is_main_process
+        is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
 
         if is_log_step:
-            logging.info(train_tracker)
-            if wandb_logger:
-                wandb_log_dict = train_tracker.to_dict()
-                if output_dict:
-                    wandb_log_dict.update(output_dict)
-                # Log sample weighting statistics if enabled
-                if sample_weighter is not None:
-                    weighter_stats = sample_weighter.get_stats()
-                    wandb_log_dict.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
-                wandb_logger.log_dict(wandb_log_dict, step)
+            # Collective reduce must run on every rank, before the main-process gate below.
+            train_tracker.reduce_across_ranks()
+            if is_main_process:
+                # Cluster-wide throughput, derived from the already-reduced (max) step time so it
+                # reflects the slowest rank — which is what actually gates the next iteration.
+                step_time = train_tracker.update_s.avg + train_tracker.dataloading_s.avg
+                if step_time > 0:
+                    train_tracker.samples_per_s = effective_batch_size / step_time
+                logging.info(train_tracker)
+                if wandb_logger:
+                    wandb_log_dict = train_tracker.to_dict()
+                    if output_dict:
+                        wandb_log_dict.update(output_dict)
+                    # Log sample weighting statistics if enabled
+                    if sample_weighter is not None:
+                        weighter_stats = sample_weighter.get_stats()
+                        wandb_log_dict.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
+                    wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step:
