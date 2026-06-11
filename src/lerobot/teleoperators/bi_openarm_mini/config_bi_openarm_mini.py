@@ -14,7 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_openarm_mini import OpenArmMiniConfig, OpenArmMiniConfigBase
-from .openarm_mini import OpenArmMini
+from dataclasses import dataclass
 
-__all__ = ["OpenArmMini", "OpenArmMiniConfig", "OpenArmMiniConfigBase"]
+from ..config import TeleoperatorConfig
+from ..openarm_mini import OpenArmMiniConfigBase
+
+
+@TeleoperatorConfig.register_subclass("bi_openarm_mini")
+@dataclass
+class BiOpenArmMiniConfig(TeleoperatorConfig):
+    """Configuration class for Bi OpenArm Mini teleoperators."""
+
+    left_arm_config: OpenArmMiniConfigBase
+    right_arm_config: OpenArmMiniConfigBase
