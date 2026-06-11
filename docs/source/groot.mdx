@@ -1,16 +1,16 @@
-# GR00T N1.5 Policy
+# GR00T Policy
 
-GR00T N1.5 is an open foundation model from NVIDIA designed for generalized humanoid robot reasoning and skills. It is a cross-embodiment model that accepts multimodal input, including language and images, to perform manipulation tasks in diverse environments.
+GR00T is an NVIDIA foundation model family for generalized humanoid robot reasoning and skills. It is a cross-embodiment policy that accepts multimodal input, including language, images, and proprioception, to perform manipulation tasks in diverse environments.
 
-This document outlines the specifics of its integration and usage within the LeRobot framework.
+LeRobot integrates GR00T N1.7 through the `groot` policy type.
 
 ## Model Overview
 
-NVIDIA Isaac GR00T N1.5 is an upgraded version of the GR00T N1 foundation model. It is built to improve generalization and language-following abilities for humanoid robots.
+GR00T N1.7 uses a Cosmos-Reason2/Qwen3-VL backbone and provides checkpoints for SimplerEnv, DROID, and LIBERO.
 
-Developers and researchers can post-train GR00T N1.5 with their own real or synthetic data to adapt it for specific humanoid robots or tasks.
+Developers and researchers can post-train GR00T with their own real or synthetic data to adapt it for specific humanoid robots or tasks.
 
-GR00T N1.5 (specifically the GR00T-N1.5-3B model) is built using pre-trained vision and language encoders. It utilizes a flow matching action transformer to model a chunk of actions, conditioned on vision, language, and proprioception.
+GR00T uses pre-trained vision and language encoders with a flow matching action transformer to model a chunk of actions conditioned on vision, language, and proprioception.
 
 <img
   src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-groot-paper1%20(1).png"
@@ -28,33 +28,46 @@ This approach allows the model to be highly adaptable through post-training for 
 
 ## Installation Requirements
 
-As of today, GR00T N1.5 requires flash attention for it's internal working.
+GR00T is intended for NVIDIA GPU-accelerated systems. The `groot` extra still includes Flash Attention on non-macOS platforms, and Flash Attention needs a compatible PyTorch/CUDA environment before it is installed. Install the dependencies in this order:
 
-We are working on making this optional, but in the meantime that means that we require an extra installation step and it can only be used in CUDA enabled devices.
-
-1. Following the Environment Setup of our [Installation Guide](./installation). **Attention** don't install `lerobot` in this step.
-2. Install [Flash Attention](https://github.com/Dao-AILab/flash-attention) by running:
+1. Follow the Environment Setup in the [Installation Guide](./installation). Do not install `lerobot` yet.
+2. Install PyTorch, TorchVision, and the build dependencies used by Flash Attention:
 
 ```bash
-# Check https://pytorch.org/get-started/locally/ for your system
-pip install "torch>=2.2.1,<2.8.0" "torchvision>=0.21.0,<0.23.0" # --index-url https://download.pytorch.org/whl/cu1XX
-pip install ninja "packaging>=24.2,<26.0" # flash attention dependencies
+# Check https://pytorch.org/get-started/locally/ for the right CUDA wheel index for your system.
+pip install "torch>=2.7,<2.12.0" "torchvision>=0.22.0,<0.27.0" \
+  --index-url https://download.pytorch.org/whl/cu128
+pip install "ninja>=1.11.1,<2.0.0" "packaging>=24.2,<26.0"
+```
+
+3. Install and verify Flash Attention:
+
+```bash
 pip install "flash-attn>=2.5.9,<3.0.0" --no-build-isolation
 python -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} imported successfully')"
 ```
 
-3. Install LeRobot by running:
+4. Install LeRobot with the GR00T extra:
 
 ```bash
-pip install lerobot[groot]
+pip install "lerobot[groot]"
 ```
+
+For a source checkout, use the same order, then install the local package with:
+
+```bash
+pip install -e ".[groot]"
+```
+
+If your CUDA/PyTorch build needs a different Flash Attention wheel or source build, follow the [Flash Attention project](https://github.com/Dao-AILab/flash-attention) instructions, but keep the same ordering: PyTorch first, Flash Attention next, then `lerobot[groot]`.
 
 ## Usage
 
-To use GR00T in your LeRobot configuration, specify the policy type as:
+To use GR00T N1.7:
 
-```python
-policy.type=groot
+```bash
+--policy.type=groot \
+--policy.model_version=n1.7
 ```
 
 ## Training
@@ -87,21 +100,54 @@ accelerate launch \
 
 ## Performance Results
 
-### Libero Benchmark Results
+### LIBERO Benchmark Results
 
 > [!NOTE]
-> Follow our instructions for Libero usage: [Libero](./libero)
+> Follow the [LIBERO](./libero) setup instructions before running `lerobot-eval`.
 
-GR00T has demonstrated strong performance on the Libero benchmark suite. To compare and test its LeRobot implementation, we finetuned the GR00T N1.5 model for 30k steps on the Libero dataset and compared the results to the GR00T reference results.
+GR00T N1.7 has demonstrated strong performance on the LIBERO benchmark suite. To reproduce LeRobot results, follow the instructions in the [LIBERO](./libero) section.
 
-| Benchmark          | LeRobot Implementation | GR00T Reference |
-| ------------------ | ---------------------- | --------------- |
-| **Libero Spatial** | 82.0%                  | 92.0%           |
-| **Libero Object**  | 99.0%                  | 92.0%           |
-| **Libero Long**    | 82.0%                  | 76.0%           |
-| **Average**        | 87.0%                  | 87.0%           |
+### GR00T N1.7 LIBERO Checkpoints
 
-These results demonstrate GR00T's strong generalization capabilities across diverse robotic manipulation tasks. To reproduce these results, you can follow the instructions in the [Libero](https://huggingface.co/docs/lerobot/libero) section.
+NVIDIA publishes GR00T N1.7 LIBERO checkpoints at [`nvidia/GR00T-N1.7-LIBERO`](https://huggingface.co/nvidia/GR00T-N1.7-LIBERO), with one subdirectory per LIBERO suite:
+
+| Suite          | Checkpoint subdirectory |
+| -------------- | ----------------------- |
+| LIBERO Spatial | `libero_spatial`        |
+| LIBERO Object  | `libero_object`         |
+| LIBERO Goal    | `libero_goal`           |
+| LIBERO 10      | `libero_10`             |
+
+Preliminary LeRobot integration results:
+
+| Suite          | Status | Success rate | n_episodes |
+| -------------- | ------ | -----------: | ---------: |
+| LIBERO Spatial | ✓      |         ~95% |         XX |
+| LIBERO Object  | ✓      |          XX% |         XX |
+| LIBERO Goal    | ✓      |          XX% |         XX |
+| LIBERO 10      | ✓      |          XX% |         XX |
+| **Average**    | ✓      |      **XX%** |     **XX** |
+
+Replace the `XX` placeholders with final eval artifacts before merge.
+
+Download the suite checkpoint locally, then point `--policy.base_model_path` at the downloaded subdirectory. `--policy.path` is reserved for LeRobot checkpoints that contain a LeRobot `config.json` with a `type` field.
+
+```bash
+huggingface-cli download nvidia/GR00T-N1.7-LIBERO \
+  --include "libero_spatial/*" \
+  --local-dir ./GR00T-N1.7-LIBERO
+
+lerobot-eval \
+  --policy.type=groot \
+  --policy.model_version=n1.7 \
+  --policy.base_model_path=./GR00T-N1.7-LIBERO/libero_spatial \
+  --policy.embodiment_tag=libero_sim \
+  --env.type=libero \
+  --env.task=libero_spatial \
+  --eval.n_episodes=50
+```
+
+Use `eval.n_episodes >= 50` per suite when reporting success rates.
 
 ### Evaluate in your hardware setup
 
@@ -131,4 +177,4 @@ lerobot-rollout\
 
 ## License
 
-This model follows NVIDIA's proprietary license, consistent with the original [GR00T repository](https://github.com/NVIDIA/Isaac-GR00T). Future versions (starting from N1.7) will follow **Apache 2.0 License**.
+GR00T N1.7 is released under the [NVIDIA Open Model License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/).

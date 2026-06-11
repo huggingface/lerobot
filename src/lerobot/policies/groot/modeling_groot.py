@@ -17,14 +17,8 @@
 """
 Groot Policy Wrapper for LeRobot Integration
 
-Minimal integration that delegates to Isaac-GR00T components where possible
-without porting their code. The intent is to:
-
-- Download and load the pretrained GR00T model via GR00TN15.from_pretrained
-- Optionally align action horizon similar to gr00t_finetune.py
-- Expose predict_action via GR00T model.get_action
-- Provide a training forward that can call the GR00T model forward if batch
-  structure matches.
+Minimal integration that delegates to Isaac-GR00T N1.7 components where
+possible without porting their code.
 
 Notes:
 - Dataset loading and full training orchestration is handled by Isaac-GR00T
@@ -46,8 +40,14 @@ from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.import_utils import require_package
 
 from ..pretrained import PreTrainedPolicy
-from .configuration_groot import GrootConfig
-from .groot_n1 import GR00TN15
+from .configuration_groot import (
+    GROOT_N1_7,
+    GrootConfig,
+    infer_groot_model_version,
+    infer_groot_n1_7_action_execution_horizon,
+    infer_groot_n1_7_action_horizon,
+    normalize_groot_model_version,
+)
 
 T = TypeVar("T", bound="GrootPolicy")
 
@@ -67,27 +67,28 @@ class GrootPolicy(PreTrainedPolicy):
 
         # Initialize GR00T model using ported components
         self._groot_model = self._create_groot_model()
+        self._action_queue_steps = self._resolve_action_queue_steps()
 
         self.reset()
 
     def _create_groot_model(self):
-        """Create and initialize the GR00T model using Isaac-GR00T API.
-
-        This is only called when creating a NEW policy (not when loading from checkpoint).
-
-        Steps (delegating to Isaac-GR00T):
-        1) Download and load pretrained model via GR00TN15.from_pretrained
-        2) Align action horizon with data_config if provided
-        """
+        """Create and initialize the GR00T N1.7 model using Isaac-GR00T APIs."""
         # Handle Flash Attention compatibility issues
         self._handle_flash_attention_compatibility()
 
-        model = GR00TN15.from_pretrained(
-            pretrained_model_name_or_path=self.config.base_model_path,
-            tune_llm=self.config.tune_llm,
-            tune_visual=self.config.tune_visual,
-            tune_projector=self.config.tune_projector,
-            tune_diffusion_model=self.config.tune_diffusion_model,
+        model_kwargs = {
+            "pretrained_model_name_or_path": self.config.base_model_path,
+            "tune_llm": self.config.tune_llm,
+            "tune_visual": self.config.tune_visual,
+            "tune_projector": self.config.tune_projector,
+            "tune_diffusion_model": self.config.tune_diffusion_model,
+        }
+        from .groot_n1_7 import GR00TN17
+
+        model = GR00TN17.from_pretrained(
+            **model_kwargs,
+            tune_vlln=True,
+            transformers_loading_kwargs={"trust_remote_code": True},
         )
 
         model.compute_dtype = "bfloat16" if self.config.use_bf16 else model.compute_dtype
@@ -97,7 +98,7 @@ class GrootPolicy(PreTrainedPolicy):
 
     def reset(self):
         """Reset policy state when environment resets."""
-        self._action_queue = deque([], maxlen=self.config.n_action_steps)
+        self._action_queue = deque([], maxlen=self._action_queue_steps)
 
     @classmethod
     def from_pretrained(
@@ -118,7 +119,7 @@ class GrootPolicy(PreTrainedPolicy):
         """Load Groot policy from pretrained model.
 
         Handles two cases:
-        1. Base GR00T models (e.g., 'nvidia/GR00T-N1.5-3B') - loads the raw model
+        1. Base GR00T N1.7 models - loads the raw model
         2. Fine-tuned LeRobot checkpoints - loads config and weights from safetensors
 
         Args:
@@ -141,8 +142,13 @@ class GrootPolicy(PreTrainedPolicy):
         from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
         from huggingface_hub.errors import HfHubHTTPError
 
+        requested_version = (
+            normalize_groot_model_version(config.model_version)
+            if config is not None
+            else infer_groot_model_version(str(pretrained_name_or_path)) or GROOT_N1_7
+        )
         print(
-            "The Groot policy is a wrapper around Nvidia's GR00T N1.5 model.\n"
+            f"The Groot policy is a wrapper around Nvidia's GR00T {requested_version} model.\n"
             f"Loading pretrained model from: {pretrained_name_or_path}"
         )
 
@@ -193,8 +199,12 @@ class GrootPolicy(PreTrainedPolicy):
         print("Detected base GR00T model, loading from HuggingFace...")
 
         if config is None:
+            model_version = infer_groot_model_version(str(pretrained_name_or_path)) or GROOT_N1_7
             # Create default config with the pretrained path
-            config = GrootConfig(base_model_path=str(pretrained_name_or_path))
+            config = GrootConfig(
+                model_version=model_version,
+                base_model_path=str(pretrained_name_or_path),
+            )
 
             # Add minimal visual feature required for validation
             # validate_features() will automatically add state and action features
@@ -215,6 +225,13 @@ class GrootPolicy(PreTrainedPolicy):
             if hasattr(config, key):
                 setattr(config, key, value)
 
+        config.model_version = normalize_groot_model_version(config.model_version)
+        inferred_version = infer_groot_model_version(config.base_model_path)
+        if inferred_version is not None and inferred_version != config.model_version:
+            raise ValueError(
+                f"GR00T model_version '{config.model_version}' does not match base_model_path "
+                f"'{config.base_model_path}', which looks like '{inferred_version}'."
+            )
         # Create a fresh policy instance - this will automatically load the GR00T model
         # in __init__ via _create_groot_model()
         policy = cls(config)
@@ -225,18 +242,161 @@ class GrootPolicy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
+    def _resolve_action_queue_steps(self) -> int:
+        n_action_steps = int(self.config.n_action_steps)
+        checkpoint_action_horizon = infer_groot_n1_7_action_horizon(
+            self.config.base_model_path,
+            self.config.embodiment_tag,
+        )
+        execution_horizon = infer_groot_n1_7_action_execution_horizon(
+            self.config.base_model_path,
+            self.config.embodiment_tag,
+        )
+        horizons = [n_action_steps]
+        if checkpoint_action_horizon is not None:
+            horizons.append(checkpoint_action_horizon)
+        if execution_horizon is not None:
+            horizons.append(execution_horizon)
+        return min(horizons)
+
+    def _resolve_prediction_horizon(self, actions: Tensor) -> int:
+        """Return the policy-facing action horizon for a native GR00T prediction."""
+
+        horizons = [actions.shape[1]]
+        checkpoint_action_horizon = infer_groot_n1_7_action_horizon(
+            self.config.base_model_path,
+            self.config.embodiment_tag,
+        )
+        if checkpoint_action_horizon is not None:
+            horizons.append(checkpoint_action_horizon)
+
+        for horizon in (self.config.chunk_size, self.config.n_action_steps):
+            horizon = int(horizon)
+            if horizon > 0:
+                horizons.append(horizon)
+
+        return max(1, min(horizons))
+
+    def _filter_groot_inputs(self, batch: dict[str, Tensor], *, include_action: bool) -> dict[str, Tensor]:
+        allowed_base = {"state", "state_mask", "embodiment_id"}
+        if include_action:
+            allowed_base.update({"action", "action_mask"})
+
+        allowed_base.update(
+            {
+                "input_ids",
+                "attention_mask",
+                "pixel_values",
+                "image_grid_thw",
+                "mm_token_type_ids",
+                "pixel_values_videos",
+                "video_grid_thw",
+            }
+        )
+        allowed_base.add("action_mask")
+
+        return {
+            k: v
+            for k, v in batch.items()
+            if k in allowed_base and not (k.startswith("next.") or k == "info")
+        }
+
+    def _prepare_n1_7_rtc_inputs(
+        self,
+        inputs: dict[str, Tensor],
+        *,
+        inference_delay: object,
+        prev_chunk_left_over: object,
+    ) -> tuple[dict[str, Tensor], dict[str, object] | None]:
+        if prev_chunk_left_over is None:
+            return inputs, None
+        if not isinstance(prev_chunk_left_over, torch.Tensor):
+            raise TypeError("prev_chunk_left_over must be a torch.Tensor for GR00T N1.7 RTC.")
+        if prev_chunk_left_over.numel() == 0:
+            return inputs, None
+
+        prev_actions = prev_chunk_left_over
+        if prev_actions.ndim == 2:
+            prev_actions = prev_actions.unsqueeze(0)
+        elif prev_actions.ndim != 3:
+            raise ValueError(
+                "prev_chunk_left_over must have shape (T, A) or (B, T, A) for GR00T N1.7 RTC."
+            )
+
+        state = inputs.get("state")
+        if state is None:
+            raise ValueError("GR00T N1.7 RTC requires `state` in the preprocessed batch.")
+        batch_size = state.shape[0]
+        if prev_actions.shape[0] == 1 and batch_size > 1:
+            prev_actions = prev_actions.expand(batch_size, -1, -1).clone()
+        elif prev_actions.shape[0] != batch_size:
+            raise ValueError(
+                "prev_chunk_left_over batch size must match the current GR00T N1.7 batch size."
+            )
+
+        # The generic LeRobot RTC engine pads short leftovers with exact zero
+        # rows for fixed-shape policy calls. Native GR00T N1.7 RTC treats every
+        # provided prefix row as a real action constraint, so strip that padding
+        # before constructing the native overlap options.
+        valid_prefix_rows = prev_actions.detach().abs().sum(dim=(0, 2)) > 0
+        if valid_prefix_rows.any():
+            valid_prefix_steps = int(valid_prefix_rows.nonzero()[-1].item()) + 1
+            prev_actions = prev_actions[:, :valid_prefix_steps, :]
+        else:
+            return inputs, None
+
+        model_action_horizon = int(getattr(self._groot_model.config, "action_horizon", self.config.chunk_size))
+        max_action_dim = int(getattr(self._groot_model.config, "max_action_dim", self.config.max_action_dim))
+        if prev_actions.shape[1] > model_action_horizon:
+            prev_actions = prev_actions[:, -model_action_horizon:, :]
+
+        action_horizon = int(prev_actions.shape[1])
+        if action_horizon <= 0:
+            return inputs, None
+
+        if prev_actions.shape[2] > max_action_dim:
+            prev_actions = prev_actions[:, :, :max_action_dim]
+        elif prev_actions.shape[2] < max_action_dim:
+            pad = torch.zeros(
+                prev_actions.shape[0],
+                prev_actions.shape[1],
+                max_action_dim - prev_actions.shape[2],
+                dtype=prev_actions.dtype,
+                device=prev_actions.device,
+            )
+            prev_actions = torch.cat([prev_actions, pad], dim=2)
+
+        prev_actions = prev_actions.to(device=state.device, dtype=state.dtype)
+
+        rtc_config = getattr(self.config, "rtc_config", None)
+        execution_horizon = int(getattr(rtc_config, "execution_horizon", action_horizon))
+        overlap_steps = max(0, min(action_horizon, execution_horizon))
+        if overlap_steps == 0:
+            return inputs, None
+
+        try:
+            frozen_steps = int(inference_delay or 0)
+        except (TypeError, ValueError):
+            frozen_steps = 0
+        frozen_steps = max(0, min(frozen_steps, overlap_steps))
+
+        options = {
+            "action_horizon": action_horizon,
+            "rtc_overlap_steps": overlap_steps,
+            "rtc_frozen_steps": frozen_steps,
+            "rtc_ramp_rate": float(getattr(self._groot_model.config, "rtc_ramp_rate", 6.0)),
+        }
+
+        inputs = dict(inputs)
+        inputs["action"] = prev_actions
+        return inputs, options
+
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Training forward pass.
 
         Delegates to Isaac-GR00T model.forward when inputs are compatible.
         """
-        # Build a clean input dict for GR00T: keep only tensors GR00T consumes
-        allowed_base = {"state", "state_mask", "action", "action_mask", "embodiment_id"}
-        groot_inputs = {
-            k: v
-            for k, v in batch.items()
-            if (k in allowed_base or k.startswith("eagle_")) and not (k.startswith("next.") or k == "info")
-        }
+        groot_inputs = self._filter_groot_inputs(batch, include_action=True)
 
         # Get device from model parameters
         device = next(self.parameters()).device
@@ -254,31 +414,42 @@ class GrootPolicy(PreTrainedPolicy):
         return loss, loss_dict
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: object) -> Tensor:
         """Predict a chunk of actions for inference by delegating to Isaac-GR00T.
 
         Returns a tensor of shape (B, n_action_steps, action_dim).
+
+        For N1.7, LeRobot's RTC leftovers are converted into the native GR00T
+        action-overlap options before calling the underlying model.
         """
         self.eval()
 
-        # Build a clean input dict for GR00T: keep only tensors GR00T consumes
-        # Preprocessing is handled by the processor pipeline, so we just filter the batch
-        # NOTE: During inference, we should NOT pass action/action_mask (that's what we're predicting)
-        allowed_base = {"state", "state_mask", "embodiment_id"}
-        groot_inputs = {
-            k: v
-            for k, v in batch.items()
-            if (k in allowed_base or k.startswith("eagle_")) and not (k.startswith("next.") or k == "info")
-        }
+        # Preprocessing is handled by the processor pipeline, so we just filter the batch.
+        # During inference, we do not pass action because it is predicted.
+        # N1.7 still carries a 2-D action horizon mask from its checkpoint processor.
+        groot_inputs = self._filter_groot_inputs(batch, include_action=False)
+        groot_options = None
+        if self.config.model_version == GROOT_N1_7:
+            groot_inputs, groot_options = self._prepare_n1_7_rtc_inputs(
+                groot_inputs,
+                inference_delay=kwargs.get("inference_delay"),
+                prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
+            )
 
         # Get device from model parameters
         device = next(self.parameters()).device
 
         # Use bf16 autocast for inference to keep memory low and match backbone dtype
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=self.config.use_bf16):
-            outputs = self._groot_model.get_action(groot_inputs)
+            if groot_options is not None:
+                outputs = self._groot_model.get_action(groot_inputs, options=groot_options)
+            else:
+                outputs = self._groot_model.get_action(groot_inputs)
 
         actions = outputs.get("action_pred")
+
+        prediction_horizon = self._resolve_prediction_horizon(actions)
+        actions = actions[:, :prediction_horizon]
 
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
@@ -292,7 +463,7 @@ class GrootPolicy(PreTrainedPolicy):
 
         if len(self._action_queue) == 0:
             actions = self.predict_action_chunk(batch)
-            self._action_queue.extend(actions.transpose(0, 1))
+            self._action_queue.extend(actions[:, : self._action_queue_steps].transpose(0, 1))
         return self._action_queue.popleft()
 
     # -------------------------

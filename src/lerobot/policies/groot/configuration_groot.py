@@ -14,11 +14,293 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
+
+GROOT_N1_7 = "n1.7"
+# Legacy GR00T N1.5 identifier. N1.5 is NOT a supported model_version (it is
+# intentionally absent from _GROOT_MODEL_VERSION_ALIASES so normalize_groot_model_version
+# still rejects it). It is retained only so that infer_groot_model_version can recognise
+# an N1.5 base path/checkpoint and the N1.7 config/loader can reject the mismatch.
+GROOT_N1_5 = "n1.5"
+GROOT_N1_7_BASE_MODEL = "nvidia/GR00T-N1.7-3B"
+GROOT_N1_7_BACKBONE_MODEL = "nvidia/Cosmos-Reason2-2B"
+GROOT_ACTION_DECODE_TRANSFORM_LIBERO = "libero"
+
+_GROOT_MODEL_VERSION_ALIASES = {
+    "n1.7": GROOT_N1_7,
+    "n1_7": GROOT_N1_7,
+    "n1d7": GROOT_N1_7,
+    "n17": GROOT_N1_7,
+    "1.7": GROOT_N1_7,
+}
+
+_GROOT_ACTION_DECODE_TRANSFORM_ALIASES = {
+    "none": None,
+    "": None,
+    GROOT_ACTION_DECODE_TRANSFORM_LIBERO: GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
+}
+
+
+def normalize_groot_model_version(model_version: str) -> str:
+    normalized = _GROOT_MODEL_VERSION_ALIASES.get(model_version.lower())
+    if normalized is None:
+        supported = GROOT_N1_7
+        raise ValueError(
+            f"Unsupported GR00T model_version '{model_version}'. Supported versions: {supported}."
+        )
+    return normalized
+
+
+def normalize_groot_action_decode_transform(transform: str | None) -> str | None:
+    if transform is None:
+        return None
+    normalized = _GROOT_ACTION_DECODE_TRANSFORM_ALIASES.get(transform.lower())
+    if normalized is None and transform.lower() not in _GROOT_ACTION_DECODE_TRANSFORM_ALIASES:
+        supported = ", ".join(
+            sorted(key for key, value in _GROOT_ACTION_DECODE_TRANSFORM_ALIASES.items() if value is not None)
+        )
+        raise ValueError(
+            f"Unsupported GR00T N1.7 action decode transform '{transform}'. "
+            f"Supported transforms: none, {supported}."
+        )
+    return normalized
+
+
+def infer_groot_model_version(model_path: str | None) -> str | None:
+    if not model_path:
+        return None
+    model_path_lower = model_path.lower()
+    if "gr00t-n1.7" in model_path_lower or "gr00t_n1.7" in model_path_lower:
+        return GROOT_N1_7
+    # Detect legacy N1.5 paths so the N1.7 config/loader can reject the mismatch.
+    # N1.5 is unsupported, but it must still be recognised here to fail loudly
+    # rather than silently treating an N1.5 checkpoint as N1.7.
+    if "gr00t-n1.5" in model_path_lower or "gr00t_n1.5" in model_path_lower:
+        return GROOT_N1_5
+    config_version = _infer_groot_model_version_from_local_config(model_path)
+    if config_version is not None:
+        return config_version
+    return None
+
+
+def is_raw_groot_n1_7_checkpoint(model_path: str | Path | None) -> bool:
+    if model_path is None:
+        return False
+
+    path = Path(model_path).expanduser()
+    if path.is_dir():
+        config_path = path / "config.json"
+    elif path.name == "config.json":
+        config_path = path
+    else:
+        return False
+
+    try:
+        with config_path.open() as f:
+            config = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    return "type" not in config and _infer_groot_model_version_from_config(config) == GROOT_N1_7
+
+
+def infer_groot_n1_7_embodiment_tag(model_path: str | Path | None) -> str | None:
+    if model_path is None:
+        return None
+
+    processor_config_path = Path(model_path).expanduser() / "processor_config.json"
+    try:
+        with processor_config_path.open() as f:
+            processor_config = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    modality_configs = processor_config.get("processor_kwargs", {}).get("modality_configs", {})
+    if not isinstance(modality_configs, dict):
+        return None
+    if "libero_sim" in modality_configs:
+        return "libero_sim"
+    if len(modality_configs) == 1:
+        return next(iter(modality_configs))
+    return None
+
+
+def infer_groot_n1_7_action_horizon(
+    model_path: str | Path | None, embodiment_tag: str | None = None
+) -> int | None:
+    if model_path is None:
+        return None
+
+    processor_config_path = Path(model_path).expanduser() / "processor_config.json"
+    try:
+        with processor_config_path.open() as f:
+            processor_config = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    processor_kwargs = processor_config.get("processor_kwargs", {})
+    if not isinstance(processor_kwargs, dict):
+        return None
+    modality_configs = processor_kwargs.get("modality_configs", {})
+    if not isinstance(modality_configs, dict):
+        return None
+
+    if embodiment_tag is None:
+        embodiment_tag = infer_groot_n1_7_embodiment_tag(model_path)
+    if embodiment_tag is None:
+        return None
+
+    embodiment_config = modality_configs.get(embodiment_tag, {})
+    if not isinstance(embodiment_config, dict):
+        return None
+    action_config = embodiment_config.get("action", {})
+    if not isinstance(action_config, dict):
+        return None
+    delta_indices = action_config.get("delta_indices", [])
+    if not isinstance(delta_indices, list):
+        return None
+    return len(delta_indices) or None
+
+
+def infer_groot_n1_7_action_execution_horizon(
+    model_path: str | Path | None, embodiment_tag: str | None = None
+) -> int | None:
+    action_horizon = infer_groot_n1_7_action_horizon(model_path, embodiment_tag)
+    if action_horizon is None:
+        return None
+
+    if embodiment_tag is None:
+        embodiment_tag = infer_groot_n1_7_embodiment_tag(model_path)
+    if embodiment_tag == "libero_sim":
+        # NVIDIA's N1.7 LIBERO rollout wrapper replans after 8 of the 16 decoded
+        # actions. Keeping that execution cadence avoids stale open-loop chunks.
+        return min(action_horizon, 8)
+    return action_horizon
+
+
+def resolve_groot_n1_7_backbone_model(model_name: str, cache_dir: str | Path | None = None) -> str:
+    model_path = Path(model_name).expanduser()
+    if model_path.exists():
+        return str(model_path)
+
+    cached_snapshot = _find_cached_hf_snapshot(model_name, cache_dir=cache_dir)
+    return str(cached_snapshot) if cached_snapshot is not None else model_name
+
+
+def _find_cached_hf_snapshot(repo_id: str, cache_dir: str | Path | None = None) -> Path | None:
+    repo_cache_name = f"models--{repo_id.replace('/', '--')}"
+    required_files = (
+        "config.json",
+        "tokenizer_config.json",
+        "preprocessor_config.json",
+        "video_preprocessor_config.json",
+    )
+
+    for hub_cache in _candidate_hf_hub_caches(cache_dir):
+        repo_cache = hub_cache / repo_cache_name
+        snapshots_dir = repo_cache / "snapshots"
+        if not snapshots_dir.is_dir():
+            continue
+
+        candidates: list[Path] = []
+        ref_path = repo_cache / "refs" / "main"
+        try:
+            ref = ref_path.read_text().strip()
+        except OSError:
+            ref = ""
+        if ref:
+            candidates.append(snapshots_dir / ref)
+        candidates.extend(
+            sorted(
+                (path for path in snapshots_dir.iterdir() if path.is_dir()),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+        )
+
+        seen: set[Path] = set()
+        for snapshot in candidates:
+            if snapshot in seen:
+                continue
+            seen.add(snapshot)
+            if all((snapshot / filename).exists() for filename in required_files):
+                return snapshot
+    return None
+
+
+def _candidate_hf_hub_caches(cache_dir: str | Path | None) -> list[Path]:
+    candidates: list[Path] = []
+    if cache_dir is not None:
+        cache_path = Path(cache_dir).expanduser()
+        candidates.append(cache_path)
+        candidates.append(cache_path / "hub")
+
+    hub_cache = os.environ.get("HUGGINGFACE_HUB_CACHE")
+    if hub_cache:
+        candidates.append(Path(hub_cache).expanduser())
+
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home:
+        candidates.append(Path(hf_home).expanduser() / "hub")
+
+    candidates.append(Path.home() / ".cache" / "huggingface" / "hub")
+
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve() if candidate.exists() else candidate
+        if resolved not in seen:
+            seen.add(resolved)
+            deduped.append(candidate)
+    return deduped
+
+
+def _infer_groot_model_version_from_local_config(model_path: str) -> str | None:
+    path = Path(model_path).expanduser()
+    if path.is_dir():
+        config_path = path / "config.json"
+    elif path.name == "config.json":
+        config_path = path
+    else:
+        return None
+
+    if not config_path.exists():
+        return None
+
+    try:
+        with config_path.open() as f:
+            config = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    return _infer_groot_model_version_from_config(config)
+
+
+def _infer_groot_model_version_from_config(config: dict) -> str | None:
+    model_version = config.get("model_version")
+    if isinstance(model_version, str):
+        try:
+            return normalize_groot_model_version(model_version)
+        except ValueError:
+            return None
+
+    candidates = [config.get("model_type"), *(config.get("architectures") or [])]
+    for candidate in candidates:
+        if not isinstance(candidate, str):
+            continue
+        normalized = candidate.lower().replace("-", "_")
+        if normalized in {"gr00tn1d7", "gr00t_n1d7", "gr00t_n1_7"}:
+            return GROOT_N1_7
+    if config.get("model_name") == GROOT_N1_7_BACKBONE_MODEL:
+        return GROOT_N1_7
+    return None
 
 
 @PreTrainedConfig.register_subclass("groot")
@@ -52,11 +334,17 @@ class GrootConfig(PreTrainedConfig):
 
     # Groot-specific model parameters (from groot_finetune_script.py)
 
-    # Path or HuggingFace model ID for the base Groot model
-    base_model_path: str = "nvidia/GR00T-N1.5-3B"
+    # Explicit GR00T model family selection. LeRobot supports GR00T N1.7 only.
+    model_version: str = GROOT_N1_7
 
-    # HF repo ID (or local path) that hosts vocab.json and merges.txt for Eagle tokenizer.
-    tokenizer_assets_repo: str = "lerobot/eagle2hg-processor-groot-n1p5"
+    # Path or HuggingFace model ID for the base Groot model
+    base_model_path: str | None = None
+
+    # HF repo ID (or local path) for the GR00T N1.7 Cosmos/Qwen3-VL backbone processor.
+    n1_7_backbone_model: str = GROOT_N1_7_BACKBONE_MODEL
+
+    # Optional named action transform applied after raw N1.7 checkpoint decoding and before env.step().
+    action_decode_transform: str | None = None
 
     # Embodiment tag to use for training (e.g. 'new_embodiment', 'gr1')
     embodiment_tag: str = "new_embodiment"
@@ -117,6 +405,38 @@ class GrootConfig(PreTrainedConfig):
     resume: bool = False
 
     def __post_init__(self):
+        self.model_version = normalize_groot_model_version(self.model_version)
+        self.action_decode_transform = normalize_groot_action_decode_transform(self.action_decode_transform)
+        if self.base_model_path is None:
+            self.base_model_path = GROOT_N1_7_BASE_MODEL
+
+        # The N1.7 LIBERO checkpoints emit a [0, 1] gripper action, but the LIBERO
+        # simulator expects the OpenVLA/[-1, 1] sign convention. NVIDIA's rollout
+        # wrapper applies this conversion; mirror it here so eval on the
+        # 'libero_sim' embodiment grasps correctly instead of scoring 0% success.
+        # This matches the embodiment-specific handling already done for the
+        # action execution horizon (see infer_groot_n1_7_action_execution_horizon).
+        if self.action_decode_transform is None and self.embodiment_tag == "libero_sim":
+            self.action_decode_transform = GROOT_ACTION_DECODE_TRANSFORM_LIBERO
+
+        if self.max_state_dim == 64:
+            self.max_state_dim = 132
+        if self.max_action_dim == 32:
+            self.max_action_dim = 132
+        if self.chunk_size == 50:
+            self.chunk_size = 40
+        if self.n_action_steps == 50:
+            self.n_action_steps = 40
+        if tuple(self.image_size) == (224, 224):
+            self.image_size = (256, 256)
+
+        inferred_version = infer_groot_model_version(self.base_model_path)
+        if inferred_version is not None and inferred_version != self.model_version:
+            raise ValueError(
+                f"GR00T model_version '{self.model_version}' does not match base_model_path "
+                f"'{self.base_model_path}', which looks like '{inferred_version}'."
+            )
+
         super().__post_init__()
 
         if self.n_action_steps > self.chunk_size:
@@ -192,7 +512,8 @@ class GrootConfig(PreTrainedConfig):
     @property
     def action_delta_indices(self) -> list[int]:
         """Return indices for delta actions."""
-        return list(range(min(self.chunk_size, 16)))
+        model_action_horizon = infer_groot_n1_7_action_horizon(self.base_model_path, self.embodiment_tag) or 40
+        return list(range(min(self.chunk_size, model_action_horizon)))
 
     @property
     def reward_delta_indices(self) -> None:
