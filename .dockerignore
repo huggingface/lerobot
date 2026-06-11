@@ -22,6 +22,10 @@ outputs
 rl
 media
 
+# Local virtualenvs (the image provides its own)
+.venv
+venv
+
 
 # Logging
 logs

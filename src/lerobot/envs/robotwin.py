@@ -41,10 +41,42 @@ ROBOTWIN_CAMERA_NAMES: tuple[str, ...] = (
     "right_camera",
 )
 
-ACTION_DIM = 14  # 7 DOF × 2 arms
+ACTION_DIM = 14  # 7 DOF × 2 arms (joint-space control mode)
+# End-effector-pose control mode: per arm [x, y, z, qx, qy, qz, qw, gripper] = 8, dual-arm = 16.
+# Used by world-model policies (e.g. LingBot-VA) that predict eef-pose deltas executed via CuRobo IK.
+EEF_ACTION_DIM = 16
 ACTION_LOW = -1.0
 ACTION_HIGH = 1.0
 DEFAULT_EPISODE_LENGTH = 300
+
+
+def _compose_eef_pose(new_pose: np.ndarray, init_pose: np.ndarray) -> np.ndarray:
+    """Compose a single-arm predicted delta pose onto the initial pose.
+
+    ``new_pose`` / ``init_pose`` are 8-vectors ``[x, y, z, qx, qy, qz, qw, gripper]``. Translation
+    is added, rotation is composed (``init_R * new_R``), and the gripper is taken from the
+    prediction. Mirrors ``add_eef_pose`` in the upstream LingBot-VA RoboTwin client.
+    """
+    from scipy.spatial.transform import Rotation
+
+    new_r = Rotation.from_quat(new_pose[3:7])
+    init_r = Rotation.from_quat(init_pose[3:7])
+    out_rot = (init_r * new_r).as_quat()
+    out_trans = new_pose[:3] + init_pose[:3]
+    return np.concatenate([out_trans, out_rot, new_pose[7:8]])
+
+
+def _add_init_eef_pose(delta_pose: np.ndarray, init_pose: np.ndarray) -> np.ndarray:
+    """Compose a dual-arm (16-d) predicted delta pose onto the initial eef pose, normalizing quats."""
+    left = _compose_eef_pose(delta_pose[:8], init_pose[:8])
+    right = _compose_eef_pose(delta_pose[8:], init_pose[8:])
+    out = np.concatenate([left, right])
+    # Normalize the two quaternions (indices 3:7 and 11:15) as the upstream client does.
+    out[3:7] = out[3:7] / (np.linalg.norm(out[3:7]) + 1e-8)
+    out[11:15] = out[11:15] / (np.linalg.norm(out[11:15]) + 1e-8)
+    return out
+
+
 # D435 dims from task_config/_camera_config.yml (what demo_clean.yml selects).
 DEFAULT_CAMERA_H = 240
 DEFAULT_CAMERA_W = 320
@@ -234,6 +266,7 @@ class RoboTwinEnv(gym.Env):
         observation_width: int | None = None,
         episode_length: int = DEFAULT_EPISODE_LENGTH,
         render_mode: str = "rgb_array",
+        action_mode: str = "joint",
     ):
         super().__init__()
         self.task_name = task_name
@@ -241,6 +274,13 @@ class RoboTwinEnv(gym.Env):
         self.task_description = task_name.replace("_", " ")
         self.episode_index = episode_index
         self._reset_stride = n_envs
+        # "joint": 14-d joint-space actions via take_action(action). "ee": 16-d end-effector-pose
+        # deltas (added onto the episode's initial eef pose) executed via take_action(.., "ee") + IK.
+        if action_mode not in ("joint", "ee"):
+            raise ValueError(f"action_mode must be 'joint' or 'ee'; got {action_mode!r}")
+        self.action_mode = action_mode
+        self._action_dim = EEF_ACTION_DIM if action_mode == "ee" else ACTION_DIM
+        self._init_eef_pose: np.ndarray | None = None
         self.camera_names = list(camera_names)
         # Default to D435 dims (the camera type baked into task_config/demo_clean.yml).
         # The YAML-driven lookup is deferred to reset() so construction doesn't
@@ -271,7 +311,7 @@ class RoboTwinEnv(gym.Env):
             }
         )
         self.action_space = spaces.Box(
-            low=ACTION_LOW, high=ACTION_HIGH, shape=(ACTION_DIM,), dtype=np.float32
+            low=ACTION_LOW, high=ACTION_HIGH, shape=(self._action_dim,), dtype=np.float32
         )
 
     def _ensure_env(self) -> None:
@@ -317,6 +357,18 @@ class RoboTwinEnv(gym.Env):
 
         return {"pixels": images, "agent_pos": joint_state}
 
+    def _read_eef_pose(self) -> np.ndarray:
+        """Read the current 16-d dual-arm eef pose [left(xyz+quat)+grip, right(xyz+quat)+grip]."""
+        assert self._env is not None, "_read_eef_pose called before _ensure_env()"
+        ep = self._env.get_obs()["endpose"]
+        pose = (
+            list(ep["left_endpose"])
+            + [ep["left_gripper"]]
+            + list(ep["right_endpose"])
+            + [ep["right_gripper"]]
+        )
+        return np.asarray(pose, dtype=np.float64)
+
     def reset(self, seed: int | None = None, **kwargs) -> tuple[RobotObservation, dict]:
         self._ensure_env()
         super().reset(seed=seed)
@@ -330,16 +382,23 @@ class RoboTwinEnv(gym.Env):
         self.episode_index += self._reset_stride
         self._step_count = 0
 
+        # In eef mode the policy predicts pose deltas relative to the initial eef pose.
+        if self.action_mode == "ee":
+            self._init_eef_pose = self._read_eef_pose()
+
         obs = self._get_obs()
         return obs, {"is_success": False, "task": self.task_name}
 
     def step(self, action: np.ndarray) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
         assert self._env is not None, "step() called before reset()"
-        if action.ndim != 1 or action.shape[0] != ACTION_DIM:
-            raise ValueError(f"Expected 1-D action of shape ({ACTION_DIM},), got {action.shape}")
+        if action.ndim != 1 or action.shape[0] != self._action_dim:
+            raise ValueError(f"Expected 1-D action of shape ({self._action_dim},), got {action.shape}")
 
         with torch.enable_grad():
-            if hasattr(self._env, "take_action"):
+            if self.action_mode == "ee":
+                ee_action = _add_init_eef_pose(np.asarray(action, dtype=np.float64), self._init_eef_pose)
+                self._env.take_action(ee_action, action_type="ee")
+            elif hasattr(self._env, "take_action"):
                 self._env.take_action(action)
             else:
                 self._env.step(action)
@@ -398,6 +457,7 @@ def _make_env_fns(
     observation_height: int,
     observation_width: int,
     episode_length: int,
+    action_mode: str = "joint",
 ) -> list[Callable[[], RoboTwinEnv]]:
     """Return n_envs factory callables for a single task."""
 
@@ -410,6 +470,7 @@ def _make_env_fns(
             observation_height=observation_height,
             observation_width=observation_width,
             episode_length=episode_length,
+            action_mode=action_mode,
         )
 
     return [partial(_make_one, i) for i in range(n_envs)]
@@ -423,6 +484,7 @@ def create_robotwin_envs(
     observation_height: int = DEFAULT_CAMERA_H,
     observation_width: int = DEFAULT_CAMERA_W,
     episode_length: int = DEFAULT_EPISODE_LENGTH,
+    action_mode: str = "joint",
 ) -> dict[str, dict[int, Any]]:
     """Create vectorized RoboTwin 2.0 environments.
 
@@ -473,6 +535,7 @@ def create_robotwin_envs(
             observation_height=observation_height,
             observation_width=observation_width,
             episode_length=episode_length,
+            action_mode=action_mode,
         )
         if is_async:
             lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space, cached_metadata)
