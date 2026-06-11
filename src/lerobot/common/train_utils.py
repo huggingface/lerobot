@@ -72,6 +72,8 @@ def save_checkpoint(
     cfg: TrainPipelineConfig,
     policy: PreTrainedPolicy,
     optimizer: Optimizer,
+    model_state_dict: dict | None = None,
+    optim_state_dict: dict | None = None,
     scheduler: LRScheduler | None = None,
     preprocessor: PolicyProcessorPipeline | None = None,
     postprocessor: PolicyProcessorPipeline | None = None,
@@ -97,12 +99,24 @@ def save_checkpoint(
         step (int): The training step at that checkpoint.
         policy (PreTrainedPolicy): The policy to save.
         optimizer (Optimizer | None, optional): The optimizer to save the state from. Defaults to None.
+        model_state_dict: Pre-gathered model state dict (for FSDP where state_dict
+            requires a collective op across all ranks). If None, calls policy.save_pretrained().
+        optim_state_dict: Pre-gathered optimizer state dict (for FSDP). If None,
+            calls optimizer.state_dict() during save.
         scheduler (LRScheduler | None, optional): The scheduler to save the state from. Defaults to None.
         preprocessor: The preprocessor/pipeline to save. Defaults to None.
         postprocessor: The postprocessor/pipeline to save. Defaults to None.
     """
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
-    policy.save_pretrained(pretrained_dir)
+    if model_state_dict is not None:
+        from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
+        from safetensors.torch import save_file
+
+        pretrained_dir.mkdir(parents=True, exist_ok=True)
+        policy.config._save_pretrained(pretrained_dir)
+        save_file(model_state_dict, str(pretrained_dir / SAFETENSORS_SINGLE_FILE))
+    else:
+        policy.save_pretrained(pretrained_dir)
     cfg.save_pretrained(pretrained_dir)
     if cfg.peft is not None:
         # When using PEFT, policy.save_pretrained will only write the adapter weights + config, not the
@@ -112,7 +126,7 @@ def save_checkpoint(
         preprocessor.save_pretrained(pretrained_dir)
     if postprocessor is not None:
         postprocessor.save_pretrained(pretrained_dir)
-    save_training_state(checkpoint_dir, step, optimizer, scheduler)
+    save_training_state(checkpoint_dir, step, optimizer, scheduler, optim_state_dict=optim_state_dict)
 
 
 def save_training_state(
@@ -120,6 +134,8 @@ def save_training_state(
     train_step: int,
     optimizer: Optimizer | None = None,
     scheduler: LRScheduler | None = None,
+    *,
+    optim_state_dict: dict | None = None,
 ) -> None:
     """
     Saves the training step, optimizer state, scheduler state, and rng state.
@@ -131,13 +147,15 @@ def save_training_state(
             Defaults to None.
         scheduler (LRScheduler | None, optional): The scheduler from which to save the state_dict.
             Defaults to None.
+        optim_state_dict: Pre-gathered optimizer state dict (for FSDP). If provided,
+            saves this directly instead of calling optimizer.state_dict().
     """
     save_dir = checkpoint_dir / TRAINING_STATE_DIR
     save_dir.mkdir(parents=True, exist_ok=True)
     save_training_step(train_step, save_dir)
     save_rng_state(save_dir)
     if optimizer is not None:
-        save_optimizer_state(optimizer, save_dir)
+        save_optimizer_state(optimizer, save_dir, optim_state_dict=optim_state_dict)
     if scheduler is not None:
         save_scheduler_state(scheduler, save_dir)
 

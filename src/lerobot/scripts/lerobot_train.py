@@ -501,6 +501,30 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         if cfg.save_checkpoint and is_saving_step:
             if is_main_process:
                 logging.info(f"Checkpoint policy after step {step}")
+            # FSDP state_dict is a collective: all ranks must participate in
+            # the all-gather. We use FSDP.state_dict_type with FULL_STATE_DICT,
+            # rank0_only=True, offload_to_cpu=True so all ranks run the
+            # collective but only rank 0 materializes the full dicts.
+            from accelerate.utils import DistributedType
+
+            if accelerator.distributed_type == DistributedType.FSDP:
+                from torch.distributed.fsdp import (
+                    FullOptimStateDictConfig,
+                    FullStateDictConfig,
+                    FullyShardedDataParallel as FSDP,
+                    StateDictType,
+                )
+
+                fsdp_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+                optim_cfg = FullOptimStateDictConfig(offload_to_cpu=True, rank0_only=True)
+                with FSDP.state_dict_type(policy, StateDictType.FULL_STATE_DICT, fsdp_cfg, optim_cfg):
+                    model_state_dict = policy.state_dict()
+                    optim_state_dict = FSDP.optim_state_dict(policy, optimizer)
+            else:
+                model_state_dict = None
+                optim_state_dict = None
+
+            if is_main_process:
                 checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
                 save_checkpoint(
                     checkpoint_dir=checkpoint_dir,
@@ -508,6 +532,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     cfg=cfg,
                     policy=accelerator.unwrap_model(policy),
                     optimizer=optimizer,
+                    model_state_dict=model_state_dict,
+                    optim_state_dict=optim_state_dict,
                     scheduler=lr_scheduler,
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
