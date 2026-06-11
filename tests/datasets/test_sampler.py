@@ -169,7 +169,7 @@ def test_partial_episode_drop_warns(caplog):
     assert "Episode 0" in caplog.text
 
 
-# --- deterministic mode (seeded Feistel permutation) ---
+# --- deterministic mode (seeded torch.randperm) ---
 
 from functools import partial  # noqa: E402
 
@@ -239,19 +239,26 @@ def test_deterministic_sampler_resume_mid_epoch():
         assert list(resumed) == epoch_1
 
 
-def test_deterministic_sampler_constant_memory():
-    # A trillion-frame dataset must instantiate instantly and seek anywhere in O(1):
-    # only per-episode boundaries are stored, never per-frame indices.
-    num_frames = 10**12
+def test_deterministic_sampler_construction_stores_only_boundaries():
+    # Construction is O(num_episodes), not O(num_frames): a million-frame single episode
+    # instantiates from just its boundaries without materializing a per-frame index list.
+    num_frames = 1_000_000
     sampler = deterministic_sampler([0], [num_frames], shuffle=True, seed=0)
     assert len(sampler) == num_frames
-    sampler.load_state_dict({"epoch": 3, "start_index": num_frames - 3})
-    # Collect via the iterator: list(sampler) would call PyObject_LengthHint -> sampler.__len__
-    # (the full epoch length, here 10**12) and pre-allocate that many slots before iterating. The
-    # iterator itself exposes no length hint, so this stays O(1) like the resumed epoch it drains.
-    tail = list(iter(sampler))
-    assert len(tail) == 3
-    assert all(0 <= idx < num_frames for idx in tail)
+    assert sampler._starts.shape == (1,) and sampler._cum_lengths.shape == (1,)
+
+
+def test_deterministic_sampler_resume_is_exact_at_scale():
+    # Seeded randperm makes resume sample-exact at non-trivial sizes: regenerating the epoch's
+    # permutation and slicing from the saved offset reproduces the remaining order exactly.
+    num_frames = 100_000
+    reference = deterministic_sampler([0], [num_frames], shuffle=True, seed=0)
+    epoch_0 = list(reference)
+    assert sorted(epoch_0) == list(range(num_frames))
+    start = num_frames - 5
+    resumed = deterministic_sampler([0], [num_frames], shuffle=True, seed=0)
+    resumed.load_state_dict({"epoch": 0, "start_index": start})
+    assert list(resumed) == epoch_0[start:]
 
 
 def test_deterministic_sampler_validation_matches_episode_aware():

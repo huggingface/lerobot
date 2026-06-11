@@ -22,38 +22,21 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-_MASK_64 = (1 << 64) - 1
-_FEISTEL_ROUNDS = 4
-# Cycle-walking converges in <4 expected steps on the chosen domain; this bound is a generous
-# safety net that should never be hit in practice.
-_MAX_CYCLE_WALK_STEPS = 100
-
-
-def _mix64(x: int) -> int:
-    """SplitMix64 finalizer (64-bit integer hash)."""
-    x = (x + 0x9E3779B97F4A7C15) & _MASK_64
-    x ^= x >> 30
-    x = (x * 0xBF58476D1CE4E5B9) & _MASK_64
-    x ^= x >> 27
-    x = (x * 0x94D049BB133111EB) & _MASK_64
-    x ^= x >> 31
-    return x
-
 
 class EpisodeAwareSampler:
-    """Sampler over episode frames with O(num_episodes) memory.
+    """Sampler over episode frames that stores only per-episode boundaries.
 
-    Only episode boundaries are stored; logical positions map to frame indices on the fly, so
-    memory does not grow with the number of frames.
+    Logical positions map to frame indices on the fly (O(num_episodes) construction memory)
+    instead of materializing a Python list of every frame index.
 
-    By default (`deterministic=True`) shuffling uses a seeded Feistel permutation over
-    `[0, num_frames)`: the data order is a pure function of `(seed, epoch)`, needs no RNG
-    synchronization across distributed ranks, and any position can be sought in O(1), enabling
-    sample-exact resume via `state_dict` / `load_state_dict`. Each completed `__iter__`
-    advances the epoch. The shuffle is pseudo-random rather than truly uniform — the standard
-    large-scale trade-off. During a resumed epoch, `__len__` still reports the full length.
+    By default (`deterministic=True`) each epoch is shuffled with a `torch.randperm` seeded from
+    `(seed, epoch)`, so the data order is a pure function of `(seed, epoch)`: it reproduces on
+    every rank without synchronizing the global RNG, and `state_dict` / `load_state_dict` resume
+    a run sample-exactly by regenerating the epoch's permutation and continuing from the saved
+    offset. Each call to `__iter__` advances the epoch. During a resumed epoch, `__len__` still
+    reports the full length.
 
-    With `deterministic=False`, shuffling falls back to `torch.randperm` driven by `generator`
+    With `deterministic=False`, shuffling uses `torch.randperm` driven by `generator` instead
     (accelerate synchronizes the generator across ranks when preparing the dataloader).
     """
 
@@ -78,7 +61,8 @@ class EpisodeAwareSampler:
             drop_n_last_frames: Frames to drop from the end of each episode.
             shuffle: Whether to shuffle the indices.
             generator: Generator for non-deterministic shuffling (global torch RNG when None).
-            deterministic: Use the seeded Feistel permutation instead of `torch.randperm`.
+            deterministic: Seed the shuffle from `(seed, epoch)` for reproducible, resumable
+                order instead of a `generator`-driven `torch.randperm`.
             seed: Seed the deterministic permutation is derived from (together with the epoch).
         """
         if drop_n_first_frames < 0:
@@ -129,12 +113,6 @@ class EpisodeAwareSampler:
         self._epoch = 0
         self._start_index = 0
 
-        # Smallest even-bit-width power-of-two domain >= num_frames: equal Feistel halves,
-        # cycle-walking converges in <4 expected steps.
-        bits = max((self._num_frames - 1).bit_length(), 2)
-        self._half_bits = (bits + 1) // 2
-        self._half_mask = (1 << self._half_bits) - 1
-
     @property
     def indices(self) -> list[int]:
         """Materialized frame indices in unshuffled order; O(num_frames), introspection only."""
@@ -157,28 +135,11 @@ class EpisodeAwareSampler:
         if not self.deterministic:
             raise RuntimeError(f"{method} requires deterministic=True: an RNG order cannot be sought.")
 
-    def _round_keys(self, epoch: int) -> list[int]:
-        state = _mix64(_mix64(self.seed) ^ _mix64(epoch))
-        keys = []
-        for _ in range(_FEISTEL_ROUNDS):
-            state = _mix64(state)
-            keys.append(state)
-        return keys
-
-    def _permute(self, index: int, keys: list[int]) -> int:
-        # Feistel network with cycle-walking: a bijection on [0, num_frames).
-        half_bits, half_mask = self._half_bits, self._half_mask
-        for _ in range(_MAX_CYCLE_WALK_STEPS):
-            left, right = index >> half_bits, index & half_mask
-            for key in keys:
-                left, right = right, left ^ (_mix64(right ^ key) & half_mask)
-            index = (left << half_bits) | right
-            if index < self._num_frames:
-                return index
-        raise RuntimeError(
-            f"Feistel cycle-walking did not converge within {_MAX_CYCLE_WALK_STEPS} steps; "
-            "this should never happen for a valid domain."
-        )
+    def _epoch_generator(self, epoch: int) -> torch.Generator:
+        # Derive a per-epoch seed from (seed, epoch) so the permutation is a pure function of both
+        # and reproduces identically on every rank without touching the global RNG.
+        epoch_seed = int(np.random.SeedSequence([self.seed, epoch]).generate_state(1, dtype=np.uint64)[0])
+        return torch.Generator().manual_seed(epoch_seed)
 
     def _frame_index(self, position: int) -> int:
         episode = int(np.searchsorted(self._cum_lengths, position, side="right"))
@@ -203,9 +164,13 @@ class EpisodeAwareSampler:
                 yield self._frame_index(k)
 
     def _iter_deterministic_epoch(self, epoch: int, start: int) -> Iterator[int]:
-        keys = self._round_keys(epoch) if self.shuffle else None
-        for k in range(start, self._num_frames):
-            yield self._frame_index(self._permute(k, keys) if self.shuffle else k)
+        if self.shuffle:
+            order = torch.randperm(self._num_frames, generator=self._epoch_generator(epoch))
+            for k in range(start, self._num_frames):
+                yield self._frame_index(int(order[k]))
+        else:
+            for k in range(start, self._num_frames):
+                yield self._frame_index(k)
 
     def __len__(self) -> int:
         return self._num_frames
