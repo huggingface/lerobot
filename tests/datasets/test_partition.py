@@ -117,3 +117,30 @@ def test_partition_over_file_groups_is_file_disjoint():
         for bin_groups in bins
     ]
     assert files_per_bin[0].isdisjoint(files_per_bin[1])
+
+
+def test_video_only_grouping_is_not_chained_by_shared_parquet():
+    # The realistic consolidated-dataset layout: ONE parquet file spans all episodes
+    # (parquet rows are tiny), while video files (~99% of bytes) each hold 2 episodes.
+    # Including the parquet in the grouping would chain everything into a single
+    # component; grouping by video files only keeps the units small, at the cost of
+    # both nodes downloading the (tiny) shared parquet.
+    video_only_ids = [
+        [("cam", 0, 0)],
+        [("cam", 0, 0)],
+        [("cam", 0, 1)],
+        [("cam", 0, 1)],
+        [("cam", 0, 2)],
+        [("cam", 0, 2)],
+    ]
+    with_parquet_ids = [[("data", 0, 0), *ids] for ids in video_only_ids]
+    assert group_episodes_by_files(with_parquet_ids) == [[0, 1, 2, 3, 4, 5]]  # chained: useless
+    groups = group_episodes_by_files(video_only_ids)
+    assert groups == [[0, 1], [2, 3], [4, 5]]
+    # bins never split a video file
+    bins = partition_episodes([2, 2, 2], 2)
+    video_files_per_bin = [
+        {fid for group_idx in bin_groups for ep in groups[group_idx] for fid in video_only_ids[ep]}
+        for bin_groups in bins
+    ]
+    assert video_files_per_bin[0].isdisjoint(video_files_per_bin[1])

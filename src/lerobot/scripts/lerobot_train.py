@@ -193,10 +193,16 @@ def make_node_dataset(cfg: TrainPipelineConfig, accelerator: "Accelerator"):
 
     All processes derive the identical partition from metadata alone, so each node downloads
     and stores only its near-uniform share of the data. Because LeRobot v3 packs many episodes
-    into shared parquet/video files, the partition unit is a *file group* (connected component
-    of episodes sharing a storage file), not a raw episode: partitioning episodes individually
-    would scatter them across files and every node would download nearly all files anyway.
-    Greedy LPT on frame counts balances the groups across nodes.
+    into shared files, the partition unit is a *file group* (connected component of episodes
+    sharing a storage file), not a raw episode: partitioning episodes individually would
+    scatter them across files and every node would download nearly all files anyway.
+
+    Only *video* files define the groups: they make up ~98-99% of dataset bytes, while a single
+    parquet file packs ~100x more episodes than a video file — including parquet membership in
+    the grouping would chain almost everything into one giant component. Parquet files spanning
+    two nodes' episodes are simply downloaded by both, a negligible overlap. Datasets without
+    video fall back to grouping by parquet files. Greedy LPT on frame counts balances the
+    groups across nodes.
     """
     import copy
 
@@ -209,17 +215,17 @@ def make_node_dataset(cfg: TrainPipelineConfig, accelerator: "Accelerator"):
     to_indices = meta.episodes["dataset_to_index"]
     lengths = [to_indices[ep] - from_indices[ep] for ep in episodes]
 
-    data_chunk_indices = meta.episodes["data/chunk_index"]
-    data_file_indices = meta.episodes["data/file_index"]
-    video_file_columns = {
-        key: (meta.episodes[f"videos/{key}/chunk_index"], meta.episodes[f"videos/{key}/file_index"])
-        for key in meta.video_keys
-    }
+    if len(meta.video_keys) > 0:
+        file_columns = {
+            key: (meta.episodes[f"videos/{key}/chunk_index"], meta.episodes[f"videos/{key}/file_index"])
+            for key in meta.video_keys
+        }
+    else:
+        file_columns = {"data": (meta.episodes["data/chunk_index"], meta.episodes["data/file_index"])}
     episode_file_ids = [
-        [("data", data_chunk_indices[ep], data_file_indices[ep])]
-        + [
+        [
             (key, chunk_indices[ep], file_indices[ep])
-            for key, (chunk_indices, file_indices) in video_file_columns.items()
+            for key, (chunk_indices, file_indices) in file_columns.items()
         ]
         for ep in episodes
     ]
@@ -503,7 +509,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 "Sample-exact resume requires the same topology as the interrupted run "
                 f"({num_nodes} nodes x {local_world_size} processes)."
             )
-    elif cfg.deterministic_sampler:
+    elif cfg.deterministic_sampler and not cfg.dataset.streaming:
         # Data order is a pure function of (seed, epoch): nothing to synchronize across ranks,
         # O(1) memory in dataset size, and a resumed run continues at the exact sample where the
         # checkpoint left off (up to accelerate's even_batches padding at epoch boundaries).
