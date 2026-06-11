@@ -115,7 +115,11 @@ def main() -> None:
         cfg = ACTConfig(input_features=input_features, output_features=output_features)
         model = ACTPolicy(cfg)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-        model, optimizer, loader = accelerator.prepare(model, optimizer, loader)
+        # Do NOT prepare the dataloader: the dataset is already rank-disjoint via
+        # split_dataset_by_node, and accelerate's IterableDatasetShard would keep only every
+        # world_size-th batch of it (silently training on 1/N of the data while decoding all
+        # of it). Batches are moved to the device manually in the loop.
+        model, optimizer = accelerator.prepare(model, optimizer)
 
     # Resume: restore the dataset's stream position so we don't replay already-seen data. The state holds
     # plain HF stream dicts + RNG state (not tensors), so weights_only=False is required; the file is a
