@@ -289,8 +289,8 @@ def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
     assert_dataset_iteration_works(aggr_ds)
 
 
-def test_aggregate_datasets_without_video_concatenation(tmp_path, lerobot_dataset_factory):
-    """When ``concatenate_videos=False``, each source mp4 is kept as its own destination mp4."""
+def test_aggregate_datasets_without_concatenation(tmp_path, lerobot_dataset_factory):
+    """With concatenation disabled, each source file is kept as its own destination file."""
     ds_0 = lerobot_dataset_factory(
         root=tmp_path / "no_stitch_0",
         repo_id=f"{DUMMY_REPO_ID}_no_stitch_0",
@@ -311,6 +311,7 @@ def test_aggregate_datasets_without_video_concatenation(tmp_path, lerobot_datase
         aggr_repo_id=f"{DUMMY_REPO_ID}_no_stitch_aggr",
         aggr_root=aggr_root,
         concatenate_videos=False,
+        concatenate_data=False,
     )
 
     with (
@@ -321,20 +322,17 @@ def test_aggregate_datasets_without_video_concatenation(tmp_path, lerobot_datase
         mock_snapshot_download.return_value = str(aggr_root)
         aggr_ds = LeRobotDataset(f"{DUMMY_REPO_ID}_no_stitch_aggr", root=aggr_root)
 
-    assert_episode_and_frame_counts(aggr_ds, ds_0.num_episodes + ds_1.num_episodes, ds_0.num_frames + ds_1.num_frames)
+    assert_episode_and_frame_counts(
+        aggr_ds, ds_0.num_episodes + ds_1.num_episodes, ds_0.num_frames + ds_1.num_frames
+    )
     assert_dataset_iteration_works(aggr_ds)
     assert_video_timestamps_within_bounds(aggr_ds)
 
-    # One destination mp4 per source mp4, for every video camera key.
-    video_keys = [k for k, ft in aggr_ds.meta.features.items() if ft.get("dtype") == "video"]
-    assert video_keys, "Test fixture should produce at least one video feature"
-    expected_src_files_per_key = 2  # two source datasets, each with one mp4 per camera
-    for key in video_keys:
-        dst_files = list((aggr_root / "videos" / key).rglob("*.mp4"))
-        assert len(dst_files) == expected_src_files_per_key, (
-            f"Expected {expected_src_files_per_key} mp4s for {key} with concatenate_videos=False, "
-            f"got {len(dst_files)}: {dst_files}"
-        )
+    # Two single-file sources stay as two files each, instead of being packed together.
+    assert len(list((aggr_root / "data").rglob("*.parquet"))) == 2
+    assert aggr_ds.meta.video_keys, "Test fixture should produce at least one video feature"
+    for key in aggr_ds.meta.video_keys:
+        assert len(list((aggr_root / "videos" / key).rglob("*.mp4"))) == 2
 
 
 @pytest.mark.parametrize("mutation", ["mismatched_value", "missing_key"])
