@@ -30,6 +30,7 @@ class EpisodeAwareSampler:
         drop_n_first_frames: int = 0,
         drop_n_last_frames: int = 0,
         shuffle: bool = False,
+        generator: torch.Generator | None = None,
     ):
         """Sampler that optionally incorporates episode boundary information.
 
@@ -41,6 +42,10 @@ class EpisodeAwareSampler:
             drop_n_first_frames: Number of frames to drop from the start of each episode.
             drop_n_last_frames: Number of frames to drop from the end of each episode.
             shuffle: Whether to shuffle the indices.
+            generator: Generator used for shuffling. Exposing this attribute (even when None) lets
+                       `accelerate` register it as the synchronized RNG in distributed training, so
+                       every rank draws the same permutation and batch shards stay disjoint. When
+                       None, shuffling falls back to the global torch RNG.
         """
         if drop_n_first_frames < 0:
             raise ValueError(f"drop_n_first_frames must be >= 0, got {drop_n_first_frames}")
@@ -73,10 +78,11 @@ class EpisodeAwareSampler:
 
         self.indices = indices
         self.shuffle = shuffle
+        self.generator = generator
 
     def __iter__(self) -> Iterator[int]:
         if self.shuffle:
-            for i in torch.randperm(len(self.indices)):
+            for i in torch.randperm(len(self.indices), generator=self.generator):
                 yield self.indices[i]
         else:
             for i in self.indices:
