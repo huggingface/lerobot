@@ -104,9 +104,9 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
 
         return RebotArm102Leader(config)
     elif config.type == "bi_rebot_102_leader":
-        from .bi_rebot_102_leader import BiRebotArm102Leader
+        from .bi_rebot_102_leader import BiRebot102Leader
 
-        return BiRebotArm102Leader(config)
+        return BiRebot102Leader(config)
     else:
         try:
             return cast("Teleoperator", make_device_from_device_class(config))

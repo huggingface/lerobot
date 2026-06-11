@@ -22,12 +22,12 @@ from lerobot.utils.decorators import check_if_already_connected, check_if_not_co
 
 from ..rebot_102_leader import RebotArm102Leader, RebotArm102LeaderTeleopConfig
 from ..teleoperator import Teleoperator
-from .config_bi_rebot_102_leader import BiRebotArm102LeaderConfig
+from .config_bi_rebot_102_leader import BiRebot102LeaderConfig
 
 logger = logging.getLogger(__name__)
 
 
-class BiRebotArm102Leader(Teleoperator):
+class BiRebot102Leader(Teleoperator):
     """Bimanual Seeed Studio StarArm102 / reBot Arm 102 leader.
 
     Composes two single-arm :class:`RebotArm102Leader` instances. Action keys of
@@ -35,10 +35,10 @@ class BiRebotArm102Leader(Teleoperator):
     leader can teleoperate a bimanual reBot B601 follower.
     """
 
-    config_class = BiRebotArm102LeaderConfig
+    config_class = BiRebot102LeaderConfig
     name = "bi_rebot_102_leader"
 
-    def __init__(self, config: BiRebotArm102LeaderConfig):
+    def __init__(self, config: BiRebot102LeaderConfig):
         super().__init__(config)
         self.config = config
 

@@ -17,6 +17,7 @@
 import logging
 from functools import cached_property
 
+from lerobot.types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..so_leader import SOLeader, SOLeaderTeleopConfig
@@ -93,7 +94,7 @@ class BiSOLeader(Teleoperator):
         self.right_arm.setup_motors()
 
     @check_if_not_connected
-    def get_action(self) -> dict[str, float]:
+    def get_action(self) -> RobotAction:
         action_dict = {}
 
         # Add "left_" prefix
