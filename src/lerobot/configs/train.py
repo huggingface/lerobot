@@ -99,12 +99,9 @@ class TrainPipelineConfig(HubMixin):
     batch_size: int = 8
     prefetch_factor: int = 4
     persistent_workers: bool = True
-    # Use a deterministic O(1)-memory sampler (seeded Feistel permutation) instead of RNG-based
-    # index shuffling. The data order becomes a pure function of (seed, epoch), which makes
-    # distributed sharding immune to RNG desync, keeps sampler memory constant in dataset size,
-    # and enables sample-exact resume of interrupted runs. The shuffle is pseudo-random rather
-    # than a true uniform permutation. Set to false to restore the legacy RNG-based shuffle
-    # order. Ignored when dataset.streaming is enabled.
+    # Deterministic data order (pure function of seed and epoch): immune to cross-rank RNG
+    # desync and enables sample-exact resume. Set to false for the legacy RNG-based shuffle.
+    # Ignored when dataset.streaming is enabled.
     deterministic_sampler: bool = True
     steps: int = 100_000
     eval_freq: int = 20_000

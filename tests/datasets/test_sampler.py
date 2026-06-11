@@ -118,12 +118,18 @@ def test_shuffle_with_generator_is_deterministic():
     # Two samplers shuffling with same-seed generators must yield identical permutations.
     # This is what keeps batch shards disjoint across ranks in distributed training, where
     # accelerate synchronizes the sampler's generator state instead of the global torch RNG.
-    sampler_a = EpisodeAwareSampler([0], [6], shuffle=True, generator=torch.Generator().manual_seed(42))
-    sampler_b = EpisodeAwareSampler([0], [6], shuffle=True, generator=torch.Generator().manual_seed(42))
+    sampler_a = EpisodeAwareSampler(
+        [0], [6], shuffle=True, deterministic=False, generator=torch.Generator().manual_seed(42)
+    )
+    sampler_b = EpisodeAwareSampler(
+        [0], [6], shuffle=True, deterministic=False, generator=torch.Generator().manual_seed(42)
+    )
     assert list(sampler_a) == list(sampler_b)
 
     # Desyncing the global RNG must not affect the permutation.
-    sampler_c = EpisodeAwareSampler([0], [6], shuffle=True, generator=torch.Generator().manual_seed(42))
+    sampler_c = EpisodeAwareSampler(
+        [0], [6], shuffle=True, deterministic=False, generator=torch.Generator().manual_seed(42)
+    )
     order_before = list(sampler_c)
     sampler_c.generator.manual_seed(42)
     torch.randperm(1000)  # consume global RNG, as rank-asymmetric code (e.g. eval) would
@@ -133,7 +139,7 @@ def test_shuffle_with_generator_is_deterministic():
 def test_generator_attribute_defaults_to_none():
     # accelerate detects synchronizable samplers via `hasattr(sampler, "generator")`,
     # so the attribute must exist even when no generator is passed.
-    sampler = EpisodeAwareSampler([0], [6], shuffle=True)
+    sampler = EpisodeAwareSampler([0], [6], shuffle=True, deterministic=False)
     assert sampler.generator is None
     assert set(sampler) == {0, 1, 2, 3, 4, 5}
 
@@ -194,7 +200,7 @@ def test_deterministic_mode_rejects_generator():
 
 
 def test_state_methods_require_deterministic_mode():
-    sampler = EpisodeAwareSampler(*EPISODE_BOUNDS, shuffle=True)
+    sampler = EpisodeAwareSampler(*EPISODE_BOUNDS, shuffle=True, deterministic=False)
     with pytest.raises(RuntimeError, match="deterministic=True"):
         sampler.set_epoch(1)
     with pytest.raises(RuntimeError, match="deterministic=True"):
