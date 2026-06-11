@@ -115,8 +115,8 @@ dataset = [
 ]
 training = [
     "lerobot[dataset]",
-    "accelerate>=1.10.0,<2.0.0",
     "wandb>=0.24.0,<0.28.0",
+    "lerobot[accelerate-dep]",
 ]
 hardware = [
     "lerobot[pynput-dep]",
@@ -143,6 +143,7 @@ pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 placo-dep = ["placo>=0.9.6,<0.9.16"]
 transformers-dep = ["transformers>=5.4.0,<5.6.0"]
 grpcio-dep = ["grpcio>=1.73.1,<2.0.0", "protobuf>=6.31.1,<8.0.0"]
+accelerate-dep = ["accelerate>=1.14.0,<2.0.0"]
 can-dep = ["python-can>=4.2.0,<5.0.0"]
 peft-dep = ["peft>=0.18.0,<1.0.0"]
 scipy-dep = ["scipy>=1.14.0,<2.0.0"]
@@ -204,7 +205,7 @@ wallx = [
 ]
 pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 molmoact2 = ["lerobot[transformers-dep]", "lerobot[peft-dep]", "lerobot[scipy-dep]"]
-smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0"]
+smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "lerobot[accelerate-dep]"]
 multi_task_dit = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
 groot = [
     "lerobot[transformers-dep]",
