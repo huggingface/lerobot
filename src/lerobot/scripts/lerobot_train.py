@@ -43,7 +43,12 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import EpisodeAwareSampler, make_dataset
+from lerobot.datasets import (
+    DeterministicEpisodeAwareSampler,
+    EpisodeAwareSampler,
+    compute_sampler_state,
+    make_dataset,
+)
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
@@ -387,7 +392,30 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
-    if hasattr(active_cfg, "drop_n_last_frames"):
+    if cfg.deterministic_sampler:
+        # Data order is a pure function of (seed, epoch): nothing to synchronize across ranks,
+        # O(1) memory in dataset size, and a resumed run continues at the exact sample where the
+        # checkpoint left off (up to accelerate's even_batches padding at epoch boundaries).
+        shuffle = False
+        sampler = DeterministicEpisodeAwareSampler(
+            dataset.meta.episodes["dataset_from_index"],
+            dataset.meta.episodes["dataset_to_index"],
+            episode_indices_to_use=dataset.episodes,
+            drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
+            shuffle=True,
+            seed=cfg.seed if cfg.seed is not None else 0,
+        )
+        if cfg.resume and step > 0:
+            sampler_state = compute_sampler_state(
+                step, len(sampler), cfg.batch_size, accelerator.num_processes
+            )
+            sampler.load_state_dict(sampler_state)
+            if is_main_process:
+                logging.info(
+                    f"Resuming data order at epoch {sampler_state['epoch']}, "
+                    f"sample {sampler_state['start_index']}"
+                )
+    elif hasattr(active_cfg, "drop_n_last_frames"):
         shuffle = False
         # A dedicated generator (rather than the global torch RNG) lets accelerator.prepare
         # synchronize the shuffle permutation across ranks, keeping batch shards disjoint even

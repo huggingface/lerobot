@@ -14,11 +14,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import math
 from collections.abc import Iterator
 
+import numpy as np
 import torch
 
 logger = logging.getLogger(__name__)
+
+_MASK_64 = (1 << 64) - 1
+_FEISTEL_ROUNDS = 4
+
+
+def _mix64(x: int) -> int:
+    """SplitMix64 finalizer: a high-quality, cheap 64-bit integer hash."""
+    x = (x + 0x9E3779B97F4A7C15) & _MASK_64
+    x ^= x >> 30
+    x = (x * 0xBF58476D1CE4E5B9) & _MASK_64
+    x ^= x >> 27
+    x = (x * 0x94D049BB133111EB) & _MASK_64
+    x ^= x >> 31
+    return x
 
 
 class EpisodeAwareSampler:
@@ -90,3 +106,168 @@ class EpisodeAwareSampler:
 
     def __len__(self) -> int:
         return len(self.indices)
+
+
+class DeterministicEpisodeAwareSampler:
+    """Episode-aware sampler with O(num_episodes) memory and a deterministic, seekable shuffle.
+
+    Unlike `EpisodeAwareSampler`, frame indices are never materialized: only per-episode
+    boundaries are stored (a few numpy int64 per episode) and the mapping from a logical
+    position to a frame index is computed on the fly via `searchsorted`. Shuffling applies a
+    seeded Feistel permutation over `[0, num_frames)` (cycle-walking to the exact domain size)
+    instead of `torch.randperm`, so the data order is a pure function of `(seed, epoch)`:
+
+    - every distributed rank derives the identical order with no RNG state to synchronize,
+    - any position can be sought in O(1), enabling sample-exact resume of interrupted runs
+      (see `state_dict` / `load_state_dict`),
+    - memory and epoch-boundary cost do not grow with the number of frames.
+
+    The trade-off is that the shuffle is pseudo-random rather than a true uniform permutation,
+    which is the standard compromise in large-scale training loaders.
+
+    Each completed `__iter__` advances the internal epoch, so consecutive dataloader passes
+    yield different permutations without requiring `set_epoch` calls. During an epoch resumed
+    via `load_state_dict`, `__len__` still reports the full epoch length; the first pass simply
+    yields fewer samples.
+    """
+
+    def __init__(
+        self,
+        dataset_from_indices: list[int],
+        dataset_to_indices: list[int],
+        episode_indices_to_use: list | None = None,
+        drop_n_first_frames: int = 0,
+        drop_n_last_frames: int = 0,
+        shuffle: bool = True,
+        seed: int = 0,
+    ):
+        """
+        Args:
+            dataset_from_indices: List of indices containing the start of each episode in the dataset.
+            dataset_to_indices: List of indices containing the end of each episode in the dataset.
+            episode_indices_to_use: List of episode indices to use. If None, all episodes are used.
+                                    Assumes that episodes are indexed from 0 to N-1.
+            drop_n_first_frames: Number of frames to drop from the start of each episode.
+            drop_n_last_frames: Number of frames to drop from the end of each episode.
+            shuffle: Whether to shuffle with the seeded Feistel permutation.
+            seed: Seed the permutation is derived from (together with the epoch).
+        """
+        if drop_n_first_frames < 0:
+            raise ValueError(f"drop_n_first_frames must be >= 0, got {drop_n_first_frames}")
+        if drop_n_last_frames < 0:
+            raise ValueError(f"drop_n_last_frames must be >= 0, got {drop_n_last_frames}")
+
+        from_indices = np.asarray(dataset_from_indices, dtype=np.int64)
+        to_indices = np.asarray(dataset_to_indices, dtype=np.int64)
+        if from_indices.shape != to_indices.shape:
+            raise ValueError(
+                f"dataset_from_indices and dataset_to_indices must have the same length, "
+                f"got {len(from_indices)} and {len(to_indices)}"
+            )
+
+        used = np.ones(len(from_indices), dtype=bool)
+        if episode_indices_to_use is not None:
+            used = np.zeros(len(from_indices), dtype=bool)
+            used[np.asarray(episode_indices_to_use, dtype=np.int64)] = True
+
+        starts = from_indices + drop_n_first_frames
+        lengths = to_indices - drop_n_last_frames - starts
+        for episode_idx in np.flatnonzero(used & (lengths <= 0)):
+            logger.warning(
+                "Episode %d has %d frames but drop_n_first_frames=%d and "
+                "drop_n_last_frames=%d removes all frames. Skipping.",
+                episode_idx,
+                to_indices[episode_idx] - from_indices[episode_idx],
+                drop_n_first_frames,
+                drop_n_last_frames,
+            )
+        used &= lengths > 0
+        if not used.any():
+            raise ValueError(
+                "No valid frames remain after applying drop_n_first_frames and drop_n_last_frames. "
+                "All episodes were either filtered out or had too few frames."
+            )
+
+        self._starts = starts[used]
+        self._cum_lengths = np.cumsum(lengths[used])
+        self._num_frames = int(self._cum_lengths[-1])
+        self.shuffle = shuffle
+        self.seed = seed
+        self._epoch = 0
+        self._start_index = 0
+
+        # Feistel cipher domain: the smallest even-bit-width power of two >= num_frames,
+        # so both halves have equal width and cycle-walking converges in <4 expected steps.
+        bits = max((self._num_frames - 1).bit_length(), 2)
+        self._half_bits = (bits + 1) // 2
+        self._half_mask = (1 << self._half_bits) - 1
+
+    def set_epoch(self, epoch: int) -> None:
+        """Set the epoch the next `__iter__` will use (DistributedSampler convention)."""
+        self._epoch = epoch
+
+    def state_dict(self) -> dict:
+        return {"epoch": self._epoch, "start_index": self._start_index}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._epoch = state["epoch"]
+        self._start_index = state["start_index"]
+
+    def _round_keys(self, epoch: int) -> list[int]:
+        state = _mix64(_mix64(self.seed) ^ _mix64(epoch))
+        keys = []
+        for _ in range(_FEISTEL_ROUNDS):
+            state = _mix64(state)
+            keys.append(state)
+        return keys
+
+    def _permute(self, index: int, keys: list[int]) -> int:
+        # Feistel network with cycle-walking: a bijection on [0, num_frames).
+        half_bits, half_mask = self._half_bits, self._half_mask
+        while True:
+            left, right = index >> half_bits, index & half_mask
+            for key in keys:
+                left, right = right, left ^ (_mix64(right ^ key) & half_mask)
+            index = (left << half_bits) | right
+            if index < self._num_frames:
+                return index
+
+    def _frame_index(self, position: int) -> int:
+        episode = int(np.searchsorted(self._cum_lengths, position, side="right"))
+        position_in_episode = position - (int(self._cum_lengths[episode - 1]) if episode > 0 else 0)
+        return int(self._starts[episode]) + position_in_episode
+
+    def __iter__(self) -> Iterator[int]:
+        # Capture and advance state eagerly so epoch bookkeeping is not deferred until the
+        # returned generator is first consumed.
+        epoch, start = self._epoch, self._start_index
+        self._epoch += 1
+        self._start_index = 0
+        return self._iter_epoch(epoch, start)
+
+    def _iter_epoch(self, epoch: int, start: int) -> Iterator[int]:
+        keys = self._round_keys(epoch) if self.shuffle else None
+        for k in range(start, self._num_frames):
+            yield self._frame_index(self._permute(k, keys) if self.shuffle else k)
+
+    def __len__(self) -> int:
+        return self._num_frames
+
+
+def compute_sampler_state(step: int, num_frames: int, batch_size: int, num_processes: int) -> dict:
+    """Map a global optimization step to a `DeterministicEpisodeAwareSampler` state for resume.
+
+    Under accelerate's batch-level sharding, every rank iterates the same underlying sampler and
+    keeps every `num_processes`-th batch, so one optimization step consumes
+    `batch_size * num_processes` consecutive sampler positions, and (with `even_batches` padding)
+    each rank sees `ceil(ceil(num_frames / batch_size) / num_processes)` batches per epoch.
+
+    `batches_into_epoch * num_processes <= ceil(num_frames / batch_size) - 1` always holds, so the
+    start index stays strictly below `num_frames`; the `min` is purely defensive. Resume is
+    sample-exact up to the `even_batches` padding accelerate appends at epoch boundaries (at most
+    `num_processes - 1` duplicated batches per epoch, the same duplication non-resumed runs get).
+    """
+    batches_per_epoch = math.ceil(math.ceil(num_frames / batch_size) / num_processes)
+    epoch, batches_into_epoch = divmod(step, batches_per_epoch)
+    start_index = min(batches_into_epoch * batch_size * num_processes, num_frames)
+    return {"epoch": epoch, "start_index": start_index}
