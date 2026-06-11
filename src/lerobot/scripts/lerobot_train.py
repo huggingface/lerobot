@@ -45,7 +45,6 @@ from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import (
-    DeterministicEpisodeAwareSampler,
     EpisodeAwareSampler,
     LeRobotDatasetMetadata,
     compute_sampler_state,
@@ -481,12 +480,13 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         # independent pure function of (seed, epoch, shard), giving sample-exact resume per rank.
         shuffle = False
         num_nodes, node_index, local_world_size = node_topology(accelerator)
-        sampler = DeterministicEpisodeAwareSampler(
+        sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
             dataset.meta.episodes["dataset_to_index"],
             episode_indices_to_use=dataset.episodes,
             drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
             shuffle=True,
+            deterministic=True,
             seed=(cfg.seed if cfg.seed is not None else 0) + node_index,
             shard_rank=accelerator.local_process_index,
             shard_world_size=local_world_size,
@@ -508,12 +508,13 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         # O(1) memory in dataset size, and a resumed run continues at the exact sample where the
         # checkpoint left off (up to accelerate's even_batches padding at epoch boundaries).
         shuffle = False
-        sampler = DeterministicEpisodeAwareSampler(
+        sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
             dataset.meta.episodes["dataset_to_index"],
             episode_indices_to_use=dataset.episodes,
             drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
             shuffle=True,
+            deterministic=True,
             seed=cfg.seed if cfg.seed is not None else 0,
         )
         if cfg.resume and step > 0:
