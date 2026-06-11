@@ -281,13 +281,17 @@ class MultiAdamConfig(OptimizerConfig):
 
 
 def save_optimizer_state(
-    optimizer: torch.optim.Optimizer | dict[str, torch.optim.Optimizer], save_dir: Path
+    optimizer: torch.optim.Optimizer | dict[str, torch.optim.Optimizer],
+    save_dir: Path,
+    optim_state_dict: dict | None = None,
 ) -> None:
     """Save optimizer state to disk.
 
     Args:
         optimizer: Either a single optimizer or a dictionary of optimizers.
         save_dir: Directory to save the optimizer state.
+        optim_state_dict: Pre-gathered optimizer state dict (for FSDP). If provided,
+            saves this directly instead of calling optimizer.state_dict().
     """
     if isinstance(optimizer, dict):
         # Handle dictionary of optimizers
@@ -297,12 +301,14 @@ def save_optimizer_state(
             _save_single_optimizer_state(opt, optimizer_dir)
     else:
         # Handle single optimizer
-        _save_single_optimizer_state(optimizer, save_dir)
+        _save_single_optimizer_state(optimizer, save_dir, optim_state_dict=optim_state_dict)
 
 
-def _save_single_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Path) -> None:
+def _save_single_optimizer_state(
+    optimizer: torch.optim.Optimizer, save_dir: Path, optim_state_dict: dict | None = None
+) -> None:
     """Save a single optimizer's state to disk."""
-    state = optimizer.state_dict()
+    state = optim_state_dict.copy() if optim_state_dict is not None else optimizer.state_dict()
     param_groups = state.pop("param_groups")
     flat_state = flatten_dict(state)
     save_file(flat_state, save_dir / OPTIMIZER_STATE)

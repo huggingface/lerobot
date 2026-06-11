@@ -233,6 +233,87 @@ def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
     return padded_images
 
 
+class JointDecoderLayerPair(nn.Module):
+    """Wraps a paired (PaliGemma, Expert) decoder layer for FSDP compatibility.
+
+    Pi0.5's compute_layer_complete() directly accesses weight matrices from both
+    models simultaneously without calling module.forward(). FSDP's all-gather hooks
+    require forward() to fire on the wrapping module. This class provides that
+    forward() boundary so FSDP can wrap each pair as a single sharding unit.
+    """
+
+    def __init__(self, paligemma_layer, expert_layer):
+        super().__init__()
+        self.paligemma_layer = paligemma_layer
+        self.expert_layer = expert_layer
+
+    def forward(self, inputs_embeds, attention_mask, position_ids, adarms_cond, rotary_emb):
+        return compute_layer_complete(
+            inputs_embeds,
+            attention_mask,
+            position_ids,
+            adarms_cond,
+            layers=(self.paligemma_layer, self.expert_layer),
+            rotary_emb=rotary_emb,
+        )
+
+
+class _JointLayerView(nn.Module):
+    """A non-owning view into JointDecoderLayerPair that exposes one side's layers.
+
+    Replaces the original nn.ModuleList on paligemma/expert so that:
+    - The HuggingFace inference forward (which iterates self.layers) still works
+    - Parameters are NOT double-registered (this module registers no children)
+    """
+
+    def __init__(self, joint_layers: nn.ModuleList, attr: str):
+        super().__init__()
+        # Store as plain Python attributes to avoid nn.Module registration
+        object.__setattr__(self, "_joint_layers", joint_layers)
+        object.__setattr__(self, "_attr", attr)
+
+    def __len__(self):
+        return len(self._joint_layers)
+
+    def __iter__(self):
+        for pair in self._joint_layers:
+            yield getattr(pair, self._attr)
+
+    def __getitem__(self, idx):
+        if isinstance(idx, slice):
+            return [getattr(self._joint_layers[i], self._attr) for i in range(*idx.indices(len(self)))]
+        return getattr(self._joint_layers[idx], self._attr)
+
+    def parameters(self, recurse=True, **kwargs):
+        # Return empty iterator; params are owned by joint_layers
+        return iter([])
+
+    def named_parameters(self, prefix="", recurse=True, **kwargs):
+        return iter([])
+
+    def named_modules(self, memo=None, prefix="", remove_duplicate=True):
+        # Only yield self, not the proxied layers (avoids double-counting)
+        if memo is None:
+            memo = set()
+        if self not in memo:
+            memo.add(self)
+            yield prefix, self
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_joint_layers"] = self._joint_layers
+        state["_attr"] = self._attr
+        return state
+
+    def __setstate__(self, state):
+        joint_layers = state.pop("_joint_layers")
+        attr = state.pop("_attr")
+        super().__init__()
+        object.__setattr__(self, "_joint_layers", joint_layers)
+        object.__setattr__(self, "_attr", attr)
+        self.__dict__.update(state)
+
+
 # Define the complete layer computation function for gradient checkpointing
 def compute_layer_complete(inputs_embeds, attention_mask, position_ids, adarms_cond, layers, rotary_emb):
     query_states = []
@@ -400,6 +481,8 @@ class PaliGemmaWithExpertModel(
         self.gemma_expert = PiGemmaForCausalLM(config=action_expert_config_hf)
         self.gemma_expert.model.embed_tokens = None
 
+        self._build_joint_layers()
+
         self.to_bfloat16_for_selected_params(precision)
         self._set_requires_grad()
 
@@ -457,6 +540,38 @@ class PaliGemmaWithExpertModel(
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.paligemma.model.language_model.get_input_embeddings()(tokens)
 
+    def _build_joint_layers(self):
+        """Build JointDecoderLayerPair list from PaliGemma and Expert layers.
+
+        Moves decoder layers into JointDecoderLayerPair wrappers. This gives FSDP
+        a proper module boundary (forward() hook point) for each paired layer
+        without changing the computation.
+
+        The original layer lists on paligemma and gemma_expert are replaced with
+        _JointLayerView instances that proxy into joint_layers, so the standard
+        HuggingFace inference path (prefix-only/suffix-only with KV cache) still
+        works through the existing PiGemmaModel.forward() code.
+        """
+        paligemma_layers = list(self.paligemma.model.language_model.layers)
+        expert_layers = list(self.gemma_expert.model.layers)
+
+        assert len(paligemma_layers) == len(expert_layers), (
+            f"Layer count mismatch: {len(paligemma_layers)} vs {len(expert_layers)}"
+        )
+
+        self.joint_layers = nn.ModuleList(
+            [JointDecoderLayerPair(p, e) for p, e in zip(paligemma_layers, expert_layers, strict=True)]
+        )
+        # Store as non-registered attribute to avoid duplicate module in the tree
+        # (the rotary_emb instance is already registered under paligemma)
+        object.__setattr__(self, "_rotary_emb", self.paligemma.model.language_model.rotary_emb)
+
+        # Replace original layer lists with views that proxy into joint_layers.
+        # This avoids double-registering params in the module tree while keeping
+        # the HuggingFace inference forward (which iterates self.layers) working.
+        self.paligemma.model.language_model.layers = _JointLayerView(self.joint_layers, "paligemma_layer")
+        self.gemma_expert.model.layers = _JointLayerView(self.joint_layers, "expert_layer")
+
     def forward(
         self,
         attention_mask: torch.Tensor | None = None,
@@ -493,10 +608,6 @@ class PaliGemmaWithExpertModel(
             prefix_output = None
             prefix_past_key_values = None
         else:
-            paligemma_layers = self.paligemma.model.language_model.layers
-            gemma_expert_layers = self.gemma_expert.model.layers
-            rotary_emb = self.paligemma.model.language_model.rotary_emb
-
             # Check if gradient checkpointing is enabled for any of the models
             use_gradient_checkpointing = (
                 hasattr(self.gemma_expert.model, "gradient_checkpointing")
@@ -504,28 +615,25 @@ class PaliGemmaWithExpertModel(
                 and self.training
             ) or (hasattr(self, "gradient_checkpointing") and self.gradient_checkpointing and self.training)
 
-            # Process all layers with gradient checkpointing if enabled
-            for layers in zip(paligemma_layers, gemma_expert_layers, strict=True):
+            for joint_layer in self.joint_layers:
                 if use_gradient_checkpointing:
                     inputs_embeds = torch.utils.checkpoint.checkpoint(
-                        compute_layer_complete,
+                        joint_layer,
                         inputs_embeds,
                         attention_mask,
                         position_ids,
                         adarms_cond,
+                        self._rotary_emb,
                         use_reentrant=False,
                         preserve_rng_state=False,
-                        layers=layers,
-                        rotary_emb=rotary_emb,
                     )
                 else:
-                    inputs_embeds = compute_layer_complete(
+                    inputs_embeds = joint_layer(
                         inputs_embeds,
                         attention_mask,
                         position_ids,
                         adarms_cond,
-                        layers=layers,
-                        rotary_emb=rotary_emb,
+                        self._rotary_emb,
                     )
 
             # final norm
@@ -749,7 +857,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
 
         if (
-            self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
+            self.paligemma_with_expert.joint_layers[0].paligemma_layer.self_attn.q_proj.weight.dtype
             == torch.bfloat16
         ):
             suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
@@ -1068,6 +1176,24 @@ class PI05Policy(PreTrainedPolicy):
 
         for key, value in state_dict.items():
             new_key = key
+
+            # Remap layer keys to joint_layers structure
+            paligemma_layer_match = re.match(
+                r"paligemma_with_expert\.paligemma\.model\.language_model\.layers\.(\d+)\.(.*)",
+                key,
+            )
+            expert_layer_match = re.match(
+                r"paligemma_with_expert\.gemma_expert\.model\.layers\.(\d+)\.(.*)",
+                key,
+            )
+            if paligemma_layer_match:
+                idx = paligemma_layer_match.group(1)
+                rest = paligemma_layer_match.group(2)
+                new_key = f"paligemma_with_expert.joint_layers.{idx}.paligemma_layer.{rest}"
+            elif expert_layer_match:
+                idx = expert_layer_match.group(1)
+                rest = expert_layer_match.group(2)
+                new_key = f"paligemma_with_expert.joint_layers.{idx}.expert_layer.{rest}"
 
             # Handle layer norm structure changes: .weight -> .dense.weight + .dense.bias
             # For gemma expert layers
