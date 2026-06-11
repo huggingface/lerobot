@@ -732,6 +732,14 @@ class DAggerStrategy(RolloutStrategy):
             logger.info("Resuming autonomous mode - resetting engine and interpolator")
             interpolator.reset()
             engine.reset()
+            # Feed a fresh observation so the first action chunk is based on
+            # the current (post-correction) state, not the stale pre-correction
+            # observation still in _obs_holder from before the pause.
+            # Without this, the RTC thread predicts actions assuming the arm
+            # is still at its pre-correction pose → snap-back on resume.
+            fresh_obs = robot.get_observation()
+            obs_processed = ctx.processors.robot_observation_processor(fresh_obs)
+            engine.notify_observation(obs_processed)
             engine.resume()
 
             # release teleop before resuming the policy

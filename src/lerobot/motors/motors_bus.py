@@ -555,7 +555,14 @@ class SerialMotorsBus(MotorsBusBase):
         if disable_torque:
             self.port_handler.clearPort()
             self.port_handler.is_using = False
-            self.disable_torque(num_retry=5)
+            try:
+                self.disable_torque(num_retry=5)
+            except ConnectionError:
+                logger.warning(
+                    "Failed to disable torque on one or more motors — "
+                    "they may still be powered. Cycle robot power to reset.",
+                    exc_info=True,
+                )
 
         self.port_handler.closePort()
         logger.debug(f"{self.__class__.__name__} disconnected.")
@@ -1127,7 +1134,7 @@ class SerialMotorsBus(MotorsBusBase):
         motors: NameOrID | Sequence[NameOrID] | None = None,
         *,
         normalize: bool = True,
-        num_retry: int = 0,
+        num_retry: int = 2,
     ) -> dict[str, Value]:
         """Read the same register from several motors at once.
 
@@ -1135,7 +1142,7 @@ class SerialMotorsBus(MotorsBusBase):
             data_name (str): Register name.
             motors (NameOrID | Sequence[NameOrID] | None, optional): Motors to query. `None` (default) reads every motor.
             normalize (bool, optional): Normalisation flag.  Defaults to `True`.
-            num_retry (int, optional): Retry attempts.  Defaults to `0`.
+            num_retry (int, optional): Retry attempts.  Defaults to `2` (3 total tries).
 
         Returns:
             dict[str, Value]: Mapping *motor name → value*.
