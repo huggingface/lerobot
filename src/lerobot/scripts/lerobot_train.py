@@ -36,6 +36,7 @@ from tqdm import tqdm
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
+    load_training_num_processes,
     load_training_state,
     save_checkpoint,
     update_last_checkpoint,
@@ -399,8 +400,18 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             seed=cfg.seed if cfg.seed is not None else 0,
         )
         if cfg.resume and step > 0:
+            # The resume offset depends on the world size that produced `step`, so use the world
+            # size recorded in the checkpoint (falling back to the current one for older ckpts).
+            saved_num_processes = load_training_num_processes(cfg.checkpoint_path)
+            ckpt_num_processes = saved_num_processes or accelerator.num_processes
+            if is_main_process and saved_num_processes not in (None, accelerator.num_processes):
+                logging.warning(
+                    f"Resuming with num_processes={accelerator.num_processes} but the checkpoint was "
+                    f"written with num_processes={saved_num_processes}. The data order resumes at the "
+                    "right epoch/offset, but per-rank sample-exactness requires the same world size."
+                )
             sampler_state = compute_sampler_state(
-                step, len(sampler), cfg.batch_size, accelerator.num_processes
+                step, len(sampler), cfg.batch_size, ckpt_num_processes
             )
             sampler.load_state_dict(sampler_state)
             if is_main_process:
@@ -541,6 +552,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     scheduler=lr_scheduler,
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
+                    num_processes=accelerator.num_processes,
                 )
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
