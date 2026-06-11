@@ -18,7 +18,8 @@ import logging
 from functools import cached_property
 
 from lerobot.types import RobotAction, RobotObservation
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.bimanual import BimanualMixin
+from lerobot.utils.decorators import check_if_not_connected
 
 from ..rebot_b601_follower import RebotB601Follower, RebotB601FollowerRobotConfig
 from ..robot import Robot
@@ -27,7 +28,7 @@ from .config_bi_rebot_b601_follower import BiRebotB601FollowerConfig
 logger = logging.getLogger(__name__)
 
 
-class BiRebotB601Follower(Robot):
+class BiRebotB601Follower(BimanualMixin, Robot):
     """Bimanual Seeed Studio reBot B601-DM follower.
 
     Composes two single-arm :class:`RebotB601Follower` instances. Observation and
@@ -113,27 +114,6 @@ class BiRebotB601Follower(Robot):
     def action_features(self) -> dict[str, type]:
         return self._motors_ft
 
-    @property
-    def is_connected(self) -> bool:
-        return self.left_arm.is_connected and self.right_arm.is_connected
-
-    @check_if_already_connected
-    def connect(self, calibrate: bool = True) -> None:
-        self.left_arm.connect(calibrate)
-        self.right_arm.connect(calibrate)
-
-    @property
-    def is_calibrated(self) -> bool:
-        return self.left_arm.is_calibrated and self.right_arm.is_calibrated
-
-    def calibrate(self) -> None:
-        self.left_arm.calibrate()
-        self.right_arm.calibrate()
-
-    def configure(self) -> None:
-        self.left_arm.configure()
-        self.right_arm.configure()
-
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         obs_dict: RobotObservation = {}
@@ -159,8 +139,3 @@ class BiRebotB601Follower(Robot):
             **{f"left_{k}": v for k, v in sent_action_left.items()},
             **{f"right_{k}": v for k, v in sent_action_right.items()},
         }
-
-    @check_if_not_connected
-    def disconnect(self) -> None:
-        self.left_arm.disconnect()
-        self.right_arm.disconnect()

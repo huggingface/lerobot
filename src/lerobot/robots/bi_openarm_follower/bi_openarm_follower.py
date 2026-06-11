@@ -18,7 +18,8 @@ import logging
 from functools import cached_property
 
 from lerobot.types import RobotAction, RobotObservation
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.bimanual import BimanualMixin
+from lerobot.utils.decorators import check_if_not_connected
 
 from ..openarm_follower import OpenArmFollower, OpenArmFollowerConfig
 from ..robot import Robot
@@ -27,7 +28,7 @@ from .config_bi_openarm_follower import BiOpenArmFollowerConfig
 logger = logging.getLogger(__name__)
 
 
-class BiOpenArmFollower(Robot):
+class BiOpenArmFollower(BimanualMixin, Robot):
     """
     Bimanual OpenArm Follower Arms
     """
@@ -119,27 +120,6 @@ class BiOpenArmFollower(Robot):
     def action_features(self) -> dict[str, type]:
         return self._motors_ft
 
-    @property
-    def is_connected(self) -> bool:
-        return self.left_arm.is_connected and self.right_arm.is_connected
-
-    @check_if_already_connected
-    def connect(self, calibrate: bool = True) -> None:
-        self.left_arm.connect(calibrate)
-        self.right_arm.connect(calibrate)
-
-    @property
-    def is_calibrated(self) -> bool:
-        return self.left_arm.is_calibrated and self.right_arm.is_calibrated
-
-    def calibrate(self) -> None:
-        self.left_arm.calibrate()
-        self.right_arm.calibrate()
-
-    def configure(self) -> None:
-        self.left_arm.configure()
-        self.right_arm.configure()
-
     def setup_motors(self) -> None:
         raise NotImplementedError(
             "Motor ID configuration is typically done via manufacturer tools for CAN motors."
@@ -183,8 +163,3 @@ class BiOpenArmFollower(Robot):
         prefixed_sent_action_right = {f"right_{key}": value for key, value in sent_action_right.items()}
 
         return {**prefixed_sent_action_left, **prefixed_sent_action_right}
-
-    @check_if_not_connected
-    def disconnect(self):
-        self.left_arm.disconnect()
-        self.right_arm.disconnect()
