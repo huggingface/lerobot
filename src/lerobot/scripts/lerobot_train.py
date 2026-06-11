@@ -389,11 +389,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     # create dataloader for offline training
     if not cfg.dataset.streaming:
-        # All non-streaming (map-style) datasets use EpisodeAwareSampler. This is broader than the
-        # historical `hasattr(active_cfg, "drop_n_last_frames")` guard: configs that previously fell
-        # back to DataLoader's default random shuffle now get this sampler instead, so their data
-        # order changes for a given seed (a deliberate, reproducibility-breaking improvement).
-        #
+        # All non-streaming (map-style) datasets use EpisodeAwareSampler.
         # The order is a pure function of (seed, epoch), so every rank independently produces the
         # same permutation. accelerate then shards it disjointly across ranks via BatchSamplerShard
         # without needing a `generator` attribute to synchronize an RNG, and resume is sample-exact.

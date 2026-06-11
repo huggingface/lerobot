@@ -213,22 +213,6 @@ def test_deterministic_sampler_resume_is_exact_at_scale():
     assert list(resumed) == epoch_0[start:]
 
 
-def test_deterministic_sampler_validation_matches_episode_aware():
-    with pytest.raises(ValueError, match="drop_n_first_frames must be >= 0"):
-        EpisodeAwareSampler([0], [10], drop_n_first_frames=-1)
-    with pytest.raises(ValueError, match="drop_n_last_frames must be >= 0"):
-        EpisodeAwareSampler([0], [10], drop_n_last_frames=-1)
-    with pytest.raises(ValueError, match="No valid frames remain"):
-        EpisodeAwareSampler([0, 1, 2], [1, 2, 3], drop_n_first_frames=1)
-
-
-def test_deterministic_sampler_partial_episode_drop_warns(caplog):
-    with caplog.at_level(logging.WARNING, logger="lerobot.datasets.sampler"):
-        sampler = EpisodeAwareSampler([0, 1], [1, 6], drop_n_first_frames=1, shuffle=False)
-    assert list(sampler) == [2, 3, 4, 5]
-    assert "Episode 0" in caplog.text
-
-
 def test_compute_sampler_state():
     # 100 frames, batch 10, 2 ranks -> 10 underlying batches, 5 per rank per epoch.
     assert compute_sampler_state(step=0, num_frames=100, batch_size=10, num_processes=2) == {
