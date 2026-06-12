@@ -392,7 +392,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
-    if hasattr(active_cfg, "drop_n_last_frames"):
+    is_streaming = isinstance(dataset, torch.utils.data.IterableDataset)
+    if hasattr(active_cfg, "drop_n_last_frames") and not is_streaming:
         shuffle = False
         # A dedicated generator (rather than the global torch RNG) lets accelerator.prepare
         # synchronize the shuffle permutation across ranks, keeping batch shards disjoint even
@@ -409,6 +410,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             generator=sampler_generator,
         )
     else:
+        if hasattr(active_cfg, "drop_n_last_frames") and is_streaming:
+            logging.warning(
+                "EpisodeAwareSampler is not compatible with streaming datasets. "
+                "Training will proceed without drop_n_last_frames filtering. "
+                "End-of-episode samples may be included in the training data."
+            )
         shuffle = True
         sampler = None
 
@@ -420,7 +427,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         dataset,
         num_workers=cfg.num_workers,
         batch_size=cfg.batch_size,
-        shuffle=shuffle and not cfg.dataset.streaming,
+        shuffle=shuffle and not is_streaming,
         sampler=sampler,
         pin_memory=device.type == "cuda",
         drop_last=False,
