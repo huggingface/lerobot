@@ -50,6 +50,16 @@ DUMMY_DEPTH_VIDEO_INFO = {
     **DUMMY_VIDEO_INFO,
     "is_depth_map": True,
 }
+DUMMY_DEPTH_VIDEO_INFO_FULL = {
+    **{k: v for k, v in DUMMY_VIDEO_INFO.items() if k != "video.preset"},
+    "video.codec": "hevc",
+    "video.pix_fmt": "gray12le",
+    "is_depth_map": True,
+    "video.depth_min": 0.05,
+    "video.depth_max": 8.0,
+    "video.shift": 2.5,
+    "video.use_log": True,
+}
 DUMMY_DEPTH_CAMERA_FEATURES = {
     "laptop_depth": {
         "shape": (64, 96, 1),
@@ -60,3 +70,25 @@ DUMMY_DEPTH_CAMERA_FEATURES = {
 DUMMY_CAMERA_FEATURES_WITH_DEPTH = {**DUMMY_CAMERA_FEATURES, **DUMMY_DEPTH_CAMERA_FEATURES}
 DUMMY_CHW = (3, 96, 128)
 DUMMY_HWC = (96, 128, 3)
+
+# Default video feature set used by video-encoding persistence tests.
+DUMMY_VIDEO_FEATURES = {
+    "observation.images.cam": {
+        "dtype": "video",
+        "shape": (64, 96, 3),
+        "names": ["height", "width", "channels"],
+    },
+    "action": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
+}
+DUMMY_VIDEO_KEY = "observation.images.cam"
+
+DUMMY_DEPTH_FEATURES = {
+    "observation.images.depth": {
+        "dtype": "video",
+        "shape": (64, 96, 1),
+        "names": ["height", "width", "channels"],
+        "info": {"is_depth_map": True},
+    },
+    "action": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
+}
+DUMMY_DEPTH_KEY = "observation.images.depth"
