@@ -31,7 +31,12 @@ import PIL.Image
 import pyarrow.parquet as pq
 import torch
 
-from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults
+from lerobot.configs import (
+    DepthEncoderConfig,
+    VideoEncoderConfig,
+    camera_encoder_defaults,
+    depth_encoder_defaults,
+)
 
 from .compute_stats import compute_episode_stats
 from .dataset_metadata import LeRobotDatasetMetadata
@@ -48,6 +53,7 @@ from .io_utils import (
     write_info,
 )
 from .utils import (
+    DEFAULT_DEPTH_PATH,
     DEFAULT_EPISODES_PATH,
     DEFAULT_IMAGE_PATH,
     update_chunk_file_indices,
@@ -67,17 +73,22 @@ def _encode_video_worker(
     episode_index: int,
     root: Path,
     fps: int,
-    camera_encoder: VideoEncoderConfig | None = None,
+    video_encoder: VideoEncoderConfig | None = None,
     encoder_threads: int | None = None,
 ) -> Path:
     temp_path = Path(tempfile.mkdtemp(dir=root)) / f"{video_key}_{episode_index:03d}.mp4"
-    fpath = DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=episode_index, frame_index=0)
+    path_template = (
+        DEFAULT_DEPTH_PATH
+        if video_encoder is not None and isinstance(video_encoder, DepthEncoderConfig)
+        else DEFAULT_IMAGE_PATH
+    )
+    fpath = path_template.format(image_key=video_key, episode_index=episode_index, frame_index=0)
     img_dir = (root / fpath).parent
     encode_video_frames(
         img_dir,
         temp_path,
         fps,
-        camera_encoder=camera_encoder,
+        video_encoder=video_encoder,
         encoder_threads=encoder_threads,
         overwrite=True,
     )
@@ -97,6 +108,7 @@ class DatasetWriter:
         meta: LeRobotDatasetMetadata,
         root: Path,
         camera_encoder: VideoEncoderConfig | None,
+        depth_encoder: DepthEncoderConfig | None,
         encoder_threads: int | None,
         batch_encoding_size: int,
         streaming_encoder: StreamingVideoEncoder | None = None,
@@ -110,6 +122,8 @@ class DatasetWriter:
             root: Local dataset root directory.
             camera_encoder: Video encoder settings applied to all cameras.
                 ``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`.
+            depth_encoder: Video encoder settings applied to all **depth** cameras.
+                ``None`` uses :func:`~lerobot.configs.depth_encoder_defaults`.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
             batch_encoding_size: Number of episodes to accumulate before
@@ -121,6 +135,7 @@ class DatasetWriter:
         self._meta = meta
         self._root = root
         self._camera_encoder = camera_encoder or camera_encoder_defaults()
+        self._depth_encoder = depth_encoder or depth_encoder_defaults()
         self._encoder_threads = encoder_threads
         self._batch_encoding_size = batch_encoding_size
         self._streaming_encoder = streaming_encoder
@@ -145,7 +160,8 @@ class DatasetWriter:
         return ep_buffer
 
     def _get_image_file_path(self, episode_index: int, image_key: str, frame_index: int) -> Path:
-        fpath = DEFAULT_IMAGE_PATH.format(
+        path_template = DEFAULT_DEPTH_PATH if image_key in self._meta.depth_keys else DEFAULT_IMAGE_PATH
+        fpath = path_template.format(
             image_key=image_key, episode_index=episode_index, frame_index=frame_index
         )
         return self._root / fpath
@@ -195,6 +211,7 @@ class DatasetWriter:
         if frame_index == 0 and self._streaming_encoder is not None:
             self._streaming_encoder.start_episode(
                 video_keys=list(self._meta.video_keys),
+                depth_video_keys=list(self._meta.depth_keys),
                 temp_dir=self._root,
             )
 
@@ -282,10 +299,13 @@ class DatasetWriter:
         if use_streaming:
             streaming_results = self._streaming_encoder.finish_episode()
             for video_key in self._meta.video_keys:
+                normalization_factor = 255.0 if video_key not in self._meta.depth_keys else 1.0
                 temp_path, video_stats = streaming_results[video_key]
                 if video_stats is not None:
                     ep_stats[video_key] = {
-                        k: v if k == "count" else np.squeeze(v.reshape(1, -1, 1, 1) / 255.0, axis=0)
+                        k: v
+                        if k == "count"
+                        else np.squeeze(v.reshape(1, -1, 1, 1) / normalization_factor, axis=0)
                         for k, v in video_stats.items()
                     }
                 ep_metadata.update(self._save_episode_video(video_key, episode_index, temp_path=temp_path))
@@ -300,7 +320,9 @@ class DatasetWriter:
                             episode_index,
                             self._root,
                             self._meta.fps,
-                            self._camera_encoder,
+                            self._depth_encoder
+                            if video_key in self._meta.depth_keys
+                            else self._camera_encoder,
                             self._encoder_threads,
                         ): video_key
                         for video_key in self._meta.video_keys
@@ -511,7 +533,12 @@ class DatasetWriter:
 
         # Update video info (only needed when first episode is encoded)
         if episode_index == 0:
-            self._meta.update_video_info(video_key, camera_encoder=self._camera_encoder)
+            self._meta.update_video_info(
+                video_key,
+                video_encoder=self._depth_encoder
+                if video_key in self._meta.depth_keys
+                else self._camera_encoder,
+            )
             write_info(self._meta.info, self._meta.root)
 
         metadata = {
@@ -578,13 +605,14 @@ class DatasetWriter:
             self.image_writer.wait_until_done()
 
     def _encode_temporary_episode_video(self, video_key: str, episode_index: int) -> Path:
-        """Use ffmpeg to convert frames stored as png into mp4 videos."""
+        """Use ffmpeg to convert frames stored as png/tiff into mp4 videos."""
+        is_depth = video_key in self._meta.depth_keys
         return _encode_video_worker(
             video_key,
             episode_index,
             self._root,
             self._meta.fps,
-            self._camera_encoder,
+            self._depth_encoder if is_depth else self._camera_encoder,
             self._encoder_threads,
         )
 

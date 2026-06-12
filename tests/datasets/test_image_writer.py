@@ -94,7 +94,7 @@ def test_image_array_to_pil_image_pytorch_format(img_array_factory):
 
 def test_image_array_to_pil_image_single_channel(img_array_factory):
     img_array = img_array_factory(channels=1)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match="Unsupported single-channel image dtype"):
         image_array_to_pil_image(img_array)
 
 
