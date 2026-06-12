@@ -21,8 +21,7 @@ Gamepad controls (Unitree wireless controller):
     Buttons       - unused (mode selection is keyboard-only)
 """
 
-import argparse, gc, math, select, sys, termios, tty
-import multiprocessing as mp
+import argparse, gc, math, queue, select, sys, termios, tty
 import threading, time
 from dataclasses import dataclass
 from enum import IntEnum
@@ -220,11 +219,19 @@ def replan_interval(mode):
         return REPLAN_INTERVAL["boxing"]
     return REPLAN_INTERVAL["default"]
 
+
+def _ort_providers(force_cpu: bool = False) -> list[str]:
+    """Prefer CUDA for enc/dec/planner (matches deploy when onnxruntime-gpu is installed)."""
+    avail = ort.get_available_providers()
+    if not force_cpu and "CUDAExecutionProvider" in avail:
+        return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    return ["CPUExecutionProvider"]
+
 # ── Movement state ────────────────────────────────────────────────────────────
 
 @dataclass
 class MovementState:
-    mode: int          = 0
+    mode: int          = LM.SLOW_WALK  # not IDLE — walking modes respond to WASD
     speed: float       = -1.0
     height: float      = -1.0
     facing_angle: float = 0.0
@@ -248,6 +255,41 @@ class MovementState:
                 f"hgt={'default' if self.height<0 else f'{self.height:.2f}'} "
                 f"facing={math.degrees(self.facing_angle):.0f}° "
                 f"{'moving' if self.has_movement else 'still'}")
+
+
+@dataclass
+class MovementSnapshot:
+    mode: int = 0
+    speed: float = -1.0
+    height: float = -1.0
+    movement: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    facing: tuple[float, float, float] = (1.0, 0.0, 0.0)
+
+
+def _snapshot_ms(ms: MovementState) -> MovementSnapshot:
+    md, fd = ms.movement_direction, ms.facing_direction
+    return MovementSnapshot(ms.mode, ms.speed, ms.height, (md[0], md[1], md[2]), (fd[0], fd[1], fd[2]))
+
+
+def should_replan_request(ms: MovementState, last: MovementSnapshot, replan_timer: float, step: int) -> bool:
+    """Match C++ G1Deploy::Planner replan triggers (g1_deploy_onnx_ref.cpp)."""
+    if step <= 0:
+        return False
+    if ms.needs_replan:
+        return True
+    md, fd = ms.movement_direction, ms.facing_direction
+    facing_changed = fd != last.facing
+    height_changed = ms.height != last.height
+    mode_changed = ms.mode != last.mode
+    speed_changed = ms.speed != last.speed
+    dir_changed = md != last.movement
+    is_static = LM(ms.mode) in STATIC_MODES
+    if mode_changed or facing_changed or height_changed:
+        return True
+    time_to_replan = replan_timer >= replan_interval(ms.mode)
+    if not is_static and (speed_changed or dir_changed or (time_to_replan and ms.speed != 0)):
+        return True
+    return False
 
 # ── Encoder / Decoder ─────────────────────────────────────────────────────────
 
@@ -419,7 +461,10 @@ def _build_planner_inputs(ctx, ms_dict, version, seed):
         "random_seed":         np.array([seed], np.int64),
     }
     if version >= 1:
-        allowed = np.zeros((1,K), np.int64); allowed[0,:6] = 1
+        # TensorRT deploy: allow 9–11 prediction tokens only (indices 3–5 for MIN_TOKENS=6).
+        allowed = np.zeros((1, K), np.int64)
+        if K >= 6:
+            allowed[0, 3:6] = 1
         inp.update({
             "height": np.array([ms_dict["height"]], np.float32),
             "has_specific_target":       np.array([[0]], np.int64),
@@ -429,9 +474,10 @@ def _build_planner_inputs(ctx, ms_dict, version, seed):
         })
     return inp
 
-def _planner_worker(path, req_q, res_q, stop_evt, version, seed):
+def _planner_worker(path, req_q, res_q, stop_evt, version, seed, use_gpu):
     so = ort.SessionOptions(); so.log_severity_level = 3
-    sess = ort.InferenceSession(path, sess_options=so, providers=["CPUExecutionProvider"])
+    providers = _ort_providers(force_cpu=not use_gpu)
+    sess = ort.InferenceSession(path, sess_options=so, providers=providers)
     while not stop_evt.is_set():
         try: ctx, gf, ms_dict = req_q.get(timeout=0.05)
         except Exception: continue
@@ -448,7 +494,7 @@ def _planner_worker(path, req_q, res_q, stop_evt, version, seed):
             print(f"[Planner] inf={1000*(t_inf-t0):.1f}ms total={1000*(time.time()-t0):.1f}ms frames={n}", flush=True)
             while not res_q.empty():
                 try: res_q.get_nowait()
-                except Exception: break
+                except queue.Empty: break
             res_q.put(motion)
         except Exception as e:
             print(f"[Planner] Error: {e}", flush=True)
@@ -464,7 +510,7 @@ class SonicPlanner:
         self.version      = 1 if len(session.get_inputs()) >= 11 else 0
         self.motion_50hz  = PlannerMotion()
         self._snapshot    = PlannerMotion()
-        self._req_q = self._res_q = self._stop_evt = self._proc = None
+        self._req_q = self._res_q = self._stop_evt = self._planner_thread = None
         self._ctrl = None
 
     def _build_inputs(self, ctx, ms):
@@ -477,30 +523,33 @@ class SonicPlanner:
 
     @staticmethod
     def build_initial_context(joint_positions):
-        ctx = np.zeros((4,36), np.float32)
+        ctx = np.zeros((4, 36), np.float32)
+        jp_mj = joint_positions.astype(np.float32)[ISAACLAB_TO_MUJOCO]
         for n in range(4):
-            ctx[n,2] = DEFAULT_HEIGHT; ctx[n,3] = 1.0
-            ctx[n,7:36] = joint_positions.astype(np.float32)
+            ctx[n, 2] = DEFAULT_HEIGHT
+            ctx[n, 3] = 1.0
+            ctx[n, 7:36] = jp_mj
         return ctx
 
     def _context_from_controller(self, current_frame):
         ctrl = self._ctrl
         gen_frame = current_frame + MOTION_LOOK_AHEAD_STEPS
-        t_arr = gen_frame/50.0 + np.arange(4)/30.0
+        t_arr = gen_frame / 50.0 + np.arange(4) / 30.0
         f50 = t_arr * 50.0
         with ctrl.motion_lock:
             ts = ctrl.motion_timesteps
-            bp = ctrl.motion_body_pos[:ts].copy()
-            bq = ctrl.motion_body_quats[:ts].copy()
-            jp = ctrl.motion_joint_positions[:ts].copy()
-        f0 = np.minimum(np.floor(f50).astype(int), ts-1)
-        f1 = np.minimum(f0+1, ts-1)
-        frac, w0 = f50-f0, None; w0 = 1.0-frac
-        ctx = np.zeros((4,36), np.float32)
-        ctx[:,0:3] = w0[:,None]*bp[f0] + frac[:,None]*bp[f1]
-        ctx[:,3:7] = quat_slerp_batch(bq[f0], bq[f1], frac)
-        ij = w0[:,None]*jp[f0] + frac[:,None]*jp[f1]
-        ctx[:,7:36] = ij[:,ISAACLAB_TO_MUJOCO]
+            if ts <= 0:
+                return self.build_initial_context(DEFAULT_ANGLES)
+            bp, bq, jp = ctrl.motion_body_pos, ctrl.motion_body_quats, ctrl.motion_joint_positions
+            f0 = np.minimum(np.floor(f50).astype(int), ts - 1)
+            f1 = np.minimum(f0 + 1, ts - 1)
+        frac = f50 - f0
+        w0 = 1.0 - frac
+        ctx = np.zeros((4, 36), np.float32)
+        ctx[:, 0:3] = w0[:, None] * bp[f0] + frac[:, None] * bp[f1]
+        ctx[:, 3:7] = quat_slerp_batch(bq[f0], bq[f1], frac)
+        ij = w0[:, None] * jp[f0] + frac[:, None] * jp[f1]
+        ctx[:, 7:36] = ij[:, ISAACLAB_TO_MUJOCO]
         self.gen_frame = gen_frame
         return ctx
 
@@ -532,7 +581,7 @@ class SonicPlanner:
                    "facing_direction":   list(ms.facing_direction)}
         while not self._req_q.empty():
             try: self._req_q.get_nowait()
-            except Exception: break
+            except queue.Empty: break
         self._req_q.put((ctx, self.gen_frame, ms_dict))
 
     def try_get_new_motion(self):
@@ -540,7 +589,7 @@ class SonicPlanner:
         result = None
         while not self._res_q.empty():
             try: result = self._res_q.get_nowait()
-            except Exception: break
+            except queue.Empty: break
         if result is None: return None
         n, gf = result["timesteps"], result["gen_frame"]
         s = self._snapshot; s.timesteps = n
@@ -550,25 +599,30 @@ class SonicPlanner:
         s.body_quaternions[:n] = result["body_quaternions"]
         return s, gf
 
-    def start_subprocess(self, controller):
+    def start_subprocess(self, controller, use_gpu: bool = False):
+        """Run planner ONNX in a background thread (avoids mp spawn/fork + CUDA/MuJoCo issues)."""
         self._ctrl = controller
-        self._req_q, self._res_q, self._stop_evt = mp.Queue(), mp.Queue(), mp.Event()
-        self._proc = mp.Process(
+        self._req_q = queue.Queue()
+        self._res_q = queue.Queue()
+        self._stop_evt = threading.Event()
+        self._planner_thread = threading.Thread(
             target=_planner_worker,
             args=(self.planner_path, self._req_q, self._res_q,
-                  self._stop_evt, self.version, self.random_seed),
-            daemon=True)
-        self._proc.start()
-        print(f"[Planner] Background process started (PID={self._proc.pid})")
+                  self._stop_evt, self.version, self.random_seed, use_gpu),
+            daemon=True,
+            name="sonic-planner",
+        )
+        self._planner_thread.start()
+        print(f"[Planner] Background thread started ({'GPU' if use_gpu else 'CPU'})")
 
     def stop_subprocess(self):
-        if self._stop_evt: self._stop_evt.set()
-        if self._proc:
-            self._proc.join(timeout=3.0)
-            if self._proc.is_alive(): self._proc.terminate()
-            print("[Planner] Background process stopped")
-        for q in (self._req_q, self._res_q):
-            if q: q.close()
+        if self._stop_evt:
+            self._stop_evt.set()
+        if self._planner_thread is not None:
+            self._planner_thread.join(timeout=3.0)
+            print("[Planner] Background thread stopped")
+        self._planner_thread = None
+        self._req_q = self._res_q = self._stop_evt = None
 
 # ── PlannerController ─────────────────────────────────────────────────────────
 
@@ -602,22 +656,58 @@ class PlannerController(StandingEncoderDecoder):
             self.playing = True; self.delta_heading = 0.0
 
     def blend_new_motion(self, new_motion, gen_frame):
+        """Blend like C++ CurrentFrameAdvancement: 8-frame cross-fade, then copy tail."""
         with self.motion_lock:
             cur = self.ref_cursor
             new_len = gen_frame - cur + new_motion.timesteps
-            if new_len <= 0: return
-            f_arr = np.arange(new_len)
-            f_old = np.minimum(f_arr + cur, self.motion_timesteps - 1)
-            f_new = np.clip(f_arr + cur - gen_frame, 0, new_motion.timesteps - 1)
+            if new_len <= 0:
+                return
+            if self.motion_timesteps == 0:
+                n = new_motion.timesteps
+                self.motion_joint_positions[:n] = new_motion.joint_positions[:n]
+                self.motion_joint_velocities[:n] = new_motion.joint_velocities[:n]
+                self.motion_body_pos[:n] = new_motion.body_positions[:n]
+                self.motion_body_quats[:n] = new_motion.body_quaternions[:n]
+                self.motion_timesteps = n
+                self.ref_cursor = 0
+                self.init_ref_quat = self.motion_body_quats[0].copy()
+                self.first_motion = False
+                return
+
             blend_start = max(0, gen_frame - cur)
-            w_new = np.clip((f_arr - blend_start) / BLEND_FRAMES if BLEND_FRAMES > 0
-                            else np.ones(new_len), 0.0, 1.0)
-            w_old = 1.0 - w_new
-            self.motion_joint_positions[:new_len]  = w_old[:,None]*self.motion_joint_positions[f_old]  + w_new[:,None]*new_motion.joint_positions[f_new]
-            self.motion_joint_velocities[:new_len] = w_old[:,None]*self.motion_joint_velocities[f_old] + w_new[:,None]*new_motion.joint_velocities[f_new]
-            self.motion_body_pos[:new_len]         = w_old[:,None]*self.motion_body_pos[f_old]         + w_new[:,None]*new_motion.body_positions[f_new]
-            self.motion_body_quats[:new_len]       = quat_slerp_batch(self.motion_body_quats[f_old], new_motion.body_quaternions[f_new], w_new)
-            self.motion_timesteps = new_len; self.first_motion = False; self.ref_cursor = 0
+            blend_end = min(new_len, blend_start + BLEND_FRAMES)
+
+            for f in range(blend_end):
+                f_old = min(f + cur, self.motion_timesteps - 1)
+                f_new = max(0, min(f + cur - gen_frame, new_motion.timesteps - 1))
+                w_new = min(1.0, max(0.0, (f - blend_start) / BLEND_FRAMES))
+                w_old = 1.0 - w_new
+                self.motion_joint_positions[f] = (
+                    w_old * self.motion_joint_positions[f_old]
+                    + w_new * new_motion.joint_positions[f_new]
+                )
+                self.motion_joint_velocities[f] = (
+                    w_old * self.motion_joint_velocities[f_old]
+                    + w_new * new_motion.joint_velocities[f_new]
+                )
+                self.motion_body_pos[f] = (
+                    w_old * self.motion_body_pos[f_old]
+                    + w_new * new_motion.body_positions[f_new]
+                )
+                self.motion_body_quats[f] = quat_slerp(
+                    self.motion_body_quats[f_old], new_motion.body_quaternions[f_new], w_new
+                )
+
+            for f in range(blend_end, new_len):
+                f_new = max(0, min(f + cur - gen_frame, new_motion.timesteps - 1))
+                self.motion_joint_positions[f] = new_motion.joint_positions[f_new]
+                self.motion_joint_velocities[f] = new_motion.joint_velocities[f_new]
+                self.motion_body_pos[f] = new_motion.body_positions[f_new]
+                self.motion_body_quats[f] = new_motion.body_quaternions[f_new].copy()
+
+            self.motion_timesteps = new_len
+            self.first_motion = False
+            self.ref_cursor = 0
             self.init_ref_quat = self.motion_body_quats[0].copy()
 
     def _heading_apply_delta(self):
@@ -648,7 +738,16 @@ class PlannerController(StandingEncoderDecoder):
 
     def step(self, robot_obs, update_encoder, debug=False):
         if robot_obs and (self.first_motion or self.reinit_heading):
-            q = robot_obs.get("imu.quaternion")
+            q = None
+            if "imu.quat.w" in robot_obs:
+                q = np.array([
+                    robot_obs["imu.quat.w"], robot_obs["imu.quat.x"],
+                    robot_obs["imu.quat.y"], robot_obs["imu.quat.z"],
+                ], np.float64)
+            else:
+                q = robot_obs.get("imu.quaternion")
+                if q is not None:
+                    q = np.array(q, np.float64)
             if q is not None:
                 self.heading_init_base_quat = np.array(q, np.float64)
                 with self.motion_lock:
@@ -660,11 +759,13 @@ class PlannerController(StandingEncoderDecoder):
                 print(f"[Heading] init quat: {self.heading_init_base_quat}")
         return super().step(robot_obs, update_encoder=update_encoder, debug=debug)
 
-    def advance_cursor(self, wall_dt):
-        if not self.playing: return
-        frames = max(1, round(wall_dt / CONTROL_DT))
+    def advance_cursor(self):
+        """Advance one frame per 50 Hz tick (C++ current_frame_ += 1), no wall-clock catch-up."""
+        if not self.playing:
+            return
         with self.motion_lock:
-            self.ref_cursor = min(self.ref_cursor + frames, self.motion_timesteps - 1)
+            if self.motion_timesteps > 0:
+                self.ref_cursor = min(self.ref_cursor + 1, self.motion_timesteps - 1)
 
 # ── Keyboard ──────────────────────────────────────────────────────────────────
 
@@ -718,6 +819,7 @@ def process_keyboard(key, ms, controller=None):
     elif key.lower() == 'd': ms.movement_angle = ms.facing_angle - math.pi/2
     if key.lower() in ('w','s','a','d'):
         ms.has_movement = ms.needs_replan = True
+        print(f"\n  >> Move {key.upper()} (replanning...)")
     elif key.lower() == 'q':
         ms.facing_angle += 0.1
         if controller: controller.delta_heading += 0.1
@@ -787,6 +889,156 @@ def process_joystick(obs, ms, controller=None):
         step = -0.005 * ry
         ms.height = max(0.1, min(1.0, (ms.height if ms.height >= 0 else DEFAULT_HEIGHT) + step))
 
+# ── Sonic-only sim (do not use UnitreeG1 in-process — its subscribe thread + GLFW crash) ──
+
+def _make_hub_sim_env(headless: bool = False):
+    """Load lerobot/unitree-g1-mujoco hub env for sonic.py sim only."""
+    import yaml as yaml_mod
+
+    from lerobot.envs.utils import _download_hub_file, _import_hub_module, _normalize_hub_result
+
+    _, _, local_file, _ = _download_hub_file(
+        "lerobot/unitree-g1-mujoco", trust_remote_code=True, hub_cache_dir=None
+    )
+    module = _import_hub_module(local_file, "lerobot/unitree-g1-mujoco")
+    kwargs = {"publish_images": False}  # avoid ZMQ :5555 conflicts; use MuJoCo window instead
+    if headless:
+        orig_load = yaml_mod.safe_load
+
+        def _headless_cfg(stream):
+            cfg = orig_load(stream)
+            if isinstance(cfg, dict):
+                cfg = {**cfg, "ENABLE_ONSCREEN": False}
+            return cfg
+
+        yaml_mod.safe_load = _headless_cfg
+        try:
+            raw = module.make_env(n_envs=1, use_async_envs=False, **kwargs)
+        finally:
+            yaml_mod.safe_load = orig_load
+    else:
+        raw = module.make_env(n_envs=1, use_async_envs=False, **kwargs)
+    return _normalize_hub_result(raw)
+
+
+def _lowstate_from_sim_obs(obs: dict):
+    from lerobot.robots.unitree_g1.unitree_g1 import G1_29_LowState
+
+    ls = G1_29_LowState()
+    for joint in G1_29_JointIndex:
+        i = joint.value
+        ls.motor_state[joint].q = float(obs["body_q"][i])
+        ls.motor_state[joint].dq = float(obs["body_dq"][i])
+        ls.motor_state[joint].tau_est = float(obs["body_tau_est"][i])
+    ls.imu_state.quaternion = list(obs["floating_base_pose"][3:7])
+    ls.imu_state.gyroscope = list(obs["floating_base_vel"][3:6])
+    ls.imu_state.accelerometer = list(obs["floating_base_acc"][:3])
+    return ls
+
+
+class SonicSimRobot:
+    """MuJoCo sim for sonic.py: main-thread physics + viewer (safe for GLFW)."""
+
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.kp = self.kd = None
+        self._shutdown_event = threading.Event()
+        self._lowstate = None
+        self._lowstate_lock = threading.Lock()
+        self._gym_env = None
+        self._mj = None
+        self._bridge = None
+        self._step_count = 0
+        self._substeps = 5
+        self._viewer_every = 5
+        self._render_every = 8
+
+    def connect(self):
+        wrapper = _make_hub_sim_env(headless=self.headless)
+        self._gym_env = wrapper["hub_env"][0].envs[0]
+        self._mj = self._gym_env.sim_env
+        self._bridge = self._mj.unitree_bridge
+        sim_dt = float(getattr(self._gym_env, "sim_dt", 0.004))
+        self._substeps = max(1, round(CONTROL_DT / sim_dt))
+        self._viewer_every = max(1, round(0.02 / sim_dt))
+        self._render_every = max(1, round(0.033333 / sim_dt))
+        self._advance_sim(10)
+        mode = "headless" if self.headless else "MuJoCo viewer (main thread)"
+        print(f"[SonicSim] Connected — {mode}", flush=True)
+
+    def _advance_sim(self, substeps: int | None = None):
+        n = self._substeps if substeps is None else substeps
+        for _ in range(n):
+            self._mj.sim_step()
+            self._step_count += 1
+            if not self.headless and self._step_count % self._viewer_every == 0:
+                self._mj.update_viewer()
+            if self._step_count % self._render_every == 0:
+                self._mj.update_render_caches()
+        with self._lowstate_lock:
+            self._lowstate = _lowstate_from_sim_obs(self._mj.prepare_obs())
+
+    def get_observation(self):
+        self._advance_sim()
+        with self._lowstate_lock:
+            ls = self._lowstate
+        if ls is None:
+            return {}
+        obs = {}
+        for motor in G1_29_JointIndex:
+            name, i = motor.name, motor.value
+            obs[f"{name}.q"] = ls.motor_state[i].q
+            obs[f"{name}.dq"] = ls.motor_state[i].dq
+            obs[f"{name}.tau"] = ls.motor_state[i].tau_est
+        if ls.imu_state.gyroscope:
+            obs["imu.gyro.x"], obs["imu.gyro.y"], obs["imu.gyro.z"] = ls.imu_state.gyroscope
+        if ls.imu_state.accelerometer:
+            obs["imu.accel.x"], obs["imu.accel.y"], obs["imu.accel.z"] = ls.imu_state.accelerometer
+        if ls.imu_state.quaternion:
+            obs["imu.quat.w"] = ls.imu_state.quaternion[0]
+            obs["imu.quat.x"] = ls.imu_state.quaternion[1]
+            obs["imu.quat.y"] = ls.imu_state.quaternion[2]
+            obs["imu.quat.z"] = ls.imu_state.quaternion[3]
+        return obs
+
+    def send_action(self, action):
+        with self._bridge.low_cmd_lock:
+            for motor in G1_29_JointIndex:
+                key = f"{motor.name}.q"
+                if key not in action:
+                    continue
+                i = motor.value
+                self._bridge.low_cmd.motor_cmd[i].q = action[key]
+                self._bridge.low_cmd.motor_cmd[i].qd = 0
+                self._bridge.low_cmd.motor_cmd[i].kp = self.kp[i]
+                self._bridge.low_cmd.motor_cmd[i].kd = self.kd[i]
+                self._bridge.low_cmd.motor_cmd[i].tau = 0.0
+            self._bridge.low_cmd_received = True
+            self._bridge.new_low_cmd = True
+        return action
+
+    def reset(self, control_dt=None, default_positions=None):
+        if default_positions is None:
+            default_positions = DEFAULT_ANGLES
+        self._gym_env.reset()
+        cmd = {f"{m.name}.q": float(default_positions[m.value]) for m in G1_29_JointIndex}
+        self.send_action(cmd)
+        self._advance_sim(1)
+
+    @property
+    def is_connected(self):
+        with self._lowstate_lock:
+            return self._lowstate is not None
+
+    def disconnect(self):
+        self._shutdown_event.set()
+        if self._gym_env is not None:
+            try:
+                self._gym_env.close()
+            except Exception:
+                pass
+            self._gym_env = None
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -794,6 +1046,12 @@ def main():
     parser.add_argument("--ip", type=str, default=None,
                         help="Robot IP for real hardware (e.g. 192.168.123.164). "
                              "Omit for simulation.")
+    parser.add_argument("--log-csv", action="store_true",
+                        help="Write /tmp/sonic_pose_log.csv (disabled by default for teleop perf)")
+    parser.add_argument("--cpu", action="store_true",
+                        help="Force CPU ONNX Runtime (skip CUDA even if onnxruntime-gpu is installed)")
+    parser.add_argument("--headless", action="store_true",
+                        help="Sim without MuJoCo window (default: show viewer)")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -811,22 +1069,27 @@ def main():
     encoder_path = hf_hub_download(repo_id="nvidia/GEAR-SONIC", filename="model_encoder.onnx")
     decoder_path = hf_hub_download(repo_id="nvidia/GEAR-SONIC", filename="model_decoder.onnx")
 
-    providers = ort.get_available_providers()
-    use_gpu   = "CUDAExecutionProvider" in providers
-    gpu_ep    = (["CUDAExecutionProvider","CPUExecutionProvider"] if use_gpu else ["CPUExecutionProvider"])
+    providers = _ort_providers(force_cpu=args.cpu)
+    use_gpu = providers[0] == "CUDAExecutionProvider"
     so = ort.SessionOptions(); so.log_severity_level = 3
 
-    print(f"[ONNX] enc/dec={'GPU' if use_gpu else 'CPU'}, planner=CPU")
-    planner_sess = ort.InferenceSession(planner_path, sess_options=so, providers=["CPUExecutionProvider"])
-    encoder_sess = ort.InferenceSession(encoder_path, sess_options=so, providers=gpu_ep)
-    decoder_sess = ort.InferenceSession(decoder_path, sess_options=so, providers=gpu_ep)
+    print(f"[ONNX] enc/dec/planner={'GPU' if use_gpu else 'CPU'}")
+    if not use_gpu and not args.cpu:
+        print("[ONNX] Tip: pip install onnxruntime-gpu for CUDA inference")
+
+    planner_sess = ort.InferenceSession(planner_path, sess_options=so, providers=providers)
+    encoder_sess = ort.InferenceSession(encoder_path, sess_options=so, providers=providers)
+    decoder_sess = ort.InferenceSession(decoder_path, sess_options=so, providers=providers)
     print(f"[Planner] version={'v1+' if len(planner_sess.get_inputs())>=11 else 'v0'}")
 
     cfg = UnitreeG1Config()
     if args.ip:
         cfg.is_simulation = False
         cfg.robot_ip = args.ip
-    robot = UnitreeG1(cfg); robot.connect()
+        robot = UnitreeG1(cfg)
+    else:
+        robot = SonicSimRobot(headless=args.headless)
+    robot.connect()
     kp, kd = _kp_kd(); robot.kp = kp.copy(); robot.kd = kd.copy()
 
     ms         = MovementState()
@@ -836,30 +1099,36 @@ def main():
     motion = planner.initialize(DEFAULT_ANGLES, ms)
     controller.load_initial_motion(motion)
     controller.print_input_diagnostics()
-    planner.start_subprocess(controller)
+    planner.start_subprocess(controller, use_gpu=use_gpu)
 
-    print(f"\nStarting: {MOTION_SETS[0][0]}")
+    print(f"\nStarting: {MOTION_SETS[0][0]} (default mode: {LM(ms.mode).name})")
     [print(f"  {i+1}: {m.name}") for i,m in enumerate(MOTION_SETS[0][1])]
+    print("\n[Ready] Click THIS terminal, then W/A/S/D to move. "
+          "1-6 change mode, 9/0 speed, Esc quit.\n", flush=True)
 
     with RawKeyboard() as kb:
         try:
             gc.disable(); gc_timer = 0.0
             robot.reset(CONTROL_DT, DEFAULT_ANGLES); time.sleep(1.0)
 
-            step = 0; last_status = replan_timer = 0.0
+            step = 0; replan_timer = 0.0
+            last_status = time.time() - 2.1  # print status on first loop tick
             loop_t = enc_t = dec_t = obs_t = act_t = []
             slow_n = blend_n = 0; stall_src = ""; did_blend = False
             prev_end = time.time(); t_start = time.time()
+            last_ms = _snapshot_ms(ms)
 
             log_path = "/tmp/sonic_pose_log.csv"
-            jnames   = [m.name for m in G1_29_JointIndex]
-            with open(log_path, "w") as log_f:
-                log_f.write("t,step,cursor,ts,blend,mode," +
-                             ",".join(f"q{i}" for i in range(29)) + "," +
-                             ",".join(f"ref{i}" for i in range(29)) + "," +
-                             ",".join(f"act{i}" for i in range(29)) +
-                             ",delta_max,action_norm,token_norm\n")
+            jnames = [m.name for m in G1_29_JointIndex]
+            log_ctx = open(log_path, "w") if args.log_csv else None
+            if log_ctx:
+                log_ctx.write("t,step,cursor,ts,blend,mode," +
+                              ",".join(f"q{i}" for i in range(29)) + "," +
+                              ",".join(f"ref{i}" for i in range(29)) + "," +
+                              ",".join(f"act{i}" for i in range(29)) +
+                              ",delta_max,action_norm,token_norm\n")
 
+            try:
                 while not robot._shutdown_event.is_set():
                     t0 = time.time()
                     if process_keyboard(kb.get_key(), ms, controller): break
@@ -873,14 +1142,14 @@ def main():
                     process_joystick(obs, ms, controller)
                     clamp_mode_params(ms)
 
-                    is_static = LM(ms.mode) in STATIC_MODES
-                    do_req = ms.needs_replan and step > 0
-                    if do_req: ms.needs_replan = False; replan_timer = 0.0
-                    elif not is_static and step > 0 and ms.speed != 0:
+                    if step > 0:
                         replan_timer += CONTROL_DT
-                        if replan_timer >= replan_interval(ms.mode):
-                            do_req = True; replan_timer = 0.0
-                    if do_req: planner.request_replan(controller.ref_cursor, ms)
+                    do_req = should_replan_request(ms, last_ms, replan_timer, step)
+                    if do_req:
+                        planner.request_replan(controller.ref_cursor, ms)
+                        replan_timer = 0.0
+                        ms.needs_replan = False
+                        last_ms = _snapshot_ms(ms)
 
                     do_enc = (step % ENCODER_UPDATE_EVERY == 0)
                     t_step = time.time()
@@ -901,19 +1170,19 @@ def main():
                     else:
                         blend_ms = 0.0
 
-                    if step % 5 == 0:
+                    if log_ctx and step % 5 == 0:
                         t_rel = time.time() - t_start
                         q_r  = np.array([obs.get(f"{n}.q", 0) for n in jnames])
                         a_v  = np.array([action.get(f"{n}.q", 0) for n in jnames])
                         cur, ts = controller.ref_cursor, controller.motion_timesteps
                         q_ref = controller.motion_joint_positions[min(cur,ts-1)] if ts > 0 else np.zeros(29)
-                        log_f.write(f"{t_rel:.4f},{step},{cur},{ts},{int(did_blend)},{ms.mode}," +
-                                    ",".join(f"{v:.6f}" for v in q_r) + "," +
-                                    ",".join(f"{v:.6f}" for v in q_ref) + "," +
-                                    ",".join(f"{v:.6f}" for v in a_v) + "," +
-                                    f"{np.max(np.abs(a_v-q_r)):.6f},"
-                                    f"{np.linalg.norm(a_v):.6f},"
-                                    f"{np.linalg.norm(controller.token):.6f}\n")
+                        log_ctx.write(f"{t_rel:.4f},{step},{cur},{ts},{int(did_blend)},{ms.mode}," +
+                                      ",".join(f"{v:.6f}" for v in q_r) + "," +
+                                      ",".join(f"{v:.6f}" for v in q_ref) + "," +
+                                      ",".join(f"{v:.6f}" for v in a_v) + "," +
+                                      f"{np.max(np.abs(a_v-q_r)):.6f},"
+                                      f"{np.linalg.norm(a_v):.6f},"
+                                      f"{np.linalg.norm(controller.token):.6f}\n")
                         did_blend = False
 
                     now = time.time(); loop_ms = 1000*(now-t0)
@@ -923,7 +1192,7 @@ def main():
                                      f"obs={obs_t[-1]:.0f} blend={blend_ms:.0f} step={step_ms:.0f} act={act_t[-1]:.0f}")
                     if loop_ms > CONTROL_DT*1500: slow_n += 1
 
-                    controller.advance_cursor(wall_dt)
+                    controller.advance_cursor()
 
                     if now - last_status > 2.0:
                         def _avg(l): return sum(l)/len(l) if l else 0
@@ -941,12 +1210,16 @@ def main():
                     if gc_timer >= 10.0: gc.collect(); gc_timer = 0.0
                     step += 1
                     time.sleep(max(0.0, CONTROL_DT-(time.time()-t0)))
+            finally:
+                if log_ctx:
+                    log_ctx.close()
 
         except KeyboardInterrupt:
             pass
         finally:
             gc.enable()
-            print(f"\n[Log] Saved to {log_path}")
+            if args.log_csv:
+                print(f"\n[Log] Saved to {log_path}")
             planner.stop_subprocess()
             print("\nStopping...")
             if robot.is_connected: robot.disconnect()
