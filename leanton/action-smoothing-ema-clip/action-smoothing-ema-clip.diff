@@ -1,6 +1,6 @@
 # Upstream base: 49755a3d (feat(processor): Add in-memory processor pipeline serialization (#3732))
 diff --git a/src/lerobot/rollout/strategies/core.py b/src/lerobot/rollout/strategies/core.py
-index 9c897522..53ae66b2 100644
+index 9c897522..3fe589df 100644
 --- a/src/lerobot/rollout/strategies/core.py
 +++ b/src/lerobot/rollout/strategies/core.py
 @@ -36,6 +36,93 @@ if TYPE_CHECKING:
@@ -63,13 +63,13 @@ index 9c897522..53ae66b2 100644
 +    for k, v in action_dict.items():
 +        prev_v = prev.get(k, v)
 +        if abs(v - prev_v) > SMOOTHING_RESET_THRESHOLD:
++            # Correction boundary: _prev is stale (frozen during teleop).
++            # Accept v directly — it IS near the current physical position
++            # because the policy just observed it.  Clipping from stale
++            # _prev would command the arm back toward the old position.
 +            reset_triggered = True
-+            delta = v - prev_v
-+            if abs(delta) > limit:
-+                clipped = True
-+            delta = max(-limit, min(limit, delta))
-+            action_dict[k] = prev_v + delta
-+            prev[k] = v  # seed EMA state with raw (not clipped) target
++            action_dict[k] = v
++            prev[k] = v  # seed EMA state with raw target
 +            continue
 +        sv = alpha * v + (1.0 - alpha) * prev_v
 +        delta = sv - prev_v
@@ -104,3 +104,49 @@ index 9c897522..53ae66b2 100644
 +    _smooth_action(processed)
      ctx.hardware.robot_wrapper.send_action(processed)
      return action_dict
+diff --git a/src/lerobot/rollout/strategies/dagger.py b/src/lerobot/rollout/strategies/dagger.py
+index 8791a550..f7a6d63b 100644
+--- a/src/lerobot/rollout/strategies/dagger.py
++++ b/src/lerobot/rollout/strategies/dagger.py
+@@ -73,7 +73,7 @@ from lerobot.utils.utils import log_say
+ 
+ from ..configs import DAggerKeyboardConfig, DAggerPedalConfig, DAggerStrategyConfig
+ from ..context import RolloutContext
+-from .core import RolloutStrategy, estimate_max_episode_seconds, safe_push_to_hub, send_next_action
++from .core import RolloutStrategy, estimate_max_episode_seconds, reset_action_smoothing, safe_push_to_hub, send_next_action
+ 
+ PYNPUT_AVAILABLE = _pynput_available
+ keyboard = None
+@@ -385,6 +385,7 @@ class DAggerStrategy(RolloutStrategy):
+ 
+         engine.reset()
+         interpolator.reset()
++        reset_action_smoothing()
+         events.reset()
+         engine.resume()
+ 
+@@ -542,6 +543,7 @@ class DAggerStrategy(RolloutStrategy):
+ 
+         engine.reset()
+         interpolator.reset()
++        reset_action_smoothing()
+         events.reset()
+         engine.resume()
+ 
+@@ -731,7 +733,16 @@ class DAggerStrategy(RolloutStrategy):
+         elif new_phase == DAggerPhase.AUTONOMOUS:
+             logger.info("Resuming autonomous mode - resetting engine and interpolator")
+             interpolator.reset()
++            reset_action_smoothing()
+             engine.reset()
++            # Feed a fresh observation so the first action chunk is based on
++            # the current (post-correction) state, not the stale pre-correction
++            # observation still in _obs_holder from before the pause.
++            # Without this, the RTC thread predicts actions assuming the arm
++            # is still at its pre-correction pose → snap-back on resume.
++            fresh_obs = robot.get_observation()
++            obs_processed = ctx.processors.robot_observation_processor(fresh_obs)
++            engine.notify_observation(obs_processed)
+             engine.resume()
+ 
+             # release teleop before resuming the policy
