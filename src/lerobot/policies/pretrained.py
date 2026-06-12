@@ -368,6 +368,16 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             revision_info = f" [revision={revision}]" if revision else ""
             logging.info(f"Model pushed to {commit_info.repo_url.url}{revision_info}")
 
+            # Update latest-checkpoint pointer to this revision
+            # (delete + create — create_branch with exist_ok=True won't update an existing ref)
+            if revision:
+                try:
+                    api.delete_branch(repo_id, branch="latest-checkpoint")
+                except Exception:
+                    pass  # doesn't exist yet (first checkpoint push)
+                api.create_branch(repo_id, branch="latest-checkpoint", revision=revision)
+                logging.info(f"latest-checkpoint pointer updated → {revision}")
+
     def generate_model_card(
         self,
         dataset_repo_id: str,
