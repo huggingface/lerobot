@@ -4,6 +4,9 @@ GR00T is an NVIDIA foundation model family for generalized humanoid robot reason
 
 LeRobot integrates GR00T N1.7 through the `groot` policy type.
 
+> [!WARNING]
+> **Breaking change:** GR00T N1.5 support was removed from LeRobot, and current releases support GR00T N1.7 only. N1.5 checkpoints, configs, and `--policy.model_version=n1.5` are rejected with a clear error. To keep using an N1.5 checkpoint, pin the last release that supports it: `pip install 'lerobot==0.5.1'`. To use the current release, migrate to GR00T N1.7 (`model_version='n1.7'`, base model [`nvidia/GR00T-N1.7-3B`](https://huggingface.co/nvidia/GR00T-N1.7-3B)).
+
 ## Model Overview
 
 GR00T N1.7 uses a Cosmos-Reason2/Qwen3-VL backbone and provides checkpoints for SimplerEnv, DROID, and LIBERO.
@@ -133,7 +136,7 @@ Replace the `XX` placeholders with final eval artifacts before merge.
 Download the suite checkpoint locally, then point `--policy.base_model_path` at the downloaded subdirectory. `--policy.path` is reserved for LeRobot checkpoints that contain a LeRobot `config.json` with a `type` field.
 
 ```bash
-huggingface-cli download nvidia/GR00T-N1.7-LIBERO \
+hf download nvidia/GR00T-N1.7-LIBERO \
   --include "libero_spatial/*" \
   --local-dir ./GR00T-N1.7-LIBERO
 
