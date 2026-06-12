@@ -202,10 +202,31 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
                     token=token,
                     local_files_only=local_files_only,
                 )
-            except HfHubHTTPError as e:
-                raise FileNotFoundError(
-                    f"{CONFIG_NAME} not found on the HuggingFace Hub in {model_id}"
-                ) from e
+            except HfHubHTTPError:
+                if revision is not None:
+                    logger.warning(
+                        f"{revision} branch not found for {model_id}, falling back to main."
+                    )
+                    try:
+                        config_file = hf_hub_download(
+                            repo_id=model_id,
+                            filename=CONFIG_NAME,
+                            revision=None,
+                            cache_dir=cache_dir,
+                            force_download=force_download,
+                            proxies=proxies,
+                            resume_download=resume_download,
+                            token=token,
+                            local_files_only=local_files_only,
+                        )
+                    except HfHubHTTPError as e2:
+                        raise FileNotFoundError(
+                            f"{CONFIG_NAME} not found on the HuggingFace Hub in {model_id}"
+                        ) from e2
+                else:
+                    raise FileNotFoundError(
+                        f"{CONFIG_NAME} not found on the HuggingFace Hub in {model_id}"
+                    )
 
         # HACK: Parse the original config to get the config subclass, so that we can
         # apply cli overrides.
