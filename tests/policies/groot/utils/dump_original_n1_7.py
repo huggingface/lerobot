@@ -9,6 +9,9 @@ LeRobot GR00T N1.7 integration requires. The two implementations therefore canno
 imported in the same Python process. To keep the parity comparison FAIR, we run the
 original model in its native env here and serialize, PER EMBODIMENT TAG:
 
+  * the RAW observation fed to the original processor (per-camera uint8 frames,
+    per-key state vectors, the language instruction), so the LeRobot side can also
+    run its OWN preprocessor on identical raw inputs and compare collated tensors,
   * the exact pre-processed/collated model inputs (so the LeRobot side consumes the
     byte-identical tensors -- same image preprocessing, tokenization, normalization),
   * the random seed used right before the flow-matching sampler,
@@ -21,8 +24,10 @@ processor's per-embodiment modality configs. This lets us test many embodiment t
 from the SAME checkpoint and confirm the LeRobot integration is not overfit to
 ``libero_sim``.
 
-The companion pytest (run in the LeRobot env) loads each .npz, replays the identical
-inputs + seed through the LeRobot GR00T N1.7 model, and asserts the outputs match.
+The companion pytest (run in the LeRobot env) loads each .npz and asserts parity
+twice: the collated inputs + seed are replayed through the LeRobot GR00T N1.7 model
+(model parity), and the raw observation is replayed through LeRobot's own
+preprocessor pipeline and compared against the collated inputs (preprocessor parity).
 
 Usage:
     .venv-original/bin/python tests/policies/groot/utils/dump_original_n1_7.py \
@@ -62,10 +67,7 @@ def make_observation(seed: int, video_keys, lang_key, state_spec):
     # One ndarray per state key, shape (B, T=1, key_dim); dim taken from statistics.
     # Keys with dim 0 (e.g. disabled eef on some embodiments) are still emitted as
     # present-but-empty so the processor's state transform finds every expected key.
-    state = {
-        k: rng.standard_normal((BATCH_SIZE, 1, dim)).astype(np.float32)
-        for k, dim in state_spec
-    }
+    state = {k: rng.standard_normal((BATCH_SIZE, 1, dim)).astype(np.float32) for k, dim in state_spec}
     language = {lang_key: [[PROMPT] for _ in range(BATCH_SIZE)]}
     return {"video": video, "state": state, "language": language}
 
@@ -76,6 +78,25 @@ def dump_one_tag(policy, fair_model, tag, modality_cfg, state_spec, args, out_pa
     video_keys = modality_cfg["video"].modality_keys
     lang_key = modality_cfg["language"].modality_keys[0]
     observation = make_observation(args.seed, video_keys, lang_key, state_spec)
+
+    # Snapshot the RAW observation exactly as fed to the original processor below. The
+    # consumer's preprocessor-parity case replays it through LeRobot's own preprocessor
+    # and compares the resulting collated tensors against the "in::" ones saved further
+    # down. raw_state_keys records the checkpoint modality-key order, which is the
+    # concatenation order of the flat LeRobot ``observation.state`` vector.
+    spec_keys = [key for key, _ in state_spec]
+    state_modality = modality_cfg.get("state")
+    state_keys = [key for key in state_modality.modality_keys if key in spec_keys] if state_modality else []
+    state_keys += [key for key in spec_keys if key not in state_keys]
+    raw_language = [
+        str(item[0]) if isinstance(item, (list, tuple)) else str(item)
+        for item in observation["language"][lang_key]
+    ]
+    raw_flat = {f"raw::video.{key}": arr.copy() for key, arr in observation["video"].items()}
+    raw_flat.update({f"raw::state.{key}": arr.copy() for key, arr in observation["state"].items()})
+    raw_flat["raw::language"] = np.array(raw_language, dtype=object)
+    raw_flat["raw_video_keys"] = np.array([str(key) for key in video_keys], dtype=object)
+    raw_flat["raw_state_keys"] = np.array([str(key) for key in state_keys], dtype=object)
 
     # Point the policy preprocessing at this embodiment (mirrors Gr00tPolicy.__init__).
     policy.embodiment_tag = type(policy.embodiment_tag)(tag)
@@ -136,6 +157,7 @@ def dump_one_tag(policy, fair_model, tag, modality_cfg, state_spec, args, out_pa
         embodiment_tag=np.array(tag),
         meta_keys=np.array(list(meta.keys()), dtype=object),
         meta_dtypes=np.array(list(meta.values()), dtype=object),
+        **raw_flat,
         **flat,
     )
     print(f"[{tag}] action_pred {action_pred.shape} -> {out_path.name} ({os.path.getsize(out_path)} B)")
@@ -181,7 +203,12 @@ def main():
         state_spec = [(k, len(v["min"])) for k, v in stats[tag]["state"].items()]
         try:
             dump_one_tag(
-                policy, fair_model, tag, all_modality[tag], state_spec, args,
+                policy,
+                fair_model,
+                tag,
+                all_modality[tag],
+                state_spec,
+                args,
                 out_dir / f"original_n1_7_{tag}.npz",
             )
             done.append(tag)

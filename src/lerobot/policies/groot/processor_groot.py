@@ -15,14 +15,16 @@
 # limitations under the License.
 
 import json
+import logging
 from copy import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
 from einops import rearrange
+from huggingface_hub import hf_hub_download
 from PIL import Image
 
 from lerobot.utils.import_utils import _transformers_available
@@ -59,6 +61,7 @@ from lerobot.utils.constants import (
 
 from .configuration_groot import (
     GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
+    GROOT_N1_5_REMOVAL_GUIDANCE,
     GROOT_N1_7_BACKBONE_MODEL,
     GrootConfig,
     is_raw_groot_n1_7_checkpoint,
@@ -79,12 +82,6 @@ N1_7_EMBODIMENT_MAPPING = {
     "libero_sim": 2,
     "new_embodiment": 10,
 }
-
-_N1_7_RAW_STATE_CACHE: dict[str, dict[str, np.ndarray]] = {}
-
-
-def _n1_7_state_cache_key(value: str | None) -> str:
-    return value or "groot_n1_7_default"
 
 
 @dataclass
@@ -471,23 +468,96 @@ def _legacy_groot_processor_overrides(
         env_action_dim = int(config.output_features[ACTION].shape[0])
     except Exception:
         env_action_dim = 0
-    action_unpack_overrides = dict(postprocessor_overrides.get("groot_action_unpack_unnormalize_v1", {}))
+    action_unpack_overrides = dict(postprocessor_overrides.get("groot_action_unpack_unnormalize_v2", {}))
     action_unpack_overrides["normalize_min_max"] = True
     action_unpack_overrides["env_action_dim"] = env_action_dim
-    postprocessor_overrides["groot_action_unpack_unnormalize_v1"] = action_unpack_overrides
+    postprocessor_overrides["groot_action_unpack_unnormalize_v2"] = action_unpack_overrides
 
     return preprocessor_overrides, postprocessor_overrides
 
 
-def _local_processor_config_has_step(pretrained_path: str, config_filename: str, step_name: str) -> bool:
+def _pretrained_processor_config_has_step(pretrained_path: str, config_filename: str, step_name: str) -> bool:
+    """Check whether a serialized processor pipeline contains a registry step.
+
+    Resolves the processor config from a local directory or, for Hub repo ids,
+    via ``hf_hub_download`` (which serves the cached copy when offline). Returns
+    False when the config cannot be resolved; loading then proceeds with the
+    legacy overrides and `make_groot_pre_post_processors_from_pretrained` retries
+    without them if they do not match the serialized pipeline.
+    """
     path = Path(pretrained_path).expanduser()
-    if not path.is_dir():
+    if path.is_dir():
+        config = _read_json(path / config_filename)
+    elif path.exists():
         return False
-    config = _read_json(path / config_filename)
+    else:
+        try:
+            config_path = hf_hub_download(
+                repo_id=str(pretrained_path), filename=config_filename, repo_type="model"
+            )
+        except Exception:
+            return False
+        config = _read_json(Path(config_path))
     steps = config.get("steps", [])
     if not isinstance(steps, list):
         return False
     return any(isinstance(step, dict) and step.get("registry_name") == step_name for step in steps)
+
+
+def _apply_groot_step_overrides(
+    pipeline: PolicyProcessorPipeline,
+    overrides: dict[str, Any] | None,
+) -> None:
+    """Apply ``from_pretrained``-style step overrides to a freshly built pipeline.
+
+    Raw N1.7 checkpoints build their processors from scratch instead of
+    deserializing them, so caller overrides must be applied to the constructed
+    steps. Override keys match a step's registry name or, as a convenience, its
+    class name (``PolicyProcessorPipeline.from_pretrained`` matches registered
+    steps by registry name only — prefer registry names so overrides keep
+    working after the checkpoint is converted and reloaded from a serialized
+    pipeline). Keys or fields that match nothing raise instead of being dropped
+    silently.
+    """
+
+    if not overrides:
+        return
+
+    def _step_keys(step: ProcessorStep) -> set[str]:
+        keys = {type(step).__name__}
+        registry_name = getattr(type(step), "_registry_name", None)
+        if registry_name:
+            keys.add(registry_name)
+        return keys
+
+    for override_key, step_overrides in overrides.items():
+        matched_steps = [step for step in pipeline.steps if override_key in _step_keys(step)]
+        if not matched_steps:
+            available = [
+                getattr(type(step), "_registry_name", None) or type(step).__name__ for step in pipeline.steps
+            ]
+            raise KeyError(
+                f"Override key '{override_key}' does not match any step of the GR00T processor pipeline "
+                f"built for this raw N1.7 checkpoint. Available step keys: {available}."
+            )
+        for step in matched_steps:
+            if not is_dataclass(step):
+                raise TypeError(
+                    f"Cannot apply overrides to step '{override_key}': it is not a dataclass step."
+                )
+            init_field_names = {f.name for f in fields(step) if f.init}
+            for field_name, value in dict(step_overrides).items():
+                if field_name not in init_field_names:
+                    raise TypeError(
+                        f"Override field '{field_name}' is not a config field of step '{override_key}'. "
+                        f"Available fields: {sorted(init_field_names)}."
+                    )
+                setattr(step, field_name, value)
+            # Re-derive attributes computed from the overridden config (e.g.
+            # DeviceProcessorStep resolves its torch.device in __post_init__).
+            post_init = getattr(step, "__post_init__", None)
+            if callable(post_init):
+                post_init()
 
 
 def make_groot_pre_post_processors_from_pretrained(
@@ -508,12 +578,20 @@ def make_groot_pre_post_processors_from_pretrained(
     if is_raw_groot_n1_7_checkpoint(pretrained_path):
         processor_cfg = copy(config)
         processor_cfg.base_model_path = str(pretrained_path)
-        return make_groot_pre_post_processors(
+        preprocessor, postprocessor = make_groot_pre_post_processors(
             config=processor_cfg,
             dataset_stats=dataset_stats,
         )
+        # Raw checkpoints have no serialized pipelines to load overrides into,
+        # so apply the caller overrides (e.g. device and rename_map from
+        # lerobot-eval or the policy server) to the freshly built steps.
+        _apply_groot_step_overrides(preprocessor, preprocessor_overrides)
+        _apply_groot_step_overrides(postprocessor, postprocessor_overrides)
+        return preprocessor, postprocessor
 
-    if _local_processor_config_has_step(
+    caller_preprocessor_overrides = dict(preprocessor_overrides or {})
+    caller_postprocessor_overrides = dict(postprocessor_overrides or {})
+    if _pretrained_processor_config_has_step(
         pretrained_path,
         postprocessor_config_filename,
         "groot_n1_7_action_decode_v1",
@@ -521,15 +599,55 @@ def make_groot_pre_post_processors_from_pretrained(
         # Converted raw N1.7 checkpoints already carry the checkpoint-specific
         # action decoder. Adding the legacy action-unpack override would target
         # a step that is not present and break loading.
-        preprocessor_overrides = dict(preprocessor_overrides or {})
-        postprocessor_overrides = dict(postprocessor_overrides or {})
+        applied_legacy_overrides = False
+        preprocessor_overrides = caller_preprocessor_overrides
+        postprocessor_overrides = caller_postprocessor_overrides
     else:
+        applied_legacy_overrides = True
         preprocessor_overrides, postprocessor_overrides = _legacy_groot_processor_overrides(
             config=config,
             dataset_stats=dataset_stats,
             preprocessor_overrides=preprocessor_overrides,
             postprocessor_overrides=postprocessor_overrides,
         )
+    try:
+        preprocessor, postprocessor = _load_groot_processor_pipelines(
+            pretrained_path,
+            preprocessor_overrides=preprocessor_overrides,
+            postprocessor_overrides=postprocessor_overrides,
+            preprocessor_config_filename=preprocessor_config_filename,
+            postprocessor_config_filename=postprocessor_config_filename,
+        )
+    except KeyError:
+        if not applied_legacy_overrides:
+            raise
+        # The legacy overrides target steps that are absent from the serialized
+        # pipelines (e.g. a converted raw N1.7 checkpoint whose postprocessor
+        # config could not be inspected before loading); retry with the caller
+        # overrides only.
+        preprocessor, postprocessor = _load_groot_processor_pipelines(
+            pretrained_path,
+            preprocessor_overrides=caller_preprocessor_overrides,
+            postprocessor_overrides=caller_postprocessor_overrides,
+            preprocessor_config_filename=preprocessor_config_filename,
+            postprocessor_config_filename=postprocessor_config_filename,
+        )
+    _reconnect_groot_relative_absolute_steps(preprocessor, postprocessor)
+    _reconnect_groot_n1_7_pack_decode_steps(preprocessor, postprocessor)
+    return preprocessor, postprocessor
+
+
+def _load_groot_processor_pipelines(
+    pretrained_path: str,
+    *,
+    preprocessor_overrides: dict[str, Any],
+    postprocessor_overrides: dict[str, Any],
+    preprocessor_config_filename: str,
+    postprocessor_config_filename: str,
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
     preprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,
         config_filename=preprocessor_config_filename,
@@ -544,7 +662,6 @@ def make_groot_pre_post_processors_from_pretrained(
         to_transition=policy_action_to_transition,
         to_output=transition_to_policy_action,
     )
-    _reconnect_groot_relative_absolute_steps(preprocessor, postprocessor)
     return preprocessor, postprocessor
 
 
@@ -562,6 +679,28 @@ def _reconnect_groot_relative_absolute_steps(
     for step in postprocessor.steps:
         if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
             step.relative_step = relative_step
+
+
+def _reconnect_groot_n1_7_pack_decode_steps(
+    preprocessor: PolicyProcessorPipeline,
+    postprocessor: PolicyProcessorPipeline,
+) -> None:
+    """Re-link a deserialized N1.7 action decode step to its pack step.
+
+    The pack step holds the per-instance raw-state cache that relative-action
+    decoding reads its reference state from; the link itself is not serialized.
+    """
+
+    pack_step = next(
+        (step for step in preprocessor.steps if isinstance(step, GrootN17PackInputsStep)),
+        None,
+    )
+    if pack_step is None:
+        return
+
+    for step in postprocessor.steps:
+        if isinstance(step, GrootN17ActionDecodeStep) and step.pack_step is None:
+            step.pack_step = pack_step
 
 
 def make_groot_pre_post_processors(
@@ -607,9 +746,12 @@ def make_groot_pre_post_processors(
         else action_horizon
     )
     checkpoint_stats = checkpoint_assets.stats if checkpoint_assets is not None else None
-    padded_stats = checkpoint_stats if _has_modality_stats(checkpoint_stats) else (dataset_stats or {})
+    checkpoint_has_stats = _has_modality_stats(checkpoint_stats)
+    padded_stats = checkpoint_stats if checkpoint_has_stats else (dataset_stats or {})
     embodiment_mapping = (
-        checkpoint_assets.embodiment_mapping if checkpoint_assets is not None else dict(N1_7_EMBODIMENT_MAPPING)
+        checkpoint_assets.embodiment_mapping
+        if checkpoint_assets is not None
+        else dict(N1_7_EMBODIMENT_MAPPING)
     )
     formalize_language = checkpoint_assets.formalize_language if checkpoint_assets is not None else True
     clip_outliers = checkpoint_assets.clip_outliers if checkpoint_assets is not None else True
@@ -618,7 +760,6 @@ def make_groot_pre_post_processors(
         env_action_dim = int(config.output_features[ACTION].shape[0])
     except Exception:
         env_action_dim = 0
-    state_cache_key = f"groot_n1_7:{config.embodiment_tag}"
     pack_step = GrootN17PackInputsStep(
         state_horizon=1,
         action_horizon=action_horizon,
@@ -636,7 +777,6 @@ def make_groot_pre_post_processors(
         video_modality_keys=video_modality_keys,
         raw_stats=checkpoint_assets.raw_stats if checkpoint_assets is not None else None,
         modality_config=checkpoint_assets.modality_config if checkpoint_assets is not None else None,
-        state_cache_key=state_cache_key,
     )
 
     input_steps: list[ProcessorStep] = [
@@ -647,14 +787,31 @@ def make_groot_pre_post_processors(
             model_name=config.n1_7_backbone_model,
             image_crop_size=checkpoint_assets.image_crop_size if checkpoint_assets is not None else None,
             image_target_size=checkpoint_assets.image_target_size if checkpoint_assets is not None else None,
-            shortest_image_edge=checkpoint_assets.shortest_image_edge if checkpoint_assets is not None else None,
+            shortest_image_edge=checkpoint_assets.shortest_image_edge
+            if checkpoint_assets is not None
+            else None,
             crop_fraction=checkpoint_assets.crop_fraction if checkpoint_assets is not None else None,
-            use_albumentations=checkpoint_assets.use_albumentations if checkpoint_assets is not None else False,
+            use_albumentations=checkpoint_assets.use_albumentations
+            if checkpoint_assets is not None
+            else False,
         ),
         DeviceProcessorStep(device=config.device),
     ]
 
-    if checkpoint_assets is None:
+    if checkpoint_assets is not None and not checkpoint_has_stats and not _has_modality_stats(padded_stats):
+        raise ValueError(
+            f"GR00T N1.7 checkpoint '{config.base_model_path}' has no statistics for embodiment tag "
+            f"'{config.embodiment_tag}', and no dataset stats were provided to fall back to, so "
+            "actions cannot be normalized or decoded. Pass dataset_stats, or set "
+            "config.embodiment_tag to an embodiment present in the checkpoint's statistics.json."
+        )
+    if checkpoint_assets is None or not checkpoint_has_stats:
+        # When the checkpoint sidecars have no stats for the configured
+        # embodiment tag (e.g. finetuning a raw base checkpoint with the
+        # default 'new_embodiment' tag), the pack step above normalized with
+        # the dataset stats; the decode step must invert with the same stats
+        # instead of using a checkpoint decoder whose empty stats would
+        # silently return normalized [-1, 1] actions.
         action_decode_step: ProcessorStep = GrootActionUnpackUnnormalizeStep(
             env_action_dim=env_action_dim,
             stats=padded_stats,
@@ -669,7 +826,6 @@ def make_groot_pre_post_processors(
             use_percentiles=checkpoint_assets.use_percentiles,
             use_relative_action=checkpoint_assets.use_relative_action,
             pack_step=pack_step,
-            state_cache_key=state_cache_key,
             action_decode_transform=config.action_decode_transform,
         )
 
@@ -770,7 +926,7 @@ def _build_n1_7_processor(model_name: str = GROOT_N1_7_BACKBONE_MODEL) -> Proces
     try:
         from transformers import (
             AutoTokenizer,
-            Qwen2VLImageProcessorFast,
+            Qwen2VLImageProcessor,
             Qwen3VLProcessor,
             Qwen3VLVideoProcessor,
         )
@@ -781,7 +937,7 @@ def _build_n1_7_processor(model_name: str = GROOT_N1_7_BACKBONE_MODEL) -> Proces
         ) from exc
 
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    image_processor = Qwen2VLImageProcessorFast.from_pretrained(model_name, trust_remote_code=True)
+    image_processor = Qwen2VLImageProcessor.from_pretrained(model_name, trust_remote_code=True)
     video_processor = Qwen3VLVideoProcessor.from_pretrained(model_name, trust_remote_code=True)
     proc = Qwen3VLProcessor(
         image_processor=image_processor,
@@ -902,8 +1058,11 @@ class GrootN17PackInputsStep(ProcessorStep):
     video_modality_keys: list[str] | None = None
     raw_stats: dict[str, Any] | None = None
     modality_config: dict[str, Any] | None = None
+    # Unused: kept so serialized configs that include it still load. The raw
+    # state cache is per instance (_last_raw_state), never process-global.
     state_cache_key: str = ""
     _last_raw_state: dict[str, np.ndarray] | None = field(default=None, init=False, repr=False)
+    _warned_image_keys: bool = field(default=False, init=False, repr=False)
 
     def _ordered_image_keys(self, obs: dict[str, Any]) -> list[str]:
         available = {key for key in obs if key.startswith(OBS_IMAGES)}
@@ -913,19 +1072,56 @@ class GrootN17PackInputsStep(ProcessorStep):
             return sorted(available)
 
         ordered: list[str] = []
+        unmatched: list[str] = []
         for modality_key in self.video_modality_keys:
             candidates = [f"{OBS_IMAGES}.{modality_key}"]
+            # Alias for datasets converted with generic camera names (e.g. the
+            # LIBERO conversions expose the wrist camera as
+            # `observation.images.image2`), so raw N1.7 LIBERO checkpoints
+            # match those datasets out of the box.
             if modality_key == "wrist_image":
                 candidates.append(f"{OBS_IMAGES}.image2")
-            elif modality_key == "image":
-                candidates.append(f"{OBS_IMAGES}.image")
 
             match = next((candidate for candidate in candidates if candidate in available), None)
-            if match is not None:
+            if match is None:
+                unmatched.append(modality_key)
+            else:
                 ordered.append(match)
 
         if not ordered:
+            if not self._warned_image_keys:
+                self._warned_image_keys = True
+                logging.warning(
+                    "None of the GR00T N1.7 checkpoint video modality keys %s match a camera among %s; "
+                    "falling back to feeding all cameras in alphabetical order, which is unlikely to be "
+                    "the layout the checkpoint was trained with. Rename the dataset cameras (e.g. via "
+                    "--rename_map) to match the checkpoint keys.",
+                    self.video_modality_keys,
+                    sorted(available),
+                )
             return sorted(available)
+        unused = sorted(available - set(ordered))
+        if (unmatched or unused) and not self._warned_image_keys:
+            self._warned_image_keys = True
+            if unmatched:
+                logging.warning(
+                    "GR00T N1.7 checkpoint video modality keys %s have no matching camera among %s; "
+                    "the model will receive %d view(s) instead of the %d it was trained with. Rename "
+                    "the dataset cameras (e.g. via --rename_map) to match the checkpoint keys %s.",
+                    unmatched,
+                    sorted(available),
+                    len(ordered),
+                    len(self.video_modality_keys),
+                    self.video_modality_keys,
+                )
+            if unused:
+                logging.warning(
+                    "Dropping camera(s) %s: the GR00T N1.7 checkpoint only consumes the video modality "
+                    "keys %s, which matched %s.",
+                    unused,
+                    self.video_modality_keys,
+                    ordered,
+                )
         return ordered
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -988,7 +1184,6 @@ class GrootN17PackInputsStep(ProcessorStep):
                 start_idx += dim
             if grouped:
                 self._last_raw_state = grouped
-                _N1_7_RAW_STATE_CACHE[_n1_7_state_cache_key(self.state_cache_key)] = grouped
 
         img_keys = self._ordered_image_keys(obs)
         if img_keys:
@@ -1101,7 +1296,6 @@ class GrootN17PackInputsStep(ProcessorStep):
             "video_modality_keys": self.video_modality_keys,
             "raw_stats": self.raw_stats,
             "modality_config": self.modality_config,
-            "state_cache_key": self.state_cache_key,
         }
 
     def get_cached_raw_state(self) -> dict[str, np.ndarray] | None:
@@ -1222,6 +1416,7 @@ class GrootN17VLMEncodeStep(ProcessorStep):
             "crop_fraction": self.crop_fraction,
             "use_albumentations": self.use_albumentations,
         }
+
 
 def _stat_dim_from_entry(entry: dict[str, Any]) -> int:
     for stat_name in ("mean", "q01", "min", "max", "std"):
@@ -1351,6 +1546,18 @@ class GrootN17ActionDecodeStep(ProcessorStep):
     group with the checkpoint stats, converts relative groups to absolute values
     using the raw state cached during packing, concatenates groups in checkpoint
     order, and finally slices to the environment action dimension.
+
+    Relative-action decoding reads the reference state from the connected
+    ``pack_step`` (re-linked after ``from_pretrained`` by
+    ``_reconnect_groot_n1_7_pack_decode_steps``), i.e. the state seen by the
+    most recent preprocess call. Engines that decode the whole chunk right
+    after prediction (RTC, async policy server) therefore use the
+    prediction-time state, matching Isaac-GR00T. The sync per-step queue path
+    instead decodes each popped (B, D) action against the latest observation:
+    the reference can be newer than the observation the chunk was predicted
+    from, and per-timestep relative stats are applied as if the popped action
+    were chunk step 0. Fixing that would require carrying the reference state
+    and chunk index alongside each queued action through the postprocessor.
     """
 
     env_action_dim: int = 0
@@ -1358,6 +1565,7 @@ class GrootN17ActionDecodeStep(ProcessorStep):
     modality_config: dict[str, Any] | None = None
     use_percentiles: bool = False
     use_relative_action: bool = False
+    # Unused: kept so serialized configs that include it still load.
     state_cache_key: str = ""
     action_decode_transform: str | None = None
     pack_step: GrootN17PackInputsStep | None = field(default=None, repr=False)
@@ -1378,6 +1586,12 @@ class GrootN17ActionDecodeStep(ProcessorStep):
             return transition
 
         action_np = action.detach().cpu().float().numpy()
+        # The sync action queue postprocesses popped actions as (B, D); decode
+        # them as single-step (B, 1, D) chunks and squeeze the horizon back at
+        # the end so both ranks share the chunk decode logic below.
+        squeeze_horizon = action_np.ndim == 2
+        if squeeze_horizon:
+            action_np = action_np[:, None, :]
         valid_horizon = _n1_7_decode_valid_horizon(action_config, action_np)
         if valid_horizon is not None:
             action_np = action_np[:, :valid_horizon]
@@ -1405,17 +1619,24 @@ class GrootN17ActionDecodeStep(ProcessorStep):
                 use_relative_action=self.use_relative_action,
                 use_percentiles=self.use_percentiles,
             )
+            # Per-timestep stats carry one row per chunk step; align them with
+            # the decoded horizon (chunks always start at step 0, and a popped
+            # (B, D) action is decoded as step 0).
+            if min_v.ndim == 2 and normalized.shape[1] <= min_v.shape[0]:
+                min_v = min_v[: normalized.shape[1]]
+                max_v = max_v[: normalized.shape[1]]
             decoded_groups[key] = _unnormalize_min_max(normalized, min_v, max_v)
             start_idx += dim
 
         if self.use_relative_action:
             raw_state = self.pack_step.get_cached_raw_state() if self.pack_step is not None else None
             if raw_state is None:
-                raw_state = _N1_7_RAW_STATE_CACHE.get(_n1_7_state_cache_key(self.state_cache_key))
-            if raw_state is None:
                 raise RuntimeError(
-                    "GrootN17ActionDecodeStep requires cached raw state from GrootN17PackInputsStep "
-                    "to convert relative N1.7 actions back to absolute actions."
+                    "GrootN17ActionDecodeStep requires the raw state cached by its connected "
+                    "GrootN17PackInputsStep to convert relative N1.7 actions back to absolute actions. "
+                    "Build both pipelines through make_groot_pre_post_processors (or load them together "
+                    "via make_groot_pre_post_processors_from_pretrained) and run the preprocessor on an "
+                    "observation before decoding actions."
                 )
             for idx, key in enumerate(action_keys):
                 if not isinstance(key, str) or key not in decoded_groups or idx >= len(action_configs):
@@ -1451,6 +1672,8 @@ class GrootN17ActionDecodeStep(ProcessorStep):
             action_keys=action_keys,
             decoded_groups=decoded_groups,
         )
+        if squeeze_horizon:
+            decoded = decoded[:, 0]
         new_transition = transition.copy()
         new_transition[TransitionKey.ACTION] = torch.as_tensor(
             decoded, dtype=action.dtype, device=action.device
@@ -1467,13 +1690,15 @@ class GrootN17ActionDecodeStep(ProcessorStep):
             "modality_config": self.modality_config,
             "use_percentiles": self.use_percentiles,
             "use_relative_action": self.use_relative_action,
-            "state_cache_key": self.state_cache_key,
             "action_decode_transform": self.action_decode_transform,
         }
 
 
 @dataclass
-@ProcessorStepRegistry.register(name="groot_action_unpack_unnormalize_v1")
+# v2: unlike the N1.5-era v1 step, this step no longer collapses (B, T, D)
+# action chunks to the last timestep, so old serialized v1 pipelines must not
+# silently load into it (v1 is stubbed below with the removal guidance).
+@ProcessorStepRegistry.register(name="groot_action_unpack_unnormalize_v2")
 class GrootActionUnpackUnnormalizeStep(ProcessorStep):
     env_action_dim: int = 0
     # Apply inverse of min-max normalization if it was used in preprocessor
@@ -1585,3 +1810,37 @@ class GrootActionUnpackUnnormalizeStep(ProcessorStep):
 
         if reconstructed:
             self.stats = reconstructed
+
+
+def _register_removed_n1_5_step_stub(registry_name: str) -> None:
+    """Register a stub for a processor step that only GR00T N1.5 pipelines serialize.
+
+    Saved N1.5 checkpoints reference these registry names in their processor JSON
+    files. Deserializing them must fail with the canonical N1.5 removal guidance
+    instead of an opaque registry KeyError (or, for
+    ``groot_action_unpack_unnormalize_v1``, silently loading the v2 step whose
+    action-chunk semantics changed).
+    """
+
+    @ProcessorStepRegistry.register(name=registry_name)
+    class _RemovedGrootN15ProcessorStep(ProcessorStep):
+        def __init__(self, **_kwargs: Any) -> None:
+            raise ValueError(
+                f"Processor step '{registry_name}' belongs to a GR00T N1.5 processor pipeline. "
+                f"{GROOT_N1_5_REMOVAL_GUIDANCE}"
+            )
+
+        def __call__(self, transition: EnvTransition) -> EnvTransition:
+            raise NotImplementedError
+
+        def transform_features(self, features):
+            raise NotImplementedError
+
+
+for _removed_n1_5_step_name in (
+    "groot_pack_inputs_v3",
+    "groot_eagle_encode_v3",
+    "groot_eagle_collate_v3",
+    "groot_action_unpack_unnormalize_v1",
+):
+    _register_removed_n1_5_step_stub(_removed_n1_5_step_name)

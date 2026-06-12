@@ -18,12 +18,8 @@
 Groot Policy Wrapper for LeRobot Integration
 
 Minimal integration that delegates to Isaac-GR00T N1.7 components where
-possible without porting their code.
-
-Notes:
-- Dataset loading and full training orchestration is handled by Isaac-GR00T
-  TrainRunner in their codebase. If you want to invoke that flow end-to-end
-  from LeRobot, see `GrootPolicy.finetune_with_groot_runner` below.
+possible without porting their code. Dataset loading and training
+orchestration are handled by LeRobot's standard training stack.
 """
 
 import builtins
@@ -42,6 +38,8 @@ from lerobot.utils.import_utils import require_package
 from ..pretrained import PreTrainedPolicy
 from ..utils import get_device_from_parameters
 from .configuration_groot import (
+    GROOT_N1_5,
+    GROOT_N1_5_REMOVAL_GUIDANCE,
     GROOT_N1_7,
     GrootConfig,
     infer_groot_model_version,
@@ -92,8 +90,11 @@ class GrootPolicy(PreTrainedPolicy):
             transformers_loading_kwargs={"trust_remote_code": True},
         )
 
-        model.compute_dtype = "bfloat16" if self.config.use_bf16 else model.compute_dtype
-        model.config.compute_dtype = model.compute_dtype
+        # GR00TN17 defines no compute_dtype attribute, so only record the
+        # bf16 preference when it is enabled instead of reading a default back.
+        if self.config.use_bf16:
+            model.compute_dtype = "bfloat16"
+            model.config.compute_dtype = "bfloat16"
 
         return model
 
@@ -229,10 +230,13 @@ class GrootPolicy(PreTrainedPolicy):
         config.model_version = normalize_groot_model_version(config.model_version)
         inferred_version = infer_groot_model_version(config.base_model_path)
         if inferred_version is not None and inferred_version != config.model_version:
-            raise ValueError(
+            message = (
                 f"GR00T model_version '{config.model_version}' does not match base_model_path "
                 f"'{config.base_model_path}', which looks like '{inferred_version}'."
             )
+            if inferred_version == GROOT_N1_5:
+                message = f"{message} {GROOT_N1_5_REMOVAL_GUIDANCE}"
+            raise ValueError(message)
         # Create a fresh policy instance - this will automatically load the GR00T model
         # in __init__ via _create_groot_model()
         policy = cls(config)
@@ -297,9 +301,7 @@ class GrootPolicy(PreTrainedPolicy):
         allowed_base.add("action_mask")
 
         return {
-            k: v
-            for k, v in batch.items()
-            if k in allowed_base and not (k.startswith("next.") or k == "info")
+            k: v for k, v in batch.items() if k in allowed_base and not (k.startswith("next.") or k == "info")
         }
 
     def _prepare_n1_7_rtc_inputs(
@@ -320,9 +322,7 @@ class GrootPolicy(PreTrainedPolicy):
         if prev_actions.ndim == 2:
             prev_actions = prev_actions.unsqueeze(0)
         elif prev_actions.ndim != 3:
-            raise ValueError(
-                "prev_chunk_left_over must have shape (T, A) or (B, T, A) for GR00T N1.7 RTC."
-            )
+            raise ValueError("prev_chunk_left_over must have shape (T, A) or (B, T, A) for GR00T N1.7 RTC.")
 
         state = inputs.get("state")
         if state is None:
@@ -331,9 +331,7 @@ class GrootPolicy(PreTrainedPolicy):
         if prev_actions.shape[0] == 1 and batch_size > 1:
             prev_actions = prev_actions.expand(batch_size, -1, -1).clone()
         elif prev_actions.shape[0] != batch_size:
-            raise ValueError(
-                "prev_chunk_left_over batch size must match the current GR00T N1.7 batch size."
-            )
+            raise ValueError("prev_chunk_left_over batch size must match the current GR00T N1.7 batch size.")
 
         # The generic LeRobot RTC engine pads short leftovers with exact zero
         # rows for fixed-shape policy calls. Native GR00T N1.7 RTC treats every
@@ -346,7 +344,9 @@ class GrootPolicy(PreTrainedPolicy):
         else:
             return inputs, None
 
-        model_action_horizon = int(getattr(self._groot_model.config, "action_horizon", self.config.chunk_size))
+        model_action_horizon = int(
+            getattr(self._groot_model.config, "action_horizon", self.config.chunk_size)
+        )
         max_action_dim = int(getattr(self._groot_model.config, "max_action_dim", self.config.max_action_dim))
         if prev_actions.shape[1] > model_action_horizon:
             prev_actions = prev_actions[:, -model_action_horizon:, :]
