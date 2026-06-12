@@ -83,7 +83,7 @@ def aggregate_pipeline_dataset_features(
     Args:
         pipeline: The DataProcessorPipeline to apply.
         initial_features: A dictionary of raw feature specs for actions and observations.
-        use_videos: Storage dtype for image features that are kept. If True, images are stored as "video", if False, they are stored as "image".
+        use_videos: Controls the storage dtype for image features. If True, images are stored as "video"; if False, they are stored as "image".
         exclude_images: If True, image features are dropped entirely from the output.
         patterns: A sequence of regex patterns to filter action and state features.
                   Image features are not affected by this filter.
