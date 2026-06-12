@@ -722,7 +722,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 force_download, resume_download, proxies, token, cache_dir, local_files_only,
                 effective_revision, overrides, to_transition, to_output
             )
-        except Exception as e:
+        except (HfHubHTTPError, FileNotFoundError) as e:
             if effective_revision == "latest-checkpoint":
                 logging.info(
                     "latest-checkpoint branch not found for processor pipeline, falling back to main. "

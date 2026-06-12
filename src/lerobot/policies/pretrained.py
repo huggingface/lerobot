@@ -155,44 +155,21 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         deactivated). To train it, you should first set it back in training mode with `policy.train()`.
 
         If ``revision="latest-checkpoint"`` and the branch doesn't exist (e.g., first training run
-        before any checkpoint has been pushed), the method silently falls back to ``revision="main"``.
-        This makes ``latest-checkpoint`` safe as a default — no crash on first run.
+        before any checkpoint has been pushed), config loading falls back to main via
+        ``PreTrainedConfig.from_pretrained``, and model weights fall back below.
         """
-        effective_revision = revision
-
         if config is None:
-            try:
-                config = PreTrainedConfig.from_pretrained(
-                    pretrained_name_or_path=pretrained_name_or_path,
-                    force_download=force_download,
-                    resume_download=resume_download,
-                    proxies=proxies,
-                    token=token,
-                    cache_dir=cache_dir,
-                    local_files_only=local_files_only,
-                    revision=effective_revision,
-                    **kwargs,
-                )
-            except Exception as e:
-                if effective_revision == "latest-checkpoint":
-                    logging.info(
-                        "latest-checkpoint branch not found, falling back to main. "
-                        "This is normal on first run — the branch is created after the first checkpoint push."
-                    )
-                    effective_revision = "main"
-                    config = PreTrainedConfig.from_pretrained(
-                        pretrained_name_or_path=pretrained_name_or_path,
-                        force_download=force_download,
-                        resume_download=resume_download,
-                        proxies=proxies,
-                        token=token,
-                        cache_dir=cache_dir,
-                        local_files_only=local_files_only,
-                        revision=effective_revision,
-                        **kwargs,
-                    )
-                else:
-                    raise
+            config = PreTrainedConfig.from_pretrained(
+                pretrained_name_or_path=pretrained_name_or_path,
+                force_download=force_download,
+                resume_download=resume_download,
+                proxies=proxies,
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                revision=revision,
+                **kwargs,
+            )
 
         model_id = str(pretrained_name_or_path)
         instance = cls(config, **kwargs)
@@ -201,11 +178,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
             policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
         else:
+            model_revision = revision
             try:
                 model_file = hf_hub_download(
                     repo_id=model_id,
                     filename=SAFETENSORS_SINGLE_FILE,
-                    revision=effective_revision,
+                    revision=model_revision,
                     cache_dir=cache_dir,
                     force_download=force_download,
                     proxies=proxies,
@@ -214,17 +192,16 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                     local_files_only=local_files_only,
                 )
                 policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
-            except HfHubHTTPError as e:
-                # Fall back to main if latest-checkpoint branch not found on model download
-                if effective_revision == "latest-checkpoint" and "latest-checkpoint" in str(e):
+            except HfHubHTTPError:
+                if model_revision == "latest-checkpoint":
                     logging.info(
                         "latest-checkpoint branch not found, falling back to main."
                     )
-                    effective_revision = "main"
+                    model_revision = "main"
                     model_file = hf_hub_download(
                         repo_id=model_id,
                         filename=SAFETENSORS_SINGLE_FILE,
-                        revision=effective_revision,
+                        revision=model_revision,
                         cache_dir=cache_dir,
                         force_download=force_download,
                         proxies=proxies,
@@ -236,7 +213,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 else:
                     raise FileNotFoundError(
                         f"{SAFETENSORS_SINGLE_FILE} not found on the HuggingFace Hub in {model_id}"
-                    ) from e
+                    )
 
         policy.to(config.device)
         policy.eval()
@@ -326,10 +303,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
         # Create the target branch if it doesn't exist yet (required by preupload endpoint)
         if revision:
-            try:
-                api.create_branch(repo_id, branch=revision, exist_ok=True)
-            except Exception:
-                pass
+            api.create_branch(repo_id, branch=revision, exist_ok=True)
 
         # Push the files to the repo in a single commit
         with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
@@ -373,7 +347,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             if revision:
                 try:
                     api.delete_branch(repo_id, branch="latest-checkpoint")
-                except Exception:
+                except HfHubHTTPError:
                     pass  # doesn't exist yet (first checkpoint push)
                 api.create_branch(repo_id, branch="latest-checkpoint", revision=revision)
                 logging.info(f"latest-checkpoint pointer updated → {revision}")
