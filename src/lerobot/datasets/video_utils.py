@@ -159,10 +159,10 @@ def decode_video_frames_pyav(
     dist = torch.cdist(query_ts[:, None], loaded_ts_t[:, None], p=1)
     min_, argmin_ = dist.min(1)
 
-    is_within_tol = min_ < tolerance_s
+    is_within_tol = min_ <= tolerance_s
     if not is_within_tol.all():
         raise FrameTimestampError(
-            f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} > {tolerance_s=})."
+            f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} >= {tolerance_s=})."
             " It means that the closest frame that can be loaded from the video is too far away in time."
             " This might be due to synchronization issues with timestamps during data collection."
             " To be safe, we advise to ignore this item during training."
@@ -370,10 +370,10 @@ def decode_video_frames_torchcodec(
     dist = torch.cdist(query_ts[:, None], loaded_ts[:, None], p=1)
     min_, argmin_ = dist.min(1)
 
-    is_within_tol = min_ < tolerance_s
+    is_within_tol = min_ <= tolerance_s
     if not is_within_tol.all():
         raise FrameTimestampError(
-            f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} > {tolerance_s=})."
+            f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} >= {tolerance_s=})."
             " It means that the closest frame that can be loaded from the video is too far away in time."
             " This might be due to synchronization issues with timestamps during data collection."
             " To be safe, we advise to ignore this item during training."
