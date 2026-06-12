@@ -114,6 +114,30 @@ def test_shuffle():
     assert set(sampler) == {0, 1, 2, 3, 4, 5}
 
 
+def test_shuffle_with_generator_is_deterministic():
+    # Two samplers shuffling with same-seed generators must yield identical permutations.
+    # This is what keeps batch shards disjoint across ranks in distributed training, where
+    # accelerate synchronizes the sampler's generator state instead of the global torch RNG.
+    sampler_a = EpisodeAwareSampler([0], [6], shuffle=True, generator=torch.Generator().manual_seed(42))
+    sampler_b = EpisodeAwareSampler([0], [6], shuffle=True, generator=torch.Generator().manual_seed(42))
+    assert list(sampler_a) == list(sampler_b)
+
+    # Desyncing the global RNG must not affect the permutation.
+    sampler_c = EpisodeAwareSampler([0], [6], shuffle=True, generator=torch.Generator().manual_seed(42))
+    order_before = list(sampler_c)
+    sampler_c.generator.manual_seed(42)
+    torch.randperm(1000)  # consume global RNG, as rank-asymmetric code (e.g. eval) would
+    assert list(sampler_c) == order_before
+
+
+def test_generator_attribute_defaults_to_none():
+    # accelerate detects synchronizable samplers via `hasattr(sampler, "generator")`,
+    # so the attribute must exist even when no generator is passed.
+    sampler = EpisodeAwareSampler([0], [6], shuffle=True)
+    assert sampler.generator is None
+    assert set(sampler) == {0, 1, 2, 3, 4, 5}
+
+
 def test_negative_drop_first_frames_raises():
     with pytest.raises(ValueError, match="drop_n_first_frames must be >= 0"):
         EpisodeAwareSampler([0], [10], drop_n_first_frames=-1)
