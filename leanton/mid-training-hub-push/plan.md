@@ -10,6 +10,7 @@ status: plan
 > **Goal:** Push model checkpoints to HuggingFace Hub at each `save_freq` interval during training, so that Colab disconnects do not lose all progress. Each checkpoint is tagged with its step count for easy identification and invalidation.
 > **Repo:** `huggingface/lerobot`
 > **Patch name:** `mid-training-hub-push`
+> **Diff basis:** `origin/main` (clean upstream). The `.diff` bundles the `revision` field on `PolicyConfig` as a prerequisite since upstream doesn't have it yet. Our `leanton` branch already has `revision` from the `rollout-policy-revision` patch — the source changes on `leanton` omit it, but the `.diff` file includes it for upstream compatibility.
 
 ---
 
@@ -169,9 +170,13 @@ anikitakis/vla_so101_pick_n_place_full_expert
 
 ## Files to Modify
 
-### 0. `src/lerobot/configs/policies.py` — `revision` field ✅ ALREADY EXISTS
+### 0. `src/lerobot/configs/policies.py` — `revision` field
 
-**Line 83** — `revision: str | None = None` is already in `PolicyConfig`. No change needed. `--policy.revision=step-N` is already a valid CLI flag via draccus.
+**On `leanton` branch:** `revision: str | None = None` is already present at line 83 (from `rollout-policy-revision` patch). No change needed in source.
+
+**In `.diff` file (upstream-ready):** The `revision` field is included as a bundled prerequisite — upstream `main` doesn't have it yet. The diff will add it right after `pretrained_path`.
+
+`--policy.revision=step-N` is a valid CLI flag via draccus once the field exists.
 
 ### 0b. `src/lerobot/policies/factory.py` — PREREQUISITE: Pass `revision` to `from_pretrained()`
 

@@ -1,8 +1,9 @@
 # Push Intermediate Checkpoints to Hub During Training
 
-**Target:** `src/lerobot/scripts/lerobot_train.py`, `src/lerobot/policies/pretrained.py`, `src/lerobot/policies/factory.py`
+**Target:** `src/lerobot/scripts/lerobot_train.py`, `src/lerobot/policies/pretrained.py`, `src/lerobot/policies/factory.py`, `src/lerobot/configs/policies.py`
 **Status:** `active`
 **GitHub:** Not filed (planned upstream feature request)
+**Diff basis:** `origin/main` (clean upstream). Includes `revision` field on `PolicyConfig` as a bundled prerequisite — upstream doesn't have it yet.
 
 ## What
 
