@@ -324,6 +324,13 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             repo_id=self.config.repo_id, private=self.config.private, exist_ok=True
         ).repo_id
 
+        # Create the target branch if it doesn't exist yet (required by preupload endpoint)
+        if revision:
+            try:
+                api.create_branch(repo_id, branch=revision, exist_ok=True)
+            except Exception:
+                pass
+
         # Push the files to the repo in a single commit
         with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             saved_path = Path(tmp) / repo_id
