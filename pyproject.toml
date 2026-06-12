@@ -241,6 +241,7 @@ aloha = ["lerobot[dataset]", "gym-aloha>=0.1.4,<0.2.0", "lerobot[scipy-dep]"]
 pusht = ["lerobot[dataset]", "gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
 libero = ["lerobot[dataset]", "lerobot[transformers-dep]", "hf-libero>=0.1.4,<0.2.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
 metaworld = ["lerobot[dataset]", "metaworld==3.0.0", "lerobot[scipy-dep]"]
+molmospaces = ["lerobot[dataset]", "mujoco>=3.0.0,<4.0.0", "molmospaces>=0.1.0,<1.0.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
 # NOTE: vlabench is NOT exposed as a `lerobot` extra. Its only distribution
 # is the OpenMOSS/VLABench GitHub repo (package name `VLABench`, no PyPI
 # release), so any `vlabench>=X` pip spec is unresolvable. Install it
@@ -299,6 +300,7 @@ all = [
     "lerobot[phone]",
     "lerobot[libero]; sys_platform == 'linux'",
     "lerobot[metaworld]",
+    "lerobot[molmospaces]; sys_platform == 'linux'",
     "lerobot[sarm]",
     "lerobot[robometer]",
     "lerobot[topreward]",
