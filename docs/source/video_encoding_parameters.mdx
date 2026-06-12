@@ -71,12 +71,22 @@ Depth maps (Intel RealSense, Reachy 2) are stored as their **own video streams**
 
 ```mermaid
 flowchart LR
-    A["Raw depth<br/>uint16 mm / float32 m"] --> B["Clip to<br/>depth_min, depth_max"]
-    B --> C["Quantize to 12-bit code<br/>0–4095 (log or linear)"]
+    A["Raw depth (uint16 mm / float32 m)"] --> B["Clip to depth_min, depth_max"]
+    B --> C["Quantize to 12-bit code 0–4095 (log or linear)"]
     C --> D["Pack into gray12le"]
-    D --> E["Encode video<br/>hevc Main 12"]
-    E --> F[("MP4 + metadata<br/>depth_min/max, shift, use_log")]
-    F -. "load time<br/>(depth_output_unit)" .-> G["Dequantize to<br/>mm or m"]
+    D --> E["Encode video (hevc Main 12)"]
+    E --> F[("MP4 + metadata: depth_min/max, shift, use_log")]
+    F -. "load time (depth_output_unit)" .-> G["Dequantize to mm or m"]
+
+    classDef input fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
+    classDef encode fill:#ede7f6,stroke:#5e35b1,color:#311b92;
+    classDef store fill:#fff8e1,stroke:#f9a825,color:#e65100;
+    classDef load fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;
+
+    class A input;
+    class B,C,D,E encode;
+    class F store;
+    class G load;
 ```
 
 Configure the depth pipeline through a parallel **`depth_encoder`** block (`DepthEncoderConfig`). It inherits every `VideoEncoderConfig` field (`vcodec`, `pix_fmt`, `crf`, …) and adds four quantizer knobs, set via `--dataset.depth_encoder.<field>`:
