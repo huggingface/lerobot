@@ -65,6 +65,66 @@ All flags below are prefixed with `--dataset.camera_encoder.` on the CLI.
 
 ---
 
+## Depth streams
+
+Depth maps (Intel RealSense, Reachy 2) are stored as their **own video streams** alongside the RGB streams. Raw depth (`uint16` millimetres or `float32` metres) can't survive an 8-bit codec, so LeRobot **quantizes** each map to a 12-bit code (`[0, 4095]`) — logarithmically by default, to match the `1/depth` error profile of depth sensors — then packs it into a high-bit-depth pixel format (`gray12le`) and encodes it with a 12-bit codec.
+
+```mermaid
+flowchart LR
+    A["Raw depth<br/>uint16 mm / float32 m"] --> B["Clip to<br/>depth_min, depth_max"]
+    B --> C["Quantize to 12-bit code<br/>0–4095 (log or linear)"]
+    C --> D["Pack into gray12le"]
+    D --> E["Encode video<br/>hevc Main 12"]
+    E --> F[("MP4 + metadata<br/>depth_min/max, shift, use_log")]
+    F -. "load time<br/>(depth_output_unit)" .-> G["Dequantize to<br/>mm or m"]
+```
+
+Configure the depth pipeline through a parallel **`depth_encoder`** block (`DepthEncoderConfig`). It inherits every `VideoEncoderConfig` field (`vcodec`, `pix_fmt`, `crf`, …) and adds four quantizer knobs, set via `--dataset.depth_encoder.<field>`:
+
+```bash
+lerobot-record \
+    ... \
+    --dataset.depth_encoder.vcodec=hevc \
+    --dataset.depth_encoder.depth_min=0.05 \
+    --dataset.depth_encoder.depth_max=5.0 \
+    --dataset.depth_encoder.use_log=true
+```
+
+| Parameter   | Type    | Default      | Description                                                                                                                       |
+| ----------- | ------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `vcodec`    | `str`   | `"hevc"`     | Defaults to HEVC Main 12 (a 12-bit-capable codec). `ffv1` is a lossless alternative.                                              |
+| `pix_fmt`   | `str`   | `"gray12le"` | Single-channel 12-bit pixel format used to carry the quantized codes.                                                             |
+| `depth_min` | `float` | `0.01`       | Depth in metres mapped to quantum `0`. Values below are clipped on decode.                                                        |
+| `depth_max` | `float` | `10.0`       | Depth in metres mapped to quantum `4095`. Values above are clipped on decode.                                                     |
+| `shift`     | `float` | `3.5`        | Pre-log offset (metres) used in logarithmic quantization for numerical stability near zero. Must satisfy `depth_min + shift > 0`. |
+| `use_log`   | `bool`  | `True`       | If `true`, quantize in log-space (recommended for typical depth sensors). Set to `false` for uniform/linear quantization.         |
+
+> [!TIP]
+> `depth_min`, `depth_max`, and `shift` are always interpreted in **metres**, regardless of the input depth's unit. Inputs are auto-detected: integer arrays (e.g. `uint16` millimetres straight from a RealSense) are treated as millimetres, floating arrays as metres. 
+> Pick `depth_min` / `depth_max` to bracket the actual working range of your sensor — quanta outside that range saturate, which can crush detail at the boundaries.
+
+Depth features are flagged with `"is_depth_map": true` in `meta/info.json`, and their quantizer settings (`video.depth_min`, `video.depth_max`, `video.shift`, `video.use_log`) are persisted — which is what lets depth be **dequantized back to physical units** on load.
+
+### Output unit at load time
+
+`depth_encoder` is a **record-time** concern. The unit that depth maps are dequantized to on _load_ (e.g. during training) is set separately by the read-time flag `--dataset.depth_output_unit`:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=<my_username>/<my_dataset_name> \
+    --dataset.depth_output_unit=m \
+    --policy.type=act
+```
+
+| Parameter           | Type  | Default | Description                                                                                  |
+| ------------------- | ----- | ------- | -------------------------------------------------------------------------------------------- |
+| `depth_output_unit` | `str` | `"mm"`  | Physical unit depth maps are dequantized to on load: `"mm"` (millimetres) or `"m"` (metres). |
+
+> [!TIP]
+> This is purely a decode-time presentation choice — it does **not** alter the stored video or its metadata, so the same dataset can be read as `mm` or `m` without re-encoding. It has no effect on datasets without depth cameras.
+
+---
+
 ## Persistence in dataset metadata
 
 After the first episode of a video stream is encoded, the encoder configuration is **persisted into the dataset metadata** (`meta/info.json`) under each video feature, alongside the values probed from the file itself. For a video feature `observation.images.<camera>`, the layout in `info.json` is:
