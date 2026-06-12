@@ -69,7 +69,12 @@ MAX_JOINT_DELTA = 1.25
 SMOOTHING_RESET_THRESHOLD = 10.0
 
 
-def _smooth_action(action_dict: dict) -> dict:
+def _smooth_action(
+    action_dict: dict,
+    alpha: float = EMA_SMOOTHING_ALPHA,
+    limit: float = MAX_JOINT_DELTA,
+    reset_threshold: float = SMOOTHING_RESET_THRESHOLD,
+) -> dict:
     """Apply EMA smoothing + per-joint velocity clipping to *action_dict*.
 
     Modifies *action_dict* in place and returns it for convenience.
@@ -77,10 +82,14 @@ def _smooth_action(action_dict: dict) -> dict:
     function attribute so it persists across calls within a rollout.
 
     Call :func:`reset_action_smoothing` at the start of every new rollout.
+
+    Args:
+        action_dict: Joint goal positions, modified in place.
+        alpha: EMA blending factor (0=raw, 1=frozen).
+        limit: Max per-frame delta in action units (degrees for SO-101).
+        reset_threshold: Gap above which EMA blending is skipped.
     """
     prev = getattr(_smooth_action, "_prev", None)
-    alpha = EMA_SMOOTHING_ALPHA
-    limit = MAX_JOINT_DELTA
     frame = getattr(_smooth_action, "_frame", 0) + 1
     _smooth_action._frame = frame
 
@@ -92,7 +101,7 @@ def _smooth_action(action_dict: dict) -> dict:
     reset_triggered = False
     for k, v in action_dict.items():
         prev_v = prev.get(k, v)
-        if abs(v - prev_v) > SMOOTHING_RESET_THRESHOLD:
+        if abs(v - prev_v) > reset_threshold:
             # EMA state has drifted too far (policy direction change, or
             # recovery after correction — though the strategy resets _prev
             # to None on correction resume, so this path mainly catches
@@ -393,6 +402,15 @@ def send_next_action(
         raise ValueError(f"Interpolated tensor length ({len(interp)}) != action keys ({len(ordered_keys)})")
     action_dict = {k: interp[i].item() for i, k in enumerate(ordered_keys)}
     processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
-    _smooth_action(processed)
+    # Apply action smoothing if enabled (EMA + velocity clip).
+    # Config fields default to module-level constants if not present.
+    cfg = ctx.runtime.cfg
+    if getattr(cfg, "action_smoothing_enabled", True):
+        _smooth_action(
+            processed,
+            alpha=getattr(cfg, "action_smoothing_alpha", EMA_SMOOTHING_ALPHA),
+            limit=getattr(cfg, "action_smoothing_max_delta", MAX_JOINT_DELTA),
+            reset_threshold=getattr(cfg, "action_smoothing_reset_threshold", SMOOTHING_RESET_THRESHOLD),
+        )
     ctx.hardware.robot_wrapper.send_action(processed)
     return action_dict

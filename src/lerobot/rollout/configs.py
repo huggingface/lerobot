@@ -223,6 +223,16 @@ class RolloutConfig:
     fps: float = 30.0
     duration: float = 0.0  # 0 = infinite (24/7 mode)
     interpolation_multiplier: int = 1
+
+    # Action smoothing (EMA + velocity clip).  Set enabled=False to bypass.
+    action_smoothing_enabled: bool = True
+    # EMA blending factor: 0.0 = raw (no smoothing), 1.0 = frozen.
+    action_smoothing_alpha: float = 0.25
+    # Max per-frame change in goal position (degrees for SO-101 with use_degrees=True).
+    action_smoothing_max_delta: float = 1.25
+    # Gap (degrees) above which EMA blending is skipped (direction change / correction boundary).
+    action_smoothing_reset_threshold: float = 10.0
+
     device: str | None = None
     task: str = ""
     display_data: bool = False
