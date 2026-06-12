@@ -66,7 +66,7 @@ require_qsv = _require_encoder("h264_qsv")
 TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "encoded_videos"
 
 
-def _write_RGB_frames(imgs_dir: Path, num_frames: int = 4, height: int = 64, width: int = 96) -> None:
+def _write_color_frames(imgs_dir: Path, num_frames: int = 4, height: int = 64, width: int = 96) -> None:
     imgs_dir.mkdir(parents=True, exist_ok=True)
     for i in range(num_frames):
         arr = np.random.randint(0, 256, (height, width, 3), dtype=np.uint8)
@@ -107,7 +107,7 @@ def _encode_video(
         _write_depth_frames(imgs_dir, num_frames=num_frames)
         cfg = cfg or DepthEncoderConfig()
     else:
-        _write_RGB_frames(imgs_dir, num_frames=num_frames)
+        _write_color_frames(imgs_dir, num_frames=num_frames)
     encode_video_frames(imgs_dir, path, fps=fps, video_encoder=cfg, overwrite=True)
     return path
 
@@ -449,7 +449,7 @@ class TestEncodeVideoFrames:
 
     def test_overwrite_false_skips_existing_file(self, tmp_path):
         imgs_dir = tmp_path / "imgs"
-        _write_RGB_frames(imgs_dir)
+        _write_color_frames(imgs_dir)
         video_path = tmp_path / "out.mp4"
         sentinel = b"pre-existing content"
         video_path.write_bytes(sentinel)
@@ -461,7 +461,7 @@ class TestEncodeVideoFrames:
     @require_libsvtav1
     def test_overwrite_true_replaces_existing_file(self, tmp_path):
         imgs_dir = tmp_path / "imgs"
-        _write_RGB_frames(imgs_dir)
+        _write_color_frames(imgs_dir)
         video_path = tmp_path / "out.mp4"
         video_path.write_bytes(b"stale content")
 
