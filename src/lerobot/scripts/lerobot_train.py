@@ -305,6 +305,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
         processor_kwargs["dataset_stats"] = dataset.meta.stats
 
+    # Always forward rename_map so fresh runs also apply camera key remapping.
+    if cfg.rename_map:
+        processor_kwargs["rename_map"] = cfg.rename_map
+
     if cfg.is_reward_model_training:
         processor_kwargs["dataset_meta"] = dataset.meta
 
