@@ -51,47 +51,25 @@ CMD = (
     "openai && "
     "export VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 && "
     "export VLLM_VIDEO_BACKEND=pyav && "
+    # All pipeline knobs (module toggles, frame sampling, parallelism, ...)
+    # are left at their defaults — see AnnotationPipelineConfig in
+    # src/lerobot/annotations/steerable_pipeline/config.py for what each one
+    # does and the docs page for per-flavor recipes.
     "lerobot-annotate "
     "--repo_id=pepijn223/robocasa_pretrain_human300_v4 "
-    "--new_repo_id=pepijn223/robocasa_pretrain_human300_v4_annotated5 "
+    "--new_repo_id=pepijn223/robocasa_pretrain_human300_v4_annotated "
     "--push_to_hub=true "
     "--vlm.backend=openai "
     "--vlm.model_id=Qwen/Qwen3.6-27B "
-    "--vlm.parallel_servers=1 "
     "--vlm.num_gpus=1 "
     '--vlm.serve_command="vllm serve Qwen/Qwen3.6-27B '
     "--tensor-parallel-size 1 --max-model-len 32768 "
     '--gpu-memory-utilization 0.8 --uvicorn-log-level warning --port {port}" '
+    # Large model: leave extra headroom over the 600 s default for the
+    # server's first boot (weight download + compile).
     "--vlm.serve_ready_timeout_s=1800 "
-    "--vlm.client_concurrency=128 "
-    "--vlm.max_new_tokens=512 "
-    "--vlm.temperature=0.7 "
-    "--executor.episode_parallelism=16 "
-    "--vlm.chat_template_kwargs='{\"enable_thinking\": false}' "
-    "--vlm.camera_key=observation.images.robot0_agentview_right "
-    # Phase 1 — plan module (subtasks + memory).
-    # Frames are always rendered as timestamped contact-sheet grids (cheap in
-    # vision tokens; the VLM cites the burned-in timestamps). Sample at 0.5s
-    # (2 fps); episodes longer than max_frames_per_prompt are auto-windowed at
-    # the same density, so coverage stays dense without tuning a window size.
-    "--plan.frames_per_second=2.0 "
-    "--plan.max_frames_per_prompt=60 "
-    # RoboCasa: the dataset task string is authoritative (eval uses it), so
-    # keep it driving subtasks. ``always`` would throw it away and hallucinate.
-    "--plan.derive_task_from_video=off "
-    # No task augmentation: eval conditions on the exact task strings, so
-    # rephrasings are unused at best and harmful when they drift.
-    "--plan.n_task_rephrasings=0 "
-    # Keep subtask decomposition tight for atomic tasks.
-    "--plan.plan_max_steps=10 "
-    # Only subtasks + memory — skip the numbered "plan" rows. true re-enables.
-    "--plan.emit_plan=false "
-    # The describe->segment grounding pass (+1 VLM call/episode) is ON by
-    # default; pass --plan.subtask_describe_first=false to skip it.
-    # Phase 2 — interjections + speech.
-    "--interjections.max_interjections_per_episode=6 "
-    # Phase 4 — general VQA: disabled for this run.
-    "--vqa.enabled=false"
+    # Qwen3.6 ships with thinking on; annotation wants plain JSON answers.
+    "--vlm.chat_template_kwargs='{\"enable_thinking\": false}'"
 )
 
 job = run_job(

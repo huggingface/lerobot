@@ -24,7 +24,6 @@ querying the same timestamp pay decode cost once.
 
 from __future__ import annotations
 
-import inspect
 import io
 import logging
 import math
@@ -266,15 +265,6 @@ class VideoFrameProvider:
         out_path = cache_dir / f"ep_{record.episode_index:06d}.mp4"
         if out_path.exists() and out_path.stat().st_size > 0:
             return out_path
-        if "start_time_s" not in inspect.signature(reencode_video).parameters:
-            # Trim support lands with huggingface/lerobot#3779; without it the
-            # whole multi-episode source file would be re-encoded as "the clip".
-            logger.warning(
-                "reencode_video has no start_time_s/end_time_s trim support in "
-                "this lerobot build; skipping clip extraction for episode %s.",
-                record.episode_index,
-            )
-            return None
         ep = self._meta.episodes[record.episode_index]
         from_timestamp = float(ep[f"videos/{self.camera_key}/from_timestamp"])
         to_timestamp = float(ep[f"videos/{self.camera_key}/to_timestamp"])
