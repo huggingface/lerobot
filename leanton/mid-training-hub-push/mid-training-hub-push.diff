@@ -1,6 +1,6 @@
 # Upstream base: 49755a3d (feat(processor): Add in-memory processor pipeline serialization (#3732))
 diff --git a/src/lerobot/configs/policies.py b/src/lerobot/configs/policies.py
-index 91701af6..07d6d1fc 100644
+index 91701af6..9c9f10fc 100644
 --- a/src/lerobot/configs/policies.py
 +++ b/src/lerobot/configs/policies.py
 @@ -69,6 +69,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
@@ -12,7 +12,16 @@ index 91701af6..07d6d1fc 100644
  
      # Upload on private repository on the Hugging Face hub.
      private: bool | None = None
-@@ -198,10 +200,31 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
+@@ -79,6 +81,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
+     # Either the repo ID of a model hosted on the Hub or a path to a directory containing weights
+     # saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch.
+     pretrained_path: Path | None = None
++    # HuggingFace Hub revision (commit hash, branch, or tag) for loading a specific version.
++    revision: str | None = None
+ 
+     def __post_init__(self) -> None:
+         if not self.device or not is_torch_device_available(self.device):
+@@ -198,10 +202,31 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
                      token=token,
                      local_files_only=local_files_only,
                  )
@@ -48,6 +57,15 @@ index 91701af6..07d6d1fc 100644
  
          # HACK: Parse the original config to get the config subclass, so that we can
          # apply cli overrides.
+@@ -223,4 +248,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
+ 
+         cli_overrides = policy_kwargs.pop("cli_overrides", [])
+         with draccus.config_type("json"):
+-            return draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
++            config = draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
++        if revision:
++            config.revision = revision
++        return config
 diff --git a/src/lerobot/policies/factory.py b/src/lerobot/policies/factory.py
 index a42b38ba..c9621021 100644
 --- a/src/lerobot/policies/factory.py
@@ -86,94 +104,60 @@ index a42b38ba..c9621021 100644
          policy = policy_cls.from_pretrained(**kwargs)
      elif cfg.pretrained_path and cfg.use_peft:
 diff --git a/src/lerobot/policies/pretrained.py b/src/lerobot/policies/pretrained.py
-index 724f920f..d86566b9 100644
+index 724f920f..65c798e5 100644
 --- a/src/lerobot/policies/pretrained.py
 +++ b/src/lerobot/policies/pretrained.py
-@@ -91,19 +91,47 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+@@ -91,6 +91,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
          """
          The policy is set in evaluation mode by default using `policy.eval()` (dropout modules are
          deactivated). To train it, you should first set it back in training mode with `policy.train()`.
 +
 +        If ``revision="latest-checkpoint"`` and the branch doesn't exist (e.g., first training run
-+        before any checkpoint has been pushed), the method silently falls back to ``revision="main"``.
-+        This makes ``latest-checkpoint`` safe as a default — no crash on first run.
++        before any checkpoint has been pushed), config loading falls back to main via
++        ``PreTrainedConfig.from_pretrained``, and model weights fall back below.
          """
-+        effective_revision = revision
-+
          if config is None:
--            config = PreTrainedConfig.from_pretrained(
--                pretrained_name_or_path=pretrained_name_or_path,
--                force_download=force_download,
--                resume_download=resume_download,
--                proxies=proxies,
--                token=token,
--                cache_dir=cache_dir,
--                local_files_only=local_files_only,
--                revision=revision,
--                **kwargs,
--            )
-+            try:
-+                config = PreTrainedConfig.from_pretrained(
-+                    pretrained_name_or_path=pretrained_name_or_path,
-+                    force_download=force_download,
-+                    resume_download=resume_download,
-+                    proxies=proxies,
-+                    token=token,
-+                    cache_dir=cache_dir,
-+                    local_files_only=local_files_only,
-+                    revision=effective_revision,
-+                    **kwargs,
-+                )
-+            except Exception as e:
-+                if effective_revision == "latest-checkpoint":
-+                    logging.info(
-+                        "latest-checkpoint branch not found, falling back to main. "
-+                        "This is normal on first run — the branch is created after the first checkpoint push."
-+                    )
-+                    effective_revision = "main"
-+                    config = PreTrainedConfig.from_pretrained(
-+                        pretrained_name_or_path=pretrained_name_or_path,
-+                        force_download=force_download,
-+                        resume_download=resume_download,
-+                        proxies=proxies,
-+                        token=token,
-+                        cache_dir=cache_dir,
-+                        local_files_only=local_files_only,
-+                        revision=effective_revision,
-+                        **kwargs,
-+                    )
-+                else:
-+                    raise
+             config = PreTrainedConfig.from_pretrained(
+@@ -104,6 +108,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+                 revision=revision,
+                 **kwargs,
+             )
 +
          model_id = str(pretrained_name_or_path)
          instance = cls(config, **kwargs)
          if os.path.isdir(model_id):
-@@ -115,7 +143,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+@@ -111,11 +116,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+             model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
+             policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
+         else:
++            model_revision = revision
+             try:
                  model_file = hf_hub_download(
                      repo_id=model_id,
                      filename=SAFETENSORS_SINGLE_FILE,
 -                    revision=revision,
-+                    revision=effective_revision,
++                    revision=model_revision,
                      cache_dir=cache_dir,
                      force_download=force_download,
                      proxies=proxies,
-@@ -125,9 +153,28 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+@@ -124,10 +130,28 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+                     local_files_only=local_files_only,
                  )
                  policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
-             except HfHubHTTPError as e:
+-            except HfHubHTTPError as e:
 -                raise FileNotFoundError(
 -                    f"{SAFETENSORS_SINGLE_FILE} not found on the HuggingFace Hub in {model_id}"
 -                ) from e
-+                # Fall back to main if latest-checkpoint branch not found on model download
-+                if effective_revision == "latest-checkpoint" and "latest-checkpoint" in str(e):
++            except HfHubHTTPError:
++                if model_revision == "latest-checkpoint":
 +                    logging.info(
 +                        "latest-checkpoint branch not found, falling back to main."
 +                    )
-+                    effective_revision = "main"
++                    model_revision = "main"
 +                    model_file = hf_hub_download(
 +                        repo_id=model_id,
 +                        filename=SAFETENSORS_SINGLE_FILE,
-+                        revision=effective_revision,
++                        revision=model_revision,
 +                        cache_dir=cache_dir,
 +                        force_download=force_download,
 +                        proxies=proxies,
@@ -185,11 +169,11 @@ index 724f920f..d86566b9 100644
 +                else:
 +                    raise FileNotFoundError(
 +                        f"{SAFETENSORS_SINGLE_FILE} not found on the HuggingFace Hub in {model_id}"
-+                    ) from e
++                    )
  
          policy.to(config.device)
          policy.eval()
-@@ -208,12 +255,20 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+@@ -208,12 +232,17 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
          self,
          cfg: TrainPipelineConfig,
          peft_model=None,
@@ -202,15 +186,12 @@ index 724f920f..d86566b9 100644
  
 +        # Create the target branch if it doesn't exist yet (required by preupload endpoint)
 +        if revision:
-+            try:
-+                api.create_branch(repo_id, branch=revision, exist_ok=True)
-+            except Exception:
-+                pass
++            api.create_branch(repo_id, branch=revision, exist_ok=True)
 +
          # Push the files to the repo in a single commit
          with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
              saved_path = Path(tmp) / repo_id
-@@ -234,16 +289,32 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+@@ -234,16 +263,32 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
  
              cfg.save_pretrained(saved_path)  # Calls _save_pretrained and stores train config
  
@@ -238,7 +219,7 @@ index 724f920f..d86566b9 100644
 +            if revision:
 +                try:
 +                    api.delete_branch(repo_id, branch="latest-checkpoint")
-+                except Exception:
++                except HfHubHTTPError:
 +                    pass  # doesn't exist yet (first checkpoint push)
 +                api.create_branch(repo_id, branch="latest-checkpoint", revision=revision)
 +                logging.info(f"latest-checkpoint pointer updated → {revision}")
@@ -246,7 +227,7 @@ index 724f920f..d86566b9 100644
      def generate_model_card(
          self, dataset_repo_id: str, model_type: str, license: str | None, tags: list[str] | None
 diff --git a/src/lerobot/processor/pipeline.py b/src/lerobot/processor/pipeline.py
-index b9b9c6c4..4ab4a157 100644
+index b9b9c6c4..0722ef33 100644
 --- a/src/lerobot/processor/pipeline.py
 +++ b/src/lerobot/processor/pipeline.py
 @@ -32,6 +32,7 @@ from __future__ import annotations
@@ -270,7 +251,7 @@ index b9b9c6c4..4ab4a157 100644
 +                force_download, resume_download, proxies, token, cache_dir, local_files_only,
 +                effective_revision, overrides, to_transition, to_output
 +            )
-+        except Exception as e:
++        except (HfHubHTTPError, FileNotFoundError) as e:
 +            if effective_revision == "latest-checkpoint":
 +                logging.info(
 +                    "latest-checkpoint branch not found for processor pipeline, falling back to main. "
