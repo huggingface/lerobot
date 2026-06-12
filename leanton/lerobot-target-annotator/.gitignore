@@ -1,0 +1,7 @@
+snapshots/
+__pycache__/
+*.py[cod]
+*.pt
+*.onnx
+.DS_Store
+annotate_stream_state*.json
