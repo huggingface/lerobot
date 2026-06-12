@@ -48,13 +48,15 @@ logger = logging.getLogger(__name__)
 # EMA alpha: 0.0 = raw (no smoothing), 1.0 = frozen (never move).
 # Lower = smoother but more perceptible lag.  At 10 fps, alpha=0.3 means the
 # commanded position reaches 90 % of target in ~6 frames (~600 ms).
-EMA_SMOOTHING_ALPHA = 0.2
+EMA_SMOOTHING_ALPHA = 0.25
 
 # Max per-frame change in commanded goal position, in the action's native
-# units.  SO-101 with use_degrees=True → degrees.  2.0° at 10 fps ≈ 20°/s
-# max joint velocity.  Increase if the arm feels sluggish; decrease if
-# single-frame jumps are still visible.
-MAX_JOINT_DELTA = 0.75
+# units.  SO-101 with use_degrees=True → degrees.  At 15 fps:
+#   0.75°/frame ≈ 11°/s  (slow, deliberate)
+#   1.00°/frame ≈ 15°/s  (moderate)
+#   1.25°/frame ≈ 19°/s  (crisp)
+#   2.00°/frame ≈ 30°/s  (fast)
+MAX_JOINT_DELTA = 1.25
 
 # If the raw action differs from the stored EMA state by more than this
 # threshold (degrees), the EMA is reset — the raw action is accepted
@@ -78,33 +80,42 @@ def _smooth_action(action_dict: dict) -> dict:
     prev = getattr(_smooth_action, "_prev", None)
     alpha = EMA_SMOOTHING_ALPHA
     limit = MAX_JOINT_DELTA
+    frame = getattr(_smooth_action, "_frame", 0) + 1
+    _smooth_action._frame = frame
 
     if prev is None:
         _smooth_action._prev = {k: v for k, v in action_dict.items()}
         return action_dict
 
+    clipped = False
+    reset_triggered = False
     for k, v in action_dict.items():
         prev_v = prev.get(k, v)
-        # If the raw action has jumped far from the stored state
-        # (e.g. DAGGER correction boundary), skip EMA blending but
-        # STILL apply the velocity clip — the reset should only mean
-        # "don't blend across the gap", not "allow unlimited velocity".
         if abs(v - prev_v) > SMOOTHING_RESET_THRESHOLD:
+            reset_triggered = True
             delta = v - prev_v
+            if abs(delta) > limit:
+                clipped = True
             delta = max(-limit, min(limit, delta))
             action_dict[k] = prev_v + delta
             prev[k] = v  # seed EMA state with raw (not clipped) target
             continue
-        # EMA: blend new target position with previous target
         sv = alpha * v + (1.0 - alpha) * prev_v
-        # Clip the CHANGE in commanded position (velocity limit),
-        # NOT the absolute position value.
         delta = sv - prev_v
+        if abs(delta) > limit:
+            clipped = True
         delta = max(-limit, min(limit, delta))
         sv = prev_v + delta
         action_dict[k] = sv
 
     _smooth_action._prev = {k: v for k, v in action_dict.items()}
+
+    if frame % 150 == 1:
+        extra = " [RESET]" if reset_triggered else ""
+        logger.info(
+            "clip=%s limit=%.2f°/frame alpha=%.2f frame=%d%s",
+            clipped, limit, alpha, frame, extra,
+        )
     return action_dict
 
 
