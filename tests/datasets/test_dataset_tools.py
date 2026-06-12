@@ -24,7 +24,7 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 
-from lerobot.configs import VideoEncoderConfig
+from lerobot.configs import DepthEncoderConfig, VideoEncoderConfig
 from lerobot.datasets.dataset_tools import (
     add_features,
     convert_image_to_video_dataset,
@@ -37,7 +37,8 @@ from lerobot.datasets.dataset_tools import (
     split_dataset,
 )
 from lerobot.datasets.io_utils import load_info
-from tests.datasets.test_video_encoding import require_h264, require_libsvtav1
+from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
+from tests.fixtures.constants import DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY
 from tests.fixtures.dataset_factories import add_frames
 
 
@@ -1333,7 +1334,105 @@ def test_convert_image_to_video_dataset_subset_episodes(tmp_path):
             shutil.rmtree(output_dir)
 
 
+@require_libsvtav1
+@require_hevc
+def test_convert_image_to_video_dataset_depth(tmp_path, empty_lerobot_dataset_factory):
+    """Depth image features convert to depth videos using the depth encoder.
+
+    Mirrors :func:`test_convert_image_to_video_dataset` but with a small local
+    image dataset that mixes an RGB camera with a depth camera, so the
+    ``depth_keys`` → ``depth_encoder`` routing and ``is_depth_map`` preservation
+    are exercised end-to-end.
+    """
+    features = {
+        "action": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
+        "observation.images.cam": {
+            "dtype": "image",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "observation.images.depth": {
+            "dtype": "image",
+            "shape": (64, 96, 1),
+            "names": ["height", "width", "channels"],
+            "info": {"is_depth_map": True},
+        },
+    }
+    source_dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "img_ds",
+        features=features,
+        use_videos=False,
+    )
+
+    add_frames(source_dataset, num_frames=4)
+    source_dataset.save_episode()
+    source_dataset.finalize()
+
+    # Source is an image dataset with the depth marker on the depth camera.
+    assert len(source_dataset.meta.video_keys) == 0
+    assert "observation.images.depth" in source_dataset.meta.depth_keys
+
+    output_dir = tmp_path / "video_ds"
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+
+        video_dataset = convert_image_to_video_dataset(
+            dataset=source_dataset,
+            output_dir=output_dir,
+            repo_id="dummy/depth_video",
+            camera_encoder=VideoEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30),
+            depth_encoder=DepthEncoderConfig(vcodec="hevc", pix_fmt="gray12le", g=2, crf=30),
+            num_workers=1,
+        )
+
+    # Both cameras are now videos, and the depth marker survived the conversion.
+    assert "observation.images.cam" in video_dataset.meta.video_keys
+    assert "observation.images.depth" in video_dataset.meta.video_keys
+    assert "observation.images.depth" in video_dataset.meta.depth_keys
+    assert "observation.images.cam" not in video_dataset.meta.depth_keys
+
+    depth_path = video_dataset.root / video_dataset.meta.get_video_file_path(0, "observation.images.depth")
+    assert depth_path.exists(), f"Depth video file should exist: {depth_path}"
+
+
 # ─── reencode_dataset ─────────────────────────────────────────────────
+
+
+@require_hevc
+def test_reencode_dataset_depth_uses_depth_encoder(tmp_path, empty_lerobot_dataset_factory):
+    """Depth videos are re-encoded with the depth encoder and keep their depth metadata.
+
+    Depth-focused companion to :func:`test_reencode_dataset_multi_key_multiprocessing`.
+    """
+    initial_cfg = DepthEncoderConfig(vcodec="hevc", pix_fmt="gray12le", g=2, crf=30)
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "ds",
+        features=DUMMY_DEPTH_FEATURES,
+        use_videos=True,
+        depth_encoder=initial_cfg,
+    )
+
+    add_frames(dataset, num_frames=4)
+    dataset.save_episode()
+    dataset.finalize()
+
+    assert DUMMY_DEPTH_KEY in dataset.meta.depth_keys
+
+    target_cfg = DepthEncoderConfig(vcodec="hevc", pix_fmt="gray12le", g=6, crf=23)
+    result = reencode_dataset(dataset, depth_encoder=target_cfg, num_workers=0)
+
+    assert result is dataset
+
+    persisted_info = load_info(dataset.root)
+    depth_info = persisted_info.features[DUMMY_DEPTH_KEY].get("info", {})
+    # Re-encode applied the new codec parameters to the depth video ...
+    assert DepthEncoderConfig.from_video_info(depth_info) == target_cfg
+    # ... while preserving the depth marker.
+    assert depth_info["is_depth_map"] is True
 
 
 @require_libsvtav1
