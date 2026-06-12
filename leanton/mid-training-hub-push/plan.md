@@ -131,6 +131,7 @@ Each checkpoint is pushed as a **Git branch** on the model repo:
 ```
 anikitakis/vla_so101_pick_n_place_full_expert
 ├── main                          ← final model (existing behavior)
+├── latest-checkpoint             ← ALWAYS points at the most recent checkpoint (auto-updating pointer)
 ├── step-002500                   ← checkpoint at step 2,500
 ├── step-005000                   ← checkpoint at step 5,000
 ├── step-007500
@@ -140,6 +141,8 @@ anikitakis/vla_so101_pick_n_place_full_expert
 ├── step-017500
 └── step-020000
 ```
+
+**`latest-checkpoint` pointer:** After each successful checkpoint push, `push_model_to_hub` also updates a `latest-checkpoint` branch to point at the just-pushed step branch. This is a lightweight delete+create operation (no file transfer — just a ref update). The user can always resume with `--policy.revision=latest-checkpoint` without knowing the exact step number. If a push fails, `latest-checkpoint` stays at the previous valid checkpoint — it's only updated after a confirmed successful upload.
 
 **Why branches (not tags):**
 - Branches can be loaded as `--policy.revision=<branch-name>` in LeRobot
@@ -304,6 +307,14 @@ The `--policy.push_checkpoints_to_hub=true` flag enables mid-training pushes. Wi
 ### Resume from a Hub Checkpoint
 
 ```bash
+# Resume from the latest checkpoint (recommended — no step number needed)
+lerobot-train \
+  --policy.path=anikitakis/vla_so101_pick_n_place_full_expert \
+  --policy.revision=latest-checkpoint \
+  --policy.push_checkpoints_to_hub=true \
+  ...
+
+# Or from a specific step
 lerobot-train \
   --policy.path=anikitakis/vla_so101_pick_n_place_full_expert \
   --policy.revision=step-005000 \
@@ -311,7 +322,7 @@ lerobot-train \
   ...
 ```
 
-Loads weights from the `step-005000` branch. The scheduler starts fresh (V1 behavior). Use the existing explicit LR flags for resume chunks.
+Loads weights from the named branch. The scheduler starts fresh (V1 behavior). Use `latest-checkpoint` to always get the most recent checkpoint without tracking step numbers — the pointer auto-updates after every successful checkpoint push.
 
 ### Invalidating a Checkpoint
 

@@ -1,6 +1,6 @@
 # Upstream base: 49755a3d9e7d43ae93092de8324e75348955afab (huggingface/lerobot:main, feat(processor): Add in-memory processor pipeline serialization (#3732))
 diff --git a/src/lerobot/configs/policies.py b/src/lerobot/configs/policies.py
-index 91701af6..99bbff14 100644
+index 91701af6..4956a2c5 100644
 --- a/src/lerobot/configs/policies.py
 +++ b/src/lerobot/configs/policies.py
 @@ -69,6 +69,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
@@ -21,6 +21,15 @@ index 91701af6..99bbff14 100644
  
      def __post_init__(self) -> None:
          if not self.device or not is_torch_device_available(self.device):
+@@ -223,4 +227,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
+ 
+         cli_overrides = policy_kwargs.pop("cli_overrides", [])
+         with draccus.config_type("json"):
+-            return draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
++            config = draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
++        if revision:
++            config.revision = revision
++        return config
 diff --git a/src/lerobot/policies/factory.py b/src/lerobot/policies/factory.py
 index a42b38ba..c9621021 100644
 --- a/src/lerobot/policies/factory.py

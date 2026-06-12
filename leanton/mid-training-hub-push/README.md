@@ -7,7 +7,7 @@
 
 ## What
 
-Adds a `push_checkpoints_to_hub` config flag (default `False`) that, when enabled, pushes model weights to the HuggingFace Hub at each `save_freq` interval as a named branch (`step-002500`, `step-005000`, etc.). V1 pushes model weights only — no optimizer/scheduler state.
+Adds a `push_checkpoints_to_hub` config flag (default `False`) that, when enabled, pushes model weights to the HuggingFace Hub at each `save_freq` interval as a named branch (`step-002500`, `step-005000`, etc.). V1 pushes model weights only — no optimizer/scheduler state. A `latest-checkpoint` branch auto-updates to always point at the most recent successful push, so resume is `--policy.revision=latest-checkpoint` (no step numbers needed).
 
 ## Why
 
@@ -15,7 +15,7 @@ Adds a `push_checkpoints_to_hub` config flag (default `False`) that, when enable
 
 Four files changed:
 - `configs/policies.py` — add `push_checkpoints_to_hub: bool = False`
-- `policies/pretrained.py` — add `revision` param to `push_model_to_hub()`
+- `policies/pretrained.py` — add `revision` param to `push_model_to_hub()` + `latest-checkpoint` pointer update after each successful step-branch push
 - `policies/factory.py` — wire `revision` through `make_policy()` and `make_pre_post_processors()`
 - `scripts/lerobot_train.py` — push model to Hub in checkpoint block when flag is set
 
@@ -23,8 +23,8 @@ Four files changed:
 
 **User:**
 1. Run training with `--policy.push_checkpoints_to_hub=true --save_freq=200 --steps=500`
-2. Check HuggingFace Hub repo: branches `step-000200` and `step-000400` exist
-3. Resume from checkpoint: `--policy.path=<repo> --policy.revision=step-000200 --steps=500`
+2. Check Hub repo: branches `step-000200`, `step-000400` exist, and `latest-checkpoint` points at `step-000400`
+3. Resume from latest: `--policy.path=<repo> --policy.revision=latest-checkpoint` — loads the most recent checkpoint automatically
 4. Run training without `--policy.push_checkpoints_to_hub` — verify no mid-training pushes (regression)
 
 **Agent:**
