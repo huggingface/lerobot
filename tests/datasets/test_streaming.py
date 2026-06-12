@@ -392,3 +392,47 @@ def test_frames_with_delta_consistency_with_shards(
         assert all(t[1] for t in key_checks), (
             f"Checking {list(filter(lambda t: not t[1], key_checks))[0][0]} left and right were found different (i: {i}, frame_idx: {frame_idx})"
         )
+
+
+def test_dataloader_workers_yield_each_sample_once(tmp_path, lerobot_dataset_factory, info_factory):
+    """Test that every sample is yielded exactly once with num_workers > 1."""
+    # Wide features push the dataset above 1MB so it gets written to multiple parquet files.
+    # With a single file only worker 0 receives data and the test would pass trivially.
+    wide_motor_features = {
+        key: {"dtype": "float32", "shape": (512,), "names": [f"motor_{i}" for i in range(512)]}
+        for key in (ACTION, "state")
+    }
+    ds_num_frames = 2400
+    ds_num_episodes = 8
+    num_workers = 2
+    repo_id = f"{DUMMY_REPO_ID}-workers"
+    local_path = tmp_path / "test"
+    info = info_factory(
+        fps=10,
+        total_episodes=ds_num_episodes,
+        total_frames=ds_num_frames,
+        total_tasks=1,
+        motor_features=wide_motor_features,
+        camera_features={},
+        use_videos=False,
+        data_files_size_in_mb=0.5,
+        chunks_size=1000,
+    )
+    lerobot_dataset_factory(
+        root=local_path,
+        repo_id=repo_id,
+        info=info,
+        use_videos=False,
+        data_files_size_in_mb=0.5,
+        chunks_size=1000,
+    )
+
+    dataset = StreamingLeRobotDataset(repo_id=repo_id, root=local_path, buffer_size=8, seed=42)
+    assert dataset.hf_dataset.num_shards > 1, "fixture must produce a multi-file dataset"
+    loader = torch.utils.data.DataLoader(dataset, batch_size=4, num_workers=num_workers)
+
+    seen_indices = []
+    for batch in loader:
+        seen_indices.extend(batch["index"].tolist())
+
+    assert sorted(seen_indices) == list(range(ds_num_frames))
