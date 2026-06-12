@@ -35,12 +35,17 @@ class DatasetConfig:
     revision: str | None = None
     use_imagenet_stats: bool = True
     video_backend: str = field(default_factory=get_safe_default_video_backend)
-    # When True, video frames are returned as uint8 tensors (0-255) instead of float32 (0.0-1.0).
+    # When True, RGB video frames are returned as uint8 tensors (0-255) instead of float32 (0.0-1.0).
     # This reduces memory and speeds up DataLoader IPC. The training pipeline handles the conversion.
     return_uint8: bool = False
+    # Physical unit depth maps are dequantized to at load time: "mm" (millimetres) or "m" (metres).
+    # Has no effect on datasets without depth cameras.
+    depth_output_unit: str = "mm"
     streaming: bool = False
 
     def __post_init__(self) -> None:
+        if self.depth_output_unit not in ("m", "mm"):
+            raise ValueError(f"depth_output_unit must be 'm' or 'mm', got {self.depth_output_unit!r}")
         if self.episodes is not None:
             if any(ep < 0 for ep in self.episodes):
                 raise ValueError(
