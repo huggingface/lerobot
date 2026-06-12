@@ -1,6 +1,6 @@
 # action-smoothing-ema-clip
 
-**Target:** `src/lerobot/rollout/strategies/core.py`, `src/lerobot/rollout/strategies/dagger.py`
+**Target:** `src/lerobot/rollout/configs.py`, `src/lerobot/rollout/strategies/core.py`, `src/lerobot/rollout/strategies/dagger.py`
 **Status:** `active`
 **GitHub:** Not filed (post-hoc smoothing, not a bug fix)
 **Bugfixes applied:** `a88983c0` (simplified reset + dagger.py state management)
@@ -19,11 +19,12 @@ Post-hoc EMA smoothing + per-joint velocity clipping on absolute goal positions 
 
 **dagger.py:** Calls `reset_action_smoothing()` (sets `_prev = None`) on correction resume and rollout start. This, combined with the `dagger-rtc-fresh-obs-on-resume` patch, ensures the first autonomous frame after a correction passes through cleanly — `v` is near the current physical position because the policy just observed it.
 
-Constants (tuned for SO-101 at 15fps):
+CLI flags (all under `RolloutConfig`, defaults tuned for SO-101 at 15fps):
 
-- `EMA_SMOOTHING_ALPHA = 0.25` — blending factor (25% new, 75% history)
-- `MAX_JOINT_DELTA = 1.25` — max per-frame change in degrees (≈19°/s at 15fps)
-- `SMOOTHING_RESET_THRESHOLD = 10.0` — gap that skips EMA blending (still clipped)
+- `--action_smoothing_enabled` (bool, default `True`) — toggle smoothing on/off
+- `--action_smoothing_alpha` (float, default `0.25`) — blending factor (25% new, 75% history)
+- `--action_smoothing_max_delta` (float, default `1.25`) — max per-frame change in degrees (≈19°/s at 15fps)
+- `--action_smoothing_reset_threshold` (float, default `10.0`) — gap that skips EMA blending (still clipped)
 
 A periodic log line every 150 frames (~10s at 15fps):
 `clip=True/False limit=X.XX°/frame alpha=X.XX frame=N [RESET]`
@@ -57,7 +58,7 @@ Second frame:
 
 **Agent:**
 ```bash
-grep -q "EMA_SMOOTHING_ALPHA\|MAX_JOINT_DELTA\|SMOOTHING_RESET_THRESHOLD" ~/lerobot/src/lerobot/rollout/strategies/core.py && echo "Constants ✅" || echo "MISSING"
-grep -q "_smooth_action(processed)" ~/lerobot/src/lerobot/rollout/strategies/core.py && echo "Injection ✅" || echo "MISSING"
+grep -q "action_smoothing_alpha\|action_smoothing_max_delta\|action_smoothing_reset_threshold" ~/lerobot/src/lerobot/rollout/configs.py && echo "Config fields ✅" || echo "MISSING"
+grep -q "_smooth_action(processed" ~/lerobot/src/lerobot/rollout/strategies/core.py && echo "Injection ✅" || echo "MISSING"
 grep -q "reset_action_smoothing()" ~/lerobot/src/lerobot/rollout/strategies/dagger.py && echo "Reset-on-resume ✅" || echo "MISSING"
 ```

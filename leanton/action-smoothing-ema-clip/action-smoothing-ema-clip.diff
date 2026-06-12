@@ -1,9 +1,42 @@
 # Upstream base: 49755a3d (feat(processor): Add in-memory processor pipeline serialization (#3732))
+diff --git a/src/lerobot/rollout/configs.py b/src/lerobot/rollout/configs.py
+index 60c47cfb..97fe0db7 100644
+--- a/src/lerobot/rollout/configs.py
++++ b/src/lerobot/rollout/configs.py
+@@ -223,6 +223,16 @@ class RolloutConfig:
+     fps: float = 30.0
+     duration: float = 0.0  # 0 = infinite (24/7 mode)
+     interpolation_multiplier: int = 1
++
++    # Action smoothing (EMA + velocity clip).  Set enabled=False to bypass.
++    action_smoothing_enabled: bool = True
++    # EMA blending factor: 0.0 = raw (no smoothing), 1.0 = frozen.
++    action_smoothing_alpha: float = 0.25
++    # Max per-frame change in goal position (degrees for SO-101 with use_degrees=True).
++    action_smoothing_max_delta: float = 1.25
++    # Gap (degrees) above which EMA blending is skipped (direction change / correction boundary).
++    action_smoothing_reset_threshold: float = 10.0
++
+     device: str | None = None
+     task: str = ""
+     display_data: bool = False
+@@ -324,7 +334,10 @@ class RolloutConfig:
+         policy_path = parser.get_path_arg("policy")
+         if policy_path:
+             cli_overrides = parser.get_cli_overrides("policy")
+-            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
++            revision = parser.parse_arg("policy.revision")
++            self.policy = PreTrainedConfig.from_pretrained(
++                policy_path, cli_overrides=cli_overrides, revision=revision
++            )
+             self.policy.pretrained_path = policy_path
+         if self.policy is None:
+             raise ValueError("--policy.path is required for rollout")
 diff --git a/src/lerobot/rollout/strategies/core.py b/src/lerobot/rollout/strategies/core.py
-index 9c897522..477b588e 100644
+index 9c897522..0a02c517 100644
 --- a/src/lerobot/rollout/strategies/core.py
 +++ b/src/lerobot/rollout/strategies/core.py
-@@ -36,6 +36,99 @@ if TYPE_CHECKING:
+@@ -36,6 +36,108 @@ if TYPE_CHECKING:
  
  logger = logging.getLogger(__name__)
  
@@ -40,7 +73,12 @@ index 9c897522..477b588e 100644
 +SMOOTHING_RESET_THRESHOLD = 10.0
 +
 +
-+def _smooth_action(action_dict: dict) -> dict:
++def _smooth_action(
++    action_dict: dict,
++    alpha: float = EMA_SMOOTHING_ALPHA,
++    limit: float = MAX_JOINT_DELTA,
++    reset_threshold: float = SMOOTHING_RESET_THRESHOLD,
++) -> dict:
 +    """Apply EMA smoothing + per-joint velocity clipping to *action_dict*.
 +
 +    Modifies *action_dict* in place and returns it for convenience.
@@ -48,10 +86,14 @@ index 9c897522..477b588e 100644
 +    function attribute so it persists across calls within a rollout.
 +
 +    Call :func:`reset_action_smoothing` at the start of every new rollout.
++
++    Args:
++        action_dict: Joint goal positions, modified in place.
++        alpha: EMA blending factor (0=raw, 1=frozen).
++        limit: Max per-frame delta in action units (degrees for SO-101).
++        reset_threshold: Gap above which EMA blending is skipped.
 +    """
 +    prev = getattr(_smooth_action, "_prev", None)
-+    alpha = EMA_SMOOTHING_ALPHA
-+    limit = MAX_JOINT_DELTA
 +    frame = getattr(_smooth_action, "_frame", 0) + 1
 +    _smooth_action._frame = frame
 +
@@ -63,7 +105,7 @@ index 9c897522..477b588e 100644
 +    reset_triggered = False
 +    for k, v in action_dict.items():
 +        prev_v = prev.get(k, v)
-+        if abs(v - prev_v) > SMOOTHING_RESET_THRESHOLD:
++        if abs(v - prev_v) > reset_threshold:
 +            # EMA state has drifted too far (policy direction change, or
 +            # recovery after correction — though the strategy resets _prev
 +            # to None on correction resume, so this path mainly catches
@@ -103,11 +145,20 @@ index 9c897522..477b588e 100644
  
  class RolloutStrategy(abc.ABC):
      """Abstract base for rollout execution strategies.
-@@ -300,5 +393,6 @@ def send_next_action(
+@@ -300,5 +402,15 @@ def send_next_action(
          raise ValueError(f"Interpolated tensor length ({len(interp)}) != action keys ({len(ordered_keys)})")
      action_dict = {k: interp[i].item() for i, k in enumerate(ordered_keys)}
      processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
-+    _smooth_action(processed)
++    # Apply action smoothing if enabled (EMA + velocity clip).
++    # Config fields default to module-level constants if not present.
++    cfg = ctx.runtime.cfg
++    if getattr(cfg, "action_smoothing_enabled", True):
++        _smooth_action(
++            processed,
++            alpha=getattr(cfg, "action_smoothing_alpha", EMA_SMOOTHING_ALPHA),
++            limit=getattr(cfg, "action_smoothing_max_delta", MAX_JOINT_DELTA),
++            reset_threshold=getattr(cfg, "action_smoothing_reset_threshold", SMOOTHING_RESET_THRESHOLD),
++        )
      ctx.hardware.robot_wrapper.send_action(processed)
      return action_dict
 diff --git a/src/lerobot/rollout/strategies/dagger.py b/src/lerobot/rollout/strategies/dagger.py
