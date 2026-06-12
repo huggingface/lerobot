@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
-import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -109,7 +108,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         world_size: int | None = None,
         video_decoder_cache_size: int | None = None,
         data_files_root: str | None = None,
-        video_decode_device: str = "cpu",
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -149,8 +147,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             data_files_root (str | None, optional): fsspec root holding the bulk ``data/`` and ``videos/``
                 trees (e.g. ``hf://buckets/<owner>/<name>``). When set, parquet and video bytes are read
                 from there while metadata still loads from ``repo_id`` on the Hub.
-            video_decode_device (str, optional): Device for torchcodec decode. ``"cuda"`` offloads to
-                NVDEC (needs a CUDA torchcodec build and ``spawn`` DataLoader workers).
         """
         super().__init__()
         self.repo_id = repo_id
@@ -184,14 +180,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.rank, self.world_size = self._resolve_distributed(rank, world_size)
         self.video_decoder_cache_size = video_decoder_cache_size
         self.data_files_root = data_files_root.rstrip("/") if data_files_root else None
-        self.video_decode_device = video_decode_device
 
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
         self.video_decoder_cache = None
-        # Shared [hits, misses, evictions, decode_ns, fetch_ns] tensor so DataLoader workers aggregate
-        # decoder-cache stats and component timings into one place the main process can read after
-        # iteration (see video_decoder_cache_stats() / timing_stats()).
-        self._cache_counters = torch.zeros(5, dtype=torch.int64).share_memory_()
         self._epoch = 0
         self._in_flight_epoch = 0
 
@@ -357,19 +348,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     def _make_video_decoder_cache(self) -> VideoDecoderCache:
         """Size the decoder cache to the pool's working set (pool episodes x cameras), capped at 128."""
         if self.video_decoder_cache_size is not None:
-            return VideoDecoderCache(
-                max_size=self.video_decoder_cache_size,
-                counters=self._cache_counters,
-                device=self.video_decode_device,
-            )
+            return VideoDecoderCache(max_size=self.video_decoder_cache_size)
         num_cameras = len(self.meta.video_keys)
         if num_cameras == 0:
-            return VideoDecoderCache(counters=self._cache_counters, device=self.video_decode_device)
-        return VideoDecoderCache(
-            max_size=min((self.episode_pool_size + 1) * num_cameras, 128),
-            counters=self._cache_counters,
-            device=self.video_decode_device,
-        )
+            return VideoDecoderCache()
+        return VideoDecoderCache(max_size=min((self.episode_pool_size + 1) * num_cameras, 128))
 
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         # `datasets` reshuffles (and re-permutes shard order) per epoch from (seed, epoch);
@@ -383,13 +366,10 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         iterator = iter(self._pipeline)
         while True:
-            fetch_start = time.perf_counter_ns()
             try:
                 row = next(iterator)
             except StopIteration:
                 return
-            finally:
-                self._cache_counters[4] += time.perf_counter_ns() - fetch_start
             yield self._finalize_sample(row)
 
     def _finalize_sample(self, row: dict) -> dict:
@@ -416,9 +396,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             query_timestamps = self._get_query_timestamps(
                 current_ts, self.delta_indices, episode_boundaries_ts
             )
-            decode_start = time.perf_counter_ns()
             video_frames = self._query_videos(query_timestamps, ep_idx)
-            self._cache_counters[3] += time.perf_counter_ns() - decode_start
 
             if self.image_transforms is not None:
                 for cam in self.meta.camera_keys:
@@ -450,31 +428,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         # shuffle order from the restored stream position, then advances normally.
         self._epoch = int(state_dict.get("epoch", 0))
         self._pipeline.load_state_dict(state_dict["pipeline"])
-
-    def video_decoder_cache_stats(self) -> dict[str, int | float]:
-        """Decoder-cache reuse aggregated across DataLoader workers via the shared counter tensor.
-
-        Unlike ``self.video_decoder_cache.stats()`` (which only reflects the main process), this sums
-        hits/misses/evictions over every worker. Counts are lock-free across processes, so treat them as
-        approximate; the ``hit_rate`` ratio is preserved.
-        """
-        hits, misses, evictions = (int(x) for x in self._cache_counters[:3].tolist())
-        total = hits + misses
-        return {
-            "hits": hits,
-            "misses": misses,
-            "evictions": evictions,
-            "hit_rate": round(hits / total, 4) if total else 0.0,
-        }
-
-    def timing_stats(self) -> dict[str, float]:
-        """Cumulative seconds spent in video decode and in the upstream tabular pipeline (parquet
-        fetch + grouping + shuffles + explode), summed across DataLoader workers via the shared
-        counter tensor. These overlap in wall-clock (workers run in parallel), so compare them to
-        ``num_workers x wallclock`` for time fractions.
-        """
-        decode_ns, fetch_ns = (int(x) for x in self._cache_counters[3:5].tolist())
-        return {"decode_s_total": round(decode_ns / 1e9, 2), "fetch_s_total": round(fetch_ns / 1e9, 2)}
 
     def _make_timestamps_from_indices(
         self, start_ts: float, indices: dict[str, list[int]] | None = None
