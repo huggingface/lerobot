@@ -139,7 +139,7 @@ class VideoEncoderConfig:
     def from_video_info(cls, video_info: dict | None) -> Self:
         """Reconstruct an encoder config from a video feature's ``info`` block.
 
-        Missing or ``None`` values fall back to the class defaults. 
+        Missing or ``None`` values fall back to the class defaults.
         """
         return cls(**cls._kwargs_from_video_info(video_info))
 

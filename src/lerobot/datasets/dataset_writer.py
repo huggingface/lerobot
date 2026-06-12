@@ -303,7 +303,9 @@ class DatasetWriter:
                 temp_path, video_stats = streaming_results[video_key]
                 if video_stats is not None:
                     ep_stats[video_key] = {
-                        k: v if k == "count" else np.squeeze(v.reshape(1, -1, 1, 1) / normalization_factor, axis=0)
+                        k: v
+                        if k == "count"
+                        else np.squeeze(v.reshape(1, -1, 1, 1) / normalization_factor, axis=0)
                         for k, v in video_stats.items()
                     }
                 ep_metadata.update(self._save_episode_video(video_key, episode_index, temp_path=temp_path))

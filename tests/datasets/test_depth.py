@@ -26,14 +26,15 @@ from lerobot.datasets.image_writer import image_array_to_pil_image, write_image
 from tests.fixtures.constants import (
     DEFAULT_FPS,
     DUMMY_CAMERA_FEATURES,
+    DUMMY_CAMERA_FEATURES_WITH_DEPTH,
+    DUMMY_CHW,
     DUMMY_DEPTH_CAMERA_FEATURES,
     DUMMY_REPO_ID,
-    DUMMY_CAMERA_FEATURES_WITH_DEPTH,
-    DUMMY_CHW
 )
 from tests.fixtures.dataset_factories import add_frames
 
 _, H, W = DUMMY_CHW
+
 
 def _depth_metres_ramp() -> np.ndarray:
     """Linearly-spaced float32 depth in metres covering the default range."""
@@ -98,9 +99,7 @@ class TestQuantizeDequantize:
         # ``m``: float32 noise (~10 µm in log mode, after ``exp``) — still 200× below the ~2 mm quant step.
         # ``mm`` + tensor stays in float32 (no uint16 round-trip), so allow 1 mm slop.
         atol = 1e-5 if output_unit == "m" else 1.0
-        np.testing.assert_allclose(
-            out.cpu().numpy().astype(np.float64), ref.astype(np.float64), atol=atol
-        )
+        np.testing.assert_allclose(out.cpu().numpy().astype(np.float64), ref.astype(np.float64), atol=atol)
 
     @pytest.mark.parametrize(
         "input_shape,output_shape",
@@ -131,9 +130,7 @@ class TestQuantizeDequantize:
 
     def test_invalid_log_params_raises(self):
         with pytest.raises(ValueError, match=r"depth_min \+ shift must be positive"):
-            quantize_depth(
-                _depth_metres_ramp(), depth_min=1.0, shift=-2.0, use_log=True, video_backend=None
-            )
+            quantize_depth(_depth_metres_ramp(), depth_min=1.0, shift=-2.0, use_log=True, video_backend=None)
 
 
 # ── 2. Image writer depth support ─────────────────────────────────────

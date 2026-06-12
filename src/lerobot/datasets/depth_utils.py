@@ -207,7 +207,6 @@ def dequantize_depth(
 
     # ── Torch path: stay on the input device, single fp32 allocation. ────────
     if isinstance(quantized, torch.Tensor):
-
         if quantized.ndim >= 3:
             # Drop the single-channel dimension so the math runs on (..., H, W).
             quantized = quantized.squeeze(-3) if quantized.shape[-3] == 1 else quantized.squeeze(-1)
