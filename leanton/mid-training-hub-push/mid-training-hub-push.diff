@@ -1,4 +1,4 @@
-# Upstream base: 49755a3d9e7d43ae93092de8324e75348955afab (huggingface/lerobot:main, feat(processor): Add in-memory processor pipeline serialization (#3732))
+# Upstream base: 49755a3d (feat(processor): Add in-memory processor pipeline serialization (#3732))
 diff --git a/src/lerobot/configs/policies.py b/src/lerobot/configs/policies.py
 index 91701af6..07d6d1fc 100644
 --- a/src/lerobot/configs/policies.py
@@ -86,7 +86,7 @@ index a42b38ba..c9621021 100644
          policy = policy_cls.from_pretrained(**kwargs)
      elif cfg.pretrained_path and cfg.use_peft:
 diff --git a/src/lerobot/policies/pretrained.py b/src/lerobot/policies/pretrained.py
-index 724f920f..2f514af4 100644
+index 724f920f..d86566b9 100644
 --- a/src/lerobot/policies/pretrained.py
 +++ b/src/lerobot/policies/pretrained.py
 @@ -91,19 +91,47 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
@@ -210,7 +210,7 @@ index 724f920f..2f514af4 100644
          # Push the files to the repo in a single commit
          with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
              saved_path = Path(tmp) / repo_id
-@@ -234,16 +289,22 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+@@ -234,16 +289,32 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
  
              cfg.save_pretrained(saved_path)  # Calls _save_pretrained and stores train config
  
@@ -232,6 +232,16 @@ index 724f920f..2f514af4 100644
 -            logging.info(f"Model pushed to {commit_info.repo_url.url}")
 +            revision_info = f" [revision={revision}]" if revision else ""
 +            logging.info(f"Model pushed to {commit_info.repo_url.url}{revision_info}")
++
++            # Update latest-checkpoint pointer to this revision
++            # (delete + create — create_branch with exist_ok=True won't update an existing ref)
++            if revision:
++                try:
++                    api.delete_branch(repo_id, branch="latest-checkpoint")
++                except Exception:
++                    pass  # doesn't exist yet (first checkpoint push)
++                api.create_branch(repo_id, branch="latest-checkpoint", revision=revision)
++                logging.info(f"latest-checkpoint pointer updated → {revision}")
  
      def generate_model_card(
          self, dataset_repo_id: str, model_type: str, license: str | None, tags: list[str] | None

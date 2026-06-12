@@ -4,7 +4,7 @@
 **Status:** `active`
 **GitHub:** Not filed (planned upstream feature request)
 **Diff basis:** `origin/main` @ `49755a3d` (clean upstream, 2026-06-12). Includes `revision` field on `PolicyConfig` as a bundled prerequisite — upstream doesn't have it yet.
-**Bugfixes applied:** `bed9786f` (config revision fallback), `42c2942e` (branch precreate)
+**Bugfixes applied:** `bed9786f` (config revision fallback), `42c2942e` (branch precreate), `7d9e8302` (latest-checkpoint pointer)
 
 ## What
 
@@ -16,7 +16,7 @@ Adds a `push_checkpoints_to_hub` config flag (default `False`) that, when enable
 
 Five files changed:
 - `configs/policies.py` — add `push_checkpoints_to_hub: bool = False` + **bugfix:** generic revision fallback in `from_pretrained()` when a requested branch doesn't exist on Hub (rollout/config load was crashing on 404 before the fallback)
-- `policies/pretrained.py` — add `revision` param to `push_model_to_hub()` + `latest-checkpoint` pointer update + `from_pretrained()` fallback to `main` + **bugfix:** `create_branch` before `upload_folder` (newer `huggingface_hub` requires the branch to exist before the preupload call)
+- `policies/pretrained.py` — add `revision` param to `push_model_to_hub()` + `latest-checkpoint` pointer update + `from_pretrained()` fallback to `main` + **bugfix:** `create_branch` before `upload_folder` (newer `huggingface_hub` requires the branch to exist before the preupload call) + **bugfix:** `latest-checkpoint` pointer auto-update after each checkpoint push (delete + create ref)
 - `policies/factory.py` — wire `revision` through `make_policy()` and `make_pre_post_processors()`
 - `scripts/lerobot_train.py` — push model to Hub in checkpoint block when flag is set
 - `processor/pipeline.py` — `from_pretrained()` fallback to `main` for processor loading
@@ -27,7 +27,11 @@ Five files changed:
 **Problem:** `upload_folder(revision="step-002500")` failed with 404 "Invalid rev id" — the Colab version of `huggingface_hub` no longer auto-creates branches via the preupload endpoint.
 **Fix:** Call `api.create_branch(repo_id, branch=revision, exist_ok=True)` before `upload_folder` in `push_model_to_hub()`.
 
-### 2. Config revision fallback (2026-06-12, `bed9786f`)
+### 2. latest-checkpoint pointer never created (2026-06-12, `7d9e8302`)
+**Problem:** `f9b2f222` committed the `latest-checkpoint` auto-updating pointer concept to docs/plan only — the source code was never modified. After every checkpoint push, the `latest-checkpoint` branch was never created or updated, so `--policy.revision=latest-checkpoint` always fell back to `main`.
+**Fix:** After a successful `upload_folder` in `push_model_to_hub()`, delete the old `latest-checkpoint` branch (if any) and create a new one pointing to the just-pushed step revision (`delete_branch` + `create_branch`). Only triggers on checkpoint pushes (when `revision` is set), not on final `main` upload.
+
+### 3. Config revision fallback (2026-06-12, `bed9786f`)
 **Problem:** `lerobot-rollout` calls `PreTrainedConfig.from_pretrained(revision="latest-checkpoint")` directly, bypassing the `latest-checkpoint` fallback in `pretrained.py`. When the branch doesn't exist, it crashes with `FileNotFoundError` instead of falling back to `main`.
 **Fix:** Generic revision fallback in `configs/policies.py` — if `hf_hub_download` fails and a revision was requested, retry with `revision=None` (main). Logs a warning on fallback.
 
@@ -48,4 +52,5 @@ grep -q "revision: str | None = None" ~/lerobot/src/lerobot/policies/pretrained.
 grep -q 'revision=revision' ~/lerobot/src/lerobot/policies/factory.py && echo "✅ factory" || echo "MISSING factory"
 grep -q "Pushing checkpoint to Hub" ~/lerobot/src/lerobot/scripts/lerobot_train.py && echo "✅ train" || echo "MISSING train"
 grep -q "revision is not None" ~/lerobot/src/lerobot/configs/policies.py && echo "✅ config fallback" || echo "MISSING config fallback"
+grep -q "delete_branch.*latest-checkpoint" ~/lerobot/src/lerobot/policies/pretrained.py && echo "✅ latest-checkpoint pointer" || echo "MISSING latest-checkpoint pointer"
 ```
