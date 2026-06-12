@@ -504,6 +504,19 @@ class TestReencodeVideo:
         assert info["video.g"] == 6
         assert info["video.crf"] == 23
 
+    @require_h264
+    def test_reencode_video_trim_window(self, tmp_path):
+        src = TEST_ARTIFACTS_DIR / "clip_6frames.mp4"
+        out = tmp_path / "trim_window.mp4"
+        cfg = VideoEncoderConfig(vcodec="h264")
+        reencode_video(src, out, camera_encoder=cfg, start_time_s=0.05, end_time_s=0.12, overwrite=True)
+
+        with av.open(str(out)) as container:
+            frames = list(container.decode(video=0))
+        # Only the frames at 0.067 and 0.1 s fall inside [0.05, 0.12).
+        assert len(frames) == 2
+        assert frames[0].time == pytest.approx(0.0, abs=1e-3)
+
 
 class TestConcatenateVideoFiles:
     def test_two_clips_frame_count(self, tmp_path):
