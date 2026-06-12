@@ -1,0 +1,147 @@
+# vLLM Policy (remote OpenPI inference)
+
+The **vLLM policy** (`--policy.type=vllm`) is a thin, weightless policy that delegates
+action inference to a **remote vLLM OpenPI WebSocket server** — for example
+[vllm-omni](https://github.com/vllm-project/vllm-omni)'s GR00T-N1.7 deployment. It holds no
+model weights locally: at each step it encodes the LeRobot observation into an OpenPI
+request, sends it over a WebSocket, and decodes the returned action trajectory into the
+env's action space.
+
+This is useful when the model is too large to run in the eval process, when inference is
+served centrally (one GPU server, many eval clients), or when you want to evaluate a
+deployment exactly as it will be served in production.
+
+## How it works
+
+```
+LeRobot eval                                  Remote server (vLLM OpenPI)
+┌────────────────────────────┐                ┌────────────────────────────┐
+│ observation (state, images,│  msgpack-numpy │ normalize → model → denorm  │
+│ task prompt)               │ ───────────────▶ (e.g. GR00T-N1.7)          │
+│                            │   WebSocket    │                            │
+│ env action  ◀──────────────│ ◀───────────── │ {action_key: ndarray, ...} │
+└────────────────────────────┘                └────────────────────────────┘
+```
+
+- **Protocol** (`/v1/realtime/robot/openpi`): on connect the server sends its
+  `PolicyServerConfig` metadata; the client then sends one observation and receives a
+  per-action-key dict of action trajectories. Serialization is the OpenPI
+  `msgpack-numpy` (`__ndarray__` envelope) format.
+- **Normalization happens on the server**, so the policy-side processor pipeline is
+  identity w.r.t. values (it only renames keys and moves tensors across devices); the
+  config's `normalization_mapping` is `IDENTITY`.
+- **Decoding is embodiment-agnostic by default**: the policy concatenates the keys named
+  in `action_keys` (in order) into the env action vector, with configurable per-channel
+  post-processing (state subtraction, scaling, gripper normalize/binarize/invert). A
+  dedicated `eef_9d` mode is available for DROID-style SE(3)/rot6d actions.
+
+## Installation
+
+```bash
+pip install -e ".[vllm]"
+```
+
+This pulls in the small runtime deps (`websockets`, `msgpack`). The policy is registered
+in-tree like every other built-in policy, so after install `lerobot-eval --help` lists
+`vllm` under `--policy.type`.
+
+You also need a running vLLM OpenPI server serving a compatible checkpoint (e.g.
+`nvidia/GR00T-N1.7-LIBERO/<suite>`). See the
+[vllm-omni](https://github.com/vllm-project/vllm-omni) docs for serving.
+
+## Quick start
+
+### 1. Run an eval against a remote server
+
+The repo ships a ready-to-use `--policy.path` directory at `examples/vllm_policy/`
+(a `config.json` plus processor JSONs). Point an eval at it:
+
+```bash
+lerobot-eval \
+  --policy.path=examples/vllm_policy \
+  --policy.host=127.0.0.1 \
+  --policy.port=8000 \
+  --env.type=libero \
+  --env.task=libero_object \
+  --eval.batch_size=1 \
+  --eval.n_episodes=2 \
+  --policy.n_action_steps=10 \
+  --output_dir=./outputs/libero_eval
+```
+
+> The `libero` env is Linux-only; install it with `pip install -e ".[libero]"`.
+
+### 2. Or run without a policy-path directory
+
+You don't need the example directory — `--policy.type=vllm` builds the config from
+defaults plus CLI overrides:
+
+```bash
+lerobot-eval \
+  --policy.type=vllm \
+  --policy.host=10.0.0.5 \
+  --policy.port=8000 \
+  --env.type=libero \
+  --env.task=libero_object \
+  --eval.n_episodes=2 \
+  --output_dir=./outputs/libero_eval
+```
+
+### 3. Smoke-test without a GPU (local mock server)
+
+A mock OpenPI server returns dummy no-op actions so you can exercise the full
+encode → send → receive → decode loop locally:
+
+```bash
+# terminal 1: start the mock server
+python -m lerobot.policies.vllm.mock_server --host 127.0.0.1 --port 8001
+
+# terminal 2: point an eval at it
+lerobot-eval --policy.type=vllm --policy.port=8001 \
+  --env.type=libero --env.task=libero_object --eval.n_episodes=1 \
+  --output_dir=./outputs/vllm_smoke
+```
+
+## Configuration
+
+Key options (all settable via `--policy.<name>` or in `config.json`):
+
+| Option | Default | Description |
+|---|---|---|
+| `host` / `port` / `ws_path` | `127.0.0.1` / `8000` / `/v1/realtime/robot/openpi` | Remote server endpoint |
+| `embodiment` | `libero_sim` | Embodiment tag sent to the server |
+| `action_space` | `libero_7d` | `libero_7d` (flat-concat decode) or `eef_9d` (SE(3)/rot6d) |
+| `action_keys` | `[x,y,z,roll,pitch,yaw,gripper]` | Server keys concatenated into the action; `action_dim = len(action_keys)` |
+| `gripper_keys` | `[gripper]` | Which `action_keys` get gripper post-processing |
+| `decode_subtract_state` | `true` | Recover per-step delta from the server's absolute output |
+| `gripper_normalize` / `gripper_binarize` / `gripper_invert` | `true` | Gripper post-processing |
+| `external_camera_obs_key` / `wrist_camera_obs_key` | LIBERO image keys | Which obs images to send |
+| `request_seed` | `null` | Optional per-request flow-matching seed |
+
+The `examples/vllm_policy/` JSONs are **generated artifacts** — rebuild them after changing
+the config with:
+
+```bash
+python examples/vllm_policy/scripts/generate_policy_dir.py
+```
+
+## Other embodiments
+
+Because the server owns normalization and conditions on the `embodiment` tag, adding a new
+robot whose action is a **flat concatenation of scalar channels** is **config-only**: set
+`--policy.embodiment`, `--policy.action_keys`, `--policy.gripper_keys`, and the gripper
+flags — no code change. Robots that need different action math (like `eef_9d`) get their
+own explicit decode path in `src/lerobot/policies/vllm/modeling_vllm.py`.
+
+> The generality is in the extension seam, not a guarantee: any new embodiment still needs
+> an end-to-end run to confirm its action/gripper conventions.
+
+## Notes & limitations
+
+- **Inference only.** The policy has no weights and does not support training.
+- **Network round-trip per inference.** Each `predict_action_chunk` opens a WebSocket,
+  handshakes, sends one observation, and reads one response; the client reconnects per
+  call to stay robust under batched eval.
+- **Server compatibility.** The example targets a GR00T-N1.7 deployment on vllm-omni; any
+  server that speaks the OpenPI `/v1/realtime/robot/openpi` protocol and returns a
+  per-action-key dict of ndarrays will work.
