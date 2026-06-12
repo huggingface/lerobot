@@ -1175,6 +1175,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         self._frozen: dict = {}
 
         self.last_predicted_frames: Tensor | None = None
+        self.last_predicted_latents: Tensor | None = None
         self.reset()
 
     # Frozen-module lazy loading (VAE + UMT5 + tokenizer)
@@ -1245,6 +1246,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         self._prompt_embeds = None
         self._negative_prompt_embeds = None
         self.last_predicted_frames = None
+        self.last_predicted_latents = None
         self._use_cfg = (cfg.guidance_scale > 1) or (cfg.action_guidance_scale > 1)
         # Two independent flow-matching schedulers (video latent + action streams).
         self._scheduler = FlowMatchScheduler(shift=cfg.snr_shift, sigma_min=0.0, extra_one_step=True)
@@ -1533,7 +1535,10 @@ class LingBotVAPolicy(PreTrainedPolicy):
         self._executed_actions = actions
 
         if self.config.save_predicted_video:
-            self.last_predicted_frames = self._decode_predicted_video(latents)
+            # Match upstream LingBot-VA visualization: collect chunk latents and decode the
+            # concatenated latent sequence once after the rollout finishes.
+            self.last_predicted_frames = None
+            self.last_predicted_latents = latents.detach().to("cpu")
 
         # On the first chunk, frame 0 is the conditioning frame (already "known"): the upstream
         # LIBERO client skips it (start_idx=1), so we drop the first frame's actions here.
@@ -1909,12 +1914,19 @@ class LingBotVAPolicy(PreTrainedPolicy):
 
     # Predicted-video decoding (opt-in)
     @torch.no_grad()
+    def decode_predicted_latents(self, latents) -> Tensor:
+        """Decode a concatenated predicted-latent sequence into ``[T, H, W, 3]`` uint8 frames."""
+        return self._decode_predicted_video(latents)
+
+    @torch.no_grad()
     def _decode_predicted_video(self, latents) -> Tensor:
         """VAE-decode predicted latents into a uint8 frame stack ``[T, H, W, 3]`` on CPU."""
         vae = self._vae
         z_dim = vae.config.z_dim
+        vae_device = next(vae.parameters()).device
+        latents = latents.to(device=vae_device, dtype=vae.dtype)
         latents = denormalize_latents(
-            latents.to(vae.dtype), vae.config.latents_mean, vae.config.latents_std, z_dim
+            latents, vae.config.latents_mean, vae.config.latents_std, z_dim
         )
         video = vae.decode(latents, return_dict=False)[0]  # [B, C, F, H, W] in [-1, 1]
         video = (video.float().clamp(-1, 1) + 1.0) / 2.0

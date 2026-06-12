@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from functools import partial
@@ -47,7 +48,10 @@ ACTION_DIM = 14  # 7 DOF × 2 arms (joint-space control mode)
 EEF_ACTION_DIM = 16
 ACTION_LOW = -1.0
 ACTION_HIGH = 1.0
-DEFAULT_EPISODE_LENGTH = 300
+DEFAULT_EPISODE_LENGTH = 1200
+OFFICIAL_INSTRUCTION_ENV = "LEROBOT_ROBOTWIN_OFFICIAL_INSTRUCTION"
+OFFICIAL_INSTRUCTION_TYPE_ENV = "LEROBOT_ROBOTWIN_INSTRUCTION_TYPE"
+OFFICIAL_INSTRUCTION_MAX_ENV = "LEROBOT_ROBOTWIN_INSTRUCTION_MAX"
 
 
 def _compose_eef_pose(new_pose: np.ndarray, init_pose: np.ndarray) -> np.ndarray:
@@ -75,6 +79,78 @@ def _add_init_eef_pose(delta_pose: np.ndarray, init_pose: np.ndarray) -> np.ndar
     out[3:7] = out[3:7] / (np.linalg.norm(out[3:7]) + 1e-8)
     out[11:15] = out[11:15] / (np.linalg.norm(out[11:15]) + 1e-8)
     return out
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _arm_for_block(block: Any) -> str:
+    return "left" if float(block.get_pose().p[0]) < 0 else "right"
+
+
+def _robotwin_blocks_episode_info(task_name: str, env: Any) -> dict[str, str] | None:
+    """Infer the episode-info dict used by RoboTwin's official instruction generator for block ranking."""
+    if task_name == "blocks_ranking_rgb":
+        return {
+            "{A}": "red block",
+            "{B}": "green block",
+            "{C}": "blue block",
+            "{a}": _arm_for_block(env.block1),
+            "{b}": _arm_for_block(env.block2),
+            "{c}": _arm_for_block(env.block3),
+        }
+    if task_name == "blocks_ranking_size":
+        return {
+            "{A}": "large block",
+            "{B}": "medium block",
+            "{C}": "small block",
+            "{a}": _arm_for_block(env.block1),
+            "{b}": _arm_for_block(env.block2),
+            "{c}": _arm_for_block(env.block3),
+        }
+    return None
+
+
+def _generate_robotwin_official_instruction(task_name: str, env: Any) -> str:
+    """Generate language with RoboTwin's official task templates, matching its eval client."""
+    fallback = task_name.replace("_", " ")
+    episode_info = _robotwin_blocks_episode_info(task_name, env)
+    if episode_info is None:
+        logger.warning("Official RoboTwin instruction is not implemented for task=%s; using %r.", task_name, fallback)
+        return fallback
+
+    try:
+        from description.utils.generate_episode_instructions import generate_episode_descriptions
+    except Exception:
+        logger.warning("Failed to import RoboTwin official instruction generator; using %r.", fallback, exc_info=True)
+        return fallback
+
+    instruction_type = os.environ.get(OFFICIAL_INSTRUCTION_TYPE_ENV, "seen")
+    try:
+        max_descriptions = int(os.environ.get(OFFICIAL_INSTRUCTION_MAX_ENV, "1000000"))
+    except ValueError:
+        max_descriptions = 1000000
+
+    results = generate_episode_descriptions(task_name, [episode_info], max_descriptions=max_descriptions)
+    if not results:
+        logger.warning("RoboTwin generated no official instructions for task=%s; using %r.", task_name, fallback)
+        return fallback
+
+    options = results[0].get(instruction_type) or results[0].get("seen") or results[0].get("unseen")
+    if not options:
+        logger.warning(
+            "RoboTwin generated no %s official instructions for task=%s; using %r.",
+            instruction_type,
+            task_name,
+            fallback,
+        )
+        return fallback
+
+    return str(np.random.choice(options))
 
 
 # D435 dims from task_config/_camera_config.yml (what demo_clean.yml selects).
@@ -381,6 +457,15 @@ class RoboTwinEnv(gym.Env):
             self._env.setup_demo(**setup_kwargs)
         self.episode_index += self._reset_stride
         self._step_count = 0
+
+        use_official_instruction = self.task_name in {"blocks_ranking_rgb", "blocks_ranking_size"}
+        if _env_flag(OFFICIAL_INSTRUCTION_ENV, default=use_official_instruction):
+            self.task_description = _generate_robotwin_official_instruction(self.task_name, self._env)
+            if hasattr(self._env, "set_instruction"):
+                self._env.set_instruction(instruction=self.task_description)
+            logger.info("RoboTwin official instruction | task=%s | %s", self.task_name, self.task_description)
+        else:
+            self.task_description = self.task_name.replace("_", " ")
 
         # In eef mode the policy predicts pose deltas relative to the initial eef pose.
         if self.action_mode == "ee":
