@@ -39,7 +39,7 @@ import torch
 from lerobot.configs.video import VideoEncoderConfig
 from lerobot.datasets.video_utils import decode_video_frames, reencode_video
 
-from .reader import EpisodeRecord
+from .reader import EpisodeRecord, snap_to_frame
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +188,13 @@ class VideoFrameProvider:
         target = camera_key if camera_key is not None else self.camera_key
         if not timestamps or target is None:
             return []
+        # Snap each request to the nearest real frame timestamp: callers
+        # sample uniform grids whose points land mid-frame, and
+        # ``decode_video_frames`` rejects queries farther than
+        # ``tolerance_s`` from a decodable frame. Snapping also dedupes
+        # repeat queries through the cache.
+        if record.frame_timestamps:
+            timestamps = [snap_to_frame(float(ts), record.frame_timestamps) for ts in timestamps]
 
         out: list[Any] = []
         misses: list[float] = []

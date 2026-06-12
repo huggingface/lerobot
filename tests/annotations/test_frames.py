@@ -151,6 +151,35 @@ def test_decode_returns_one_uint8_frame_per_timestamp(
         assert frame.shape == (3, 120, 160)
 
 
+def test_frames_at_snaps_mid_frame_grid_to_real_frames(
+    sample_video: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """Uniform sampling grids land mid-frame; ``frames_at`` must snap them to
+    real frame timestamps before decoding.
+
+    Regression: ``decode_video_frames`` rejects queries farther than
+    ``tolerance_s`` (default 10 ms) from a decodable frame, so un-snapped
+    mid-frame queries raised ``FrameTimestampError`` wholesale and the plan
+    module silently lost its contact sheets for most episodes.
+    """
+    from types import SimpleNamespace
+
+    fake = _FakeMeta(video_keys=["observation.images.cam"], image_keys=[], video_path=sample_video)
+    import lerobot.datasets.dataset_metadata as meta_mod
+
+    monkeypatch.setattr(meta_mod, "LeRobotDatasetMetadata", lambda *a, **k: fake, raising=True)
+    provider = VideoFrameProvider(root=tmp_path)  # default 10 ms tolerance
+    # 10 fps fixture -> frames at 0.0, 0.1, ...; queries sit mid-frame.
+    record = SimpleNamespace(episode_index=0, frame_timestamps=[i / 10 for i in range(30)])
+
+    frames = provider.frames_at(record, [0.149, 1.234, 2.04], camera_key="observation.images.cam")
+
+    assert len(frames) == 3
+    for frame in frames:
+        assert isinstance(frame, torch.Tensor)
+        assert frame.shape == (3, 120, 160)
+
+
 def test_decode_returns_empty_list_on_missing_file(tmp_path: Path, monkeypatch) -> None:
     """A missing video is a recoverable no-frames condition, never a crash."""
     provider = _provider_for_video(tmp_path, tmp_path / "does_not_exist.mp4", monkeypatch)
