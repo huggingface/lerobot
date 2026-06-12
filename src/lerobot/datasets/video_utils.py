@@ -82,17 +82,23 @@ def decode_video_frames(
     if backend != "pyav" and is_depth:
         logger.warning("Decoding depth maps is only supported with the 'pyav' backend.")
         # We do not actually return uint8 here, but we avoid the 255 normalization step.
-        return decode_video_frames_pyav(video_path, timestamps, tolerance_s, return_uint8=False, is_depth=True)
+        return decode_video_frames_pyav(
+            video_path, timestamps, tolerance_s, return_uint8=False, is_depth=True
+        )
 
     if backend is None:
         backend = get_safe_default_video_backend()
     if backend == "torchcodec":
         return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s, return_uint8=return_uint8)
     elif backend == "pyav":
-        return decode_video_frames_pyav(video_path, timestamps, tolerance_s, return_uint8=return_uint8, is_depth=is_depth)
+        return decode_video_frames_pyav(
+            video_path, timestamps, tolerance_s, return_uint8=return_uint8, is_depth=is_depth
+        )
     elif backend == "video_reader":
         logger.warning("backend='video_reader' is deprecated and now aliases to 'pyav'.")
-        return decode_video_frames_pyav(video_path, timestamps, tolerance_s, return_uint8=return_uint8, is_depth=is_depth)
+        return decode_video_frames_pyav(
+            video_path, timestamps, tolerance_s, return_uint8=return_uint8, is_depth=is_depth
+        )
     else:
         raise ValueError(f"Unsupported video backend: {backend}")
 
@@ -122,7 +128,7 @@ def decode_video_frames_pyav(
         tolerance_s: Allowed deviation in seconds between a queried timestamp and the closest
             decoded frame.
         log_loaded_timestamps: When True, log every decoded frame's timestamp at INFO level.
-        return_uint8: For RGB videos, if True return raw uint8 frames (C, H, W). 
+        return_uint8: For RGB videos, if True return raw uint8 frames (C, H, W).
             Otherwise, return float32 in [0, 1] range.
         is_depth: Set to True if the video is a depth map (1 channel, uint12).
 
@@ -477,13 +483,13 @@ def encode_video_frames(
             with Image.open(input_data) as input_image:
                 if is_depth:
                     input_frame = quantize_depth(
-                        np.array(input_image), 
+                        np.array(input_image),
                         depth_min=video_encoder.depth_min,
                         depth_max=video_encoder.depth_max,
                         shift=video_encoder.shift,
                         use_log=video_encoder.use_log,
                         pix_fmt=video_encoder.pix_fmt,
-                        video_backend="pyav"
+                        video_backend="pyav",
                     )
                 else:
                     input_image = input_image.convert("RGB")

@@ -30,10 +30,8 @@ from lerobot.datasets.aggregate import aggregate_datasets
 from lerobot.datasets.feature_utils import features_equal_for_merge
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from tests.fixtures.constants import (
-    DUMMY_CAMERA_FEATURES,
-    DUMMY_DEPTH_CAMERA_FEATURES,
-    DUMMY_REPO_ID,
     DUMMY_CAMERA_FEATURES_WITH_DEPTH,
+    DUMMY_REPO_ID,
 )
 
 CAMERA_FEATURES_WITH_DEPTH = {**DUMMY_CAMERA_FEATURES, **DUMMY_DEPTH_CAMERA_FEATURES}
@@ -235,9 +233,7 @@ def assert_depth_keys_preserved(aggr_ds, ds_0, ds_1):
     )
     for key in expected_depth_keys:
         info = aggr_ds.meta.info.features[key].get("info") or {}
-        assert info.get("is_depth_map") is True, (
-            f"Depth marker lost on feature {key!r} after aggregation"
-        )
+        assert info.get("is_depth_map") is True, f"Depth marker lost on feature {key!r} after aggregation"
 
 
 def assert_video_timestamps_within_bounds(aggr_ds):

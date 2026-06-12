@@ -37,7 +37,13 @@ import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
-from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults, DepthEncoderConfig, encoder_config_from_video_info, depth_encoder_defaults
+from lerobot.configs import (
+    DepthEncoderConfig,
+    VideoEncoderConfig,
+    camera_encoder_defaults,
+    depth_encoder_defaults,
+    encoder_config_from_video_info,
+)
 from lerobot.configs.video import DEPTH_ENCODER_INFO_FIELD_NAMES
 from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
 from lerobot.utils.utils import flatten_dict
@@ -1617,7 +1623,7 @@ def recompute_stats(
         raise ValueError(f"No parquet files found in {data_dir}")
 
     all_episode_stats = []
-    #TODO: enable image and video stats re-computation
+    # TODO: enable image and video stats re-computation
     numeric_keys = [k for k, v in features_to_compute.items() if v["dtype"] not in ["image", "video"]]
 
     for parquet_path in tqdm(parquet_files, desc="Computing stats from data files"):
@@ -1717,9 +1723,7 @@ def convert_image_to_video_dataset(
     logging.info(
         f"Converting {len(episode_indices)} episodes with {len(img_keys)} cameras from {dataset.repo_id}"
     )
-    logging.info(
-        f"RGB video encoder: {camera_encoder}, depth video encoder: {depth_encoder}"
-    )
+    logging.info(f"RGB video encoder: {camera_encoder}, depth video encoder: {depth_encoder}")
 
     # Create new features dict, converting image features to video features
     new_features = {}
@@ -1973,7 +1977,11 @@ def reencode_dataset(
         return dataset
     logging.info(f"Re-encoding {sum(len(paths) for paths in video_keys_paths_dict.values())} video file(s).")
 
-    worker_args = [(path, encoder, encoder_threads) for video_key, encoder in video_keys_encoders_dict.items() for path in video_keys_paths_dict[video_key]]
+    worker_args = [
+        (path, encoder, encoder_threads)
+        for video_key, encoder in video_keys_encoders_dict.items()
+        for path in video_keys_paths_dict[video_key]
+    ]
     if num_workers and num_workers > 1:
         with ProcessPoolExecutor(max_workers=num_workers) as pool:
             futures = [pool.submit(_reencode_video_worker, args) for args in worker_args]
@@ -1992,9 +2000,7 @@ def reencode_dataset(
     depth_preserve_keys = {"is_depth_map", *(f"video.{n}" for n in DEPTH_ENCODER_INFO_FIELD_NAMES)}
     for video_key, encoder in video_keys_encoders_dict.items():
         preserve_keys = depth_preserve_keys if video_key in meta.depth_keys else None
-        meta.update_video_info(
-            video_key=video_key, video_encoder=encoder, preserve_keys=preserve_keys
-        )
+        meta.update_video_info(video_key=video_key, video_encoder=encoder, preserve_keys=preserve_keys)
 
     write_info(meta.info, meta.root)
     logging.info("Dataset metadata updated.")
