@@ -38,6 +38,8 @@ from lerobot.datasets.utils import (
     DEFAULT_VIDEO_PATH,
     DatasetInfo,
 )
+from lerobot.datasets.video_utils import encode_video_frames
+from lerobot.utils.constants import DEFAULT_FEATURES
 from tests.fixtures.constants import (
     DEFAULT_FPS,
     DUMMY_CAMERA_FEATURES,
@@ -45,13 +47,9 @@ from tests.fixtures.constants import (
     DUMMY_REPO_ID,
     DUMMY_ROBOT_TYPE,
 )
-from lerobot.datasets.video_utils import encode_video_frames
-from lerobot.utils.constants import DEFAULT_FEATURES
 
 
-def add_frames(
-    dataset: LeRobotDataset, num_frames: int
-) -> None:
+def add_frames(dataset: LeRobotDataset, num_frames: int) -> None:
     """Append ``num_frames`` synthetic frames to ``dataset``.
 
     Generates per-feature payloads from ``dataset.meta``: uint16 depth ramps for
@@ -59,9 +57,8 @@ def add_frames(
     and float32 zeros for everything else. ``DEFAULT_FEATURES`` (timestamp,
     frame_index, ...) are auto-populated by ``add_frame`` and skipped here.
     """
-    if video_keys is None:
-        video_keys = dataset.meta.video_keys
-    depth_keys = set(dataset.meta.depth_keys)
+    video_keys = dataset.meta.video_keys
+    depth_keys = dataset.meta.depth_keys
     # Smooth gradient base reused per (H, W) to keep depth frames cheap to
     # encode (HEVC Main 12 hates white noise).
     _depth_base_cache: dict[tuple[int, int], np.ndarray] = {}
