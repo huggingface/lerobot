@@ -175,12 +175,21 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
         "repo_id": repo_id,
         "tag": version_tag,
         "repo_type": "dataset",
-        "exist_ok": True,
     }
     if revision is not None:
         tag_kwargs["revision"] = revision
 
     try:
+        # Re-annotating an existing repo leaves a stale tag behind, and
+        # ``create_tag`` fails (or silently keeps the old target with
+        # ``exist_ok``) when the tag already exists — delete it first so the
+        # tag always points at the upload we just made.
+        from contextlib import suppress  # noqa: PLC0415
+
+        from huggingface_hub.errors import RevisionNotFoundError  # noqa: PLC0415
+
+        with suppress(RevisionNotFoundError):
+            api.delete_tag(repo_id, tag=version_tag, repo_type="dataset")
         api.create_tag(**tag_kwargs)
         print(f"[lerobot-annotate] tagged {repo_id} as {version_tag}", flush=True)
     except Exception as exc:  # noqa: BLE001

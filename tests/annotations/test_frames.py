@@ -38,19 +38,20 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.annotations.steerable_pipeline.frames import (  # noqa: E402
-    VideoFrameProvider,
-    _decode_frames_av,
-    _decode_frames_ffmpeg,
-)
+from lerobot.annotations.steerable_pipeline.frames import VideoFrameProvider  # noqa: E402
 
 
 class _FakeMeta:
     """Minimal metadata stub exposing ``video_keys`` / ``camera_keys``."""
 
-    def __init__(self, video_keys: list[str], image_keys: list[str]) -> None:
+    def __init__(self, video_keys: list[str], image_keys: list[str], video_path: Path | None = None) -> None:
         self.video_keys = video_keys
         self.camera_keys = [*video_keys, *image_keys]
+        self._video_path = video_path
+        self.episodes = {0: {f"videos/{key}/from_timestamp": 0.0 for key in video_keys}}
+
+    def get_video_file_path(self, episode_index: int, camera_key: str) -> Path:
+        return self._video_path
 
 
 def test_default_camera_key_skips_image_only_cameras(tmp_path: Path, monkeypatch) -> None:
@@ -124,15 +125,24 @@ def sample_video(tmp_path: Path) -> Path:
     return out
 
 
-def test_decode_frames_av_returns_one_uint8_frame_per_timestamp(sample_video: Path) -> None:
-    """``_decode_frames_av`` decodes via PyAV directly — no torchcodec/torchvision.
+def _provider_for_video(tmp_path: Path, video: Path, monkeypatch) -> VideoFrameProvider:
+    """A provider whose single camera resolves to ``video`` via fake metadata."""
+    fake = _FakeMeta(video_keys=["observation.images.cam"], image_keys=[], video_path=video)
+    import lerobot.datasets.dataset_metadata as meta_mod
 
-    This is the always-available fallback: torchcodec is unusable in some
-    containers and lerobot's ``pyav`` backend routes through the removed
-    ``torchvision.io.VideoReader``.
+    monkeypatch.setattr(meta_mod, "LeRobotDatasetMetadata", lambda *a, **k: fake, raising=True)
+    return VideoFrameProvider(root=tmp_path, tolerance_s=0.2)
+
+
+def test_decode_returns_one_uint8_frame_per_timestamp(
+    sample_video: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """``_decode`` routes through ``decode_video_frames`` (torchcodec when
+    available, PyAV otherwise) — no subprocess fallback.
     """
+    provider = _provider_for_video(tmp_path, sample_video, monkeypatch)
     timestamps = [0.0, 1.0, 2.5]
-    frames = _decode_frames_av(sample_video, timestamps)
+    frames = provider._decode(0, timestamps, "observation.images.cam")
 
     assert len(frames) == len(timestamps)
     for frame in frames:
@@ -141,39 +151,67 @@ def test_decode_frames_av_returns_one_uint8_frame_per_timestamp(sample_video: Pa
         assert frame.shape == (3, 120, 160)
 
 
-def test_decode_frames_av_picks_nearest_frame(sample_video: Path) -> None:
-    """Repeated and out-of-order timestamps each resolve to the nearest frame."""
-    frames = _decode_frames_av(sample_video, [2.0, 0.0, 2.0])
-
-    assert len(frames) == 3
-    assert torch.equal(frames[0], frames[2])
-    assert not torch.equal(frames[0], frames[1])
+def test_decode_returns_empty_list_on_missing_file(tmp_path: Path, monkeypatch) -> None:
+    """A missing video is a recoverable no-frames condition, never a crash."""
+    provider = _provider_for_video(tmp_path, tmp_path / "does_not_exist.mp4", monkeypatch)
+    assert provider._decode(0, [0.0], "observation.images.cam") == []
 
 
-def test_decode_frames_av_raises_on_missing_file(tmp_path: Path) -> None:
-    """A missing video surfaces as an exception the caller can fall back on."""
-    with pytest.raises(Exception):  # noqa: B017, PT011
-        _decode_frames_av(tmp_path / "does_not_exist.mp4", [0.0])
-
-
-def test_decode_frames_ffmpeg_returns_one_uint8_frame_per_timestamp(sample_video: Path) -> None:
-    """``_decode_frames_ffmpeg`` shells out to the ffmpeg CLI — the always-
-    available fallback that decodes AV1 and isolates crashes to a child
-    process.
+def test_episode_clip_path_trims_via_reencode_video(tmp_path: Path, monkeypatch) -> None:
+    """Clip extraction delegates to ``video_utils.reencode_video`` with the
+    episode's ``[from_timestamp, to_timestamp)`` trim window — no subprocess.
     """
-    timestamps = [0.0, 1.0, 2.5]
-    frames = _decode_frames_ffmpeg(sample_video, timestamps)
+    from types import SimpleNamespace
 
-    assert len(frames) == len(timestamps)
-    for frame in frames:
-        assert isinstance(frame, torch.Tensor)
-        assert frame.dtype == torch.uint8
-        assert frame.shape == (3, 120, 160)
+    import lerobot.annotations.steerable_pipeline.frames as frames_mod
+
+    src = tmp_path / "src.mp4"
+    src.write_bytes(b"src")
+    fake = _FakeMeta(video_keys=["observation.images.cam"], image_keys=[], video_path=src)
+    fake.episodes[0]["videos/observation.images.cam/from_timestamp"] = 1.5
+    fake.episodes[0]["videos/observation.images.cam/to_timestamp"] = 4.0
+    import lerobot.datasets.dataset_metadata as meta_mod
+
+    monkeypatch.setattr(meta_mod, "LeRobotDatasetMetadata", lambda *a, **k: fake, raising=True)
+
+    captured = {}
+
+    def fake_reencode(
+        input_video_path,
+        output_video_path,
+        camera_encoder=None,
+        overwrite=False,
+        start_time_s=None,
+        end_time_s=None,
+    ):
+        captured.update(
+            src=Path(input_video_path),
+            encoder=camera_encoder,
+            start_time_s=start_time_s,
+            end_time_s=end_time_s,
+        )
+        Path(output_video_path).write_bytes(b"clip")
+
+    monkeypatch.setattr(frames_mod, "reencode_video", fake_reencode, raising=True)
+    provider = VideoFrameProvider(root=tmp_path)
+    record = SimpleNamespace(episode_index=0, frame_timestamps=[0.0, 1.0])
+
+    out = provider.episode_clip_path(record, tmp_path / "clips")
+
+    assert out == tmp_path / "clips" / "ep_000000.mp4"
+    assert captured["src"] == src
+    assert captured["start_time_s"] == 1.5
+    assert captured["end_time_s"] == 4.0
+    # H.264 so the clip is decodable by vllm's libav build (sources are often AV1).
+    assert captured["encoder"].vcodec == "h264"
 
 
-def test_decode_frames_ffmpeg_raises_on_missing_file(tmp_path: Path) -> None:
-    """A missing video raises (non-zero ffmpeg exit), never crashes the job."""
-    if shutil.which("ffmpeg") is None:
-        pytest.skip("ffmpeg not available")
-    with pytest.raises(Exception):  # noqa: B017, PT011
-        _decode_frames_ffmpeg(tmp_path / "does_not_exist.mp4", [0.0])
+def test_videoframeprovider_serializes_decodes_with_a_lock() -> None:
+    """torchcodec's cached per-file decoder is single-threaded; the provider
+    must own a dedicated lock that ``_decode`` holds around the decoder call.
+    """
+    import threading
+
+    lock_field = VideoFrameProvider.__dataclass_fields__.get("_decode_lock")
+    assert lock_field is not None
+    assert lock_field.default_factory is threading.Lock

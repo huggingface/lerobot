@@ -24,6 +24,7 @@ querying the same timestamp pay decode cost once.
 
 from __future__ import annotations
 
+import inspect
 import io
 import logging
 import math
@@ -36,7 +37,8 @@ from typing import Any, Protocol
 import PIL.Image
 import torch
 
-from lerobot.datasets.video_utils import decode_video_frames
+from lerobot.configs.video import VideoEncoderConfig
+from lerobot.datasets.video_utils import decode_video_frames, reencode_video
 
 from .reader import EpisodeRecord
 
@@ -137,10 +139,9 @@ class VideoFrameProvider:
     camera_key: str | None = None
     tolerance_s: float = 1e-2
     cache_size: int = 256
-    # Keyframe decode backend. ``None`` uses the ffmpeg CLI — the
-    # concurrency- and crash-safe default for the pipeline's threaded
-    # decode. Set to ``"torchcodec"`` or ``"pyav"`` to pin an in-process
-    # decoder when the build is known thread-safe.
+    # Keyframe decode backend forwarded to
+    # :func:`lerobot.datasets.video_utils.decode_video_frames`. ``None``
+    # uses the library default (torchcodec when available, else PyAV).
     video_backend: str | None = None
     _meta: Any = field(default=None, init=False, repr=False)
     _cache: dict = field(default_factory=dict, init=False, repr=False)
@@ -149,6 +150,10 @@ class VideoFrameProvider:
     # ``ExecutorConfig.episode_parallelism``); guard the dict cache and the
     # one-shot warn flag against concurrent updates from worker threads.
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    # Serializes decode_video_frames calls: torchcodec hands out one
+    # ``VideoDecoder`` per file from a process-wide cache, and the decoder
+    # is not safe to drive from multiple threads at once.
+    _decode_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _warned_decode_fail: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -247,52 +252,47 @@ class VideoFrameProvider:
     def episode_clip_path(self, record: EpisodeRecord, cache_dir: Path) -> Path | None:
         """Extract the episode's subclip to ``cache_dir/ep_{idx:06d}.mp4``.
 
-        Returns ``None`` if the dataset has no video tracks. Skips
-        re-extract when the cached clip already exists. Re-encodes to
-        H.264 (libx264) so the resulting mp4 is decodable by every
-        downstream video processor — stream-copy would inherit the
-        source codec (often AV1 in modern LeRobot datasets), which
-        vllm's libav build cannot decode.
+        Returns ``None`` if the dataset has no video tracks or extraction
+        failed. Skips re-extract when the cached clip already exists.
+        Re-encodes to H.264 via
+        :func:`lerobot.datasets.video_utils.reencode_video` so the resulting
+        mp4 is decodable by every downstream video processor — stream-copy
+        would inherit the source codec (often AV1 in modern LeRobot
+        datasets), which vllm's libav build cannot decode.
         """
-        import subprocess  # noqa: PLC0415
-
         if self.camera_key is None:
             return None
         cache_dir.mkdir(parents=True, exist_ok=True)
         out_path = cache_dir / f"ep_{record.episode_index:06d}.mp4"
         if out_path.exists() and out_path.stat().st_size > 0:
             return out_path
+        if "start_time_s" not in inspect.signature(reencode_video).parameters:
+            # Trim support lands with huggingface/lerobot#3779; without it the
+            # whole multi-episode source file would be re-encoded as "the clip".
+            logger.warning(
+                "reencode_video has no start_time_s/end_time_s trim support in "
+                "this lerobot build; skipping clip extraction for episode %s.",
+                record.episode_index,
+            )
+            return None
         ep = self._meta.episodes[record.episode_index]
         from_timestamp = float(ep[f"videos/{self.camera_key}/from_timestamp"])
         to_timestamp = float(ep[f"videos/{self.camera_key}/to_timestamp"])
         src = self.root / self._meta.get_video_file_path(record.episode_index, self.camera_key)
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-loglevel",
-            "error",
-            "-ss",
-            f"{from_timestamp:.3f}",
-            "-to",
-            f"{to_timestamp:.3f}",
-            "-i",
-            str(src),
-            "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-crf",
-            "23",
-            "-pix_fmt",
-            "yuv420p",
-            "-an",
-            str(out_path),
-        ]
+        encoder = VideoEncoderConfig(vcodec="h264", pix_fmt="yuv420p", g=None, crf=23, preset="ultrafast")
         try:
-            # ffmpeg is invoked by name via PATH lookup (the standard way to
-            # call the CLI); the arg list is fully controlled here, not shell.
-            subprocess.run(cmd, check=True, timeout=300)  # nosec B607
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            reencode_video(
+                src,
+                out_path,
+                camera_encoder=encoder,
+                overwrite=True,
+                start_time_s=from_timestamp,
+                end_time_s=to_timestamp,
+            )
+        except Exception:
+            logger.warning(
+                "clip extraction failed for episode %s (%s)", record.episode_index, src, exc_info=True
+            )
             return None
         return out_path if out_path.exists() and out_path.stat().st_size > 0 else None
 
@@ -300,61 +300,47 @@ class VideoFrameProvider:
         """Decode ``timestamps`` from the episode's video as ``(C, H, W)`` tensors.
 
         Delegates to :func:`lerobot.datasets.video_utils.decode_video_frames`
-        (torchcodec by default, PyAV fallback) rather than a bespoke decoder.
-        Returns one frame per requested timestamp, or ``[]`` if decoding
-        failed wholesale — callers treat ``[]`` as "no frames available".
+        (torchcodec when available, PyAV otherwise; ``video_backend`` pins
+        one explicitly). Returns one frame per requested timestamp, or ``[]``
+        if decoding failed — callers treat ``[]`` as "no frames available".
         """
         ep = self._meta.episodes[episode_index]
         from_timestamp = ep[f"videos/{camera_key}/from_timestamp"]
         shifted = [from_timestamp + ts for ts in timestamps]
         video_path = self.root / self._meta.get_video_file_path(episode_index, camera_key)
 
-        # Default to the ffmpeg CLI. The pipeline decodes under a 16-wide
-        # ThreadPoolExecutor and the in-process decoders are unsafe there:
-        # torchcodec is not thread-safe and SIGSEGVs under concurrent decode
-        # (a crash no try/except can catch), PyAV can likewise segfault on
-        # AV1, and lerobot's ``pyav`` backend routes through the removed
-        # ``torchvision.io.VideoReader``. ``_decode_frames_ffmpeg`` shells
-        # out per frame: each decode is an isolated child process, so it is
-        # both crash-safe and concurrency-safe. ``video_backend`` can pin
-        # ``torchcodec`` / ``pyav`` explicitly for callers that know their
-        # build is safe.
-        chain = [self.video_backend] if self.video_backend else ["ffmpeg"]
-
-        exc: Exception | None = None
-        for backend in chain:
-            try:
-                if backend == "ffmpeg":
-                    return _decode_frames_ffmpeg(video_path, shifted)
-                if backend in ("pyav", "av"):
-                    return _decode_frames_av(video_path, shifted)
+        try:
+            # The module phases decode under a ThreadPoolExecutor (see
+            # ``ExecutorConfig.episode_parallelism``) but torchcodec's cached
+            # per-file decoder is single-threaded, so serialize decodes on a
+            # dedicated lock. Frame extraction is a small fraction of episode
+            # wall time (VLM calls dominate), so the contention is cheap.
+            with self._decode_lock:
                 # Stacked ``(N, C, H, W)`` uint8 tensor; one row per timestamp.
                 decoded = decode_video_frames(
-                    video_path, shifted, self.tolerance_s, backend=backend, return_uint8=True
+                    video_path, shifted, self.tolerance_s, backend=self.video_backend, return_uint8=True
                 )
-                return list(decoded)
-            except Exception as e:  # noqa: PERF203
-                exc = e
-
-        # Every backend raised. Log loudly the first time so a silent
-        # vqa-module no-op (every prompt skipped because frames_at returned
-        # []) is debuggable from the job log instead of post-hoc parquet
-        # inspection. Subsequent failures stay quiet.
-        with self._lock:
-            already_warned = self._warned_decode_fail
+            return list(decoded)
+        except Exception as exc:
+            # Log loudly the first time so a silent vqa-module no-op (every
+            # prompt skipped because frames_at returned []) is debuggable from
+            # the job log instead of post-hoc parquet inspection. Subsequent
+            # failures stay quiet.
+            with self._lock:
+                already_warned = self._warned_decode_fail
+                if not already_warned:
+                    self._warned_decode_fail = True
             if not already_warned:
-                self._warned_decode_fail = True
-        if not already_warned:
-            logger.warning(
-                "VideoFrameProvider._decode failed for episode=%s camera=%s video_path=%s backends=%s: %s",
-                episode_index,
-                camera_key,
-                video_path,
-                chain,
-                exc,
-                exc_info=exc,
-            )
-        return []
+                logger.warning(
+                    "VideoFrameProvider._decode failed for episode=%s camera=%s video_path=%s backend=%s: %s",
+                    episode_index,
+                    camera_key,
+                    video_path,
+                    self.video_backend,
+                    exc,
+                    exc_info=exc,
+                )
+            return []
 
 
 def make_frame_provider(
@@ -368,91 +354,6 @@ def make_frame_provider(
     if provider.camera_key is None:
         return null_provider()
     return provider
-
-
-def _decode_frames_ffmpeg(video_path: Path, timestamps: list[float]) -> list[Any]:
-    """Decode the frames nearest to ``timestamps`` via the ffmpeg CLI.
-
-    Runs one ``ffmpeg`` process per timestamp, seeking with ``-ss`` and
-    piping a single PNG to stdout. Unlike the in-process decoders this
-    survives a hostile container: a full ffmpeg build decodes AV1 (the codec
-    modern LeRobot datasets use) where torchcodec raises and PyAV can
-    SIGSEGV, and a crash stays isolated to the child process — a non-zero
-    exit is a catchable error, not a segfault of the whole job. Returns one
-    ``(C, H, W)`` uint8 tensor per timestamp.
-    """
-    import io  # noqa: PLC0415
-    import subprocess  # noqa: PLC0415
-
-    import numpy as np  # noqa: PLC0415
-
-    frames: list[Any] = []
-    for ts in timestamps:
-        # ffmpeg invoked by name via PATH lookup; fully-controlled arg list, no shell.
-        proc = subprocess.run(  # nosec B607
-            [
-                "ffmpeg",
-                "-nostdin",
-                "-loglevel",
-                "error",
-                "-ss",
-                f"{max(ts, 0.0):.3f}",
-                "-i",
-                str(video_path),
-                "-frames:v",
-                "1",
-                "-f",
-                "image2pipe",
-                "-vcodec",
-                "png",
-                "pipe:1",
-            ],
-            capture_output=True,
-            check=True,
-            timeout=120,
-        )
-        if not proc.stdout:
-            raise RuntimeError(f"ffmpeg returned no frame for t={ts:.3f}s of {video_path}")
-        img = PIL.Image.open(io.BytesIO(proc.stdout)).convert("RGB")
-        frames.append(torch.from_numpy(np.asarray(img).copy()).permute(2, 0, 1).contiguous())
-    return frames
-
-
-def _decode_frames_av(video_path: Path, timestamps: list[float]) -> list[Any]:
-    """Decode the frames nearest to ``timestamps`` using PyAV directly.
-
-    lerobot's ``decode_video_frames(backend="pyav")`` routes through
-    ``torchvision.io.VideoReader``, removed in torchvision 0.23+. This helper
-    talks to the ``av`` package directly. Note PyAV can SIGSEGV on AV1
-    streams in some builds — prefer ``_decode_frames_ffmpeg`` as the default
-    fallback; this stays available behind ``video_backend="pyav"``. Returns
-    one ``(C, H, W)`` uint8 tensor per timestamp.
-    """
-    import av  # noqa: PLC0415
-
-    first_ts = min(timestamps)
-    last_ts = max(timestamps)
-    loaded_frames: list[torch.Tensor] = []
-    loaded_ts: list[float] = []
-    with av.open(str(video_path)) as container:
-        stream = container.streams.video[0]
-        # Seek to the keyframe at or before the first requested timestamp.
-        offset = max(int(first_ts / stream.time_base), 0) if stream.time_base else 0
-        container.seek(offset, stream=stream, backward=True, any_frame=False)
-        for idx, frame in enumerate(container.decode(stream)):
-            ts = frame.time
-            if ts is None:
-                ts = float(frame.pts * stream.time_base) if frame.pts is not None else float(idx)
-            loaded_ts.append(ts)
-            loaded_frames.append(
-                torch.from_numpy(frame.to_ndarray(format="rgb24")).permute(2, 0, 1).contiguous()
-            )
-            if ts >= last_ts:
-                break
-    if not loaded_frames:
-        raise RuntimeError(f"PyAV decoded no frames from {video_path}")
-    ts_tensor = torch.tensor(loaded_ts)
-    return [loaded_frames[int(torch.argmin((ts_tensor - q).abs()))] for q in timestamps]
 
 
 def _frame_to_pil(frame: Any) -> Any:

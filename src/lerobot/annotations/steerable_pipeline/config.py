@@ -197,8 +197,9 @@ class AnnotationPipelineConfig:
     skip_validation: bool = False
     only_episodes: tuple[int, ...] | None = None
 
-    # Keyframe decode backend. None → ffmpeg CLI (crash-/thread-safe; torchcodec
-    # SIGSEGVs under concurrent decode). Or ``"torchcodec"`` / ``"pyav"``.
+    # Keyframe decode backend forwarded to ``decode_video_frames``. None →
+    # library default (torchcodec when available, else PyAV). Or pin
+    # ``"torchcodec"`` / ``"pyav"`` explicitly.
     video_backend: str | None = None
 
     # Upload to the Hub (new_repo_id if set, else repo_id; one must be set).
