@@ -20,11 +20,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import torch
+from huggingface_hub import snapshot_download
 from safetensors.torch import load_file
+from transformers import AutoTokenizer, UMT5EncoderModel
 
 if TYPE_CHECKING:
     from .wan_adapters import WanVideoVAE38
     from .wan_video_dit import WanVideoDiT
+
+from diffusers import AutoencoderKLWan
+
+from .wan_adapters import WanVideoVAE38
+from .wan_video_dit import WanVideoDiT
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +72,6 @@ class WanTokenizer:
     FastWAM call site expects."""
 
     def __init__(self, name: str = WAN_T5_TOKENIZER, seq_len: int = 512) -> None:
-        from transformers import AutoTokenizer
-
         self.tokenizer = AutoTokenizer.from_pretrained(name)
         self.seq_len = int(seq_len)
 
@@ -94,10 +99,6 @@ def build_wan_tokenizer(*, tokenizer_max_len: int) -> WanTokenizer:
 
 def load_pretrained_wan_vae(*, torch_dtype: torch.dtype, device: str) -> WanVideoVAE38:
     """Load real Wan2.2 VAE weights from the diffusers repo (offline base creation)."""
-    from diffusers import AutoencoderKLWan
-
-    from .wan_adapters import WanVideoVAE38
-
     vae = AutoencoderKLWan.from_pretrained(
         WAN22_DIFFUSERS_MODEL_ID, subfolder="vae", torch_dtype=torch_dtype
     )
@@ -106,8 +107,6 @@ def load_pretrained_wan_vae(*, torch_dtype: torch.dtype, device: str) -> WanVide
 
 def load_pretrained_wan_text_encoder(*, torch_dtype: torch.dtype, device: str) -> WanTextEncoder:
     """Load real UMT5-XXL encoder weights from the diffusers repo (offline base creation)."""
-    from transformers import UMT5EncoderModel
-
     encoder = UMT5EncoderModel.from_pretrained(
         WAN22_DIFFUSERS_MODEL_ID, subfolder="text_encoder", torch_dtype=torch_dtype
     )
@@ -126,8 +125,6 @@ def resolve_wan_dit_paths(
     if path.is_dir():
         return sorted(path.glob(WAN_DIT_PATTERN))
 
-    from huggingface_hub import snapshot_download
-
     snapshot_path = snapshot_download(
         repo_id=str(model_id_or_path),
         revision=revision,
@@ -145,8 +142,6 @@ def load_wan_video_dit(
     torch_dtype: torch.dtype,
     device: str,
 ) -> WanVideoDiT:
-    from .wan_video_dit import WanVideoDiT
-
     model = WanVideoDiT(**dit_config)
     state_dict = _read_wan_dit_safetensors(paths)
     model.load_state_dict(state_dict, strict=False)

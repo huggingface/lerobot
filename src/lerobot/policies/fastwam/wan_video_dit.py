@@ -29,6 +29,7 @@ from .wan.modules.model import (
     rope_params,
     sinusoidal_embedding_1d,
 )
+from .wan.utils.fm_solvers import get_sampling_sigmas
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +95,6 @@ def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
 
 
 def _get_wan_sampling_sigmas(num_inference_steps: int, shift: float) -> list[float]:
-    from .wan.utils.fm_solvers import get_sampling_sigmas
-
     return get_sampling_sigmas(num_inference_steps, shift)
 
 

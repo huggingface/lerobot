@@ -153,11 +153,25 @@ class FastWAMConfig(PreTrainedConfig):
         proprio_dim (int | None): Number of proprioception channels used as an
             extra text-context token. `None` disables proprio conditioning.
         action_horizon (int): Number of actions predicted by one policy call.
-        num_video_frames (int): Number of video frames used by FastWAM rollout.
+        num_video_frames (int): Raw video sampling window (in dataset frames). The
+            model actually operates on `model_video_frames` frames after subsampling
+            by `action_video_freq_ratio`.
+        action_video_freq_ratio (int): Actions are sampled at this multiple of the
+            video frame rate. Video frames are taken every `action_video_freq_ratio`-th
+            raw frame, so the model sees `(num_video_frames - 1) // ratio + 1` frames
+            spanning the same time window as `action_horizon` actions (ratio actions
+            per video frame).
         image_size (tuple[int, int]): Concatenated image size as `(height, width)`.
         context_len (int): Maximum text embedding token length.
         video_dit_config (dict[str, Any] | None): Wan video expert config.
         action_dit_config (dict[str, Any] | None): Action expert config.
+        use_gradient_checkpointing (bool): Enable activation checkpointing in both DiT
+            experts (trades compute for memory; propagated into the DiT configs).
+        freeze_video_expert (bool): Freeze the ~5B Wan video expert
+            (`model.video_expert`) so only the action expert + proprio encoder train.
+            Cuts the AdamW optimizer footprint substantially; the video expert keeps its
+            pretrained weights. (If enabled, also set `loss.lambda_video=0` to skip the
+            now-gradient-free video loss compute.)
     """
 
     n_obs_steps: int = 1
@@ -166,6 +180,7 @@ class FastWAMConfig(PreTrainedConfig):
     action_horizon: int = 32
     n_action_steps: int = 32
     num_video_frames: int = 33
+    action_video_freq_ratio: int = 4
     image_size: tuple[int, int] = (224, 448)
     context_len: int = 128
     model_id: str = WAN22_MODEL_ID
@@ -186,6 +201,8 @@ class FastWAMConfig(PreTrainedConfig):
     sigma_shift: float | None = None
     tiled: bool = False
     fp32_attention: bool = True
+    use_gradient_checkpointing: bool = False
+    freeze_video_expert: bool = False
     toggle_action_dimensions: list[int] = field(default_factory=list)
     video_scheduler: dict[str, float | int] = field(
         default_factory=lambda: {"train_shift": 5.0, "infer_shift": 5.0, "num_train_timesteps": 1000}
@@ -220,6 +237,8 @@ class FastWAMConfig(PreTrainedConfig):
         self.action_dit_config = self.action_dit_config or default_action_dit_config(self.action_dim)
         self.video_dit_config["fp32_attention"] = bool(self.fp32_attention)
         self.action_dit_config["fp32_attention"] = bool(self.fp32_attention)
+        self.video_dit_config["use_gradient_checkpointing"] = bool(self.use_gradient_checkpointing)
+        self.action_dit_config["use_gradient_checkpointing"] = bool(self.use_gradient_checkpointing)
         if self.input_features is None:
             height, width = self.image_size
             self.input_features = {
@@ -300,8 +319,28 @@ class FastWAMConfig(PreTrainedConfig):
             raise ValueError(f"`action_horizon` must be positive, got {self.action_horizon}.")
         if self.n_action_steps > self.action_horizon:
             raise ValueError("`n_action_steps` cannot exceed `action_horizon`.")
-        if self.num_video_frames % 4 != 1:
-            raise ValueError(f"`num_video_frames` must satisfy T % 4 == 1, got {self.num_video_frames}.")
+        if self.action_video_freq_ratio <= 0:
+            raise ValueError(
+                f"`action_video_freq_ratio` must be positive, got {self.action_video_freq_ratio}."
+            )
+        # Video frames are subsampled by action_video_freq_ratio; the resulting model frame
+        # count must satisfy T % 4 == 1 for the VAE temporal tokenization (mirrors the
+        # original FastWAM dataset asserts).
+        if (self.num_video_frames - 1) % self.action_video_freq_ratio != 0:
+            raise ValueError(
+                f"`num_video_frames - 1` ({self.num_video_frames - 1}) must be divisible by "
+                f"`action_video_freq_ratio` ({self.action_video_freq_ratio})."
+            )
+        if ((self.num_video_frames - 1) // self.action_video_freq_ratio) % 4 != 0:
+            raise ValueError(
+                f"Subsampled video transitions ({(self.num_video_frames - 1) // self.action_video_freq_ratio}) "
+                "must be divisible by 4 for VAE tokenization (i.e. model_video_frames % 4 == 1)."
+            )
+        if self.action_horizon % ((self.num_video_frames - 1) // self.action_video_freq_ratio) != 0:
+            raise ValueError(
+                f"`action_horizon` ({self.action_horizon}) must be divisible by the number of "
+                f"video transitions ({(self.num_video_frames - 1) // self.action_video_freq_ratio})."
+            )
         if not self.image_features:
             raise ValueError("FastWAM requires at least one image feature.")
         if self.action_feature is None:
@@ -333,8 +372,19 @@ class FastWAMConfig(PreTrainedConfig):
             raise ValueError(f"FastWAM image feature widths must sum to {width}, got {image_width_sum}.")
 
     @property
-    def observation_delta_indices(self) -> None:
-        return None
+    def model_video_frames(self) -> int:
+        """Number of video frames the model actually operates on, after subsampling the
+        raw `num_video_frames` window by `action_video_freq_ratio` (e.g. 33 -> 9)."""
+        return (self.num_video_frames - 1) // self.action_video_freq_ratio + 1
+
+    @property
+    def observation_delta_indices(self) -> list[int]:
+        # Load the video frames the model is supervised on: the future window subsampled by
+        # action_video_freq_ratio (e.g. [0, 4, 8, ..., 32] -> 9 frames). Each video frame is
+        # thus `action_video_freq_ratio` actions apart, while actions load at the full rate
+        # (`action_delta_indices` = range(action_horizon)). Returning None would load only the
+        # current frame, making the video target a static repeat (degenerate supervision).
+        return list(range(0, self.num_video_frames, self.action_video_freq_ratio))
 
     @property
     def action_delta_indices(self) -> list[int]:

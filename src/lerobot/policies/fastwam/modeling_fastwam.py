@@ -15,7 +15,9 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -25,6 +27,23 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import OBS_STATE
 
 from .configuration_fastwam import FastWAMConfig
+from .modular_fastwam import ActionDiT, FastWAM, MoT
+from .wan_components import (
+    build_wan_tokenizer,
+    load_pretrained_wan_text_encoder,
+    load_pretrained_wan_vae,
+)
+from .wan_video_dit import WanVideoDiT
+
+# TEMPORARY DEBUG — revert before merge. When FASTWAM_DECODE_DEBUG=1, route the first
+# eval episode's action chunks through `infer_joint` so the predicted video latents are
+# decoded by the VAE and dumped as PNG frames (sanity-checks the diffusers decode path).
+_FASTWAM_DECODE_DEBUG = os.environ.get("FASTWAM_DECODE_DEBUG") == "1"
+# Debug viz knob: extra divisor on the predicted-frame advance per env step. Should be 1
+# now that the model emits model_video_frames (so frames_per_step = (model_video_frames-1)/
+# action_horizon already encodes the action_video_freq_ratio). Was 4 to compensate for the
+# (now-fixed) bug where the model ran on the un-subsampled num_video_frames.
+_DEBUG_PRED_RATE_DIV = 1
 
 
 class FastWAMPolicy(PreTrainedPolicy):
@@ -43,13 +62,32 @@ class FastWAMPolicy(PreTrainedPolicy):
         self,
         config: FastWAMConfig,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+        **kwargs: Any,
     ):
+        # `make_policy`/`from_pretrained` forward extra kwargs (e.g. `dataset_meta`); the
+        # dataset feature metadata is already applied to `config` by make_policy upstream,
+        # so we accept and ignore them, matching the other LeRobot policies.
         super().__init__(config, dataset_stats)
         config.validate_features()
         self.config = config
         self.dataset_stats = dataset_stats
         self.model = self._build_core_model(config)
+        if config.freeze_video_expert and getattr(self.model, "video_expert", None) is not None:
+            # Freeze the ~5B Wan video expert; get_optim_params filters on requires_grad,
+            # so its params drop out of the optimizer (and DDP skips them).
+            self.model.video_expert.requires_grad_(False)
         self.reset()
+        # TEMPORARY DEBUG — revert before merge. Mark construction done so `reset()`
+        # counts only eval-rollout resets (one per episode), not this __init__ one.
+        self._debug_constructed = True
+        self._debug_episode_index = -1
+        self._debug_seen_tasks: set[str] = set()
+        self._debug_capturing = False
+        self._debug_episode_started = False
+        self._debug_episode_task = ""
+        self._debug_step_in_chunk = 0
+        self._debug_last_video: list | None = None
+        self._debug_pairs: list = []
 
     @classmethod
     def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
@@ -100,17 +138,33 @@ class FastWAMPolicy(PreTrainedPolicy):
             model.to(map_location)
         return model
 
-    def get_optim_params(self) -> dict[str, Any]:
+    def get_optim_params(self) -> list[Tensor]:
+        # Return the trainable tensors directly (a single param group). The optimizer
+        # builder wraps these in a param group; returning a bare {"params": [...]} dict
+        # instead would make `list(...)` yield the key string "params".
         params = (
             list(self.model.dit.parameters()) if hasattr(self.model, "dit") else list(self.model.parameters())
         )
         proprio_encoder = getattr(self.model, "proprio_encoder", None)
         if proprio_encoder is not None:
             params.extend(list(proprio_encoder.parameters()))
-        return {"params": [p for p in params if p.requires_grad]}
+        return [p for p in params if p.requires_grad]
 
     def reset(self) -> None:
         self._action_queue: deque[Tensor] = deque([], maxlen=self.config.n_action_steps)
+        # TEMPORARY DEBUG — revert before merge. Flush the just-finished episode's
+        # true-vs-pred video if it was a captured one (pairs accumulate only while
+        # capturing), then reset per-episode capture state.
+        if getattr(self, "_debug_constructed", False):
+            if _FASTWAM_DECODE_DEBUG and self._debug_pairs:
+                self._save_debug_video()
+            self._debug_episode_index += 1
+            self._debug_capturing = False
+            self._debug_episode_started = False
+            self._debug_episode_task = ""
+            self._debug_step_in_chunk = 0
+            self._debug_last_video = None
+            self._debug_pairs = []
 
     def _batch_to_training_sample(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Adapt a standard LeRobot batch to the FastWAM-native sample that
@@ -144,7 +198,7 @@ class FastWAMPolicy(PreTrainedPolicy):
                 sample["proprio"] = state.unsqueeze(1) if state.ndim == 2 else state
         return sample
 
-    def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any]]:
         """Compute FastWAM training loss for a LeRobot batch.
 
         Args:
@@ -154,19 +208,14 @@ class FastWAMPolicy(PreTrainedPolicy):
                 `action`, `action_is_pad`).
 
         Returns:
-            dict[str, Tensor]: Output dictionary containing the scalar `loss`
-            key required by LeRobot and optional tensor metrics.
+            tuple[Tensor, dict[str, Any]]: The scalar loss to backprop, and a dict of
+            logging metrics (e.g. `loss_video`, `loss_action`) — the `(loss, output_dict)`
+            contract the LeRobot training loop expects.
         """
 
         sample = self._batch_to_training_sample(batch)
         loss, metrics = self.model.training_loss(sample)
-        output = {"loss": loss}
-        for key, value in (metrics or {}).items():
-            if isinstance(value, Tensor):
-                output[key] = value.to(device=loss.device)
-            else:
-                output[key] = torch.as_tensor(value, device=loss.device)
-        return output
+        return loss, dict(metrics or {})
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **_: Any) -> Tensor:
@@ -183,7 +232,21 @@ class FastWAMPolicy(PreTrainedPolicy):
         self.eval()
         infer_kwargs = _batch_to_infer_kwargs(batch=batch, config=self.config)
         batch_size = _infer_kwargs_batch_size(infer_kwargs)
-        if batch_size == 1:
+        # TEMPORARY DEBUG — revert before merge. On captured episodes (first of each task),
+        # run the joint video+action path so the predicted video is VAE-decoded; stash it
+        # so select_action can pair each predicted frame with the real obs that follows.
+        if _FASTWAM_DECODE_DEBUG and getattr(self, "_debug_capturing", False) and batch_size == 1:
+            out = self.model.infer_joint(
+                **infer_kwargs,
+                num_video_frames=self.config.model_video_frames,
+                test_action_with_infer_action=False,
+            )
+            # The decoded rollout has model_video_frames frames spanning the full
+            # action_horizon (action_video_freq_ratio actions per frame); the per-step
+            # pairing indexes into it, so keep all frames.
+            self._debug_last_video = out["video"]
+            action = _action_from_model_output(out)
+        elif batch_size == 1:
             action = _action_from_model_output(self.model.infer_action(**infer_kwargs))
         else:
             action = torch.cat(
@@ -202,12 +265,98 @@ class FastWAMPolicy(PreTrainedPolicy):
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
         self.eval()
+        # TEMPORARY DEBUG — revert before merge. On the first step of each episode, decide
+        # whether to capture: yes iff this episode's task hasn't been captured yet (so we
+        # get the first episode of every task).
+        if _FASTWAM_DECODE_DEBUG and not self._debug_episode_started:
+            self._debug_episode_started = True
+            task = self._debug_task_name(batch)
+            if task not in self._debug_seen_tasks:
+                self._debug_seen_tasks.add(task)
+                self._debug_capturing = True
+                self._debug_episode_task = task
+        capturing = _FASTWAM_DECODE_DEBUG and self._debug_capturing
         if len(self._action_queue) == 0:
             actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
             self._action_queue.extend(actions.transpose(0, 1))
+            if capturing:
+                self._debug_step_in_chunk = 0  # a fresh chunk was just predicted
+        if capturing:
+            self._debug_capture_pair(batch)
+            self._debug_step_in_chunk += 1
         return self._action_queue.popleft()
 
-    def _build_core_model(self, config: FastWAMConfig) -> torch.nn.Module:
+    # ---- TEMPORARY DEBUG (revert before merge): true-vs-predicted video capture ----
+    @staticmethod
+    def _debug_task_name(batch: dict[str, Any]) -> str:
+        task = batch.get("task")
+        if isinstance(task, (list, tuple)):
+            task = task[0] if task else None
+        return str(task) if task else "no_task"
+
+    def _debug_capture_pair(self, batch: dict[str, Tensor]) -> None:
+        video = getattr(self, "_debug_last_video", None)
+        if not video:
+            return
+        real = _input_image_from_batch(batch, self.config)[0]  # [C,H,W] in [-1,1]
+        # Map env-step offset within the chunk to a predicted-frame index. The rollout has
+        # (model_video_frames - 1) transitions over action_horizon actions, so each env step
+        # advances frames_per_step = (model_video_frames-1)/action_horizon frames (= 1/ratio,
+        # e.g. 8/32 = 0.25 — one predicted frame per ~4 actions).
+        frames_per_step = (self.config.model_video_frames - 1) / max(1, self.config.action_horizon)
+        idx = min(
+            int(round(self._debug_step_in_chunk * frames_per_step / _DEBUG_PRED_RATE_DIV)),
+            len(video) - 1,
+        )
+        pair = self._debug_hstack(self._debug_tensor_to_pil(real), video[idx])
+        self._debug_label_pair(pair, left_w=real.shape[-1], pred_idx=idx)
+        self._debug_pairs.append(pair)
+
+    @staticmethod
+    def _debug_label_pair(pair, left_w: int, pred_idx: int) -> None:
+        from PIL import ImageDraw
+
+        draw = ImageDraw.Draw(pair)
+        draw.text((3, 3), "true", fill=(255, 255, 0))
+        draw.text((left_w + 3, 3), f"pred[t+{pred_idx}]", fill=(0, 255, 0))
+
+    @staticmethod
+    def _debug_tensor_to_pil(image: Tensor):
+        from PIL import Image
+
+        arr = ((image.detach().float().clamp(-1.0, 1.0) + 1.0) * 127.5).to(torch.uint8)
+        return Image.fromarray(arr.cpu().permute(1, 2, 0).numpy())
+
+    @staticmethod
+    def _debug_hstack(left, right):
+        from PIL import Image
+
+        if right.height != left.height:
+            right = right.resize((round(right.width * left.height / right.height), left.height))
+        canvas = Image.new("RGB", (left.width + right.width, left.height))
+        canvas.paste(left, (0, 0))
+        canvas.paste(right, (left.width, 0))
+        return canvas
+
+    def _save_debug_video(self) -> None:
+        import re
+
+        import numpy as np
+
+        from lerobot.utils.io_utils import write_video
+
+        pairs = getattr(self, "_debug_pairs", None)
+        if not pairs:
+            return
+        out_dir = Path("outputs/fastwam_debug")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r"[^a-zA-Z0-9]+", "_", self._debug_episode_task).strip("_")[:40] or "task"
+        path = out_dir / f"ep{self._debug_episode_index:03d}_{slug}_true_vs_pred.mp4"
+        frames = [np.asarray(pair) for pair in pairs]  # HWC uint8 RGB
+        write_video(path, frames, fps=30)
+        logging.info("FASTWAM_DECODE_DEBUG: wrote %d-frame mp4 (left=true, right=pred) to %s", len(frames), path)
+
+    def _build_core_model(self, config: FastWAMConfig) -> FastWAM:
         """Build the FastWAM core for training / inference.
 
         Only the trainable parts (the MoT DiT and the proprio encoder) are
@@ -218,14 +367,6 @@ class FastWAMPolicy(PreTrainedPolicy):
         across checkpoints) and are intentionally excluded from `model.safetensors`
         — see `FastWAM.__init__`. The tokenizer comes from `google/umt5-xxl`.
         """
-        from .modular_fastwam import ActionDiT, FastWAM, MoT
-        from .wan_components import (
-            build_wan_tokenizer,
-            load_pretrained_wan_text_encoder,
-            load_pretrained_wan_vae,
-        )
-        from .wan_video_dit import WanVideoDiT
-
         dtype = _dtype_from_name(config.torch_dtype)
         device = config.device
         video_expert = WanVideoDiT(**config.video_dit_config).to(device=device, dtype=dtype)
@@ -342,15 +483,24 @@ def batch_device(batch: dict[str, Any]) -> torch.device:
 
 
 def _stack_video_from_images(batch: dict[str, Tensor], config: FastWAMConfig) -> Tensor:
-    image_keys = sorted(k for k in batch if k.startswith("observation.images."))
+    # Exclude the `*_is_pad` companion tensors that delta-timestamp loading adds alongside
+    # each camera (shape [B, T]); they share the `observation.images.` prefix but are not frames.
+    image_keys = sorted(
+        k for k in batch if k.startswith("observation.images.") and not k.endswith("_is_pad")
+    )
     if not image_keys:
         raise KeyError("FastWAM batch must contain `video` or `observation.images.*` keys.")
     images = [batch[key] for key in image_keys]
+    # Cameras concatenate along width (last dim) in both the single-frame and temporal case.
     image = torch.cat(images, dim=-1) if len(images) > 1 else images[0]
     if image.ndim == 4:
-        image = image.unsqueeze(2).repeat(1, 1, config.num_video_frames, 1, 1)
-    if image.ndim != 5:
-        raise ValueError(f"Expected image batch [B,C,H,W] or video [B,C,T,H,W], got {tuple(image.shape)}.")
+        # [B, C, H, W]: a single frame (e.g. the live eval observation) -> repeat across time.
+        image = image.unsqueeze(2).repeat(1, 1, config.model_video_frames, 1, 1)
+    elif image.ndim == 5:
+        # [B, T, C, H, W]: temporal stack from delta-timestamp loading -> [B, C, T, H, W].
+        image = image.permute(0, 2, 1, 3, 4)
+    else:
+        raise ValueError(f"Expected image batch [B,C,H,W] or temporal [B,T,C,H,W], got {tuple(image.shape)}.")
     return image
 
 

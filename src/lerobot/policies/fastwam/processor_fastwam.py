@@ -43,6 +43,35 @@ from .configuration_fastwam import FastWAMConfig
 
 
 @dataclass
+@ProcessorStepRegistry.register(name="fastwam_image_crop_resize_processor")
+class FastWAMImageCropResizeProcessorStep(ImageCropResizeProcessorStep):
+    """`ImageCropResizeProcessorStep` that tolerates a leading temporal/batch stack.
+
+    FastWAM loads a per-camera video stack, so image observations arrive as
+    ``[B, T, C, H, W]``. torchvision's crop/resize only accept ``[..., C, H, W]`` with a
+    single leading batch dim (resize raises on 5-D input), so we flatten any leading
+    dims into the batch, apply the base 4-D crop/resize, then restore the leading shape.
+    Crop/resize params and feature-shape bookkeeping are inherited unchanged.
+    """
+
+    def observation(self, observation: dict) -> dict:
+        leads: dict[str, tuple] = {}
+        flat_input = dict(observation)
+        for key, img in observation.items():
+            if "image" in key and torch.is_tensor(img) and img.ndim > 4:
+                leads[key] = tuple(img.shape[:-3])
+                flat_input[key] = img.reshape(-1, *img.shape[-3:])
+        processed = super().observation(flat_input)
+        if not leads:
+            return processed
+        out = dict(processed)
+        for key, lead in leads.items():
+            im = processed[key]
+            out[key] = im.reshape(*lead, *im.shape[-3:])
+        return out
+
+
+@dataclass
 @ProcessorStepRegistry.register(name="fastwam_action_toggle_processor")
 class FastWAMActionToggleProcessorStep(ActionProcessorStep):
     """Apply FastWAM LIBERO toggle semantics to configured action dimensions."""
@@ -111,7 +140,8 @@ def make_fastwam_pre_post_processors(
     resize_steps = []
     if visual_shapes:
         target_hw = (int(visual_shapes[0][1]), int(visual_shapes[0][2]))
-        resize_steps.append(ImageCropResizeProcessorStep(resize_size=target_hw))
+        # FastWAM-aware resize: tolerates the leading temporal dim of the video stack.
+        resize_steps.append(FastWAMImageCropResizeProcessorStep(resize_size=target_hw))
 
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
