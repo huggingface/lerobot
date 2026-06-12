@@ -516,6 +516,9 @@ def compute_episode_stats(
             continue
 
         if any(d == 0 for d in features[key].get("shape", ())):
+            logging.warning(
+                f"Skipping stats for feature '{key}' with a zero-width shape {features[key]['shape']}."
+            )
             continue
 
         if features[key]["dtype"] in ["image", "video"]:
