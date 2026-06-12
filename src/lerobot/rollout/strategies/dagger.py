@@ -73,7 +73,7 @@ from lerobot.utils.utils import log_say
 
 from ..configs import DAggerKeyboardConfig, DAggerPedalConfig, DAggerStrategyConfig
 from ..context import RolloutContext
-from .core import RolloutStrategy, estimate_max_episode_seconds, reset_action_smoothing, safe_push_to_hub, send_next_action
+from .core import RolloutStrategy, estimate_max_episode_seconds, safe_push_to_hub, send_next_action
 
 PYNPUT_AVAILABLE = _pynput_available
 keyboard = None
@@ -385,7 +385,6 @@ class DAggerStrategy(RolloutStrategy):
 
         engine.reset()
         interpolator.reset()
-        reset_action_smoothing()
         events.reset()
         engine.resume()
 
@@ -543,7 +542,6 @@ class DAggerStrategy(RolloutStrategy):
 
         engine.reset()
         interpolator.reset()
-        reset_action_smoothing()
         events.reset()
         engine.resume()
 
@@ -733,7 +731,6 @@ class DAggerStrategy(RolloutStrategy):
         elif new_phase == DAggerPhase.AUTONOMOUS:
             logger.info("Resuming autonomous mode - resetting engine and interpolator")
             interpolator.reset()
-            reset_action_smoothing()
             engine.reset()
             # Feed a fresh observation so the first action chunk is based on
             # the current (post-correction) state, not the stale pre-correction
