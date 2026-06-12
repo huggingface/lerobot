@@ -485,6 +485,14 @@ class RealSenseCamera(Camera):
                 if self.use_depth:
                     depth_frame_raw = frame.get_depth_frame()
                     depth_frame = np.asanyarray(depth_frame_raw.get_data())
+                    # Normalize to mm. D435: 1 mm/count; D405: 0.1 mm/count.
+                    depth_scale_mm = depth_frame_raw.get_units() * 1000.0
+                    if abs(depth_scale_mm - 1.0) > 1e-3:
+                        scaled = depth_frame.astype(np.float32) * depth_scale_mm
+                        # Preserve 0 as invalid sentinel; clip guards against any
+                        # future camera shipping with depth_scale > 1 mm/count.
+                        scaled = np.where(depth_frame == 0, 0, scaled)
+                        depth_frame = np.clip(scaled, 0, np.iinfo(np.uint16).max).astype(np.uint16)
                     processed_depth_frame = self._postprocess_image(depth_frame, depth_frame=True)
 
                 capture_time = time.perf_counter()
@@ -532,7 +540,53 @@ class RealSenseCamera(Camera):
             self.latest_timestamp = None
             self.new_frame_event.clear()
 
-    # NOTE(Steven): Missing implementation for depth for now
+    @check_if_not_connected
+    def async_read_depth(self, timeout_ms: float = 200) -> NDArray[Any]:
+        """
+        Reads the latest available depth frame asynchronously.
+
+        This method retrieves the most recent depth frame captured by the background
+        read thread. It does not block waiting for the camera hardware directly,
+        but may wait up to timeout_ms for the background thread to provide a frame.
+        It is “best effort” under high FPS.
+
+        Args:
+            timeout_ms (float): Maximum time in milliseconds to wait for a frame
+                to become available. Defaults to 200ms (0.2 seconds).
+
+        Returns:
+            np.ndarray:
+            The latest captured depth frame (uint16, millimeters), processed according to configuration.
+
+        Raises:
+            DeviceNotConnectedError: If the camera is not connected.
+            TimeoutError: If no frame data becomes available within the specified timeout.
+            RuntimeError: If the depth stream is not enabled, if the background
+                thread died unexpectedly, or if the event fires without a frame available.
+        """
+
+        if not self.use_depth:
+            raise RuntimeError(
+                f"Failed to capture depth frame via async_read_depth(); depth stream is not enabled for {self}."
+            )
+        if self.thread is None or not self.thread.is_alive():
+            raise RuntimeError(f"{self} read thread is not running.")
+
+        if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
+            raise TimeoutError(
+                f"Timed out waiting for depth frame from camera {self} after {timeout_ms} ms. "
+                f"Read thread alive: {self.thread.is_alive()}."
+            )
+
+        with self.frame_lock:
+            frame = self.latest_depth_frame
+            self.new_frame_event.clear()
+
+        if frame is None:
+            raise RuntimeError(f"Internal error: Event set but no depth frame available for {self}.")
+
+        return frame
+
     @check_if_not_connected
     def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
         """
@@ -575,7 +629,52 @@ class RealSenseCamera(Camera):
 
         return frame
 
-    # NOTE(Steven): Missing implementation for depth for now
+    @check_if_not_connected
+    def read_depth_latest(self, max_age_ms: int = 500) -> NDArray[Any]:
+        """
+        Returns the most recent depth frame captured immediately (Peeking).
+
+        This method is non-blocking and returns whatever is currently in the
+        memory buffer. Unlike `async_read_depth`, it does not clear the new-frame
+        event nor wait for a fresh frame — it just peeks at whatever the
+        background capture thread has most recently stored. The frame may be
+        stale (hanging camera scenario e.g.).
+
+        Args:
+            max_age_ms (int): Maximum age in milliseconds a buffered frame may
+                have before it is rejected as stale. Defaults to 500ms.
+
+        Returns:
+            NDArray[Any]: The depth frame (numpy array, uint16, millimeters).
+
+        Raises:
+            TimeoutError: If the latest depth frame is older than `max_age_ms`.
+            DeviceNotConnectedError: If the camera is not connected.
+            RuntimeError: If the depth stream is not enabled, if the background
+                thread is not running, or if no depth frames have been captured yet.
+        """
+
+        if not self.use_depth:
+            raise RuntimeError(
+                f"Failed to capture depth frame '.read_depth_latest()'. Depth stream is not enabled for {self}."
+            )
+        if self.thread is None or not self.thread.is_alive():
+            raise RuntimeError(f"{self} read thread is not running.")
+
+        with self.frame_lock:
+            depth_map = self.latest_depth_frame
+            timestamp = self.latest_timestamp
+
+        if depth_map is None or timestamp is None:
+            raise RuntimeError(f"{self} has not captured any depth frames yet.")
+
+        age_ms = (time.perf_counter() - timestamp) * 1e3
+        if age_ms > max_age_ms:
+            raise TimeoutError(
+                f"{self} latest depth frame is too old: {age_ms:.1f} ms (max allowed: {max_age_ms} ms)."
+            )
+        return depth_map
+
     @check_if_not_connected
     def read_latest(self, max_age_ms: int = 500) -> NDArray[Any]:
         """Return the most recent (color) frame captured immediately (Peeking).
