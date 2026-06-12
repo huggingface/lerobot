@@ -1,4 +1,4 @@
-# Upstream base: 49755a3d (feat(processor): Add in-memory processor pipeline serialization (#3732))
+# Upstream base: 30790de1 (feat(edit-dataset): add `concatenate_videos` opt-out to merge (#3663))
 diff --git a/src/lerobot/rollout/configs.py b/src/lerobot/rollout/configs.py
 index 60c47cfb..97fe0db7 100644
 --- a/src/lerobot/rollout/configs.py

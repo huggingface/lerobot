@@ -1,4 +1,4 @@
-# Upstream base: 49755a3d (feat(processor): Add in-memory processor pipeline serialization (#3732))
+# Upstream base: 30790de1 (feat(edit-dataset): add `concatenate_videos` opt-out to merge (#3663))
 diff --git a/src/lerobot/configs/policies.py b/src/lerobot/configs/policies.py
 index 91701af6..9c9f10fc 100644
 --- a/src/lerobot/configs/policies.py
@@ -104,10 +104,10 @@ index a42b38ba..c9621021 100644
          policy = policy_cls.from_pretrained(**kwargs)
      elif cfg.pretrained_path and cfg.use_peft:
 diff --git a/src/lerobot/policies/pretrained.py b/src/lerobot/policies/pretrained.py
-index 724f920f..65c798e5 100644
+index a69487f3..e9522ea4 100644
 --- a/src/lerobot/policies/pretrained.py
 +++ b/src/lerobot/policies/pretrained.py
-@@ -91,6 +91,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+@@ -153,6 +153,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
          """
          The policy is set in evaluation mode by default using `policy.eval()` (dropout modules are
          deactivated). To train it, you should first set it back in training mode with `policy.train()`.
@@ -118,7 +118,7 @@ index 724f920f..65c798e5 100644
          """
          if config is None:
              config = PreTrainedConfig.from_pretrained(
-@@ -104,6 +108,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+@@ -166,6 +170,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                  revision=revision,
                  **kwargs,
              )
@@ -126,7 +126,7 @@ index 724f920f..65c798e5 100644
          model_id = str(pretrained_name_or_path)
          instance = cls(config, **kwargs)
          if os.path.isdir(model_id):
-@@ -111,11 +116,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+@@ -173,11 +178,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
              model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
              policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
          else:
@@ -140,7 +140,7 @@ index 724f920f..65c798e5 100644
                      cache_dir=cache_dir,
                      force_download=force_download,
                      proxies=proxies,
-@@ -124,10 +130,28 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+@@ -186,10 +192,28 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                      local_files_only=local_files_only,
                  )
                  policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
@@ -173,7 +173,7 @@ index 724f920f..65c798e5 100644
  
          policy.to(config.device)
          policy.eval()
-@@ -208,12 +232,17 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+@@ -270,12 +294,17 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
          self,
          cfg: TrainPipelineConfig,
          peft_model=None,
@@ -191,7 +191,7 @@ index 724f920f..65c798e5 100644
          # Push the files to the repo in a single commit
          with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
              saved_path = Path(tmp) / repo_id
-@@ -234,16 +263,32 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+@@ -296,16 +325,32 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
  
              cfg.save_pretrained(saved_path)  # Calls _save_pretrained and stores train config
  
@@ -225,7 +225,7 @@ index 724f920f..65c798e5 100644
 +                logging.info(f"latest-checkpoint pointer updated → {revision}")
  
      def generate_model_card(
-         self, dataset_repo_id: str, model_type: str, license: str | None, tags: list[str] | None
+         self,
 diff --git a/src/lerobot/processor/pipeline.py b/src/lerobot/processor/pipeline.py
 index b9b9c6c4..0722ef33 100644
 --- a/src/lerobot/processor/pipeline.py
@@ -285,10 +285,10 @@ index b9b9c6c4..0722ef33 100644
              "force_download": force_download,
              "resume_download": resume_download,
 diff --git a/src/lerobot/scripts/lerobot_train.py b/src/lerobot/scripts/lerobot_train.py
-index 4ddef310..c32b5bda 100644
+index 70a5e9e9..0af6a827 100644
 --- a/src/lerobot/scripts/lerobot_train.py
 +++ b/src/lerobot/scripts/lerobot_train.py
-@@ -336,6 +336,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
+@@ -345,6 +345,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
          preprocessor, postprocessor = make_pre_post_processors(
              policy_cfg=cfg.policy,
              pretrained_path=processor_pretrained_path,
@@ -296,7 +296,7 @@ index 4ddef310..c32b5bda 100644
              **processor_kwargs,
          )
  
-@@ -516,6 +517,21 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
+@@ -577,6 +578,21 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                  if wandb_logger:
                      wandb_logger.log_policy(checkpoint_dir)
  
