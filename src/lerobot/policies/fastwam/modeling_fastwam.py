@@ -14,23 +14,17 @@
 
 from __future__ import annotations
 
-import shutil
-import warnings
+import logging
 from collections import deque
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import torch
 from torch import Tensor
 
-from lerobot.configs import PreTrainedConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import OBS_STATE
 
 from .configuration_fastwam import FastWAMConfig
-
-if TYPE_CHECKING:
-    from .wan_components import WanCheckpointPaths
 
 
 class FastWAMPolicy(PreTrainedPolicy):
@@ -49,98 +43,62 @@ class FastWAMPolicy(PreTrainedPolicy):
         self,
         config: FastWAMConfig,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
-        **kwargs: Any,
     ):
-        skip_wan_init = bool(kwargs.pop("_skip_wan_init", False))
         super().__init__(config, dataset_stats)
         config.validate_features()
         self.config = config
         self.dataset_stats = dataset_stats
-        suppress_base_init_warning = bool(kwargs.pop("_suppress_base_init_warning", False))
-        if not skip_wan_init and not suppress_base_init_warning:
-            warnings.warn(
-                "FastWAMPolicy(config) initializes from architecture/config and does not load pretrained "
-                "FastWAM weights. For training or evaluation, use `make_policy(config)` or "
-                "`FastWAMPolicy.from_pretrained(...)`.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-        if skip_wan_init:
-            self.model = _build_core_model_from_architecture(config)
-        else:
-            self.model = self._build_core_model(config)
+        self.model = self._build_core_model(config)
         self.reset()
 
     @classmethod
-    def from_pretrained(
-        cls,
-        pretrained_name_or_path: str | Path,
-        *,
-        config: FastWAMConfig | None = None,
-        force_download: bool = False,
-        resume_download: bool | None = None,
-        proxies: dict | None = None,
-        token: str | bool | None = None,
-        cache_dir: str | Path | None = None,
-        local_files_only: bool = False,
-        revision: str | None = None,
-        strict: bool = False,
-        **kwargs: Any,
-    ) -> FastWAMPolicy:
-        """Load FastWAM weights and local Wan components from one HF directory.
+    def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
+        """Shape-aware load that supports cross-embodiment fine-tuning.
 
-        Args:
-            pretrained_name_or_path (str | Path): HF-format policy directory
-                containing `config.json`, `model.safetensors`, local Wan VAE,
-                local UMT5 text encoder safetensors, and tokenizer files.
-            config (FastWAMConfig | None): Optional config override. When
-                omitted, `config.json` is read from `pretrained_name_or_path`.
-            force_download (bool): Forwarded to LeRobot's pretrained loader.
-            resume_download (bool | None): Forwarded to LeRobot's pretrained loader.
-            proxies (dict | None): Forwarded to LeRobot's pretrained loader.
-            token (str | bool | None): Forwarded to LeRobot's pretrained loader.
-            cache_dir (str | Path | None): Forwarded to LeRobot's pretrained loader.
-            local_files_only (bool): Forwarded to LeRobot's pretrained loader.
-            revision (str | None): Forwarded to LeRobot's pretrained loader.
-            strict (bool): Whether safetensors loading should require an exact
-                match between checkpoint keys and policy module keys.
-            **kwargs (Any): Extra constructor arguments forwarded to
-                `FastWAMPolicy`.
+        `safetensors.load_model(strict=False)` ignores missing/unexpected keys but
+        still raises on a shape mismatch for a shared key. When fine-tuning from a
+        checkpoint trained on a different embodiment (e.g. the LIBERO 7-DoF / 8-dim
+        checkpoint adapted to a 6-DoF / 6-dim arm), the action encoder/head and
+        proprio encoder legitimately differ in shape. With `strict=False` we drop
+        only those shape-mismatched tensors — leaving them at their freshly
+        initialized values — and load every compatible tensor. With `strict=True`
+        the standard exact-match loader is used.
         """
+        from safetensors import safe_open
 
-        pretrained_path = _resolve_pretrained_directory(
-            pretrained_name_or_path=pretrained_name_or_path,
-            force_download=force_download,
-            token=token,
-            cache_dir=cache_dir,
-            local_files_only=local_files_only,
-            revision=revision,
-        )
-        if config is None:
-            config = PreTrainedConfig.from_pretrained(pretrained_path)
-            if not isinstance(config, FastWAMConfig):
-                raise TypeError(f"Expected FastWAM config, got {type(config).__name__}.")
-        kwargs["_skip_wan_init"] = True
-        policy = super().from_pretrained(
-            pretrained_path,
-            config=config,
-            force_download=force_download,
-            resume_download=resume_download,
-            proxies=proxies,
-            token=token,
-            cache_dir=cache_dir,
-            local_files_only=local_files_only,
-            revision=revision,
-            strict=strict,
-            **kwargs,
-        )
-        policy.load_wan_components_from_pretrained(pretrained_path)
-        policy.eval()
-        return policy
+        model_state_dict = model.state_dict()
+        mismatched = []
+        with safe_open(model_file, framework="pt") as f:
+            checkpoint_keys = list(f.keys())
+            for key in checkpoint_keys:
+                if key in model_state_dict and tuple(model_state_dict[key].shape) != tuple(
+                    f.get_slice(key).get_shape()
+                ):
+                    mismatched.append(key)
 
-    def _save_pretrained(self, save_directory: Path) -> None:
-        super()._save_pretrained(save_directory)
-        _copy_wan_components_from_policy(policy=self, save_directory=save_directory)
+        if not mismatched:
+            return super()._load_as_safetensor(model, model_file, map_location, strict)
+        if strict:
+            raise RuntimeError(
+                f"FastWAM: {len(mismatched)} checkpoint tensors have a shape mismatch under "
+                f"strict=True: {mismatched}"
+            )
+
+        from safetensors.torch import load_file
+
+        logging.warning(
+            "FastWAM cross-embodiment load: reinitializing %d shape-mismatched tensor(s), keeping "
+            "every compatible weight: %s",
+            len(mismatched),
+            mismatched,
+        )
+        state_dict = load_file(model_file, device="cpu")
+        for key in mismatched:
+            state_dict.pop(key, None)
+        model.load_state_dict(state_dict, strict=False)
+        if map_location and map_location != "cpu":
+            model.to(map_location)
+        return model
 
     def get_optim_params(self) -> dict[str, Any]:
         params = (
@@ -151,20 +109,40 @@ class FastWAMPolicy(PreTrainedPolicy):
             params.extend(list(proprio_encoder.parameters()))
         return {"params": [p for p in params if p.requires_grad]}
 
-    def load_wan_components_from_pretrained(self, pretrained_name_or_path: str | Path) -> None:
-        """Attach local Wan VAE, text encoder, and tokenizer from a HF directory.
-
-        Args:
-            pretrained_name_or_path (str | Path): Directory containing
-                `Wan2.2_VAE.safetensors`, `models_t5_umt5-xxl-enc-bf16.safetensors`,
-                and `google/umt5-xxl/` tokenizer files.
-        """
-
-        paths = resolve_wan_component_paths(pretrained_name_or_path)
-        _load_wan_components_into_policy(policy=self, paths=paths)
-
     def reset(self) -> None:
         self._action_queue: deque[Tensor] = deque([], maxlen=self.config.n_action_steps)
+
+    def _batch_to_training_sample(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        """Adapt a standard LeRobot batch to the FastWAM-native sample that
+        `FastWAM.build_inputs` consumes (`video`, `action`, `context`/`context_mask`,
+        per-frame `proprio`).
+
+        The LeRobot training loop passes raw `observation.images.*`, a single-step
+        `observation.state` `[B, D]`, `action`, and a language `task` string. We do
+        only the translation `build_inputs` can't: stack the camera frames into a
+        video, encode the prompt with the (frozen) text encoder (mirroring inference,
+        so language-conditioned datasets need no precomputed context), and give proprio
+        the per-frame axis `build_inputs` indexes. All shape/presence validation is
+        left to `build_inputs`, the single authority on the contract.
+        """
+        sample = dict(batch)
+        if "video" not in sample:
+            sample["video"] = _stack_video_from_images(batch, self.config)
+        if "context" not in sample or "context_mask" not in sample:
+            prompt = _prompt_from_batch(batch=batch, config=self.config)
+            if prompt is None:
+                raise KeyError(
+                    "FastWAM training requires a `task`/`prompt` to encode text context, "
+                    "or precomputed `context`/`context_mask` in the batch."
+                )
+            sample["context"], sample["context_mask"] = self.model.encode_prompt(prompt)
+        if self.config.proprio_dim is not None and "proprio" not in sample:
+            state = sample.get(OBS_STATE)
+            if state is not None:
+                # LeRobot gives a single-step state [B, D]; build_inputs expects
+                # per-frame [B, T, D] and uses frame 0, so add a T=1 axis.
+                sample["proprio"] = state.unsqueeze(1) if state.ndim == 2 else state
+        return sample
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Compute FastWAM training loss for a LeRobot batch.
@@ -180,7 +158,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             key required by LeRobot and optional tensor metrics.
         """
 
-        sample = _batch_to_training_sample(batch=batch, config=self.config)
+        sample = self._batch_to_training_sample(batch)
         loss, metrics = self.model.training_loss(sample)
         output = {"loss": loss}
         for key, value in (metrics or {}).items():
@@ -230,223 +208,57 @@ class FastWAMPolicy(PreTrainedPolicy):
         return self._action_queue.popleft()
 
     def _build_core_model(self, config: FastWAMConfig) -> torch.nn.Module:
-        return _build_core_model_from_wan22(config)
+        """Build the FastWAM core for training / inference.
 
-
-def _resolve_pretrained_directory(
-    pretrained_name_or_path: str | Path,
-    *,
-    force_download: bool,
-    token: str | bool | None,
-    cache_dir: str | Path | None,
-    local_files_only: bool,
-    revision: str | None,
-) -> Path:
-    path = Path(pretrained_name_or_path)
-    if path.is_dir():
-        return path
-
-    from huggingface_hub import snapshot_download
-
-    from .wan_components import (
-        WAN_T5_CHECKPOINT,
-        WAN_T5_TOKENIZER,
-        WAN_VAE_CHECKPOINT,
-    )
-
-    snapshot_path = snapshot_download(
-        repo_id=str(pretrained_name_or_path),
-        revision=revision,
-        cache_dir=cache_dir,
-        force_download=force_download,
-        token=token,
-        local_files_only=local_files_only,
-        allow_patterns=[
-            "config.json",
-            "model.safetensors",
-            WAN_VAE_CHECKPOINT,
-            WAN_T5_CHECKPOINT,
-            f"{WAN_T5_TOKENIZER}/**",
-        ],
-    )
-    return Path(snapshot_path)
-
-
-def resolve_wan_component_paths(pretrained_name_or_path: str | Path) -> WanCheckpointPaths:
-    """Resolve local Wan component paths stored beside FastWAM HF weights.
-
-    Args:
-        pretrained_name_or_path (str | Path): HF-format FastWAM directory.
-
-    Returns:
-        WanCheckpointPaths: Existing VAE, text encoder, and tokenizer paths.
-        DiT shards are intentionally optional here because FastWAM HF
-        checkpoints store trainable DiT weights in `model.safetensors`.
-    """
-
-    from .wan_components import resolve_wan_checkpoint_paths
-
-    return resolve_wan_checkpoint_paths(
-        pretrained_name_or_path,
-        load_dit=False,
-        load_text_encoder=True,
-    )
-
-
-def _load_wan_components_into_policy(policy: FastWAMPolicy, paths: WanCheckpointPaths) -> None:
-    from .wan_components import load_wan_text_encoder, load_wan_tokenizer, load_wan_vae
-
-    if paths.text_encoder is None or paths.tokenizer is None:
-        raise FileNotFoundError("FastWAM HF checkpoint requires Wan text encoder and tokenizer sidecars.")
-    dtype = _dtype_from_name(policy.config.torch_dtype)
-    device = str(policy.config.device)
-    policy.model.vae = load_wan_vae(paths.vae, torch_dtype=dtype, device=device)
-    policy.model.text_encoder = load_wan_text_encoder(paths.text_encoder, torch_dtype=dtype, device=device)
-    policy.model.tokenizer = load_wan_tokenizer(
-        paths.tokenizer,
-        tokenizer_max_len=int(policy.config.tokenizer_max_len),
-    )
-    model_paths = dict(getattr(policy.model, "model_paths", {}) or {})
-    model_paths.update(
-        {
-            "vae": str(paths.vae),
-            "text_encoder": str(paths.text_encoder),
-            "tokenizer": str(paths.tokenizer),
-        }
-    )
-    policy.model.model_paths = model_paths
-
-
-def _copy_wan_components_from_policy(policy: FastWAMPolicy, save_directory: Path) -> None:
-    model_paths = getattr(policy.model, "model_paths", {}) or {}
-    paths = {
-        "vae": model_paths.get("vae"),
-        "text_encoder": model_paths.get("text_encoder"),
-        "tokenizer": model_paths.get("tokenizer"),
-    }
-    missing = [name for name, path in paths.items() if path is None]
-    if missing:
-        raise RuntimeError(
-            "FastWAM save_pretrained requires local Wan component paths for "
-            f"{missing}. Load or initialize the policy with local Wan VAE, text encoder, and tokenizer files."
+        Only the trainable parts (the MoT DiT and the proprio encoder) are
+        materialized empty here and then filled from the policy's
+        `model.safetensors` by the base `from_pretrained`. The *frozen* Wan2.2 VAE
+        and UMT5 text encoder are loaded with their real weights from the
+        `Wan-AI/Wan2.2-TI2V-5B-Diffusers` repo (cached in the HF cache, shared
+        across checkpoints) and are intentionally excluded from `model.safetensors`
+        — see `FastWAM.__init__`. The tokenizer comes from `google/umt5-xxl`.
+        """
+        from .modular_fastwam import ActionDiT, FastWAM, MoT
+        from .wan_components import (
+            build_wan_tokenizer,
+            load_pretrained_wan_text_encoder,
+            load_pretrained_wan_vae,
         )
-    _copy_component_path(Path(paths["vae"]), save_directory / Path(paths["vae"]).name)
-    _copy_component_path(Path(paths["text_encoder"]), save_directory / Path(paths["text_encoder"]).name)
-    tokenizer_source = Path(paths["tokenizer"])
-    _copy_component_path(tokenizer_source, save_directory / "google" / "umt5-xxl")
+        from .wan_video_dit import WanVideoDiT
 
-
-def _copy_component_path(source: Path, destination: Path) -> None:
-    source = source.expanduser()
-    if not source.exists():
-        raise FileNotFoundError(f"FastWAM component path does not exist: {source}")
-    if source.resolve() == destination.resolve():
-        return
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if source.is_dir():
-        shutil.copytree(source, destination, dirs_exist_ok=True)
-    else:
-        shutil.copy2(source, destination)
-
-
-def _build_core_model_from_wan22(config: FastWAMConfig) -> torch.nn.Module:
-    from .modular_fastwam import FastWAM
-
-    dtype = _dtype_from_name(config.torch_dtype)
-    return FastWAM.from_wan22_pretrained(
-        device=config.device,
-        torch_dtype=dtype,
-        model_id=config.model_id,
-        tokenizer_model_id=config.tokenizer_model_id,
-        tokenizer_max_len=config.tokenizer_max_len,
-        load_text_encoder=config.load_text_encoder,
-        proprio_dim=config.proprio_dim,
-        video_dit_config=config.video_dit_config,
-        action_dit_config=config.action_dit_config,
-        mot_checkpoint_mixed_attn=config.mot_checkpoint_mixed_attn,
-        video_train_shift=float(config.video_scheduler["train_shift"]),
-        video_infer_shift=float(config.video_scheduler["infer_shift"]),
-        video_num_train_timesteps=int(config.video_scheduler["num_train_timesteps"]),
-        action_train_shift=float(config.action_scheduler["train_shift"]),
-        action_infer_shift=float(config.action_scheduler["infer_shift"]),
-        action_num_train_timesteps=int(config.action_scheduler["num_train_timesteps"]),
-        loss_lambda_video=float(config.loss["lambda_video"]),
-        loss_lambda_action=float(config.loss["lambda_action"]),
-    )
-
-
-def _build_core_model_from_architecture(config: FastWAMConfig) -> torch.nn.Module:
-    from .modular_fastwam import ActionDiT, FastWAM, MoT
-    from .wan_video_dit import WanVideoDiT
-
-    dtype = _dtype_from_name(config.torch_dtype)
-    video_expert = WanVideoDiT(**config.video_dit_config).to(device=config.device, dtype=dtype)
-    action_expert = ActionDiT(**config.action_dit_config).to(device=config.device, dtype=dtype)
-    mot = MoT(
-        mixtures={"video": video_expert, "action": action_expert},
-        mot_checkpoint_mixed_attn=config.mot_checkpoint_mixed_attn,
-    )
-    return FastWAM(
-        video_expert=video_expert,
-        action_expert=action_expert,
-        mot=mot,
-        vae=_FastWAMVAEPlaceholder(),
-        text_encoder=None,
-        tokenizer=None,
-        text_dim=int(config.video_dit_config["text_dim"]),
-        proprio_dim=config.proprio_dim,
-        device=config.device,
-        torch_dtype=dtype,
-        video_train_shift=float(config.video_scheduler["train_shift"]),
-        video_infer_shift=float(config.video_scheduler["infer_shift"]),
-        video_num_train_timesteps=int(config.video_scheduler["num_train_timesteps"]),
-        action_train_shift=float(config.action_scheduler["train_shift"]),
-        action_infer_shift=float(config.action_scheduler["infer_shift"]),
-        action_num_train_timesteps=int(config.action_scheduler["num_train_timesteps"]),
-        loss_lambda_video=float(config.loss["lambda_video"]),
-        loss_lambda_action=float(config.loss["lambda_action"]),
-    )
-
-
-class _FastWAMVAEPlaceholder(torch.nn.Module):
-    """Minimal VAE placeholder for checkpoint loading without Wan2.2 VAE.
-
-    Args:
-        temporal_downsample_factor (int): Temporal compression factor expected
-            by FastWAM latent shape logic.
-        upsampling_factor (int): Spatial compression factor expected by FastWAM.
-        z_dim (int): Latent channel count used by Wan2.2 TI2V VAE.
-    """
-
-    temporal_downsample_factor: int = 4
-    upsampling_factor: int = 8
-
-    def __init__(self, z_dim: int = 48):
-        super().__init__()
-        self.model = type("VAEModelShape", (), {"z_dim": int(z_dim)})()
-
-    def encode(self, *args, **kwargs):
-        raise RuntimeError(
-            "FastWAM VAE placeholder cannot encode images; load Wan2.2 VAE for image inference."
+        dtype = _dtype_from_name(config.torch_dtype)
+        device = config.device
+        video_expert = WanVideoDiT(**config.video_dit_config).to(device=device, dtype=dtype)
+        action_expert = ActionDiT(**config.action_dit_config).to(device=device, dtype=dtype)
+        mot = MoT(
+            mixtures={"video": video_expert, "action": action_expert},
+            mot_checkpoint_mixed_attn=config.mot_checkpoint_mixed_attn,
         )
-
-    def decode(self, *args, **kwargs):
-        raise RuntimeError(
-            "FastWAM VAE placeholder cannot decode latents; load Wan2.2 VAE for video inference."
+        text_encoder = (
+            load_pretrained_wan_text_encoder(torch_dtype=dtype, device=device)
+            if config.load_text_encoder
+            else None
         )
-
-
-def _batch_to_training_sample(batch: dict[str, Tensor], config: FastWAMConfig) -> dict[str, Tensor]:
-    sample = dict(batch)
-    if "video" not in sample:
-        sample["video"] = _stack_video_from_images(batch, config)
-    if "proprio" not in sample and OBS_STATE in batch:
-        sample["proprio"] = batch[OBS_STATE]
-    required = {"video", ACTION, "context", "context_mask"}
-    missing = sorted(required - set(sample))
-    if missing:
-        raise KeyError(f"FastWAM training batch is missing keys: {missing}.")
-    return sample
+        return FastWAM(
+            video_expert=video_expert,
+            action_expert=action_expert,
+            mot=mot,
+            vae=load_pretrained_wan_vae(torch_dtype=dtype, device=device),
+            text_encoder=text_encoder,
+            tokenizer=build_wan_tokenizer(tokenizer_max_len=config.tokenizer_max_len),
+            text_dim=int(config.video_dit_config["text_dim"]),
+            proprio_dim=config.proprio_dim,
+            device=device,
+            torch_dtype=dtype,
+            video_train_shift=float(config.video_scheduler["train_shift"]),
+            video_infer_shift=float(config.video_scheduler["infer_shift"]),
+            video_num_train_timesteps=int(config.video_scheduler["num_train_timesteps"]),
+            action_train_shift=float(config.action_scheduler["train_shift"]),
+            action_infer_shift=float(config.action_scheduler["infer_shift"]),
+            action_num_train_timesteps=int(config.action_scheduler["num_train_timesteps"]),
+            loss_lambda_video=float(config.loss["lambda_video"]),
+            loss_lambda_action=float(config.loss["lambda_action"]),
+        )
 
 
 def _batch_to_infer_kwargs(batch: dict[str, Tensor], config: FastWAMConfig) -> dict[str, Any]:

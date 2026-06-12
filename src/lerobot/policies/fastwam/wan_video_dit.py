@@ -660,11 +660,16 @@ class WanVideoDiT(WanModel):
         ) * timestep.to(dtype=model_dtype).view(batch_size, 1, 1)
         token_timesteps[:, 0, :] = 0
         token_timesteps = token_timesteps.reshape(batch_size, -1)
-        token_t_emb = sinusoidal_embedding_1d(self.freq_dim, token_timesteps.reshape(-1)).to(
-            dtype=model_dtype
-        )
-        t = self.time_embedding(token_t_emb).reshape(batch_size, -1, self.hidden_dim)
-        t_mod = self.time_projection(t).unflatten(2, (6, self.hidden_dim))
+        # Wan keeps the time embedding in fp32: the AdaLN modulation in the vendored
+        # Head/Block asserts e.dtype == float32 (numerical stability of the scale/shift).
+        # Upstream guarantees this via an fp32 autocast region, so it holds even when the
+        # model runs in bf16. Mirror that here, then cast the per-block modulation back to
+        # model_dtype so the bf16 attention blocks are not upcast to fp32.
+        with torch.amp.autocast("cuda", dtype=torch.float32):
+            token_t_emb = sinusoidal_embedding_1d(self.freq_dim, token_timesteps.reshape(-1)).float()
+            t = self.time_embedding(token_t_emb).reshape(batch_size, -1, self.hidden_dim)
+            t_mod = self.time_projection(t).unflatten(2, (6, self.hidden_dim))
+        t_mod = t_mod.to(dtype=model_dtype)
 
         x = self.patchify(x)
         f, h, w = x.shape[2:]

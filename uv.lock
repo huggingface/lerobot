@@ -1637,18 +1637,6 @@ http = [
 ]
 
 [[package]]
-name = "ftfy"
-version = "6.3.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "wcwidth" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a5/d3/8650919bc3c7c6e90ee3fa7fd618bf373cbbe55dff043bd67353dbb20cd8/ftfy-6.3.1.tar.gz", hash = "sha256:9b3c3d90f84fb267fe64d375a07b7f8912d817cf86009ae134aa03e1819506ec", size = 308927, upload-time = "2024-10-26T00:50:35.149Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ab/6e/81d47999aebc1b155f81eca4477a616a70f238a2549848c38983f3c22a82/ftfy-6.3.1-py3-none-any.whl", hash = "sha256:7c70eb532015cd2f9adb53f101fb6c7945988d023a085d127d1573dc49dd0083", size = 44821, upload-time = "2024-10-26T00:50:33.425Z" },
-]
-
-[[package]]
 name = "future"
 version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2708,7 +2696,6 @@ all = [
     { name = "faker" },
     { name = "fastapi" },
     { name = "feetech-servo-sdk" },
-    { name = "ftfy" },
     { name = "grpcio" },
     { name = "grpcio-tools" },
     { name = "gym-aloha" },
@@ -2747,7 +2734,6 @@ all = [
     { name = "pyzmq" },
     { name = "qwen-vl-utils" },
     { name = "reachy2-sdk" },
-    { name = "regex" },
     { name = "rerun-sdk" },
     { name = "ruff" },
     { name = "scikit-image" },
@@ -2846,8 +2832,6 @@ evaluation = [
 ]
 fastwam = [
     { name = "diffusers" },
-    { name = "ftfy" },
-    { name = "regex" },
     { name = "transformers" },
 ]
 feetech = [
@@ -3108,7 +3092,6 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'phone'", specifier = "<1.0" },
     { name = "feetech-servo-sdk", marker = "extra == 'feetech'", specifier = ">=1.0.0,<2.0.0" },
     { name = "flash-attn", marker = "sys_platform != 'darwin' and extra == 'groot'", specifier = ">=2.5.9,<3.0.0" },
-    { name = "ftfy", marker = "extra == 'fastwam'", specifier = ">=6.1.1,<7.0.0" },
     { name = "grpcio", marker = "extra == 'grpcio-dep'", specifier = "==1.73.1" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = "==1.73.1" },
     { name = "gym-aloha", marker = "extra == 'aloha'", specifier = ">=0.1.2,<0.2.0" },
@@ -3277,7 +3260,6 @@ requires-dist = [
     { name = "pyzmq", marker = "extra == 'pyzmq-dep'", specifier = ">=26.2.1,<28.0.0" },
     { name = "qwen-vl-utils", marker = "extra == 'qwen-vl-utils-dep'", specifier = ">=0.0.11,<0.1.0" },
     { name = "reachy2-sdk", marker = "extra == 'reachy2'", specifier = ">=1.0.15,<1.1.0" },
-    { name = "regex", marker = "extra == 'fastwam'", specifier = ">=2024.0.0,<2027.0.0" },
     { name = "requests", specifier = ">=2.32.0,<3.0.0" },
     { name = "rerun-sdk", marker = "extra == 'viz'", specifier = ">=0.24.0,<0.27.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.1" },

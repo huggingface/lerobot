@@ -15,8 +15,7 @@
 from __future__ import annotations
 
 import logging
-import time
-from dataclasses import dataclass
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,57 +23,108 @@ import torch
 from safetensors.torch import load_file
 
 if TYPE_CHECKING:
-    from .wan.modules.tokenizers import HuggingfaceTokenizer
     from .wan_adapters import WanVideoVAE38
     from .wan_video_dit import WanVideoDiT
 
 logger = logging.getLogger(__name__)
 
+# The custom MoT video DiT still ships in the original (non-diffusers) Wan2.2
+# repo as sharded `diffusion_pytorch_model*.safetensors`; the VAE and UMT5 text
+# encoder come from the diffusers conversion. Tokenizer is the stock UMT5 one.
 WAN_DIT_PATTERN = "diffusion_pytorch_model*.safetensors"
-WAN_T5_SAFE_CHECKPOINT = "models_t5_umt5-xxl-enc-bf16.safetensors"
-WAN_T5_CHECKPOINT = WAN_T5_SAFE_CHECKPOINT
 WAN_T5_TOKENIZER = "google/umt5-xxl"
-WAN_VAE_SAFE_CHECKPOINT = "Wan2.2_VAE.safetensors"
-WAN_VAE_CHECKPOINT = WAN_VAE_SAFE_CHECKPOINT
+WAN22_DIFFUSERS_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+
+class WanTextEncoder(torch.nn.Module):
+    """FastWAM text-encoder contract over `transformers.UMT5EncoderModel`.
+
+    Exposes `.dim` (hidden size) and `forward(ids, mask) -> [B, L, dim]`, matching
+    the call in `FastWAM.encode_prompt`.
+    """
+
+    def __init__(
+        self,
+        dtype: torch.dtype = torch.bfloat16,
+        device: str | torch.device = "cuda",
+        *,
+        pretrained: torch.nn.Module,
+    ) -> None:
+        super().__init__()
+        # UMT5-XXL is a fixed pretrained encoder — never trained from scratch, so a real
+        # `UMT5EncoderModel` (with weights) must always be supplied (loaded from the
+        # diffusers repo by `load_pretrained_wan_text_encoder`). No random/offline build.
+        self.model = pretrained.to(device=device, dtype=dtype)
+        self.dim = int(self.model.config.d_model)
+
+    def forward(self, ids: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        return self.model(input_ids=ids, attention_mask=mask.long()).last_hidden_state
 
 
-@dataclass(frozen=True)
-class WanCheckpointPaths:
-    root: Path
-    dit: list[Path]
-    vae: Path
-    text_encoder: Path | None
-    tokenizer: Path | None
+class WanTokenizer:
+    """UMT5 tokenizer wrapper returning `(input_ids, attention_mask)` like the
+    FastWAM call site expects."""
+
+    def __init__(self, name: str = WAN_T5_TOKENIZER, seq_len: int = 512) -> None:
+        from transformers import AutoTokenizer
+
+        self.tokenizer = AutoTokenizer.from_pretrained(name)
+        self.seq_len = int(seq_len)
+
+    def __call__(
+        self, sequence: str | Sequence[str], return_mask: bool = False, add_special_tokens: bool = True, **_: Any
+    ):
+        if isinstance(sequence, str):
+            sequence = [sequence]
+        out = self.tokenizer(
+            list(sequence),
+            padding="max_length",
+            truncation=True,
+            max_length=self.seq_len,
+            add_special_tokens=add_special_tokens,
+            return_tensors="pt",
+        )
+        if return_mask:
+            return out.input_ids, out.attention_mask
+        return out.input_ids
 
 
-@dataclass
-class Wan22LoadedComponents:
-    dit: WanVideoDiT
-    vae: WanVideoVAE38
-    text_encoder: torch.nn.Module | None
-    tokenizer: HuggingfaceTokenizer | None
-    dit_path: list[str]
-    vae_path: str
-    text_encoder_path: str | None
-    tokenizer_path: str | None
+def build_wan_tokenizer(*, tokenizer_max_len: int) -> WanTokenizer:
+    return WanTokenizer(name=WAN_T5_TOKENIZER, seq_len=int(tokenizer_max_len))
 
 
-def resolve_wan_checkpoint_dir(
+def load_pretrained_wan_vae(*, torch_dtype: torch.dtype, device: str) -> WanVideoVAE38:
+    """Load real Wan2.2 VAE weights from the diffusers repo (offline base creation)."""
+    from diffusers import AutoencoderKLWan
+
+    from .wan_adapters import WanVideoVAE38
+
+    vae = AutoencoderKLWan.from_pretrained(
+        WAN22_DIFFUSERS_MODEL_ID, subfolder="vae", torch_dtype=torch_dtype
+    )
+    return WanVideoVAE38(dtype=torch_dtype, device=device, pretrained=vae)
+
+
+def load_pretrained_wan_text_encoder(*, torch_dtype: torch.dtype, device: str) -> WanTextEncoder:
+    """Load real UMT5-XXL encoder weights from the diffusers repo (offline base creation)."""
+    from transformers import UMT5EncoderModel
+
+    encoder = UMT5EncoderModel.from_pretrained(
+        WAN22_DIFFUSERS_MODEL_ID, subfolder="text_encoder", torch_dtype=torch_dtype
+    )
+    return WanTextEncoder(dtype=torch_dtype, device=device, pretrained=encoder)
+
+
+def resolve_wan_dit_paths(
     model_id_or_path: str | Path,
     *,
     cache_dir: str | Path | None = None,
     local_files_only: bool = False,
     revision: str | None = None,
-) -> Path:
-    """Return a local Wan2.2 checkpoint directory.
-
-    Local paths are used directly. Hub repos are downloaded with the same fixed
-    component names used by the upstream Wan2.2 inference code.
-    """
-
+) -> list[Path]:
+    """Resolve the custom MoT DiT shards from the original Wan2.2 repo or a local dir."""
     path = Path(model_id_or_path).expanduser()
     if path.is_dir():
-        return path
+        return sorted(path.glob(WAN_DIT_PATTERN))
 
     from huggingface_hub import snapshot_download
 
@@ -83,51 +133,9 @@ def resolve_wan_checkpoint_dir(
         revision=revision,
         cache_dir=cache_dir,
         local_files_only=local_files_only,
-        allow_patterns=[
-            WAN_DIT_PATTERN,
-            WAN_T5_CHECKPOINT,
-            WAN_VAE_CHECKPOINT,
-            f"{WAN_T5_TOKENIZER}/**",
-        ],
+        allow_patterns=[WAN_DIT_PATTERN],
     )
-    return Path(snapshot_path)
-
-
-def resolve_wan_checkpoint_paths(
-    checkpoint_dir: str | Path,
-    *,
-    tokenizer_dir: str | Path | None = None,
-    load_dit: bool = True,
-    load_text_encoder: bool = True,
-) -> WanCheckpointPaths:
-    root = Path(checkpoint_dir).expanduser()
-    tokenizer_root = Path(tokenizer_dir).expanduser() if tokenizer_dir is not None else root
-    dit = sorted(root.glob(WAN_DIT_PATTERN)) if load_dit else []
-    vae = root / WAN_VAE_SAFE_CHECKPOINT
-    text_encoder = root / WAN_T5_SAFE_CHECKPOINT if load_text_encoder else None
-    tokenizer = tokenizer_root / WAN_T5_TOKENIZER if load_text_encoder else None
-
-    missing = []
-    if load_dit and len(dit) == 0:
-        missing.append(f"DiT ({WAN_DIT_PATTERN})")
-    if not vae.exists():
-        missing.append(f"VAE ({WAN_VAE_SAFE_CHECKPOINT})")
-    if load_text_encoder:
-        if text_encoder is None or not text_encoder.exists():
-            missing.append(f"text encoder ({WAN_T5_SAFE_CHECKPOINT})")
-        if tokenizer is None or not tokenizer.exists():
-            missing.append(f"tokenizer ({WAN_T5_TOKENIZER})")
-    if missing:
-        raise FileNotFoundError(
-            f"Incomplete Wan2.2 checkpoint directory {root}: missing {', '.join(missing)}."
-        )
-    return WanCheckpointPaths(
-        root=root,
-        dit=dit,
-        vae=vae,
-        text_encoder=text_encoder,
-        tokenizer=tokenizer,
-    )
+    return sorted(Path(snapshot_path).glob(WAN_DIT_PATTERN))
 
 
 def load_wan_video_dit(
@@ -145,107 +153,6 @@ def load_wan_video_dit(
     return model.to(device=device, dtype=torch_dtype)
 
 
-def load_wan_text_encoder(
-    checkpoint_path: str | Path,
-    *,
-    torch_dtype: torch.dtype,
-    device: str,
-) -> torch.nn.Module:
-    from .wan.modules.t5 import umt5_xxl
-
-    model = umt5_xxl(
-        encoder_only=True,
-        return_tokenizer=False,
-        dtype=torch_dtype,
-        device=device,
-    )
-    checkpoint_path = Path(checkpoint_path)
-    if checkpoint_path.suffix != ".safetensors":
-        raise ValueError(f"Wan2.2 text encoder checkpoint must be safetensors, got {checkpoint_path}.")
-    state_dict = load_file(checkpoint_path)
-    model.load_state_dict(state_dict)
-    return model.to(device=device, dtype=torch_dtype)
-
-
-def load_wan_tokenizer(tokenizer_path: str | Path, *, tokenizer_max_len: int) -> HuggingfaceTokenizer:
-    from .wan.modules.tokenizers import HuggingfaceTokenizer
-
-    return HuggingfaceTokenizer(
-        name=str(tokenizer_path),
-        seq_len=int(tokenizer_max_len),
-        clean="whitespace",
-    )
-
-
-def load_wan_vae(checkpoint_path: str | Path, *, torch_dtype: torch.dtype, device: str) -> WanVideoVAE38:
-    from .wan_adapters import WanVideoVAE38
-
-    return WanVideoVAE38(vae_pth=str(checkpoint_path), dtype=torch_dtype, device=device)
-
-
-def load_wan22_ti2v_5b_components(
-    device: str = "cuda",
-    torch_dtype: torch.dtype = torch.bfloat16,
-    model_id: str = "Wan-AI/Wan2.2-TI2V-5B",
-    tokenizer_model_id: str = "Wan-AI/Wan2.2-TI2V-5B",
-    tokenizer_max_len: int = 512,
-    dit_config: dict[str, Any] | None = None,
-    load_text_encoder: bool = True,
-):
-    logger.info("Loading Wan2.2-TI2V-5B components...")
-    start = time.time()
-
-    if dit_config is None:
-        raise ValueError("`dit_config` is required for Wan2.2-TI2V-5B loading.")
-
-    checkpoint_dir = resolve_wan_checkpoint_dir(model_id)
-    tokenizer_dir = (
-        checkpoint_dir if tokenizer_model_id == model_id else resolve_wan_checkpoint_dir(tokenizer_model_id)
-    )
-    paths = resolve_wan_checkpoint_paths(
-        checkpoint_dir,
-        tokenizer_dir=tokenizer_dir,
-        load_text_encoder=load_text_encoder,
-    )
-
-    dit = load_wan_video_dit(
-        paths.dit,
-        dit_config=dit_config,
-        torch_dtype=torch_dtype,
-        device=device,
-    )
-    vae = load_wan_vae(paths.vae, torch_dtype=torch_dtype, device=device)
-
-    text_encoder: torch.nn.Module | None = None
-    tokenizer: HuggingfaceTokenizer | None = None
-    if load_text_encoder:
-        if paths.text_encoder is None or paths.tokenizer is None:
-            raise FileNotFoundError("Wan2.2 text encoder/tokenizer paths were not resolved.")
-        text_encoder = load_wan_text_encoder(
-            paths.text_encoder,
-            torch_dtype=torch_dtype,
-            device=device,
-        )
-        tokenizer = load_wan_tokenizer(paths.tokenizer, tokenizer_max_len=tokenizer_max_len)
-    else:
-        logger.info(
-            "Skipping pretrained text encoder/tokenizer load (`load_text_encoder=False`); "
-            "training must provide cached `context/context_mask`."
-        )
-
-    logger.info("Finished loading Wan2.2-TI2V-5B components in %.2f seconds.", time.time() - start)
-    return Wan22LoadedComponents(
-        dit=dit,
-        vae=vae,
-        text_encoder=text_encoder,
-        tokenizer=tokenizer,
-        dit_path=[str(path) for path in paths.dit],
-        vae_path=str(paths.vae),
-        text_encoder_path=str(paths.text_encoder) if paths.text_encoder is not None else None,
-        tokenizer_path=str(paths.tokenizer) if paths.tokenizer is not None else None,
-    )
-
-
 def _read_wan_dit_safetensors(paths: list[str | Path]) -> dict[str, torch.Tensor]:
     state_dict = {}
     for path in paths:
@@ -254,17 +161,14 @@ def _read_wan_dit_safetensors(paths: list[str | Path]) -> dict[str, torch.Tensor
 
 
 __all__ = [
+    "WAN22_DIFFUSERS_MODEL_ID",
     "WAN_DIT_PATTERN",
-    "WAN_T5_CHECKPOINT",
     "WAN_T5_TOKENIZER",
-    "WAN_VAE_CHECKPOINT",
-    "Wan22LoadedComponents",
-    "WanCheckpointPaths",
-    "load_wan22_ti2v_5b_components",
-    "load_wan_text_encoder",
-    "load_wan_tokenizer",
-    "load_wan_vae",
+    "WanTextEncoder",
+    "WanTokenizer",
+    "build_wan_tokenizer",
+    "load_pretrained_wan_text_encoder",
+    "load_pretrained_wan_vae",
     "load_wan_video_dit",
-    "resolve_wan_checkpoint_dir",
-    "resolve_wan_checkpoint_paths",
+    "resolve_wan_dit_paths",
 ]

@@ -18,21 +18,13 @@ import json
 
 import pytest
 import torch
-from safetensors.torch import save_model
+from safetensors import safe_open
 from torch import nn
 
 from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
 from lerobot.policies import FastWAMConfig, get_policy_class, make_policy_config, make_pre_post_processors
-from lerobot.policies.fastwam import modeling_fastwam
-from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy, resolve_wan_component_paths
+from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy
 from lerobot.policies.fastwam.processor_fastwam import FastWAMActionToggleProcessorStep
-from lerobot.policies.fastwam.wan_components import (
-    WAN_DIT_PATTERN,
-    WAN_T5_CHECKPOINT,
-    WAN_T5_TOKENIZER,
-    WAN_VAE_CHECKPOINT,
-    resolve_wan_checkpoint_paths,
-)
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -170,8 +162,7 @@ def test_policy_forward_and_predict_action_adapt_lerobot_batches(monkeypatch):
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
         base_model_id=None,
     )
-    with pytest.warns(RuntimeWarning, match="does not load pretrained FastWAM weights"):
-        policy = FastWAMPolicy(cfg)
+    policy = FastWAMPolicy(cfg)
 
     output = policy.forward(
         {
@@ -207,89 +198,96 @@ def test_policy_forward_and_predict_action_adapt_lerobot_batches(monkeypatch):
     ]
 
 
-def test_from_pretrained_loads_weights_without_initializing_wan_backbone(monkeypatch, tmp_path):
-    cfg = FastWAMConfig(action_dim=3, proprio_dim=2, action_horizon=4, n_action_steps=2, base_model_id=None)
-    cfg.save_pretrained(tmp_path)
-    monkeypatch.setattr(FastWAMPolicy, "_build_core_model", lambda self, config: FakeFastWAMCore())
-    reference_policy = FastWAMPolicy(cfg, _suppress_base_init_warning=True)
-    save_model(reference_policy, str(tmp_path / "model.safetensors"))
+class CoreWithFrozenComponents(FakeFastWAMCore):
+    """Fake core mirroring the real one: frozen VAE / text encoder held as
+    *unregistered* attributes (via `object.__setattr__`) so they are excluded from
+    `state_dict()` and the saved checkpoint, but still moved by the `_apply` override."""
 
+    def __init__(self):
+        super().__init__()
+        object.__setattr__(self, "vae", nn.Linear(2, 2))
+        object.__setattr__(self, "text_encoder", nn.Linear(2, 2))
+        self.vae.requires_grad_(False)
+        self.text_encoder.requires_grad_(False)
+
+    def _apply(self, fn, *args, **kwargs):
+        super()._apply(fn, *args, **kwargs)
+        self.vae._apply(fn)
+        self.text_encoder._apply(fn)
+        return self
+
+
+def test_from_pretrained_uses_base_loader_and_skips_wan_backbone(monkeypatch, tmp_path):
+    cfg = FastWAMConfig(action_dim=3, proprio_dim=2, action_horizon=4, n_action_steps=2, base_model_id=None)
+
+    def build_core(self, config):
+        core = CoreWithFrozenComponents()
+        with torch.no_grad():
+            core.dit.weight.fill_(0.5)
+        return core
+
+    monkeypatch.setattr(FastWAMPolicy, "_build_core_model", build_core)
+
+    reference = FastWAMPolicy(cfg)
+    with torch.no_grad():
+        reference.model.dit.weight.fill_(1.25)  # a distinctive, trained-looking weight
+    reference.save_pretrained(tmp_path)
+
+    # Building from Wan2.2 must never happen on a checkpoint load.
     def fail_if_wan_pretrained_is_loaded(*args, **kwargs):
-        raise AssertionError("from_pretrained must not initialize or download Wan2.2 backbone components")
+        raise AssertionError("from_pretrained must not initialize or download the Wan2.2 backbone")
 
     monkeypatch.setattr(
         "lerobot.policies.fastwam.modular_fastwam.FastWAM.from_wan22_pretrained",
         fail_if_wan_pretrained_is_loaded,
     )
-    monkeypatch.setattr(
-        modeling_fastwam,
-        "_build_core_model_from_architecture",
-        lambda config: FakeFastWAMCore(),
-        raising=False,
-    )
-    loaded_components_from = []
-    monkeypatch.setattr(
-        FastWAMPolicy,
-        "load_wan_components_from_pretrained",
-        lambda self, path: loaded_components_from.append(path),
-    )
 
-    policy = FastWAMPolicy.from_pretrained(tmp_path, strict=False)
+    policy = FastWAMPolicy.from_pretrained(tmp_path)
 
-    assert isinstance(policy.model, FakeFastWAMCore)
-    assert loaded_components_from == [tmp_path]
+    assert isinstance(policy.model, CoreWithFrozenComponents)
+    # The bundled checkpoint weights overwrote the freshly built (0.5) DiT weights.
+    assert torch.allclose(policy.model.dit.weight, torch.full_like(policy.model.dit.weight, 1.25))
 
 
-def test_save_pretrained_copies_required_wan_sidecars(monkeypatch, tmp_path):
+def test_save_pretrained_excludes_frozen_components(monkeypatch, tmp_path):
     cfg = FastWAMConfig(action_dim=3, proprio_dim=2, action_horizon=4, n_action_steps=2, base_model_id=None)
-    source = tmp_path / "source"
-    tokenizer = source / WAN_T5_TOKENIZER
-    tokenizer.mkdir(parents=True)
-    vae = source / WAN_VAE_CHECKPOINT
-    text_encoder = source / WAN_T5_CHECKPOINT
-    tokenizer_file = tokenizer / "tokenizer.json"
-    vae.write_bytes(b"vae")
-    text_encoder.write_bytes(b"text")
-    tokenizer_file.write_text("{}")
-    core = FakeFastWAMCore()
-    core.model_paths = {
-        "vae": str(vae),
-        "text_encoder": str(text_encoder),
-        "tokenizer": str(tokenizer),
-    }
-    monkeypatch.setattr(FastWAMPolicy, "_build_core_model", lambda self, config: core)
-    policy = FastWAMPolicy(cfg, _suppress_base_init_warning=True)
+    monkeypatch.setattr(FastWAMPolicy, "_build_core_model", lambda self, config: CoreWithFrozenComponents())
+    policy = FastWAMPolicy(cfg)
 
     save_dir = tmp_path / "saved"
     policy.save_pretrained(save_dir)
 
     assert (save_dir / "model.safetensors").is_file()
-    assert (save_dir / WAN_VAE_CHECKPOINT).read_bytes() == b"vae"
-    assert (save_dir / WAN_T5_CHECKPOINT).read_bytes() == b"text"
-    assert (save_dir / WAN_T5_TOKENIZER / "tokenizer.json").read_text() == "{}"
+    # No Wan sidecar files either: the frozen backbone comes from the diffusers repo.
+    assert not (save_dir / "Wan2.2_VAE.safetensors").exists()
+    assert not (save_dir / "google").exists()
+
+    with safe_open(save_dir / "model.safetensors", framework="pt") as f:
+        keys = set(f.keys())
+    # Lean checkpoint: only the trainable DiT is saved; the frozen VAE / UMT5 text
+    # encoder are excluded (loaded from the diffusers/transformers repos at init).
+    assert any(key.startswith("model.dit.") for key in keys)
+    assert not any(key.startswith("model.vae.") for key in keys)
+    assert not any(key.startswith("model.text_encoder.") for key in keys)
 
 
-def test_wan_component_resolution_uses_fixed_safetensors_layout(tmp_path):
-    tokenizer = tmp_path / WAN_T5_TOKENIZER
-    tokenizer.mkdir(parents=True)
-    (tmp_path / WAN_VAE_CHECKPOINT).touch()
-    (tmp_path / WAN_T5_CHECKPOINT).touch()
-    (tmp_path / "diffusion_pytorch_model-00001-of-00001.safetensors").touch()
-    (tokenizer / "tokenizer.json").touch()
+def test_frozen_components_excluded_from_params_but_follow_device_moves(monkeypatch):
+    cfg = FastWAMConfig(action_dim=3, proprio_dim=2, action_horizon=4, n_action_steps=2, base_model_id=None)
+    monkeypatch.setattr(FastWAMPolicy, "_build_core_model", lambda self, config: CoreWithFrozenComponents())
+    policy = FastWAMPolicy(cfg)
 
-    paths = resolve_wan_checkpoint_paths(tmp_path)
-    sidecar_paths = resolve_wan_component_paths(tmp_path)
+    # Unregistered: excluded from state_dict and from the optimizer's parameter set.
+    sd = policy.state_dict()
+    assert not any(k.startswith("model.vae.") or k.startswith("model.text_encoder.") for k in sd)
+    param_names = [n for n, _ in policy.named_parameters()]
+    assert not any("vae" in n or "text_encoder" in n for n in param_names)
 
-    assert paths.dit == [tmp_path / "diffusion_pytorch_model-00001-of-00001.safetensors"]
-    assert paths.vae == tmp_path / WAN_VAE_CHECKPOINT
-    assert paths.text_encoder == tmp_path / WAN_T5_CHECKPOINT
-    assert paths.tokenizer == tmp_path / WAN_T5_TOKENIZER
-    assert sidecar_paths.dit == []
-    assert WAN_DIT_PATTERN == "diffusion_pytorch_model*.safetensors"
-
-    (tmp_path / WAN_T5_CHECKPOINT).unlink()
-    with pytest.raises(FileNotFoundError, match="text encoder"):
-        resolve_wan_checkpoint_paths(tmp_path)
+    # ...but the `_apply` override still carries them through `.to()` (dtype stands in
+    # for device on a CPU box), so they never strand off the rest of the model.
+    policy.to(torch.float64)
+    assert policy.model.dit.weight.dtype == torch.float64  # registered
+    assert policy.model.vae.weight.dtype == torch.float64  # unregistered, moved via _apply
+    assert policy.model.text_encoder.weight.dtype == torch.float64
 
 
 def test_pretrained_config_round_trips_fastwam_features(tmp_path):
@@ -302,3 +300,57 @@ def test_pretrained_config_round_trips_fastwam_features(tmp_path):
     assert loaded.image_features["observation.images.image"].type == FeatureType.VISUAL
     assert loaded.action_feature.shape == (7,)
     assert loaded.robot_state_feature.shape == (8,)
+
+
+def test_vae_adapter_empty_build_encode_decode_shapes():
+    """Offline glue check of the diffusers-backed VAE adapter (random weights).
+
+    Validates the encode/decode contract — 48 latent channels, 16x spatial / 4x
+    temporal compression, list-or-batch input, scaling round-trip — without any
+    weight download. (Numerical fidelity vs the original Wan VAE is a separate,
+    GPU + real-weights verification step.)
+    """
+    pytest.importorskip("diffusers")
+    from diffusers import AutoencoderKLWan
+
+    from lerobot.policies.fastwam.wan_adapters import WanVideoVAE38
+
+    # Production always loads a real pretrained VAE from the diffusers repo; here we
+    # build the same architecture with random weights and dummy standardization stats
+    # to exercise the adapter's shape/scaling contract offline (fidelity is checked
+    # separately, with real weights, on GPU).
+    arch = {
+        "base_dim": 160,
+        "decoder_base_dim": 256,
+        "z_dim": 48,
+        "dim_mult": [1, 2, 4, 4],
+        "num_res_blocks": 2,
+        "attn_scales": [],
+        "temperal_downsample": [False, True, True],
+        "dropout": 0.0,
+        "is_residual": True,
+        "in_channels": 12,
+        "out_channels": 12,
+        "patch_size": 2,
+        "scale_factor_spatial": 16,
+        "scale_factor_temporal": 4,
+        "clip_output": False,
+        "latents_mean": [0.0] * 48,
+        "latents_std": [1.0] * 48,
+    }
+    raw = AutoencoderKLWan.from_config(arch)
+    vae = WanVideoVAE38(dtype=torch.float32, device="cpu", pretrained=raw)
+    assert vae.z_dim == 48
+    assert vae.upsampling_factor == 16
+    assert vae.temporal_downsample_factor == 4
+
+    video = torch.rand(1, 3, 5, 32, 32) * 2 - 1  # [B,C,T,H,W] in [-1,1]
+    latents = vae.encode(video)
+    assert latents.shape == (1, 48, 2, 2, 2)  # T'=(5-1)//4+1, H'=W'=32//16
+
+    decoded = vae.decode(latents)
+    assert decoded.shape[0] == 1 and decoded.shape[1] == 3 and decoded.shape[-2:] == (32, 32)
+    assert decoded.min() >= -1.0 and decoded.max() <= 1.0
+
+    # list input is accepted and equals the batched path
+    assert torch.equal(vae.encode([video[0]]), latents)

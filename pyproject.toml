@@ -225,8 +225,6 @@ eo1 = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]"]
 fastwam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
-    "ftfy>=6.1.1,<7.0.0",
-    "regex>=2024.0.0,<2027.0.0",
 ]
 hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.14,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]

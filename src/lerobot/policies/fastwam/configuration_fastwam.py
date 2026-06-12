@@ -118,10 +118,6 @@ def _coerce_policy_features(features: dict[str, Any] | None) -> dict[str, Policy
     return coerced
 
 
-def _coerce_normalization_mapping(mapping: dict[str, Any]) -> dict[str, Any]:
-    return {key: _coerce_enum(NormalizationMode, value) for key, value in mapping.items()}
-
-
 def _is_local_model_id(value: str) -> bool:
     path = Path(value).expanduser()
     return path.is_absolute() or value.startswith(("./", "../", "~")) or path.exists()
@@ -200,7 +196,7 @@ class FastWAMConfig(PreTrainedConfig):
     loss: dict[str, float] = field(default_factory=lambda: {"lambda_video": 1.0, "lambda_action": 1.0})
     video_dit_config: dict[str, Any] | None = None
     action_dit_config: dict[str, Any] | None = None
-    normalization_mapping: dict[str, Any] = field(
+    normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,
             "STATE": NormalizationMode.MEAN_STD,
@@ -220,7 +216,6 @@ class FastWAMConfig(PreTrainedConfig):
         self.input_features = _coerce_policy_features(self.input_features)
         self.output_features = _coerce_policy_features(self.output_features)
         self.toggle_action_dimensions = [int(dim) for dim in self.toggle_action_dimensions]
-        self.normalization_mapping = _coerce_normalization_mapping(self.normalization_mapping)
         self.video_dit_config = self.video_dit_config or default_video_dit_config(self.action_dim)
         self.action_dit_config = self.action_dit_config or default_action_dit_config(self.action_dim)
         self.video_dit_config["fp32_attention"] = bool(self.fp32_attention)
@@ -265,6 +260,38 @@ class FastWAMConfig(PreTrainedConfig):
 
     def get_scheduler_preset(self) -> None:
         return None
+
+    def set_dataset_feature_metadata(self, dataset_features: dict[str, Any]) -> None:
+        """Rebuild visual input features from the dataset's real camera keys.
+
+        FastWAM's `__post_init__` installs a synthetic single-image default
+        (`observation.images.image` at full `image_size` width). For datasets
+        with one or more separately-named cameras (e.g. `observation.images.top`,
+        `observation.images.wrist`), this hook — invoked by `make_policy` once the
+        dataset metadata is known — replaces that default with the actual camera
+        keys, each declared at the policy's native per-camera resolution
+        (`image_size[0]` x `image_size[1] // num_cameras`). The accompanying
+        resize step in `make_fastwam_pre_post_processors` resizes raw frames to
+        match, so heterogeneous source resolutions (e.g. 480x640) are supported.
+        """
+        image_keys = sorted(
+            key
+            for key, feature in dataset_features.items()
+            if key.startswith("observation.images.")
+            and feature.get("dtype") in ("video", "image")
+        )
+        if not image_keys:
+            return
+        height, total_width = self.image_size
+        per_cam_width = total_width // len(image_keys)
+        new_inputs: dict[str, PolicyFeature] = {
+            key: PolicyFeature(type=FeatureType.VISUAL, shape=(3, height, per_cam_width))
+            for key in image_keys
+        }
+        if self.proprio_dim is not None and OBS_STATE in dataset_features:
+            new_inputs[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(self.proprio_dim,))
+        self.input_features = new_inputs
+        self.validate_features()
 
     def validate_features(self) -> None:
         if self.action_dim <= 0:

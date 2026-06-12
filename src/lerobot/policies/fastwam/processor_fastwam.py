@@ -24,6 +24,7 @@ from lerobot.processor import (
     ActionProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
+    ImageCropResizeProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
@@ -90,9 +91,8 @@ def make_fastwam_pre_post_processors(
         output processor pipelines discoverable by LeRobot.
     """
 
-    normalization_stats: dict[str, dict[str, Any]] = {
-        key: dict(value) for key, value in (dataset_stats or {}).items()
-    }
+    # force visual stats to be mean 0.5 and std 0.5 to map [0, 1] data to [-1, 1]
+    normalization_stats: dict[str, dict[str, Any]] = dict(dataset_stats or {})
     for key, feature in config.input_features.items():
         if feature.type != FeatureType.VISUAL:
             continue
@@ -101,10 +101,23 @@ def make_fastwam_pre_post_processors(
             "mean": torch.full((channels, 1, 1), 0.5, dtype=torch.float32),
             "std": torch.full((channels, 1, 1), 0.5, dtype=torch.float32),
         }
+
+    # resize visual inputs to match model expected input size, if necessary
+    visual_shapes = [
+        feature.shape
+        for feature in config.input_features.values()
+        if feature.type == FeatureType.VISUAL
+    ]
+    resize_steps = []
+    if visual_shapes:
+        target_hw = (int(visual_shapes[0][1]), int(visual_shapes[0][2]))
+        resize_steps.append(ImageCropResizeProcessorStep(resize_size=target_hw))
+
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
+        *resize_steps,
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
