@@ -105,7 +105,7 @@ def rollout(
     seeds: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
-    predicted_frames_callback: Callable[[PreTrainedPolicy], None] | None = None,
+    predicted_latents_callback: Callable[[PreTrainedPolicy], None] | None = None,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -135,9 +135,9 @@ def rollout(
             are returned optionally because they typically take more memory to cache. Defaults to False.
         render_callback: Optional rendering callback to be used after the environments are reset, and after
             every step.
-        predicted_frames_callback: Optional callback invoked after every ``select_action`` with the policy
-            itself. World-model policies (e.g. LingBot-VA) stash their decoded predicted video frames on
-            ``policy.last_predicted_frames``; this lets the caller collect them to save predicted-video MP4s.
+        predicted_latents_callback: Optional callback invoked after every ``select_action`` with the policy
+            itself. World-model policies (e.g. LingBot-VA) stash predicted video latents on
+            ``policy.last_predicted_latents``; this lets the caller concatenate chunks and decode once.
     Returns:
         The dictionary described above.
     """
@@ -188,8 +188,8 @@ def rollout(
         observation = preprocessor(observation)
         with torch.inference_mode():
             action = policy.select_action(observation)
-        if predicted_frames_callback is not None:
-            predicted_frames_callback(policy)
+        if predicted_latents_callback is not None:
+            predicted_latents_callback(policy)
         action = postprocessor(action)
 
         action_transition = {ACTION: action}
@@ -209,12 +209,22 @@ def rollout(
         # available if none of the envs finished.
         if "final_info" in info:
             final_info = info["final_info"]
-            if not isinstance(final_info, dict):
-                raise RuntimeError(
-                    "Unsupported `final_info` format: expected dict (Gymnasium >= 1.0). "
-                    "You're likely using an older version of gymnasium (< 1.0). Please upgrade."
+            if isinstance(final_info, dict):
+                is_success = final_info.get("is_success", [False] * env.num_envs)
+                successes = (
+                    is_success.tolist()
+                    if hasattr(is_success, "tolist")
+                    else [bool(is_success)] * env.num_envs
                 )
-            successes = final_info["is_success"].tolist()
+            else:
+                # Gymnasium < 1.0 returns final_info as a per-env sequence/object array,
+                # with entries set to a dict only for envs that just finished.
+                successes = []
+                for item in final_info:
+                    if isinstance(item, dict) and "is_success" in item:
+                        successes.append(bool(item["is_success"]))
+                    else:
+                        successes.append(False)
         elif "is_success" in info:
             is_success = info["is_success"]
             successes = (
@@ -352,14 +362,15 @@ def eval_policy(
         predicted_video_paths: list[str] = []
         n_predicted_rendered = 0
 
-    # Collects the policy's decoded predicted-video frames across a rollout (world-model policies only).
-    def collect_predicted_frames(policy: PreTrainedPolicy):
-        frames = getattr(policy, "last_predicted_frames", None)
-        if frames is not None:
-            pred_frames.append(
-                np.asarray(frames.detach().to("cpu")) if hasattr(frames, "detach") else np.asarray(frames)
+    # Collect predicted-video latents across a rollout (world-model policies only). The latents are
+    # concatenated and decoded once after the rollout, matching upstream LingBot-VA's visualization path.
+    def collect_predicted_latents(policy: PreTrainedPolicy):
+        latents = getattr(policy, "last_predicted_latents", None)
+        if latents is not None:
+            pred_latents.append(
+                latents.detach().to("cpu") if hasattr(latents, "detach") else torch.as_tensor(latents).cpu()
             )
-            policy.last_predicted_frames = None
+            policy.last_predicted_latents = None
 
     if return_episode_data:
         episode_data: dict | None = None
@@ -373,7 +384,7 @@ def eval_policy(
             ep_frames: list[np.ndarray] = []
 
         if save_predicted_video:
-            pred_frames: list[np.ndarray] = []
+            pred_latents: list[torch.Tensor] = []
 
         if start_seed is None:
             seeds = None
@@ -391,7 +402,7 @@ def eval_policy(
             seeds=list(seeds) if seeds else None,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
-            predicted_frames_callback=collect_predicted_frames if save_predicted_video else None,
+            predicted_latents_callback=collect_predicted_latents if save_predicted_video else None,
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -458,9 +469,19 @@ def eval_policy(
                 n_episodes_rendered += 1
 
         # Maybe save the policy's predicted (imagined) video for this batch's rollout.
-        if save_predicted_video and len(pred_frames) > 0:
-            # pred_frames is a list of [F, H, W, C] uint8 stacks emitted on chunk refills; concat over time.
-            predicted_video = np.concatenate(pred_frames, axis=0)
+        if save_predicted_video and len(pred_latents) > 0:
+            predicted_latent = torch.cat(pred_latents, dim=2)
+            decoder = getattr(policy, "decode_predicted_latents", None) or getattr(
+                policy, "_decode_predicted_video", None
+            )
+            if decoder is None:
+                raise AttributeError(
+                    "Policy config requested predicted-video saving, but the policy does not expose "
+                    "`decode_predicted_latents` or `_decode_predicted_video`."
+                )
+            predicted_video = decoder(predicted_latent)
+            if hasattr(predicted_video, "detach"):
+                predicted_video = predicted_video.detach().to("cpu").numpy()
             videos_dir.mkdir(parents=True, exist_ok=True)
             predicted_video_path = videos_dir / f"pred_episode_{n_predicted_rendered}.mp4"
             predicted_video_paths.append(str(predicted_video_path))
@@ -653,9 +674,10 @@ class TaskMetrics(TypedDict):
     max_rewards: list[float]
     successes: list[bool]
     video_paths: list[str]
+    predicted_video_paths: list[str]
 
 
-ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "video_paths")
+ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "video_paths", "predicted_video_paths")
 
 
 def eval_one(
@@ -696,6 +718,7 @@ def eval_one(
         max_rewards=[ep["max_reward"] for ep in per_episode],
         successes=[ep["success"] for ep in per_episode],
         video_paths=task_result.get("video_paths", []),
+        predicted_video_paths=task_result.get("predicted_video_paths", []),
     )
 
 
@@ -742,6 +765,7 @@ def run_one(
     # ensure we always provide video_paths key to simplify accumulation
     if max_episodes_rendered > 0:
         metrics.setdefault("video_paths", [])
+    metrics.setdefault("predicted_video_paths", [])
     return task_group, task_id, metrics
 
 
@@ -795,11 +819,11 @@ def eval_policy_all(
         _append("sum_rewards", metrics.get("sum_rewards"))
         _append("max_rewards", metrics.get("max_rewards"))
         _append("successes", metrics.get("successes"))
-        # video_paths is list-like
-        paths = metrics.get("video_paths", [])
-        if paths:
-            group_acc[group]["video_paths"].extend(paths)
-            overall["video_paths"].extend(paths)
+        for key in ("video_paths", "predicted_video_paths"):
+            paths = metrics.get(key, [])
+            if paths:
+                group_acc[group][key].extend(paths)
+                overall[key].extend(paths)
 
     # Choose runner (sequential vs threaded)
     task_runner = partial(
@@ -867,6 +891,7 @@ def eval_policy_all(
             "pc_success": _agg_from_list(acc["successes"]) * 100 if acc["successes"] else float("nan"),
             "n_episodes": len(acc["sum_rewards"]),
             "video_paths": list(acc["video_paths"]),
+            "predicted_video_paths": list(acc["predicted_video_paths"]),
         }
 
     # overall aggregates
@@ -878,6 +903,7 @@ def eval_policy_all(
         "eval_s": time.time() - start_t,
         "eval_ep_s": (time.time() - start_t) / max(1, len(overall["sum_rewards"])),
         "video_paths": list(overall["video_paths"]),
+        "predicted_video_paths": list(overall["predicted_video_paths"]),
     }
 
     return {
