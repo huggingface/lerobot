@@ -92,13 +92,13 @@ def _smooth_action(action_dict: dict) -> dict:
     for k, v in action_dict.items():
         prev_v = prev.get(k, v)
         if abs(v - prev_v) > SMOOTHING_RESET_THRESHOLD:
+            # Correction boundary: _prev is stale (frozen during teleop).
+            # Accept v directly — it IS near the current physical position
+            # because the policy just observed it.  Clipping from stale
+            # _prev would command the arm back toward the old position.
             reset_triggered = True
-            delta = v - prev_v
-            if abs(delta) > limit:
-                clipped = True
-            delta = max(-limit, min(limit, delta))
-            action_dict[k] = prev_v + delta
-            prev[k] = v  # seed EMA state with raw (not clipped) target
+            action_dict[k] = v
+            prev[k] = v  # seed EMA state with raw target
             continue
         sv = alpha * v + (1.0 - alpha) * prev_v
         delta = sv - prev_v
