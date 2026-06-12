@@ -48,7 +48,7 @@ is itself a defaulted dataclass, so the original config dataclasses fail to impo
 
 So the test uses a **producer / consumer** split across two venvs:
 
-1. **Producer** — `tests/policies/groot/dump_original_n1_7.py`, run in the *original*
+1. **Producer** — `tests/policies/groot/utils/dump_original_n1_7.py`, run in the *original*
    gr00t venv. For each embodiment it builds dummy inputs generically from the
    checkpoint metadata (state dims from `statistics.json`; camera/language keys from
    the processor modality configs), runs the original model, and saves the exact
@@ -82,7 +82,7 @@ PY
 
 # 1) Produce the original-side artifacts for all embodiments (original gr00t venv, CUDA)
 CUDA_VISIBLE_DEVICES=0 /path/to/Isaac-GR00T/.venv-original/bin/python \
-    tests/policies/groot/dump_original_n1_7.py \
+    tests/policies/groot/utils/dump_original_n1_7.py \
     --ckpt "$CKPT" --out-dir tests/policies/groot/artifacts --device cuda --seed 42
 
 # 2) Run the parity test (LeRobot venv) — one parametrized case per embodiment

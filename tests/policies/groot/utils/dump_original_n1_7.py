@@ -25,7 +25,7 @@ The companion pytest (run in the LeRobot env) loads each .npz, replays the ident
 inputs + seed through the LeRobot GR00T N1.7 model, and asserts the outputs match.
 
 Usage:
-    .venv-original/bin/python tests/policies/groot/dump_original_n1_7.py \
+    .venv-original/bin/python tests/policies/groot/utils/dump_original_n1_7.py \
         --ckpt <path-to-GR00T-N1.7-LIBERO/libero_10> \
         --out-dir tests/policies/groot/artifacts \
         [--tags libero_sim,oxe_droid_relative_eef_relative_joint,...] \
