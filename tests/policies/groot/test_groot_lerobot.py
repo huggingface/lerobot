@@ -207,6 +207,11 @@ def test_lerobot_groot_forward_pass():
     with torch.no_grad():
         lerobot_loss, lerobot_metrics = lerobot_policy.forward(batch_lerobot_processed)
 
+    assert isinstance(lerobot_loss, torch.Tensor)
+    assert torch.isfinite(lerobot_loss).all()
+    assert "loss" in lerobot_metrics
+    assert np.isfinite(lerobot_metrics["loss"])
+
     print("\nForward pass successful.")
     print(f"  - Loss: {lerobot_loss.item():.6f}")
     print(f"  - Metrics: {lerobot_metrics}")
