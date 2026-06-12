@@ -270,6 +270,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self,
         cfg: TrainPipelineConfig,
         peft_model=None,
+        revision: str | None = None,
     ):
         api = HfApi()
         repo_id = api.create_repo(
@@ -296,16 +297,22 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
             cfg.save_pretrained(saved_path)  # Calls _save_pretrained and stores train config
 
+            commit_message = (
+                f"Checkpoint at {revision}" if revision
+                else "Upload policy weights, train config and readme"
+            )
             commit_info = api.upload_folder(
                 repo_id=repo_id,
                 repo_type="model",
                 folder_path=saved_path,
-                commit_message="Upload policy weights, train config and readme",
+                revision=revision,
+                commit_message=commit_message,
                 allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
                 ignore_patterns=["*.tmp", "*.log"],
             )
 
-            logging.info(f"Model pushed to {commit_info.repo_url.url}")
+            revision_info = f" [revision={revision}]" if revision else ""
+            logging.info(f"Model pushed to {commit_info.repo_url.url}{revision_info}")
 
     def generate_model_card(
         self,

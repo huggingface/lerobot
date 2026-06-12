@@ -1,0 +1,121 @@
+diff --git a/src/lerobot/configs/policies.py b/src/lerobot/configs/policies.py
+index c9ff9604..4956a2c5 100644
+--- a/src/lerobot/configs/policies.py
++++ b/src/lerobot/configs/policies.py
+@@ -69,6 +69,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
+ 
+     push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override
+     repo_id: str | None = None
++    # Whether to push intermediate checkpoints to Hub at each save_freq interval during training.
++    push_checkpoints_to_hub: bool = False
+ 
+     # Upload on private repository on the Hugging Face hub.
+     private: bool | None = None
+diff --git a/src/lerobot/policies/factory.py b/src/lerobot/policies/factory.py
+index a42b38ba..c9621021 100644
+--- a/src/lerobot/policies/factory.py
++++ b/src/lerobot/policies/factory.py
+@@ -252,6 +252,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
+ def make_pre_post_processors(
+     policy_cfg: PreTrainedConfig,
+     pretrained_path: str | None = None,
++    revision: str | None = None,
+     **kwargs: Unpack[ProcessorConfigKwargs],
+ ) -> tuple[
+     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+@@ -306,6 +307,7 @@ def make_pre_post_processors(
+             config_filename=kwargs.get(
+                 "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+             ),
++            revision=revision,
+             overrides=kwargs.get("preprocessor_overrides", {}),
+             to_transition=batch_to_transition,
+             to_output=transition_to_batch,
+@@ -315,6 +317,7 @@ def make_pre_post_processors(
+             config_filename=kwargs.get(
+                 "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+             ),
++            revision=revision,
+             overrides=kwargs.get("postprocessor_overrides", {}),
+             to_transition=policy_action_to_transition,
+             to_output=transition_to_policy_action,
+@@ -556,6 +559,8 @@ def make_policy(
+     if cfg.pretrained_path and not cfg.use_peft:
+         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
+         # hyperparameters that we want to vary).
++        if cfg.revision:
++            kwargs["revision"] = cfg.revision
+         kwargs["pretrained_name_or_path"] = cfg.pretrained_path
+         policy = policy_cls.from_pretrained(**kwargs)
+     elif cfg.pretrained_path and cfg.use_peft:
+diff --git a/src/lerobot/policies/pretrained.py b/src/lerobot/policies/pretrained.py
+index 724f920f..612c9842 100644
+--- a/src/lerobot/policies/pretrained.py
++++ b/src/lerobot/policies/pretrained.py
+@@ -208,6 +208,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+         self,
+         cfg: TrainPipelineConfig,
+         peft_model=None,
++        revision: str | None = None,
+     ):
+         api = HfApi()
+         repo_id = api.create_repo(
+@@ -234,16 +235,22 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
+ 
+             cfg.save_pretrained(saved_path)  # Calls _save_pretrained and stores train config
+ 
++            commit_message = (
++                f"Checkpoint at {revision}" if revision
++                else "Upload policy weights, train config and readme"
++            )
+             commit_info = api.upload_folder(
+                 repo_id=repo_id,
+                 repo_type="model",
+                 folder_path=saved_path,
+-                commit_message="Upload policy weights, train config and readme",
++                revision=revision,
++                commit_message=commit_message,
+                 allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
+                 ignore_patterns=["*.tmp", "*.log"],
+             )
+ 
+-            logging.info(f"Model pushed to {commit_info.repo_url.url}")
++            revision_info = f" [revision={revision}]" if revision else ""
++            logging.info(f"Model pushed to {commit_info.repo_url.url}{revision_info}")
+ 
+     def generate_model_card(
+         self, dataset_repo_id: str, model_type: str, license: str | None, tags: list[str] | None
+diff --git a/src/lerobot/scripts/lerobot_train.py b/src/lerobot/scripts/lerobot_train.py
+index 4ddef310..c32b5bda 100644
+--- a/src/lerobot/scripts/lerobot_train.py
++++ b/src/lerobot/scripts/lerobot_train.py
+@@ -336,6 +336,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
+         preprocessor, postprocessor = make_pre_post_processors(
+             policy_cfg=cfg.policy,
+             pretrained_path=processor_pretrained_path,
++            revision=cfg.policy.revision if hasattr(cfg.policy, "revision") else None,
+             **processor_kwargs,
+         )
+ 
+@@ -516,6 +517,21 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
+                 if wandb_logger:
+                     wandb_logger.log_policy(checkpoint_dir)
+ 
++                # Push checkpoint to HuggingFace Hub if enabled (V1: model weights only)
++                if getattr(active_cfg, "push_checkpoints_to_hub", False):
++                    step_id = get_step_identifier(step, cfg.steps)
++                    logging.info(f"Pushing checkpoint to Hub at step {step}")
++                    try:
++                        unwrapped = accelerator.unwrap_model(policy)
++                        if not cfg.is_reward_model_training and cfg.policy.use_peft:
++                            unwrapped.push_model_to_hub(cfg, peft_model=unwrapped,
++                                                        revision=f"step-{step_id}")
++                        else:
++                            unwrapped.push_model_to_hub(cfg, revision=f"step-{step_id}")
++                        logging.info(f"Checkpoint pushed to {active_cfg.repo_id} @ step-{step_id}")
++                    except Exception as e:
++                        logging.warning(f"Hub push failed (local checkpoint safe): {e}")
++
+             accelerator.wait_for_everyone()
+ 
+         if cfg.env and is_eval_step:

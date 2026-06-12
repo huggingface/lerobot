@@ -252,6 +252,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
 def make_pre_post_processors(
     policy_cfg: PreTrainedConfig,
     pretrained_path: str | None = None,
+    revision: str | None = None,
     **kwargs: Unpack[ProcessorConfigKwargs],
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
@@ -306,6 +307,7 @@ def make_pre_post_processors(
             config_filename=kwargs.get(
                 "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
             ),
+            revision=revision,
             overrides=kwargs.get("preprocessor_overrides", {}),
             to_transition=batch_to_transition,
             to_output=transition_to_batch,
@@ -315,6 +317,7 @@ def make_pre_post_processors(
             config_filename=kwargs.get(
                 "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
             ),
+            revision=revision,
             overrides=kwargs.get("postprocessor_overrides", {}),
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
@@ -556,6 +559,8 @@ def make_policy(
     if cfg.pretrained_path and not cfg.use_peft:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
+        if cfg.revision:
+            kwargs["revision"] = cfg.revision
         kwargs["pretrained_name_or_path"] = cfg.pretrained_path
         policy = policy_cls.from_pretrained(**kwargs)
     elif cfg.pretrained_path and cfg.use_peft:

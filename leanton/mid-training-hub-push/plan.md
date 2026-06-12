@@ -46,35 +46,36 @@ This works but:
 
 ---
 
-## ⚠️ Prerequisite: `--policy.revision` in Training (NOT Yet Implemented)
+## ⚠️ Prerequisite: `--policy.revision` in Training — Mostly Done
 
-**This is a blocking dependency.** The checkpoint push creates branches like `step-005000`, but LeRobot's training path currently **cannot load from a revision**. Without this, intermediate checkpoints on Hub are unloadable via the CLI.
+The checkpoint push creates branches like `step-005000`. For training to load from them, `--policy.revision=step-N` must work end-to-end. **The infrastructure is ~80% there.** Only wiring is missing.
 
-### Current State
+### Current State (Verified against codebase 2026-06-12)
 
-| Component | Has `revision` param in method signature? | Has `revision` config field / CLI flag? | Passed through call chain? |
-|:---|:---|:---|:---|
-| `PolicyConfig` (`configs/policies.py`) | — | **No** — no `revision` field | — |
-| `PolicyConfig.from_pretrained()` | ✅ (line 178) | — | Never called with one |
-| `PreTrainedPolicy.from_pretrained()` | ✅ (line 87) | — | Never called with one |
-| `make_policy()` (`policies/factory.py`) | — | — | **Does not pass `revision`** |
-| Rollout (`lerobot-rollout`) | — | **No** — tracked as issue #3549 | — |
+| Component | Status | Detail |
+|:---|:---|:---|
+| `PolicyConfig` (`configs/policies.py:83`) | ✅ **Done** | `revision: str \| None = None` already exists |
+| `PreTrainedPolicy.from_pretrained()` (`pretrained.py:87`) | ✅ **Done** | Accepts `revision`, passes to `hf_hub_download` and `Config.from_pretrained` |
+| `PolicyProcessorPipeline.from_pretrained()` (`pipeline.py:623`) | ✅ **Done** | Accepts `revision`, passes through to hub download |
+| `HubMixin.push_to_hub()` (`hub.py:137`) | ✅ **Done** | Accepts `branch=` param, passes to `upload_folder(revision=branch)` |
+| `make_policy()` (`factory.py:559-560`) | ❌ **Missing** | Does NOT pass `cfg.revision` to `from_pretrained()` |
+| `make_pre_post_processors()` (`factory.py:304,313`) | ❌ **Missing** | Does NOT pass `revision` to `PolicyProcessorPipeline.from_pretrained()` |
+| Rollout (`lerobot-rollout`) | ❌ **Missing** | Tracked as issue #3549; separate patch `rollout-policy-revision` |
 
-**Bottom line:** The `from_pretrained()` methods already accept `revision` and pass it to `hf_hub_download()`, but no caller ever provides one. The config has no field for it, and the CLI has no flag.
+**Bottom line:** `--policy.revision=step-005000` is already a valid CLI flag — draccus picks it up from the dataclass field. `from_pretrained()` methods already accept and handle it. Only `make_policy()` and `make_pre_post_processors()` need one-line fixes to pass it through.
 
 ### What This Patch Must Also Add
 
 | File | Change | Lines |
 |:-----|:-------|:------|
-| `configs/policies.py` | Add `revision: str \| None = None` field to `PolicyConfig`, after `pretrained_path` | ~81 |
-| `policies/factory.py` | In `make_policy()`, pass `revision=cfg.revision` into `kwargs` dict | ~507 |
-| `scripts/lerobot_train.py` | When loading preprocessor/postprocessor from `pretrained_path` (lines 281, 291 of factory.py), pass `revision` | ~281, ~291 |
+| `policies/factory.py` | In `make_policy()`, pass `revision=cfg.revision` into `kwargs` before `from_pretrained()` | ~559 |
+| `policies/factory.py` | In `make_pre_post_processors()`, pass `revision=` to `PolicyProcessorPipeline.from_pretrained()` | ~304, ~313 |
 
-After this, `--policy.revision=step-005000` becomes a valid training CLI flag. It will be picked up by draccus automatically (any dataclass field becomes a CLI flag).
+After this, `--policy.revision=step-005000` loads weights and processors from the named Hub branch. Combined with the main `push_checkpoints_to_hub` feature, intermediate checkpoints become fully loadable.
 
 ### Relationship to Issue #3549
 
-Issue #3549 ("Missing `--policy.revision` flag in rollout") is the **rollout-side** equivalent. The local patch `bugfix_rollout_policy_revision` fixes it there. This prerequisite is the **training-side** fix — same concept, same pattern, different script.
+Issue #3549 ("Missing `--policy.revision` flag in rollout") is the **rollout-side** equivalent. The local patch `rollout-policy-revision` fixes it there. This prerequisite is the **training-side** fix — same concept, same pattern, different script.
 
 ---
 
@@ -168,35 +169,25 @@ anikitakis/vla_so101_pick_n_place_full_expert
 
 ## Files to Modify
 
-### 0. `src/lerobot/configs/policies.py` — PREREQUISITE: Add `revision` field
+### 0. `src/lerobot/configs/policies.py` — `revision` field ✅ ALREADY EXISTS
 
-**Line ~81** (in `PolicyConfig`, after `pretrained_path`):
-
-```python
-# Existing:
-pretrained_path: Path | None = None
-
-# Add:
-revision: str | None = None
-```
-
-This makes `--policy.revision=step-005000` available as a CLI flag via draccus. Without this, checkpoint branches on Hub cannot be loaded. This is the training-side equivalent of what issue #3549 tracks for rollout.
+**Line 83** — `revision: str | None = None` is already in `PolicyConfig`. No change needed. `--policy.revision=step-N` is already a valid CLI flag via draccus.
 
 ### 0b. `src/lerobot/policies/factory.py` — PREREQUISITE: Pass `revision` to `from_pretrained()`
 
-**Line ~507** (in `make_policy()`):
+**Line ~559** (in `make_policy()`, before `from_pretrained` call):
 
 ```python
-# Existing:
-kwargs["pretrained_name_or_path"] = cfg.pretrained_path
-policy = policy_cls.from_pretrained(**kwargs)
-
-# Add revision to kwargs before from_pretrained call:
+# Before line 559 — add revision to kwargs:
 if cfg.revision:
     kwargs["revision"] = cfg.revision
+
+# Existing (line 559-560):
+kwargs["pretrained_name_or_path"] = cfg.pretrained_path
+policy = policy_cls.from_pretrained(**kwargs)
 ```
 
-And at **lines ~281, ~291** (in `make_pre_post_processors()`), pass `revision` when loading processor pipelines from Hub.
+**Lines ~304, ~313** (in `make_pre_post_processors()`): `PolicyProcessorPipeline.from_pretrained()` already accepts `revision` (param at `pipeline.py:623`). Add `revision=revision_param` to both calls. The function needs to accept `revision: str | None = None` as a new kwarg, or receive it from the caller's config.
 
 ### 1. `src/lerobot/configs/policies.py` — Add `push_checkpoints_to_hub` field
 
@@ -218,34 +209,30 @@ This makes `--policy.push_checkpoints_to_hub=true` available as a CLI flag. The 
 **Lines 495-513** (inside the `is_saving_step` block):
 
 ```python
-# After update_last_checkpoint(checkpoint_dir), ~line 509:
+# After update_last_checkpoint(checkpoint_dir), ~line 515:
 
 if getattr(active_cfg, "push_checkpoints_to_hub", False):
+    step_id = get_step_identifier(step, cfg.steps)
     logging.info(f"Pushing checkpoint to Hub at step {step}")
     try:
-        # Unwrap from DDP before pushing
         unwrapped = accelerator.unwrap_model(policy)
         if not cfg.is_reward_model_training and cfg.policy.use_peft:
             unwrapped.push_model_to_hub(cfg, peft_model=unwrapped,
-                                        revision=f"step-{get_step_identifier(step, cfg.steps)}")
+                                        revision=f"step-{step_id}")
         else:
-            unwrapped.push_model_to_hub(cfg,
-                                        revision=f"step-{get_step_identifier(step, cfg.steps)}")
-        preprocessor.push_to_hub(active_cfg.repo_id,
-                                 revision=f"step-{get_step_identifier(step, cfg.steps)}")
-        postprocessor.push_to_hub(active_cfg.repo_id,
-                                  revision=f"step-{get_step_identifier(step, cfg.steps)}")
-        logging.info(f"Checkpoint pushed to {active_cfg.repo_id} @ step-{get_step_identifier(step, cfg.steps)}")
+            unwrapped.push_model_to_hub(cfg, revision=f"step-{step_id}")
+        logging.info(f"Checkpoint pushed to {active_cfg.repo_id} @ step-{step_id}")
     except Exception as e:
-        logging.warning(f"Failed to push checkpoint to Hub: {e}. Local checkpoint saved. Training continues.")
+        logging.warning(f"Hub push failed (local checkpoint safe): {e}")
 ```
 
 **Key design decisions in this block:**
 
+- **Model weights only (V1):** Processors don't change mid-training — pushing them on every checkpoint is unnecessary overhead. The processor pipeline is loaded via `make_policy`/`make_pre_post_processors` with `revision` on resume. Only model weights are pushed per checkpoint.
 - **`try/except` wrapper:** If the Hub push fails (network blip, rate limit), the local checkpoint is already saved. Training continues. We log a warning rather than crashing.
 - **Reuses `push_model_to_hub`:** No new Hub-logic code. Same method the final push uses.
 - **`get_step_identifier()`:** Reuses existing zero-padding logic from `train_utils.py` (line 41-43). At 20K steps, step 5000 → `"005000"`, producing `revision="step-005000"`.
-- **`active_cfg` not `cfg`:** `active_cfg = cfg.trainable_config` (line 287) — the policy config that has `repo_id`.
+- **`active_cfg` not `cfg`:** `active_cfg = cfg.trainable_config` (line 293) — the policy config that has `repo_id`.
 
 ### 3. `src/lerobot/policies/pretrained.py` — Add `revision` parameter to `push_model_to_hub`
 
@@ -265,33 +252,29 @@ def push_model_to_hub(
 
     with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         saved_path = Path(tmp) / repo_id
-        # ... (same save logic) ...
-
-        # Use create_branch if revision is specified and not main
-        if revision and revision != "main":
-            try:
-                api.create_branch(repo_id, revision=revision, repo_type="model", exist_ok=True)
-            except Exception:
-                pass  # Branch may already exist from prior push at same step
+        # ... (same save logic, lines 221-235) ...
 
         commit_info = api.upload_folder(
             repo_id=repo_id,
             repo_type="model",
             folder_path=saved_path,
-            revision=revision,  # NEW: push to specific branch
-            commit_message=f"Checkpoint at {revision}",
+            revision=revision,                        # NEW: push to branch (None → main)
+            commit_message=(
+                f"Checkpoint at {revision}" if revision
+                else "Upload policy weights, train config and readme"
+            ),
             allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
             ignore_patterns=["*.tmp", "*.log"],
         )
-        logging.info(f"Model pushed to {commit_info.repo_url.url} [revision={revision}]")
+        logging.info(f"Model pushed to {commit_info.repo_url.url}"
+                     f"{' [revision=' + revision + ']' if revision else ''}")
 ```
 
 **Key details:**
 - `revision=None` preserves existing behavior (push to `main`)
-- `api.create_branch()` creates the branch if it doesn't exist; `exist_ok=True` prevents errors on re-push at same step
-- The `upload_folder` call passes `revision` so it commits to the branch, not main
-
-**Important gotcha:** The `preprocessor.push_to_hub()` and `postprocessor.push_to_hub()` methods also need the `revision` parameter. In V1, this means processor files are pushed alongside model weights on the same branch. If their `push_to_hub` signatures differ, we handle this in the processor base class too.
+- No `api.create_branch()` needed — `upload_folder(revision=...)` auto-creates the branch on first push. Redundant `create_branch` is dead code.
+- The `upload_folder` call passes `revision` so it commits to the branch, not main.
+- Commit message distinguishes checkpoints from final pushes for clarity in the Hub UI.
 
 ---
 
@@ -367,7 +350,7 @@ Only `main` (the final model) remains. This keeps the Hub repo clean.
 **Acceptable risk.** The upload is an atomic operation (single `upload_folder` call). If it fails mid-transfer, the branch either has the old content (from a prior push at the same step — unlikely) or is in an incomplete state. Incomplete state = load fails with corrupt weights → user skips to the previous checkpoint. The local filesystem is already gone (Colab disconnect), but the previous checkpoint branch is safe on Hub.
 
 ### 3. Re-pushing to same step (e.g., resume + re-run)
-**Handled.** `api.create_branch(..., exist_ok=True)` allows the branch to already exist. The new `upload_folder` overwrites the old content with a new commit on that branch. No error. No ambiguity.
+**Handled.** `upload_folder(revision=...)` auto-creates the branch on first push and creates a new commit on subsequent pushes. No error. No ambiguity. The latest commit wins.
 
 ### 4. Large model upload time blocking training
 **Minimal impact.** For SmolVLA (~100M trainable params, ~2 GB on disk):

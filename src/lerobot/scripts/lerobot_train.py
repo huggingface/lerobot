@@ -345,6 +345,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         preprocessor, postprocessor = make_pre_post_processors(
             policy_cfg=cfg.policy,
             pretrained_path=processor_pretrained_path,
+            revision=cfg.policy.revision if hasattr(cfg.policy, "revision") else None,
             **processor_kwargs,
         )
 
@@ -576,6 +577,21 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
                     wandb_logger.log_policy(checkpoint_dir)
+
+                # Push checkpoint to HuggingFace Hub if enabled (V1: model weights only)
+                if getattr(active_cfg, "push_checkpoints_to_hub", False):
+                    step_id = get_step_identifier(step, cfg.steps)
+                    logging.info(f"Pushing checkpoint to Hub at step {step}")
+                    try:
+                        unwrapped = accelerator.unwrap_model(policy)
+                        if not cfg.is_reward_model_training and cfg.policy.use_peft:
+                            unwrapped.push_model_to_hub(cfg, peft_model=unwrapped,
+                                                        revision=f"step-{step_id}")
+                        else:
+                            unwrapped.push_model_to_hub(cfg, revision=f"step-{step_id}")
+                        logging.info(f"Checkpoint pushed to {active_cfg.repo_id} @ step-{step_id}")
+                    except Exception as e:
+                        logging.warning(f"Hub push failed (local checkpoint safe): {e}")
 
             accelerator.wait_for_everyone()
 
