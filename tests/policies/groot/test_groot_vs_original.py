@@ -16,22 +16,12 @@
 
 """Parity test: original NVIDIA GR00T N1.7 vs the GR00T N1.7 integration in LeRobot.
 
-This is the N1.7 analogue of ``test_groot_vs_original.py`` (which covers N1.5/GR1).
-It verifies that the *self-contained* LeRobot reimplementation of the GR00T N1.7
-action head + Qwen3-VL backbone produces the SAME raw model output (``action_pred``,
-the normalized flow-matching prediction before any action decoding) as NVIDIA's
-original ``gr00t`` package, given byte-identical pre-processed inputs and the same
-flow-matching seed.
-
-MULTIPLE EMBODIMENTS (anti-overfitting)
----------------------------------------
-The comparison is parametrized over EVERY embodiment tag present in the checkpoint
-(``libero_sim`` plus the cross-embodiment tags it was trained with: oxe_droid,
-real_g1, the real_r1_pro_sharpa family, and the xdof family). Inputs for each tag are
-built generically from the checkpoint metadata (state dims from ``statistics.json``,
-camera/language keys from the processor modality configs), so passing on all of them
-shows the LeRobot integration is correct across the model's full embodiment space and
-not merely tuned for ``libero_sim``.
+Verifies that the self-contained LeRobot reimplementation of the GR00T N1.7 action
+head + Qwen3-VL backbone produces the SAME raw model output (``action_pred``, the
+normalized flow-matching prediction before any action decoding) as NVIDIA's original
+``gr00t`` package, given byte-identical pre-processed inputs and the same
+flow-matching seed. The comparison is parametrized over every embodiment tag present
+in the checkpoint.
 
 WHY TWO ENVIRONMENTS
 --------------------
@@ -43,16 +33,16 @@ argument follows default argument"). The two implementations therefore CANNOT be
 imported in the same Python process.
 
 To keep the comparison fair, the original outputs + the exact collated inputs are
-produced once per embodiment in the original ``gr00t`` env via
-``groot_vs_lerobot/scripts/dump_original_n1_7.py`` and saved to per-tag ``.npz``
-files. This test discovers those artifacts, replays the identical inputs through the
-LeRobot model, and compares.
+produced once per embodiment in the original ``gr00t`` env via the companion script
+``dump_original_n1_7.py`` (next to this file) and saved to per-tag ``.npz`` files.
+This test discovers those artifacts, replays the identical inputs through the LeRobot
+model, and compares.
 
 This test is LOCAL-only and skips on CI, when ``gr00t``-side prerequisites are not
-present, or when no artifact has been generated. No hardcoded paths: the artifact
-directory comes from ``GROOT_N1_7_PARITY_DIR`` (default:
-``groot_vs_lerobot/artifacts`` alongside the repo root). See
-``groot_vs_lerobot/README.md`` for the full run procedure.
+present, or when no artifact has been generated. By default it looks for artifacts in
+``<this dir>/artifacts/``; override with ``GROOT_N1_7_PARITY_DIR``. See the
+"Original-vs-LeRobot parity test" section of ``src/lerobot/policies/groot/README.md``
+for the full run procedure.
 """
 
 import os
@@ -80,12 +70,17 @@ _ARTIFACT_SUFFIX = ".npz"
 
 
 def _artifact_dir() -> Path:
+    """Directory holding the per-embodiment .npz artifacts.
+
+    Self-contained by default: a sibling ``artifacts/`` directory next to this test.
+    Override with ``GROOT_N1_7_PARITY_DIR`` (e.g. to point at a scratch location).
+    The directory is read-only here -- it is populated by ``dump_original_n1_7.py``
+    run in the original gr00t environment; the test never creates it.
+    """
     env = os.environ.get("GROOT_N1_7_PARITY_DIR")
     if env:
         return Path(env)
-    # repo_root/tests/policies/groot/<this file> -> repo_root.parent holds groot_vs_lerobot/
-    repo_root = Path(__file__).resolve().parents[3]
-    return repo_root.parent / "groot_vs_lerobot" / "artifacts"
+    return Path(__file__).resolve().parent / "artifacts"
 
 
 def _discover_artifacts() -> list[tuple[str, Path]]:
@@ -183,12 +178,12 @@ _ARTIFACTS = _discover_artifacts()
     not _ARTIFACTS,
     reason=(
         "No GR00T N1.7 parity artifacts found. Generate them first in the original gr00t "
-        "env:\n  .venv-original/bin/python groot_vs_lerobot/scripts/dump_original_n1_7.py "
-        "--ckpt <ckpt> --out-dir groot_vs_lerobot/artifacts --device cuda"
+        "env:\n  .venv-original/bin/python tests/policies/groot/dump_original_n1_7.py "
+        "--ckpt <ckpt> --out-dir tests/policies/groot/artifacts --device cuda"
     ),
 )
 @pytest.mark.parametrize("embodiment_tag,artifact", _ARTIFACTS, ids=[t for t, _ in _ARTIFACTS])
-def test_groot_n1_7_get_action_parity(embodiment_tag, artifact, lerobot_model):
+def test_groot_get_action_parity(embodiment_tag, artifact, lerobot_model):
     """Raw model.get_action(action_pred) parity per embodiment: original vs LeRobot."""
     original_action, flat_inputs = _load_artifact(artifact)
     model_inputs = _unflatten(flat_inputs)
