@@ -25,7 +25,8 @@ in the checkpoint.
 
 To keep the comparison fair, the original outputs + the exact collated inputs are
 produced once per embodiment in the original ``gr00t`` env via the companion script
-``dump_original_n1_7.py`` (next to this file) and saved to per-tag ``.npz`` files.
+``utils/dump_original_n1_7.py`` (in the ``utils`` package next to this file) and saved
+to per-tag ``.npz`` files.
 This test discovers those artifacts, replays the identical inputs through the LeRobot
 model, and compares.
 
@@ -65,7 +66,7 @@ def _artifact_dir() -> Path:
 
     Self-contained by default: a sibling ``artifacts/`` directory next to this test.
     Override with ``GROOT_N1_7_PARITY_DIR`` (e.g. to point at a scratch location).
-    The directory is read-only here -- it is populated by ``dump_original_n1_7.py``
+    The directory is read-only here -- it is populated by ``utils/dump_original_n1_7.py``
     run in the original gr00t environment; the test never creates it.
     """
     env = os.environ.get("GROOT_N1_7_PARITY_DIR")
@@ -169,7 +170,7 @@ _ARTIFACTS = _discover_artifacts()
     not _ARTIFACTS,
     reason=(
         "No GR00T N1.7 parity artifacts found. Generate them first in the original gr00t "
-        "env:\n  .venv-original/bin/python tests/policies/groot/dump_original_n1_7.py "
+        "env:\n  .venv-original/bin/python tests/policies/groot/utils/dump_original_n1_7.py "
         "--ckpt <ckpt> --out-dir tests/policies/groot/artifacts --device cuda"
     ),
 )
