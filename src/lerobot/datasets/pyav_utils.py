@@ -109,7 +109,7 @@ def _check_option_value(vcodec: str, label: str, value: Any, opt: av.option.Opti
                     f"{label}={value!r} is not numeric; codec {vcodec!r} expects a number for this option."
                 ) from e
         elif isinstance(value, (float, int)):
-            num_val = value
+            num_val = float(value)
         else:
             raise ValueError(
                 f"{label}={value!r} is not numeric; codec {vcodec!r} expects a number for this option."
