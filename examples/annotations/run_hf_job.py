@@ -51,10 +51,6 @@ CMD = (
     "openai && "
     "export VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 && "
     "export VLLM_VIDEO_BACKEND=pyav && "
-    # All pipeline knobs (module toggles, frame sampling, parallelism, ...)
-    # are left at their defaults — see AnnotationPipelineConfig in
-    # src/lerobot/annotations/steerable_pipeline/config.py for what each one
-    # does and the docs page for per-flavor recipes.
     "lerobot-annotate "
     "--repo_id=pepijn223/robocasa_pretrain_human300_v4 "
     "--new_repo_id=pepijn223/robocasa_pretrain_human300_v4_annotated "
@@ -65,8 +61,6 @@ CMD = (
     '--vlm.serve_command="vllm serve Qwen/Qwen3.6-27B '
     "--tensor-parallel-size 1 --max-model-len 32768 "
     '--gpu-memory-utilization 0.8 --uvicorn-log-level warning --port {port}" '
-    # Large model: leave extra headroom over the 600 s default for the
-    # server's first boot (weight download + compile).
     "--vlm.serve_ready_timeout_s=1800 "
     # Qwen3.6 ships with thinking on; annotation wants plain JSON answers.
     "--vlm.chat_template_kwargs='{\"enable_thinking\": false}'"
