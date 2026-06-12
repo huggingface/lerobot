@@ -49,13 +49,34 @@ def get_step_checkpoint_dir(output_dir: Path, total_steps: int, step: int) -> Pa
     return output_dir / CHECKPOINTS_DIR / step_identifier
 
 
-def save_training_step(step: int, save_dir: Path) -> None:
-    write_json({"step": step}, save_dir / TRAINING_STEP)
+def save_training_step(
+    step: int, save_dir: Path, num_processes: int | None = None, batch_size: int | None = None
+) -> None:
+    state: dict = {"step": step}
+    # num_processes and batch_size are recorded so a resumed run can detect a changed world size or
+    # batch size: the sampler's resume offset is computed from the (num_processes, batch_size) that
+    # produced `step`, since both scale how many sampler positions a step consumes (see
+    # compute_sampler_state).
+    if num_processes is not None:
+        state["num_processes"] = num_processes
+    if batch_size is not None:
+        state["batch_size"] = batch_size
+    write_json(state, save_dir / TRAINING_STEP)
 
 
 def load_training_step(save_dir: Path) -> int:
     training_step = load_json(save_dir / TRAINING_STEP)
     return training_step["step"]
+
+
+def load_training_num_processes(checkpoint_dir: Path) -> int | None:
+    """World size recorded at checkpoint time, or None for checkpoints written before it was stored."""
+    return load_json(checkpoint_dir / TRAINING_STATE_DIR / TRAINING_STEP).get("num_processes")
+
+
+def load_training_batch_size(checkpoint_dir: Path) -> int | None:
+    """Per-process batch size recorded at checkpoint time, or None for older checkpoints."""
+    return load_json(checkpoint_dir / TRAINING_STATE_DIR / TRAINING_STEP).get("batch_size")
 
 
 def update_last_checkpoint(checkpoint_dir: Path) -> Path:
@@ -75,6 +96,8 @@ def save_checkpoint(
     scheduler: LRScheduler | None = None,
     preprocessor: PolicyProcessorPipeline | None = None,
     postprocessor: PolicyProcessorPipeline | None = None,
+    num_processes: int | None = None,
+    batch_size: int | None = None,
 ) -> None:
     """This function creates the following directory structure:
 
@@ -100,6 +123,10 @@ def save_checkpoint(
         scheduler (LRScheduler | None, optional): The scheduler to save the state from. Defaults to None.
         preprocessor: The preprocessor/pipeline to save. Defaults to None.
         postprocessor: The postprocessor/pipeline to save. Defaults to None.
+        num_processes (int | None, optional): Distributed world size to record for sample-exact
+            resume. Defaults to None (not recorded).
+        batch_size (int | None, optional): Per-process batch size to record for sample-exact
+            resume. Defaults to None (not recorded).
     """
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
     policy.save_pretrained(pretrained_dir)
@@ -112,7 +139,9 @@ def save_checkpoint(
         preprocessor.save_pretrained(pretrained_dir)
     if postprocessor is not None:
         postprocessor.save_pretrained(pretrained_dir)
-    save_training_state(checkpoint_dir, step, optimizer, scheduler)
+    save_training_state(
+        checkpoint_dir, step, optimizer, scheduler, num_processes=num_processes, batch_size=batch_size
+    )
 
 
 def save_training_state(
@@ -120,6 +149,8 @@ def save_training_state(
     train_step: int,
     optimizer: Optimizer | None = None,
     scheduler: LRScheduler | None = None,
+    num_processes: int | None = None,
+    batch_size: int | None = None,
 ) -> None:
     """
     Saves the training step, optimizer state, scheduler state, and rng state.
@@ -131,10 +162,12 @@ def save_training_state(
             Defaults to None.
         scheduler (LRScheduler | None, optional): The scheduler from which to save the state_dict.
             Defaults to None.
+        num_processes (int | None, optional): Distributed world size to record. Defaults to None.
+        batch_size (int | None, optional): Per-process batch size to record. Defaults to None.
     """
     save_dir = checkpoint_dir / TRAINING_STATE_DIR
     save_dir.mkdir(parents=True, exist_ok=True)
-    save_training_step(train_step, save_dir)
+    save_training_step(train_step, save_dir, num_processes=num_processes, batch_size=batch_size)
     save_rng_state(save_dir)
     if optimizer is not None:
         save_optimizer_state(optimizer, save_dir)
