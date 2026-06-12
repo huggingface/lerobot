@@ -13,6 +13,10 @@ Depth metadata detection on ``LeRobotDatasetMetadata.depth_keys`` lives in
 
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("av", reason="av is required (install lerobot[dataset])")
+
 import av
 import numpy as np
 import PIL.Image
