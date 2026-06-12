@@ -1,13 +1,13 @@
 # action-smoothing-ema-clip
 
-**Target:** `src/lerobot/rollout/strategies/core.py`, `src/lerobot/rollout/strategies/dagger.py`
+**Target:** `src/lerobot/rollout/strategies/core.py`
 **Status:** `active`
 **GitHub:** Not filed (post-hoc smoothing, not a bug fix)
 **Bugfixes applied:** `2978b798` (snap-back on correction resume), `0bc80699` (reset-threshold bypassed velocity clip)
 
 ## What
 
-Post-hoc EMA smoothing + per-joint velocity clipping on absolute goal positions. On DAGGER correction boundaries (>10° gap from stale state), the EMA state is reset — the raw policy output is accepted directly (it is near the current physical position — the policy just observed it) and `_prev` is re-seeded. On subsequent frames, normal EMA + clip resumes. `reset_action_smoothing()` is called on correction resume for a clean slate.
+Post-hoc EMA smoothing + per-joint velocity clipping on absolute goal positions. On DAGGER correction boundaries (>10° gap from stale state), the EMA state is reset — the raw policy output is accepted directly (it is near the current physical position — the policy just observed it) and `_prev` is re-seeded. On subsequent frames, normal EMA + clip resumes.
 
 Constants (tuned for SO-101 at 15fps):
 
@@ -45,5 +45,5 @@ SmolVLA per-frame prediction noise causes high-frequency jitter at inference. Th
 ```bash
 grep -q "EMA_SMOOTHING_ALPHA\|MAX_JOINT_DELTA\|SMOOTHING_RESET_THRESHOLD" ~/lerobot/src/lerobot/rollout/strategies/core.py && echo "Constants ✅" || echo "MISSING"
 grep -q "_smooth_action(processed)" ~/lerobot/src/lerobot/rollout/strategies/core.py && echo "Injection ✅" || echo "MISSING"
-grep -q "reset_action_smoothing()" ~/lerobot/src/lerobot/rollout/strategies/dagger.py && echo "Reset-on-resume ✅" || echo "MISSING"
+grep -q "STILL apply" ~/lerobot/src/lerobot/rollout/strategies/core.py && echo "Reset-comment ✅" || echo "MISSING"
 ```
