@@ -615,11 +615,12 @@ class RealSenseCamera(Camera):
         return frame
 
     @check_if_not_connected
-    def async_read_depth(self, timeout_ms: float = 200) -> NDArray[Any]:
-        """Read the latest depth frame asynchronously, in metric meters.
+    def async_read_depth(self, timeout_ms: float = 200) -> NDArray[np.uint16]:
+        """Read the latest depth frame asynchronously, in millimeters.
 
         Mirrors :meth:`async_read` but returns the depth stream rather than the
-        color stream. Output is ``np.uint16`` of shape ``(H, W, 1)``.
+        color stream. Output is ``np.uint16`` of shape ``(H, W, 1)``, where each
+        pixel is the distance from the sensor in millimeters.
 
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
@@ -647,10 +648,11 @@ class RealSenseCamera(Camera):
 
     @check_if_not_connected
     def read_latest_depth(self, max_age_ms: int = 500) -> NDArray[Any]:
-        """Return the most recent depth frame in metric meters (peeking).
+        """Return the most recent depth frame in millimeters (peeking).
 
         Non-blocking counterpart of :meth:`read_latest` for the depth stream.
-        Output is ``np.uint16`` of shape ``(H, W, 1)`` in millimeters.
+        Output is ``np.uint16`` of shape ``(H, W, 1)``, where each pixel is the
+        distance from the sensor in millimeters.
 
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
