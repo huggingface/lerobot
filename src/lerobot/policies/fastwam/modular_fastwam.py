@@ -24,7 +24,13 @@ import torch.nn as nn
 import torch.nn.functional as functional
 from PIL import Image
 
-from .wan_components import load_wan22_ti2v_5b_components
+from .wan_components import (
+    build_wan_tokenizer,
+    load_pretrained_wan_text_encoder,
+    load_pretrained_wan_vae,
+    load_wan_video_dit,
+    resolve_wan_dit_paths,
+)
 from .wan_video_dit import (
     FastWAMAttentionBlock,
     WanContinuousFlowMatchScheduler,
@@ -846,9 +852,17 @@ class FastWAM(torch.nn.Module):
         # Keep trainer compatibility: optimizer and freeze logic use `model.dit`.
         self.dit = self.mot
 
-        self.vae = vae
-        self.text_encoder = text_encoder
+        # Frozen Wan2.2 components: bypass `nn.Module.__setattr__` so they are NOT
+        # registered as submodules. They are therefore excluded from `state_dict()`
+        # (lean checkpoints), `parameters()`, and DDP gradient sync, and are loaded
+        # with their real weights from the diffusers/transformers repos at construction.
+        # Device/dtype moves still reach them via the `_apply` override below.
+        object.__setattr__(self, "vae", vae)
+        object.__setattr__(self, "text_encoder", text_encoder)
         self.tokenizer = tokenizer
+        vae.requires_grad_(False)
+        if text_encoder is not None:
+            text_encoder.requires_grad_(False)
         if text_dim is None:
             if self.text_encoder is None:
                 raise ValueError("`text_dim` is required when `text_encoder` is not loaded.")
@@ -913,18 +927,17 @@ class FastWAM(torch.nn.Module):
             raise ValueError("`video_dit_config` is required for FastWAM.from_wan22_pretrained().")
         if "text_dim" not in video_dit_config:
             raise ValueError("`video_dit_config['text_dim']` is required for FastWAM.")
+        del tokenizer_model_id  # tokenizer is the stock UMT5 one (google/umt5-xxl)
 
-        components = load_wan22_ti2v_5b_components(
-            device=device,
-            torch_dtype=torch_dtype,
-            model_id=model_id,
-            tokenizer_model_id=tokenizer_model_id,
-            tokenizer_max_len=tokenizer_max_len,
+        # Custom MoT video DiT from the original Wan2.2 repo; frozen VAE / UMT5 from
+        # the diffusers conversion. This is the offline base-creation path; the
+        # weights it loads are then bundled into the FastWAM `model.safetensors`.
+        video_expert = load_wan_video_dit(
+            resolve_wan_dit_paths(model_id),
             dit_config=video_dit_config,
-            load_text_encoder=load_text_encoder,
+            torch_dtype=torch_dtype,
+            device=device,
         )
-
-        video_expert = components.dit
         action_expert = ActionDiT(**action_dit_config).to(device=device, dtype=torch_dtype)
         if int(action_expert.num_heads) != int(video_expert.num_heads):
             raise ValueError("ActionDiT `num_heads` must match video expert for MoT mixed attention.")
@@ -938,13 +951,21 @@ class FastWAM(torch.nn.Module):
             mot_checkpoint_mixed_attn=mot_checkpoint_mixed_attn,
         )
 
-        model = cls(
+        vae = load_pretrained_wan_vae(torch_dtype=torch_dtype, device=device)
+        text_encoder = (
+            load_pretrained_wan_text_encoder(torch_dtype=torch_dtype, device=device)
+            if load_text_encoder
+            else None
+        )
+        tokenizer = build_wan_tokenizer(tokenizer_max_len=tokenizer_max_len)
+
+        return cls(
             video_expert=video_expert,
             action_expert=action_expert,
             mot=mot,
-            vae=components.vae,
-            text_encoder=components.text_encoder,
-            tokenizer=components.tokenizer,
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
             text_dim=int(video_dit_config["text_dim"]),
             proprio_dim=proprio_dim,
             device=device,
@@ -958,20 +979,17 @@ class FastWAM(torch.nn.Module):
             loss_lambda_video=loss_lambda_video,
             loss_lambda_action=loss_lambda_action,
         )
-        model.model_paths = {
-            "video_dit": components.dit_path,
-            "vae": components.vae_path,
-            "text_encoder": components.text_encoder_path,
-            "tokenizer": components.tokenizer_path,
-        }
-        return model
 
-    def to(self, *args, **kwargs):
-        super().to(*args, **kwargs)
-        self.mot.to(*args, **kwargs)
+    def _apply(self, fn, *args, **kwargs):
+        # `.to()` / `.cuda()` / `.cpu()` and accelerate/DDP device moves all funnel
+        # through `_apply`, and the parent policy reaches us via `child._apply(fn)`
+        # (not `child.to()`). Propagate `fn` to the *unregistered* frozen VAE / text
+        # encoder here so they follow the rest of the model onto the right device,
+        # while staying out of `state_dict()` / `parameters()`.
+        super()._apply(fn, *args, **kwargs)
+        self.vae._apply(fn)
         if self.text_encoder is not None:
-            self.text_encoder.to(*args, **kwargs)
-        self.vae.to(*args, **kwargs)
+            self.text_encoder._apply(fn)
         return self
 
     @staticmethod
@@ -1628,7 +1646,7 @@ class FastWAM(torch.nn.Module):
         latent_w = width // self.vae.upsampling_factor
         generator = None if seed is None else torch.Generator(device=rand_device).manual_seed(seed)
         return torch.randn(
-            (1, self.vae.model.z_dim, latent_t, latent_h, latent_w),
+            (1, self.vae.z_dim, latent_t, latent_h, latent_w),
             generator=generator,
             device=rand_device,
             dtype=torch.float32,
