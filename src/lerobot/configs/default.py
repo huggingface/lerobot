@@ -42,7 +42,7 @@ class DatasetConfig:
     # Whole episodes each streaming consumer keeps open to shuffle across (the randomness knob).
     # Larger mixes more episodes per batch at the cost of cold-start latency; RAM stays small because
     # the pool holds tabular rows only. Ignored when streaming is False.
-    streaming_episode_pool_size: int = 64
+    streaming_episode_pool_size: int = 1024
 
     def __post_init__(self) -> None:
         if self.episodes is not None:

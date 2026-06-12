@@ -79,7 +79,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         dataset = StreamingLeRobotDataset(
             repo_id="your-dataset-repo-id",
             delta_timestamps={"action": [0.0, 0.1, 0.2]},
-            episode_pool_size=64,
+            episode_pool_size=1024,
         )
         for sample in dataset:
             ...
@@ -97,7 +97,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         revision: str | None = None,
         force_cache_sync: bool = False,
         streaming: bool = True,
-        episode_pool_size: int | None = 64,
+        episode_pool_size: int | None = 1024,
         frame_shuffle_buffer_size: int | None = None,
         buffer_size: int | None = None,
         max_num_shards: int | None = None,
@@ -128,7 +128,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             episode_pool_size (int, optional): Whole episodes each consumer keeps open to shuffle
                 across — the randomness knob. Larger mixes more episodes per batch (closer to
                 map-style uniform) at the cost of cold-start latency and frame-buffer RAM.
-                Defaults to 64.
+                Defaults to 1024.
             frame_shuffle_buffer_size (int | None, optional): Frame-level shuffle buffer after the
                 episode pool. Defaults to ``episode_pool_size x average episode length`` (capped),
                 which matches the pool's mixing radius.
@@ -178,7 +178,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.shuffle = shuffle
 
         self.streaming = streaming
-        self.episode_pool_size = max(1, episode_pool_size) if episode_pool_size else 64
+        self.episode_pool_size = max(1, episode_pool_size) if episode_pool_size else 1024
         self._return_uint8 = return_uint8
 
         self.rank, self.world_size = self._resolve_distributed(rank, world_size)
