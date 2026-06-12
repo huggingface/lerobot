@@ -11,9 +11,13 @@ Post-hoc EMA smoothing + per-joint velocity clipping on absolute goal positions.
 
 Constants (tuned for SO-101 at 15fps):
 
-- `EMA_SMOOTHING_ALPHA = 0.2` — lower = smoother but more lag (20% new, 80% history)
-- `MAX_JOINT_DELTA = 0.75` — max per-frame change in degrees (≈11°/s at 15fps)
+- `EMA_SMOOTHING_ALPHA = 0.25` — lower = smoother but more lag (25% new, 75% history)
+- `MAX_JOINT_DELTA = 1.25` — max per-frame change in degrees (≈19°/s at 15fps)
 - `SMOOTHING_RESET_THRESHOLD = 10.0` — gap that triggers EMA reset
+
+A periodic log line is emitted every 150 frames (~10s at 15fps):
+`clip=True/False limit=X.XX°/frame alpha=X.XX frame=N [RESET]`
+where `[RESET]` marks a correction-boundary frame.
 
 ## Why
 
