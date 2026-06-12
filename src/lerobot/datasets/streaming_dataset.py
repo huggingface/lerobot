@@ -13,16 +13,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from collections import deque
-from collections.abc import Callable, Generator, Iterable, Iterator
+import logging
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import datasets
 import numpy as np
 import torch
 from datasets import load_dataset
+from datasets.distributed import split_dataset_by_node
 
-from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
+from lerobot.utils.constants import HF_LEROBOT_HOME
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .feature_utils import get_delta_indices
@@ -31,207 +33,56 @@ from .utils import (
     check_version_compatibility,
     find_float_index,
     is_float_in_list,
-    safe_shard,
 )
 from .video_utils import (
     VideoDecoderCache,
     decode_video_frames_torchcodec,
 )
 
+logger = logging.getLogger(__name__)
 
-class LookBackError(Exception):
-    """
-    Exception raised when trying to look back in the history of a Backtrackable object.
-    """
-
-    pass
-
-
-class LookAheadError(Exception):
-    """
-    Exception raised when trying to look ahead in the future of a Backtrackable object.
-    """
-
-    pass
-
-
-class Backtrackable[T]:
-    """
-    Wrap any iterator/iterable so you can step back up to `history` items
-    and look ahead up to `lookahead` items.
-
-    This is useful for streaming datasets where you need to access previous and future items
-    but can't load the entire dataset into memory.
-
-    Example:
-    -------
-    ```python
-    ds = load_dataset("c4", "en", streaming=True, split="train")
-    rev = Backtrackable(ds, history=3, lookahead=2)
-
-    x0 = next(rev)  # forward
-    x1 = next(rev)
-    x2 = next(rev)
-
-    # Look ahead
-    x3_peek = rev.peek_ahead(1)  # next item without moving cursor
-    x4_peek = rev.peek_ahead(2)  # two items ahead
-
-    # Look back
-    x1_again = rev.peek_back(1)  # previous item without moving cursor
-    x0_again = rev.peek_back(2)  # two items back
-
-    # Move backward
-    x1_back = rev.prev()  # back one step
-    next(rev)  # returns x2, continues forward from where we were
-    ```
-    """
-
-    __slots__ = ("_source", "_back_buf", "_ahead_buf", "_cursor", "_history", "_lookahead")
-
-    def __init__(self, iterable: Iterable[T], *, history: int = 1, lookahead: int = 0):
-        if history < 1:
-            raise ValueError("history must be >= 1")
-        if lookahead <= 0:
-            raise ValueError("lookahead must be > 0")
-
-        self._source: Iterator[T] = iter(iterable)
-        self._back_buf: deque[T] = deque(maxlen=history)
-        self._ahead_buf: deque[T] = deque(maxlen=lookahead) if lookahead > 0 else deque()
-        self._cursor: int = 0
-        self._history = history
-        self._lookahead = lookahead
-
-    def __iter__(self) -> "Backtrackable[T]":
-        return self
-
-    def __next__(self) -> T:
-        # If we've stepped back, consume from back buffer first
-        if self._cursor < 0:  # -1 means "last item", etc.
-            self._cursor += 1
-            return self._back_buf[self._cursor]
-
-        # If we have items in the ahead buffer, use them first
-        item = self._ahead_buf.popleft() if self._ahead_buf else next(self._source)
-
-        # Add current item to back buffer and reset cursor
-        self._back_buf.append(item)
-        self._cursor = 0
-        return item
-
-    def prev(self) -> T:
-        """
-        Step one item back in history and return it.
-        Raises IndexError if already at the oldest buffered item.
-        """
-        if len(self._back_buf) + self._cursor <= 1:
-            raise LookBackError("At start of history")
-
-        self._cursor -= 1
-        return self._back_buf[self._cursor]
-
-    def peek_back(self, n: int = 1) -> T:
-        """
-        Look `n` items back (n=1 == previous item) without moving the cursor.
-        """
-        if n < 0 or n + 1 > len(self._back_buf) + self._cursor:
-            raise LookBackError("peek_back distance out of range")
-
-        return self._back_buf[self._cursor - (n + 1)]
-
-    def peek_ahead(self, n: int = 1) -> T:
-        """
-        Look `n` items ahead (n=1 == next item) without moving the cursor.
-        Fills the ahead buffer if necessary.
-        """
-        if n < 1:
-            raise LookAheadError("peek_ahead distance must be 1 or more")
-        elif n > self._lookahead:
-            raise LookAheadError("peek_ahead distance exceeds lookahead limit")
-
-        # Fill ahead buffer if we don't have enough items
-        while len(self._ahead_buf) < n:
-            try:
-                item = next(self._source)
-                self._ahead_buf.append(item)
-
-            except StopIteration as err:
-                raise LookAheadError("peek_ahead: not enough items in source") from err
-
-        return self._ahead_buf[n - 1]
-
-    def history(self) -> list[T]:
-        """
-        Return a copy of the buffered history (most recent last).
-        The list length ≤ `history` argument passed at construction.
-        """
-        if self._cursor == 0:
-            return list(self._back_buf)
-
-        # When cursor<0, slice so the order remains chronological
-        return list(self._back_buf)[: self._cursor or None]
-
-    def can_peek_back(self, steps: int = 1) -> bool:
-        """
-        Check if we can go back `steps` items without raising an IndexError.
-        """
-        return steps <= len(self._back_buf) + self._cursor
-
-    def can_peek_ahead(self, steps: int = 1) -> bool:
-        """
-        Check if we can peek ahead `steps` items.
-        This may involve trying to fill the ahead buffer.
-        """
-        if self._lookahead > 0 and steps > self._lookahead:
-            return False
-
-        # Try to fill ahead buffer to check if we can peek that far
-        try:
-            while len(self._ahead_buf) < steps:
-                if self._lookahead > 0 and len(self._ahead_buf) >= self._lookahead:
-                    return False
-                item = next(self._source)
-                self._ahead_buf.append(item)
-            return True
-        except StopIteration:
-            return False
+# Bound the default frame-level shuffle buffer: rows are tabular-only (~KB each), so this is
+# roughly a few hundred MB of host RAM per consumer at the cap.
+_MAX_DEFAULT_FRAME_BUFFER = 200_000
 
 
 class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
-    """LeRobotDataset with streaming capabilities.
+    """LeRobotDataset with streaming capabilities, built on native HF `datasets` primitives.
 
-    This class extends LeRobotDataset to add streaming functionality, allowing data to be streamed
-    rather than loaded entirely into memory. This is especially useful for large datasets that may
-    not fit in memory or when you want to quickly explore a dataset without downloading it completely.
+    The tabular side is a pure `datasets` pipeline::
 
-    The key innovation is using a Backtrackable iterator that maintains a bounded buffer of recent
-    items, allowing us to access previous frames for delta timestamps without loading the entire
-    dataset into memory.
+        load_dataset(streaming=True)                          # parquet shards from the Hub / a bucket
+          -> split_dataset_by_node(rank, world_size)          # disjoint shards per rank
+          -> batch(by_column="episode_index")                 # whole episodes
+          -> shuffle(buffer_size=episode_pool_size)           # episode pool (the randomness knob)
+          -> map(explode + exact delta windows)               # episode -> frames, windows are exact
+          -> shuffle(buffer_size=frame_shuffle_buffer_size)   # frame-level interleave
+
+    and this class is a thin torch ``IterableDataset`` wrapper around it that decodes video
+    per emitted sample (decode-on-exit), applies image transforms, and attaches the task
+    string. DataLoader workers are split natively by `datasets` (disjoint shards per worker),
+    and resume uses the native ``state_dict`` / ``load_state_dict``.
+
+    Randomness: a batch mixes up to ``episode_pool_size`` distinct episodes; delta windows are
+    exact slices of the resident episode with correct padding at episode boundaries.
+
+    Resume: ``state_dict()`` / ``load_state_dict()`` delegate to `datasets`. Samples sitting in
+    the shuffle buffers at checkpoint time are skipped on resume (documented `datasets`
+    behavior), so resume never repeats data but may drop up to roughly
+    ``episode_pool_size x episode_len + frame_shuffle_buffer_size`` frames — negligible at
+    training scale. The contract is exact with ``num_workers=0``; with DataLoader workers use
+    ``torchdata.stateful_dataloader.StatefulDataLoader``, which checkpoints each worker's
+    dataset state through this same protocol.
 
     Example:
-        Basic usage:
         ```python
-        from lerobot.common.datasets.streaming_dataset import StreamingLeRobotDataset
-
-        # Create a streaming dataset with delta timestamps
-        delta_timestamps = {
-            "observation.image": [-1.0, -0.5, 0.0],  # 1 sec ago, 0.5 sec ago, current
-            "action": [0.0, 0.1, 0.2],  # current, 0.1 sec future, 0.2 sec future
-        }
-
         dataset = StreamingLeRobotDataset(
             repo_id="your-dataset-repo-id",
-            delta_timestamps=delta_timestamps,
-            streaming=True,
-            buffer_size=1000,
+            delta_timestamps={"action": [0.0, 0.1, 0.2]},
+            episode_pool_size=1024,
         )
-
-        # Iterate over the dataset
-        for i, item in enumerate(dataset):
-            print(f"Sample {i}: Episode {item['episode_index']} Frame {item['frame_index']}")
-            # item will contain stacked frames according to delta_timestamps
-            if i >= 10:
-                break
+        for sample in dataset:
+            ...
         ```
     """
 
@@ -246,12 +97,19 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         revision: str | None = None,
         force_cache_sync: bool = False,
         streaming: bool = True,
-        buffer_size: int = 1000,
-        max_num_shards: int = 16,
+        episode_pool_size: int | None = 1024,
+        frame_shuffle_buffer_size: int | None = None,
+        buffer_size: int | None = None,
+        max_num_shards: int | None = None,
         seed: int = 42,
         rng: np.random.Generator | None = None,
         shuffle: bool = True,
         return_uint8: bool = False,
+        rank: int | None = None,
+        world_size: int | None = None,
+        video_decoder_cache_size: int | None = None,
+        data_files_root: str | None = None,
+        video_decode_device: str = "cpu",
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -267,11 +125,32 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             revision (str, optional): Git revision id (branch name, tag, or commit hash).
             force_cache_sync (bool, optional): Flag to sync and refresh local files first.
             streaming (bool, optional): Whether to stream the dataset or load it all. Defaults to True.
-            buffer_size (int, optional): Buffer size for shuffling when streaming. Defaults to 1000.
-            max_num_shards (int, optional): Number of shards to re-shard the input dataset into. Defaults to 16.
+            episode_pool_size (int, optional): Whole episodes each consumer keeps open to shuffle
+                across — the randomness knob. Larger mixes more episodes per batch (closer to
+                map-style uniform) at the cost of cold-start latency and frame-buffer RAM.
+                Defaults to 1024.
+            frame_shuffle_buffer_size (int | None, optional): Frame-level shuffle buffer after the
+                episode pool. Defaults to ``episode_pool_size x average episode length`` (capped),
+                which matches the pool's mixing radius.
+            buffer_size (int | None, optional): Deprecated; superseded by ``episode_pool_size``.
+            max_num_shards (int | None, optional): Deprecated; `datasets` handles shard-to-worker
+                assignment natively.
             seed (int, optional): Reproducibility random seed.
-            rng (np.random.Generator | None, optional): Random number generator.
-            shuffle (bool, optional): Whether to shuffle the dataset across exhaustions. Defaults to True.
+            rng (np.random.Generator | None, optional): Deprecated; ignored.
+            shuffle (bool, optional): Whether to shuffle. False yields episodes in stream order.
+            rank (int | None, optional): This process' rank for distributed training. Each rank streams
+                a disjoint set of shards via ``split_dataset_by_node``. When omitted, resolved from
+                Accelerate (``process_index``) or the ``RANK`` env var, defaulting to 0.
+            world_size (int | None, optional): Total number of distributed processes. When omitted,
+                resolved from Accelerate or ``WORLD_SIZE``, defaulting to 1. For an even per-rank split,
+                ``num_shards % world_size == 0`` should hold (warned otherwise).
+            video_decoder_cache_size (int | None, optional): Max number of open video decoders to retain.
+                When omitted, sized to the episode pool's working set, capped at 128.
+            data_files_root (str | None, optional): fsspec root holding the bulk ``data/`` and ``videos/``
+                trees (e.g. ``hf://buckets/<owner>/<name>``). When set, parquet and video bytes are read
+                from there while metadata still loads from ``repo_id`` on the Hub.
+            video_decode_device (str, optional): Device for torchcodec decode. ``"cuda"`` offloads to
+                NVDEC (needs a CUDA torchcodec build and ``spawn`` DataLoader workers).
         """
         super().__init__()
         self.repo_id = repo_id
@@ -284,15 +163,37 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
         self.seed = seed
-        self.rng = rng if rng is not None else np.random.default_rng(seed)
+        if rng is not None:
+            logger.warning("StreamingLeRobotDataset: `rng` is deprecated and ignored; use `seed`.")
+        if buffer_size is not None:
+            logger.warning(
+                "StreamingLeRobotDataset: `buffer_size` is deprecated and ignored; "
+                "use `episode_pool_size` (whole episodes, not frames)."
+            )
+        if max_num_shards is not None:
+            logger.warning(
+                "StreamingLeRobotDataset: `max_num_shards` is deprecated and ignored; "
+                "`datasets` assigns shards to DataLoader workers natively."
+            )
         self.shuffle = shuffle
 
         self.streaming = streaming
-        self.buffer_size = buffer_size
+        self.episode_pool_size = max(1, episode_pool_size) if episode_pool_size else 1024
         self._return_uint8 = return_uint8
+
+        self.rank, self.world_size = self._resolve_distributed(rank, world_size)
+        self.video_decoder_cache_size = video_decoder_cache_size
+        self.data_files_root = data_files_root.rstrip("/") if data_files_root else None
+        self.video_decode_device = video_decode_device
 
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
         self.video_decoder_cache = None
+        # Shared [hits, misses, evictions, decode_ns, fetch_ns] tensor so DataLoader workers aggregate
+        # decoder-cache stats and component timings into one place the main process can read after
+        # iteration (see video_decoder_cache_stats() / timing_stats()).
+        self._cache_counters = torch.zeros(5, dtype=torch.int64).share_memory_()
+        self._epoch = 0
+        self._in_flight_epoch = 0
 
         if self._requested_root is not None:
             self.root.mkdir(exist_ok=True, parents=True)
@@ -314,15 +215,42 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self.delta_timestamps = delta_timestamps
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
 
-        self.hf_dataset: datasets.IterableDataset = load_dataset(
-            self.repo_id if not self.streaming_from_local else str(self.root),
-            split="train",
-            streaming=self.streaming,
-            data_files="data/*/*.parquet",
-            revision=self.revision,
+        if self.data_files_root is not None:
+            # Bulk data lives in an fsspec root (e.g. an HF storage bucket); metadata stays on the Hub.
+            self.hf_dataset: datasets.IterableDataset = load_dataset(
+                "parquet",
+                split="train",
+                streaming=self.streaming,
+                data_files=f"{self.data_files_root}/data/*/*.parquet",
+            )
+        else:
+            self.hf_dataset = load_dataset(
+                self.repo_id if not self.streaming_from_local else str(self.root),
+                split="train",
+                streaming=self.streaming,
+                data_files="data/*/*.parquet",
+                revision=self.revision,
+            )
+
+        # Drop any parquet columns not declared in the dataset's feature contract. Some revisions / sources
+        # (e.g. an unversioned bucket holding `main`) carry extra, possibly variable-length annotation
+        # columns such as `language_events`; left in, they leak into the sample and break default DataLoader
+        # collation across frames of differing length. On a clean revision this is a no-op.
+        known_columns = set(self.meta.features)
+        extra_columns = [c for c in (self.hf_dataset.column_names or []) if c not in known_columns]
+        if extra_columns:
+            self.hf_dataset = self.hf_dataset.remove_columns(extra_columns)
+
+        self.num_shards = self.hf_dataset.num_shards
+
+        avg_episode_len = max(1, round(self.meta.total_frames / max(1, self.meta.total_episodes)))
+        self.frame_shuffle_buffer_size = (
+            frame_shuffle_buffer_size
+            if frame_shuffle_buffer_size is not None
+            else min(self.episode_pool_size * avg_episode_len, _MAX_DEFAULT_FRAME_BUFFER)
         )
 
-        self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
+        self._pipeline = self._build_pipeline()
 
     @property
     def num_frames(self):
@@ -337,96 +265,223 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         return self.meta.fps
 
     @staticmethod
-    def _iter_random_indices(
-        rng: np.random.Generator, buffer_size: int, random_batch_size=100
-    ) -> Iterator[int]:
-        while True:
-            yield from (int(i) for i in rng.integers(0, buffer_size, size=random_batch_size))
+    def _resolve_distributed(rank: int | None, world_size: int | None) -> tuple[int, int]:
+        """Resolve (rank, world_size) for distributed streaming.
 
-    @staticmethod
-    def _infinite_generator_over_elements(rng: np.random.Generator, elements: list[int]) -> Iterator[int]:
-        while True:
-            yield rng.choice(elements)
+        Explicit arguments win. Otherwise prefer an already-initialized Accelerate state, then the
+        ``RANK``/``WORLD_SIZE`` env vars set by launchers, and finally fall back to single-process (0, 1).
+        """
+        import os
 
-    # TODO(fracapuano): Implement multi-threaded prefetching to accelerate data loading.
-    # The current sequential iteration is a bottleneck. A producer-consumer pattern
-    # could be used with a ThreadPoolExecutor to run `make_frame` (especially video decoding)
-    # in parallel, feeding a queue from which this iterator will yield processed items.
+        if rank is not None and world_size is not None:
+            return rank, world_size
+
+        try:
+            from accelerate.state import PartialState
+
+            if PartialState._shared_state:  # only read it if already initialized; never initialize here
+                state = PartialState()
+                return state.process_index, state.num_processes
+        except Exception:
+            logger.debug("Could not resolve distributed state from Accelerate; using env/defaults.")
+
+        env_rank = os.environ.get("RANK")
+        env_world = os.environ.get("WORLD_SIZE")
+        if env_rank is not None and env_world is not None:
+            return int(env_rank), int(env_world)
+
+        return 0, 1
+
+    def _build_pipeline(self) -> datasets.IterableDataset:
+        """Assemble the native tabular pipeline (everything except video decode)."""
+        ds = self.hf_dataset
+        if self.world_size > 1:
+            if ds.num_shards % self.world_size != 0:
+                logger.warning(
+                    f"num_shards ({ds.num_shards}) is not divisible by world_size ({self.world_size}): "
+                    "datasets falls back to example-level splitting where every rank reads (and pays "
+                    "for) the full stream. Re-shard the dataset or adjust world size."
+                )
+            ds = split_dataset_by_node(ds, rank=self.rank, world_size=self.world_size)
+
+        ds = ds.batch(by_column="episode_index")
+        episode_columns = list(ds.column_names or self.hf_dataset.column_names or [])
+        if self.shuffle:
+            ds = ds.shuffle(seed=self.seed, buffer_size=self.episode_pool_size)
+        # A row-count-changing batched map must drop the input columns explicitly; the exploded
+        # frames re-emit them (windowed keys replaced by their delta windows + *_is_pad masks).
+        ds = ds.map(self._explode_episodes, batched=True, remove_columns=episode_columns)
+        if self.shuffle:
+            ds = ds.shuffle(seed=self.seed + 1, buffer_size=max(2, self.frame_shuffle_buffer_size))
+        return ds
+
+    def _tabular_window_keys(self) -> list[str]:
+        if self.delta_indices is None:
+            return []
+        return [key for key in self.delta_indices if key not in self.meta.video_keys]
+
+    def _explode_episodes(self, episode_batch: dict[str, list[list]]) -> dict[str, list]:
+        """Episode batches -> per-frame rows, with exact tabular delta windows and pad masks.
+
+        Runs inside the `datasets` pipeline (plain Python values, no torch). For each windowed key
+        the original per-frame value is replaced by its delta window (list of values, clamped to
+        the episode bounds) plus a ``{key}_is_pad`` mask, mirroring the map-style dataset.
+        """
+        window_keys = set(self._tabular_window_keys())
+        out: dict[str, list] = {key: [] for key in episode_batch if key not in window_keys}
+        for key in window_keys:
+            out[key] = []
+            out[f"{key}_is_pad"] = []
+
+        num_episodes = len(episode_batch["episode_index"])
+        for e in range(num_episodes):
+            length = len(episode_batch["episode_index"][e])
+            for key, column in episode_batch.items():
+                if key in window_keys:
+                    continue
+                out[key].extend(column[e])
+            for key in window_keys:
+                episode_column = episode_batch[key][e]
+                deltas = self.delta_indices[key]
+                for t in range(length):
+                    window = []
+                    is_pad = []
+                    for delta in deltas:
+                        j = t + delta
+                        window.append(episode_column[min(max(j, 0), length - 1)])
+                        is_pad.append(not 0 <= j < length)
+                    out[key].append(window)
+                    out[f"{key}_is_pad"].append(is_pad)
+        return out
+
+    def _make_video_decoder_cache(self) -> VideoDecoderCache:
+        """Size the decoder cache to the pool's working set (pool episodes x cameras), capped at 128."""
+        if self.video_decoder_cache_size is not None:
+            return VideoDecoderCache(
+                max_size=self.video_decoder_cache_size,
+                counters=self._cache_counters,
+                device=self.video_decode_device,
+            )
+        num_cameras = len(self.meta.video_keys)
+        if num_cameras == 0:
+            return VideoDecoderCache(counters=self._cache_counters, device=self.video_decode_device)
+        return VideoDecoderCache(
+            max_size=min((self.episode_pool_size + 1) * num_cameras, 128),
+            counters=self._cache_counters,
+            device=self.video_decode_device,
+        )
+
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
-        if self.video_decoder_cache is None:
-            self.video_decoder_cache = VideoDecoderCache()
+        # `datasets` reshuffles (and re-permutes shard order) per epoch from (seed, epoch);
+        # DataLoader workers each advance their own copy's counter in lockstep. The in-flight
+        # epoch is tracked separately so a mid-iteration state_dict() records the epoch the
+        # stream position actually belongs to.
+        self._in_flight_epoch = self._epoch
+        self._pipeline.set_epoch(self._in_flight_epoch)
+        self._epoch += 1
+        self.video_decoder_cache = self._make_video_decoder_cache()
 
-        # keep the same seed across exhaustions if shuffle is False, otherwise shuffle data across exhaustions
-        rng = np.random.default_rng(self.seed) if not self.shuffle else self.rng
+        iterator = iter(self._pipeline)
+        while True:
+            fetch_start = time.perf_counter_ns()
+            try:
+                row = next(iterator)
+            except StopIteration:
+                return
+            finally:
+                self._cache_counters[4] += time.perf_counter_ns() - fetch_start
+            yield self._finalize_sample(row)
 
-        buffer_indices_generator = self._iter_random_indices(rng, self.buffer_size)
+    def _finalize_sample(self, row: dict) -> dict:
+        """Torch conversion + video decode (decode-on-exit) + transforms + task for one frame."""
+        window_keys = self._tabular_window_keys()
+        pad_masks = {f"{key}_is_pad": torch.BoolTensor(row.pop(f"{key}_is_pad")) for key in window_keys}
+        item = item_to_torch(row)
+        item.update(pad_masks)
 
-        idx_to_backtrack_dataset = {
-            idx: self._make_backtrackable_dataset(safe_shard(self.hf_dataset, idx, self.num_shards))
-            for idx in range(self.num_shards)
+        if len(self.meta.video_keys) > 0:
+            ep_idx = int(item["episode_index"])
+            current_ts = float(item["timestamp"])
+            # Per-camera episode-local bounds [0, duration]: out-of-episode deltas pad instead of
+            # decoding against a neighbouring episode sharing the same video file.
+            episode_boundaries_ts = {
+                key: (
+                    0.0,
+                    self.meta.episodes[ep_idx][f"videos/{key}/to_timestamp"]
+                    - self.meta.episodes[ep_idx][f"videos/{key}/from_timestamp"],
+                )
+                for key in self.meta.video_keys
+            }
+            original_timestamps = self._make_timestamps_from_indices(current_ts, self.delta_indices)
+            query_timestamps = self._get_query_timestamps(
+                current_ts, self.delta_indices, episode_boundaries_ts
+            )
+            decode_start = time.perf_counter_ns()
+            video_frames = self._query_videos(query_timestamps, ep_idx)
+            self._cache_counters[3] += time.perf_counter_ns() - decode_start
+
+            if self.image_transforms is not None:
+                for cam in self.meta.camera_keys:
+                    video_frames[cam] = self.image_transforms(video_frames[cam])
+
+            item.update(video_frames)
+            if self.delta_indices is not None:
+                item.update(
+                    self._get_video_frame_padding_mask(video_frames, query_timestamps, original_timestamps)
+                )
+
+        item["task"] = self.meta.tasks.iloc[int(item["task_index"])].name
+        return item
+
+    def set_epoch(self, epoch: int) -> None:
+        """Set the epoch the next ``__iter__`` will use (reshuffles the native pipeline)."""
+        self._epoch = epoch
+
+    def state_dict(self) -> dict:
+        """Native `datasets` stream state. Exact contract with ``num_workers=0``; with DataLoader
+        workers use ``torchdata.stateful_dataloader.StatefulDataLoader`` (it checkpoints each
+        worker's copy through this protocol). Samples in the shuffle buffers are skipped on
+        resume (never repeated), bounded by the pool + frame buffer sizes.
+        """
+        return {"pipeline": self._pipeline.state_dict(), "epoch": self._in_flight_epoch}
+
+    def load_state_dict(self, state_dict: dict) -> None:
+        # Resume continues inside the recorded epoch: the next __iter__ replays that epoch's
+        # shuffle order from the restored stream position, then advances normally.
+        self._epoch = int(state_dict.get("epoch", 0))
+        self._pipeline.load_state_dict(state_dict["pipeline"])
+
+    def video_decoder_cache_stats(self) -> dict[str, int | float]:
+        """Decoder-cache reuse aggregated across DataLoader workers via the shared counter tensor.
+
+        Unlike ``self.video_decoder_cache.stats()`` (which only reflects the main process), this sums
+        hits/misses/evictions over every worker. Counts are lock-free across processes, so treat them as
+        approximate; the ``hit_rate`` ratio is preserved.
+        """
+        hits, misses, evictions = (int(x) for x in self._cache_counters[:3].tolist())
+        total = hits + misses
+        return {
+            "hits": hits,
+            "misses": misses,
+            "evictions": evictions,
+            "hit_rate": round(hits / total, 4) if total else 0.0,
         }
 
-        # This buffer is populated while iterating on the dataset's shards
-        # the logic is to add 2 levels of randomness:
-        # (1) sample one shard at random from the ones available, and
-        # (2) sample one frame from the shard sampled at (1)
-        frames_buffer = []
-        while available_shards := list(idx_to_backtrack_dataset.keys()):
-            shard_key = next(self._infinite_generator_over_elements(rng, available_shards))
-            backtrack_dataset = idx_to_backtrack_dataset[shard_key]  # selects which shard to iterate on
-
-            try:
-                for frame in self.make_frame(backtrack_dataset):
-                    if len(frames_buffer) == self.buffer_size:
-                        i = next(buffer_indices_generator)  # samples a element from the buffer
-                        yield frames_buffer[i]
-                        frames_buffer[i] = frame
-                    else:
-                        frames_buffer.append(frame)
-                    break  # random shard sampled, switch shard
-            except (
-                RuntimeError,
-                StopIteration,
-            ):  # NOTE: StopIteration inside a generator throws a RuntimeError since python 3.7
-                del idx_to_backtrack_dataset[shard_key]  # Remove exhausted shard, onto another shard
-
-        # Once shards are all exhausted, shuffle the buffer and yield the remaining frames
-        rng.shuffle(frames_buffer)
-        yield from frames_buffer
-
-    def _get_window_steps(
-        self, delta_timestamps: dict[str, list[float]] | None = None, dynamic_bounds: bool = False
-    ) -> tuple[int, int]:
-        if delta_timestamps is None:
-            return 1, 1
-
-        if not dynamic_bounds:
-            # Fix the windows
-            lookback = LOOKBACK_BACKTRACKTABLE
-            lookahead = LOOKAHEAD_BACKTRACKTABLE
-        else:
-            # Dynamically adjust the windows based on the given delta_timesteps
-            all_timestamps = sum(delta_timestamps.values(), [])
-            lookback = min(all_timestamps) * self.fps
-            lookahead = max(all_timestamps) * self.fps
-
-            # When lookback is >=0 it means no negative timesteps have been provided
-            lookback = 0 if lookback >= 0 else (lookback * -1)
-
-        return lookback, lookahead
-
-    def _make_backtrackable_dataset(self, dataset: datasets.IterableDataset) -> Backtrackable:
-        lookback, lookahead = self._get_window_steps(self.delta_timestamps)
-        return Backtrackable(dataset, history=lookback, lookahead=lookahead)
+    def timing_stats(self) -> dict[str, float]:
+        """Cumulative seconds spent in video decode and in the upstream tabular pipeline (parquet
+        fetch + grouping + shuffles + explode), summed across DataLoader workers via the shared
+        counter tensor. These overlap in wall-clock (workers run in parallel), so compare them to
+        ``num_workers x wallclock`` for time fractions.
+        """
+        decode_ns, fetch_ns = (int(x) for x in self._cache_counters[3:5].tolist())
+        return {"decode_s_total": round(decode_ns / 1e9, 2), "fetch_s_total": round(fetch_ns / 1e9, 2)}
 
     def _make_timestamps_from_indices(
         self, start_ts: float, indices: dict[str, list[int]] | None = None
     ) -> dict[str, list[float]]:
         if indices is not None:
             return {
-                key: (
-                    start_ts + torch.tensor(indices[key]) / self.fps
-                ).tolist()  # NOTE: why not delta_timestamps directly?
+                key: (start_ts + torch.tensor(indices[key]) / self.fps).tolist()
                 for key in self.delta_timestamps
             }
         else:
@@ -463,65 +518,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         return padding_mask
 
-    def make_frame(self, dataset_iterator: Backtrackable) -> Generator:
-        """Makes a frame starting from a dataset iterator"""
-        item = next(dataset_iterator)
-        item = item_to_torch(item)
-
-        updates = []  # list of "updates" to apply to the item retrieved from hf_dataset (w/o camera features)
-
-        # Get episode index from the item
-        ep_idx = item["episode_index"]
-
-        # "timestamp" restarts from 0 for each episode, whereas we need a global timestep within the single .mp4 file (given by index/fps)
-        current_ts = item["index"] / self.fps
-
-        episode_boundaries_ts = {
-            key: (
-                self.meta.episodes[ep_idx][f"videos/{key}/from_timestamp"],
-                self.meta.episodes[ep_idx][f"videos/{key}/to_timestamp"],
-            )
-            for key in self.meta.video_keys
-        }
-
-        # Apply delta querying logic if necessary
-        if self.delta_indices is not None:
-            query_result, padding = self._get_delta_frames(dataset_iterator, item)
-            updates.append(query_result)
-            updates.append(padding)
-
-        # Load video frames, when needed
-        if len(self.meta.video_keys) > 0:
-            original_timestamps = self._make_timestamps_from_indices(current_ts, self.delta_indices)
-
-            # Some timestamps might not result available considering the episode's boundaries
-            query_timestamps = self._get_query_timestamps(
-                current_ts, self.delta_indices, episode_boundaries_ts
-            )
-            video_frames = self._query_videos(query_timestamps, ep_idx)
-
-            if self.image_transforms is not None:
-                image_keys = self.meta.camera_keys
-                for cam in image_keys:
-                    video_frames[cam] = self.image_transforms(video_frames[cam])
-
-            updates.append(video_frames)
-
-            if self.delta_indices is not None:
-                # We always return the same number of frames. Unavailable frames are padded.
-                padding_mask = self._get_video_frame_padding_mask(
-                    video_frames, query_timestamps, original_timestamps
-                )
-                updates.append(padding_mask)
-
-        result = item.copy()
-        for update in updates:
-            result.update(update)
-
-        result["task"] = self.meta.tasks.iloc[item["task_index"]].name
-
-        yield result
-
     def _get_query_timestamps(
         self,
         current_ts: float,
@@ -552,11 +548,20 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         item = {}
         for video_key, query_ts in query_timestamps.items():
-            root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
-            video_path = f"{root}/{self.meta.get_video_file_path(ep_idx, video_key)}"
+            # query_ts is episode-local; shift to the absolute in-file timeline by the episode's offset.
+            from_timestamp = self.meta.episodes[ep_idx][f"videos/{video_key}/from_timestamp"]
+            shifted_query_ts = [from_timestamp + ts for ts in query_ts]
+            rel_path = str(self.meta.get_video_file_path(ep_idx, video_key))
+            if self.data_files_root is not None:
+                root = self.data_files_root
+            elif self.streaming and not self.streaming_from_local:
+                root = self.meta.url_root
+            else:
+                root = self.root
+            video_path = f"{root}/{rel_path}"
             frames = decode_video_frames_torchcodec(
                 video_path,
-                query_ts,
+                shifted_query_ts,
                 self.tolerance_s,
                 decoder_cache=self.video_decoder_cache,
                 return_uint8=self._return_uint8,
@@ -565,116 +570,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             item[video_key] = frames.squeeze(0) if len(query_ts) == 1 else frames
 
         return item
-
-    def _get_delta_frames(self, dataset_iterator: Backtrackable, current_item: dict):
-        # TODO(fracapuano): Modularize this function, refactor the code
-        """Get frames with delta offsets using the backtrackable iterator.
-
-        Args:
-            current_item (dict): Current item from the iterator.
-            ep_idx (int): Episode index.
-
-        Returns:
-            tuple: (query_result, padding) - frames at delta offsets and padding info.
-        """
-        current_episode_idx = current_item["episode_index"]
-
-        # Prepare results
-        query_result = {}
-        padding = {}
-
-        for key, delta_indices in self.delta_indices.items():
-            if key in self.meta.video_keys:
-                continue  # visual frames are decoded separately
-
-            target_frames = []
-            is_pad = []
-
-            # Create a results dictionary to store frames in processing order, then reconstruct original order for stacking
-            delta_results = {}
-
-            # Separate and sort deltas by difficulty (easier operations first)
-            negative_deltas = sorted([d for d in delta_indices if d < 0], reverse=True)  # [-1, -2, -3, ...]
-            positive_deltas = sorted([d for d in delta_indices if d > 0])  # [1, 2, 3, ...]
-            zero_deltas = [d for d in delta_indices if d == 0]
-
-            # Process zero deltas (current frame)
-            for delta in zero_deltas:
-                delta_results[delta] = (
-                    current_item[key],
-                    False,
-                )
-
-            # Process negative deltas in order of increasing difficulty
-            lookback_failed = False
-
-            last_successful_frame = current_item[key]
-
-            for delta in negative_deltas:
-                if lookback_failed:
-                    delta_results[delta] = (last_successful_frame, True)
-                    continue
-
-                try:
-                    steps_back = abs(delta)
-                    if dataset_iterator.can_peek_back(steps_back):
-                        past_item = dataset_iterator.peek_back(steps_back)
-                        past_item = item_to_torch(past_item)
-
-                        if past_item["episode_index"] == current_episode_idx:
-                            delta_results[delta] = (past_item[key], False)
-                            last_successful_frame = past_item[key]
-
-                        else:
-                            raise LookBackError("Retrieved frame is from different episode!")
-                    else:
-                        raise LookBackError("Cannot go back further than the history buffer!")
-
-                except LookBackError:
-                    delta_results[delta] = (last_successful_frame, True)
-                    lookback_failed = True  # All subsequent negative deltas will also fail
-
-            # Process positive deltas in order of increasing difficulty
-            lookahead_failed = False
-            last_successful_frame = current_item[key]
-
-            for delta in positive_deltas:
-                if lookahead_failed:
-                    delta_results[delta] = (last_successful_frame, True)
-                    continue
-
-                try:
-                    if dataset_iterator.can_peek_ahead(delta):
-                        future_item = dataset_iterator.peek_ahead(delta)
-                        future_item = item_to_torch(future_item)
-
-                        if future_item["episode_index"] == current_episode_idx:
-                            delta_results[delta] = (future_item[key], False)
-                            last_successful_frame = future_item[key]
-
-                        else:
-                            raise LookAheadError("Retrieved frame is from different episode!")
-                    else:
-                        raise LookAheadError("Cannot go ahead further than the lookahead buffer!")
-
-                except LookAheadError:
-                    delta_results[delta] = (last_successful_frame, True)
-                    lookahead_failed = True  # All subsequent positive deltas will also fail
-
-            # Reconstruct original order for stacking
-            for delta in delta_indices:
-                frame, is_padded = delta_results[delta]
-
-                # add batch dimension for stacking
-                target_frames.append(frame)  # frame.unsqueeze(0))
-                is_pad.append(is_padded)
-
-            # Stack frames and add to results
-            if target_frames:
-                query_result[key] = torch.stack(target_frames)
-                padding[f"{key}_is_pad"] = torch.BoolTensor(is_pad)
-
-        return query_result, padding
 
     def _validate_delta_timestamp_keys(self, delta_timestamps: dict[list[float]]) -> None:
         """

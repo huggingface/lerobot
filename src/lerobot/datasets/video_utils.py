@@ -22,6 +22,7 @@ import queue
 import shutil
 import tempfile
 import threading
+import time
 import warnings
 from collections import OrderedDict
 from dataclasses import asdict, dataclass, field
@@ -45,6 +46,92 @@ from lerobot.configs import (
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
 logger = logging.getLogger(__name__)
+
+
+DEFAULT_REMOTE_IO_MAX_RETRIES = 5
+"""Retry budget for transient hf:// / fsspec / httpx transport errors during streaming video decode.
+
+Streaming a dataset from an HF bucket/CDN issues many small range requests and occasionally hits a
+transient transport failure (timeout, dropped connection, 408/5xx). The right response is to rebuild
+the connection and retry rather than crash the DataLoader worker. Override via
+``LEROBOT_REMOTE_IO_MAX_RETRIES``; set to ``0`` to disable retries (fail fast).
+"""
+
+# Transient transport failures from the hf:// -> fsspec -> httpx stack. We match on text because the
+# concrete exception types live in optional deps (httpx, huggingface_hub) and vary across versions.
+# "client has been closed" is the important one: once a shared httpx client is closed by a single
+# failed read, every subsequent read in that worker fails until the fsspec instance cache is cleared.
+_RETRYABLE_TRANSPORT_FRAGMENTS = (
+    "client has been closed",
+    "server disconnected",
+    "remoteprotocolerror",
+    "unexpected_eof",
+    "eof occurred in violation of protocol",
+    "connection reset",
+    "connection aborted",
+    "connection broken",
+    "incompleteread",
+    "read operation timed out",
+    "timed out",
+    "request time-out",
+    "408",
+    "502",
+    "503",
+    "504",
+)
+
+
+def _remote_io_max_retries() -> int:
+    raw = os.environ.get("LEROBOT_REMOTE_IO_MAX_RETRIES")
+    if raw is None:
+        return DEFAULT_REMOTE_IO_MAX_RETRIES
+    try:
+        return max(0, int(raw))
+    except ValueError as e:
+        raise ValueError(f"LEROBOT_REMOTE_IO_MAX_RETRIES must be an integer; got {raw!r}") from e
+
+
+def _is_retryable_transport_error(exc: BaseException) -> bool:
+    """True if ``exc`` looks like a transient remote-IO failure worth retrying (vs a real bug)."""
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(fragment in text for fragment in _RETRYABLE_TRANSPORT_FRAGMENTS)
+
+
+def _recover_remote_io(decoder_cache: "VideoDecoderCache", video_path: str) -> None:
+    """Drop the dead decoder for ``video_path`` and force a fresh fsspec client before a retry.
+
+    fsspec caches one filesystem instance per (protocol, args), and that instance owns the httpx
+    client a failed read may have closed. Clearing the instance cache makes the next ``fsspec.open``
+    build a new client, which is what breaks the "client has been closed" cascade.
+    """
+    decoder_cache.invalidate(video_path)
+    with contextlib.suppress(Exception):
+        fsspec.AbstractFileSystem.clear_instance_cache()
+
+
+def _retry_remote_io(operation, on_retry, max_retries: int, base_delay: float = 0.5, max_delay: float = 10.0):
+    """Run ``operation()``, retrying transient transport errors after ``on_retry()`` + capped backoff.
+
+    Non-transport errors (decode / index / timestamp issues) propagate immediately so real bugs are
+    never masked by retries.
+    """
+    attempt = 0
+    while True:
+        try:
+            return operation()
+        except Exception as e:
+            if attempt >= max_retries or not _is_retryable_transport_error(e):
+                raise
+            attempt += 1
+            logger.warning(
+                "Transient remote-IO error (%s: %s); rebuilding connection and retrying (%d/%d).",
+                type(e).__name__,
+                e,
+                attempt,
+                max_retries,
+            )
+            on_retry()
+            time.sleep(min(base_delay * 2 ** (attempt - 1), max_delay))
 
 
 def decode_video_frames(
@@ -242,7 +329,12 @@ class VideoDecoderCache:
 
     _SENTINEL: ClassVar[object] = object()
 
-    def __init__(self, max_size: int | None | object = _SENTINEL):
+    def __init__(
+        self,
+        max_size: int | None | object = _SENTINEL,
+        counters: "torch.Tensor | None" = None,
+        device: str = "cpu",
+    ):
         if max_size is VideoDecoderCache._SENTINEL:
             max_size = _default_max_cache_size()
         if max_size is not None and max_size <= 0:
@@ -250,6 +342,18 @@ class VideoDecoderCache:
         self.max_size: int | None = max_size  # type: ignore[assignment]
         self._cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._lock = Lock()
+        # Decode device for the underlying torchcodec VideoDecoder. "cuda" offloads H.264/H.265 decode to
+        # the GPU's dedicated NVDEC engine (independent of the SMs used for training); requires a
+        # CUDA-enabled torchcodec/FFmpeg build. See https://developer.nvidia.com/video-codec-sdk.
+        self.device = device
+        # Observability counters (cheap, updated under the lock) for benchmarking decoder reuse.
+        self.hits = 0
+        self.misses = 0
+        self.evictions = 0
+        # Optional shared [hits, misses, evictions] tensor so DataLoader workers aggregate into one place
+        # (the per-worker `self.*` ints are invisible to the main process). Lock-free across processes, so
+        # treat the aggregate as approximate; the hit-rate ratio is preserved.
+        self._counters = counters
 
     def __contains__(self, video_path: object) -> bool:
         with self._lock:
@@ -271,11 +375,21 @@ class VideoDecoderCache:
             entry = self._cache.get(video_path)
             if entry is not None:
                 self._cache.move_to_end(video_path)
+                self.hits += 1
+                if self._counters is not None:
+                    self._counters[0] += 1
                 return entry[0]
 
-            file_handle = fsspec.open(video_path).__enter__()
+            self.misses += 1
+            if self._counters is not None:
+                self._counters[1] += 1
+            # Bound per-handle buffering: with many decoders kept open at once (one per camera per active
+            # shard, across all workers), the default fsspec read cache balloons RAM on remote backends
+            # like hf:// buckets. A small readahead cache caps each handle's footprint without hurting the
+            # mostly-sequential reads torchcodec issues.
+            file_handle = fsspec.open(video_path, cache_type="readahead", block_size=2**20).__enter__()
             try:
-                decoder = VideoDecoder(file_handle, seek_mode="approximate")
+                decoder = VideoDecoder(file_handle, seek_mode="approximate", device=self.device)
             except Exception:
                 file_handle.close()
                 raise
@@ -287,6 +401,9 @@ class VideoDecoderCache:
             if self.max_size is not None:
                 while len(self._cache) > self.max_size:
                     _evicted_path, (_evicted_decoder, evicted_handle) = self._cache.popitem(last=False)
+                    self.evictions += 1
+                    if self._counters is not None:
+                        self._counters[2] += 1
                     with contextlib.suppress(Exception):
                         evicted_handle.close()
 
@@ -300,10 +417,34 @@ class VideoDecoderCache:
                     file_handle.close()
             self._cache.clear()
 
+    def invalidate(self, video_path: str) -> None:
+        """Drop and close the cached decoder for a path whose connection went bad.
+
+        After a transport error the cached ``fsspec`` handle (and the httpx client behind it) is dead;
+        removing the entry forces the next :meth:`get_decoder` to re-open a fresh handle.
+        """
+        with self._lock:
+            entry = self._cache.pop(str(video_path), None)
+        if entry is not None:
+            with contextlib.suppress(Exception):
+                entry[1].close()
+
     def size(self) -> int:
         """Return the number of cached decoders."""
         with self._lock:
             return len(self._cache)
+
+    def stats(self) -> dict[str, int | float]:
+        """Return reuse counters (hits/misses/evictions, hit rate, current size) for benchmarking."""
+        with self._lock:
+            total = self.hits + self.misses
+            return {
+                "hits": self.hits,
+                "misses": self.misses,
+                "evictions": self.evictions,
+                "hit_rate": self.hits / total if total else 0.0,
+                "size": len(self._cache),
+            }
 
 
 class FrameTimestampError(ValueError):
@@ -343,19 +484,23 @@ def decode_video_frames_torchcodec(
     if decoder_cache is None:
         decoder_cache = _default_decoder_cache
 
-    # Use cached decoder instead of creating new one each time
-    decoder = decoder_cache.get_decoder(str(video_path))
+    def _decode_frames():
+        # Both opening the decoder and reading frames go over the network for hf:// paths, so wrap the
+        # whole unit: a transient transport error retries by dropping the dead handle and rebuilding
+        # the connection (see _retry_remote_io / _recover_remote_io) instead of killing the worker.
+        decoder = decoder_cache.get_decoder(str(video_path))
+        average_fps = decoder.metadata.average_fps
+        frame_indices = [round(ts * average_fps) for ts in timestamps]
+        return decoder.get_frames_at(indices=frame_indices)
+
+    frames_batch = _retry_remote_io(
+        _decode_frames,
+        on_retry=lambda: _recover_remote_io(decoder_cache, str(video_path)),
+        max_retries=_remote_io_max_retries(),
+    )
 
     loaded_ts = []
     loaded_frames = []
-
-    # get metadata for frame information
-    metadata = decoder.metadata
-    average_fps = metadata.average_fps
-    # convert timestamps to frame indices
-    frame_indices = [round(ts * average_fps) for ts in timestamps]
-    # retrieve frames based on indices
-    frames_batch = decoder.get_frames_at(indices=frame_indices)
 
     for frame, pts in zip(frames_batch.data, frames_batch.pts_seconds, strict=True):
         loaded_frames.append(frame)

@@ -95,7 +95,7 @@ dependencies = [
 
 # ── Feature-scoped extras ──────────────────────────────────
 dataset = [
-    "datasets>=4.7.0,<5.0.0",
+    "datasets>=4.7.0,<6.0.0",
     "pandas>=2.0.0,<3.0.0", # NOTE: Transitive dependency of datasets
     "pyarrow>=21.0.0,<30.0.0", # NOTE: Transitive dependency of datasets
     "lerobot[av-dep]",
@@ -339,6 +339,10 @@ explicit = true
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
+# Temporary: the native streaming pipeline needs batch(by_column=...) to survive shard/shuffle
+# re-creation, fixed in datasets#8259 (merged, not yet released). Pin to the merge commit until the
+# next datasets release ships it, then drop this and bump the floor in `dependencies`.
+datasets = { git = "https://github.com/huggingface/datasets.git", rev = "2c45eab1bb975ac3d846f2aa6217b82adec8eba3" }
 
 [tool.setuptools.package-data]
 lerobot = ["envs/*.json"]

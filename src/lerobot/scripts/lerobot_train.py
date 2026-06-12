@@ -392,7 +392,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
-    if hasattr(active_cfg, "drop_n_last_frames"):
+    if hasattr(active_cfg, "drop_n_last_frames") and not cfg.dataset.streaming:
         shuffle = False
         # A dedicated generator (rather than the global torch RNG) lets accelerator.prepare
         # synchronize the shuffle permutation across ranks, keeping batch shards disjoint even
@@ -431,9 +431,16 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     # Prepare everything with accelerator
     accelerator.wait_for_everyone()
-    policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
-        policy, optimizer, dataloader, lr_scheduler
-    )
+    if cfg.dataset.streaming:
+        # The streaming IterableDataset is already rank-disjoint via split_dataset_by_node, so we must
+        # NOT hand the dataloader to accelerate: its IterableDatasetShard would keep only every
+        # world_size-th batch of each rank's already-disjoint stream (silently training on 1/N of the
+        # data while decoding all of it). Batches are moved to the device manually in the loop below.
+        policy, optimizer, lr_scheduler = accelerator.prepare(policy, optimizer, lr_scheduler)
+    else:
+        policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
+            policy, optimizer, dataloader, lr_scheduler
+        )
     dl_iter = cycle(dataloader)
 
     policy.train()
@@ -483,6 +490,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+        if cfg.dataset.streaming:
+            # The streaming dataloader is not accelerate-prepared (see above), so move to device here.
+            batch = {k: (v.to(device, non_blocking=True) if torch.is_tensor(v) else v) for k, v in batch.items()}
         for cam_key in dataset.meta.camera_keys:
             if cam_key in batch and batch[cam_key].dtype == torch.uint8:
                 batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0

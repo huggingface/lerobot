@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import numpy as np
 import pytest
 import torch
 
@@ -23,52 +22,6 @@ from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.datasets.utils import safe_shard
 from lerobot.utils.constants import ACTION
 from tests.fixtures.constants import DUMMY_REPO_ID
-
-
-def get_frames_expected_order(streaming_ds: StreamingLeRobotDataset) -> list[int]:
-    """Replicates the shuffling logic of StreamingLeRobotDataset to get the expected order of indices."""
-    rng = np.random.default_rng(streaming_ds.seed)
-    buffer_size = streaming_ds.buffer_size
-    num_shards = streaming_ds.num_shards
-
-    shards_indices = []
-    for shard_idx in range(num_shards):
-        shard = streaming_ds.hf_dataset.shard(num_shards, index=shard_idx)
-        shard_indices = [item["index"] for item in shard]
-        shards_indices.append(shard_indices)
-
-    shard_iterators = {i: iter(s) for i, s in enumerate(shards_indices)}
-
-    buffer_indices_generator = streaming_ds._iter_random_indices(rng, buffer_size)
-
-    frames_buffer = []
-    expected_indices = []
-
-    while shard_iterators:  # While there are still available shards
-        available_shard_keys = list(shard_iterators.keys())
-        if not available_shard_keys:
-            break
-
-        # Call _infinite_generator_over_elements with current available shards (key difference!)
-        shard_key = next(streaming_ds._infinite_generator_over_elements(rng, available_shard_keys))
-
-        try:
-            frame_index = next(shard_iterators[shard_key])
-
-            if len(frames_buffer) == buffer_size:
-                i = next(buffer_indices_generator)
-                expected_indices.append(frames_buffer[i])
-                frames_buffer[i] = frame_index
-            else:
-                frames_buffer.append(frame_index)
-
-        except StopIteration:
-            del shard_iterators[shard_key]  # Remove exhausted shard
-
-    rng.shuffle(frames_buffer)
-    expected_indices.extend(frames_buffer)
-
-    return expected_indices
 
 
 def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
@@ -120,10 +73,9 @@ def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
     [False, True],
 )
 def test_frames_order_over_epochs(tmp_path, lerobot_dataset_factory, shuffle):
-    """Test if streamed frames correspond to shuffling operations over in-memory dataset."""
+    """Each epoch covers every frame exactly once; shuffle reshuffles across epochs."""
     ds_num_frames = 400
     ds_num_episodes = 10
-    buffer_size = 100
     seed = 42
     n_epochs = 3
 
@@ -138,25 +90,17 @@ def test_frames_order_over_epochs(tmp_path, lerobot_dataset_factory, shuffle):
     )
 
     streaming_ds = StreamingLeRobotDataset(
-        repo_id=repo_id, root=local_path, buffer_size=buffer_size, seed=seed, shuffle=shuffle
+        repo_id=repo_id, root=local_path, episode_pool_size=4, seed=seed, shuffle=shuffle
     )
 
-    first_epoch_indices = [frame["index"] for frame in streaming_ds]
-    expected_indices = get_frames_expected_order(streaming_ds)
-
-    assert first_epoch_indices == expected_indices, "First epoch indices do not match expected indices"
-
-    expected_indices = get_frames_expected_order(streaming_ds)
-    for _ in range(n_epochs):
-        streaming_indices = [frame["index"] for frame in streaming_ds]
-        frames_match = all(
-            s_index == e_index for s_index, e_index in zip(streaming_indices, expected_indices, strict=True)
-        )
-
-        if shuffle:
-            assert not frames_match
-        else:
-            assert frames_match
+    epochs = [[int(frame["index"]) for frame in streaming_ds] for _ in range(n_epochs)]
+    for epoch_indices in epochs:
+        assert sorted(epoch_indices) == list(range(ds_num_frames)), "epoch did not cover every frame once"
+    if shuffle:
+        assert epochs[0] != epochs[1], "shuffle did not reshuffle across epochs"
+        assert epochs[0] != list(range(ds_num_frames)), "shuffle left the stream in sequential order"
+    else:
+        assert epochs[0] == epochs[1] == epochs[2], "unshuffled epochs must repeat the same order"
 
 
 @pytest.mark.parametrize(
@@ -164,15 +108,11 @@ def test_frames_order_over_epochs(tmp_path, lerobot_dataset_factory, shuffle):
     [False, True],
 )
 def test_frames_order_with_shards(tmp_path, lerobot_dataset_factory, shuffle):
-    """Test if streamed frames correspond to shuffling operations over in-memory dataset with multiple shards."""
+    """Multi-shard streams keep exactly-once coverage and deterministic per-seed order."""
     ds_num_frames = 100
     ds_num_episodes = 10
-    buffer_size = 10
-
     seed = 42
-    n_epochs = 3
     data_file_size_mb = 0.001
-
     chunks_size = 1
 
     local_path = tmp_path / "test"
@@ -187,31 +127,21 @@ def test_frames_order_with_shards(tmp_path, lerobot_dataset_factory, shuffle):
         chunks_size=chunks_size,
     )
 
-    streaming_ds = StreamingLeRobotDataset(
-        repo_id=repo_id,
-        root=local_path,
-        buffer_size=buffer_size,
-        seed=seed,
-        shuffle=shuffle,
-        max_num_shards=4,
-    )
-
-    first_epoch_indices = [frame["index"] for frame in streaming_ds]
-    expected_indices = get_frames_expected_order(streaming_ds)
-
-    assert first_epoch_indices == expected_indices, "First epoch indices do not match expected indices"
-
-    for _ in range(n_epochs):
-        streaming_indices = [
-            frame["index"] for frame in streaming_ds
-        ]  # NOTE: this is the same as first_epoch_indices
-        frames_match = all(
-            s_index == e_index for s_index, e_index in zip(streaming_indices, expected_indices, strict=True)
+    def make_ds():
+        return StreamingLeRobotDataset(
+            repo_id=repo_id,
+            root=local_path,
+            episode_pool_size=3,
+            seed=seed,
+            shuffle=shuffle,
+            max_num_shards=4,
         )
-        if shuffle:
-            assert not frames_match
-        else:
-            assert frames_match
+
+    first = [int(frame["index"]) for frame in make_ds()]
+    again = [int(frame["index"]) for frame in make_ds()]
+
+    assert sorted(first) == list(range(ds_num_frames)), "epoch did not cover every frame once"
+    assert first == again, "same seed must reproduce the same order"
 
 
 @pytest.mark.parametrize(
@@ -287,6 +217,11 @@ def test_frames_with_delta_consistency(tmp_path, lerobot_dataset_factory, state_
                     right = right[~target_frame[f"{key}_is_pad"]]
 
                 check = torch.allclose(left, right) and left.shape == right.shape
+
+            else:
+                # Scalar numerics: streaming yields python floats/ints where map-style yields
+                # 0-dim tensors (long-standing accepted difference). Compare by value.
+                check = float(left) == float(right)
 
             key_checks.append((key, check))
 
