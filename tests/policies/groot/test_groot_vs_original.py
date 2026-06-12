@@ -23,15 +23,6 @@ normalized flow-matching prediction before any action decoding) as NVIDIA's orig
 flow-matching seed. The comparison is parametrized over every embodiment tag present
 in the checkpoint.
 
-WHY TWO ENVIRONMENTS
---------------------
-The original ``gr00t`` package pins ``transformers==4.57.3`` (Python 3.10) and its
-model-config dataclasses subclass ``PretrainedConfig``. Under the transformers 5.x
-that the LeRobot GR00T N1.7 integration requires, ``PretrainedConfig`` is itself a
-defaulted dataclass, so the original config classes fail to import ("non-default
-argument follows default argument"). The two implementations therefore CANNOT be
-imported in the same Python process.
-
 To keep the comparison fair, the original outputs + the exact collated inputs are
 produced once per embodiment in the original ``gr00t`` env via the companion script
 ``dump_original_n1_7.py`` (next to this file) and saved to per-tag ``.npz`` files.
