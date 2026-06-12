@@ -52,16 +52,67 @@ git checkout leanton
 
 ### 2. Create Slug Folder + Diff
 
+> [!CAUTION]
+> **MANDATE: Diff MUST be generated against `origin/main` (clean upstream), not against the local `leanton` branch or `HEAD~1`.** A diff against `leanton` omits changes already applied by other patches on the same files — it will fail when applied to upstream `main`. This is non-negotiable. Every `.diff` file must be upstream-ready.
+
+**Why `git diff main -- <files>` is NOT sufficient:** When multiple patches touch the same file, `git diff main` captures ALL patches' cumulative changes, not just yours. Example: our `rollout-policy-revision` patch added `revision: str | None = None` to `PolicyConfig`. If your patch also touches `policies.py`, a `git diff main` will include the `revision` field from the other patch — polluting your diff. Conversely, if you diff against `HEAD~1` (leanton parent), you omit changes from other patches that your code depends on but upstream doesn't have — your diff fails at runtime on upstream.
+
+**Required procedure — isolate your patch on a temp branch from `origin/main`:**
+
 ```bash
 SLUG="<descriptive-slug>"   # kebab-case, e.g. "dagger-rtc-fresh-obs-on-resume"
-mkdir -p leanton/$SLUG
 
-# Generate diff against main (NOT HEAD~1 — that would include other patches)
-git diff main -- <changed_files> > leanton/$SLUG/$SLUG.diff
+# Step A: Record the exact upstream base commit
+UPSTREAM_BASE=$(git rev-parse origin/main)
+echo "Upstream base: $UPSTREAM_BASE"
 
-# Verify clean
-git apply --check leanton/$SLUG/$SLUG.diff && echo "✅" || echo "❌"
+# Step B: Create temp branch from clean upstream
+git stash  # safety: stash any uncommitted work
+git checkout -b tmp-$SLUG origin/main
+
+# Step C: Apply ONLY this patch's source changes to the temp branch
+# Option 1: Cherry-pick the commit that has your source changes
+git cherry-pick <your-source-commit-hash>
+# If cherry-pick conflicts on leanton/ docs, resolve by keeping docs deleted:
+#   git rm leanton/$SLUG/...  (or git checkout --theirs / --ours as needed)
+#   git cherry-pick --continue
+
+# Option 2 (if cherry-pick is messy): Apply the diff manually
+#   git show <your-source-commit> -- src/ | git apply
+
+# Step D: Generate diff against origin/main (CLEAN — only this patch's changes)
+git diff origin/main -- src/ > leanton/$SLUG/$SLUG.diff
+
+# Step E: Verify the diff applies cleanly to origin/main
+git checkout origin/main -- src/   # reset to upstream state
+git apply --check leanton/$SLUG/$SLUG.diff && echo "✅ Upstream-clean" || echo "❌ FAILS — fix before proceeding"
+
+# Step F: Cleanup — return to leanton and restore
+git checkout leanton
+git branch -D tmp-$SLUG
+git stash pop 2>/dev/null  # if you stashed earlier
 ```
+
+**Document the base commit in the diff header and README:**
+
+The `.diff` file must record the upstream base commit as a comment on line 1:
+
+```diff
+# Upstream base: <full commit hash> (huggingface/lerobot:main, <date>)
+diff --git a/src/lerobot/...
+```
+
+And the README must include:
+
+```markdown
+**Diff basis:** `origin/main` @ `<short hash>` (clean upstream).
+```
+
+**Verification checklist before committing the `.diff`:**
+- [ ] Diff applies cleanly to `origin/main`: `git apply --check <diff>` against upstream files
+- [ ] Diff contains ONLY this patch's changes (no leaked changes from other patches)
+- [ ] Diff includes any prerequisite fields/config that upstream doesn't have but this patch depends on
+- [ ] Upstream base commit hash is documented in the diff and README
 
 ### 3. Document the Patch
 
@@ -73,6 +124,7 @@ Create `leanton/<slug>/README.md`:
 **Target:** `<file path in lerobot>`
 **Status:** `active`
 **GitHub:** `<issue link>` (or "Not filed")
+**Diff basis:** `origin/main` @ `<short hash>` (clean upstream, <date>)
 
 ## What
 
@@ -96,6 +148,7 @@ grep -q "<unique_string>" ~/lerobot/<target_file> && echo "✅" || echo "MISSING
 - No Obsidian YAML frontmatter — plain markdown, GitHub-friendly
 - No vault paths — use fork-relative or standard paths (`~/lerobot/...`)
 - No `[[wikilinks]]` — use standard markdown links
+- **Diff basis is MANDATORY** — must include the exact `origin/main` commit hash the diff was generated against. This is critical for upstream filing and rebase triage.
 
 ### 4. Commit and Push
 

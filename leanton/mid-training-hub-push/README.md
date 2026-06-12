@@ -3,7 +3,7 @@
 **Target:** `src/lerobot/scripts/lerobot_train.py`, `src/lerobot/policies/pretrained.py`, `src/lerobot/policies/factory.py`, `src/lerobot/configs/policies.py`
 **Status:** `active`
 **GitHub:** Not filed (planned upstream feature request)
-**Diff basis:** `origin/main` (clean upstream). Includes `revision` field on `PolicyConfig` as a bundled prerequisite — upstream doesn't have it yet.
+**Diff basis:** `origin/main` @ `49755a3d` (clean upstream, 2026-06-12). Includes `revision` field on `PolicyConfig` as a bundled prerequisite — upstream doesn't have it yet.
 
 ## What
 

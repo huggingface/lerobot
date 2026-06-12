@@ -1,3 +1,4 @@
+# Upstream base: 49755a3d9e7d43ae93092de8324e75348955afab (huggingface/lerobot:main, feat(processor): Add in-memory processor pipeline serialization (#3732))
 diff --git a/src/lerobot/configs/policies.py b/src/lerobot/configs/policies.py
 index 91701af6..99bbff14 100644
 --- a/src/lerobot/configs/policies.py
