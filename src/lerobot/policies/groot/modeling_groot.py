@@ -18,15 +18,12 @@
 Groot Policy Wrapper for LeRobot Integration
 
 Minimal integration that delegates to Isaac-GR00T N1.7 components where
-possible without porting their code.
-
-Notes:
-- Dataset loading and full training orchestration is handled by Isaac-GR00T
-  TrainRunner in their codebase. If you want to invoke that flow end-to-end
-  from LeRobot, see `GrootPolicy.finetune_with_groot_runner` below.
+possible without porting their code. Dataset loading and training
+orchestration are handled by LeRobot's standard training stack.
 """
 
 import builtins
+import logging
 import os
 from collections import deque
 from pathlib import Path
@@ -42,6 +39,8 @@ from lerobot.utils.import_utils import require_package
 from ..pretrained import PreTrainedPolicy
 from ..utils import get_device_from_parameters
 from .configuration_groot import (
+    GROOT_N1_5,
+    GROOT_N1_5_REMOVAL_GUIDANCE,
     GROOT_N1_7,
     GrootConfig,
     infer_groot_model_version,
@@ -49,6 +48,8 @@ from .configuration_groot import (
     infer_groot_n1_7_action_horizon,
     normalize_groot_model_version,
 )
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound="GrootPolicy")
 
@@ -92,8 +93,11 @@ class GrootPolicy(PreTrainedPolicy):
             transformers_loading_kwargs={"trust_remote_code": True},
         )
 
-        model.compute_dtype = "bfloat16" if self.config.use_bf16 else model.compute_dtype
-        model.config.compute_dtype = model.compute_dtype
+        # GR00TN17 defines no compute_dtype attribute, so only record the
+        # bf16 preference when it is enabled instead of reading a default back.
+        if self.config.use_bf16:
+            model.compute_dtype = "bfloat16"
+            model.config.compute_dtype = "bfloat16"
 
         return model
 
@@ -148,9 +152,10 @@ class GrootPolicy(PreTrainedPolicy):
             if config is not None
             else infer_groot_model_version(str(pretrained_name_or_path)) or GROOT_N1_7
         )
-        print(
-            f"The Groot policy is a wrapper around Nvidia's GR00T {requested_version} model.\n"
-            f"Loading pretrained model from: {pretrained_name_or_path}"
+        logger.info(
+            "The Groot policy wraps NVIDIA's GR00T %s model. Loading pretrained model from: %s",
+            requested_version,
+            pretrained_name_or_path,
         )
 
         model_id = str(pretrained_name_or_path)
@@ -181,7 +186,7 @@ class GrootPolicy(PreTrainedPolicy):
 
         if is_finetuned_checkpoint:
             # This is a fine-tuned LeRobot checkpoint - use parent class loading
-            print("Detected fine-tuned LeRobot checkpoint, loading with state dict...")
+            logger.info("Detected fine-tuned LeRobot checkpoint, loading with state dict...")
             return super().from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
                 config=config,
@@ -197,7 +202,7 @@ class GrootPolicy(PreTrainedPolicy):
             )
 
         # This is a base GR00T model - load it fresh
-        print("Detected base GR00T model, loading from HuggingFace...")
+        logger.info("Detected base GR00T model, loading from HuggingFace...")
 
         if config is None:
             model_version = infer_groot_model_version(str(pretrained_name_or_path)) or GROOT_N1_7
@@ -229,10 +234,13 @@ class GrootPolicy(PreTrainedPolicy):
         config.model_version = normalize_groot_model_version(config.model_version)
         inferred_version = infer_groot_model_version(config.base_model_path)
         if inferred_version is not None and inferred_version != config.model_version:
-            raise ValueError(
+            message = (
                 f"GR00T model_version '{config.model_version}' does not match base_model_path "
                 f"'{config.base_model_path}', which looks like '{inferred_version}'."
             )
+            if inferred_version == GROOT_N1_5:
+                message = f"{message} {GROOT_N1_5_REMOVAL_GUIDANCE}"
+            raise ValueError(message)
         # Create a fresh policy instance - this will automatically load the GR00T model
         # in __init__ via _create_groot_model()
         policy = cls(config)
@@ -297,9 +305,7 @@ class GrootPolicy(PreTrainedPolicy):
         allowed_base.add("action_mask")
 
         return {
-            k: v
-            for k, v in batch.items()
-            if k in allowed_base and not (k.startswith("next.") or k == "info")
+            k: v for k, v in batch.items() if k in allowed_base and not (k.startswith("next.") or k == "info")
         }
 
     def _prepare_n1_7_rtc_inputs(
@@ -320,9 +326,7 @@ class GrootPolicy(PreTrainedPolicy):
         if prev_actions.ndim == 2:
             prev_actions = prev_actions.unsqueeze(0)
         elif prev_actions.ndim != 3:
-            raise ValueError(
-                "prev_chunk_left_over must have shape (T, A) or (B, T, A) for GR00T N1.7 RTC."
-            )
+            raise ValueError("prev_chunk_left_over must have shape (T, A) or (B, T, A) for GR00T N1.7 RTC.")
 
         state = inputs.get("state")
         if state is None:
@@ -331,9 +335,7 @@ class GrootPolicy(PreTrainedPolicy):
         if prev_actions.shape[0] == 1 and batch_size > 1:
             prev_actions = prev_actions.expand(batch_size, -1, -1).clone()
         elif prev_actions.shape[0] != batch_size:
-            raise ValueError(
-                "prev_chunk_left_over batch size must match the current GR00T N1.7 batch size."
-            )
+            raise ValueError("prev_chunk_left_over batch size must match the current GR00T N1.7 batch size.")
 
         # The generic LeRobot RTC engine pads short leftovers with exact zero
         # rows for fixed-shape policy calls. Native GR00T N1.7 RTC treats every
@@ -346,7 +348,9 @@ class GrootPolicy(PreTrainedPolicy):
         else:
             return inputs, None
 
-        model_action_horizon = int(getattr(self._groot_model.config, "action_horizon", self.config.chunk_size))
+        model_action_horizon = int(
+            getattr(self._groot_model.config, "action_horizon", self.config.chunk_size)
+        )
         max_action_dim = int(getattr(self._groot_model.config, "max_action_dim", self.config.max_action_dim))
         if prev_actions.shape[1] > model_action_horizon:
             prev_actions = prev_actions[:, -model_action_horizon:, :]
@@ -409,6 +413,11 @@ class GrootPolicy(PreTrainedPolicy):
 
         # Isaac-GR00T returns a BatchFeature; loss key is typically 'loss'
         loss = outputs.get("loss")
+        if loss is None:
+            raise RuntimeError(
+                "GR00T model.forward did not return a 'loss'. Training batches must include "
+                "'action' and 'action_mask'; check the preprocessor output."
+            )
 
         loss_dict = {"loss": loss.item()}
 
@@ -471,33 +480,21 @@ class GrootPolicy(PreTrainedPolicy):
     # Internal helpers
     # -------------------------
     def _handle_flash_attention_compatibility(self) -> None:
-        """Handle Flash Attention compatibility issues by setting environment variables.
+        """Log Flash Attention availability (diagnostic only).
 
-        This addresses the common 'undefined symbol' error that occurs when Flash Attention
-        is compiled against a different PyTorch version than what's currently installed.
+        The GR00T N1.7 backbone automatically falls back to SDPA when ``flash_attn`` is
+        unavailable (see ``Qwen3Backbone``), so this probe only emits a hint; it does not
+        change behaviour or mutate global state.
         """
-
-        # Set environment variables to handle Flash Attention compatibility
-        # These help with symbol resolution issues
-        os.environ.setdefault("FLASH_ATTENTION_FORCE_BUILD", "0")
-        os.environ.setdefault("FLASH_ATTENTION_SKIP_CUDA_BUILD", "0")
-
-        # Try to import flash_attn and handle failures gracefully
         try:
             import flash_attn
 
-            print(f"[GROOT] Flash Attention version: {flash_attn.__version__}")
-        except ImportError as e:
-            print(f"[GROOT] Flash Attention not available: {e}")
-            print("[GROOT] Will use fallback attention mechanism")
-        except Exception as e:
-            if "undefined symbol" in str(e):
-                print(f"[GROOT] Flash Attention compatibility issue detected: {e}")
-                print("[GROOT] This is likely due to PyTorch/Flash Attention version mismatch")
-                print("[GROOT] Consider reinstalling Flash Attention with compatible version:")
-                print("  pip uninstall flash-attn")
-                print("  pip install --no-build-isolation flash-attn==2.6.3")
-                print("[GROOT] Continuing with fallback attention mechanism")
-            else:
-                print(f"[GROOT] Flash Attention error: {e}")
-                print("[GROOT] Continuing with fallback attention mechanism")
+            logger.debug("Flash Attention %s is available.", flash_attn.__version__)
+        except ImportError:
+            logger.debug("Flash Attention is not installed; the GR00T backbone will use SDPA.")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Flash Attention failed to import (%s); the GR00T backbone will use SDPA. If this is "
+                "an 'undefined symbol' error, reinstall a flash-attn build matching your torch version.",
+                e,
+            )

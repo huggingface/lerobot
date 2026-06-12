@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,15 +24,29 @@ from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTr
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
+logger = logging.getLogger(__name__)
+
 GROOT_N1_7 = "n1.7"
 # Legacy GR00T N1.5 identifier. N1.5 is NOT a supported model_version (it is
 # intentionally absent from _GROOT_MODEL_VERSION_ALIASES so normalize_groot_model_version
 # still rejects it). It is retained only so that infer_groot_model_version can recognise
 # an N1.5 base path/checkpoint and the N1.7 config/loader can reject the mismatch.
 GROOT_N1_5 = "n1.5"
+# Canonical guidance appended to every error raised when an N1.5 checkpoint, config,
+# or processor pipeline is detected. Keep this message in sync with docs/source/groot.mdx.
+GROOT_N1_5_REMOVAL_GUIDANCE = (
+    "GR00T N1.5 support was removed from LeRobot. "
+    "To keep using an N1.5 checkpoint, pin the last release that supports it: "
+    "`pip install 'lerobot==0.5.1'`. To use the current release, migrate to GR00T N1.7 "
+    "(model_version='n1.7', base model nvidia/GR00T-N1.7-3B)."
+)
 GROOT_N1_7_BASE_MODEL = "nvidia/GR00T-N1.7-3B"
 GROOT_N1_7_BACKBONE_MODEL = "nvidia/Cosmos-Reason2-2B"
 GROOT_ACTION_DECODE_TRANSFORM_LIBERO = "libero"
+# Sentinel meaning "the user did not pick an action decode transform": __post_init__ resolves it
+# to the embodiment default ('libero' for 'libero_sim', otherwise None). It is distinct from an
+# explicit 'none' (resolved to None) so an opt-out survives a draccus save/load round-trip.
+GROOT_ACTION_DECODE_TRANSFORM_AUTO = "auto"
 
 _GROOT_MODEL_VERSION_ALIASES = {
     "n1.7": GROOT_N1_7,
@@ -41,7 +56,12 @@ _GROOT_MODEL_VERSION_ALIASES = {
     "1.7": GROOT_N1_7,
 }
 
+# Legacy N1.5 spellings, kept ONLY so they can be detected and rejected with
+# GROOT_N1_5_REMOVAL_GUIDANCE (see GROOT_N1_5 above). Never map these to a supported version.
+_GROOT_N1_5_VERSION_ALIASES = {"n1.5", "n1_5", "n1d5", "n15", "1.5"}
+
 _GROOT_ACTION_DECODE_TRANSFORM_ALIASES = {
+    GROOT_ACTION_DECODE_TRANSFORM_AUTO: GROOT_ACTION_DECODE_TRANSFORM_AUTO,
     "none": None,
     "": None,
     GROOT_ACTION_DECODE_TRANSFORM_LIBERO: GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
@@ -52,9 +72,10 @@ def normalize_groot_model_version(model_version: str) -> str:
     normalized = _GROOT_MODEL_VERSION_ALIASES.get(model_version.lower())
     if normalized is None:
         supported = GROOT_N1_7
-        raise ValueError(
-            f"Unsupported GR00T model_version '{model_version}'. Supported versions: {supported}."
-        )
+        message = f"Unsupported GR00T model_version '{model_version}'. Supported versions: {supported}."
+        if model_version.lower() in _GROOT_N1_5_VERSION_ALIASES:
+            message = f"{message} {GROOT_N1_5_REMOVAL_GUIDANCE}"
+        raise ValueError(message)
     return normalized
 
 
@@ -286,6 +307,8 @@ def _infer_groot_model_version_from_local_config(model_path: str) -> str | None:
 def _infer_groot_model_version_from_config(config: dict) -> str | None:
     model_version = config.get("model_version")
     if isinstance(model_version, str):
+        if model_version.lower() in _GROOT_N1_5_VERSION_ALIASES:
+            return GROOT_N1_5
         try:
             return normalize_groot_model_version(model_version)
         except ValueError:
@@ -298,8 +321,17 @@ def _infer_groot_model_version_from_config(config: dict) -> str | None:
         normalized = candidate.lower().replace("-", "_")
         if normalized in {"gr00tn1d7", "gr00t_n1d7", "gr00t_n1_7"}:
             return GROOT_N1_7
+        # nvidia/GR00T-N1.5-3B ships model_type 'gr00t_n1_5' and architectures ['GR00T_N1_5'].
+        # Recognise them so N1.5 checkpoints at generic local paths are rejected loudly
+        # instead of being silently treated as N1.7 (see infer_groot_model_version).
+        if normalized in {"gr00t_n1_5", "gr00tn1_5", "gr00t_n15", "gr00t_n1d5", "gr00tn1d5"}:
+            return GROOT_N1_5
     if config.get("model_name") == GROOT_N1_7_BACKBONE_MODEL:
         return GROOT_N1_7
+    # The Eagle VLM backbone is specific to pre-N1.7 GR00T checkpoints (N1.7 uses Cosmos/Qwen3-VL).
+    backbone_cfg = config.get("backbone_cfg")
+    if isinstance(backbone_cfg, dict) and "eagle_path" in backbone_cfg:
+        return GROOT_N1_5
     return None
 
 
@@ -310,27 +342,32 @@ class GrootConfig(PreTrainedConfig):
 
     # Basic policy settings
     n_obs_steps: int = 1
-    chunk_size: int = 50
-    n_action_steps: int = 50
+    chunk_size: int = 40
+    n_action_steps: int = 40
 
     # Dimension settings (must match pretrained GR00T model expectations)
     # Maximum state dimension. Shorter states will be zero-padded.
-    max_state_dim: int = 64
+    max_state_dim: int = 132
 
     # Maximum action dimension. Shorter actions will be zero-padded.
-    max_action_dim: int = 32
+    max_action_dim: int = 132
 
-    # Normalization (start with identity, adjust as needed)
+    # GR00T normalizes state/action internally in its processor steps (min/max with
+    # q01/q99 percentiles, per embodiment), and the Qwen3-VL backbone's image processor
+    # handles image normalization. The policy therefore does NOT use LeRobot's
+    # NormalizerProcessorStep/UnnormalizerProcessorStep, so this mapping is intentionally
+    # IDENTITY for every feature and is not consulted by make_groot_pre_post_processors.
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
-            "STATE": NormalizationMode.MEAN_STD,
-            "ACTION": NormalizationMode.MEAN_STD,
+            "STATE": NormalizationMode.IDENTITY,
+            "ACTION": NormalizationMode.IDENTITY,
         }
     )
 
-    # Image preprocessing (adjust to match Groot's expected input)
-    image_size: tuple[int, int] = (224, 224)
+    # Deprecated and unused: image sizing is handled by the backbone's image processor.
+    # Kept only so config.json files saved with earlier versions still parse.
+    image_size: tuple[int, int] = (256, 256)
 
     # Groot-specific model parameters (from groot_finetune_script.py)
 
@@ -344,7 +381,14 @@ class GrootConfig(PreTrainedConfig):
     n1_7_backbone_model: str = GROOT_N1_7_BACKBONE_MODEL
 
     # Optional named action transform applied after raw N1.7 checkpoint decoding and before env.step().
-    action_decode_transform: str | None = None
+    # 'auto' (default) resolves to the embodiment default ('libero' for 'libero_sim', otherwise no
+    # transform). Pass 'none' to explicitly disable the transform, including for 'libero_sim'.
+    action_decode_transform: str | None = GROOT_ACTION_DECODE_TRANSFORM_AUTO
+
+    # Deprecated, GR00T N1.5 only — do not set. Kept so config.json files saved by lerobot<=0.5.1
+    # still parse (draccus rejects unknown fields) and can be rejected in __post_init__ with a
+    # clear error pointing at GROOT_N1_5_REMOVAL_GUIDANCE instead of a cryptic DecodingError.
+    tokenizer_assets_repo: str | None = None
 
     # Embodiment tag to use for training (e.g. 'new_embodiment', 'gr1')
     embodiment_tag: str = "new_embodiment"
@@ -384,17 +428,13 @@ class GrootConfig(PreTrainedConfig):
     warmup_ratio: float = 0.05
     use_bf16: bool = True
 
-    # Dataset parameters
-    # Video backend to use for training ('decord' or 'torchvision_av')
+    # Deprecated Isaac-GR00T runner fields below — unused by the LeRobot N1.7 implementation
+    # (nothing in src/lerobot reads them). They are kept only so config.json files saved by
+    # earlier lerobot releases still parse: draccus rejects unknown fields, so removing them
+    # would break every previously saved groot checkpoint at config-load time.
     video_backend: str = "decord"
-
-    # Whether to balance dataset weights in mixture datasets
     balance_dataset_weights: bool = True
-
-    # Whether to sample trajectories weighted by their length
     balance_trajectory_weights: bool = True
-
-    # Optional dataset paths for delegating training to Isaac-GR00T runner
     dataset_paths: list[str] | None = None
     output_dir: str = "./tmp/gr00t"
     save_steps: int = 1000
@@ -405,6 +445,15 @@ class GrootConfig(PreTrainedConfig):
     resume: bool = False
 
     def __post_init__(self):
+        # 'tokenizer_assets_repo' only ever existed for GR00T N1.5 (lerobot<=0.5.1) and was
+        # serialized into every groot checkpoint config.json, so a value here means a legacy
+        # N1.5 checkpoint or config is being loaded.
+        if self.tokenizer_assets_repo is not None:
+            raise ValueError(
+                "Config sets 'tokenizer_assets_repo', which only existed for GR00T N1.5; this looks "
+                f"like a legacy GR00T N1.5 checkpoint or config. {GROOT_N1_5_REMOVAL_GUIDANCE}"
+            )
+
         self.model_version = normalize_groot_model_version(self.model_version)
         self.action_decode_transform = normalize_groot_action_decode_transform(self.action_decode_transform)
         if self.base_model_path is None:
@@ -416,26 +465,48 @@ class GrootConfig(PreTrainedConfig):
         # 'libero_sim' embodiment grasps correctly instead of scoring 0% success.
         # This matches the embodiment-specific handling already done for the
         # action execution horizon (see infer_groot_n1_7_action_execution_horizon).
-        if self.action_decode_transform is None and self.embodiment_tag == "libero_sim":
-            self.action_decode_transform = GROOT_ACTION_DECODE_TRANSFORM_LIBERO
+        # Only the 'auto' sentinel resolves to the embodiment default; an explicit
+        # 'none' (normalized to None above) keeps the transform disabled.
+        if self.action_decode_transform == GROOT_ACTION_DECODE_TRANSFORM_AUTO:
+            self.action_decode_transform = (
+                GROOT_ACTION_DECODE_TRANSFORM_LIBERO if self.embodiment_tag == "libero_sim" else None
+            )
 
-        if self.max_state_dim == 64:
-            self.max_state_dim = 132
-        if self.max_action_dim == 32:
-            self.max_action_dim = 132
-        if self.chunk_size == 50:
-            self.chunk_size = 40
-        if self.n_action_steps == 50:
-            self.n_action_steps = 40
-        if tuple(self.image_size) == (224, 224):
-            self.image_size = (256, 256)
+        # GR00T N1.5-era default values (e.g. --policy.chunk_size=50 from old commands or
+        # stale configs) are migrated to the values the N1.7 checkpoints expect, with a
+        # warning. The dataclass defaults are already the N1.7 values, so a plain
+        # GrootConfig() never triggers this.
+        legacy_default_remaps = (
+            ("max_state_dim", 64, 132),
+            ("max_action_dim", 32, 132),
+            ("chunk_size", 50, 40),
+            ("n_action_steps", 50, 40),
+            ("image_size", (224, 224), (256, 256)),
+        )
+        for field_name, legacy_value, n1_7_value in legacy_default_remaps:
+            current_value = getattr(self, field_name)
+            if isinstance(legacy_value, tuple):
+                current_value = tuple(current_value)
+            if current_value == legacy_value:
+                logger.warning(
+                    "GrootConfig.%s=%s matches a legacy GR00T N1.5-era default; remapping it to %s, "
+                    "the value expected by GR00T N1.7 checkpoints. Set a different value explicitly "
+                    "if this is not what you want.",
+                    field_name,
+                    legacy_value,
+                    n1_7_value,
+                )
+                setattr(self, field_name, n1_7_value)
 
         inferred_version = infer_groot_model_version(self.base_model_path)
         if inferred_version is not None and inferred_version != self.model_version:
-            raise ValueError(
+            message = (
                 f"GR00T model_version '{self.model_version}' does not match base_model_path "
                 f"'{self.base_model_path}', which looks like '{inferred_version}'."
             )
+            if inferred_version == GROOT_N1_5:
+                message = f"{message} {GROOT_N1_5_REMOVAL_GUIDANCE}"
+            raise ValueError(message)
 
         super().__post_init__()
 
@@ -511,9 +582,22 @@ class GrootConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list[int]:
-        """Return indices for delta actions."""
-        model_action_horizon = infer_groot_n1_7_action_horizon(self.base_model_path, self.embodiment_tag) or 40
-        return list(range(min(self.chunk_size, model_action_horizon)))
+        """Return indices for delta actions.
+
+        The model action horizon is read from the checkpoint's processor_config.json
+        when available; the result is cached (keyed on the inputs that determine it) so
+        repeated access during dataset/training setup does not re-read from disk.
+        """
+        cache_key = (self.base_model_path, self.embodiment_tag, self.chunk_size)
+        cached = getattr(self, "_action_delta_indices_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+        model_action_horizon = (
+            infer_groot_n1_7_action_horizon(self.base_model_path, self.embodiment_tag) or 40
+        )
+        indices = list(range(min(self.chunk_size, model_action_horizon)))
+        object.__setattr__(self, "_action_delta_indices_cache", (cache_key, indices))
+        return indices
 
     @property
     def reward_delta_indices(self) -> None:
