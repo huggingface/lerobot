@@ -13,11 +13,12 @@ Adds a `push_checkpoints_to_hub` config flag (default `False`) that, when enable
 
 `push_to_hub=true` only pushes the final model after training completes. On Colab or other ephemeral runtimes, a disconnection loses all local checkpoints. The user runs 6K-step chunks on L4 (~6 hours each) and has lost multiple runs to disconnects. This patch makes intermediate checkpoints survive runtime loss.
 
-Four files changed:
+Five files changed:
 - `configs/policies.py` — add `push_checkpoints_to_hub: bool = False`
-- `policies/pretrained.py` — add `revision` param to `push_model_to_hub()` + `latest-checkpoint` pointer update after each successful step-branch push
+- `policies/pretrained.py` — add `revision` param to `push_model_to_hub()` + `latest-checkpoint` pointer update + `from_pretrained()` fallback to `main`
 - `policies/factory.py` — wire `revision` through `make_policy()` and `make_pre_post_processors()`
 - `scripts/lerobot_train.py` — push model to Hub in checkpoint block when flag is set
+- `processor/pipeline.py` — `from_pretrained()` fallback to `main` for processor loading
 
 ## Validate
 
