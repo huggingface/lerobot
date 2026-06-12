@@ -58,6 +58,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         return_uint8: bool = False,
+        depth_output_unit: str = "mm",
         batch_encoding_size: int = 1,
         camera_encoder: VideoEncoderConfig | None = None,
         depth_encoder: DepthEncoderConfig | None = None,
@@ -210,6 +211,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.revision = revision if revision else CODEBASE_VERSION
         self._video_backend = video_backend if video_backend else get_safe_default_video_backend()
         self._return_uint8 = return_uint8
+        self._depth_output_unit = depth_output_unit
         self._batch_encoding_size = batch_encoding_size
         self._encoder_threads = encoder_threads
 
@@ -250,6 +252,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             return_uint8=self._return_uint8,
+            depth_output_unit=self._depth_output_unit,
         )
         self.image_transforms = image_transforms
 
@@ -320,6 +323,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 delta_timestamps=self.delta_timestamps,
                 image_transforms=self.image_transforms,
                 return_uint8=self._return_uint8,
+                depth_output_unit=self._depth_output_unit,
             )
         return self.reader
 
@@ -721,6 +725,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episodes = None
         obj._video_backend = video_backend if video_backend is not None else get_safe_default_video_backend()
         obj._return_uint8 = False
+        obj._depth_output_unit = "mm"
         obj._batch_encoding_size = batch_encoding_size
         obj._encoder_threads = encoder_threads
 
@@ -819,6 +824,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episodes = None
         obj._video_backend = video_backend if video_backend else get_safe_default_video_backend()
         obj._return_uint8 = False
+        obj._depth_output_unit = "mm"
         obj._batch_encoding_size = batch_encoding_size
 
         if obj._requested_root is not None:
