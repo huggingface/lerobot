@@ -90,16 +90,16 @@ class TestQuantizeDequantize:
     @pytest.mark.parametrize("output_unit", ["m", "mm"])
     def test_numpy_torch_agree(self, use_log, output_unit):
         """Batched torch path produces the same values as the numpy path."""
-        T = 3
+        batch_size = 3
         per_frame = np.linspace(0, DEPTH_QMAX, H * W, dtype=np.uint16).reshape(H, W)
-        batch_np = np.broadcast_to(per_frame[None, None, ...], (T, 1, H, W)).copy()
+        batch_np = np.broadcast_to(per_frame[None, None, ...], (batch_size, 1, H, W)).copy()
         batch_t = torch.from_numpy(batch_np.astype(np.int32))  # torch.uint16 support is patchy.
 
         ref = dequantize_depth(batch_np, use_log=use_log, output_unit=output_unit, output_tensor=False)
         out = dequantize_depth(batch_t, use_log=use_log, output_unit=output_unit, output_tensor=True)
 
         assert isinstance(out, torch.Tensor)
-        assert out.shape == (T, 1, H, W)
+        assert out.shape == (batch_size, 1, H, W)
         # ``m``: float32 noise (~10 µm in log mode, after ``exp``) — still 200× below the ~2 mm quant step.
         # ``mm`` + tensor stays in float32 (no uint16 round-trip), so allow 1 mm slop.
         atol = 1e-5 if output_unit == "m" else 1.0
