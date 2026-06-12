@@ -14,6 +14,7 @@
 # limitations under the License.
 
 
+import logging
 from typing import TYPE_CHECKING
 
 import torch
@@ -40,6 +41,9 @@ else:
     SinusoidalPositionalEmbedding = None
     TimestepEmbedding = None
     Timesteps = None
+
+
+logger = logging.getLogger(__name__)
 
 
 class TimestepEncoder(nn.Module):
@@ -265,8 +269,8 @@ class DiT(ModelMixin, ConfigMixin):
         self.norm_out = nn.LayerNorm(self.inner_dim, elementwise_affine=False, eps=1e-6)
         self.proj_out_1 = nn.Linear(self.inner_dim, 2 * self.inner_dim)
         self.proj_out_2 = nn.Linear(self.inner_dim, self.config.output_dim)
-        print(
-            "Total number of DiT parameters: ",
+        logger.debug(
+            "Total number of DiT parameters: %d",
             sum(p.numel() for p in self.parameters() if p.requires_grad),
         )
 
@@ -426,8 +430,8 @@ class SelfAttentionTransformer(ModelMixin, ConfigMixin):
                 for _ in range(self.config.num_layers)
             ]
         )
-        print(
-            "Total number of SelfAttentionTransformer parameters: ",
+        logger.debug(
+            "Total number of SelfAttentionTransformer parameters: %d",
             sum(p.numel() for p in self.parameters() if p.requires_grad),
         )
 

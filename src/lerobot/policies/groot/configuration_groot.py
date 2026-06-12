@@ -352,12 +352,16 @@ class GrootConfig(PreTrainedConfig):
     # Maximum action dimension. Shorter actions will be zero-padded.
     max_action_dim: int = 132
 
-    # Normalization (start with identity, adjust as needed)
+    # GR00T normalizes state/action internally in its processor steps (min/max with
+    # q01/q99 percentiles, per embodiment), and the Qwen3-VL backbone's image processor
+    # handles image normalization. The policy therefore does NOT use LeRobot's
+    # NormalizerProcessorStep/UnnormalizerProcessorStep, so this mapping is intentionally
+    # IDENTITY for every feature and is not consulted by make_groot_pre_post_processors.
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
-            "STATE": NormalizationMode.MEAN_STD,
-            "ACTION": NormalizationMode.MEAN_STD,
+            "STATE": NormalizationMode.IDENTITY,
+            "ACTION": NormalizationMode.IDENTITY,
         }
     )
 
@@ -578,11 +582,22 @@ class GrootConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list[int]:
-        """Return indices for delta actions."""
+        """Return indices for delta actions.
+
+        The model action horizon is read from the checkpoint's processor_config.json
+        when available; the result is cached (keyed on the inputs that determine it) so
+        repeated access during dataset/training setup does not re-read from disk.
+        """
+        cache_key = (self.base_model_path, self.embodiment_tag, self.chunk_size)
+        cached = getattr(self, "_action_delta_indices_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
         model_action_horizon = (
             infer_groot_n1_7_action_horizon(self.base_model_path, self.embodiment_tag) or 40
         )
-        return list(range(min(self.chunk_size, model_action_horizon)))
+        indices = list(range(min(self.chunk_size, model_action_horizon)))
+        object.__setattr__(self, "_action_delta_indices_cache", (cache_key, indices))
+        return indices
 
     @property
     def reward_delta_indices(self) -> None:

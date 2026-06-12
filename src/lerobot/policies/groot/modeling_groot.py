@@ -23,6 +23,7 @@ orchestration are handled by LeRobot's standard training stack.
 """
 
 import builtins
+import logging
 import os
 from collections import deque
 from pathlib import Path
@@ -47,6 +48,8 @@ from .configuration_groot import (
     infer_groot_n1_7_action_horizon,
     normalize_groot_model_version,
 )
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound="GrootPolicy")
 
@@ -149,9 +152,10 @@ class GrootPolicy(PreTrainedPolicy):
             if config is not None
             else infer_groot_model_version(str(pretrained_name_or_path)) or GROOT_N1_7
         )
-        print(
-            f"The Groot policy is a wrapper around Nvidia's GR00T {requested_version} model.\n"
-            f"Loading pretrained model from: {pretrained_name_or_path}"
+        logger.info(
+            "The Groot policy wraps NVIDIA's GR00T %s model. Loading pretrained model from: %s",
+            requested_version,
+            pretrained_name_or_path,
         )
 
         model_id = str(pretrained_name_or_path)
@@ -182,7 +186,7 @@ class GrootPolicy(PreTrainedPolicy):
 
         if is_finetuned_checkpoint:
             # This is a fine-tuned LeRobot checkpoint - use parent class loading
-            print("Detected fine-tuned LeRobot checkpoint, loading with state dict...")
+            logger.info("Detected fine-tuned LeRobot checkpoint, loading with state dict...")
             return super().from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
                 config=config,
@@ -198,7 +202,7 @@ class GrootPolicy(PreTrainedPolicy):
             )
 
         # This is a base GR00T model - load it fresh
-        print("Detected base GR00T model, loading from HuggingFace...")
+        logger.info("Detected base GR00T model, loading from HuggingFace...")
 
         if config is None:
             model_version = infer_groot_model_version(str(pretrained_name_or_path)) or GROOT_N1_7
@@ -409,6 +413,11 @@ class GrootPolicy(PreTrainedPolicy):
 
         # Isaac-GR00T returns a BatchFeature; loss key is typically 'loss'
         loss = outputs.get("loss")
+        if loss is None:
+            raise RuntimeError(
+                "GR00T model.forward did not return a 'loss'. Training batches must include "
+                "'action' and 'action_mask'; check the preprocessor output."
+            )
 
         loss_dict = {"loss": loss.item()}
 
@@ -471,33 +480,21 @@ class GrootPolicy(PreTrainedPolicy):
     # Internal helpers
     # -------------------------
     def _handle_flash_attention_compatibility(self) -> None:
-        """Handle Flash Attention compatibility issues by setting environment variables.
+        """Log Flash Attention availability (diagnostic only).
 
-        This addresses the common 'undefined symbol' error that occurs when Flash Attention
-        is compiled against a different PyTorch version than what's currently installed.
+        The GR00T N1.7 backbone automatically falls back to SDPA when ``flash_attn`` is
+        unavailable (see ``Qwen3Backbone``), so this probe only emits a hint; it does not
+        change behaviour or mutate global state.
         """
-
-        # Set environment variables to handle Flash Attention compatibility
-        # These help with symbol resolution issues
-        os.environ.setdefault("FLASH_ATTENTION_FORCE_BUILD", "0")
-        os.environ.setdefault("FLASH_ATTENTION_SKIP_CUDA_BUILD", "0")
-
-        # Try to import flash_attn and handle failures gracefully
         try:
             import flash_attn
 
-            print(f"[GROOT] Flash Attention version: {flash_attn.__version__}")
-        except ImportError as e:
-            print(f"[GROOT] Flash Attention not available: {e}")
-            print("[GROOT] Will use fallback attention mechanism")
-        except Exception as e:
-            if "undefined symbol" in str(e):
-                print(f"[GROOT] Flash Attention compatibility issue detected: {e}")
-                print("[GROOT] This is likely due to PyTorch/Flash Attention version mismatch")
-                print("[GROOT] Consider reinstalling Flash Attention with compatible version:")
-                print("  pip uninstall flash-attn")
-                print("  pip install --no-build-isolation flash-attn==2.6.3")
-                print("[GROOT] Continuing with fallback attention mechanism")
-            else:
-                print(f"[GROOT] Flash Attention error: {e}")
-                print("[GROOT] Continuing with fallback attention mechanism")
+            logger.debug("Flash Attention %s is available.", flash_attn.__version__)
+        except ImportError:
+            logger.debug("Flash Attention is not installed; the GR00T backbone will use SDPA.")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Flash Attention failed to import (%s); the GR00T backbone will use SDPA. If this is "
+                "an 'undefined symbol' error, reinstall a flash-attn build matching your torch version.",
+                e,
+            )

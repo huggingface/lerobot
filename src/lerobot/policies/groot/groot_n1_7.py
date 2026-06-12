@@ -71,7 +71,7 @@ GR00T_N1_7_DEFAULTS: dict[str, Any] = {
     "backbone_embedding_dim": 2048,
     "tune_llm": False,
     "tune_visual": False,
-    "select_layer": 12,
+    "select_layer": 16,  # N1.7-3B checkpoint value; real checkpoint loads override this from config.json
     "reproject_vision": False,
     "use_flash_attention": True,
     "load_bf16": False,
