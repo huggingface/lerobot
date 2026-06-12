@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
@@ -712,7 +713,45 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             KeyError: If an override key doesn't match any step in the pipeline.
             ProcessorMigrationError: If the model requires migration to processor format.
         """
+        effective_revision = revision
         model_id = str(pretrained_model_name_or_path)
+
+        try:
+            return cls._load_pipeline(
+                model_id, config_filename,
+                force_download, resume_download, proxies, token, cache_dir, local_files_only,
+                effective_revision, overrides, to_transition, to_output
+            )
+        except Exception as e:
+            if effective_revision == "latest-checkpoint":
+                logging.info(
+                    "latest-checkpoint branch not found for processor pipeline, falling back to main. "
+                    "This is normal on first run."
+                )
+                effective_revision = "main"
+                return cls._load_pipeline(
+                    model_id, config_filename,
+                    force_download, resume_download, proxies, token, cache_dir, local_files_only,
+                    effective_revision, overrides, to_transition, to_output
+                )
+            raise
+
+    @classmethod
+    def _load_pipeline(
+        cls,
+        model_id: str,
+        config_filename: str,
+        force_download: bool,
+        resume_download: bool | None,
+        proxies: dict[str, str] | None,
+        token: str | bool | None,
+        cache_dir: str | Path | None,
+        local_files_only: bool,
+        revision: str | None,
+        overrides: dict[str, Any] | None,
+        to_transition: Callable[[TInput], EnvTransition] | None,
+        to_output: Callable[[EnvTransition], TOutput] | None,
+    ) -> DataProcessorPipeline[TInput, TOutput]:
         hub_download_kwargs = {
             "force_download": force_download,
             "resume_download": resume_download,
