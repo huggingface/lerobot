@@ -7,7 +7,7 @@
 
 ## What
 
-Adds a `push_checkpoints_to_hub` config flag (default `False`) that, when enabled, pushes model weights to the HuggingFace Hub at each `save_freq` interval as a named branch (`step-002500`, `step-005000`, etc.). V1 pushes model weights only — no optimizer/scheduler state. A `latest-checkpoint` branch auto-updates to always point at the most recent successful push, so resume is `--policy.revision=latest-checkpoint` (no step numbers needed).
+Adds a `push_checkpoints_to_hub` config flag (default `False`) that, when enabled, pushes model weights to the HuggingFace Hub at each `save_freq` interval as a named branch (`step-002500`, `step-005000`, etc.). V1 pushes model weights only — no optimizer/scheduler state. A `latest-checkpoint` branch auto-updates to always point at the most recent successful push, so resume is `--policy.revision=latest-checkpoint` (no step numbers needed). On first run (before any checkpoint exists), `from_pretrained()` silently falls back to `main` — the same command works for both fresh and resume training.
 
 ## Why
 
@@ -24,8 +24,9 @@ Four files changed:
 **User:**
 1. Run training with `--policy.push_checkpoints_to_hub=true --save_freq=200 --steps=500`
 2. Check Hub repo: branches `step-000200`, `step-000400` exist, and `latest-checkpoint` points at `step-000400`
-3. Resume from latest: `--policy.path=<repo> --policy.revision=latest-checkpoint` — loads the most recent checkpoint automatically
-4. Run training without `--policy.push_checkpoints_to_hub` — verify no mid-training pushes (regression)
+3. Resume: `--policy.revision=latest-checkpoint` — loads `step-000400` automatically (no step number needed)
+4. Start fresh training with `--policy.revision=latest-checkpoint` on a repo with no checkpoints — silently falls back to `main` (no crash)
+5. Run training without `--policy.push_checkpoints_to_hub` — verify no mid-training pushes (regression)
 
 **Agent:**
 ```bash

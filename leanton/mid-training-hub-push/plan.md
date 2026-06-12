@@ -144,6 +144,8 @@ anikitakis/vla_so101_pick_n_place_full_expert
 
 **`latest-checkpoint` pointer:** After each successful checkpoint push, `push_model_to_hub` also updates a `latest-checkpoint` branch to point at the just-pushed step branch. This is a lightweight delete+create operation (no file transfer — just a ref update). The user can always resume with `--policy.revision=latest-checkpoint` without knowing the exact step number. If a push fails, `latest-checkpoint` stays at the previous valid checkpoint — it's only updated after a confirmed successful upload.
 
+**Fallback on first run:** `from_pretrained()` has a built-in fallback for `latest-checkpoint`: if the branch doesn't exist yet (first training run before any checkpoint push), it silently falls back to `main`. This covers both the config download and model weight download paths. The user can set `--policy.revision=latest-checkpoint` unconditionally — it works on first run (falls back to `main`) and every subsequent run (uses the latest checkpoint). No manual revision switching.
+
 **Why branches (not tags):**
 - Branches can be loaded as `--policy.revision=<branch-name>` in LeRobot
 - Deletable with standard Hub tools
