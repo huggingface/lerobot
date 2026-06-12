@@ -36,6 +36,8 @@ from tqdm import tqdm
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
+    load_training_batch_size,
+    load_training_num_processes,
     load_training_state,
     save_checkpoint,
     update_last_checkpoint,
@@ -43,7 +45,7 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import EpisodeAwareSampler, make_dataset
+from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state, make_dataset
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
@@ -237,18 +239,17 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    # Dataset loading synchronization: each node's local main process downloads first to avoid
-    # race conditions (the global main process only exists on node 0, so gating on it would let
-    # all ranks of the other nodes download and build the Arrow cache concurrently).
-    if accelerator.is_local_main_process:
-        if is_main_process:
-            logging.info("Creating dataset")
+    # Dataset loading synchronization: the global main process downloads once to the shared
+    # dataset root, then a barrier lets every other rank read the already-populated copy.
+    # LeRobotDataset skips its snapshot_download when try_load() succeeds, so no rank re-downloads.
+    if is_main_process:
+        logging.info("Creating dataset")
         dataset = make_dataset(cfg)
 
     accelerator.wait_for_everyone()
 
-    # Now all other processes can safely load the dataset from the local cache
-    if not accelerator.is_local_main_process:
+    # Other ranks read from the shared copy populated by the main process.
+    if not is_main_process:
         dataset = make_dataset(cfg)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
@@ -392,22 +393,47 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
-    if hasattr(active_cfg, "drop_n_last_frames"):
+    if not cfg.dataset.streaming:
+        # All non-streaming (map-style) datasets use EpisodeAwareSampler.
+        # The order is a pure function of (seed, epoch), so every rank independently produces the
+        # same permutation. accelerate then shards it disjointly across ranks via BatchSamplerShard
+        # without needing a `generator` attribute to synchronize an RNG, and resume is sample-exact.
         shuffle = False
-        # A dedicated generator (rather than the global torch RNG) lets accelerator.prepare
-        # synchronize the shuffle permutation across ranks, keeping batch shards disjoint even
-        # when ranks consume the global RNG asymmetrically (e.g. eval on the main process only).
-        sampler_generator = torch.Generator()
-        if cfg.seed is not None:
-            sampler_generator.manual_seed(cfg.seed)
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
             dataset.meta.episodes["dataset_to_index"],
             episode_indices_to_use=dataset.episodes,
-            drop_n_last_frames=active_cfg.drop_n_last_frames,
+            drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
             shuffle=True,
-            generator=sampler_generator,
+            seed=cfg.seed if cfg.seed is not None else 0,
         )
+        if cfg.resume and step > 0:
+            # The resume offset depends on the (num_processes, batch_size) that produced `step`, so
+            # use the values recorded in the checkpoint (falling back to the current ones for older
+            # ckpts that did not store them).
+            saved_num_processes = load_training_num_processes(cfg.checkpoint_path)
+            saved_batch_size = load_training_batch_size(cfg.checkpoint_path)
+            ckpt_num_processes = saved_num_processes or accelerator.num_processes
+            ckpt_batch_size = saved_batch_size or cfg.batch_size
+            if is_main_process and saved_num_processes not in (None, accelerator.num_processes):
+                logging.warning(
+                    f"Resuming with num_processes={accelerator.num_processes} but the checkpoint was "
+                    f"written with num_processes={saved_num_processes}. The data order resumes at the "
+                    "right epoch/offset, but per-rank sample-exactness requires the same world size."
+                )
+            if is_main_process and saved_batch_size not in (None, cfg.batch_size):
+                logging.warning(
+                    f"Resuming with batch_size={cfg.batch_size} but the checkpoint was written with "
+                    f"batch_size={saved_batch_size}. The data order resumes at the right epoch/offset, "
+                    "but per-rank sample-exactness requires the same batch size."
+                )
+            sampler_state = compute_sampler_state(step, len(sampler), ckpt_batch_size, ckpt_num_processes)
+            sampler.load_state_dict(sampler_state)
+            if is_main_process:
+                logging.info(
+                    f"Resuming data order at epoch {sampler_state['epoch']}, "
+                    f"sample {sampler_state['start_index']}"
+                )
     else:
         shuffle = True
         sampler = None
@@ -544,6 +570,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     scheduler=lr_scheduler,
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
+                    num_processes=accelerator.num_processes,
+                    batch_size=cfg.batch_size,
                 )
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
