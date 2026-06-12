@@ -18,6 +18,10 @@ from __future__ import annotations
 # Utilities
 ########################################################################################
 import logging
+import os
+import select
+import sys
+import threading
 import time
 import traceback
 from contextlib import nullcontext
@@ -143,12 +147,109 @@ def init_keyboard_listener():
     events["rerecord_episode"] = False
     events["stop_recording"] = False
 
+    class CombinedListener:
+        def __init__(self):
+            self._listeners = []
+
+        def add(self, listener_obj):
+            if listener_obj is not None:
+                self._listeners.append(listener_obj)
+
+        def stop(self):
+            for listener_obj in self._listeners:
+                stop_fn = getattr(listener_obj, "stop", None)
+                if callable(stop_fn):
+                    stop_fn()
+
+    class TerminalKeyListener:
+        def __init__(self, on_key):
+            self._on_key = on_key
+            self._running = False
+            self._thread = None
+            self._fd = None
+            self._old_attrs = None
+
+        def _read_char(self, timeout=0.02):
+            if self._fd is None:
+                return None
+            ready, _, _ = select.select([self._fd], [], [], timeout)
+            if ready:
+                return os.read(self._fd, 1).decode(errors="ignore")
+            return None
+
+        def _run(self):
+            while self._running:
+                ch = self._read_char(timeout=0.05)
+                if ch is None:
+                    continue
+
+                if ch == "\x1b":
+                    ch2 = self._read_char(timeout=0.02)
+                    ch3 = self._read_char(timeout=0.02) if ch2 else None
+                    seq = (ch2 or "") + (ch3 or "")
+                    if seq == "[C":
+                        self._on_key("right")
+                    elif seq == "[D":
+                        self._on_key("left")
+                    else:
+                        self._on_key("esc")
+                    continue
+
+                # Fallback hotkeys in terminal mode.
+                if ch.lower() == "n":
+                    self._on_key("right")
+                elif ch.lower() == "r":
+                    self._on_key("left")
+                elif ch.lower() in ("q",):
+                    self._on_key("esc")
+
+        def start(self):
+            import termios
+            import tty
+
+            if not sys.stdin.isatty():
+                return
+            self._fd = sys.stdin.fileno()
+            self._old_attrs = termios.tcgetattr(self._fd)
+            tty.setcbreak(self._fd)
+            self._running = True
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+
+        def stop(self):
+            self._running = False
+            if self._thread is not None:
+                self._thread.join(timeout=0.2)
+            if self._fd is not None and self._old_attrs is not None:
+                import termios
+
+                termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old_attrs)
+
+    def handle_key(kind: str):
+        if kind == "right":
+            print("Right arrow key pressed. Exiting loop...")
+            events["exit_early"] = True
+        elif kind == "left":
+            print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
+            events["rerecord_episode"] = True
+            events["exit_early"] = True
+        elif kind == "esc":
+            print("Escape key pressed. Stopping data recording...")
+            events["stop_recording"] = True
+            events["exit_early"] = True
+
+    combined_listener = CombinedListener()
+
     if is_headless():
-        logging.warning(
-            "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
-        )
-        listener = None
-        return listener, events
+        if sys.stdin.isatty():
+            terminal_listener = TerminalKeyListener(on_key=handle_key)
+            terminal_listener.start()
+            combined_listener.add(terminal_listener)
+        else:
+            logging.warning(
+                "Headless environment detected and no interactive terminal is available. Keyboard inputs will not be available."
+            )
+        return combined_listener if combined_listener._listeners else None, events
 
     # Only import pynput if not in a headless environment
     from pynput import keyboard
@@ -156,23 +257,19 @@ def init_keyboard_listener():
     def on_press(key):
         try:
             if key == keyboard.Key.right:
-                print("Right arrow key pressed. Exiting loop...")
-                events["exit_early"] = True
+                handle_key("right")
             elif key == keyboard.Key.left:
-                print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
-                events["rerecord_episode"] = True
-                events["exit_early"] = True
+                handle_key("left")
             elif key == keyboard.Key.esc:
-                print("Escape key pressed. Stopping data recording...")
-                events["stop_recording"] = True
-                events["exit_early"] = True
+                handle_key("esc")
         except Exception as e:
             print(f"Error handling key press: {e}")
 
     listener = keyboard.Listener(on_press=on_press)
     listener.start()
+    combined_listener.add(listener)
 
-    return listener, events
+    return combined_listener if combined_listener._listeners else None, events
 
 
 def sanity_check_dataset_name(repo_id, policy_cfg):
