@@ -59,16 +59,14 @@ EMA_SMOOTHING_ALPHA = 0.25
 MAX_JOINT_DELTA = 1.25
 
 # If the raw action differs from the stored EMA state by more than this
-# threshold (degrees), the EMA has drifted too far — either from a DAGGER
-# correction (huge gap, e.g. 30-60°) or from accumulated tracking lag
-# during normal movement (moderate gap, e.g. 10-20°).  See below for how
-# the two cases are handled differently.
+# threshold (degrees), the EMA state has drifted too far and is reset.
+# The delta is still velocity-clipped; the reset only skips EMA blending
+# (which would transmit the stale trend across the gap) and seeds _prev
+# with the raw target for fast re-convergence.
+# DAGGER correction boundaries are handled separately: the strategy calls
+# reset_action_smoothing() on resume, which sets _prev=None so the first
+# frame passes through cleanly (v ≈ physical position, fresh observation).
 SMOOTHING_RESET_THRESHOLD = 10.0
-
-# Gap above which we assume a DAGGER correction boundary rather than EMA
-# drift.  Correction gaps are accepted directly (v ≈ physical position);
-# drift gaps are clipped from _prev to avoid transmitting a raw jump.
-SMOOTHING_CORRECTION_THRESHOLD = 30.0
 
 
 def _smooth_action(action_dict: dict) -> dict:
@@ -95,21 +93,17 @@ def _smooth_action(action_dict: dict) -> dict:
     for k, v in action_dict.items():
         prev_v = prev.get(k, v)
         if abs(v - prev_v) > SMOOTHING_RESET_THRESHOLD:
+            # EMA state has drifted too far (policy direction change, or
+            # recovery after correction — though the strategy resets _prev
+            # to None on correction resume, so this path mainly catches
+            # mid-autonomous drift).  Skip EMA blending but still clip
+            # velocity, and seed _prev with the raw target.
             reset_triggered = True
-            gap = abs(v - prev_v)
-            if gap > SMOOTHING_CORRECTION_THRESHOLD:
-                # Correction boundary: _prev is stale (frozen during teleop).
-                # Accept v directly — it IS near the current physical position
-                # because the policy just observed it.
-                action_dict[k] = v
-            else:
-                # EMA drift during normal movement: clip from _prev to avoid
-                # transmitting a raw jump, then seed _prev with raw target.
-                delta = v - prev_v
-                if abs(delta) > limit:
-                    clipped = True
-                delta = max(-limit, min(limit, delta))
-                action_dict[k] = prev_v + delta
+            delta = v - prev_v
+            if abs(delta) > limit:
+                clipped = True
+            delta = max(-limit, min(limit, delta))
+            action_dict[k] = prev_v + delta
             prev[k] = v  # seed EMA state with raw target for fast re-convergence
             continue
         sv = alpha * v + (1.0 - alpha) * prev_v
