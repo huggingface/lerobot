@@ -94,6 +94,14 @@ Merge multiple datasets from a list of local dataset paths:
         --operation.repo_ids "['pusht_train', 'pusht_val']" \
         --operation.roots "['/path/to/pusht_train', '/path/to/pusht_val']"
 
+Merge multiple datasets while keeping one file per source file (no video/data stitching):
+    lerobot-edit-dataset \
+        --new_repo_id lerobot/pusht_merged \
+        --operation.type merge \
+        --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']" \
+        --operation.concatenate_videos false \
+        --operation.concatenate_data false
+
 Remove camera feature:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
@@ -257,6 +265,9 @@ class SplitConfig(OperationConfig):
 class MergeConfig(OperationConfig):
     repo_ids: list[str] | None = None
     roots: list[str] | None = None
+    # When False, keep one file per source file instead of packing into shards.
+    concatenate_videos: bool = True
+    concatenate_data: bool = True
 
 
 @OperationConfig.register_subclass("remove_feature")
@@ -461,6 +472,8 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
         datasets,
         output_repo_id=cfg.new_repo_id,
         output_dir=output_dir,
+        concatenate_videos=cfg.operation.concatenate_videos,
+        concatenate_data=cfg.operation.concatenate_data,
     )
 
     logging.info(f"Merged dataset saved to {output_dir}")

@@ -29,6 +29,7 @@ from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor, save_model as save_model_as_safetensor
 from torch import Tensor, nn
 
+from lerobot.__version__ import __version__
 from lerobot.configs import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.hub import HubMixin
@@ -36,6 +37,67 @@ from lerobot.utils.hub import HubMixin
 from .utils import log_model_loading_keys
 
 T = TypeVar("T", bound="PreTrainedPolicy")
+
+
+def _build_card_context(
+    cfg: TrainPipelineConfig | None,
+    dataset_repo_id: str | None,
+    input_features: dict | None,
+    output_features: dict | None,
+) -> dict:
+    """Collect optional data for the model-card template.
+
+    Returns plain values only (no Markdown) — the template in
+    ``lerobot/templates/lerobot_modelcard_template.md`` decides how and whether to show
+    each one. Everything is best-effort: anything unavailable is left empty/None and the
+    template simply skips that section, so this never breaks a Hub push.
+    """
+    context = {
+        "training": None,
+        "input_features": input_features or {},
+        "output_features": output_features or {},
+        "dataset": None,
+        "robot_type": None,
+        "cameras": [],
+    }
+
+    if cfg is not None:
+        optimizer = getattr(cfg, "optimizer", None)
+        context["training"] = {
+            "steps": cfg.steps,
+            "batch_size": cfg.batch_size,
+            "seed": cfg.seed,
+            "optimizer": getattr(optimizer, "type", None) if optimizer else None,
+            "lr": getattr(optimizer, "lr", None) if optimizer else None,
+            "lerobot_version": __version__,
+        }
+
+    if dataset_repo_id:
+        dataset_cfg = getattr(cfg, "dataset", None)
+        try:
+            from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+
+            meta = LeRobotDatasetMetadata(
+                dataset_repo_id,
+                root=getattr(dataset_cfg, "root", None),
+                revision=getattr(dataset_cfg, "revision", None),
+            )
+            context["dataset"] = {
+                "repo_id": dataset_repo_id,
+                "episodes": meta.total_episodes,
+                "frames": meta.total_frames,
+                "fps": meta.fps,
+                "tasks": [str(task) for task in meta.tasks.index],
+            }
+            context["robot_type"] = meta.robot_type
+            context["cameras"] = [key.split(".")[-1] for key in meta.camera_keys]
+        except Exception as e:  # noqa: BLE001 — dataset details are optional, never fail the push
+            logging.warning(
+                f"Could not load dataset metadata for '{dataset_repo_id}'; those sections will be "
+                f"omitted from the model card. ({e})"
+            )
+
+    return context
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -228,7 +290,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 self.save_pretrained(saved_path)  # Calls _save_pretrained and stores model tensors
 
             card = self.generate_model_card(
-                cfg.dataset.repo_id, self.config.type, self.config.license, self.config.tags
+                cfg.dataset.repo_id, self.config.type, self.config.license, self.config.tags, cfg=cfg
             )
             card.save(str(saved_path / "README.md"))
 
@@ -246,9 +308,20 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             logging.info(f"Model pushed to {commit_info.repo_url.url}")
 
     def generate_model_card(
-        self, dataset_repo_id: str, model_type: str, license: str | None, tags: list[str] | None
+        self,
+        dataset_repo_id: str,
+        model_type: str,
+        license: str | None,
+        tags: list[str] | None,
+        cfg: TrainPipelineConfig | None = None,
     ) -> ModelCard:
-        base_model = "lerobot/smolvla_base" if model_type == "smolvla" else None  # Set a base model
+        base_model_mapping = {
+            "smolvla": "lerobot/smolvla_base",
+            "pi0": "lerobot/pi0_base",
+            "pi05": "lerobot/pi05_base",
+            "pi0_fast": "lerobot/pi0fast-base",
+            "xvla": "lerobot/xvla-base",
+        }
 
         card_data = ModelCardData(
             license=license or "apache-2.0",
@@ -257,13 +330,20 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             tags=list(set(tags or []).union({"robotics", "lerobot", model_type})),
             model_name=model_type,
             datasets=dataset_repo_id,
-            base_model=base_model,
+            base_model=base_model_mapping.get(model_type),
         )
+
+        context = _build_card_context(
+            cfg, dataset_repo_id, self.config.input_features, self.config.output_features
+        )
+        # Used by the template to pre-fill commands and the "Fine-tuned from" line.
+        context["policy_repo_id"] = getattr(self.config, "repo_id", None)
+        context["base_model"] = base_model_mapping.get(model_type)
 
         template_card = (
             files("lerobot.templates").joinpath("lerobot_modelcard_template.md").read_text(encoding="utf-8")
         )
-        card = ModelCard.from_template(card_data, template_str=template_card)
+        card = ModelCard.from_template(card_data, template_str=template_card, **context)
         card.validate()
         return card
 
