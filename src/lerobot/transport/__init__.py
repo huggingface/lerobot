@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-gRPC transport layer for async inference.
+gRPC transport layer for the HIL-SERL RL stack (actor ↔ learner).
 
 Requires: ``pip install 'lerobot[grpcio-dep]'``
 

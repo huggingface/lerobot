@@ -1,0 +1,115 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Example manifest for `lerobot-policy-server --manifest server.yaml`.
+#
+# One process = one (model, revision, dtype, device) on one GPU. Dynamic
+# model loading is deliberately unsupported: pre-warmed processes keep
+# capacity planning honest. Every field below can also be overridden on
+# the command line via draccus, e.g. --model.repo_or_path=... or
+# --zenoh.connect_endpoints='["tcp/other-router:7447"]'.
+#
+# Field names mirror the dataclasses in src/lerobot/policy_server/manifest.py.
+
+# --- Which policy this process serves, and where it runs ------------------
+model:
+  # Hub repo id (org/name) or a local checkpoint directory. Required.
+  repo_or_path: lerobot/pi0_towels
+  # Hub revision: branch, tag, or commit sha.
+  revision: main
+  # Optional torch dtype cast applied after load (e.g. "bfloat16",
+  # "float16"). null keeps the checkpoint's native dtype.
+  dtype: bfloat16
+  # Inference device, e.g. "cuda", "cuda:1", "cpu".
+  device: cuda
+
+# --- Task namespace --------------------------------------------------------
+# The task this service is published under. VLA clients may override the
+# task per session unless `pin_task` is true, in which case session opens
+# with a different task string are rejected.
+default_task: "fold the towel"
+pin_task: false
+# Optional override for the <task_slug> key segment of the Zenoh prefix
+# (defaults to a slug of `default_task`).
+service_name: ""
+
+# --- Serving mode & capacity ------------------------------------------------
+# "auto" resolves from the policy classification: shared for verified
+# chunk-stateless policies (act/pi0/pi05, smolvla with n_obs_steps=1),
+# exclusive otherwise. Chunk-stateful policies — e.g. diffusion, whose
+# predict_action_chunk reads select_action-fed queues — are always forced
+# to "exclusive" (max_sessions=1); "shared" cannot override that.
+serving_mode: auto
+
+# Capacity rule-of-thumb: with t = server seconds per inference, r = each
+# client's request rate (self-clocked to ~1-4 Hz, not the control rate),
+# H = RTC execution horizon, and dt = control period:
+#   max_sessions ~= min( 0.8 / (r*t),  (H*dt/2 - network RTT) / t )
+# e.g. ACT @ 20 ms, 1 Hz refresh -> ~40 clients/GPU; Pi0 @ 150 ms -> ~5.
+# Session opens beyond this are rejected with the current load in the
+# reply, so clients retry another replica.
+max_sessions: 5
+
+# Dummy inferences run at startup so the first real request does not pay
+# for CUDA graph/kernel warmup.
+warmup_inferences: 2
+
+# --- FPS contract -----------------------------------------------------------
+# Control rate the policy was trained at. Clients reporting a different
+# fps get a warning — or a hard reject when `strict_fps` is true.
+trained_fps: 30.0
+strict_fps: false
+
+# --- Real Time Chunking (RTC) -----------------------------------------------
+# Global to this process: init_rtc_processor mutates the policy instance,
+# so RTC is a per-process decision, not per-session. Only rtc-capable
+# families (pi0/pi05/smolvla) honor it; others are downgraded to plain
+# chunk-append at session open.
+rtc:
+  enabled: true
+  # Number of actions executed from each chunk before the next chunk is
+  # blended in (the H in the capacity formula above).
+  execution_horizon: 10
+
+# --- Housekeeping ------------------------------------------------------------
+# Sessions with no liveliness token and no traffic for this long are
+# garbage-collected (belt-and-braces behind liveliness GC).
+session_idle_timeout_s: 300.0
+
+# --- Transport ----------------------------------------------------------------
+# Robots and servers both *dial out* to a zenohd router in production
+# (mode: client). mode: peer + listen_endpoints supports router-less LAN
+# and loopback test deployments. Multicast scouting is always disabled:
+# fleet discovery is configuration, not protocol magic.
+zenoh:
+  mode: client
+  connect_endpoints:
+    - tcp/router.gpu-cluster.internal:7447
+  listen_endpoints: []
+  # mTLS material (PEM paths). All three are required for tls/ endpoints;
+  # leave them null for plain tcp/ inside a trusted network.
+  # tls_root_ca_certificate: /etc/lerobot/tls/ca.pem
+  # tls_connect_certificate: /etc/lerobot/tls/server.pem
+  # tls_connect_private_key: /etc/lerobot/tls/server.key
+  # Escape hatch: raw JSON5 merged into the zenoh config last.
+  # extra_config_json5: '{transport: {link: {tx: {queue: {size: {data: 4}}}}}}'
+
+# --- Observability -------------------------------------------------------------
+# HTTP health + Prometheus metrics port; 0 disables the endpoint.
+health_port: 9100
+
+# Optional bounded request/response capture for offline replay.
+debug:
+  capture_dir: null
+  capture_max: 256

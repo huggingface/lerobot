@@ -1,0 +1,250 @@
+# Remote Inference (lerobot-policy-server)
+
+Remote inference decouples GPU policy inference from robot control. A `lerobot-policy-server` process runs the policy on a GPU machine; the robot runs `lerobot-rollout --inference.type=remote` as a **weightless edge client** — no policy weights, no GPU, no policy processors on the robot. One GPU server can serve several robots at once, and the remote backend works with every rollout strategy (`base`, `sentry`, `highlight`, `dagger`, `episodic`).
+
+Use remote inference when:
+
+- The policy is too large or too slow for the machine attached to the robot (e.g. Pi0/Pi0.5 on a Raspberry Pi or laptop edge).
+- You want one GPU to serve a fleet of robots running the same policy.
+- You want to update or restart the inference side without touching the robots.
+
+<Tip>
+
+Remote inference requires the `async` extra on **both** sides: `pip install 'lerobot[async]'` (installs `eclipse-zenoh` and `msgpack`). The server additionally needs the extras of the policy it serves (e.g. `lerobot[pi]`, `lerobot[smolvla]`).
+
+</Tip>
+
+## Architecture
+
+```
+ robot (edge, weightless)                              GPU machine
+┌───────────────────────────┐                  ┌────────────────────────────┐
+│ lerobot-rollout           │                  │ lerobot-policy-server      │
+│  --inference.type=remote  │     zenoh        │  one process = one         │
+│                           │     router       │  (model, revision, GPU)    │
+│  control loop @ fps       │   ┌────────┐     │                            │
+│   └─ pops local action ◄──┼───┤ zenohd ├─────┼─► inference worker thread  │
+│      buffer (chunks)      │   └────────┘     │   (round-robin over        │
+│                           │   observations ► │    client sessions)        │
+│  network worker thread ───┼──► ◄ action      │                            │
+│   (publishes obs, merges  │      chunks      │  stateless per request     │
+│    chunks into buffer)    │                  │                            │
+└───────────────────────────┘                  └────────────────────────────┘
+```
+
+The client keeps a local **action buffer** filled with chunks of future actions, so the control loop never blocks on the network: short network blips are absorbed by the buffer and the robot keeps moving. The client self-clocks — it requests a new chunk whenever the buffer holds less than `--inference.buffer_time_s` seconds of playback.
+
+The server is **stateless per request**: clients ship their RTC prefixes and a delay hint with every observation, so a server crash or restart loses zero control state and reconnects are trivial. In production both robots and servers _dial out_ to a `zenohd` router (NAT-friendly: nothing on the robot network needs an open inbound port).
+
+## Quickstart on a LAN (peer mode, no router)
+
+For a quick test on one network you can skip the router: the server listens directly and the robot connects to it.
+
+On the GPU machine:
+
+```bash
+lerobot-policy-server \
+    --model.repo_or_path=${HF_USER}/my_pi0_policy \
+    --default_task="pick up the cube" \
+    --zenoh.mode=peer \
+    --zenoh.listen_endpoints='["tcp/0.0.0.0:7447"]'
+```
+
+Wait for `Policy server up: ...` (the model is downloaded, loaded, and warmed up first).
+
+On the robot machine (replace `192.168.1.42` with the GPU machine's IP):
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USER}/my_pi0_policy \
+    --inference.type=remote \
+    --inference.zenoh_mode=peer \
+    --inference.connect_endpoint=tcp/192.168.1.42:7447 \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="pick up the cube" \
+    --duration=60
+```
+
+`--policy.path` on the client resolves to a config-only download (no weights): it is used for pre-flight validation and action ordering, and doubles as the default service address. The client's `--policy.path` and `--task` must match the server's `--model.repo_or_path` and `--default_task` — that pair is the namespace the service is published under (see [Troubleshooting](#troubleshooting)).
+
+## Production deployment (router)
+
+In production, run a [zenoh router](https://zenoh.io/docs/getting-started/installation/) (`zenohd`) somewhere both sides can reach, and have robots and servers dial out to it:
+
+```bash
+zenohd  # listens on tcp/0.0.0.0:7447 by default
+```
+
+Configure the server with a YAML manifest:
+
+```yaml
+# server.yaml
+model:
+  repo_or_path: lerobot/pi0_towels
+  revision: main
+  dtype: bfloat16 # optional cast after load
+  device: cuda
+default_task: "fold the towel"
+serving_mode: auto # shared for verified chunk-stateless policies, exclusive otherwise
+max_sessions: 5
+warmup_inferences: 2
+trained_fps: 30.0
+rtc:
+  enabled: true
+  execution_horizon: 10
+  max_guidance_weight: 10.0
+health_port: 9100 # /healthz + /metrics; 0 disables
+zenoh:
+  mode: client
+  connect_endpoints: ["tcp/router.gpu-cluster.internal:7447"]
+```
+
+```bash
+lerobot-policy-server --manifest server.yaml
+```
+
+Everything in the manifest can also be set directly on the CLI (`--model.repo_or_path=...`, `--max_sessions=...`, etc.). One process serves exactly one `(model, revision, dtype, device)` — to serve two models, or one model on two GPUs, run two processes. Dynamic model loading is deliberately unsupported: pre-warmed processes keep capacity planning honest.
+
+On the robot, only the endpoint changes (the default `--inference.zenoh_mode=client` is already router mode):
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=lerobot/pi0_towels \
+    --inference.type=remote \
+    --inference.connect_endpoint=tcp/router.gpu-cluster.internal:7447 \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="fold the towel" \
+    --duration=600
+```
+
+### TLS / mTLS
+
+For traffic that leaves a trusted network, terminate TLS at the router and give both sides client certificates (all three PEM paths are required together):
+
+```yaml
+# server.yaml (zenoh section)
+zenoh:
+  mode: client
+  connect_endpoints: ["tls/router.gpu-cluster.internal:7447"]
+  tls_root_ca_certificate: /etc/lerobot/ca.pem
+  tls_connect_certificate: /etc/lerobot/server.pem
+  tls_connect_private_key: /etc/lerobot/server.key
+```
+
+On the robot the equivalent flags are `--inference.tls_ca`, `--inference.tls_cert`, and `--inference.tls_key`, with `--inference.connect_endpoint=tls/...`.
+
+<Tip>
+
+Multicast scouting is always disabled: discovery is configuration, not protocol magic. If nothing connects, check the endpoints — there is no fallback discovery mechanism.
+
+</Tip>
+
+## RTC over the network
+
+The remote engine reuses the [Real-Time Chunking](./rtc) machinery: the client keeps the chunk leftover and latency tracking locally and ships an action prefix plus a delay hint with every observation; the server runs prefix-conditioned chunk generation. This gives the same smooth chunk-to-chunk transitions as local RTC, with network latency folded into the delay computation.
+
+RTC is enabled by default on both sides (`rtc.enabled: true`). Tune it from the client:
+
+```bash
+lerobot-rollout \
+    ... \
+    --inference.type=remote \
+    --inference.rtc.execution_horizon=10 \
+    --inference.rtc.max_guidance_weight=10.0
+```
+
+If the server or its policy does not support RTC (only `pi0`, `pi05`, and `smolvla` are RTC-capable, and the server manifest must have `rtc.enabled: true`), the session is **downgraded to plain chunk-append** and the client logs:
+
+```
+RTC downgraded to chunk-append (server does not support RTC)
+```
+
+The robot still runs — chunks are simply appended to the buffer without prefix blending, which can produce visible seams between chunks on slow policies.
+
+## Fail-safe behavior
+
+The client runs a fail-safe state machine (`CONNECTING → STREAMING → DEGRADED → STALLED → RECONNECTING → DEAD`). A bad initial deployment fails fast: `lerobot-rollout` aborts before the robot moves if the handshake or validation fails. Once streaming, faults degrade in stages:
+
+| Condition                                          | Behavior                                                                                                                                |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Short network blip / late chunk                    | The robot rides its action buffer; state goes `DEGRADED` after `--inference.degraded_after_s` (default 1.0 s) without a fresh chunk     |
+| Buffered actions older than `max_action_age_s`     | Stale actions are dropped (never executed); default `--inference.max_action_age_s=3.0`                                                  |
+| Buffer runs dry (`STALLED`)                        | Fallback per `--inference.fallback`: `hold` (default — robot holds its last commanded position), `repeat_last`, or `zero`               |
+| Server liveliness lost / repeated request timeouts | `RECONNECTING`: re-handshake with exponential backoff (`reconnect_initial_backoff_s=0.5` doubling up to `reconnect_max_backoff_s=10.0`) |
+| Reconnected server runs a different model/revision | Hard refusal (`DEAD`) — the client never executes wrong-model chunks                                                                    |
+| Offline longer than `max_offline_s` (default 60 s) | `DEAD`: the engine signals the rollout's shutdown event for a clean stop                                                                |
+
+<Tip warning={true}>
+
+`--inference.fallback=zero` is required for velocity-controlled robots: for them "send nothing" means "keep the last velocity", so an explicit zero command is the only safe stop. For position-controlled arms the default `hold` is safe.
+
+</Tip>
+
+Server restarts are equally graceful: on SIGTERM the server drops its liveliness token first (clients ride their buffers through the drain), finishes the in-flight inference, and exits. Clients reconnect when the replacement comes up.
+
+## Serving multiple robots
+
+`max_sessions` caps concurrent clients per server process. A single inference worker thread serializes GPU access and round-robins over sessions with a pending observation; per-client newest-wins mailboxes mean overload degrades into longer cycle times (larger but correct client-side delays), never into queue buildup.
+
+A rough capacity estimate, keeping ~20% headroom:
+
+```
+N_robots ≈ 0.8 / (rate × inference_time)
+```
+
+where `rate` is each robot's chunk-request rate in Hz (how often the client's buffer dips below `buffer_time_s`) and `inference_time` is the server's seconds per chunk. For example, at 100 ms per chunk and ~2 chunk requests per second per robot: `N ≈ 0.8 / (2 × 0.1) = 4` robots.
+
+The actual serving mode is classified per policy family, never inferred:
+
+- **shared** — verified chunk-stateless policies (`act`, `pi0`, `pi05`, and `smolvla` with `n_obs_steps=1`) serve up to `max_sessions` clients from one policy instance.
+- **exclusive** — stateful families (diffusion-family policies, `smolvla` with observation history, and any unverified policy) are forced to `max_sessions=1`. Run one server process per robot for these.
+
+`serving_mode: auto` (the default) resolves this automatically; you may force `exclusive`, but `shared` can never override a stateful classification.
+
+## Observability
+
+With `health_port` set (default 9100), the server exposes:
+
+- `GET /healthz` — `200 ok` while the inference worker is alive, `503` otherwise. Wire this to your orchestrator's liveness probe.
+- `GET /metrics` — Prometheus text format: `lerobot_policy_server_requests_total`, `errors_total`, `superseded_total`, `dropped_unknown_client_total`, `sessions_opened_total`, `sessions_closed_total`, `active_sessions`, `server_load`.
+
+Every inference request also emits one structured audit line on the `lerobot.policy_server.audit` logger:
+
+```json
+{
+  "session_id": "9f2c...",
+  "client_uuid": "robot-07",
+  "seq_id": 412,
+  "episode_id": 3,
+  "queue_wait_ms": 1.8,
+  "inference_ms": 93.2,
+  "superseded": 0,
+  "outcome": "ok"
+}
+```
+
+`(session_id, seq_id)` correlates a server-side audit line with the client's request. Set a stable `--inference.client_uuid` per robot (instead of the default fresh UUID per run) for fleet-wide log correlation, and use `--inference.tags` to forward free-form labels in the handshake.
+
+## Troubleshooting
+
+**`No policy server answered status query at '@lerobot/...'`**
+
+The client found no server under the key it dialed. Either the endpoint is wrong (check `--inference.connect_endpoint`, the router, and firewalls), or the **service namespace** does not match. The namespace is the `(model_id, revision, task)` triple: on the client it comes from `--inference.service_model_id` (default: `--policy.path`), `--inference.service_revision` (default: `main`), and `--inference.service_task` (default: the rollout `--task`); on the server from `model.repo_or_path`, `model.revision`, and `service_name` (default: a slug of `default_task`). A robot task string that differs from the server's `default_task` is the most common cause — fix the task, or pin the namespace explicitly with `--inference.service_task` on the client / `service_name` in the manifest.
+
+**`Action name/order mismatch between server policy and this robot`**
+
+The hard sync-safety contract: chunk columns map to motors **by order**, so the robot's ordered action keys must exactly equal the policy's `action_feature_names`. This fires when the robot type, motor naming, or rename map differs from the training setup. Use the same robot type (and rename map) the policy was trained with.
+
+**`RTC requested but this server/policy does not support it — downgrading to chunk-append`**
+
+Informational, not fatal. Enable RTC in the server manifest (`rtc.enabled: true`) and make sure the policy family is RTC-capable (`pi0`, `pi05`, `smolvla`). Otherwise, expect chunk-append behavior (see [RTC over the network](#rtc-over-the-network)).
+
+**`server full: N/N sessions active`**
+
+The session-open was rejected at capacity. Raise `max_sessions` (shared mode only), or point the robot at another server replica — the rejection includes the current load so orchestration can retry elsewhere.

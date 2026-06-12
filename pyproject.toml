@@ -226,7 +226,9 @@ hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.14,<0.
 vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]
 
 # Features
-async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
+# Remote inference over Zenoh: lerobot-policy-server + lerobot-rollout --inference.type=remote.
+# Keep zenohd routers on the same minor version as the Python binding.
+async = ["eclipse-zenoh>=1.9,<2.0", "msgpack>=1.0.0,<2.0.0"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
 # Development
@@ -324,6 +326,7 @@ lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 lerobot-rollout="lerobot.scripts.lerobot_rollout:main"
+lerobot-policy-server="lerobot.scripts.lerobot_policy_server:main"
 
 # ---------------- Tool Configurations ----------------
 
@@ -514,11 +517,6 @@ ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.rl.*"
-# ignore_errors = false
-
-
-# [[tool.mypy.overrides]]
-# module = "lerobot.async_inference.*"
 # ignore_errors = false
 
 [[tool.mypy.overrides]]

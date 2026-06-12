@@ -348,3 +348,70 @@ def test_rollout_context_fields():
 
     field_names = {f.name for f in dataclasses.fields(RolloutContext)}
     assert field_names == {"runtime", "hardware", "policy", "processors", "data"}
+
+
+# ---------------------------------------------------------------------------
+# Remote inference config & factory dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_create_inference_engine_remote_requires_policy_config():
+    from lerobot.rollout.inference.factory import RemoteInferenceConfig, create_inference_engine
+
+    with pytest.raises(ValueError, match="policy_config"):
+        create_inference_engine(
+            RemoteInferenceConfig(),
+            policy=None,
+            preprocessor=None,
+            postprocessor=None,
+            robot_wrapper=MagicMock(robot_type="mock"),
+            hw_features={},
+            dataset_features={},
+            ordered_action_keys=["k"],
+            task="t",
+            fps=30.0,
+            device=None,
+            policy_config=None,
+        )
+
+
+def test_remote_config_draccus_registration():
+    from lerobot.rollout.inference.factory import InferenceEngineConfig, RemoteInferenceConfig
+
+    assert RemoteInferenceConfig().type == "remote"
+    assert InferenceEngineConfig.get_choice_class("remote") is RemoteInferenceConfig
+    assert "remote" in dict(InferenceEngineConfig.get_known_choices())
+
+
+def test_fallback_mode_values():
+    from lerobot.rollout.inference.factory import FallbackMode
+
+    assert FallbackMode.HOLD.value == "hold"
+    assert FallbackMode.REPEAT_LAST.value == "repeat_last"
+    assert FallbackMode.ZERO.value == "zero"
+    assert {mode.value for mode in FallbackMode} == {"hold", "repeat_last", "zero"}
+
+
+def test_local_backends_require_loaded_policy():
+    from lerobot.rollout.inference.factory import (
+        RTCInferenceConfig,
+        SyncInferenceConfig,
+        create_inference_engine,
+    )
+
+    common = {
+        "policy": None,
+        "preprocessor": None,
+        "postprocessor": None,
+        "robot_wrapper": MagicMock(robot_type="mock"),
+        "hw_features": {},
+        "dataset_features": {},
+        "ordered_action_keys": ["k"],
+        "task": "t",
+        "fps": 30.0,
+        "device": "cpu",
+    }
+    with pytest.raises(ValueError, match="requires a loaded policy"):
+        create_inference_engine(SyncInferenceConfig(), **common)
+    with pytest.raises(ValueError, match="requires a loaded policy"):
+        create_inference_engine(RTCInferenceConfig(), **common)

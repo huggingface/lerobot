@@ -14,13 +14,18 @@
 
 """Inference engine package — backend-agnostic action production.
 
-Concrete backends (``sync``, ``rtc``, ...) expose the same small interface so
-rollout strategies never branch on which backend is in use.
+Concrete backends (``sync``, ``rtc``, ``remote``, ...) expose the same
+small interface so rollout strategies never branch on which backend is
+in use.
 """
+
+from typing import Any
 
 from .base import InferenceEngine
 from .factory import (
+    FallbackMode,
     InferenceEngineConfig,
+    RemoteInferenceConfig,
     RTCInferenceConfig,
     SyncInferenceConfig,
     create_inference_engine,
@@ -29,11 +34,23 @@ from .rtc import RTCInferenceEngine
 from .sync import SyncInferenceEngine
 
 __all__ = [
+    "FallbackMode",
     "InferenceEngine",
     "InferenceEngineConfig",
     "RTCInferenceConfig",
     "RTCInferenceEngine",
+    "RemoteInferenceConfig",
+    "RemoteInferenceEngine",
     "SyncInferenceConfig",
     "SyncInferenceEngine",
     "create_inference_engine",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    # Lazy: RemoteInferenceEngine pulls in msgpack/zenoh ('async' extra).
+    if name == "RemoteInferenceEngine":
+        from .remote import RemoteInferenceEngine
+
+        return RemoteInferenceEngine
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

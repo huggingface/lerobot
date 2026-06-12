@@ -31,6 +31,7 @@ Inference backends
 ------------------
     --inference.type=sync      One policy call per control tick (default)
     --inference.type=rtc       Real-Time Chunking for slow VLA models
+    --inference.type=remote    Network inference via lerobot-policy-server (weightless edge)
 
 Usage examples
 --------------
@@ -145,6 +146,19 @@ Usage examples
         --dataset.camera_encoder.vcodec=h264 \\
         --dataset.camera_encoder.preset=fast \\
         --dataset.camera_encoder.extra_options={"tune": "film", "profile:v": "high", "bf": 2}
+
+    # Sentry mode — remote inference against a lerobot-policy-server (weightless edge)
+    lerobot-rollout \\
+        --strategy.type=sentry \\
+        --strategy.upload_every_n_episodes=5 \\
+        --policy.path=lerobot/pi0_base \\
+        --inference.type=remote \\
+        --inference.connect_endpoint=tcp/router.gpu-cluster.internal:7447 \\
+        --inference.rtc.execution_horizon=10 \\
+        --robot.type=so100_follower \\
+        --robot.port=/dev/ttyACM0 \\
+        --dataset.repo_id=user/rollout_sentry_data \\
+        --dataset.single_task="patrol" --duration=3600
 """
 
 import logging

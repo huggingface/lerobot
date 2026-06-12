@@ -151,18 +151,18 @@ lerobot-rollout \
     --device=cuda
 ```
 
-## How It Differs from the Async Inference in LeRobot
+## How It Relates to Remote Inference
 
-Both RTC and [async inference](./async) improve real-time robot control, but they solve different problems.
+Both RTC and [remote inference](./remote_inference) improve real-time robot control, but they solve different problems.
 
-| Aspect        | Async Inference                                                            | RTC                                                 |
-| ------------- | -------------------------------------------------------------------------- | --------------------------------------------------- |
-| **Problem**   | Idle frames while waiting for inference                                    | Discontinuities between action chunks               |
-| **Solution**  | Decouple prediction from execution                                         | Guide new chunks to continue smoothly from previous |
-| **Benefit**   | No waiting, continuous action                                              | Smooth transitions, natural motion                  |
-| **Best Used** | Async inference is best used with large models with high inference latency | Flow-matching based policies                        |
+| Aspect        | Remote Inference                                                         | RTC                                                 |
+| ------------- | ------------------------------------------------------------------------ | --------------------------------------------------- |
+| **Problem**   | The policy is too large (or too slow) for the edge machine               | Discontinuities between action chunks               |
+| **Solution**  | Run inference on a GPU server; the robot executes buffered action chunks | Guide new chunks to continue smoothly from previous |
+| **Benefit**   | Weightless edge clients, one GPU serves many robots                      | Smooth transitions, natural motion                  |
+| **Best Used** | Large models with high inference latency, robot fleets                   | Flow-matching based policies                        |
 
-**Use both together** for maximum smoothness and reactivity!
+**Use both together** (`--inference.type=remote` with `--inference.rtc.execution_horizon=...`) for maximum smoothness and reactivity: the remote engine reuses RTC's chunk-merging machinery client-side while the server runs prefix-conditioned chunk generation.
 
 ## Advanced: Debug Tracking
 
