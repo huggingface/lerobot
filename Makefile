@@ -178,3 +178,9 @@ test-smolvla-ete-eval:
 		--env.episode_length=5 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1
+
+# E2E annotation pipeline smoke test against a tiny in-memory fixture
+# dataset. Opt-in (not part of `make test-end-to-end`) and uses a stub VLM
+# backend, so it does not require a real model checkpoint or GPU.
+annotation-e2e:
+	uv run python -m tests.annotations.run_e2e_smoke

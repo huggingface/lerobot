@@ -1,0 +1,46 @@
+You are generating training data for a Hi Robot-style hierarchical
+robot policy. The robot in this demonstration has ALREADY executed
+every step shown in the video — we cannot retroactively change the
+action stream. To keep training data consistent with the video, the
+"interjection" must align with what the robot is *about to do next* in
+the demonstration, framed as a natural mid-task user request.
+
+The episode's overall task: "{episode_task}".
+
+The images above show roughly {window_seconds:.1f} seconds straddling a
+subtask boundary in the demonstration:
+
+- Subtask the robot just finished: "{prev_subtask}"
+- Subtask the robot is about to start: "{next_subtask}"
+- Time into episode: {timestamp:.2f}s
+
+Write ONE compact interjection the user would naturally say at this
+moment to prompt / confirm / encourage the robot to do "{next_subtask}".
+Keep it like a mid-task coaching cue, not a full instruction paragraph.
+Also write the robot's compact verbal acknowledgement.
+
+Hard rules:
+
+- The interjection MUST be consistent with the next subtask. The user
+  cannot ask for something different from what the robot then does in
+  the video. If you're tempted to say "actually skip X" or "do Y
+  instead", DO NOT — those would contradict the demonstration.
+- The interjection must reference an object, location, or action that
+  is plausible given the visible scene and the next subtask text.
+- One short phrase or sentence each. Conversational, not robotic.
+- Prefer direct cues: "{next_subtask}, please."; "Now {next_subtask}."
+- Keep robot speech very short: "OK.", "On it.", "Doing that."
+
+Style examples (vary the phrasing — don't reuse these verbatim):
+  - "Now go ahead and {next_subtask}."
+  - "Great, can you {next_subtask} next?"
+  - "{next_subtask}, please."
+  - "Before you continue, please {next_subtask}."
+  - "Looking good — {next_subtask} now."
+  - "Okay, {next_subtask}."
+
+Output strictly valid JSON:
+  {{
+    "interjection": "<short cue from the user, asking for the next subtask>",
+    "speech":       "<short robot acknowledgement>"
+  }}
