@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import pytest
+import torch
 
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 
@@ -25,8 +26,16 @@ def mock_metrics():
 
 
 class MockAccelerator:
-    def __init__(self, num_processes: int):
+    def __init__(self, num_processes: int, reduce_fn=None):
         self.num_processes = num_processes
+        self.device = torch.device("cpu")
+        self._reduce_fn = reduce_fn
+
+    def reduce(self, tensor, reduction="mean"):
+        # In single-process tests we just want a deterministic stand-in for accelerate's reduce.
+        if self._reduce_fn is not None:
+            return self._reduce_fn(tensor, reduction)
+        return tensor
 
 
 def test_average_meter_initialization():
@@ -157,3 +166,70 @@ def test_metrics_tracker_reset_averages(mock_metrics):
     tracker.reset_averages()
     assert tracker.loss.avg == 0.0
     assert tracker.accuracy.avg == 0.0
+
+
+def test_average_meter_invalid_reduction():
+    with pytest.raises(ValueError):
+        AverageMeter("loss", reduction="median")
+
+
+def test_average_meter_reduction_stored():
+    meter = AverageMeter("updt_s", reduction="max")
+    assert meter.reduction == "max"
+
+
+def test_metrics_tracker_reduce_across_ranks_no_accelerator():
+    metrics = {"update_s": AverageMeter("update_s", reduction="max")}
+    tracker = MetricsTracker(batch_size=32, num_frames=1000, num_episodes=50, metrics=metrics)
+    tracker.update_s = 0.5
+    tracker.reduce_across_ranks()  # no-op without accelerator
+    assert tracker.update_s.avg == 0.5
+
+
+def test_metrics_tracker_reduce_across_ranks_single_process():
+    metrics = {"update_s": AverageMeter("update_s", reduction="max")}
+    tracker = MetricsTracker(
+        batch_size=32,
+        num_frames=1000,
+        num_episodes=50,
+        metrics=metrics,
+        accelerator=MockAccelerator(num_processes=1),
+    )
+    tracker.update_s = 0.5
+    tracker.reduce_across_ranks()  # no-op when world size is 1
+    assert tracker.update_s.avg == 0.5
+
+
+def test_metrics_tracker_reduce_across_ranks_invokes_reduce():
+    captured = {}
+
+    def fake_reduce(tensor, reduction):
+        captured["reduction"] = reduction
+        captured["values"] = tensor.clone()
+        # Pretend the slowest rank reported 0.9 instead of this rank's 0.4.
+        return torch.tensor([0.9], dtype=tensor.dtype, device=tensor.device)
+
+    metrics = {
+        "loss": AverageMeter("loss"),  # reduction="none" -> not touched
+        "update_s": AverageMeter("update_s", reduction="max"),
+    }
+    tracker = MetricsTracker(
+        batch_size=32,
+        num_frames=1000,
+        num_episodes=50,
+        metrics=metrics,
+        accelerator=MockAccelerator(num_processes=4, reduce_fn=fake_reduce),
+    )
+    tracker.loss = 1.0
+    tracker.update_s = 0.4
+    tracker.reduce_across_ranks()
+
+    assert captured["reduction"] == "max"
+    assert torch.allclose(captured["values"], torch.tensor([0.4]))
+    assert tracker.update_s.avg == pytest.approx(0.9)
+    # Metrics without a reduction stay untouched.
+    assert tracker.loss.avg == 1.0
+    # Invariant: avg == sum / count must hold after reduce, so subsequent .update() calls
+    # accumulate against the cluster view rather than the stale per-rank sum.
+    meter = tracker.update_s
+    assert meter.sum / meter.count == pytest.approx(meter.avg)
