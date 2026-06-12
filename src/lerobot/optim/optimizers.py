@@ -111,6 +111,29 @@ class AdamWConfig(OptimizerConfig):
         return torch.optim.AdamW(params, **kwargs)
 
 
+@OptimizerConfig.register_subclass("adamw8bit")
+@dataclass
+class AdamW8bitConfig(OptimizerConfig):
+    """AdamW with 8-bit quantized optimizer states via bitsandbytes.
+
+    Reduces optimizer state memory from ~8 GB to ~2 GB for 1B-param models,
+    enabling GR00T N1.5-3B fine-tuning on 12 GB GPUs.
+    """
+
+    lr: float = 1e-3
+    betas: tuple[float, float] = (0.9, 0.999)
+    eps: float = 1e-8
+    weight_decay: float = 1e-2
+    grad_clip_norm: float = 10.0
+
+    def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
+        import bitsandbytes as bnb
+
+        kwargs = asdict(self)
+        kwargs.pop("grad_clip_norm")
+        return bnb.optim.AdamW8bit(params, **kwargs)
+
+
 @OptimizerConfig.register_subclass("sgd")
 @dataclass
 class SGDConfig(OptimizerConfig):
@@ -305,6 +328,15 @@ def _save_single_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Pat
     state = optimizer.state_dict()
     param_groups = state.pop("param_groups")
     flat_state = flatten_dict(state)
+    # Some optimizers (e.g. bitsandbytes AdamW8bit) store scalar ints/floats
+    # (like 'step') as Python primitives rather than tensors. safetensors
+    # requires all values to be tensors, so convert them here.
+    # Also, bnb shares qmap1/qmap2 tensors across parameter states — clone
+    # them to avoid the "tensors share memory" safetensors error.
+    flat_state = {
+        k: (torch.as_tensor(v) if not isinstance(v, torch.Tensor) else v.clone())
+        for k, v in flat_state.items()
+    }
     save_file(flat_state, save_dir / OPTIMIZER_STATE)
     write_json(param_groups, save_dir / OPTIMIZER_PARAM_GROUPS)
 
