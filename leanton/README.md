@@ -32,11 +32,4 @@ The `leanton/` directory ships alongside the code for reference (diffs, READMEs,
 | `async-diffusion-crash` | [patch](async-diffusion-crash/async-diffusion-crash.patch) | `policies/diffusion/modeling_diffusion.py` | [#3445](https://github.com/huggingface/lerobot/issues/3445) | Fixes async inference crash when `predict_action_chunk` receives empty tensor. |
 | `rollout-policy-revision` | [patch](rollout-policy-revision/rollout-policy-revision.patch) | `policies.py`, `rollout/configs.py`, `rollout/context.py` | [#3549](https://github.com/huggingface/lerobot/issues/3549) | Adds `--policy.revision` flag to `lerobot-rollout`. |
 | `policy-server-logging` | [patch](policy-server-logging/policy-server-logging.patch) | `async_inference/policy_server.py` | — | Traceback logging in policy server (minor). |
-
----
-
-## Reference (No Patch Required)
-
-| Folder | What it is |
-|:-------|:-----------|
-| `mid-training-hub-push_not-implemented/` | Ideation for pushing checkpoints mid-training (not a `.diff`, not yet implemented) |
+| `mid-training-hub-push` | [diff](mid-training-hub-push/mid-training-hub-push.diff) | `scripts/lerobot_train.py`, `policies/pretrained.py`, `policies/factory.py` | — (planned) | Push intermediate checkpoints to Hub at each `save_freq`. V1: model weights only. Config flag: `push_checkpoints_to_hub`. |
