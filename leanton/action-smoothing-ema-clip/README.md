@@ -2,7 +2,7 @@
 
 **Target:** `src/lerobot/rollout/configs.py`, `src/lerobot/rollout/strategies/core.py`, `src/lerobot/rollout/strategies/dagger.py`
 **Status:** `active`
-**GitHub:** Not filed (post-hoc smoothing, not a bug fix)
+**GitHub:** https://github.com/huggingface/lerobot/issues/3794
 **Bugfixes applied:** `a88983c0` (simplified reset + dagger.py state management)
 
 ## What

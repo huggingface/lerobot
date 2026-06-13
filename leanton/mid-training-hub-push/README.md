@@ -2,8 +2,8 @@
 
 **Target:** `src/lerobot/scripts/lerobot_train.py`, `src/lerobot/policies/pretrained.py`, `src/lerobot/policies/factory.py`, `src/lerobot/configs/policies.py`
 **Status:** `active`
-**GitHub:** Not filed (planned upstream feature request)
-**Diff basis:** `origin/main` @ `49755a3d` (clean upstream, 2026-06-12). Includes `revision` field on `PolicyConfig` as a bundled prerequisite — upstream doesn't have it yet.
+**GitHub:** https://github.com/huggingface/lerobot/issues/3793
+**Diff basis:** `origin/main` @ `30790de1` (clean upstream, 2026-06-13). Includes `revision` field on `PolicyConfig` as a bundled prerequisite — upstream doesn't have it yet.
 **Bugfixes applied:** `bed9786f` (config revision fallback), `42c2942e` (branch precreate), `7d9e8302` (latest-checkpoint pointer)
 
 ## What
