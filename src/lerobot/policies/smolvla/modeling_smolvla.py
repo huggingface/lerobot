@@ -101,42 +101,16 @@ def create_sinusoidal_pos_embedding(
 
 
 def make_att_2d_masks(pad_masks, att_masks):
-    """Copied from big_vision.
-
-    Tokens can attend to valid inputs tokens which have a cumulative mask_ar
-    smaller or equal to theirs. This way `mask_ar` int[B, N] can be used to
-    setup several types of attention, for example:
-
-      [[1 1 1 1 1 1]]: pure causal attention.
-
-      [[0 0 0 1 1 1]]: prefix-lm attention. The first 3 tokens can attend between
-          themselves and the last 3 tokens have a causal attention. The first
-          entry could also be a 1 without changing behaviour.
-
-      [[1 0 1 0 1 0 0 1 0 0]]: causal attention between 4 blocks. Tokens of a
-          block can attend all previous blocks and all tokens on the same block.
-
-    Args:
-      input_mask: bool[B, N] true if its part of the input, false if padding.
-      mask_ar: int32[B, N] mask that's 1 where previous tokens cannot depend on
-        it and 0 where it shares the same attention mask as the previous token.
-    """
-    if att_masks.ndim != 2:
-        raise ValueError(att_masks.ndim)
-    if pad_masks.ndim != 2:
-        raise ValueError(pad_masks.ndim)
-
-    cumsum = torch.cumsum(att_masks, dim=1)
-    att_2d_masks = cumsum[:, None, :] <= cumsum[:, :, None]
-    pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
+    pad_masks = pad_masks.bool()
+    att_masks = att_masks.bool()
+    if pad_masks.shape[-1] != att_masks.shape[-1]:
+        min_len = min(pad_masks.shape[-1], att_masks.shape[-1])
+        pad_masks = pad_masks[:, :min_len]
+        att_masks = att_masks[:, :min_len]
+    pad_2d_masks = pad_masks.unsqueeze(-2)
+    att_2d_masks = att_masks.unsqueeze(-1)
     att_2d_masks = att_2d_masks & pad_2d_masks
     return att_2d_masks
-
-
-def resize_with_pad(img, width, height, pad_value=-1):
-    # assume no-op when width height fits already
-    if img.ndim != 4:
-        raise ValueError(f"(b,c,h,w) expected, but {img.shape}")
 
     cur_height, cur_width = img.shape[2:]
 
@@ -155,18 +129,16 @@ def resize_with_pad(img, width, height, pad_value=-1):
     return padded_img
 
 
-def pad_vector(vector, new_dim):
-    """Can be (batch_size x sequence_length x features_dimension)
-    or (batch_size x features_dimension)
-    """
-    if vector.shape[-1] == new_dim:
+def pad_vector(vector, target_dim):
+    current_dim = vector.shape[-1]
+    if current_dim == target_dim:
         return vector
-    shape = list(vector.shape)
-    current_dim = shape[-1]
-    shape[-1] = new_dim
-    new_vector = torch.zeros(*shape, dtype=vector.dtype, device=vector.device)
-    new_vector[..., :current_dim] = vector
-    return new_vector
+    elif current_dim < target_dim:
+        pad_size = target_dim - current_dim
+        pad = torch.zeros(*vector.shape[:-1], pad_size, device=vector.device, dtype=vector.dtype)
+        return torch.cat([vector, pad], dim=-1)
+    else:
+        return vector[..., :target_dim]
 
 
 def normalize(x, min_val, max_val):
