@@ -107,6 +107,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .bi_rebot_102_leader import BiRebotArm102Leader
 
         return BiRebotArm102Leader(config)
+    elif config.type == "roarm_m3_leader":
+        from .roarm_m3_leader import RoarmM3Leader
+
+        return RoarmM3Leader(config)
     else:
         try:
             return cast("Teleoperator", make_device_from_device_class(config))
