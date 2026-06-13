@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 from unittest.mock import patch
 
 import numpy as np
@@ -664,6 +665,28 @@ def test_compute_episode_stats_string_features_skipped():
     assert "task" not in stats
     assert "action" in stats
     assert "q01" in stats["action"]
+
+
+def test_compute_episode_stats_zero_width_features_skipped(caplog):
+    """Test that features with a zero-width dim (e.g. shape=(0,)) are skipped with a warning."""
+    episode_data = {
+        "empty": np.zeros((100, 0), dtype=np.float32),  # Zero-width feature
+        "action": np.random.normal(0, 1, (100, 5)),
+    }
+    features = {
+        "empty": {"dtype": "float32", "shape": (0,)},
+        "action": {"dtype": "float32", "shape": (5,)},
+    }
+
+    with caplog.at_level(logging.WARNING):
+        stats = compute_episode_stats(episode_data, features)
+
+    # Zero-width features should be skipped with a warning, others computed as usual
+    assert "empty" not in stats
+    assert "empty" in caplog.text
+    assert "action" in stats
+    assert "q01" in stats["action"]
+    assert stats["action"]["mean"].shape == (5,)
 
 
 def test_aggregate_feature_stats_with_quantiles():
