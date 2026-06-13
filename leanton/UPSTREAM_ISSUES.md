@@ -12,6 +12,8 @@
 | [#3549](https://github.com/huggingface/lerobot/issues/3549) | Missing `--policy.revision` flag in rollout | 2026-05-10 | configuration, policies, training | `rollout-policy-revision` |
 | [#3722](https://github.com/huggingface/lerobot/issues/3722) | No way to opt out of `stamp_repo_id` timestamp on rollout datasets | 2026-06-05 | bug, dataset, configuration | `no-stamp-repo-id` |
 | [#3747](https://github.com/huggingface/lerobot/issues/3747) | DAGGER resume: RTC engine uses stale observation after correction, causing snap-back | 2026-06-09 | bug, policies | `dagger-rtc-fresh-obs-on-resume` |
+| [#3793](https://github.com/huggingface/lerobot/issues/3793) | Push intermediate training checkpoints to Hub | 2026-06-13 | enhancement, training | `mid-training-hub-push` |
+| [#3794](https://github.com/huggingface/lerobot/issues/3794) | Post-hoc EMA smoothing and velocity clipping for rollout actions | 2026-06-13 | enhancement, policies | `action-smoothing-ema-clip` |
 
 ## Closed (Merged / Fixed Upstream)
 
