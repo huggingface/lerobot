@@ -69,6 +69,7 @@ from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.import_utils import _pynput_available
 from lerobot.utils.pedal import start_pedal_listener
 from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.smooth_move import follower_smooth_move_to, teleop_smooth_move_to, teleop_supports_feedback
 from lerobot.utils.utils import log_say
 
 from ..configs import DAggerKeyboardConfig, DAggerPedalConfig, DAggerStrategyConfig

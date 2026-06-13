@@ -155,6 +155,7 @@ from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.smooth_move import follower_smooth_move_to, teleop_supports_joint_pose
 from lerobot.utils.utils import (
     init_logging,
     log_say,
@@ -394,6 +395,7 @@ def record(
 
     dataset = None
     listener = None
+    initial_action: dict | None = None
 
     try:
         if cfg.resume:
@@ -440,6 +442,20 @@ def record(
         robot.connect()
         if teleop is not None:
             teleop.connect()
+
+        initial_action = {
+            k: v
+            for k, v in robot.get_observation().items()
+            if k in robot.action_features and k.endswith(".pos")
+        }
+
+        if teleop is not None and teleop_supports_joint_pose(teleop):
+            obs = robot.get_observation()
+            teleop_action = teleop.get_action()
+            processed = teleop_action_processor((teleop_action, obs))
+            target = {k: v for k, v in robot_action_processor((processed, obs)).items() if k.endswith(".pos")}
+            log_say("Smooth handover: sliding follower to leader pose", cfg.play_sounds)
+            follower_smooth_move_to(robot, initial_action, target)
 
         listener, events = init_keyboard_listener()
 
@@ -501,6 +517,18 @@ def record(
 
         if dataset:
             dataset.finalize()
+
+        if initial_action is not None and robot.is_connected:
+            try:
+                log_say("Returning follower to initial pose", cfg.play_sounds)
+                current = {
+                    k: v
+                    for k, v in robot.get_observation().items()
+                    if k in robot.action_features and k.endswith(".pos")
+                }
+                follower_smooth_move_to(robot, current, initial_action)
+            except Exception:
+                logging.exception("Could not return robot to initial pose")
 
         if robot.is_connected:
             robot.disconnect()
