@@ -191,7 +191,7 @@ def rollout(
         action = action_transition[ACTION]
 
         # Convert to CPU / numpy.
-        action_numpy: np.ndarray = action.to("cpu").numpy()
+        action_numpy = _action_to_env_numpy(action)
         assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
         # Apply the next action.
@@ -259,6 +259,11 @@ def rollout(
         policy.use_original_modules()
 
     return ret
+
+
+def _action_to_env_numpy(action: Tensor) -> np.ndarray:
+    """Convert policy actions to a NumPy array accepted by Gym environments."""
+    return action.detach().to(device="cpu", dtype=torch.float32).numpy()
 
 
 def eval_policy(
