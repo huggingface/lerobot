@@ -1,9 +1,9 @@
 import torch
 
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
-from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.policies.factory import make_pre_post_processors
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.datasets import LeRobotDatasetMetadata
+from lerobot.policies import make_pre_post_processors
+from lerobot.policies.act import ACTPolicy
 from lerobot.policies.utils import build_inference_frame, make_robot_action
 from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
 

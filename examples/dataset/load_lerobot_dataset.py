@@ -31,16 +31,11 @@ from pprint import pprint
 import torch
 from huggingface_hub import HfApi
 
-import lerobot
-from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata
 
 
 def main():
-    # We ported a number of existing datasets ourselves, use this to see the list:
-    print("List of available datasets:")
-    pprint(lerobot.available_datasets)
-
-    # You can also browse through the datasets created/ported by the community on the hub using the hub api:
+    # Browse datasets created/ported by the community on the hub using the hub api:
     hub_api = HfApi()
     repo_ids = [info.id for info in hub_api.list_datasets(task_categories="robotics", tags=["LeRobot"])]
     pprint(repo_ids)
@@ -87,9 +82,8 @@ def main():
     # The previous metadata class is contained in the 'meta' attribute of the dataset:
     print(dataset.meta)
 
-    # LeRobotDataset actually wraps an underlying Hugging Face dataset
-    # (see https://huggingface.co/docs/datasets for more information).
-    print(dataset.hf_dataset)
+    # You can inspect the dataset using its repr:
+    print(dataset)
 
     # LeRobot datasets also subclasses PyTorch datasets so you can do everything you know and love from working
     # with the latter, like iterating through the dataset.

@@ -31,13 +31,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy_config
 from lerobot.scripts.lerobot_train import train
-from lerobot.utils.utils import auto_select_torch_device
+from lerobot.utils.device_utils import auto_select_torch_device
 
 pytest.importorskip("transformers")
 

@@ -21,16 +21,23 @@ import numpy as np
 import pytest
 import torch
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+
+from lerobot.configs import VideoEncoderConfig
 from lerobot.datasets.dataset_tools import (
     add_features,
+    convert_image_to_video_dataset,
     delete_episodes,
     merge_datasets,
     modify_features,
     modify_tasks,
+    reencode_dataset,
     remove_feature,
     split_dataset,
 )
-from lerobot.scripts.lerobot_edit_dataset import convert_image_to_video_dataset
+from lerobot.datasets.io_utils import load_info
+from tests.datasets.test_video_encoding import _add_frames, require_h264, require_libsvtav1
 
 
 @pytest.fixture
@@ -67,8 +74,8 @@ def test_delete_single_episode(sample_dataset, tmp_path):
     output_dir = tmp_path / "filtered"
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(output_dir)
@@ -93,8 +100,8 @@ def test_delete_multiple_episodes(sample_dataset, tmp_path):
     output_dir = tmp_path / "filtered"
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(output_dir)
@@ -150,8 +157,8 @@ def test_split_by_episodes(sample_dataset, tmp_path):
     }
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
 
@@ -193,8 +200,8 @@ def test_split_by_fractions(sample_dataset, tmp_path):
     }
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
 
@@ -270,8 +277,8 @@ def test_merge_two_datasets(sample_dataset, tmp_path, empty_lerobot_dataset_fact
     dataset2.finalize()
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "merged_dataset")
@@ -310,8 +317,8 @@ def test_add_features_with_values(sample_dataset, tmp_path):
     }
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "with_reward")
@@ -346,8 +353,8 @@ def test_add_features_with_callable(sample_dataset, tmp_path):
         "reward": (compute_reward, feature_info),
     }
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "with_reward")
@@ -401,8 +408,8 @@ def test_modify_features_add_and_remove(sample_dataset, tmp_path):
     feature_info = {"dtype": "float32", "shape": (1,), "names": None}
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "modified")
@@ -434,8 +441,8 @@ def test_modify_features_only_add(sample_dataset, tmp_path):
     feature_info = {"dtype": "float32", "shape": (1,), "names": None}
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "modified")
@@ -457,8 +464,8 @@ def test_modify_features_only_remove(sample_dataset, tmp_path):
     feature_info = {"dtype": "float32", "shape": (1,), "names": None}
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
@@ -494,8 +501,8 @@ def test_remove_single_feature(sample_dataset, tmp_path):
         "reward": (np.random.randn(50, 1).astype(np.float32), feature_info),
     }
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
@@ -521,8 +528,8 @@ def test_remove_single_feature(sample_dataset, tmp_path):
 def test_remove_multiple_features(sample_dataset, tmp_path):
     """Test removing multiple features at once."""
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
@@ -576,8 +583,8 @@ def test_remove_camera_feature(sample_dataset, tmp_path):
     camera_to_remove = camera_keys[0]
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "without_camera")
@@ -598,8 +605,8 @@ def test_remove_camera_feature(sample_dataset, tmp_path):
 def test_complex_workflow_integration(sample_dataset, tmp_path):
     """Test a complex workflow combining multiple operations."""
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
@@ -647,8 +654,8 @@ def test_delete_episodes_preserves_stats(sample_dataset, tmp_path):
     output_dir = tmp_path / "filtered"
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(output_dir)
@@ -671,8 +678,8 @@ def test_delete_episodes_preserves_tasks(sample_dataset, tmp_path):
     output_dir = tmp_path / "filtered"
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(output_dir)
@@ -699,8 +706,8 @@ def test_split_three_ways(sample_dataset, tmp_path):
     }
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
 
@@ -732,8 +739,8 @@ def test_split_preserves_stats(sample_dataset, tmp_path):
     splits = {"train": [0, 1, 2], "val": [3, 4]}
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
 
@@ -790,8 +797,8 @@ def test_merge_three_datasets(sample_dataset, tmp_path, empty_lerobot_dataset_fa
         datasets.append(dataset)
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "merged_dataset")
@@ -832,8 +839,8 @@ def test_merge_preserves_stats(sample_dataset, tmp_path, empty_lerobot_dataset_f
     dataset2.finalize()
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "merged_dataset")
@@ -866,8 +873,8 @@ def test_add_features_preserves_existing_stats(sample_dataset, tmp_path):
     }
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "with_reward")
@@ -890,8 +897,8 @@ def test_remove_feature_updates_stats(sample_dataset, tmp_path):
     feature_info = {"dtype": "float32", "shape": (1,), "names": None}
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
@@ -919,8 +926,8 @@ def test_delete_consecutive_episodes(sample_dataset, tmp_path):
     output_dir = tmp_path / "filtered"
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(output_dir)
@@ -943,8 +950,8 @@ def test_delete_first_and_last_episodes(sample_dataset, tmp_path):
     output_dir = tmp_path / "filtered"
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(output_dir)
@@ -971,8 +978,8 @@ def test_split_all_episodes_assigned(sample_dataset, tmp_path):
     }
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
 
@@ -999,8 +1006,8 @@ def test_modify_features_preserves_file_structure(sample_dataset, tmp_path):
     feature_info = {"dtype": "float32", "shape": (1,), "names": None}
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
 
@@ -1020,7 +1027,7 @@ def test_modify_features_preserves_file_structure(sample_dataset, tmp_path):
 
         # Get original chunk/file indices from first episode
         if train_dataset.meta.episodes is None:
-            from lerobot.datasets.utils import load_episodes
+            from lerobot.datasets.io_utils import load_episodes
 
             train_dataset.meta.episodes = load_episodes(train_dataset.meta.root)
         original_chunk_indices = [ep["data/chunk_index"] for ep in train_dataset.meta.episodes]
@@ -1040,7 +1047,7 @@ def test_modify_features_preserves_file_structure(sample_dataset, tmp_path):
 
         # Check that chunk/file indices are preserved
         if modified_dataset.meta.episodes is None:
-            from lerobot.datasets.utils import load_episodes
+            from lerobot.datasets.io_utils import load_episodes
 
             modified_dataset.meta.episodes = load_episodes(modified_dataset.meta.root)
         new_chunk_indices = [ep["data/chunk_index"] for ep in modified_dataset.meta.episodes]
@@ -1194,7 +1201,7 @@ def test_modify_tasks_in_place(sample_dataset):
 
 def test_modify_tasks_keeps_original_when_not_overridden(sample_dataset):
     """Test that original tasks are kept when using episode_tasks without new_task."""
-    from lerobot.datasets.utils import load_episodes
+    from lerobot.datasets.io_utils import load_episodes
 
     # Ensure episodes metadata is loaded
     if sample_dataset.meta.episodes is None:
@@ -1229,8 +1236,8 @@ def test_convert_image_to_video_dataset(tmp_path):
     output_dir = tmp_path / "pusht_video"
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(output_dir)
@@ -1244,10 +1251,12 @@ def test_convert_image_to_video_dataset(tmp_path):
             dataset=source_dataset,
             output_dir=output_dir,
             repo_id="lerobot/pusht_video",
-            vcodec="libsvtav1",
-            pix_fmt="yuv420p",
-            g=2,
-            crf=30,
+            camera_encoder=VideoEncoderConfig(
+                vcodec="libsvtav1",
+                pix_fmt="yuv420p",
+                g=2,
+                crf=30,
+            ),
             episode_indices=[0, 1],
             num_workers=2,
         )
@@ -1292,8 +1301,8 @@ def test_convert_image_to_video_dataset_subset_episodes(tmp_path):
     output_dir = tmp_path / "pusht_video_subset"
 
     with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(output_dir)
@@ -1321,3 +1330,41 @@ def test_convert_image_to_video_dataset_subset_episodes(tmp_path):
 
         if output_dir.exists():
             shutil.rmtree(output_dir)
+
+
+# ─── reencode_dataset ─────────────────────────────────────────────────
+
+
+@require_libsvtav1
+@require_h264
+def test_reencode_dataset_multi_key_multiprocessing(
+    tmp_path, empty_lerobot_dataset_factory, features_factory
+):
+    """Re-encode a two-camera dataset with num_workers=2 and verify metadata refresh."""
+    features = features_factory(use_videos=True)
+    initial_cfg = VideoEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "ds",
+        features=features,
+        use_videos=True,
+        camera_encoder=initial_cfg,
+    )
+
+    _add_frames(dataset, num_frames=4)
+    dataset.save_episode()
+    _add_frames(dataset, num_frames=4)
+    dataset.save_episode()
+    dataset.finalize()
+
+    assert len(dataset.meta.video_keys) == 2
+
+    target_cfg = VideoEncoderConfig(vcodec="h264", g=6, crf=23, pix_fmt="yuv420p")
+
+    result = reencode_dataset(dataset, camera_encoder=target_cfg, num_workers=2)
+
+    assert result is dataset
+
+    persisted_info = load_info(dataset.root)
+    for vk in dataset.meta.video_keys:
+        persisted_encoder = VideoEncoderConfig.from_video_info(persisted_info.features[vk].get("info", {}))
+        assert persisted_encoder == target_cfg

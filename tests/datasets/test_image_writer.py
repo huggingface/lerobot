@@ -20,6 +20,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.datasets.image_writer import (
     AsyncImageWriter,
     image_array_to_pil_image,
@@ -142,9 +144,9 @@ def test_write_image_image(tmp_path, img_factory):
 def test_write_image_exception(tmp_path):
     image_array = "invalid data"
     fpath = tmp_path / DUMMY_IMAGE
-    with patch("builtins.print") as mock_print:
+    with patch("lerobot.datasets.image_writer.logger") as mock_logger:
         write_image(image_array, fpath)
-        mock_print.assert_called()
+        mock_logger.error.assert_called()
         assert not fpath.exists()
 
 
@@ -243,10 +245,10 @@ def test_save_image_invalid_data(tmp_path):
         image_array = "invalid data"
         fpath = tmp_path / DUMMY_IMAGE
         fpath.parent.mkdir(parents=True, exist_ok=True)
-        with patch("builtins.print") as mock_print:
+        with patch("lerobot.datasets.image_writer.logger") as mock_logger:
             writer.save_image(image_array, fpath)
             writer.wait_until_done()
-            mock_print.assert_called()
+            mock_logger.error.assert_called()
             assert not fpath.exists()
     finally:
         writer.stop()
@@ -352,9 +354,13 @@ def test_with_different_image_formats(tmp_path, img_array_factory):
 
 
 def test_safe_stop_image_writer_decorator():
-    class MockDataset:
+    class MockWriter:
         def __init__(self):
             self.image_writer = MagicMock(spec=AsyncImageWriter)
+
+    class MockDataset:
+        def __init__(self):
+            self.writer = MockWriter()
 
     @safe_stop_image_writer
     def function_that_raises_exception(dataset=None):
@@ -366,7 +372,7 @@ def test_safe_stop_image_writer_decorator():
         function_that_raises_exception(dataset=dataset)
 
     assert str(exc_info.value) == "Test exception"
-    dataset.image_writer.stop.assert_called_once()
+    dataset.writer.image_writer.stop.assert_called_once()
 
 
 def test_main_process_time(tmp_path, img_tensor_factory):

@@ -22,7 +22,7 @@ from functools import cached_property
 import cv2
 import numpy as np
 
-from lerobot.processor import RobotAction, RobotObservation
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError

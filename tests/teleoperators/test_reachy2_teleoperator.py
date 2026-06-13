@@ -18,6 +18,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from lerobot.utils.import_utils import is_package_available
+
+if not is_package_available("reachy2_sdk"):
+    pytest.skip("reachy2_sdk not available", allow_module_level=True)
+
 from lerobot.teleoperators.reachy2_teleoperator import (
     REACHY2_ANTENNAS_JOINTS,
     REACHY2_L_ARM_JOINTS,

@@ -14,10 +14,8 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -55,7 +53,7 @@ class WallXConfig(PreTrainedConfig):
     pretrained_name_or_path: str = "x-square-robot/wall-oss-flow"
 
     # Tokenizer settings
-    action_tokenizer_path: str | None = "physical-intelligence/fast"
+    action_tokenizer_path: str | None = "lerobot/fast-action-tokenizer"
 
     # Action prediction mode: "diffusion" or "fast"
     prediction_mode: str = "diffusion"

@@ -22,18 +22,30 @@ and calculate arctan2 of the unit circle to get the joint angle.
 We then store the ellipse parameters and the zero offset for each joint to be used at runtime.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
-import serial
+
+from lerobot.utils.import_utils import _serial_available, require_package
+
+if TYPE_CHECKING or _serial_available:
+    import serial
+else:
+    serial = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
+
+ADC_MAX = 2**12 - 1
+ADC_HALF = ADC_MAX / 2
 
 # exoskeleton joint names -> ADC channel pairs. TODO: add wrist pitch and wrist yaw
 JOINTS = {
@@ -59,7 +71,7 @@ class ExoskeletonCalibration:
 
     version: int = 2
     side: str = ""
-    adc_max: int = 2**12 - 1
+    adc_max: int = ADC_MAX
     joints: list[ExoskeletonJointCalibration] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -79,7 +91,7 @@ class ExoskeletonCalibration:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ExoskeletonCalibration":
+    def from_dict(cls, data: dict) -> ExoskeletonCalibration:
         joints = [
             ExoskeletonJointCalibration(
                 name=j["name"],
@@ -92,7 +104,7 @@ class ExoskeletonCalibration:
         return cls(
             version=data.get("version", 2),
             side=data.get("side", ""),
-            adc_max=data.get("adc_max", 2**12 - 1),
+            adc_max=data.get("adc_max", ADC_MAX),
             joints=joints,
         )
 
@@ -112,11 +124,8 @@ class CalibParams:
 
 
 def normalize_angle(angle: float) -> float:
-    while angle > np.pi:
-        angle -= 2 * np.pi
-    while angle < -np.pi:
-        angle += 2 * np.pi
-    return angle
+    """Normalize angle to [-pi, pi]."""
+    return float(np.arctan2(np.sin(angle), np.cos(angle)))
 
 
 def joint_z_and_angle(raw16: list[int], j: ExoskeletonJointCalibration) -> tuple[np.ndarray, float]:
@@ -125,7 +134,7 @@ def joint_z_and_angle(raw16: list[int], j: ExoskeletonJointCalibration) -> tuple
     """
     pair = JOINTS[j.name]
     s, c = raw16[pair[0]], raw16[pair[1]]  # get sin and cos
-    p = np.array([float(c) - (2**12 - 1) / 2, float(s) - (2**12 - 1) / 2])  # center the raw values
+    p = np.array([float(c) - ADC_HALF, float(s) - ADC_HALF])  # center the raw values
     z = np.asarray(j.T) @ (
         p - np.asarray(j.center_fit)
     )  # center the ellipse and invert the transformation matrix to get unit circle coords
@@ -147,6 +156,7 @@ def run_exo_calibration(
     """
     Run interactive calibration for an exoskeleton arm.
     """
+    require_package("pyserial", extra="unitree_g1", import_name="serial")
     try:
         import cv2
         import matplotlib.pyplot as plt
@@ -167,7 +177,7 @@ def run_exo_calibration(
 
     def read_joint_point(raw16: list[int], pair: tuple[int, int]):
         s, c = raw16[pair[0]], raw16[pair[1]]
-        return float(c) - (2**12 - 1) / 2, float(s) - (2**12 - 1) / 2, float(s), float(c)
+        return float(c) - ADC_HALF, float(s) - ADC_HALF, float(s), float(c)
 
     def select_fit_subset(xs, ys):
         """Select and filter points for ellipse fitting. Trims outliers by radius and downsamples."""
@@ -317,7 +327,7 @@ def run_exo_calibration(
                         calib = ExoskeletonCalibration(
                             version=2,
                             side=side,
-                            adc_max=2**12 - 1,
+                            adc_max=ADC_MAX,
                             joints=[
                                 ExoskeletonJointCalibration(
                                     name=j["name"],
@@ -367,8 +377,8 @@ def run_exo_calibration(
                     state["win_s"].append(s_raw)
                     state["win_c"].append(c_raw)
                     if len(state["win_s"]) >= max(3, params.median_window):
-                        state["ys"].append(running_median(state["win_s"]) - (2**12 - 1) / 2)
-                        state["xs"].append(running_median(state["win_c"]) - (2**12 - 1) / 2)
+                        state["ys"].append(running_median(state["win_s"]) - ADC_HALF)
+                        state["xs"].append(running_median(state["win_c"]) - ADC_HALF)
                 else:
                     jdata = joints_out[-1]
                     z = np.array(jdata["T"]) @ (np.array([x_raw, y_raw]) - np.array(jdata["center_fit"]))

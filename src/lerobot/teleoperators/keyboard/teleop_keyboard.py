@@ -21,8 +21,9 @@ import time
 from queue import Queue
 from typing import Any
 
-from lerobot.processor import RobotAction
+from lerobot.types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.import_utils import _pynput_available, require_package
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
@@ -32,20 +33,18 @@ from .configuration_keyboard import (
     KeyboardTeleopConfig,
 )
 
-PYNPUT_AVAILABLE = True
-try:
-    if ("DISPLAY" not in os.environ) and ("linux" in sys.platform):
-        logging.info("No DISPLAY set. Skipping pynput import.")
-        raise ImportError("pynput blocked intentionally due to no display.")
-
-    from pynput import keyboard
-except ImportError:
-    keyboard = None
-    PYNPUT_AVAILABLE = False
-except Exception as e:
-    keyboard = None
-    PYNPUT_AVAILABLE = False
-    logging.info(f"Could not import pynput: {e}")
+PYNPUT_AVAILABLE = _pynput_available
+keyboard = None
+if PYNPUT_AVAILABLE:
+    try:
+        if ("DISPLAY" not in os.environ) and ("linux" in sys.platform):
+            logging.info("No DISPLAY set. Skipping pynput import.")
+            PYNPUT_AVAILABLE = False
+        else:
+            from pynput import keyboard
+    except Exception as e:
+        PYNPUT_AVAILABLE = False
+        logging.info(f"Could not import pynput: {e}")
 
 
 class KeyboardTeleop(Teleoperator):
@@ -57,6 +56,7 @@ class KeyboardTeleop(Teleoperator):
     name = "keyboard"
 
     def __init__(self, config: KeyboardTeleopConfig):
+        require_package("pynput", extra="pynput-dep")
         super().__init__(config)
         self.config = config
         self.robot_type = config.type
@@ -104,11 +104,14 @@ class KeyboardTeleop(Teleoperator):
 
     def _on_press(self, key):
         if hasattr(key, "char"):
-            self.event_queue.put((key.char, True))
+            key = key.char
+        self.event_queue.put((key, True))
 
     def _on_release(self, key):
         if hasattr(key, "char"):
-            self.event_queue.put((key.char, False))
+            key = key.char
+        self.event_queue.put((key, False))
+
         if key == keyboard.Key.esc:
             logging.info("ESC pressed, disconnecting.")
             self.disconnect()
@@ -204,8 +207,6 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
                 # this is useful for retrieving other events like interventions for RL, episode success, etc.
                 self.misc_keys_queue.put(key)
 
-        self.current_pressed.clear()
-
         action_dict = {
             "delta_x": delta_x,
             "delta_y": delta_y,
@@ -255,6 +256,8 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             keyboard.Key.ctrl_l,
         ]
         is_intervention = any(self.current_pressed.get(key, False) for key in movement_keys)
+
+        self.current_pressed.clear()
 
         # Check for episode control commands from misc_keys_queue
         terminate_episode = False
@@ -341,8 +344,8 @@ class KeyboardRoverTeleop(KeyboardTeleop):
     def action_features(self) -> dict:
         """Return action format for rover (linear and angular velocities)."""
         return {
-            "linear.vel": float,
-            "angular.vel": float,
+            "linear_velocity": float,
+            "angular_velocity": float,
         }
 
     @property
@@ -366,7 +369,7 @@ class KeyboardRoverTeleop(KeyboardTeleop):
         Get the current action based on pressed keys.
 
         Returns:
-            RobotAction with 'linear.vel' and 'angular.vel' keys
+            RobotAction with 'linear_velocity' and 'angular_velocity' keys.
         """
         before_read_t = time.perf_counter()
 
@@ -427,6 +430,6 @@ class KeyboardRoverTeleop(KeyboardTeleop):
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
         return {
-            "linear.vel": linear_velocity,
-            "angular.vel": angular_velocity,
+            "linear_velocity": linear_velocity,
+            "angular_velocity": angular_velocity,
         }

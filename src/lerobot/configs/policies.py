@@ -26,12 +26,12 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
-from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.optim.optimizers import OptimizerConfig
-from lerobot.optim.schedulers import LRSchedulerConfig
+from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.device_utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 from lerobot.utils.hub import HubMixin
-from lerobot.utils.utils import auto_select_torch_device, is_amp_available, is_torch_device_available
+
+from .types import FeatureType, PolicyFeature
 
 T = TypeVar("T", bound="PreTrainedConfig")
 logger = getLogger(__name__)

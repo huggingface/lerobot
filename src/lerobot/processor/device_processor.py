@@ -24,10 +24,10 @@ from typing import Any
 
 import torch
 
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.utils.utils import get_safe_torch_device
+from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.types import EnvTransition, PolicyAction, TransitionKey
+from lerobot.utils.device_utils import get_safe_torch_device
 
-from .core import EnvTransition, PolicyAction, TransitionKey
 from .pipeline import ProcessorStep, ProcessorStepRegistry
 
 

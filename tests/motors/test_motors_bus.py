@@ -19,6 +19,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytest.importorskip("serial", reason="pyserial is required (install lerobot[hardware])")
+
 from lerobot.motors.motors_bus import (
     Motor,
     MotorNormMode,

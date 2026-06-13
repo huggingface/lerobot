@@ -23,25 +23,33 @@ TODO(alexander-soare):
 import math
 from collections import deque
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import einops
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
-from diffusers.schedulers.scheduling_ddim import DDIMScheduler
-from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from torch import Tensor, nn
 
-from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import (
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
+from lerobot.utils.import_utils import _diffusers_available, require_package
+
+if TYPE_CHECKING or _diffusers_available:
+    from diffusers.schedulers.scheduling_ddim import DDIMScheduler
+    from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+else:
+    DDIMScheduler = None
+    DDPMScheduler = None
+
+from ..pretrained import PreTrainedPolicy
+from ..utils import (
     get_device_from_parameters,
     get_dtype_from_parameters,
     get_output_shape,
     populate_queues,
 )
-from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
+from .configuration_diffusion import DiffusionConfig
 
 
 class DiffusionPolicy(PreTrainedPolicy):
@@ -65,6 +73,7 @@ class DiffusionPolicy(PreTrainedPolicy):
             dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
+        require_package("diffusers", extra="diffusion")
         super().__init__(config)
         config.validate_features()
         self.config = config
@@ -151,11 +160,13 @@ class DiffusionPolicy(PreTrainedPolicy):
         return loss, None
 
 
-def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMScheduler:
+def _make_noise_scheduler(name: str, **kwargs: dict):
     """
     Factory for noise scheduler instances of the requested type. All kwargs are passed
     to the scheduler.
     """
+    require_package("diffusers", extra="diffusion")
+
     if name == "DDPM":
         return DDPMScheduler(**kwargs)
     elif name == "DDIM":
@@ -369,7 +380,9 @@ class DiffusionModel(nn.Module):
                     f"{self.config.do_mask_loss_for_padding=}."
                 )
             in_episode_bound = ~batch["action_is_pad"]
-            loss = loss * in_episode_bound.unsqueeze(-1)
+            mask = in_episode_bound.unsqueeze(-1)
+            num_valid = mask.sum() * loss.shape[-1]
+            return (loss * mask).sum() / num_valid.clamp_min(1)
 
         return loss.mean()
 
@@ -454,12 +467,18 @@ class DiffusionRgbEncoder(nn.Module):
     def __init__(self, config: DiffusionConfig):
         super().__init__()
         # Set up optional preprocessing.
-        if config.crop_shape is not None:
+        if config.resize_shape is not None:
+            self.resize = torchvision.transforms.Resize(config.resize_shape)
+        else:
+            self.resize = None
+
+        crop_shape = config.crop_shape
+        if crop_shape is not None:
             self.do_crop = True
             # Always use center crop for eval
-            self.center_crop = torchvision.transforms.CenterCrop(config.crop_shape)
+            self.center_crop = torchvision.transforms.CenterCrop(crop_shape)
             if config.crop_is_random:
-                self.maybe_random_crop = torchvision.transforms.RandomCrop(config.crop_shape)
+                self.maybe_random_crop = torchvision.transforms.RandomCrop(crop_shape)
             else:
                 self.maybe_random_crop = self.center_crop
         else:
@@ -485,13 +504,16 @@ class DiffusionRgbEncoder(nn.Module):
 
         # Set up pooling and final layers.
         # Use a dry run to get the feature map shape.
-        # The dummy input should take the number of image channels from `config.image_features` and it should
-        # use the height and width from `config.crop_shape` if it is provided, otherwise it should use the
-        # height and width from `config.image_features`.
+        # The dummy shape mirrors the runtime preprocessing order: resize -> crop.
 
         # Note: we have a check in the config class to make sure all images have the same shape.
         images_shape = next(iter(config.image_features.values())).shape
-        dummy_shape_h_w = config.crop_shape if config.crop_shape is not None else images_shape[1:]
+        if config.crop_shape is not None:
+            dummy_shape_h_w = config.crop_shape
+        elif config.resize_shape is not None:
+            dummy_shape_h_w = config.resize_shape
+        else:
+            dummy_shape_h_w = images_shape[1:]
         dummy_shape = (1, images_shape[0], *dummy_shape_h_w)
         feature_map_shape = get_output_shape(self.backbone, dummy_shape)[1:]
 
@@ -507,7 +529,10 @@ class DiffusionRgbEncoder(nn.Module):
         Returns:
             (B, D) image feature.
         """
-        # Preprocess: maybe crop (if it was set up in the __init__).
+        # Preprocess: resize if configured, then crop if configured.
+
+        if self.resize is not None:
+            x = self.resize(x)
         if self.do_crop:
             if self.training:  # noqa: SIM108
                 x = self.maybe_random_crop(x)

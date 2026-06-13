@@ -20,17 +20,18 @@ from pathlib import Path
 import einops
 import pytest
 import torch
+
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from packaging import version
 from safetensors.torch import load_file
 
-from lerobot import available_policies
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.utils import cycle, dataset_to_policy_features
+from lerobot.datasets import make_dataset
 from lerobot.envs.factory import make_env, make_env_config
-from lerobot.envs.utils import preprocess_observation
+from lerobot.envs.utils import close_envs, preprocess_observation
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
@@ -41,10 +42,25 @@ from lerobot.policies.factory import (
     make_pre_post_processors,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
+from lerobot.policies.vqbet.modeling_vqbet import VQBeTHead
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+from lerobot.utils.feature_utils import dataset_to_policy_features
+from lerobot.utils.import_utils import is_package_available
 from lerobot.utils.random_utils import seeded_context
+from lerobot.utils.utils import cycle
 from tests.artifacts.policies.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
+
+# Policies that require optional heavy dependencies to instantiate
+_POLICY_REQUIRED_PACKAGES: dict[str, tuple[str, ...]] = {
+    "diffusion": ("diffusers",),
+}
+
+_ALL_POLICIES = ["act", "diffusion", "tdmpc", "vqbet"]
+AVAILABLE_POLICIES = [
+    p for p in _ALL_POLICIES if all(is_package_available(pkg) for pkg in _POLICY_REQUIRED_PACKAGES.get(p, ()))
+]
 
 
 @pytest.fixture
@@ -81,7 +97,7 @@ def dummy_dataset_metadata(lerobot_dataset_metadata_factory, info_factory, tmp_p
     return ds_meta
 
 
-@pytest.mark.parametrize("policy_name", available_policies)
+@pytest.mark.parametrize("policy_name", AVAILABLE_POLICIES)
 def test_get_policy_and_config_classes(policy_name: str):
     """Check that the correct policy and config classes are returned."""
     policy_cls = get_policy_class(policy_name)
@@ -143,12 +159,18 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     Note: We test various combinations of policy and dataset. The combinations are by no means exhaustive,
           and for now we add tests as we see fit.
     """
+    if policy_name == "vqbet" and DEVICE == "mps":
+        pytest.skip("VQBet does not support MPS backend")
+    if policy_name == "act" and "aloha" in ds_repo_id and DEVICE == "mps":
+        pytest.skip("ACT with aloha has batch mutation issues on MPS")
+
     train_cfg = TrainPipelineConfig(
         # TODO(rcadene, aliberts): remove dataset download
         dataset=DatasetConfig(repo_id=ds_repo_id, episodes=[0]),
         policy=make_policy_config(policy_name, push_to_hub=False, **policy_kwargs),
         env=make_env_config(env_name, **env_kwargs),
     )
+    train_cfg.policy.device = DEVICE
     train_cfg.validate()
 
     # Check that we can make the policy object.
@@ -174,6 +196,8 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
 
     for key in batch:
         if isinstance(batch[key], torch.Tensor):
+            if batch[key].dtype == torch.uint8:
+                batch[key] = batch[key].to(dtype=torch.float32) / 255.0
             batch[key] = batch[key].to(DEVICE, non_blocking=True)
 
     # Test updating the policy (and test that it does not mutate the batch)
@@ -215,6 +239,8 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     # Test step through policy
     env.step(action)
 
+    close_envs(envs)
+
 
 # TODO(rcadene, aliberts): This test is quite end-to-end. Move this test in test_optimizer?
 def test_act_backbone_lr():
@@ -227,6 +253,7 @@ def test_act_backbone_lr():
         dataset=DatasetConfig(repo_id="lerobot/aloha_sim_insertion_scripted", episodes=[0]),
         policy=make_policy_config("act", optimizer_lr=0.01, optimizer_lr_backbone=0.001, push_to_hub=False),
     )
+    cfg.policy.device = DEVICE
     cfg.validate()  # Needed for auto-setting some parameters
 
     assert cfg.policy.optimizer_lr == 0.01
@@ -243,7 +270,7 @@ def test_act_backbone_lr():
     assert len(optimizer.param_groups[1]["params"]) == 20
 
 
-@pytest.mark.parametrize("policy_name", available_policies)
+@pytest.mark.parametrize("policy_name", AVAILABLE_POLICIES)
 def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
     """Check that the policy can be instantiated with defaults."""
     policy_cls = get_policy_class(policy_name)
@@ -256,7 +283,7 @@ def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
     policy_cls(policy_cfg)
 
 
-@pytest.mark.parametrize("policy_name", available_policies)
+@pytest.mark.parametrize("policy_name", AVAILABLE_POLICIES)
 def test_save_and_load_pretrained(dummy_dataset_metadata, tmp_path, policy_name: str):
     policy_cls = get_policy_class(policy_name)
     policy_cfg = make_policy_config(policy_name)
@@ -331,7 +358,7 @@ def test_multikey_construction(multikey: bool):
         # to normalize the image at all. In our current codebase we dont normalize at all. But there is still a minor difference
         # that fails the test. However, by testing to normalize the image with 0.5 0.5 in the current codebase, the test pass.
         # Thus, we deactivate this test for now.
-        (
+        pytest.param(
             "lerobot/pusht",
             "diffusion",
             {
@@ -340,6 +367,7 @@ def test_multikey_construction(multikey: bool):
                 "down_dims": [128, 256, 512],
             },
             "",
+            marks=pytest.mark.skipif(not is_package_available("diffusers"), reason="diffusers not installed"),
         ),
         ("lerobot/aloha_sim_insertion_human", "act", {"n_action_steps": 10}, ""),
         (
@@ -452,3 +480,45 @@ def test_act_temporal_ensembler():
         assert torch.all(offline_avg <= einops.reduce(seq_slice, "b s 1 -> b 1", "max"))
         # Selected atol=1e-4 keeping in mind actions in [-1, 1] and excepting 0.01% error.
         torch.testing.assert_close(online_avg, offline_avg, rtol=1e-4, atol=1e-4)
+
+
+def test_vqbet_discretize_keeps_buffers_on_device():
+    """Regression test: VQBeTHead.discretize() must not move registered buffers off the model device.
+
+    Previously, `self.vqvae_model.discretized = torch.tensor(True)` replaced the
+    registered buffer with a new CPU tensor, causing DDP to crash with:
+        RuntimeError: No backend type associated with device type cpu
+    The fix uses `.fill_(True)` to update in-place, preserving device placement.
+    """
+    config = VQBeTConfig()
+    config.input_features = {
+        OBS_IMAGES: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 96, 96)),
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+    }
+    config.output_features = {
+        ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,)),
+    }
+    # Tiny sizes for fast CPU/GPU execution.
+    config.n_vqvae_training_steps = 3
+    config.vqvae_n_embed = 8
+    config.vqvae_embedding_dim = 32
+    config.vqvae_enc_hidden_dim = 32
+    config.action_chunk_size = 2
+    config.crop_shape = (84, 84)
+
+    head = VQBeTHead(config).to(DEVICE)
+    vqvae = head.vqvae_model
+
+    dummy_actions = torch.randn(4, config.action_chunk_size, config.action_feature.shape[0], device=DEVICE)
+    n_steps = config.n_vqvae_training_steps
+    for _ in range(n_steps):
+        head.discretize(n_steps, dummy_actions)
+
+    assert vqvae.discretized.device.type == torch.device(DEVICE).type, (
+        "vqvae_model.discretized was moved off the model device after discretize(). "
+        "Use .fill_(True) instead of = torch.tensor(True) to keep the buffer on device."
+    )
+    assert vqvae.vq_layer.freeze_codebook.device.type == torch.device(DEVICE).type, (
+        "vq_layer.freeze_codebook was moved off the model device after discretize(). "
+        "Use .fill_(True) instead of = torch.tensor(True) to keep the buffer on device."
+    )

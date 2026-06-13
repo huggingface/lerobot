@@ -34,14 +34,13 @@ pip install -e ".[smolvla]"
 
 ### Using RTC with Pi0
 
-You can find a complete reference implementation in [eval_with_real_robot.py](examples/rtc/eval_with_real_robot.py).
+You can use `lerobot-rollout --strategy.type=base --inference.type=rtc` for RTC deployment on real robots.
 The snippet below provides a simplified pseudo-example of how RTC operates with Pi0 in your pipeline:
 
 ```python
 from lerobot.policies.pi0 import PI0Policy, PI0Config
-from lerobot.configs.types import RTCAttentionSchedule
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.policies.rtc.action_queue import ActionQueue
+from lerobot.configs import RTCAttentionSchedule
+from lerobot.policies.rtc import RTCConfig, ActionQueue
 
 # Load Pi0 with RTC enabled
 policy_cfg = PI0Config()
@@ -138,8 +137,12 @@ The script generates a visualization of the denoising process, comparing standar
 ## Testing RTC with a Real Robot
 
 ```bash
-python examples/rtc/eval_with_real_robot.py \
+lerobot-rollout \
+    --strategy.type=base \
     --policy.path=${HF_USERNAME}/policy_repo_id \
+    --inference.type=rtc \
+    --inference.rtc.execution_horizon=10 \
+    --inference.rtc.max_guidance_weight=10.0 \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58FA0834591 \
     --robot.cameras="{ gripper: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
@@ -179,7 +182,7 @@ visualizer = RTCDebugVisualizer()
 # ... create plots
 ```
 
-See `examples/rtc/eval_dataset.py` for a complete example of visualization.
+See `examples/rtc/eval_dataset.py` for a complete example of offline RTC visualization.
 
 ## References
 

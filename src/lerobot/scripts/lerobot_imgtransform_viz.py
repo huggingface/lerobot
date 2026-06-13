@@ -35,9 +35,9 @@ from pathlib import Path
 import draccus
 from torchvision.transforms import ToPILImage
 
-from lerobot.configs.default import DatasetConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.transforms import (
+from lerobot.configs import DatasetConfig
+from lerobot.datasets import LeRobotDataset
+from lerobot.transforms import (
     ImageTransforms,
     ImageTransformsConfig,
     make_transform_from_config,
