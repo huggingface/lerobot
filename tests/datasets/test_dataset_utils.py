@@ -23,7 +23,7 @@ from datasets import Dataset  # noqa: E402
 from huggingface_hub import DatasetCard
 
 from lerobot.datasets.io_utils import hf_transform_to_torch
-from lerobot.datasets.utils import create_lerobot_dataset_card
+from lerobot.datasets.utils import create_lerobot_dataset_card, get_safe_version
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.feature_utils import combine_feature_dicts
 
@@ -112,6 +112,19 @@ def test_merge_multiple_groups_order_and_dedup():
 
     assert out[ACTION]["names"] == ["a", "b", "c", "d"]
     assert out[ACTION]["shape"] == (4,)
+
+
+def test_get_safe_version_without_repo_versions_falls_back_to_default_branch(monkeypatch):
+    monkeypatch.setattr("lerobot.datasets.utils.get_repo_versions", lambda repo_id: [])
+
+    class DummyRepoInfo:
+        default_branch = "main"
+
+    monkeypatch.setattr(
+        "lerobot.datasets.utils.HfApi.repo_info", lambda self, repo_id, repo_type: DummyRepoInfo()
+    )
+
+    assert get_safe_version("test/repo", "v3.0") == "main"
 
 
 def test_non_vector_last_wins_for_images():
