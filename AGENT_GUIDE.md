@@ -61,15 +61,19 @@ Full details in [`docs/source/so101.mdx`](./docs/source/so101.mdx) and [`docs/so
 **4.1 Install**
 
 ```bash
-pip install 'lerobot[feetech]'              # SO-100/SO-101 motor stack
-# pip install 'lerobot[all]'                # everything
-# pip install 'lerobot[aloha,pusht]'        # specific features
-# pip install 'lerobot[smolvla]'            # add SmolVLA deps
-git lfs install && git lfs pull
-hf auth login                               # required to push datasets/policies
-```
+# uv (recommended — see AGENTS.md and CLAUDE.md)
+uv sync --locked --extra feetech          # SO-100/SO-101 motor stack
+# uv sync --locked --extra all            # everything
+# uv sync --locked --extra smolvla        # add SmolVLA deps
 
-Contributors can alternatively use `uv sync --locked --extra feetech` (see `AGENTS.md`).
+# pip (alternative, e.g. when not working from source)
+# pip install 'lerobot[feetech]'
+# pip install 'lerobot[all]'
+# pip install 'lerobot[smolvla]'
+
+git lfs install && git lfs pull
+hf auth login                             # required to push datasets/policies
+```
 
 **4.2 Find USB ports** — run once per arm, unplug when prompted.
 
