@@ -74,44 +74,38 @@ When you launch training with accelerate:
 3. **Gradient synchronization**: Gradients are synchronized across GPUs during backpropagation
 4. **Single process logging**: Only the main process logs to wandb and saves checkpoints
 
-## Learning Rate and Training Steps Scaling
+## Learning Rate and Steps Auto-Scaling
 
-**Important:** LeRobot does **NOT** automatically scale learning rates or training steps based on the number of GPUs. This gives you full control over your training hyperparameters.
+By default, LeRobot keeps your hyperparameters exactly as you set them. If you want automatic scaling when using multiple GPUs, enable it with `--auto_scale=true`.
 
-### Why No Automatic Scaling?
+When `--auto_scale=true` is enabled and training runs with multiple processes (GPUs), LeRobot will:
 
-Many distributed training frameworks automatically scale the learning rate by the number of GPUs (e.g., `lr = base_lr × num_gpus`).
-However, LeRobot keeps the learning rate exactly as you specify it.
+- Multiply the optimizer learning rate by the number of processes (linear LR scaling)
+- Divide the total number of training steps by the number of processes
 
-### When and How to Scale
+This keeps the total number of samples and overall training dynamics roughly consistent across different GPU counts.
 
-If you want to scale your hyperparameters when using multiple GPUs, you should do it manually:
-
-**Learning Rate Scaling:**
+Example with 2 GPUs:
 
 ```bash
-# Example: 2 GPUs with linear LR scaling
-# Base LR: 1e-4, with 2 GPUs -> 2e-4
 accelerate launch --num_processes=2 $(which lerobot-train) \
-  --optimizer.lr=2e-4 \
   --dataset.repo_id=lerobot/pusht \
-  --policy=act
-```
-
-**Training Steps Scaling:**
-
-Since the effective batch size `bs` increases with multiple GPUs (batch_size × num_gpus), you may want to reduce the number of training steps proportionally:
-
-```bash
-# Example: 2 GPUs with effective batch size 2x larger
-# Original: batch_size=8, steps=100000
-# With 2 GPUs: batch_size=8 (16 in total), steps=50000
-accelerate launch --num_processes=2 $(which lerobot-train) \
+  --policy.type=act \
   --batch_size=8 \
-  --steps=50000 \
-  --dataset.repo_id=lerobot/pusht \
-  --policy=act
+  --steps=100000 \
+  --auto_scale=true
 ```
+
+The effective behavior will be approximately:
+
+- Optimizer LR: `lr × 2`
+- Steps: `100000 → 50000`
+
+Notes:
+
+- Auto-scaling is skipped when resuming from a checkpoint to preserve training state.
+- If you prefer manual control, omit `--auto_scale` and set `--optimizer.lr` and `--steps` yourself.
+- Checkpoint and eval cadence: `auto_scale` currently does not adjust `save_freq` or `eval_freq`. If you want the same number of checkpoints/evaluations as a single-GPU run, consider scaling them as `ceil(freq / world_size)`. Whether to scale these by default is under discussion with maintainers.
 
 ## Notes
 
