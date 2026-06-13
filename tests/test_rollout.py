@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import dataclasses
+import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -104,6 +106,34 @@ def test_sentry_config_defaults():
     cfg = SentryStrategyConfig()
     assert cfg.upload_every_n_episodes == 5
     assert cfg.target_video_file_size_mb is None
+
+
+def test_rollout_config_passes_policy_revision(monkeypatch):
+    from lerobot.configs import PreTrainedConfig
+    from lerobot.rollout import RolloutConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    captured = {}
+
+    def fake_from_pretrained(cls, pretrained_name_or_path, **kwargs):
+        captured["pretrained_name_or_path"] = pretrained_name_or_path
+        captured.update(kwargs)
+        return SimpleNamespace(device="cpu", revision=None)
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["lerobot-rollout", "--policy.path=user/policy", "--policy.revision=abc123"],
+    )
+    monkeypatch.setattr(PreTrainedConfig, "from_pretrained", classmethod(fake_from_pretrained))
+
+    cfg = RolloutConfig(robot=MockRobotConfig())
+
+    assert captured["pretrained_name_or_path"] == "user/policy"
+    assert captured["revision"] == "abc123"
+    assert "--revision=abc123" in captured["cli_overrides"]
+    assert cfg.policy.pretrained_path == "user/policy"
+    assert cfg.policy.revision == "abc123"
 
 
 # ---------------------------------------------------------------------------

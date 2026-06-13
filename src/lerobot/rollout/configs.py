@@ -323,9 +323,18 @@ class RolloutConfig:
 
         policy_path = parser.get_path_arg("policy")
         if policy_path:
-            cli_overrides = parser.get_cli_overrides("policy")
-            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            cli_overrides = [
+                *parser.get_yaml_overrides("policy"),
+                *(parser.get_cli_overrides("policy") or []),
+            ]
+            policy_revision = parser.parse_arg("revision", cli_overrides)
+            self.policy = PreTrainedConfig.from_pretrained(
+                policy_path,
+                revision=policy_revision,
+                cli_overrides=cli_overrides,
+            )
             self.policy.pretrained_path = policy_path
+            self.policy.revision = policy_revision
         if self.policy is None:
             raise ValueError("--policy.path is required for rollout")
 
