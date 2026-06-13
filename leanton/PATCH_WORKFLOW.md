@@ -165,18 +165,53 @@ git push fork leanton
 - One commit per logical change (source + diff + README together)
 - Never commit on `main` — it's a clean upstream mirror
 
-### 5. File Upstream (if applicable)
+### 5. Draft Upstream Issue
+
+Before filing upstream, draft the issue inside the patch folder for review:
+
+```bash
+# Create leanton/<slug>/ISSUE.md with:
+#   - Title line
+#   - Motivation section (why this matters)
+#   - Proposed solution (what the patch does, files changed)
+#   - Implementation link (branch + diff stats)
+#   - Scope / limitations
+#   - Testing summary
+```
+
+**Review the draft with the user before filing.** Once approved, file the issue:
 
 ```bash
 gh issue create --repo huggingface/lerobot \
-  --title "<descriptive title>" \
-  --label "bug" --label "policies" \
-  --body '<Detailed description with root cause, reproduction, environment, proposed fix>'
+  --title "<title from ISSUE.md>" \
+  --body "$(cat leanton/<slug>/ISSUE.md)"
 ```
 
-Record the issue in **both** locations:
-- `leanton/<slug>/README.md` — `**GitHub:**` field
+### 6. Record the Issue
+
+Track in **all three** locations:
+- `leanton/<slug>/ISSUE.md` — canonical draft
+- `leanton/<slug>/README.md` — `**GitHub:**` field (update with issue link)
 - `leanton/UPSTREAM_ISSUES.md` — Open table
+
+### 7. PR (after issue discussion)
+
+When maintainers accept the approach:
+- Create a clean feature branch from `origin/main`: `feat/<slug>`
+- Apply the `.diff`: `git apply leanton/<slug>/<slug>.diff`
+- Run `pre-commit run -a` and `pytest`
+- Follow the [PR template](https://github.com/huggingface/lerobot/blob/main/.github/PULL_REQUEST_TEMPLATE.md)
+- **Review another contributor's PR first** (community review policy)
+- Reference the issue in the PR description
+
+```bash
+git checkout -b feat/<slug> origin/main
+git apply leanton/<slug>/<slug>.diff
+git add src/
+git commit -m "<PR title per CONTRIBUTING.md>"
+git push fork feat/<slug>
+gh pr create --repo huggingface/lerobot --base main --head anikita:feat/<slug>
+```
 
 ---
 
