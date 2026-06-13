@@ -74,6 +74,7 @@ from lerobot.utils.utils import log_say
 from ..configs import DAggerKeyboardConfig, DAggerPedalConfig, DAggerStrategyConfig
 from ..context import RolloutContext
 from .core import RolloutStrategy, estimate_max_episode_seconds, safe_push_to_hub, send_next_action
+from .display import DAggerDisplay
 
 PYNPUT_AVAILABLE = _pynput_available
 keyboard = None
@@ -231,7 +232,7 @@ def _init_dagger_keyboard(events: DAggerEvents, cfg: DAggerKeyboardConfig):
 
     listener = keyboard.Listener(on_press=on_press)
     listener.start()
-    logger.info(
+    logger.debug(
         "DAgger keyboard listener started (pause_resume='%s', correction='%s', upload='%s', ESC=stop)",
         cfg.pause_resume,
         cfg.correction,
@@ -315,6 +316,28 @@ class DAggerStrategy(RolloutStrategy):
             self._episode_duration_s,
         )
 
+        if self.config.input_device == "keyboard":
+            kb = self.config.keyboard
+            pause_key, correction_key, upload_key = (
+                kb.pause_resume.upper(),
+                kb.correction.upper(),
+                kb.upload.upper(),
+            )
+        else:
+            pb = self.config.pedal
+            pause_key, correction_key, upload_key = pb.pause_resume, pb.correction, pb.upload
+
+        self._display = DAggerDisplay(
+            record_autonomous=self.config.record_autonomous,
+            num_episodes=self.config.num_episodes,
+            episode_duration_s=self._episode_duration_s,
+            input_device=self.config.input_device,
+            pause_key=pause_key,
+            correction_key=correction_key,
+            upload_key=upload_key,
+        )
+        self._display.show_banner()
+
     def run(self, ctx: RolloutContext) -> None:
         """Run DAgger episodes with human-in-the-loop intervention."""
         if self.config.record_autonomous:
@@ -387,6 +410,7 @@ class DAggerStrategy(RolloutStrategy):
         interpolator.reset()
         events.reset()
         engine.resume()
+        self._display.show_state(DAggerPhase.AUTONOMOUS)
 
         last_action: dict[str, Any] | None = None
         record_tick = 0
@@ -417,6 +441,7 @@ class DAggerStrategy(RolloutStrategy):
                             ctx,
                             last_action,
                         )
+                        self._display.show_state(new_phase)
                         if new_phase == DAggerPhase.AUTONOMOUS:
                             last_action = None
 
@@ -501,9 +526,7 @@ class DAggerStrategy(RolloutStrategy):
                     if (sleep_t := control_interval - dt) > 0:
                         precise_sleep(sleep_t)
                     else:
-                        logger.warning(
-                            f"Record loop is running slower ({1 / dt:.1f} Hz) than the target FPS ({cfg.fps} Hz). Dataset frames might be dropped and robot control might be unstable. Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long 3) CPU starvation"
-                        )
+                        self._warn_slow_loop(dt, control_interval, cfg.fps)
 
             finally:
                 logger.info("DAgger continuous control loop ended — pausing engine")
@@ -544,6 +567,7 @@ class DAggerStrategy(RolloutStrategy):
         interpolator.reset()
         events.reset()
         engine.resume()
+        self._display.show_state(DAggerPhase.AUTONOMOUS)
 
         last_action: dict[str, Any] | None = None
         start_time = time.perf_counter()
@@ -578,6 +602,7 @@ class DAggerStrategy(RolloutStrategy):
                             ctx,
                             last_action,
                         )
+                        self._display.show_state(new_phase)
                         if new_phase == DAggerPhase.AUTONOMOUS:
                             last_action = None
 
@@ -650,9 +675,7 @@ class DAggerStrategy(RolloutStrategy):
                     if (sleep_t := control_interval - dt) > 0:
                         precise_sleep(sleep_t)
                     else:
-                        logger.warning(
-                            f"Record loop is running slower ({1 / dt:.1f} Hz) than the target FPS ({cfg.fps} Hz). Dataset frames might be dropped and robot control might be unstable. Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long 3) CPU starvation"
-                        )
+                        self._warn_slow_loop(dt, control_interval, cfg.fps)
 
             finally:
                 logger.info("DAgger corrections-only loop ended — pausing engine")

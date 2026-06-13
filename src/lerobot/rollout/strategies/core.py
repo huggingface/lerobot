@@ -33,6 +33,7 @@ from ..inference import InferenceEngine
 if TYPE_CHECKING:
     from ..configs import RolloutStrategyConfig
     from ..context import HardwareContext, ProcessorContext, RolloutContext, RuntimeContext
+    from .display import RolloutStatusDisplay
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,17 @@ class RolloutStrategy(abc.ABC):
         self._interpolator: ActionInterpolator | None = None
         self._warmup_flushed: bool = False
         self._cached_obs_processed: dict | None = None
+        self._display: RolloutStatusDisplay | None = None
+
+    def _warn_slow_loop(self, dt: float, control_interval: float, fps: float) -> None:
+        """Warn when the control loop runs slower than the target FPS."""
+        if dt > control_interval:
+            logger.warning(
+                "Control loop running slower (%.1f Hz) than target (%.0f Hz). "
+                "Possible causes: camera FPS not keeping up, slow policy inference, CPU starvation.",
+                1 / dt,
+                fps,
+            )
 
     def _init_engine(self, ctx: RolloutContext) -> None:
         """Attach the inference engine and action interpolator, then start the backend.
