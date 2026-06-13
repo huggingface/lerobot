@@ -571,7 +571,7 @@ def send_interactions(
 
     - Interaction Messages:
         - Contains useful statistics about episodic rewards and policy timings.
-        - The message is serialized using `pickle` and sent to the learner.
+        - The message is serialized as JSON and sent to the learner.
     """
 
     if not use_threads(cfg):
