@@ -16,5 +16,6 @@
 
 from .config_openarm_follower import OpenArmFollowerConfig, OpenArmFollowerConfigBase
 from .openarm_follower import OpenArmFollower
+from .open_follower_dragontactile import OpenFollowerDragonTacile
 
-__all__ = ["OpenArmFollower", "OpenArmFollowerConfig", "OpenArmFollowerConfigBase"]
+__all__ = ["OpenArmFollower", "OpenFollowerDragonTacile", "OpenArmFollowerConfig", "OpenArmFollowerConfigBase"]

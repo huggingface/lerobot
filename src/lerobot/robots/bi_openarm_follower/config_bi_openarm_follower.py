@@ -23,6 +23,7 @@ from ..openarm_follower import OpenArmFollowerConfigBase
 
 
 @RobotConfig.register_subclass("bi_openarm_follower")
+@RobotConfig.register_subclass("bi_openarm_follower_dragontactile")
 @dataclass(kw_only=True)
 class BiOpenArmFollowerConfig(RobotConfig):
     """Configuration class for Bi OpenArm Follower robots."""

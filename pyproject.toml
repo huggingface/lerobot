@@ -138,9 +138,7 @@ dataset_viz = ["lerobot[dataset]", "lerobot[viz]"]
 # Common
 av-dep = ["av>=15.0.0,<16.0.0"]
 pygame-dep = ["pygame>=2.5.1,<2.7.0"]
-# NOTE: 0.9.16 links against liburdfdom_sensor.so.4, which is unavailable on Ubuntu 24.04
-# (noble ships urdfdom 3.x). Cap below 0.9.16 until system urdfdom 4.x is broadly available.
-placo-dep = ["placo>=0.9.6,<0.9.16"]
+placo-dep = ["placo>=0.9.6,<0.9.17"]
 transformers-dep = ["transformers>=5.4.0,<5.6.0"]
 grpcio-dep = ["grpcio>=1.73.1,<2.0.0", "protobuf>=6.31.1,<8.0.0"]
 accelerate-dep = ["accelerate>=1.14.0,<2.0.0"]
@@ -193,6 +191,7 @@ intelrealsense = [
     "pyrealsense2-macosx>=2.54,<2.57.0 ; sys_platform == 'darwin'",
 ]
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0", "lerobot[scipy-dep]"]
+dragontactil = ["scipy>=1.14.0,<2.0.0",  "opendaq"]
 
 # Policies
 diffusion = ["lerobot[diffusers-dep]"]

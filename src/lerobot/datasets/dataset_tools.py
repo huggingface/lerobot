@@ -29,11 +29,13 @@ from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import av
 import datasets
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 
 from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults
@@ -48,6 +50,7 @@ from .compute_stats import (
 )
 from .dataset_metadata import LeRobotDatasetMetadata
 from .io_utils import (
+    crop_and_rescale_rendered_tactile_spectrogram,
     get_parquet_file_size_in_mb,
     load_episodes,
     write_info,
@@ -1972,3 +1975,166 @@ def reencode_dataset(
     logging.info("Dataset metadata updated.")
 
     return dataset
+
+
+def _to_uint8_rgb_hwc(image: torch.Tensor, target_h: int, target_w: int) -> np.ndarray:
+    """Normalize a tensor image to uint8 RGB HWC with a target spatial size."""
+    if image.ndim != 3:
+        raise ValueError(f"Expected a 3D image tensor, got shape {tuple(image.shape)}")
+
+    if image.shape[0] in (1, 3):
+        chw = image
+    elif image.shape[2] in (1, 3):
+        chw = image.permute(2, 0, 1)
+    else:
+        raise ValueError(f"Expected 1 or 3 channels, got shape {tuple(image.shape)}")
+
+    if chw.shape[0] == 1:
+        chw = chw.repeat(3, 1, 1)
+
+    if chw.shape[1] != target_h or chw.shape[2] != target_w:
+        chw = F.interpolate(chw.unsqueeze(0).float(), size=(target_h, target_w), mode="bilinear").squeeze(0)
+
+    if not torch.is_floating_point(chw):
+        chw = chw.float()
+
+    # Accept either [0, 1] floats or [0, 255] style values.
+    if float(chw.max()) > 1.0:
+        chw = chw / 255.0
+
+    chw = chw.clamp(0.0, 1.0)
+    return (chw * 255.0).round().to(torch.uint8).permute(1, 2, 0).cpu().numpy()
+
+
+def _transform_video_file(
+    input_video_path: Path,
+    output_video_path: Path,
+    transform: Callable[[torch.Tensor], torch.Tensor],
+    camera_encoder: VideoEncoderConfig,
+    encoder_threads: int | None = None,
+) -> None:
+    """Decode, transform and re-encode a single video file."""
+    output_video_path.parent.mkdir(parents=True, exist_ok=True)
+    video_options = camera_encoder.get_codec_options(encoder_threads, as_strings=True)
+
+    with av.open(str(input_video_path), mode="r") as src:
+        in_stream = src.streams.video[0]
+        fps = in_stream.base_rate
+        width = int(in_stream.width)
+        height = int(in_stream.height)
+
+        with av.open(str(output_video_path), mode="w", options={"movflags": "faststart"}) as dst:
+            out_stream = dst.add_stream(camera_encoder.vcodec, fps, options=video_options)
+            out_stream.pix_fmt = camera_encoder.pix_fmt
+            out_stream.width = width
+            out_stream.height = height
+
+            for frame in src.decode(in_stream):
+                rgb = frame.to_ndarray(format="rgb24")
+                image = torch.from_numpy(rgb).permute(2, 0, 1).float() / 255.0
+                transformed = transform(image)
+                transformed_rgb = _to_uint8_rgb_hwc(transformed, target_h=height, target_w=width)
+                out_frame = av.VideoFrame.from_ndarray(transformed_rgb, format="rgb24")
+
+                packet = out_stream.encode(out_frame)
+                if packet:
+                    dst.mux(packet)
+
+            packet = out_stream.encode()
+            if packet:
+                dst.mux(packet)
+
+
+def transform_video_feature_dataset(
+    dataset: LeRobotDataset,
+    feature_key: str,
+    transform: Callable[[torch.Tensor], torch.Tensor],
+    output_dir: str | Path | None = None,
+    repo_id: str | None = None,
+    camera_encoder: VideoEncoderConfig | None = None,
+    encoder_threads: int | None = None,
+    recompute_dataset_stats_flag: bool = False,
+) -> LeRobotDataset:
+    """Create a new dataset by transforming one existing video feature and blacking out the rest of the video .
+
+    This is an external/offline dataset edit operation: source dataset stays
+    untouched, and a new dataset root is created with the transformed feature.
+    """
+    if feature_key not in dataset.meta.video_keys:
+        raise ValueError(
+            f"Feature '{feature_key}' must be a video feature. Available video keys: {dataset.meta.video_keys}"
+        )
+
+    if repo_id is None:
+        repo_suffix = feature_key.split(".")[-1]
+        repo_id = f"{dataset.repo_id}_{repo_suffix}_transformed"
+
+    output_root = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
+    if output_root.exists():
+        raise FileExistsError(f"Output directory already exists: {output_root}")
+
+    logging.info(f"Creating transformed dataset copy at {output_root}")
+    shutil.copytree(dataset.root, output_root)
+
+    transformed_dataset = LeRobotDataset(repo_id=repo_id, root=output_root)
+
+    if camera_encoder is None:
+        current_info = transformed_dataset.meta.info.features[feature_key].get("info", {})
+        camera_encoder = VideoEncoderConfig.from_video_info(current_info)
+
+    feature_dir = transformed_dataset.root / VIDEO_DIR / feature_key
+    video_paths = sorted(feature_dir.rglob("*.mp4"))
+    if len(video_paths) == 0:
+        raise FileNotFoundError(f"No video files found for feature '{feature_key}' in {feature_dir}")
+
+    logging.info(f"Transforming {len(video_paths)} video files for '{feature_key}'")
+    for video_path in tqdm(video_paths, desc=f"Transforming {feature_key}"):
+        tmp_path = video_path.with_suffix(".tmp.mp4")
+        _transform_video_file(
+            input_video_path=video_path,
+            output_video_path=tmp_path,
+            transform=transform,
+            camera_encoder=camera_encoder,
+            encoder_threads=encoder_threads,
+        )
+        tmp_path.replace(video_path)
+
+    transformed_dataset.meta.info.features[feature_key]["info"] = get_video_info(
+        video_paths[0], camera_encoder=camera_encoder
+    )
+    write_info(transformed_dataset.meta.info, transformed_dataset.root)
+
+    if recompute_dataset_stats_flag:
+        logging.info("Recomputing dataset statistics for transformed dataset")
+        recompute_stats(transformed_dataset)
+    else:
+        logging.warning(
+            "Dataset stats were not recomputed. If normalization uses this feature, "
+            "consider calling recompute_stats() on the transformed dataset."
+        )
+
+    return transformed_dataset
+
+
+def create_tactile_spectrogram_variant_dataset(
+    dataset: LeRobotDataset,
+    feature_key: str = "observation.images.left_tactile_spectrogram",
+    crop_data: int = 10,
+    begin_crop_freq: float = 5_000.0,
+    output_dir: str | Path | None = None,
+    repo_id: str | None = None,
+    camera_encoder: VideoEncoderConfig | None = None,
+    encoder_threads: int | None = None,
+    recompute_dataset_stats_flag: bool = False,
+) -> LeRobotDataset:
+    """Create a dataset copy with tactile spectrogram crop/rescale baked in."""
+    return transform_video_feature_dataset(
+        dataset=dataset,
+        feature_key=feature_key,
+        transform=lambda image: crop_and_rescale_rendered_tactile_spectrogram(image, crop_data=crop_data,begin_crop_freq=begin_crop_freq),
+        output_dir=output_dir,
+        repo_id=repo_id,
+        camera_encoder=camera_encoder,
+        encoder_threads=encoder_threads,
+        recompute_dataset_stats_flag=recompute_dataset_stats_flag,
+    )
