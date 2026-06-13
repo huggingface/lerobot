@@ -204,6 +204,38 @@ def test_clear_resets_buffer(tmp_path):
     assert dataset.writer.episode_buffer["size"] == 0
 
 
+def test_clear_removes_video_frame_staging_dir(tmp_path):
+    """clear_episode_buffer() removes PNG staging dirs for video features."""
+    video_key = "observation.images.cam"
+    features = {
+        video_key: {
+            "dtype": "video",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=features,
+        root=tmp_path / "ds",
+        use_videos=True,
+    )
+
+    dataset.add_frame(_make_frame(features))
+    video_staging_dir = (
+        dataset.root
+        / Path(DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=0, frame_index=0)).parent
+    )
+    assert video_staging_dir.is_dir()
+
+    dataset.clear_episode_buffer()
+
+    assert dataset.writer.episode_buffer["size"] == 0
+    assert not video_staging_dir.exists()
+
+
 def test_finalize_is_idempotent(tmp_path):
     """Calling finalize() twice does not raise."""
     dataset = LeRobotDataset.create(
