@@ -21,6 +21,7 @@ import shutil
 from pathlib import Path
 
 import datasets
+import numpy as np
 import pandas as pd
 import tqdm
 
@@ -275,7 +276,89 @@ def update_meta_data(
     df["dataset_to_index"] = df["dataset_to_index"] + dst_meta.info.total_frames
     df["episode_index"] = df["episode_index"] + dst_meta.info.total_episodes
 
+    _offset_stats_columns(df, "index", dst_meta.info.total_frames)
+    _offset_stats_columns(df, "episode_index", dst_meta.info.total_episodes)
+
     return df
+
+
+def _offset_stats_columns(df: pd.DataFrame, stats_key: str, offset: int) -> None:
+    """Offset per-episode stats columns for reindexed metadata keys."""
+    if offset == 0:
+        return
+
+    prefix = f"stats/{stats_key}/"
+    for column in df.columns:
+        if not column.startswith(prefix):
+            continue
+        # count/std are invariant to affine offsets.
+        if column.endswith("/count") or column.endswith("/std"):
+            continue
+        df[column] = df[column] + offset
+
+
+def _to_numeric_array(value) -> np.ndarray:
+    """Convert parquet-loaded stats values to numeric numpy arrays."""
+    if isinstance(value, np.ndarray):
+        arr = value
+    elif isinstance(value, list | tuple):
+        arr = np.asarray(value)
+    else:
+        arr = np.asarray([value])
+
+    if arr.dtype == object:
+        def _unwrap_nested(obj):
+            if isinstance(obj, np.ndarray):
+                return _unwrap_nested(obj.tolist())
+            if isinstance(obj, list | tuple):
+                return [_unwrap_nested(x) for x in obj]
+            return obj
+
+        arr = np.asarray(_unwrap_nested(arr.tolist()), dtype=np.float64)
+
+    if arr.ndim == 0:
+        arr = arr.reshape(1)
+
+    return arr
+
+
+def _normalize_stats_value_shape(
+    feature_name: str,
+    stat_name: str,
+    value: np.ndarray,
+    features: dict[str, dict],
+) -> np.ndarray:
+    """Normalize stats value shape after parquet round-trip."""
+    feature_dtype = features.get(feature_name, {}).get("dtype")
+    if feature_dtype in {"image", "video"} and stat_name != "count":
+        if value.ndim == 1:
+            value = value.reshape(-1, 1, 1)
+        elif value.ndim == 2 and value.shape[1] == 1:
+            value = value.reshape(value.shape[0], 1, 1)
+    return value
+
+
+def _load_episode_stats_from_parquet(episodes_dir: Path, features: dict[str, dict]) -> list[dict[str, dict]]:
+    """Load per-episode stats dicts directly from merged episode metadata parquet files."""
+    episode_stats: list[dict[str, dict]] = []
+    parquet_files = sorted(episodes_dir.rglob("*.parquet"))
+    for path in parquet_files:
+        df = pd.read_parquet(path)
+        stats_columns = [col for col in df.columns if col.startswith("stats/")]
+        if not stats_columns:
+            continue
+
+        for _, row in df.iterrows():
+            per_episode: dict[str, dict] = {}
+            for col in stats_columns:
+                _, feature_name, stat_name = col.split("/", 2)
+                per_episode.setdefault(feature_name, {})
+                value = _to_numeric_array(row[col])
+                value = _normalize_stats_value_shape(feature_name, stat_name, value, features)
+                per_episode[feature_name][stat_name] = value
+            episode_stats.append(per_episode)
+
+    return episode_stats
 
 
 def aggregate_datasets(
@@ -710,5 +793,6 @@ def finalize_aggregation(aggr_meta, all_metadata):
     write_info(aggr_meta.info, aggr_meta.root)
 
     logging.info("write stats")
-    aggr_meta.stats = aggregate_stats([m.stats for m in all_metadata])
+    episode_stats = _load_episode_stats_from_parquet(aggr_meta.root / "meta" / "episodes", aggr_meta.features)
+    aggr_meta.stats = aggregate_stats(episode_stats) if episode_stats else aggregate_stats([m.stats for m in all_metadata])
     write_stats(aggr_meta.stats, aggr_meta.root)
