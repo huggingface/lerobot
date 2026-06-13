@@ -486,7 +486,6 @@ class OpenCVCamera(Camera):
             self.thread.join(timeout=2.0)
 
         self.thread = None
-        self.stop_event = None
 
         with self.frame_lock:
             self.latest_frame = None
