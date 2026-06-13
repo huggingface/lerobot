@@ -368,6 +368,38 @@ def test_molmoact2_explicit_image_keys_stay_strict():
         step._resolve_image_keys(observation)
 
 
+def test_molmoact2_extract_state_unsqueezes_single_sample():
+    step = object.__new__(MolmoAct2PackInputsProcessorStep)
+    state = torch.tensor([1.0, 2.0, 3.0])
+
+    extracted = step._extract_state({OBS_STATE: state}, batch_size=1)
+
+    assert extracted.shape == (1, 3)
+    assert torch.equal(extracted[0], state)
+
+
+def test_molmoact2_extract_state_handles_batch_of_scalar_states():
+    # Shape-(1,) state features are stored as scalars, so a batch collates to (B,).
+    step = object.__new__(MolmoAct2PackInputsProcessorStep)
+    state = torch.tensor([1.0, 2.0, 3.0, 4.0])
+
+    extracted = step._extract_state({OBS_STATE: state}, batch_size=4)
+
+    assert extracted.shape == (4, 1)
+    assert torch.equal(extracted.squeeze(-1), state)
+
+
+def test_molmoact2_extract_state_handles_scalar_batch_misread_as_single_sample():
+    # AddBatchDimensionObservationStep turns a (B,) batch of scalar states into (1, B).
+    step = object.__new__(MolmoAct2PackInputsProcessorStep)
+    state = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+
+    extracted = step._extract_state({OBS_STATE: state}, batch_size=4)
+
+    assert extracted.shape == (4, 1)
+    assert torch.equal(extracted.squeeze(-1), state.squeeze(0))
+
+
 def test_enable_lora_vlm_builds_policy_local_peft_config():
     pytest.importorskip("peft")
     policy_cfg = MolmoAct2Config(

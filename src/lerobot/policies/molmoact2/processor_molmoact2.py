@@ -793,7 +793,13 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             raise ValueError("MolmoAct2 requires observation.state for discrete state prompting.")
         state = torch.as_tensor(observation[OBS_STATE], dtype=torch.float32)
         if state.ndim == 1:
-            state = state.unsqueeze(0)
+            # Shape-(1,) state features are stored as scalars, so a batch of them
+            # collates to (batch_size,) rather than (batch_size, 1).
+            state = state.unsqueeze(-1) if int(state.shape[0]) == batch_size else state.unsqueeze(0)
+        elif state.ndim == 2 and state.shape[0] == 1 and int(state.shape[1]) == batch_size and batch_size > 1:
+            # AddBatchDimensionObservationStep misreads a (batch_size,) scalar-state
+            # batch as one sample and unsqueezes it to (1, batch_size).
+            state = state.transpose(0, 1)
         if int(state.shape[0]) != batch_size:
             raise ValueError(f"State batch size {state.shape[0]} does not match batch size {batch_size}.")
         return state
