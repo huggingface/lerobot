@@ -710,5 +710,28 @@ def finalize_aggregation(aggr_meta, all_metadata):
     write_info(aggr_meta.info, aggr_meta.root)
 
     logging.info("write stats")
-    aggr_meta.stats = aggregate_stats([m.stats for m in all_metadata])
+    # episode_index and index are re-indexed during aggregation: each source
+    # dataset k has its values shifted by the cumulative total_episodes /
+    # total_frames of all preceding datasets.  The per-dataset stats were
+    # computed on the original (pre-shift) values, so we must apply the same
+    # offsets to min/max/mean and all quantiles before aggregating.  std and
+    # count are invariant to translation and need no adjustment.
+    adjusted_stats: list[dict] = []
+    ep_offset = 0
+    frame_offset = 0
+    for m in all_metadata:
+        s = copy.deepcopy(m.stats)
+        for feat_key, offset in (("episode_index", ep_offset), ("index", frame_offset)):
+            if feat_key not in s:
+                continue
+            feat = s[feat_key]
+            for stat_key in list(feat):
+                if stat_key in ("min", "max", "mean") or (
+                    stat_key.startswith("q") and stat_key[1:].isdigit()
+                ):
+                    feat[stat_key] = feat[stat_key] + offset
+        adjusted_stats.append(s)
+        ep_offset += m.total_episodes
+        frame_offset += m.total_frames
+    aggr_meta.stats = aggregate_stats(adjusted_stats)
     write_stats(aggr_meta.stats, aggr_meta.root)
