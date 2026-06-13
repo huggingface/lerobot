@@ -14,6 +14,7 @@
 
 """Tests for ActionInterpolator and its interaction with ActionQueue (RTC)."""
 
+import numpy as np
 import pytest
 import torch
 
@@ -557,3 +558,84 @@ def test_queue_interpolator_delay_skips_stale_actions():
     first_action = queue.get()
     assert first_action is not None
     torch.testing.assert_close(first_action, torch.tensor([103.0, 103.0]))
+
+
+# ====================== SLERP / rotvec_indices Tests ======================
+
+
+def test_antipodal_rotvec_no_sweep():
+    """SLERP must not sweep through near-zero rotation for antipodal rotvec pairs.
+
+    Reproduces the exact values from GitHub issue #3691: two rotvecs that encode
+    nearly the same physical orientation (~0.6 rad apart) but lie ~5.6 rad apart
+    in vector space.  Linear interpolation dips to ||r|| ≈ 0.5 at the midpoint;
+    SLERP must keep all intermediate magnitudes well above that threshold.
+    """
+    # Action layout: [pos_x, pos_y, pos_z, wx, wy, wz, gripper]  (rotvec at index 3)
+    a0 = torch.tensor([0.1, 0.2, 0.3, +1.45, -0.14, +2.34, 0.5])  # ||rotvec|| ≈ 2.74
+    a1 = torch.tensor([0.2, 0.3, 0.4, -1.72, -0.38, -2.31, 0.6])  # antipodal twin, ||rotvec|| ≈ 2.93
+
+    interp = ActionInterpolator(multiplier=5, rotvec_indices=[3])
+    interp.add(a0)
+    interp.get()  # first step: passthrough, no previous
+
+    interp.add(a1)
+    rot_norms = []
+    while True:
+        a = interp.get()
+        if a is None:
+            break
+        rot_norms.append(np.linalg.norm(a[3:6].numpy()))
+
+    # Without the fix the minimum magnitude at the midpoint is ~0.51 (the bug).
+    # With SLERP the interpolated rotations stay on the geodesic, so all magnitudes
+    # must remain well above 2.0.
+    assert len(rot_norms) == 5
+    assert min(rot_norms) > 2.0, (
+        f"Rotation magnitude dipped to {min(rot_norms):.3f} — "
+        "non-physical sweep through near-identity rotation (antipodal twin bug)"
+    )
+
+
+def test_slerp_non_rotvec_dims_remain_linear():
+    """Position and gripper dims must still be linearly interpolated when rotvec_indices is set."""
+    a0 = torch.tensor([0.0, 0.0, 0.0, +1.45, -0.14, +2.34, 0.0])
+    a1 = torch.tensor([1.0, 2.0, 3.0, -1.72, -0.38, -2.31, 1.0])
+
+    interp = ActionInterpolator(multiplier=2, rotvec_indices=[3])
+    interp.add(a0)
+    interp.get()
+
+    interp.add(a1)
+    mid = interp.get()
+    end = interp.get()
+
+    assert mid is not None and end is not None
+    # Position dims 0-2 and gripper dim 6 must be at exact linear midpoints
+    torch.testing.assert_close(mid[:3], torch.tensor([0.5, 1.0, 1.5]))
+    torch.testing.assert_close(mid[6:7], torch.tensor([0.5]))
+    torch.testing.assert_close(end[:3], torch.tensor([1.0, 2.0, 3.0]))
+    torch.testing.assert_close(end[6:7], torch.tensor([1.0]))
+
+
+def test_slerp_non_antipodal_rotvec_close_to_linear():
+    """For non-antipodal rotvecs (small physical angle), SLERP ≈ linear interpolation."""
+    # Two nearby rotation vectors — no antipodal ambiguity, SLERP and linear should agree
+    a0 = torch.tensor([0.0, 0.0, 0.3])  # small rotation around z
+    a1 = torch.tensor([0.0, 0.0, 0.6])  # slightly larger rotation around z
+
+    interp_slerp = ActionInterpolator(multiplier=4, rotvec_indices=[0])
+    interp_linear = ActionInterpolator(multiplier=4)
+
+    for interp in (interp_slerp, interp_linear):
+        interp.add(a0)
+        interp.get()
+
+    interp_slerp.add(a1)
+    interp_linear.add(a1)
+
+    for _ in range(4):
+        slerp_val = interp_slerp.get()
+        linear_val = interp_linear.get()
+        assert slerp_val is not None and linear_val is not None
+        torch.testing.assert_close(slerp_val, linear_val, atol=1e-4, rtol=1e-4)
