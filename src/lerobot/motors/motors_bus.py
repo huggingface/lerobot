@@ -906,6 +906,40 @@ class SerialMotorsBus(MotorsBusBase):
 
         return unnormalized_values
 
+    def _check_goal_position_bounds(self, data_name: str, motor: str, int_value: int) -> None:
+        """Validate a ``Goal_Position`` write against the motor's calibrated range.
+
+        When ``normalize=True`` the value has already been clamped by
+        :py:meth:`_unnormalize`. When ``normalize=False`` the raw integer is
+        written through unchecked, which lets an out-of-range goal reach the
+        motor firmware. On Feetech STS3215 (and similar), the firmware then
+        silently clamps the goal to the nearest edge of
+        ``[Min_Position_Limit, Max_Position_Limit]``, drives toward that edge,
+        and enables torque even if the host had disabled it. See issue #3585.
+
+        Raising here surfaces the out-of-range write as a ``ValueError``
+        before it reaches the bus, so the caller can either pass an in-range
+        value or recalibrate.
+        """
+        if data_name != "Goal_Position":
+            return
+        if not self.calibration:
+            return
+        calib = self.calibration.get(motor)
+        if calib is None:
+            return
+        if int_value < calib.range_min or int_value > calib.range_max:
+            raise ValueError(
+                f"Cannot write Goal_Position={int_value} to motor '{motor}': "
+                f"value is outside the calibrated range "
+                f"[{calib.range_min}, {calib.range_max}]. Writing an "
+                f"out-of-range goal causes the motor firmware to silently "
+                f"clamp, drive toward the edge, and enable torque even if "
+                f"the host had disabled it (see issue #3585). Pass a value "
+                f"within the calibrated range, or update the calibration to "
+                f"cover this position."
+            )
+
     @abc.abstractmethod
     def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
         pass
@@ -1087,6 +1121,8 @@ class SerialMotorsBus(MotorsBusBase):
         if normalize and data_name in self.normalized_data:
             int_value = self._unnormalize({id_: value})[id_]
 
+        self._check_goal_position_bounds(data_name, motor, int_value)
+
         int_value = self._encode_sign(data_name, {id_: int_value})[id_]
 
         err_msg = f"Failed to write '{data_name}' on {id_=} with '{int_value}' after {num_retry + 1} tries."
@@ -1247,6 +1283,9 @@ class SerialMotorsBus(MotorsBusBase):
         int_ids_values = {id_: int(val) for id_, val in raw_ids_values.items()}
         if normalize and data_name in self.normalized_data:
             int_ids_values = self._unnormalize(raw_ids_values)
+
+        for id_, int_value in int_ids_values.items():
+            self._check_goal_position_bounds(data_name, self._id_to_name(id_), int_value)
 
         int_ids_values = self._encode_sign(data_name, int_ids_values)
 
