@@ -95,7 +95,7 @@ If you want to scale your hyperparameters when using multiple GPUs, you should d
 accelerate launch --num_processes=2 $(which lerobot-train) \
   --optimizer.lr=2e-4 \
   --dataset.repo_id=lerobot/pusht \
-  --policy=act
+  --policy.type=act
 ```
 
 **Training Steps Scaling:**
@@ -110,7 +110,7 @@ accelerate launch --num_processes=2 $(which lerobot-train) \
   --batch_size=8 \
   --steps=50000 \
   --dataset.repo_id=lerobot/pusht \
-  --policy=act
+  --policy.type=act
 ```
 
 ## Notes
