@@ -69,13 +69,19 @@ class DatasetRecordConfig:
     # Number of threads per encoder instance. None = auto (codec default).
     # Lower values reduce CPU usage, maps to 'lp' (via svtav1-params) for libsvtav1 and 'threads' for h264/hevc..
     encoder_threads: int | None = None
+    # Skip appending the date-time tag to repo_id, keeping the user-provided name as-is
+    # (e.g. self-managed versioned names intended for a later `lerobot-edit-dataset merge`).
+    no_stamp: bool = False
 
     def stamp_repo_id(self) -> None:
         """Append a date-time tag to ``repo_id`` so each recording session gets a unique name.
 
         Must be called explicitly at dataset *creation* time — not on resume,
         where the existing ``repo_id`` (already stamped) must be preserved.
+        No-op when ``no_stamp`` is set, preserving a user-managed ``repo_id``.
         """
+        if self.no_stamp:
+            return
         if self.repo_id:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.repo_id = f"{self.repo_id}_{timestamp}"
