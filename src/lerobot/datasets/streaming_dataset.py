@@ -89,15 +89,15 @@ class Backtrackable[T]:
 
     __slots__ = ("_source", "_back_buf", "_ahead_buf", "_cursor", "_history", "_lookahead")
 
-    def __init__(self, iterable: Iterable[T], *, history: int = 1, lookahead: int = 0):
-        if history < 1:
-            raise ValueError("history must be >= 1")
-        if lookahead <= 0:
-            raise ValueError("lookahead must be > 0")
+    def __init__(self, iterable: Iterable[T], *, history: int = 0, lookahead: int = 0):
+        if history < 0:
+            raise ValueError("history must be >= 0")
+        if lookahead < 0:
+            raise ValueError("lookahead must be >= 0")
 
         self._source: Iterator[T] = iter(iterable)
         self._back_buf: deque[T] = deque(maxlen=history)
-        self._ahead_buf: deque[T] = deque(maxlen=lookahead) if lookahead > 0 else deque()
+        self._ahead_buf: deque[T] = deque(maxlen=lookahead)
         self._cursor: int = 0
         self._history = history
         self._lookahead = lookahead
