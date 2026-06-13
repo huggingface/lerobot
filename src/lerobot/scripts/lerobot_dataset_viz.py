@@ -155,12 +155,12 @@ def visualize_dataset(
 
             # display each dimension of action space (e.g. actuators command)
             if ACTION in batch:
-                for dim_idx, val in enumerate(batch[ACTION][i]):
+                for dim_idx, val in enumerate(batch[ACTION][i].reshape(-1)):
                     rr.log(f"{ACTION}/{dim_idx}", rr.Scalars(val.item()))
 
             # display each dimension of observed state space (e.g. agent position in joint space)
             if OBS_STATE in batch:
-                for dim_idx, val in enumerate(batch[OBS_STATE][i]):
+                for dim_idx, val in enumerate(batch[OBS_STATE][i].reshape(-1)):
                     rr.log(f"state/{dim_idx}", rr.Scalars(val.item()))
 
             if DONE in batch:
