@@ -97,7 +97,7 @@ Training a policy is as simple as running a script configuration:
 
 ```bash
 lerobot-train \
-  --policy=act \
+  --policy.type=act \
   --dataset.repo_id=lerobot/aloha_mobile_cabinet
 ```
 
