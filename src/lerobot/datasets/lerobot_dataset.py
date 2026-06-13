@@ -58,6 +58,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         return_uint8: bool = False,
+        skip_video_decode: bool = False,
         batch_encoding_size: int = 1,
         camera_encoder: VideoEncoderConfig | None = None,
         encoder_threads: int | None = None,
@@ -208,6 +209,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.revision = revision if revision else CODEBASE_VERSION
         self._video_backend = video_backend if video_backend else get_safe_default_video_backend()
         self._return_uint8 = return_uint8
+        self._skip_video_decode = skip_video_decode
         self._batch_encoding_size = batch_encoding_size
         self._encoder_threads = encoder_threads
 
@@ -248,6 +250,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             return_uint8=self._return_uint8,
+            skip_video_decode=self._skip_video_decode,
         )
 
         # Load actual data
@@ -315,6 +318,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 delta_timestamps=self.delta_timestamps,
                 image_transforms=self.image_transforms,
                 return_uint8=self._return_uint8,
+                skip_video_decode=self._skip_video_decode,
             )
         return self.reader
 
@@ -712,6 +716,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episodes = None
         obj._video_backend = video_backend if video_backend is not None else get_safe_default_video_backend()
         obj._return_uint8 = False
+        obj._skip_video_decode = False
         obj._batch_encoding_size = batch_encoding_size
         obj._encoder_threads = encoder_threads
 
@@ -806,6 +811,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episodes = None
         obj._video_backend = video_backend if video_backend else get_safe_default_video_backend()
         obj._return_uint8 = False
+        obj._skip_video_decode = False
         obj._batch_encoding_size = batch_encoding_size
 
         if obj._requested_root is not None:

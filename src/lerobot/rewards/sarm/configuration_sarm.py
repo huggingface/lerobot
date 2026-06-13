@@ -19,6 +19,7 @@ Paper: https://arxiv.org/abs/2509.25358
 """
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.configs.rewards import RewardModelConfig
@@ -86,6 +87,12 @@ class SARMConfig(RewardModelConfig):
     device: str | None = None
     image_key: str = OBS_IMAGES + ".top"  # Key for image used from the dataset
     state_key: str = OBS_STATE
+    # Optional path to a .npy memmap of CLIP image features, shape (N_total_frames, 512),
+    # indexed by absolute global frame index. When set, the per-step CLIP image-encoder
+    # forward in SARMEncodingProcessorStep is replaced by a memmap lookup, and the video
+    # decode step is short-circuited. When None (default), upstream online-CLIP behavior
+    # is preserved unchanged, and CLIP forward is performed online for each frame.
+    precomputed_image_features_path: str | None = None
 
     # Populated by the processor (video_features, state_features, text_features)
     input_features: dict = field(default_factory=lambda: {})
@@ -174,6 +181,12 @@ class SARMConfig(RewardModelConfig):
             and self.num_dense_stages < 2
         ):
             raise ValueError(f"num_dense_stages must be at least 2, got {self.num_dense_stages}")
+
+        if self.precomputed_image_features_path is not None:
+            if not Path(self.precomputed_image_features_path).is_file():
+                raise FileNotFoundError(
+                    f"precomputed_image_features_path={self.precomputed_image_features_path} not found"
+                )
 
     def get_optimizer_preset(self) -> AdamWConfig:
         """Get default optimizer configuration for SARM training."""
