@@ -192,6 +192,55 @@ lerobot-edit-dataset \
 
 There is also a tool for adding features to a dataset that is not yet covered in `lerobot-edit-dataset`.
 
+## Command-Line Tool: lerobot-check-calibration
+
+In leader/follower teleoperation, `action` stores the leader position and `observation.state` stores the follower position. If the two arms are calibrated differently, every recorded frame carries a systematic offset between them. This is invisible during training — the policy simply learns the biased mapping and the loss looks healthy — but it breaks deployment, because at inference time the policy receives follower observations while it was trained to output leader-shifted targets.
+
+`lerobot-check-calibration` detects this drift after recording, using only data the dataset already contains. It restricts the comparison to "stable" frames (frames where the robot is not moving, so the follower controller has converged) and reports the mean `action - observation.state` per motor:
+
+```bash
+# Check a dataset from the hub (or local cache)
+lerobot-check-calibration --repo-id user/my_dataset
+
+# Check a local dataset and emit machine-readable JSON
+lerobot-check-calibration --repo-id user/my_dataset --root /path/to/dataset --output-format json
+
+# Estimate the Cartesian end-effector impact of the worst joint offset (for a 30 cm arm)
+lerobot-check-calibration --repo-id user/my_dataset --arm-length-cm 30
+```
+
+**Parameters:**
+
+- `vel_threshold`: Max per-joint motion (in action units per step) for a frame to count as stable (default: 0.5)
+- `ok_threshold` / `warn_threshold`: Verdict boundaries on the absolute mean delta (defaults: 1.0 / 3.0)
+- `arm_length_cm`: Optional arm length used to estimate the Cartesian impact of the worst offset (assumes degrees)
+- `output_format`: `table` (human-readable, default) or `json` (machine-readable)
+
+**Reading the output:** a mean delta close to zero means the arms are aligned on that motor. A systematic offset above 1-3 degrees indicates a calibration mismatch — consider re-running `lerobot-calibrate` on both arms before recording more episodes. Grippers usually show a high standard deviation (fast open/close motions); focus on the arm joints.
+
+## Command-Line Tool: lerobot-dataset-quality
+
+For datasets with many episodes, reviewing each one in `lerobot-dataset-viz` is impractical. `lerobot-dataset-quality` computes deterministic per-episode metrics from the recorded actions — duration, trajectory smoothness (jerk), peak velocity, fraction of motionless frames, and end-pose consistency — and flags episodes that are statistical outliers (IQR rule) on any of them. The flagged episodes are a short list of candidates to inspect visually and optionally remove with `lerobot-edit-dataset`:
+
+```bash
+# Analyze a dataset from the hub (or local cache)
+lerobot-dataset-quality --repo-id user/my_dataset
+
+# Analyze a local dataset and emit machine-readable JSON
+lerobot-dataset-quality --repo-id user/my_dataset --root /path/to/dataset --output-format json
+
+# Use a stricter outlier rule and list more episodes
+lerobot-dataset-quality --repo-id user/my_dataset --k-iqr 1.0 --top-bad 20
+```
+
+**Parameters:**
+
+- `top_bad`: How many of the worst episodes to list in the table report (default: 10)
+- `k_iqr`: IQR multiplier for outlier detection; lower is stricter (default: 1.5)
+- `output_format`: `table` (human-readable, default) or `json` (machine-readable)
+
+**Reading the output:** flags name the metric and the direction, e.g. `duration_high` (episode much longer than the rest, often a struggled attempt), `spike_jerk_high` (sharp corrections), `static_high` (long hesitations), `final_state_high` (episode ends in a different pose than the others). The tool is read-only; it prints a ready-to-edit `lerobot-edit-dataset --operation.type delete_episodes` command for the worst episodes, to run only after reviewing them in `lerobot-dataset-viz`.
+
 # Dataset Visualization
 
 ## Online Visualization
