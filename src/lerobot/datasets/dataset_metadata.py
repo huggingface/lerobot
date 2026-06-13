@@ -14,9 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
+import json
 from collections.abc import Callable
 from pathlib import Path
 
+import datasets
+import fsspec
 import numpy as np
 import packaging.version
 import pandas as pd
@@ -32,6 +35,7 @@ from lerobot.utils.utils import flatten_dict
 from .compute_stats import aggregate_stats
 from .feature_utils import create_empty_dataset_info
 from .io_utils import (
+    cast_stats_to_numpy,
     get_file_size_in_mb,
     load_episodes,
     load_info,
@@ -44,6 +48,11 @@ from .io_utils import (
 from .language import DEFAULT_TOOLS, LANGUAGE_COLUMNS
 from .utils import (
     DEFAULT_EPISODES_PATH,
+    DEFAULT_TASKS_PATH,
+    EPISODES_DIR,
+    INFO_PATH,
+    STATS_PATH,
+    DatasetInfo,
     check_version_compatibility,
     get_safe_version,
     has_legacy_hub_download_metadata,
@@ -53,6 +62,14 @@ from .utils import (
 from .video_utils import get_video_info
 
 CODEBASE_VERSION = "v3.0"
+
+
+def is_fsspec_uri(path: str | Path | None) -> bool:
+    return isinstance(path, str) and "://" in path and not path.startswith("file://")
+
+
+def _remote_join(root: str, *parts: str) -> str:
+    return "/".join([root.rstrip("/"), *(part.strip("/") for part in parts)])
 
 
 class LeRobotDatasetMetadata:
@@ -70,6 +87,7 @@ class LeRobotDatasetMetadata:
         revision: str | None = None,
         force_cache_sync: bool = False,
         metadata_buffer_size: int = 10,
+        storage_options: dict | None = None,
     ):
         """Load or download metadata for an existing LeRobot dataset.
 
@@ -94,7 +112,9 @@ class LeRobotDatasetMetadata:
         """
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
-        self._requested_root = Path(root) if root is not None else None
+        self._remote_root = is_fsspec_uri(root)
+        self._storage_options = dict(storage_options or {})
+        self._requested_root = root if self._remote_root else Path(root) if root is not None else None
         self.root = self._requested_root if self._requested_root is not None else HF_LEROBOT_HOME / repo_id
         self._pq_writer = None
         self.latest_episode = None
@@ -109,6 +129,8 @@ class LeRobotDatasetMetadata:
                 raise FileNotFoundError
             self._load_metadata()
         except (FileNotFoundError, NotADirectoryError):
+            if self._remote_root:
+                raise
             if is_valid_version(self.revision):
                 self.revision = get_safe_version(self.repo_id, self.revision)
 
@@ -174,11 +196,48 @@ class LeRobotDatasetMetadata:
             self.finalize()
 
     def _load_metadata(self):
+        if self._remote_root:
+            self._load_remote_metadata()
+            return
+
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks = load_tasks(self.root)
         self.episodes = load_episodes(self.root)
         self.stats = load_stats(self.root)
+
+    def _load_remote_metadata(self):
+        info_path = _remote_join(self.root, INFO_PATH)
+        with fsspec.open(info_path, mode="r", **self._storage_options) as f:
+            self.info = DatasetInfo.from_dict(json.load(f))
+        check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
+
+        tasks_path = _remote_join(self.root, DEFAULT_TASKS_PATH)
+        with fsspec.open(tasks_path, **self._storage_options) as f:
+            self.tasks = pd.read_parquet(f)
+        self.tasks.index.name = "task"
+
+        fs, episodes_pattern = fsspec.core.url_to_fs(
+            _remote_join(self.root, EPISODES_DIR, "*", "*.parquet"),
+            **self._storage_options,
+        )
+        episodes_paths = sorted(fs.unstrip_protocol(path) for path in fs.glob(episodes_pattern))
+        if len(episodes_paths) == 0:
+            raise FileNotFoundError(f"Remote dataset does not contain episode metadata: {self.root}")
+        self.episodes = datasets.Dataset.from_parquet(
+            episodes_paths, storage_options=dict(self._storage_options)
+        )
+        self.episodes = self.episodes.select_columns(
+            [key for key in self.episodes.features if not key.startswith("stats/")]
+        )
+
+        stats_path = _remote_join(self.root, STATS_PATH)
+        fs, stripped_stats_path = fsspec.core.url_to_fs(stats_path, **self._storage_options)
+        if fs.exists(stripped_stats_path):
+            with fsspec.open(stats_path, mode="r", **self._storage_options) as f:
+                self.stats = cast_stats_to_numpy(json.load(f))
+        else:
+            self.stats = None
 
     def ensure_readable(self) -> None:
         """Guarantee metadata is fully loaded for read operations.

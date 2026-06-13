@@ -255,7 +255,7 @@ class VideoDecoderCache:
         with self._lock:
             return str(video_path) in self._cache
 
-    def get_decoder(self, video_path: str):
+    def get_decoder(self, video_path: str, storage_options: dict | None = None):
         """Get a cached decoder or create a new one, evicting LRU if at capacity."""
         if importlib.util.find_spec("torchcodec"):
             from torchcodec.decoders import VideoDecoder
@@ -273,7 +273,7 @@ class VideoDecoderCache:
                 self._cache.move_to_end(video_path)
                 return entry[0]
 
-            file_handle = fsspec.open(video_path).__enter__()
+            file_handle = fsspec.open(video_path, **(storage_options or {})).__enter__()
             try:
                 decoder = VideoDecoder(file_handle, seek_mode="approximate")
             except Exception:
@@ -322,6 +322,7 @@ def decode_video_frames_torchcodec(
     log_loaded_timestamps: bool = False,
     decoder_cache: VideoDecoderCache | None = None,
     return_uint8: bool = False,
+    storage_options: dict | None = None,
 ) -> torch.Tensor:
     """Loads frames associated with the requested timestamps of a video using torchcodec.
 
@@ -331,6 +332,7 @@ def decode_video_frames_torchcodec(
         tolerance_s: Allowed deviation in seconds for frame retrieval.
         log_loaded_timestamps: Whether to log loaded timestamps.
         decoder_cache: Optional decoder cache instance. Uses default if None.
+        storage_options: Extra options passed to fsspec when opening remote video files.
 
     Note: Setting device="cuda" outside the main process, e.g. in data loader workers, will lead to CUDA initialization errors.
 
@@ -344,7 +346,7 @@ def decode_video_frames_torchcodec(
         decoder_cache = _default_decoder_cache
 
     # Use cached decoder instead of creating new one each time
-    decoder = decoder_cache.get_decoder(str(video_path))
+    decoder = decoder_cache.get_decoder(str(video_path), storage_options=storage_options)
 
     loaded_ts = []
     loaded_frames = []
