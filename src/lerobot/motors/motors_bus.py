@@ -1237,6 +1237,9 @@ class SerialMotorsBus(MotorsBusBase):
         """
 
         raw_ids_values = self._get_ids_values_dict(values)
+        if not raw_ids_values:
+            raise ValueError(f"Cannot sync write '{data_name}' with no motor values.")
+
         models = [self._id_to_model(id_) for id_ in raw_ids_values]
         if self._has_different_ctrl_tables:
             assert_same_address(self.model_ctrl_table, models, data_name)
