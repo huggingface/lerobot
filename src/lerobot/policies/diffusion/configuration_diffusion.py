@@ -96,6 +96,16 @@ class DiffusionConfig(PreTrainedConfig):
         do_mask_loss_for_padding: Whether to mask the loss when there are copy-padded actions. See
             `LeRobotDataset` and `load_previous_and_future_frames` for more information. Note, this defaults
             to False as the original Diffusion Policy implementation does the same.
+        use_language_conditioning: Whether to encode the batch `task` language and append it to the global
+            conditioning vector. Defaults to False to preserve the original Diffusion Policy behavior.
+        language_encoder_name: Hugging Face CLIP text model used for task-language embeddings when
+            `use_language_conditioning` is enabled.
+        language_condition_dim: Size of the projected task-language feature appended per observation step.
+        language_encoder_freeze: Whether to freeze the CLIP text encoder and only train the projection.
+        tokenizer_max_length: Maximum token length used by the task tokenizer.
+        tokenizer_padding: Padding strategy passed to `TokenizerProcessorStep`.
+        tokenizer_padding_side: Padding side passed to `TokenizerProcessorStep`.
+        tokenizer_truncation: Whether task strings should be truncated to `tokenizer_max_length`.
     """
 
     # Inputs / output structure.
@@ -152,6 +162,16 @@ class DiffusionConfig(PreTrainedConfig):
     # Loss computation
     do_mask_loss_for_padding: bool = False
 
+    # Language conditioning.
+    use_language_conditioning: bool = False
+    language_encoder_name: str = "openai/clip-vit-base-patch16"
+    language_condition_dim: int = 128
+    language_encoder_freeze: bool = True
+    tokenizer_max_length: int = 77
+    tokenizer_padding: str = "max_length"
+    tokenizer_padding_side: str = "right"
+    tokenizer_truncation: bool = True
+
     # Training presets
     optimizer_lr: float = 1e-4
     optimizer_betas: tuple = (0.95, 0.999)
@@ -199,6 +219,30 @@ class DiffusionConfig(PreTrainedConfig):
                 self.crop_shape = None
         if self.crop_shape is not None and (self.crop_shape[0] <= 0 or self.crop_shape[1] <= 0):
             raise ValueError(f"`crop_shape` must have positive dimensions. Got {self.crop_shape}.")
+
+        if self.use_language_conditioning:
+            if not self.language_encoder_name:
+                raise ValueError("`language_encoder_name` must be set when language conditioning is enabled.")
+            if self.language_condition_dim <= 0:
+                raise ValueError(
+                    f"`language_condition_dim` must be a positive integer. Got {self.language_condition_dim}."
+                )
+            if self.tokenizer_max_length <= 0:
+                raise ValueError(
+                    f"`tokenizer_max_length` must be a positive integer. Got {self.tokenizer_max_length}."
+                )
+            supported_padding = {"max_length", "longest", "do_not_pad"}
+            if self.tokenizer_padding not in supported_padding:
+                raise ValueError(
+                    f"`tokenizer_padding` must be one of {sorted(supported_padding)}. "
+                    f"Got {self.tokenizer_padding}."
+                )
+            supported_padding_sides = {"left", "right"}
+            if self.tokenizer_padding_side not in supported_padding_sides:
+                raise ValueError(
+                    f"`tokenizer_padding_side` must be one of {sorted(supported_padding_sides)}. "
+                    f"Got {self.tokenizer_padding_side}."
+                )
 
         # Check that the horizon size and U-Net downsampling is compatible.
         # U-Net downsamples by 2 with each stage.
