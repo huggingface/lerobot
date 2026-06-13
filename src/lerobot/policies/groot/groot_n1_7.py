@@ -71,7 +71,7 @@ GR00T_N1_7_DEFAULTS: dict[str, Any] = {
     "backbone_embedding_dim": 2048,
     "tune_llm": False,
     "tune_visual": False,
-    "select_layer": 12,
+    "select_layer": 16,
     "reproject_vision": False,
     "use_flash_attention": True,
     "load_bf16": False,
@@ -819,11 +819,14 @@ def _cosmos_reason2_qwen3_vl_config() -> PretrainedConfig:
 
 
 def get_backbone_cls(config: GR00TN17Config):
-    if (
-        config.backbone_model_type == "qwen"
-        or "nvidia/Cosmos-Reason2" in config.model_name
-        or "Qwen/Qwen3-VL" in config.model_name
-    ):
+    if "nvidia/Cosmos-Reason2" in config.model_name or "Qwen/Qwen3-VL" in config.model_name:
+        return Qwen3Backbone
+    if config.backbone_model_type == "qwen":
+        logger.warning(
+            "Unrecognized GR00T N1.7 backbone model name '%s'; assuming a Qwen3-VL-compatible "
+            "backbone because backbone_model_type='qwen'.",
+            config.model_name,
+        )
         return Qwen3Backbone
     raise ValueError(f"Unsupported GR00T N1.7 backbone model: {config.model_name}")
 
@@ -909,7 +912,7 @@ class GR00TN17(PreTrainedModel):
             "trust_remote_code": True
         }
         load_backbone_weights = kwargs.pop("load_backbone_weights", False)
-        for key in ("revision", "cache_dir", "local_files_only", "token"):
+        for key in ("cache_dir", "local_files_only", "token"):
             if key in kwargs:
                 transformers_loading_kwargs.setdefault(key, kwargs[key])
 
