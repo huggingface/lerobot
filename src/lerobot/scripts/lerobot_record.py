@@ -289,7 +289,7 @@ def record_loop(
         # Get action from teleop
         if isinstance(teleop, Teleoperator):
             act = teleop.get_action()
-            if robot.name == "unitree_g1":
+            if teleop.feedback_features:
                 teleop.send_feedback(obs)
 
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
