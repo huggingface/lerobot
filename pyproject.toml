@@ -126,6 +126,9 @@ hardware = [
 viz = [
     "rerun-sdk>=0.24.0,<0.27.0",
 ]
+foxglove = [
+    "foxglove-sdk>=0.24.0,<1.0.0",
+]
 # ── User-facing composite extras (map to CLI scripts) ─────
 # lerobot-record, lerobot-replay, lerobot-calibrate, lerobot-teleoperate, etc.
 core_scripts = ["lerobot[dataset]", "lerobot[hardware]", "lerobot[viz]"]
