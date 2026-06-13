@@ -19,9 +19,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from lerobot.robots.bi_so_follower import BiSOFollower, BiSOFollowerConfig
 from lerobot.robots.so_follower import (
     SO100Follower,
     SO100FollowerConfig,
+    SOFollowerConfig,
 )
 
 
@@ -48,27 +50,42 @@ def _make_bus_mock() -> MagicMock:
     return bus
 
 
+def _configure_bus_mock(bus_mock: MagicMock, *_args, **kwargs) -> MagicMock:
+    bus_mock.motors = kwargs["motors"]
+    motors_order: list[str] = list(bus_mock.motors)
+
+    bus_mock.sync_read.return_value = {motor: idx for idx, motor in enumerate(motors_order, 1)}
+    bus_mock.sync_write.return_value = None
+    bus_mock.write.return_value = None
+    bus_mock.disable_torque.return_value = None
+    bus_mock.enable_torque.return_value = None
+    bus_mock.is_calibrated = True
+    return bus_mock
+
+
+@contextmanager
+def _patch_bus(bus_mock: MagicMock):
+    with patch(
+        "lerobot.robots.so_follower.so_follower.FeetechMotorsBus",
+        side_effect=lambda *args, **kwargs: _configure_bus_mock(bus_mock, *args, **kwargs),
+    ):
+        yield
+
+
+def _write_values(bus_mock: MagicMock, register: str) -> dict[str, int]:
+    return {
+        motor: value
+        for reg, motor, value in (call.args for call in bus_mock.write.call_args_list)
+        if reg == register
+    }
+
+
 @pytest.fixture
 def follower():
     bus_mock = _make_bus_mock()
 
-    def _bus_side_effect(*_args, **kwargs):
-        bus_mock.motors = kwargs["motors"]
-        motors_order: list[str] = list(bus_mock.motors)
-
-        bus_mock.sync_read.return_value = {motor: idx for idx, motor in enumerate(motors_order, 1)}
-        bus_mock.sync_write.return_value = None
-        bus_mock.write.return_value = None
-        bus_mock.disable_torque.return_value = None
-        bus_mock.enable_torque.return_value = None
-        bus_mock.is_calibrated = True
-        return bus_mock
-
     with (
-        patch(
-            "lerobot.robots.so_follower.so_follower.FeetechMotorsBus",
-            side_effect=_bus_side_effect,
-        ),
+        _patch_bus(bus_mock),
         patch.object(SO100Follower, "configure", lambda self: None),
     ):
         cfg = SO100FollowerConfig(port="/dev/null")
@@ -109,3 +126,66 @@ def test_send_action(follower):
 
     goal_pos = {m: (i + 1) * 10 for i, m in enumerate(follower.bus.motors)}
     follower.bus.sync_write.assert_called_once_with("Goal_Position", goal_pos)
+
+
+def test_configure_writes_default_position_p_coefficient():
+    bus_mock = _make_bus_mock()
+
+    with _patch_bus(bus_mock):
+        robot = SO100Follower(SO100FollowerConfig(port="/dev/null"))
+        robot.configure()
+
+    motors = set(robot.bus.motors)
+    assert _write_values(bus_mock, "P_Coefficient") == dict.fromkeys(motors, 32)
+    assert _write_values(bus_mock, "I_Coefficient") == dict.fromkeys(motors, 0)
+    assert _write_values(bus_mock, "D_Coefficient") == dict.fromkeys(motors, 32)
+    assert _write_values(bus_mock, "Max_Torque_Limit") == {"gripper": 500}
+    assert _write_values(bus_mock, "Protection_Current") == {"gripper": 250}
+    assert _write_values(bus_mock, "Overload_Torque") == {"gripper": 25}
+
+
+def test_configure_writes_overridden_position_p_coefficient():
+    bus_mock = _make_bus_mock()
+
+    with _patch_bus(bus_mock):
+        robot = SO100Follower(SO100FollowerConfig(port="/dev/null", position_p_coefficient=16))
+        robot.configure()
+
+    assert _write_values(bus_mock, "P_Coefficient") == dict.fromkeys(robot.bus.motors, 16)
+
+
+@pytest.mark.parametrize("value", [-1, 256, 1.5, "32", True])
+def test_position_p_coefficient_rejects_invalid_values(value):
+    with pytest.raises(ValueError, match="position_p_coefficient must be an integer in \\[0, 255\\]"):
+        SO100FollowerConfig(port="/dev/null", position_p_coefficient=value)
+
+
+@pytest.mark.parametrize("value", [0, 16, 32, 255])
+def test_position_p_coefficient_accepts_valid_values(value):
+    config = SO100FollowerConfig(port="/dev/null", position_p_coefficient=value)
+
+    assert config.position_p_coefficient == value
+
+
+def test_bi_so_follower_preserves_position_p_coefficients():
+    def make_arm(config):
+        arm = MagicMock()
+        arm.config = config
+        arm.cameras = {}
+        return arm
+
+    config = BiSOFollowerConfig(
+        left_arm_config=SOFollowerConfig(port="/dev/left", position_p_coefficient=16),
+        right_arm_config=SOFollowerConfig(port="/dev/right", position_p_coefficient=32),
+    )
+
+    with patch(
+        "lerobot.robots.bi_so_follower.bi_so_follower.SOFollower", side_effect=make_arm
+    ) as follower_cls:
+        BiSOFollower(config)
+
+    left_config = follower_cls.call_args_list[0].args[0]
+    right_config = follower_cls.call_args_list[1].args[0]
+
+    assert left_config.position_p_coefficient == 16
+    assert right_config.position_p_coefficient == 32
