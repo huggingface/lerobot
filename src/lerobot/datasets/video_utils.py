@@ -275,7 +275,7 @@ class VideoDecoderCache:
 
             file_handle = fsspec.open(video_path).__enter__()
             try:
-                decoder = VideoDecoder(file_handle, seek_mode="approximate")
+                decoder = VideoDecoder(file_handle, seek_mode="exact")
             except Exception:
                 file_handle.close()
                 raise
