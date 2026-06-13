@@ -1,0 +1,331 @@
+# Isaac Teleop
+
+Control your robot with NVIDIA [Isaac Teleop](https://github.com/NVIDIA/IsaacTeleop), a
+multi-modal teleoperation framework. Isaac Teleop drives a single `TeleopSession` from a range
+of input devices — XR (VR) controllers, hand tracking, full-body tracking, Manus gloves, foot
+pedals, and more.
+
+In LeRobot, each Isaac Teleop input device is its own `Teleoperator` subclass under
+`lerobot.teleoperators.isaac_teleop`, sharing one session lifecycle (see
+`IsaacTeleopTeleoperator`). The device available today is the **XR controller**
+(`XRController`); Manus gloves and hand/full-body tracking are the natural next devices. This
+guide uses the XR controller.
+
+**In this guide you'll learn:**
+
+- How an Isaac Teleop device drives a robot end‑effector (EE) target
+- How the _clutch_ (squeeze/grip on the XR controller) engages teleoperation without jerking the arm
+- How to run the SO‑101 teleoperation example and tune motion / gripper / IK
+
+## Installation
+
+Isaac Teleop support is the `isaac-teleop` extra. `isaacteleop` lives on the NVIDIA package index
+(not public PyPI) and 1.3.x ships as a pre-release, so point your installer at the NVIDIA index
+and allow pre-releases. Both forms below pull `isaacteleop[cloudxr,retargeters]~=1.3.0` — the
+`cloudxr` extra brings the CloudXR runtime bindings and `retargeters` the retargeter library the
+controller pipeline uses.
+
+### Into an existing LeRobot install
+
+```bash
+uv pip install 'lerobot[isaac-teleop]' \
+  --extra-index-url https://pypi.nvidia.com --prerelease=allow
+```
+
+### From LeRobot source
+
+If you build LeRobot from source (e.g. to work on the teleoperator itself), clone the repo and
+install the extra in editable mode. The NVIDIA index is already configured in `pyproject.toml`
+(`[[tool.uv.index]]`), so the explicit `--extra-index-url` is optional — but `--prerelease=allow`
+is still required because 1.3.x is a pre-release:
+
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+uv pip install -e '.[isaac-teleop]' --prerelease=allow
+```
+
+`uv sync --locked` does **not** install this extra — the private pre-release is intentionally
+left out of the lockfile — so use the explicit `uv pip install -e` above. You can also install
+the underlying package on its own, which is handy when developing against a local Isaac Teleop
+checkout (see [Build Isaac Teleop from source](https://nvidia.github.io/IsaacTeleop/main/getting_started/build_from_source/index.html)):
+
+```bash
+uv pip install 'isaacteleop[cloudxr,retargeters]~=1.3.0' \
+  --extra-index-url https://pypi.nvidia.com --prerelease=allow
+```
+
+<Tip warning={true}>
+
+`isaacteleop` is distributed by NVIDIA and is **not** on public PyPI — `pip install
+lerobot[isaac-teleop]` without the NVIDIA index will fail. Because the package is private and
+pre-release, the `isaac-teleop` extra is intentionally not pinned in the public lockfile.
+
+</Tip>
+
+### Set up CloudXR and connect a headset
+
+Isaac Teleop streams the headset to your machine over **NVIDIA CloudXR**, which provides the
+OpenXR runtime the session connects to. By default LeTeleop **auto-launches the CloudXR runtime
+for you** when you call `teleop_device.connect()` — you no longer have to run `python -m
+isaacteleop.cloudxr` and `source cloudxr.env` in a separate shell. All you need is a supported
+headset connected and the CloudXR firewall ports open. Follow the Isaac Teleop
+[Quick Start](https://nvidia.github.io/IsaacTeleop/main/getting_started/quick_start.html) for the
+headset-pairing and firewall details.
+
+**First run (EULA).** The very first launch must accept the NVIDIA CloudXR EULA. The auto-launch
+prompts for it **on stdin**, so on a headless machine it will hang waiting for input. Bootstrap
+the EULA once, interactively, with:
+
+```bash
+python -m isaacteleop.cloudxr --accept-eula   # one-time: accept the CloudXR EULA
+```
+
+After that, `connect()` launches the runtime non-interactively. The launch **blocks for ~30s**
+while the runtime comes up.
+
+**Configuration.** Two fields on `IsaacTeleopConfig` (shared by every device) control this:
+
+- `auto_launch_cloudxr` (default `True`) — whether `connect()` starts the runtime. Set `False`
+  when CloudXR is already running externally.
+- `cloudxr_env_file` (default `None`) — an optional CloudXR device-profile `.env` selecting the
+  headset transport (e.g. an Apple Vision Pro profile). This is launcher **input**; it is not the
+  `~/.cloudxr/run/cloudxr.env` **output** file the old manual flow told you to `source`. `None`
+  keeps the default auto-WebRTC profile.
+
+**Opting out.** To skip the auto-launch (CloudXR already running), either set
+`auto_launch_cloudxr=False` or export:
+
+```bash
+export LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1
+```
+
+The **env var takes precedence over the config field**: if `LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1` is
+set, the auto-launch is skipped even when `auto_launch_cloudxr=True`. This variable is
+**independent** of Isaac Lab's `ISAACLAB_CXR_SKIP_AUTOLAUNCH` — setting one does not affect the
+other.
+
+**One teleoperator per process.** The CloudXR runtime configures the environment process-wide (a
+singleton), so run a single Isaac Teleop teleoperator per process.
+
+**Shutting down.** Always call `teleop_device.disconnect()` on exit — including on Ctrl-C. Wrap
+your teleoperation loop in `try/finally` and call `disconnect()` in the `finally`. This tears down
+the OpenXR session **before** the CloudXR runtime, which is the required order; the launcher's
+`atexit` hook only reaps the runtime and does not run the session's `__exit__`, so without an
+explicit `disconnect()` an interrupted run shuts down in the wrong order.
+
+```python
+teleop_device.connect()
+try:
+    while True:
+        action = teleop_device.get_action()
+        # ... drive the robot ...
+finally:
+    teleop_device.disconnect()
+```
+
+See [System Requirements](https://nvidia.github.io/IsaacTeleop/main/references/requirements.html)
+for supported OS / GPU / CloudXR versions and headsets.
+
+## How it works
+
+The XR controller is one Isaac Teleop **input** device: it produces an absolute EE pose plus a
+gripper command, which then flows through LeRobot's existing closed‑loop Cartesian IK pipeline —
+the same one used by the phone teleoperator. The only device‑specific piece is the first two
+stages (`XRController` + `MapXRControllerActionToRobotAction`); everything downstream is shared, and a
+future device (e.g. Manus gloves) would swap in its own `teleop_<device>.py` + processor while
+reusing the rest.
+
+`XRController._build_pipeline` wires Isaac Teleop's `ControllersSource`, `Se3AbsRetargeter`, and
+`GripperRetargeter` into the session graph; see the Isaac Teleop
+[Retargeting interface](https://nvidia.github.io/IsaacTeleop/main/references/retargeting/index.html)
+and [architecture overview](https://nvidia.github.io/IsaacTeleop/main/overview/architecture.html)
+for how those source nodes and retargeters compose.
+
+```text
+  VR controller (OpenXR)
+        │
+        ▼
+  XRController.get_action()                  ─┐  device-specific (Isaac Teleop)
+        │  ee_pos / ee_quat / gripper / enabled │  • TeleopSession; squeeze → enabled
+        ▼                                       │  • trigger → gripper state
+  MapXRControllerActionToRobotAction         ─┘  • OpenXR → robot frame remap,
+        │  target_* / gripper_vel / enabled         origin-relative deltas, re-capture
+        ▼                                           origin on the `enabled` rising edge
+  EEReferenceAndDelta              ── latch FK reference (from measured joints)
+        │                             on the SAME `enabled` rising edge
+        ▼
+  EEBoundsAndSafety                ── workspace + per-frame step clamp
+        │
+        ▼
+  GripperVelocityToJoint(discrete_gripper=True)
+        │
+        ▼
+  InverseKinematicsEEToJoints      ── closed-loop, position-priority Placo IK
+        │
+        ▼
+  SO-101 follower joint targets
+```
+
+### The clutch: two latches, one signal
+
+This is the key design point. The clutch is **split** across a module boundary, and both halves
+re‑arm on the _same_ `enabled` rising edge:
+
+- **Latch A — controller origin** (`MapXRControllerActionToRobotAction`): the controller pose at engage.
+- **Latch B — EE reference** (`EEReferenceAndDelta`): the robot's current EE pose, computed by
+  forward kinematics on the **measured joints**, at engage.
+
+Because both latch on the same frame, the commanded delta on the engage frame is exactly zero,
+so the arm stays put — no teleport on engage, and no jump after an episode reset (both halves
+`reset()` together). This mirrors how Isaac Lab's `SO101ClutchRetargeter` latches the live EE
+pose on engage, but realized with the real robot's measured‑joint FK as the reference.
+
+## Controls
+
+- **Squeeze / grip** — the **clutch** (deadman). Hold it past `clutch_threshold` to engage
+  teleoperation; release to pause. Each engage re‑captures the origin, so you can reposition
+  your hand while paused and re‑engage without the arm jumping (index/clutch style).
+- **Trigger** — the **gripper**. Mapped to a binary open/close state and consumed downstream as
+  a discrete command (`GripperVelocityToJoint(discrete_gripper=True)`), so a held trigger does
+  not ramp the gripper to saturation.
+
+## Get started
+
+### Step 1: Create the teleoperator
+
+```python
+from lerobot.teleoperators.isaac_teleop import XRController, XRControllerConfig
+
+teleop_config = XRControllerConfig(
+    hand_side="right",      # "left" or "right" controller
+    clutch_threshold=0.5,   # squeeze value above which the clutch engages
+)
+teleop_device = XRController(teleop_config)
+```
+
+`XRController.get_action()` returns `ee_pos` (3,), `ee_quat` (x, y, z, w), a scalar `gripper`
+state, and the boolean `enabled` clutch.
+
+### Step 2: Connect
+
+Calling `teleop_device.connect()` first auto-launches the CloudXR runtime (unless you opted out —
+see [Set up CloudXR and connect a headset](#set-up-cloudxr-and-connect-a-headset); this blocks for
+~30s and on the first run prompts for the EULA on stdin), then starts the Isaac Teleop
+[`TeleopSession`](https://nvidia.github.io/IsaacTeleop/main/getting_started/teleop_session.html)
+(opens the OpenXR session and discovers the controllers). XR controllers are self‑calibrating, so
+there is no manual calibration step — the clutch handles re‑centering each time you engage. Pair
+`connect()` with a `try/finally` that calls `disconnect()` so the session tears down before the
+runtime on exit/Ctrl-C.
+
+### Step 3: Run the example
+
+The example assumes you configured your robot (SO‑101 follower) and set the correct serial port.
+
+You also need the **robot URDF (and its meshes) in the example folder**. The example loads
+`./SO101/so101_new_calib.urdf` relative to its own directory, so run the example from there. A
+helper script downloads the URDF and the meshes it references from the
+[SO‑ARM100 repo](https://github.com/TheRobotStudio/SO-ARM100/tree/main/Simulation/SO101) into
+`examples/isaac_teleop_to_so101/SO101/`:
+
+```bash
+cd examples/isaac_teleop_to_so101
+python download_assets.py    # fetches SO101/so101_new_calib.urdf + assets/*.stl
+python teleoperate.py
+```
+
+`download_assets.py` uses only the standard library (no extra dependencies) and skips files
+already present; pass `--force` to re‑download. If you prefer, you can instead copy the `SO101`
+folder from the SO‑ARM100 repo into `examples/isaac_teleop_to_so101/` by hand — the script just
+automates that, fetching only the meshes the URDF actually references.
+
+Then, in your headset: squeeze and hold the grip to engage, move the controller to drive the
+arm, and use the trigger to open/close the gripper.
+
+## Important pipeline steps and options
+
+- `MapXRControllerActionToRobotAction` remaps the controller pose from the OpenXR frame
+  (X=Right, Y=Up, Z=Backward) to the robot frame (X=Forward, Y=Left, Z=Up), then emits
+  origin‑relative target deltas in **real metres** plus the gripper command:
+
+  ```python
+  action["enabled"] = enabled
+  action["target_x"], action["target_y"], action["target_z"] = delta_pos   # metres, 0 when disengaged
+  action["target_wx"], action["target_wy"], action["target_wz"] = delta_rotvec
+  action["gripper_vel"] = gripper_class   # key name fixed by the downstream contract;
+                                          # value is a discrete class index (0=close, 2=open)
+  ```
+
+- `EEReferenceAndDelta` latches the FK reference EE pose on the `enabled` rising edge and adds
+  the deltas to produce an absolute target. Because the XR processor emits metres,
+  `end_effector_step_sizes` acts as a pure motion gain — set it to `1.0` for 1:1 motion and tune
+  to taste:
+
+  ```python
+  EEReferenceAndDelta(
+      kinematics=kinematics_solver,
+      end_effector_step_sizes={"x": 1.0, "y": 1.0, "z": 1.0},
+      motor_names=list(robot.bus.motors.keys()),
+      use_latched_reference=True,
+  )
+  ```
+
+- `EEBoundsAndSafety` clamps the EE to a workspace and rate‑limits per‑frame jumps. With a 1:1
+  gain the per‑frame clamp (`max_ee_step_m`) only trips if the controller moves faster than
+  `max_ee_step_m * FPS` (~3 m/s at 30 FPS), which normal teleoperation never reaches.
+
+  ```python
+  EEBoundsAndSafety(
+      end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+      max_ee_step_m=0.10,
+  )
+  ```
+
+- `GripperVelocityToJoint(discrete_gripper=True)` turns the discrete open/close command into an
+  absolute gripper position, clipped to the joint bounds (so a held state cannot run away).
+
+- `InverseKinematicsEEToJoints(initial_guess_current_joints=True)` solves closed‑loop Placo IK
+  seeded from the measured joints each frame. SO‑101 is a 5‑DOF arm and the IK is
+  position‑dominant (orientation is weighted very low), so the controller orientation has a
+  limited effect — primarily wrist roll.
+
+See the [Processors for Robots and Teleoperators](./processors_robots_teleop) guide for more on
+adapting the pipeline to other robots.
+
+## Troubleshooting
+
+- **`ModuleNotFoundError: isaacteleop`** — the `isaac-teleop` extra was installed without the
+  NVIDIA index. Re-run the install command at the top of this guide, with `--extra-index-url
+https://pypi.nvidia.com --prerelease=allow`.
+- **No controllers found** — make sure the CloudXR runtime is running, the firewall ports are
+  whitelisted, and the headset is connected (see
+  [Set up CloudXR and connect a headset](#set-up-cloudxr-and-connect-a-headset) and the Isaac
+  Teleop [Quick Start](https://nvidia.github.io/IsaacTeleop/main/getting_started/quick_start.html)).
+- **CloudXR auto-launch failed** — `connect()` raises a `RuntimeError` if the runtime does not
+  come up within its startup timeout. Check the launcher logs under `~/.cloudxr/logs`. Common
+  causes: the EULA was never accepted (run `python -m isaacteleop.cloudxr --accept-eula` once,
+  interactively — the auto-launch prompts on stdin and hangs headless), or the runtime is already
+  running externally (set `LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1` or `auto_launch_cloudxr=False` to
+  skip the auto-launch).
+- **Arm does not move** — the clutch is a deadman: you must hold the squeeze/grip past
+  `clutch_threshold`. Lower the threshold if your controller's squeeze is reported softly.
+- **Motion feels misaligned** — confirm the headset/play space orientation; the OpenXR→robot
+  remap assumes the standard OpenXR axis convention.
+
+## Learn more
+
+NVIDIA Isaac Teleop documentation ([docs home](https://nvidia.github.io/IsaacTeleop/),
+[GitHub](https://github.com/NVIDIA/IsaacTeleop)):
+
+- [Quick Start](https://nvidia.github.io/IsaacTeleop/main/getting_started/quick_start.html) —
+  install, run the CloudXR server, connect a headset, run a teleop example.
+- [TeleopSession](https://nvidia.github.io/IsaacTeleop/main/getting_started/teleop_session.html) —
+  the session API `XRController` wraps.
+- [Retargeting interface](https://nvidia.github.io/IsaacTeleop/main/references/retargeting/index.html)
+  and [architecture overview](https://nvidia.github.io/IsaacTeleop/main/overview/architecture.html) —
+  how source nodes and retargeters compose into a pipeline.
+- [Build from source](https://nvidia.github.io/IsaacTeleop/main/getting_started/build_from_source/index.html) —
+  build `isaacteleop` from a local checkout.
+- [System Requirements](https://nvidia.github.io/IsaacTeleop/main/references/requirements.html) and
+  the [CloudXR SDK docs](https://docs.nvidia.com/cloudxr-sdk) — supported platforms, GPUs,
+  CloudXR/OpenXR runtime versions, and headsets.

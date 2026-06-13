@@ -192,6 +192,16 @@ intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54,<2.57.0 ; sys_platform == 'darwin'",
 ]
+# isaacteleop is published on the NVIDIA index (https://pypi.nvidia.com), not
+# public PyPI, and 1.3.x ships as a pre-release. `uv sync --locked` cannot
+# resolve it in a public environment, so uv.lock is intentionally NOT
+# regenerated for this extra. The NVIDIA index is configured (explicit) in
+# [[tool.uv.index]] below; install allowing pre-releases, e.g.:
+#   uv pip install 'lerobot[isaac-teleop]' \
+#       --extra-index-url https://pypi.nvidia.com --prerelease=allow
+# The [cloudxr,retargeters] isaacteleop extras pull the CloudXR runtime bindings
+# and the retargeter library the XR controller pipeline uses.
+isaac-teleop = ["isaacteleop[cloudxr,retargeters]~=1.3.0", "lerobot[kinematics]", "lerobot[scipy-dep]"]
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0", "lerobot[scipy-dep]"]
 
 # Policies
@@ -352,9 +362,18 @@ name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
+# isaacteleop (the `isaac-teleop` extra) ships on the NVIDIA index as a
+# pre-release. Marked explicit so it is only used for packages mapped to it in
+# [tool.uv.sources]; installs still need `--prerelease=allow` (see the extra).
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
+explicit = true
+
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
+isaacteleop = [{ index = "nvidia" }]
 
 [tool.setuptools.package-data]
 lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt"]
