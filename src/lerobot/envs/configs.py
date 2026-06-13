@@ -357,6 +357,7 @@ class LiberoEnv(EnvConfig):
         }
     )
     control_mode: str = "relative"  # or "absolute"
+    binarize_gripper: bool | None = None
 
     def __post_init__(self):
         if self.obs_type == "pixels":
@@ -442,12 +443,21 @@ class LiberoEnv(EnvConfig):
         )
 
     def get_env_processors(self, policy_cfg: Any | None = None):
-        max_state_dim = getattr(policy_cfg, "max_state_dim", None) if getattr(policy_cfg, "type", None) == "evo1" else None
+        is_evo1 = getattr(policy_cfg, "type", None) == "evo1"
+        max_state_dim = getattr(policy_cfg, "max_state_dim", None) if is_evo1 else None
         action_feature = self.features.get(ACTION)
         action_dim = int(action_feature.shape[0]) if action_feature is not None else 7
+        binarize_gripper = is_evo1 if self.binarize_gripper is None else self.binarize_gripper
         return (
             PolicyProcessorPipeline(steps=[LiberoProcessorStep(max_state_dim=max_state_dim)]),
-            PolicyProcessorPipeline(steps=[LiberoActionProcessorStep(action_dim=action_dim)]),
+            PolicyProcessorPipeline(
+                steps=[
+                    LiberoActionProcessorStep(
+                        action_dim=action_dim,
+                        binarize_gripper=binarize_gripper,
+                    )
+                ]
+            ),
         )
 
 

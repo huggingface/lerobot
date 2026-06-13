@@ -173,13 +173,42 @@ class LiberoActionProcessorStep(ActionProcessorStep):
     """Slices padded policy actions back to the executable LIBERO action space."""
 
     action_dim: int = 7
+    binarize_gripper: bool = False
+    gripper_index: int = 6
+    gripper_threshold: float = 0.5
+    gripper_below_threshold_value: float = 1.0
+    gripper_above_threshold_value: float = -1.0
 
     def action(self, action):
         if action.shape[-1] < self.action_dim:
             raise ValueError(
                 f"LIBERO action has {action.shape[-1]} dims, which is smaller than action_dim={self.action_dim}."
             )
-        return action[..., : self.action_dim]
+        action = action[..., : self.action_dim]
+        if not self.binarize_gripper:
+            return action
+
+        if not 0 <= self.gripper_index < self.action_dim:
+            raise ValueError(
+                f"gripper_index={self.gripper_index} must be within sliced action_dim={self.action_dim}."
+            )
+        action = action.clone()
+        below = torch.as_tensor(
+            self.gripper_below_threshold_value,
+            dtype=action.dtype,
+            device=action.device,
+        )
+        above = torch.as_tensor(
+            self.gripper_above_threshold_value,
+            dtype=action.dtype,
+            device=action.device,
+        )
+        action[..., self.gripper_index] = torch.where(
+            action[..., self.gripper_index] > self.gripper_threshold,
+            above,
+            below,
+        )
+        return action
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -190,7 +219,14 @@ class LiberoActionProcessorStep(ActionProcessorStep):
         return new_features
 
     def get_config(self) -> dict:
-        return {"action_dim": self.action_dim}
+        return {
+            "action_dim": self.action_dim,
+            "binarize_gripper": self.binarize_gripper,
+            "gripper_index": self.gripper_index,
+            "gripper_threshold": self.gripper_threshold,
+            "gripper_below_threshold_value": self.gripper_below_threshold_value,
+            "gripper_above_threshold_value": self.gripper_above_threshold_value,
+        }
 
 
 @dataclass

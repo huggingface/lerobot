@@ -99,12 +99,18 @@ def test_libero_evo1_processors_use_padded_state_and_env_action_dim():
     assert pre.steps[0].max_state_dim == 24
     assert isinstance(post.steps[0], LiberoActionProcessorStep)
     assert post.steps[0].action_dim == cfg.features["action"].shape[0] == 7
+    assert post.steps[0].binarize_gripper is True
 
     class _OtherConfig:
         type = "other"
 
-    pre_other, _ = make_env_pre_post_processors(cfg, policy_cfg=_OtherConfig())
+    pre_other, post_other = make_env_pre_post_processors(cfg, policy_cfg=_OtherConfig())
     assert pre_other.steps[0].max_state_dim is None
+    assert post_other.steps[0].binarize_gripper is False
+
+    cfg.binarize_gripper = False
+    _, post_disabled = make_env_pre_post_processors(cfg, policy_cfg=_Evo1Config())
+    assert post_disabled.steps[0].binarize_gripper is False
 
 
 def test_libero_processor_pads_state_to_max_dim():
@@ -136,6 +142,24 @@ def test_libero_action_processor_slices_padded_action():
 
     with pytest.raises(ValueError, match="smaller than action_dim=7"):
         step.action(torch.zeros(2, 6))
+
+
+def test_libero_action_processor_can_binarize_gripper():
+    step = LiberoActionProcessorStep(action_dim=7, binarize_gripper=True)
+    action = torch.tensor(
+        [
+            [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 0.5, 7.0],
+            [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 0.6, 7.0],
+        ],
+        dtype=torch.float32,
+    )
+
+    processed = step.action(action)
+
+    assert processed.shape == (2, 7)
+    assert torch.equal(processed[:, :6], action[:, :6])
+    assert torch.equal(processed[:, 6], torch.tensor([1.0, -1.0]))
+    assert torch.equal(action[:, 6], torch.tensor([0.5, 0.6]))
 
 
 def test_base_create_envs():

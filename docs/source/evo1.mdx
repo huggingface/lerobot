@@ -159,14 +159,18 @@ pixel embeddings, VLM fused tokens, normalized actions, and denormalized actions
 (`max_abs_diff=0.0`).
 
 The published checkpoint expects the raw LIBERO camera feature names
-`observation.images.agentview_image` and `observation.images.robot0_eye_in_hand_image`. To run the converted
-checkpoint with LeRobot LIBERO evaluation for the same one-episode-per-task setting, keep those camera names
-instead of the default `image`/`image2` mapping:
+`observation.images.agentview_image` and `observation.images.robot0_eye_in_hand_image`. The official EVO1 LIBERO
+rollout protocol also replans every 14 actions and binarizes the gripper command before stepping the simulator.
+The LIBERO environment postprocessor applies the gripper binarization automatically for EVO1 policies. To run the
+converted checkpoint with LeRobot LIBERO evaluation for the same one-episode-per-task setting, keep the raw camera
+names instead of the default `image`/`image2` mapping and override `policy.n_action_steps` to 14:
 
 ```bash
 lerobot-eval \
   --policy.path=javadcc/evo1-libero-lerobot \
+  --policy.vlm_model_name=OpenGVLab/InternVL3-1B \
   --policy.device=cuda \
+  --policy.n_action_steps=14 \
   --env.type=libero \
   --env.task=libero_object \
   --env.camera_name_mapping="{agentview_image: agentview_image, robot0_eye_in_hand_image: robot0_eye_in_hand_image}" \
