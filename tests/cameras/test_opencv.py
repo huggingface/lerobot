@@ -20,13 +20,13 @@
 # ```
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cv2
 import numpy as np
 import pytest
 
-from lerobot.cameras.configs import Cv2Rotation
+from lerobot.cameras.configs import Cv2Backends, Cv2Rotation
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -266,6 +266,53 @@ def test_fourcc_with_camera():
         # Read should work normally
         img = camera.read()
         assert isinstance(img, np.ndarray)
+
+
+@pytest.mark.skipif(
+    __import__("platform").system() != "Linux",
+    reason="V4L2 auto-selection only applies on Linux",
+)
+def test_linux_v4l2_auto_selection():
+    """On Linux, /dev/video* paths with backend=ANY should auto-select V4L2."""
+    config = OpenCVCameraConfig(
+        index_or_path="/dev/video0",
+        backend=Cv2Backends.ANY,
+        warmup_s=0,
+    )
+    camera = OpenCVCamera(config)
+
+    mock_vc = MagicMock(spec=cv2.VideoCapture)
+    mock_vc.isOpened.return_value = False
+
+    module_path = OpenCVCamera.__module__
+    with patch(f"{module_path}.cv2.VideoCapture", return_value=mock_vc) as mock_cls:
+        with pytest.raises(ConnectionError):
+            camera.connect(warmup=False)
+        # Verify V4L2 (200) was passed instead of ANY (0)
+        mock_cls.assert_called_once_with("/dev/video0", Cv2Backends.V4L2)
+
+
+@pytest.mark.skipif(
+    __import__("platform").system() != "Linux",
+    reason="V4L2 auto-selection only applies on Linux",
+)
+def test_linux_explicit_backend_not_overridden():
+    """On Linux, explicit backend=V4L2 should not be changed."""
+    config = OpenCVCameraConfig(
+        index_or_path="/dev/video0",
+        backend=Cv2Backends.V4L2,
+        warmup_s=0,
+    )
+    camera = OpenCVCamera(config)
+
+    mock_vc = MagicMock(spec=cv2.VideoCapture)
+    mock_vc.isOpened.return_value = False
+
+    module_path = OpenCVCamera.__module__
+    with patch(f"{module_path}.cv2.VideoCapture", return_value=mock_vc) as mock_cls:
+        with pytest.raises(ConnectionError):
+            camera.connect(warmup=False)
+        mock_cls.assert_called_once_with("/dev/video0", Cv2Backends.V4L2)
 
 
 @pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)
