@@ -26,6 +26,9 @@ from .io_utils import load_image_as_numpy
 
 DEFAULT_QUANTILES = [0.01, 0.10, 0.50, 0.90, 0.99]
 
+# Emitted at most once per process: see `_warn_quantile_aggregation_is_approximate`.
+_QUANTILE_AGGREGATION_WARNED = False
+
 
 class RunningQuantileStats:
     """
@@ -130,32 +133,98 @@ class RunningQuantileStats:
 
         return stats
 
+    @staticmethod
+    def _make_bin_edges(low: float, high: float, num_bins: int) -> np.ndarray:
+        """Build ``num_bins + 1`` edges spanning ``[low, high]`` with tiny padding.
+
+        The padding guarantees strictly increasing edges even for a constant
+        feature (``low == high``), so downstream histogram/quantile math is safe.
+        """
+        span = high - low
+        padding = span * 1e-10 if span > 0 else 1e-10
+        return np.linspace(low - padding, high + padding, num_bins + 1)
+
+    @staticmethod
+    def _rebin_histogram(hist: np.ndarray, old_edges: np.ndarray, new_edges: np.ndarray) -> np.ndarray:
+        """Redistribute ``hist`` counts from ``old_edges`` onto ``new_edges``.
+
+        Each old bin's count is assigned to the new bin that contains the old
+        bin's center. This is the mapping used both when a single histogram's
+        range expands and when two histograms are merged.
+        """
+        num_bins = len(new_edges) - 1
+        old_centers = (old_edges[:-1] + old_edges[1:]) / 2
+        bin_idx = np.searchsorted(new_edges, old_centers) - 1
+        np.clip(bin_idx, 0, num_bins - 1, out=bin_idx)
+        new_hist = np.zeros(num_bins)
+        np.add.at(new_hist, bin_idx, hist)
+        return new_hist
+
     def _adjust_histograms(self):
         """Adjust histograms when min or max changes."""
         for i in range(len(self._histograms)):
-            old_edges = self._bin_edges[i]
-            old_hist = self._histograms[i]
+            new_edges = self._make_bin_edges(self._min[i], self._max[i], self._num_quantile_bins)
+            self._histograms[i] = self._rebin_histogram(self._histograms[i], self._bin_edges[i], new_edges)
+            self._bin_edges[i] = new_edges
 
-            # Create new edges with small padding to ensure range coverage
-            padding = (self._max[i] - self._min[i]) * 1e-10
-            new_edges = np.linspace(
-                self._min[i] - padding, self._max[i] + padding, self._num_quantile_bins + 1
+    def merge(self, other: RunningQuantileStats) -> RunningQuantileStats:
+        """Merge another ``RunningQuantileStats`` into this one, in place.
+
+        Combines counts, means, and per-dimension histograms so that the merged
+        object yields the same statistics as if every batch seen by ``other``
+        had instead been passed to ``self.update``. Crucially, the resulting
+        quantiles are *global* over the union of all data (accurate to histogram
+        resolution) -- not a count-weighted average of the two objects'
+        quantiles, which biases distribution tails inward.
+
+        ``mean``/``std``/``min``/``max`` remain exact; only quantiles carry the
+        usual histogram discretization error. Returns ``self`` for chaining.
+        """
+        if other._count == 0:
+            return self
+        if self._count == 0:
+            self._count = other._count
+            self._mean = other._mean.copy()
+            self._mean_of_squares = other._mean_of_squares.copy()
+            self._min = other._min.copy()
+            self._max = other._max.copy()
+            self._histograms = [h.copy() for h in other._histograms]
+            self._bin_edges = [e.copy() for e in other._bin_edges]
+            return self
+
+        if self._num_quantile_bins != other._num_quantile_bins:
+            raise ValueError(
+                "Cannot merge RunningQuantileStats with different num_quantile_bins "
+                f"({self._num_quantile_bins} != {other._num_quantile_bins})."
+            )
+        if self._mean.size != other._mean.size:
+            raise ValueError(
+                "Cannot merge RunningQuantileStats with different vector lengths "
+                f"({self._mean.size} != {other._mean.size})."
             )
 
-            # Redistribute existing histogram counts to new bins
-            # We need to map each old bin center to the new bins
-            old_centers = (old_edges[:-1] + old_edges[1:]) / 2
-            new_hist = np.zeros(self._num_quantile_bins)
+        total_count = self._count + other._count
+        # Mean and mean-of-squares are exact count-weighted averages of the two parts.
+        self._mean = (self._mean * self._count + other._mean * other._count) / total_count
+        self._mean_of_squares = (
+            self._mean_of_squares * self._count + other._mean_of_squares * other._count
+        ) / total_count
 
-            for old_center, count in zip(old_centers, old_hist, strict=False):
-                if count > 0:
-                    # Find which new bin this old center belongs to
-                    bin_idx = np.searchsorted(new_edges, old_center) - 1
-                    bin_idx = max(0, min(bin_idx, self._num_quantile_bins - 1))
-                    new_hist[bin_idx] += count
+        new_min = np.minimum(self._min, other._min)
+        new_max = np.maximum(self._max, other._max)
 
-            self._histograms[i] = new_hist
+        # Re-bin both histograms onto the union range, then sum the counts.
+        for i in range(len(self._histograms)):
+            new_edges = self._make_bin_edges(new_min[i], new_max[i], self._num_quantile_bins)
+            self._histograms[i] = self._rebin_histogram(
+                self._histograms[i], self._bin_edges[i], new_edges
+            ) + self._rebin_histogram(other._histograms[i], other._bin_edges[i], new_edges)
             self._bin_edges[i] = new_edges
+
+        self._min = new_min
+        self._max = new_max
+        self._count = total_count
+        return self
 
     def _update_histograms(self, batch: np.ndarray) -> None:
         """Update histograms with new vectors."""
@@ -469,18 +538,88 @@ def get_feature_stats(
         quantile_list = DEFAULT_QUANTILES
 
     original_shape = array.shape
-    reshaped, sample_count = _prepare_array_for_stats(array, axis)
+    running_stats, sample_count = compute_feature_running_stats(array, axis, quantile_list=quantile_list)
 
-    if reshaped.shape[0] < 2:
+    if running_stats is None:
+        reshaped, _ = _prepare_array_for_stats(array, axis)
         stats = _compute_basic_stats(reshaped, sample_count, quantile_list)
-    else:
-        running_stats = RunningQuantileStats()
-        running_stats.update(reshaped)
-        stats = running_stats.get_statistics()
-        stats["count"] = np.array([sample_count])
+        return _reshape_stats_by_axis(stats, axis, keepdims, original_shape)
 
-    stats = _reshape_stats_by_axis(stats, axis, keepdims, original_shape)
-    return stats
+    return feature_stats_from_running(running_stats, sample_count, axis, keepdims, original_shape)
+
+
+def compute_feature_running_stats(
+    array: np.ndarray,
+    axis: int | tuple[int, ...] | None,
+    quantile_list: list[float] | None = None,
+) -> tuple[RunningQuantileStats | None, int]:
+    """Build a :class:`RunningQuantileStats` accumulator for one feature array.
+
+    The array is reshaped according to ``axis`` (same conventions as
+    :func:`get_feature_stats`) and fed to a single accumulator. The returned
+    accumulator can be merged with others from different shards/episodes via
+    :meth:`RunningQuantileStats.merge` to obtain *global* statistics in a
+    single streaming pass, without holding all data in memory at once.
+
+    Args:
+        array: Input data array.
+        axis: Axis or axes along which to reduce (see :func:`get_feature_stats`).
+        quantile_list: Quantiles to track. Defaults to :data:`DEFAULT_QUANTILES`.
+
+    Returns:
+        ``(running_stats, sample_count)``. ``running_stats`` is ``None`` when
+        fewer than 2 vectors are available (too few for histogram quantiles);
+        callers should fall back to :func:`_compute_basic_stats` in that case.
+    """
+    if quantile_list is None:
+        quantile_list = DEFAULT_QUANTILES
+
+    reshaped, sample_count = _prepare_array_for_stats(array, axis)
+    if reshaped.shape[0] < 2:
+        return None, sample_count
+
+    running_stats = RunningQuantileStats(quantile_list=quantile_list)
+    running_stats.update(reshaped)
+    return running_stats, sample_count
+
+
+def feature_stats_from_running(
+    running_stats: RunningQuantileStats,
+    sample_count: int,
+    axis: int | tuple[int, ...] | None,
+    keepdims: bool,
+    original_shape: tuple[int, ...],
+) -> dict[str, np.ndarray]:
+    """Finalize a (possibly merged) accumulator into a reshaped stats dict.
+
+    Produces the same output layout as :func:`get_feature_stats`. ``count`` is
+    overridden with ``sample_count`` (number of samples, e.g. frames) rather
+    than the accumulator's internal element count, matching the existing
+    convention used throughout the stats pipeline.
+    """
+    stats = running_stats.get_statistics()
+    stats["count"] = np.array([sample_count])
+    return _reshape_stats_by_axis(stats, axis, keepdims, original_shape)
+
+
+def aggregate_quantile_stats(running_stats_list: list[RunningQuantileStats]) -> RunningQuantileStats:
+    """Merge per-shard accumulators into one with correct global quantiles.
+
+    This is the statistically correct counterpart to the quantile handling in
+    :func:`aggregate_feature_stats`: instead of averaging already-computed
+    per-shard quantiles (which biases tails), it merges the underlying
+    histograms so the result reflects the true global distribution.
+    """
+    if not running_stats_list:
+        raise ValueError("Cannot aggregate an empty list of RunningQuantileStats.")
+
+    merged = RunningQuantileStats(
+        quantile_list=running_stats_list[0]._quantile_list,
+        num_quantile_bins=running_stats_list[0]._num_quantile_bins,
+    )
+    for running_stats in running_stats_list:
+        merged.merge(running_stats)
+    return merged
 
 
 def compute_episode_stats(
@@ -602,13 +741,39 @@ def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, d
     if stats_ft_list:
         quantile_keys = [k for k in stats_ft_list[0] if k.startswith("q") and k[1:].isdigit()]
 
+        if quantile_keys and len(stats_ft_list) > 1:
+            _warn_quantile_aggregation_is_approximate()
+
         for q_key in quantile_keys:
             if all(q_key in s for s in stats_ft_list):
+                # WARNING: this count-weighted average of per-shard quantiles is only an
+                # APPROXIMATION. The mean of per-episode q01 values is not the global q01;
+                # averaging pulls the distribution tails inward (q01 too high, q99 too low).
+                # Exact global quantiles cannot be recovered from already-summarized stats
+                # dicts -- they require the underlying data/histograms. For quantile-normalized
+                # policies (e.g. pi0 / pi0.5) recompute true global quantiles by merging
+                # histograms instead (see `aggregate_quantile_stats` /
+                # `scripts/augment_dataset_quantile_stats.py`).
                 quantile_values = np.stack([s[q_key] for s in stats_ft_list])
                 weighted_quantiles = quantile_values * counts
                 aggregated[q_key] = weighted_quantiles.sum(axis=0) / total_count
 
     return aggregated
+
+
+def _warn_quantile_aggregation_is_approximate() -> None:
+    """Warn once per process that aggregated quantiles are an approximation."""
+    global _QUANTILE_AGGREGATION_WARNED
+    if _QUANTILE_AGGREGATION_WARNED:
+        return
+    _QUANTILE_AGGREGATION_WARNED = True
+    logging.warning(
+        "aggregate_stats() approximates aggregated quantiles by count-weighted averaging of "
+        "per-shard quantiles, which biases distribution tails inward (q01 too high, q99 too low). "
+        "Quantile-normalized policies (e.g. pi0 / pi0.5) require TRUE global quantiles -- recompute "
+        "them from data with `python -m lerobot.scripts.augment_dataset_quantile_stats "
+        "--repo-id <repo_id> --overwrite`."
+    )
 
 
 def aggregate_stats(stats_list: list[dict[str, dict]]) -> dict[str, dict[str, np.ndarray]]:

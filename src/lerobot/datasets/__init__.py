@@ -21,7 +21,15 @@ require_package("datasets", extra="dataset")
 require_package("av", extra="dataset")
 
 from .aggregate import aggregate_datasets
-from .compute_stats import DEFAULT_QUANTILES, aggregate_stats, get_feature_stats
+from .compute_stats import (
+    DEFAULT_QUANTILES,
+    RunningQuantileStats,
+    aggregate_quantile_stats,
+    aggregate_stats,
+    compute_feature_running_stats,
+    feature_stats_from_running,
+    get_feature_stats,
+)
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .dataset_tools import (
     add_features,
@@ -71,6 +79,7 @@ __all__ = [
     "LeRobotDatasetMetadata",
     "MultiLeRobotDataset",
     "PERSISTENT_STYLES",
+    "RunningQuantileStats",
     "STYLE_REGISTRY",
     "StreamingLeRobotDataset",
     "VideoEncodingManager",
@@ -79,10 +88,13 @@ __all__ = [
     "add_features",
     "aggregate_datasets",
     "aggregate_pipeline_dataset_features",
+    "aggregate_quantile_stats",
     "aggregate_stats",
+    "compute_feature_running_stats",
     "convert_image_to_video_dataset",
     "create_initial_features",
     "compute_sampler_state",
+    "feature_stats_from_running",
     "create_lerobot_dataset_card",
     "column_for_style",
     "delete_episodes",

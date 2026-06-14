@@ -25,6 +25,14 @@ quantile statistics (q01, q10, q50, q90, q99) in their metadata. This script:
 3. If missing, computes quantile statistics for all features
 4. Updates the dataset metadata with the new quantile statistics
 
+The quantiles computed here are TRUE GLOBAL quantiles over the whole dataset:
+each episode's data is streamed into a per-feature running histogram and those
+histograms are merged across episodes (``RunningQuantileStats.merge``). This is
+the statistically correct way to combine quantiles and matches what
+quantile-normalized policies (e.g. pi0 / pi0.5) expect. It deliberately avoids
+``aggregate_stats``, whose count-weighted averaging of per-episode quantiles
+biases the distribution tails inward.
+
 Usage:
 
 ```bash
@@ -48,8 +56,9 @@ from lerobot.datasets import (
     CODEBASE_VERSION,
     DEFAULT_QUANTILES,
     LeRobotDataset,
-    aggregate_stats,
-    get_feature_stats,
+    RunningQuantileStats,
+    compute_feature_running_stats,
+    feature_stats_from_running,
     write_stats,
 )
 from lerobot.utils.utils import init_logging
@@ -77,15 +86,22 @@ def has_quantile_stats(stats: dict[str, dict] | None, quantile_list_keys: list[s
     return False
 
 
-def process_single_episode(dataset: LeRobotDataset, episode_idx: int) -> dict:
-    """Process a single episode and return its statistics.
+def process_single_episode(dataset: LeRobotDataset, episode_idx: int) -> dict[str, dict]:
+    """Build per-feature running histogram accumulators for a single episode.
+
+    Returns a mapping ``feature_key -> info`` where ``info`` carries the
+    episode's :class:`RunningQuantileStats` accumulator (``None`` if the episode
+    has fewer than 2 usable samples) plus the metadata needed to finalize it
+    after all episodes are merged. Returning accumulators rather than finished
+    stats lets the caller merge histograms across episodes for *global*
+    quantiles, instead of averaging per-episode quantiles.
 
     Args:
         dataset: The LeRobot dataset
         episode_idx: Index of the episode to process
 
     Returns:
-        Dictionary containing episode statistics
+        Dictionary mapping each numerical feature to its accumulator + metadata.
     """
     logging.info(f"Computing stats for episode {episode_idx}")
 
@@ -103,13 +119,14 @@ def process_single_episode(dataset: LeRobotDataset, episode_idx: int) -> dict:
                 collected_data[key] = []
             collected_data[key].append(value)
 
-    ep_stats = {}
+    ep_running: dict[str, dict] = {}
     for key, data_list in collected_data.items():
-        if dataset.features[key]["dtype"] == "string":
+        if dataset.features[key]["dtype"] in {"string", "language"}:
             continue
 
         data = torch.stack(data_list).cpu().numpy()
-        if dataset.features[key]["dtype"] in ["image", "video"]:
+        is_image = dataset.features[key]["dtype"] in ["image", "video"]
+        if is_image:
             if data.dtype == np.uint8:
                 data = data.astype(np.float32) / 255.0
 
@@ -119,42 +136,85 @@ def process_single_episode(dataset: LeRobotDataset, episode_idx: int) -> dict:
             axes_to_reduce = 0
             keepdims = data.ndim == 1
 
-        ep_stats[key] = get_feature_stats(
-            data, axis=axes_to_reduce, keepdims=keepdims, quantile_list=DEFAULT_QUANTILES
+        running_stats, sample_count = compute_feature_running_stats(
+            data, axis=axes_to_reduce, quantile_list=DEFAULT_QUANTILES
         )
 
-        if dataset.features[key]["dtype"] in ["image", "video"]:
-            ep_stats[key] = {
-                k: v if k == "count" else np.squeeze(v, axis=0) for k, v in ep_stats[key].items()
-            }
+        ep_running[key] = {
+            "running_stats": running_stats,
+            "sample_count": sample_count,
+            "axis": axes_to_reduce,
+            "keepdims": keepdims,
+            "original_shape": data.shape,
+            "is_image": is_image,
+        }
 
-    return ep_stats
+    return ep_running
+
+
+def _merge_episode_running_stats(
+    ep_running: dict[str, dict],
+    merged_running: dict[str, RunningQuantileStats],
+    feature_meta: dict[str, dict],
+) -> None:
+    """Merge one episode's accumulators into the dataset-level accumulators.
+
+    Mutates ``merged_running`` and ``feature_meta`` in place. Must be called
+    from a single thread (the merge itself is not thread-safe).
+    """
+    for key, info in ep_running.items():
+        running_stats = info["running_stats"]
+        if running_stats is None:
+            # Episode too short for histogram quantiles; its handful of frames are
+            # negligible for global quantiles, so skip rather than bias the result.
+            continue
+
+        if key not in merged_running:
+            merged_running[key] = running_stats
+            feature_meta[key] = {
+                "axis": info["axis"],
+                "keepdims": info["keepdims"],
+                "original_shape": info["original_shape"],
+                "is_image": info["is_image"],
+                "total_count": int(info["sample_count"]),
+            }
+        else:
+            merged_running[key].merge(running_stats)
+            feature_meta[key]["total_count"] += int(info["sample_count"])
 
 
 def compute_quantile_stats_for_dataset(dataset: LeRobotDataset) -> dict[str, dict]:
-    """Compute quantile statistics for all episodes in the dataset.
+    """Compute TRUE global statistics (incl. quantiles) for the whole dataset.
+
+    Each episode is streamed into per-feature running histograms which are then
+    merged across episodes (:meth:`RunningQuantileStats.merge`). The merged
+    histograms yield global quantiles accurate to histogram resolution -- unlike
+    averaging per-episode quantiles. ``mean``/``std``/``min``/``max`` are exact.
+    Only one merged accumulator per feature is retained at a time, so memory
+    stays bounded regardless of dataset size.
 
     Args:
         dataset: The LeRobot dataset to compute statistics for
 
     Returns:
-        Dictionary containing aggregated statistics with quantiles
+        Dictionary mapping feature keys to their global statistics dictionaries.
 
     Note:
-        Video decoding operations are not thread-safe, so we process episodes sequentially
-        when video keys are present. For datasets without videos, we use parallel processing
-        with ThreadPoolExecutor for better performance.
+        Video decoding operations are not thread-safe, so we process episodes
+        sequentially when video keys are present. For datasets without videos,
+        episodes are processed in parallel and merged as results arrive.
     """
     logging.info(f"Computing quantile statistics for dataset with {dataset.num_episodes} episodes")
 
-    episode_stats_list = []
+    merged_running: dict[str, RunningQuantileStats] = {}
+    feature_meta: dict[str, dict] = {}
     has_videos = len(dataset.meta.video_keys) > 0
 
     if has_videos:
         logging.info("Dataset contains video keys - using sequential processing for thread safety")
         for episode_idx in tqdm(range(dataset.num_episodes), desc="Processing episodes"):
-            ep_stats = process_single_episode(dataset, episode_idx)
-            episode_stats_list.append(ep_stats)
+            ep_running = process_single_episode(dataset, episode_idx)
+            _merge_episode_running_stats(ep_running, merged_running, feature_meta)
     else:
         logging.info("Dataset has no video keys - using parallel processing for better performance")
         max_workers = min(dataset.num_episodes, 16)
@@ -165,23 +225,34 @@ def compute_quantile_stats_for_dataset(dataset: LeRobotDataset) -> dict[str, dic
                 for episode_idx in range(dataset.num_episodes)
             }
 
-            episode_results = {}
             with tqdm(total=dataset.num_episodes, desc="Processing episodes") as pbar:
+                # Episodes are computed in worker threads; merging happens here in the
+                # main thread as each result arrives, keeping memory bounded.
                 for future in concurrent.futures.as_completed(future_to_episode):
-                    episode_idx = future_to_episode[future]
-                    ep_stats = future.result()
-                    episode_results[episode_idx] = ep_stats
+                    _merge_episode_running_stats(future.result(), merged_running, feature_meta)
                     pbar.update(1)
 
-        for episode_idx in range(dataset.num_episodes):
-            if episode_idx in episode_results:
-                episode_stats_list.append(episode_results[episode_idx])
-
-    if not episode_stats_list:
+    if not merged_running:
         raise ValueError("No episode data found for computing statistics")
 
-    logging.info(f"Aggregating statistics from {len(episode_stats_list)} episodes")
-    return aggregate_stats(episode_stats_list)
+    logging.info(f"Finalizing global statistics for {len(merged_running)} features")
+    new_stats: dict[str, dict] = {}
+    for key, running_stats in merged_running.items():
+        meta = feature_meta[key]
+        feature_stats = feature_stats_from_running(
+            running_stats,
+            sample_count=meta["total_count"],
+            axis=meta["axis"],
+            keepdims=meta["keepdims"],
+            original_shape=meta["original_shape"],
+        )
+        if meta["is_image"]:
+            feature_stats = {
+                k: v if k == "count" else np.squeeze(v, axis=0) for k, v in feature_stats.items()
+            }
+        new_stats[key] = feature_stats
+
+    return new_stats
 
 
 def augment_dataset_with_quantile_stats(

@@ -21,12 +21,16 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.datasets.compute_stats import (
+    DEFAULT_QUANTILES,
     RunningQuantileStats,
     _assert_type_and_shape,
     aggregate_feature_stats,
+    aggregate_quantile_stats,
     aggregate_stats,
     compute_episode_stats,
+    compute_feature_running_stats,
     estimate_num_samples,
+    feature_stats_from_running,
     get_feature_stats,
     sample_images,
     sample_indices,
@@ -857,3 +861,175 @@ def test_fixed_quantiles_always_computed():
         for q_key in expected_quantiles:
             assert q_key in episode_stats[key]
             assert episode_stats[key][q_key].shape == (features[key]["shape"][0],)
+
+
+# ---------------------------------------------------------------------------
+# RunningQuantileStats.merge and global-quantile helpers
+# ---------------------------------------------------------------------------
+
+QUANTILE_KEYS = ["q01", "q10", "q50", "q90", "q99"]
+
+
+def test_merge_matches_single_pass():
+    """Merging per-chunk accumulators matches a single pass over all data."""
+    rng = np.random.default_rng(0)
+    data = rng.normal(0.0, 1.0, size=(20000, 3))
+
+    single = RunningQuantileStats()
+    single.update(data)
+    single_stats = single.get_statistics()
+
+    merged = RunningQuantileStats()
+    for chunk in np.array_split(data, 5):
+        part = RunningQuantileStats()
+        part.update(chunk)
+        merged.merge(part)
+    merged_stats = merged.get_statistics()
+
+    # mean / std / min / max / count are exact (no histogram discretization).
+    np.testing.assert_allclose(merged_stats["mean"], single_stats["mean"], rtol=1e-6, atol=1e-8)
+    np.testing.assert_allclose(merged_stats["std"], single_stats["std"], rtol=1e-6, atol=1e-8)
+    np.testing.assert_allclose(merged_stats["min"], single_stats["min"])
+    np.testing.assert_allclose(merged_stats["max"], single_stats["max"])
+    np.testing.assert_allclose(merged_stats["count"], single_stats["count"])
+
+    # Quantiles match the single pass and the numpy ground truth to bin resolution.
+    for q_key, q in zip(QUANTILE_KEYS, DEFAULT_QUANTILES, strict=True):
+        np.testing.assert_allclose(merged_stats[q_key], single_stats[q_key], atol=0.02)
+        np.testing.assert_allclose(merged_stats[q_key], np.quantile(data, q, axis=0), atol=0.05)
+
+
+def test_merge_yields_global_quantiles_unlike_averaging():
+    """The core fix: merging gives global quantiles; averaging per-shard quantiles does not.
+
+    Two episodes with well-separated distributions make averaging clearly wrong:
+    the global q01 lives inside the lower cluster, but the mean of the two
+    per-episode q01 values lands between the clusters.
+    """
+    rng = np.random.default_rng(1)
+    ep1 = rng.normal(-5.0, 0.5, size=(5000, 1))
+    ep2 = rng.normal(5.0, 0.5, size=(5000, 1))
+    all_data = np.concatenate([ep1, ep2])
+
+    rs1 = RunningQuantileStats()
+    rs1.update(ep1)
+    rs2 = RunningQuantileStats()
+    rs2.update(ep2)
+    s1, s2 = rs1.get_statistics(), rs2.get_statistics()
+
+    merged = aggregate_quantile_stats([rs1, rs2]).get_statistics()
+
+    true_q01 = np.quantile(all_data, 0.01, axis=0)
+    true_q99 = np.quantile(all_data, 0.99, axis=0)
+
+    # Equal counts -> averaging is the simple mean of per-episode quantiles.
+    avg_q01 = (s1["q01"] + s2["q01"]) / 2
+    avg_q99 = (s1["q99"] + s2["q99"]) / 2
+
+    # Merged histogram recovers the true global quantiles.
+    np.testing.assert_allclose(merged["q01"], true_q01, atol=0.15)
+    np.testing.assert_allclose(merged["q99"], true_q99, atol=0.15)
+
+    # Averaging is badly biased toward the center (off by several units), and far
+    # worse than the merged result.
+    merged_err = abs(merged["q01"].item() - true_q01.item())
+    avg_err = abs(avg_q01.item() - true_q01.item())
+    assert avg_err > 1.0
+    assert avg_err > 10 * merged_err
+    assert abs(avg_q99.item() - true_q99.item()) > 1.0
+
+
+def test_merge_empty_is_identity():
+    """Merging with an empty accumulator leaves data unchanged (either direction)."""
+    rng = np.random.default_rng(2)
+    data = rng.normal(size=(200, 2))
+
+    rs = RunningQuantileStats()
+    rs.update(data)
+    ref = rs.get_statistics()
+
+    # Empty other: no-op.
+    rs.merge(RunningQuantileStats())
+    np.testing.assert_allclose(rs.get_statistics()["q50"], ref["q50"])
+    np.testing.assert_allclose(rs.get_statistics()["mean"], ref["mean"])
+
+    # Empty self: copies other's state exactly.
+    empty = RunningQuantileStats()
+    empty.merge(rs)
+    np.testing.assert_array_equal(empty.get_statistics()["q50"], ref["q50"])
+    np.testing.assert_array_equal(empty.get_statistics()["max"], ref["max"])
+
+
+def test_merge_validates_compatibility():
+    """Merging mismatched bin counts or vector lengths raises a clear error."""
+    rng = np.random.default_rng(3)
+
+    a = RunningQuantileStats(num_quantile_bins=100)
+    a.update(rng.normal(size=(10, 2)))
+    b = RunningQuantileStats(num_quantile_bins=200)
+    b.update(rng.normal(size=(10, 2)))
+    with pytest.raises(ValueError, match="num_quantile_bins"):
+        a.merge(b)
+
+    c = RunningQuantileStats()
+    c.update(rng.normal(size=(10, 3)))
+    d = RunningQuantileStats()
+    d.update(rng.normal(size=(10, 2)))
+    with pytest.raises(ValueError, match="vector lengths"):
+        c.merge(d)
+
+
+def test_aggregate_quantile_stats_matches_sequential_merge():
+    """aggregate_quantile_stats equals an explicit sequential merge and ignores input order side effects."""
+    rng = np.random.default_rng(4)
+    chunks = [rng.normal(size=(2000, 2)) for _ in range(4)]
+
+    rs_list = []
+    for chunk in chunks:
+        part = RunningQuantileStats()
+        part.update(chunk)
+        rs_list.append(part)
+
+    agg = aggregate_quantile_stats(rs_list).get_statistics()
+
+    seq = RunningQuantileStats()
+    for chunk in chunks:
+        part = RunningQuantileStats()
+        part.update(chunk)
+        seq.merge(part)
+    seq_stats = seq.get_statistics()
+
+    for key in ("mean", "std", "min", "max", *QUANTILE_KEYS):
+        np.testing.assert_allclose(agg[key], seq_stats[key], rtol=1e-9, atol=1e-9)
+
+    # Inputs are not mutated by aggregation.
+    np.testing.assert_allclose(rs_list[0].get_statistics()["count"], np.array([2000]))
+
+    with pytest.raises(ValueError, match="empty list"):
+        aggregate_quantile_stats([])
+
+
+def test_compute_feature_running_stats_roundtrip():
+    """compute_feature_running_stats + feature_stats_from_running == get_feature_stats."""
+    rng = np.random.default_rng(5)
+    array = rng.normal(size=(50, 4)).astype(np.float32)
+
+    running_stats, sample_count = compute_feature_running_stats(
+        array, axis=0, quantile_list=DEFAULT_QUANTILES
+    )
+    assert sample_count == 50
+    finalized = feature_stats_from_running(
+        running_stats, sample_count, axis=0, keepdims=False, original_shape=array.shape
+    )
+    direct = get_feature_stats(array, axis=0, keepdims=False)
+
+    assert set(finalized.keys()) == set(direct.keys())
+    for key in direct:
+        np.testing.assert_allclose(finalized[key], direct[key], rtol=1e-6, atol=1e-6)
+
+
+def test_compute_feature_running_stats_insufficient_samples():
+    """Fewer than 2 vectors yields no accumulator (caller falls back to basic stats)."""
+    running_stats, sample_count = compute_feature_running_stats(np.array([[1.0, 2.0]]), axis=0)
+    assert running_stats is None
+    assert sample_count == 1
