@@ -103,6 +103,10 @@ class TrainPipelineConfig(HubMixin):
     # Run policy in the simulation environment every N steps to measure reward/success (0 = disabled).
     env_eval_freq: int = 20_000
     log_freq: int = 200
+    # Compute eval loss on held-out episodes every N steps (0 = disabled). Requires eval_split > 0.
+    eval_steps: int = 0
+    # Cap on total eval samples, split uniformly across tasks (0 = use all held-out data).
+    max_eval_samples: int = 0
     tolerance_s: float = 1e-4
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.

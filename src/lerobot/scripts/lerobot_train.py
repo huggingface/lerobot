@@ -45,7 +45,8 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state, make_dataset
+from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
+from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
@@ -244,13 +245,13 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # LeRobotDataset skips its snapshot_download when try_load() succeeds, so no rank re-downloads.
     if is_main_process:
         logging.info("Creating dataset")
-        dataset = make_dataset(cfg)
+        dataset, eval_dataset = make_train_eval_datasets(cfg)
 
     accelerator.wait_for_everyone()
 
     # Other ranks read from the shared copy populated by the main process.
     if not is_main_process:
-        dataset = make_dataset(cfg)
+        dataset, eval_dataset = make_train_eval_datasets(cfg)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
@@ -434,6 +435,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     f"Resuming data order at epoch {sampler_state['epoch']}, "
                     f"sample {sampler_state['start_index']}"
                 )
+        if dataset.reader._absolute_to_relative_idx is not None:
+            sampler.indices = [dataset.reader._absolute_to_relative_idx[i] for i in sampler.indices]
     else:
         shuffle = True
         sampler = None
@@ -454,6 +457,31 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
         persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
     )
+
+    # Build eval dataloader if a held-out split exists
+    eval_dataloader = None
+    if eval_dataset is not None:
+        eval_ds = eval_dataset
+        if cfg.max_eval_samples > 0 and hasattr(eval_dataset, "hf_dataset"):
+            task_indices = eval_dataset.hf_dataset["task_index"]
+            unique_tasks = sorted(set(task_indices))
+            per_task = max(1, cfg.max_eval_samples // len(unique_tasks))
+            selected: list[int] = []
+            for t in unique_tasks:
+                frames = [i for i, ti in enumerate(task_indices) if ti == t][:per_task]
+                selected.extend(frames)
+            eval_ds = torch.utils.data.Subset(eval_dataset, selected)
+
+        eval_collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
+        eval_dataloader = torch.utils.data.DataLoader(
+            eval_ds,
+            batch_size=cfg.batch_size,
+            shuffle=False,
+            num_workers=cfg.num_workers,
+            pin_memory=device.type == "cuda",
+            drop_last=False,
+            collate_fn=eval_collate_fn,
+        )
 
     # Prepare everything with accelerator
     accelerator.wait_for_everyone()
@@ -535,6 +563,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_env_eval_step = cfg.env_eval_freq > 0 and step % cfg.env_eval_freq == 0
+        is_eval_step = cfg.eval_steps > 0 and eval_dataloader is not None and step % cfg.eval_steps == 0
 
         if is_log_step:
             # Collective reduce must run on every rank, before the main-process gate below.
@@ -556,6 +585,27 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                         wandb_log_dict.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
                     wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
+
+        if is_eval_step:
+            policy.eval()
+            eval_loss_sum = 0.0
+            n_eval_batches = 0
+            with torch.no_grad(), accelerator.autocast():
+                for eval_batch in eval_dataloader:
+                    for cam_key in dataset.meta.camera_keys:
+                        if cam_key in eval_batch and eval_batch[cam_key].dtype == torch.uint8:
+                            eval_batch[cam_key] = eval_batch[cam_key].to(dtype=torch.float32) / 255.0
+                    eval_batch = preprocessor(eval_batch)
+                    loss, _ = policy.forward(eval_batch)
+                    eval_loss_sum += loss.item()
+                    n_eval_batches += 1
+            eval_loss = eval_loss_sum / max(n_eval_batches, 1)
+            policy.train()
+
+            if is_main_process:
+                logging.info(f"step {step}: eval_loss={eval_loss:.4f}")
+                if wandb_logger:
+                    wandb_logger.log_dict({"eval_loss": eval_loss}, step=step, mode="eval")
 
         if cfg.save_checkpoint and is_saving_step:
             if is_main_process:
