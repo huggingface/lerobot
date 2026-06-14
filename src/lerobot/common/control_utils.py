@@ -151,7 +151,11 @@ def init_keyboard_listener():
         return listener, events
 
     # Only import pynput if not in a headless environment
-    from pynput import keyboard
+    try:
+        from pynput import keyboard
+    except ImportError as e:
+        logging.error(f"Failed to import pynput: {e}. Keyboard listener will not be available.")
+        return None, events
 
     def on_press(key):
         try:
@@ -169,8 +173,22 @@ def init_keyboard_listener():
         except Exception as e:
             print(f"Error handling key press: {e}")
 
-    listener = keyboard.Listener(on_press=on_press)
-    listener.start()
+    try:
+        listener = keyboard.Listener(on_press=on_press)
+        listener.start()
+        logging.info(
+            "Keyboard listener initialized successfully. "
+            "Use RIGHT ARROW to exit early, LEFT ARROW to rerecord episode, ESC to stop recording. "
+            "Note: This may require elevated privileges on Linux systems."
+        )
+    except Exception as e:
+        logging.error(
+            f"Failed to start keyboard listener: {e}. "
+            "Keyboard input will not be available. "
+            "On Linux, you may need to run with elevated privileges (sudo) or check X11 permissions. "
+            "Traceback: {traceback.format_exc()}"
+        )
+        listener = None
 
     return listener, events
 

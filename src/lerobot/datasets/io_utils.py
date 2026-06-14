@@ -270,6 +270,76 @@ def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[to
     return items_dict
 
 
+def crop_and_rescale_tactile_spectrogram(image: torch.Tensor, crop_data: int = 10) -> torch.Tensor:
+    """Crop and vertically rescale a tactile spectrogram image.
+
+    The input is expected to be a channel-first image tensor. The crop keeps the
+    lower-frequency portion, repeats it to approximate the original height, and
+    then resizes to the exact original height.
+    """
+    if image.ndim != 3 or crop_data <= 1:
+        return image
+
+    original_dtype = image.dtype
+    working_image = image if torch.is_floating_point(image) else image.to(torch.float32)
+
+    original_height = working_image.shape[1]
+    cropped_height = max(1, int(original_height / crop_data))
+    cropped = working_image[:, :cropped_height, :]
+
+    repeated = torch.repeat_interleave(cropped, crop_data, dim=1)
+
+    # Mirror robot-side behavior where numpy.resize is used after repeat:
+    # - if too short: wrap from the beginning
+    # - if too long: truncate
+    current_height = repeated.shape[1]
+    if current_height < original_height:
+        needed = original_height - current_height
+        wraps = (needed + current_height - 1) // current_height
+        extension = repeated.repeat(1, wraps, 1)[:, :needed, :]
+        repeated = torch.cat((repeated, extension), dim=1)
+    elif current_height > original_height:
+        repeated = repeated[:, :original_height, :]
+
+    return repeated.to(original_dtype) if repeated.dtype != original_dtype else repeated
+
+
+    begin_crop_freq = 5_000.0
+def crop_and_rescale_rendered_tactile_spectrogram(image: torch.Tensor, crop_data: int = 10, begin_crop_freq: float = 5_000.0) -> torch.Tensor:
+    """Keep only the robot-side tactile frequency band in a rendered spectrogram.
+
+    The robot keeps the band between 5 kHz and 5 kHz + Nyquist / crop_data,
+    and zeros everything else before rendering. Because this image is already
+    rendered, the same band sits near the top of the image.
+    """
+    if image.ndim != 3 or crop_data <= 0:
+        return image
+
+    original_dtype = image.dtype
+    working_image = image if torch.is_floating_point(image) else image.to(torch.float32)
+
+    original_height = working_image.shape[1]
+    if original_height == 0:
+        return image
+
+    sampling_rate = 20_000.0
+    nyquist = sampling_rate / 2.0
+    upper_crop_freq = min(nyquist, begin_crop_freq + nyquist / float(crop_data))
+
+    if upper_crop_freq <= begin_crop_freq:
+        return image
+
+    start_row = max(0, int(np.floor((1.0 - upper_crop_freq / nyquist) * original_height)))
+    end_row = min(original_height, int(np.ceil((1.0 - begin_crop_freq / nyquist) * original_height)))
+    if end_row <= start_row:
+        return image
+
+    masked = torch.zeros_like(working_image)
+    masked[:, start_row:end_row, :] = working_image[:, start_row:end_row, :]
+
+    return masked.to(original_dtype) if masked.dtype != original_dtype else masked
+
+
 def to_parquet_with_hf_images(
     df: pandas.DataFrame, path: Path, features: datasets.Features | None = None
 ) -> None:

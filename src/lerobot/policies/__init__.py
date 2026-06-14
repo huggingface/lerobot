@@ -46,6 +46,7 @@ __all__ = [
     "GrootConfig",
     "MolmoAct2Config",
     "MultiTaskDiTConfig",
+    "EO1Config",
     "PI0Config",
     "PI0FastConfig",
     "PI05Config",
