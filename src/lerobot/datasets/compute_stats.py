@@ -183,6 +183,13 @@ class RunningQuantileStats:
         if other._count == 0:
             return self
         if self._count == 0:
+            # Merging into an empty accumulator yields a faithful clone of ``other``:
+            # adopt its full configuration too, otherwise ``self``'s histogram length
+            # (now ``other._num_quantile_bins``) would disagree with a stale
+            # ``self._num_quantile_bins`` and silently rebin on the next update/merge.
+            self._num_quantile_bins = other._num_quantile_bins
+            self._quantile_list = list(other._quantile_list)
+            self._quantile_keys = list(other._quantile_keys)
             self._count = other._count
             self._mean = other._mean.copy()
             self._mean_of_squares = other._mean_of_squares.copy()

@@ -960,6 +960,38 @@ def test_merge_empty_is_identity():
     np.testing.assert_array_equal(empty.get_statistics()["max"], ref["max"])
 
 
+def test_merge_into_empty_adopts_other_config():
+    """Merging into an empty accumulator clones other's bin config (regression).
+
+    Guards against the empty-copy path leaving a stale ``_num_quantile_bins`` that
+    disagrees with the copied histograms, which would silently rebin on a later
+    update or spuriously fail a later merge compatibility check.
+    """
+    rng = np.random.default_rng(7)
+
+    other = RunningQuantileStats(num_quantile_bins=2000)
+    other.update(rng.normal(size=(500, 2)))
+
+    # Empty receiver constructed with a DIFFERENT bin count.
+    merged = RunningQuantileStats(num_quantile_bins=500)
+    merged.merge(other)
+
+    # Config is adopted from other and consistent with the copied histograms.
+    assert merged._num_quantile_bins == 2000
+    assert all(len(h) == 2000 for h in merged._histograms)
+    assert all(len(e) == 2001 for e in merged._bin_edges)
+
+    # A later update that expands the range keeps the adopted resolution.
+    merged.update(rng.normal(10.0, 1.0, size=(50, 2)))  # shifts max -> triggers _adjust_histograms
+    assert all(len(h) == 2000 for h in merged._histograms)
+
+    # A later merge with a third accumulator at the adopted resolution must not raise.
+    third = RunningQuantileStats(num_quantile_bins=2000)
+    third.update(rng.normal(size=(100, 2)))
+    merged.merge(third)
+    assert merged.get_statistics()["count"][0] == 500 + 50 + 100
+
+
 def test_merge_validates_compatibility():
     """Merging mismatched bin counts or vector lengths raises a clear error."""
     rng = np.random.default_rng(3)
