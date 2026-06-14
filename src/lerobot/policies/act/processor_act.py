@@ -28,7 +28,7 @@ from lerobot.processor import (
     policy_action_to_transition,
     transition_to_policy_action,
 )
-from lerobot.processor.hil_processor import ImageCropResizeProcessorStep
+from lerobot.processor import ImageCropResizeProcessorStep
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 

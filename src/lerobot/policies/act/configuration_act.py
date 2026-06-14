@@ -95,6 +95,7 @@ class ACTConfig(PreTrainedConfig):
 
     # Architecture.
     # Vision backbone.
+    # ACT uses 480x640 sized images
     resize_imgs: tuple[int, int] = (480, 640)
     vision_backbone: str = "resnet18"
     pretrained_backbone_weights: str | None = "ResNet18_Weights.IMAGENET1K_V1"
