@@ -102,10 +102,40 @@ class PI0Config(PreTrainedConfig):
 
     tokenizer_max_length: int = 48  # see openpi `__post_init__`
 
+    # Fields present in the published lerobot/pi0 Hub config.json but not actively
+    # wired into model logic. Accepted here so draccus can decode the config without error.
+    resize_imgs_with_padding: tuple[int, int] | None = None
+    adapt_to_pi_aloha: bool = False
+    use_delta_joint_actions_aloha: bool = False
+    proj_width: int = 1024
+    num_steps: int | None = None
+    use_cache: bool = True
+    attention_implementation: str = "eager"
+    train_state_proj: bool = True
+
     def __post_init__(self):
         super().__post_init__()
 
-        # Validate configuration
+        # Hub config stores `num_steps`; model code uses `num_inference_steps`.
+        if self.num_steps is not None:
+            if self.num_steps != self.num_inference_steps and self.num_inference_steps != 10:
+                raise ValueError(
+                    f"num_steps ({self.num_steps}) and num_inference_steps ({self.num_inference_steps}) "
+                    "are both explicitly set to different values. Use only one."
+                )
+            self.num_inference_steps = self.num_steps
+
+        # Normalize resize_imgs_with_padding: Hub JSON may deserialize as list.
+        if self.resize_imgs_with_padding is not None:
+            val = self.resize_imgs_with_padding
+            if isinstance(val, list):
+                val = tuple(val)
+            if not isinstance(val, tuple) or len(val) != 2 or not all(isinstance(v, int) for v in val):
+                raise ValueError(
+                    f"resize_imgs_with_padding must be a (height, width) tuple of 2 ints, got {val!r}"
+                )
+            self.resize_imgs_with_padding = val  # type: ignore[assignment]
+
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"n_action_steps ({self.n_action_steps}) cannot be greater than chunk_size ({self.chunk_size})"
