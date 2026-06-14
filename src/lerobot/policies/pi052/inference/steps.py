@@ -248,6 +248,22 @@ class DispatchAction(InferenceStep):
 # ---------------------------------------------------------------------------
 
 
+_LOC_TOKENIZER_CACHE: dict[str, Any] = {}
+
+
+def _get_loc_tokenizer(tok_name: str, auto_tokenizer_cls: Any, register_loc_fn: Any) -> Any:
+    """Return a loc-token-registered tokenizer, loading from disk only once.
+
+    ``AutoTokenizer.from_pretrained`` + loc-token registration is expensive and
+    the result is immutable, so cache per ``tok_name``.
+    """
+    tokenizer = _LOC_TOKENIZER_CACHE.get(tok_name)
+    if tokenizer is None:
+        tokenizer = register_loc_fn(auto_tokenizer_cls.from_pretrained(tok_name))
+        _LOC_TOKENIZER_CACHE[tok_name] = tokenizer
+    return tokenizer
+
+
 def _build_text_batch(
     policy: Any,
     prompt_messages: list[dict[str, Any]],
@@ -277,7 +293,10 @@ def _build_text_batch(
     )
     # Register PaliGemma's <locDDDD> tokens so inference encoding /
     # decoding sees them as single vocab ids — must match training.
-    tokenizer = register_paligemma_loc_tokens(AutoTokenizer.from_pretrained(tok_name))
+    # The tokenizer is read-only after registration, so cache it: rebuilding it
+    # from disk on every call dominated eval runtime (this runs twice per env
+    # per replan — subtask gen + action prompt).
+    tokenizer = _get_loc_tokenizer(tok_name, AutoTokenizer, register_paligemma_loc_tokens)
 
     messages = [_strip_blocks(_flatten_say_tool_calls(m)) for m in prompt_messages]
     prompt, _spans = _format_messages(messages)

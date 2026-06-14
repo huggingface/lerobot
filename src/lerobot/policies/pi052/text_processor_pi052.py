@@ -40,15 +40,38 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import torch
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor.pipeline import ProcessorStep, ProcessorStepRegistry
 from lerobot.types import EnvTransition, TransitionKey
-from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
+from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 
 logger = logging.getLogger(__name__)
+
+
+def discretize_state_str(state_row: Any) -> str:
+    """Discretize a single normalized state vector into 256 bins, space-joined.
+
+    Mirrors pi05's ``Pi05PrepareStateTokenizerProcessorStep`` (same bins /
+    convention) so pi052's low-level action prompt carries proprioception in
+    the exact format pi05 was trained on. Expects state already normalized by
+    the upstream ``NormalizerProcessorStep``.
+    """
+    arr = state_row.detach().cpu().numpy() if hasattr(state_row, "detach") else np.asarray(state_row)
+    disc = np.digitize(arr, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
+    return " ".join(str(int(x)) for x in disc.reshape(-1).tolist())
+
+
+def _state_row_at(state_all: Any, pos: int) -> Any:
+    """Select the per-sample state row from a (possibly batched) state tensor."""
+    if state_all is None:
+        return None
+    if hasattr(state_all, "ndim") and state_all.ndim >= 2:
+        return state_all[pos]
+    return state_all
 
 
 def _content_to_text(content: Any) -> str:
@@ -391,6 +414,10 @@ class PI052TextTokenizerStep(ProcessorStep):
             return transition
 
         tokenizer = self._ensure_tokenizer()
+        # Normalized proprioceptive state (set by NormalizerProcessorStep, which
+        # runs before this step). Injected into low-level action prompts so the
+        # action expert sees proprioception, matching pi05's discretized State:.
+        state_all = (transition.get(TransitionKey.OBSERVATION) or {}).get(OBS_STATE)
         # VQA coords are 0–1000 normalized (Qwen2.5-VL convention) — the
         # <loc> conversion is camera-resolution-independent and needs no
         # observation lookup here.
@@ -404,13 +431,16 @@ class PI052TextTokenizerStep(ProcessorStep):
                     list(tgt_indices),
                     complementary,
                     sample_idx=int(s_idx) if s_idx is not None else None,
+                    state_row=_state_row_at(state_all, pos),
                 )
-                for msg, streams, tgt_indices, s_idx in zip(
-                    messages,
-                    complementary.get("message_streams") or [[] for _ in messages],
-                    complementary.get("target_message_indices") or [[] for _ in messages],
-                    indices_iter,
-                    strict=False,
+                for pos, (msg, streams, tgt_indices, s_idx) in enumerate(
+                    zip(
+                        messages,
+                        complementary.get("message_streams") or [[] for _ in messages],
+                        complementary.get("target_message_indices") or [[] for _ in messages],
+                        indices_iter,
+                        strict=False,
+                    )
                 )
             ]
         else:
@@ -423,6 +453,7 @@ class PI052TextTokenizerStep(ProcessorStep):
                     list(complementary.get("target_message_indices") or []),
                     complementary,
                     sample_idx=sample_idx,
+                    state_row=_state_row_at(state_all, 0),
                 )
             ]
 
@@ -446,6 +477,7 @@ class PI052TextTokenizerStep(ProcessorStep):
         target_indices: list[int],
         complementary: dict[str, Any],
         sample_idx: int | None = None,
+        state_row: Any = None,
     ) -> tuple[Tensor, Tensor, Tensor, Tensor, str]:
         # Optional: drop non-target messages per the dropout config.
         # Keeps the supervised-target indices stable by re-mapping
@@ -472,6 +504,17 @@ class PI052TextTokenizerStep(ProcessorStep):
         # stripping, so the spoken reply is actually tokenized and
         # supervised (PaliGemma's flat prompt has no structured calls).
         messages = [_strip_blocks(_flatten_say_tool_calls(m)) for m in messages]
+        # Low-level (action-conditioning) samples get the discretized state
+        # appended to their user message, mirroring pi05's
+        # "..., State: {256-bin};" so the action expert sees proprioception.
+        # Higher-level text streams (subtask/memory generation) stay state-free.
+        if state_row is not None and any(s == "low_level" for s in message_streams):
+            state_str = discretize_state_str(state_row)
+            for m in reversed(messages):
+                if m.get("role") == "user":
+                    base = _content_to_text(m.get("content", ""))
+                    m["content"] = f"{base}, State: {state_str};"
+                    break
         # Append EOS to supervised target turns so the LM head learns to
         # stop (the span covers it → it becomes a supervised label).
         prompt, spans = _format_messages(

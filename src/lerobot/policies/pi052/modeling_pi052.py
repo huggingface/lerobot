@@ -55,6 +55,7 @@ from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
+    OBS_STATE,
     OPENPI_ATTENTION_MASK_VALUE,
 )
 from lerobot.utils.import_utils import require_package
@@ -1592,6 +1593,7 @@ class PI052Policy(PreTrainedPolicy):
         top_p: float = 1.0,
         tokenizer: Any = None,
         suppress_loc_tokens: bool = False,
+        use_kv_cache: bool = True,
     ) -> str:
         """Generate text continuation from a multimodal prefix.
 
@@ -1613,11 +1615,11 @@ class PI052Policy(PreTrainedPolicy):
         if tokenizer is None:
             from transformers import AutoTokenizer  # noqa: PLC0415
 
+            from .inference.steps import _get_loc_tokenizer  # noqa: PLC0415
             from .text_processor_pi052 import register_paligemma_loc_tokens  # noqa: PLC0415
 
-            tokenizer = register_paligemma_loc_tokens(
-                AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
-            )
+            tok_name = getattr(self.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
+            tokenizer = _get_loc_tokenizer(tok_name, AutoTokenizer, register_paligemma_loc_tokens)
         if eos_token_id is None:
             eos_token_id = tokenizer.eos_token_id
 
@@ -1647,7 +1649,16 @@ class PI052Policy(PreTrainedPolicy):
         current_pad = prefix_pad_masks
         current_att = prefix_att_masks
         generated: list[int] = []
+        new_emb = None
 
+        # KV-cache decode: encode the (image-heavy) prefix once, then feed only
+        # the newly sampled token each step, attending to the cached keys. This
+        # turns an O(n_tokens * prefix_len) recompute into O(prefix_len + n_tokens)
+        # and is the dominant cost here (the prefix carries ~3*256 image tokens).
+        # With ``use_kv_cache=False`` the loop reduces exactly to the original
+        # recompute path (cache stays ``None`` so every step re-runs the full
+        # prefix), which we keep as a fallback / parity reference.
+        cache = None
 
         backbone = self.model.paligemma_with_expert
         lm_head = backbone.paligemma.lm_head
@@ -1666,16 +1677,32 @@ class PI052Policy(PreTrainedPolicy):
         )
 
         for _ in range(max_new_tokens):
-            att_2d = make_att_2d_masks(current_pad, current_att)
-            position_ids = torch.cumsum(current_pad, dim=1) - 1
-            att_2d_4d = self.model._prepare_attention_masks_4d(att_2d, dtype=backbone_dtype)
-            (vlm_out, _), _ = backbone.forward(
+            if cache is None:
+                # First step (and every step when caching is disabled): run the
+                # full bidirectional-prefix forward. ``current_*`` already grow
+                # in the no-cache fallback below.
+                step_embs = current_embs
+                att_2d = make_att_2d_masks(current_pad, current_att)
+                position_ids = torch.cumsum(current_pad, dim=1) - 1
+                att_2d_4d = self.model._prepare_attention_masks_4d(att_2d, dtype=backbone_dtype)
+            else:
+                # Incremental step: only the last token. It attends to every
+                # valid cached key (``current_pad`` already includes this token),
+                # so pad positions in the prefix stay masked just like the
+                # recompute path.
+                step_embs = new_emb
+                att_2d = current_pad[:, None, :]
+                att_2d_4d = self.model._prepare_attention_masks_4d(att_2d, dtype=backbone_dtype)
+                position_ids = (torch.cumsum(current_pad, dim=1) - 1)[:, -1:]
+            (vlm_out, _), new_cache = backbone.forward(
                 attention_mask=att_2d_4d,
                 position_ids=position_ids,
-                past_key_values=None,
-                inputs_embeds=[current_embs, None],
-                use_cache=False,
+                past_key_values=cache,
+                inputs_embeds=[step_embs, None],
+                use_cache=use_kv_cache,
             )
+            if use_kv_cache:
+                cache = new_cache
             if vlm_out is None:
                 break
             last = vlm_out[:, -1:].to(lm_head.weight.dtype)
@@ -1702,9 +1729,13 @@ class PI052Policy(PreTrainedPolicy):
 
             # embed_language_tokens already applies the Gemma sqrt(hidden) scale (tf>=5.4.0).
             new_emb = backbone.embed_language_tokens(next_ids.unsqueeze(0))
-            current_embs = torch.cat([current_embs, new_emb], dim=1)
+            # ``current_pad`` tracks valid keys for both paths (cache mask +
+            # position ids). Only the recompute path needs the full embedding /
+            # block-attention history re-fed each step.
             current_pad = torch.cat([current_pad, ones_step], dim=1)
-            current_att = torch.cat([current_att, ones_step], dim=1)
+            if not use_kv_cache:
+                current_embs = torch.cat([current_embs, new_emb], dim=1)
+                current_att = torch.cat([current_att, ones_step], dim=1)
 
         decoded = tokenizer.decode(generated, skip_special_tokens=True).strip()
         if not decoded and generated:
@@ -1744,10 +1775,15 @@ class PI052Policy(PreTrainedPolicy):
 
     def _with_low_level_subtask_prompt(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         from .inference.steps import _build_text_batch  # noqa: PLC0415
+        from .text_processor_pi052 import discretize_state_str  # noqa: PLC0415
 
         n = self._batch_size_from_observation(batch)
         self._ensure_subtask_state(n)
         tasks = self._tasks_from_batch(batch, n)
+        # Normalized state for the low-level action prompt (mirrors training:
+        # "User: {subtask}, State: {256-bin};"). batch state is already
+        # normalized by the eval preprocessor's NormalizerProcessorStep.
+        state_all = batch.get(OBS_STATE)
 
         # Generate one subtask per parallel env, each conditioned on that env's
         # own task + observation, then stack the per-env prompts into a single
@@ -1758,9 +1794,12 @@ class PI052Policy(PreTrainedPolicy):
         for i in range(n):
             obs_i = self._slice_observation(batch, i)
             subtask = self._generate_low_level_subtask(obs_i, tasks[i], i)
+            content = subtask
+            if torch.is_tensor(state_all):
+                content = f"{subtask}, State: {discretize_state_str(state_all[i])};"
             text_batch = _build_text_batch(
                 self,
-                [{"role": "user", "content": subtask}],
+                [{"role": "user", "content": content}],
                 add_generation_prompt=False,
             )
             rows.append((text_batch["lang_tokens"], text_batch["lang_masks"]))
