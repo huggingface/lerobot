@@ -100,7 +100,8 @@ class TrainPipelineConfig(HubMixin):
     prefetch_factor: int = 4
     persistent_workers: bool = True
     steps: int = 100_000
-    eval_freq: int = 20_000
+    # Run policy in the simulation environment every N steps to measure reward/success (0 = disabled).
+    env_eval_freq: int = 20_000
     log_freq: int = 200
     tolerance_s: float = 1e-4
     save_checkpoint: bool = True

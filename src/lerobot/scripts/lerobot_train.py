@@ -256,7 +256,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_env = None
-    if cfg.eval_freq > 0 and cfg.env is not None and is_main_process:
+    if cfg.env_eval_freq > 0 and cfg.env is not None and is_main_process:
         logging.info("Creating env")
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
@@ -534,7 +534,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         train_tracker.step()
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
-        is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
+        is_env_eval_step = cfg.env_eval_freq > 0 and step % cfg.env_eval_freq == 0
 
         if is_log_step:
             # Collective reduce must run on every rank, before the main-process gate below.
@@ -579,7 +579,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
             accelerator.wait_for_everyone()
 
-        if cfg.env and is_eval_step:
+        if cfg.env and is_env_eval_step:
             if is_main_process:
                 step_id = get_step_identifier(step, cfg.steps)
                 logging.info(f"Eval policy at step {step}")
