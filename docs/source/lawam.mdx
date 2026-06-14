@@ -1,0 +1,103 @@
+# LaWAM
+
+`lawam` is a LeRobot adapter for [LaWAM](https://github.com/Nemo-1024/LaWAM), a latent world action model that uses a Qwen3-VL backbone, a latent world model, and a flow-matching action head.
+
+The implementation ports the LaWAM policy, latent-world batching, and LAM inference components into LeRobot, so `lawam` works through the standard LeRobot SFT and evaluation policy interfaces.
+
+## Installation
+
+Install LeRobot with the LaWAM extra:
+
+```bash
+pip install -e ".[lawam]"
+```
+
+## Fine-Tuning
+
+Fine-tune with released LaWAM LAM weights and a Qwen3-VL backbone:
+
+```bash
+lerobot-train \
+  --policy.type=lawam \
+  --policy.base_vlm=Qwen/Qwen3-VL-2B-Instruct \
+  --policy.lam_ckpt_path=/path/to/lawam_lam/checkpoints/pytorch_model.pt \
+  --policy.lam_yaml_path=/path/to/lawam_lam/dino_large_vae.yaml \
+  --policy.chunk_size=50 \
+  --policy.action_hz=20 \
+  --dataset.repo_id=your_org/your_lerobot_dataset \
+  --policy.repo_id=your_org/lawam_sft
+```
+
+To initialize from an original full LaWAM PyTorch checkpoint, pass the checkpoint path in addition to the LAM files:
+
+```bash
+lerobot-train \
+  --policy.type=lawam \
+  --policy.base_vlm=Qwen/Qwen3-VL-2B-Instruct \
+  --policy.lam_ckpt_path=/path/to/lawam_lam/checkpoints/pytorch_model.pt \
+  --policy.lam_yaml_path=/path/to/lawam_lam/dino_large_vae.yaml \
+  --policy.lawam_checkpoint_path=/path/to/lawam_pretrain/final_model/pytorch_model.pt \
+  --policy.chunk_size=50 \
+  --policy.action_hz=20 \
+  --policy.flow_horizon_sec=1.2 \
+  --dataset.repo_id=your_org/your_lerobot_dataset \
+  --policy.repo_id=your_org/lawam_sft
+```
+
+The adapter uses LeRobot dataset stats for action and state normalization before building LaWAM train batches. `policy.chunk_size` controls the action window loaded from the dataset, and `policy.num_video_frames` controls the observation frame window. The train collator keeps the full action window for padding while masking flow loss to `floor(policy.flow_horizon_sec * policy.action_hz)` valid action tokens, matching the released LaWAM checkpoints. Released LaWAM checkpoints use a 32-dimensional padded action/state space internally; keep `policy.flow_action_dim=32` and `policy.flow_state_dim=32` unless you trained a checkpoint with different flow dimensions.
+
+When training locally without pushing to the Hub, set `--policy.push_to_hub=false`. If your environment has a TorchCodec/PyTorch/FFmpeg mismatch, use LeRobot's PyAV decoder with `--dataset.video_backend=pyav`.
+
+## Evaluation
+
+Evaluate a LeRobot-saved LaWAM policy with the standard evaluator:
+
+```bash
+lerobot-eval \
+  --policy.path=your_org/lawam_sft \
+  --env.type=libero \
+  --eval.n_episodes=10
+```
+
+For original `.pt` LaWAM checkpoints, use `policy.type=lawam` with `policy.lawam_checkpoint_path` and the same `policy.base_vlm` used for training.
+
+For released LIBERO SFT checkpoints, keep the padded flow dimensions and set the flow horizon used by that checkpoint, for example:
+
+```bash
+lerobot-eval \
+  --policy.type=lawam \
+  --policy.base_vlm=Qwen/Qwen3-VL-2B-Instruct \
+  --policy.lam_ckpt_path=/path/to/lawam_lam/checkpoints/pytorch_model.pt \
+  --policy.lam_yaml_path=/path/to/lawam_lam/dino_large_vae.yaml \
+  --policy.lawam_checkpoint_path=/path/to/lawam_libero_sft/final_model/pytorch_model.pt \
+  --policy.flow_action_dim=32 \
+  --policy.flow_state_dim=32 \
+  --policy.flow_horizon_sec=0.4 \
+  --policy.action_hz=20 \
+  --env.type=libero \
+  --eval.n_episodes=10
+```
+
+## Camera Selection
+
+By default, visual features whose names include `wrist` are passed as wrist views, and the remaining visual features are primary views. Override this with:
+
+```bash
+--policy.primary_image_features='["observation.images.front"]' \
+--policy.wrist_image_features='["observation.images.wrist"]'
+```
+
+## Runtime Fields
+
+Common LaWAM-specific policy fields:
+
+| Field | Description |
+| --- | --- |
+| `lawam_checkpoint_path` | Original LaWAM `.pt` checkpoint to load. |
+| `base_vlm` | Qwen/Qwen3-VL model ID or local directory used by LaWAM's processor. |
+| `lam_ckpt_path` | LAM checkpoint used by the latent world model. |
+| `lam_yaml_path` | LAM YAML config used to instantiate the latent world model. |
+| `flow_action_dim` | Internal padded action dimension used by the LaWAM flow head. |
+| `flow_state_dim` | Internal padded state dimension used by the LaWAM flow head. |
+| `action_hz` | Control frequency passed to LaWAM inference and train collation. |
+| `embodiment_id` | LaWAM embodiment ID used when the LeRobot dataset does not provide one. |

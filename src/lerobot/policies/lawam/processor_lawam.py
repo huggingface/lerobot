@@ -1,0 +1,152 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import annotations
+
+from typing import Any
+
+import torch
+
+from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
+    DeviceProcessorStep,
+    EnvTransition,
+    NormalizerProcessorStep,
+    PolicyAction,
+    PolicyProcessorPipeline,
+    ProcessorStep,
+    ProcessorStepRegistry,
+    RenameObservationsProcessorStep,
+    TransitionKey,
+    UnnormalizerProcessorStep,
+)
+from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
+from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+
+from .configuration_lawam import LaWAMConfig
+
+
+@ProcessorStepRegistry.register(name="lawam_clip_actions")
+class LaWAMClipActionsProcessorStep(ProcessorStep):
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition.get(TransitionKey.ACTION)
+        if action is None:
+            return transition
+        transition = dict(transition)
+        transition[TransitionKey.ACTION] = action.clamp(-1.0, 1.0)
+        return transition
+
+    def transform_features(self, features):
+        return features
+
+
+@ProcessorStepRegistry.register(name="lawam_pre_snap_gripper")
+class LaWAMPreSnapGripperProcessorStep(ProcessorStep):
+    def __init__(self, gripper_dim: int = 6, threshold: float = 0.5):
+        self.gripper_dim = gripper_dim
+        self.threshold = threshold
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition.get(TransitionKey.ACTION)
+        if action is None or action.shape[-1] <= self.gripper_dim:
+            return transition
+        transition = dict(transition)
+        snapped = action.clone()
+        snapped[..., self.gripper_dim] = (snapped[..., self.gripper_dim] >= self.threshold).float()
+        transition[TransitionKey.ACTION] = snapped
+        return transition
+
+    def transform_features(self, features):
+        return features
+
+
+@ProcessorStepRegistry.register(name="lawam_binarize_gripper")
+class LaWAMBinarizeGripperProcessorStep(ProcessorStep):
+    def __init__(self, gripper_dim: int = 6, threshold: float = 0.5):
+        self.gripper_dim = gripper_dim
+        self.threshold = threshold
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition.get(TransitionKey.ACTION)
+        if action is None or action.shape[-1] <= self.gripper_dim:
+            return transition
+        transition = dict(transition)
+        binarized = action.clone()
+        binarized[..., self.gripper_dim] = 1.0 - 2.0 * (
+            binarized[..., self.gripper_dim] > self.threshold
+        ).float()
+        transition[TransitionKey.ACTION] = binarized
+        return transition
+
+    def transform_features(self, features):
+        return features
+
+
+def make_lawam_pre_post_processors(
+    config: LaWAMConfig,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    features = {**config.input_features, **config.output_features}
+    input_steps = [
+        RenameObservationsProcessorStep(rename_map={}),
+        AddBatchDimensionProcessorStep(),
+        DeviceProcessorStep(device=config.device),
+        NormalizerProcessorStep(
+            features=features,
+            norm_map=config.normalization_mapping,
+            stats=dataset_stats,
+        ),
+    ]
+
+    output_steps: list[ProcessorStep] = []
+    if config.clip_normalized_actions:
+        output_steps.append(LaWAMClipActionsProcessorStep())
+    if config.pre_snap_gripper_action:
+        output_steps.append(
+            LaWAMPreSnapGripperProcessorStep(
+                gripper_dim=config.gripper_dim,
+                threshold=config.gripper_threshold,
+            )
+        )
+    output_steps.append(
+        UnnormalizerProcessorStep(
+            features=features,
+            norm_map=config.normalization_mapping,
+            stats=dataset_stats,
+        )
+    )
+    if config.binarize_gripper_action:
+        output_steps.append(
+            LaWAMBinarizeGripperProcessorStep(
+                gripper_dim=config.gripper_dim,
+                threshold=config.gripper_threshold,
+            )
+        )
+    output_steps.append(DeviceProcessorStep(device="cpu"))
+
+    return (
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
+            steps=input_steps,
+            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
+        ),
+        PolicyProcessorPipeline[PolicyAction, PolicyAction](
+            steps=output_steps,
+            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
+            to_transition=policy_action_to_transition,
+            to_output=transition_to_policy_action,
+        ),
+    )

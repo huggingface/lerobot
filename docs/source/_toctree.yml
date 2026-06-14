@@ -67,6 +67,8 @@
     title: MolmoAct2
   - local: vla_jepa
     title: VLA-JEPA
+  - local: lawam
+    title: LaWAM
   - local: eo1
     title: EO-1
   - local: groot
