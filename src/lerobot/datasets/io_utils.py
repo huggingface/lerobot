@@ -299,8 +299,14 @@ def item_to_torch(item: dict) -> dict:
         dict: Dictionary with all tensor-like items converted to torch.Tensor.
     """
     skip_keys = {"task", *LANGUAGE_COLUMNS}
+    to_tensor = transforms.ToTensor()
     for key, val in item.items():
-        if isinstance(val, (np.ndarray | list)) and key not in skip_keys:
+        if key in skip_keys:
+            continue
+        if isinstance(val, PILImage.Image):
+            # Same conversion as hf_transform_to_torch: PIL (H, W, C) uint8 -> (C, H, W) float32 in [0, 1]
+            item[key] = to_tensor(val)
+        elif isinstance(val, (np.ndarray | list)):
             # Convert numpy arrays and lists to torch tensors
             item[key] = torch.tensor(val)
     return item
