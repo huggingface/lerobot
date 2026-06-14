@@ -159,6 +159,8 @@
     title: OpenArm
   - local: rebot_b601
     title: reBot B601-DM
+  - local: roarm_m3
+    title: RoArm-M3
   title: "Robots"
 - sections:
   - local: phone_teleop
