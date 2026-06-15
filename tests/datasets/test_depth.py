@@ -20,7 +20,6 @@ pytest.importorskip("av", reason="av is required (install lerobot[dataset])")
 import av
 import numpy as np
 import PIL.Image
-import pytest
 import torch
 
 from lerobot.configs import DepthEncoderConfig
