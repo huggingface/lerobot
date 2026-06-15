@@ -506,8 +506,10 @@ def compute_episode_stats(
         Each statistics dictionary contains min, max, mean, std, count, and quantiles.
 
     Note:
-        Image statistics are normalized to [0,1] range and have shape (3,1,1) for
-        per-channel values when dtype is 'image' or 'video'.
+        For 'image'/'video' features, stats are computed per channel and kept with a
+        leading channel axis (e.g. shape (3, 1, 1) for RGB). RGB stats are divided by
+        255 to land in [0, 1]; depth maps (features flagged with ``is_depth_map``) skip
+        this rescaling and remain in their stored units.
     """
     if quantile_list is None:
         quantile_list = DEFAULT_QUANTILES

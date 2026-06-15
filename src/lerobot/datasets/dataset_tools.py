@@ -1682,21 +1682,27 @@ def convert_image_to_video_dataset(
     LeRobot dataset structure with videos stored in chunked MP4 files.
 
     Args:
-        dataset: The source LeRobot dataset with images
-        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
-        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
-        camera_encoder: Video encoder settings applied to RGB cameras
-            (``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`).
+        dataset: The source LeRobot dataset with images.
+        output_dir: Root directory where the converted dataset will be stored. When
+            ``None``, defaults to ``$HF_LEROBOT_HOME/repo_id``. Equivalent to
+            ``new_root`` in ``EditDatasetConfig``.
+        repo_id: Converted dataset identifier. Equivalent to ``new_repo_id`` in
+            ``EditDatasetConfig``.
+        camera_encoder: Video encoder settings applied to RGB cameras. When ``None``,
+            :func:`~lerobot.configs.video.camera_encoder_defaults` is used.
         depth_encoder: Video encoder settings applied to depth-map cameras, including
-            the quantization parameters persisted to the dataset metadata
-            (``None`` uses :func:`~lerobot.configs.depth_encoder_defaults`).
-        episode_indices: List of episode indices to convert (None = all episodes)
-        num_workers: Number of threads for parallel processing (default: 4)
-        max_episodes_per_batch: Maximum episodes per video batch to avoid memory issues (None = no limit)
-        max_frames_per_batch: Maximum frames per video batch to avoid memory issues (None = no limit)
+            the quantization parameters persisted to the dataset metadata. When
+            ``None``, :func:`~lerobot.configs.video.depth_encoder_defaults` is used.
+        episode_indices: Episode indices to convert. When ``None``, all episodes are
+            converted.
+        num_workers: Number of threads for parallel processing.
+        max_episodes_per_batch: Maximum episodes per video batch, to bound memory use.
+            ``None`` means no limit.
+        max_frames_per_batch: Maximum frames per video batch, to bound memory use.
+            ``None`` means no limit.
 
     Returns:
-        New LeRobotDataset with images encoded as videos
+        A new :class:`LeRobotDataset` with images encoded as videos.
     """
     if camera_encoder is None:
         camera_encoder = camera_encoder_defaults()

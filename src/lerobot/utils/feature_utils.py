@@ -51,7 +51,9 @@ def hw_to_dataset_features(
 
     This function takes a dictionary describing hardware outputs (like joint states
     or camera image shapes) and formats it into the standard LeRobot feature
-    specification.
+    specification. Single-channel cameras (shape ``(H, W, 1)``) are flagged as depth
+    maps via ``info["is_depth_map"] = True``; three-channel cameras ``(H, W, 3)`` are
+    treated as RGB.
 
     Args:
         hw_features (dict): Dictionary mapping feature names to their type (float for
@@ -61,7 +63,7 @@ def hw_to_dataset_features(
         use_video (bool): If True, image features are marked as "video", otherwise "image".
 
     Returns:
-        dict: A LeRobot features dictionary.
+        dict: A LeRobot features dictionary. Depth cameras carry ``info["is_depth_map"] = True``.
     """
     features = {}
     joint_fts = {

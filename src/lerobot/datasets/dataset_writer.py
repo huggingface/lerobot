@@ -120,10 +120,11 @@ class DatasetWriter:
             meta: Dataset metadata instance (used for feature schema, chunk
                 settings, and episode persistence).
             root: Local dataset root directory.
-            camera_encoder: Video encoder settings applied to all cameras.
-                ``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`.
-            depth_encoder: Video encoder settings applied to all **depth** cameras.
-                ``None`` uses :func:`~lerobot.configs.depth_encoder_defaults`.
+            camera_encoder: Video encoder settings applied to RGB cameras. When
+                ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults` is used.
+            depth_encoder: Video encoder settings applied to depth cameras, including
+                the quantization parameters. When ``None``,
+                :func:`~lerobot.configs.video.depth_encoder_defaults` is used.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
             batch_encoding_size: Number of episodes to accumulate before

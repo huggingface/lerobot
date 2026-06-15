@@ -189,7 +189,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 (codec, quality, etc.). When ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults`
                 is used by the writer.
             depth_encoder (DepthEncoderConfig | None, optional): Video encoder settings for depth cameras
-                (codec, quality, etc.). When ``None``, :func:`~lerobot.configs.depth.depth_encoder_defaults`
+                (codec, quality, etc.). When ``None``, :func:`~lerobot.configs.video.depth_encoder_defaults`
                 is used by the writer.
             encoder_threads (int | None, optional): Number of encoder threads (global). ``None`` lets the
                 codec decide.
@@ -690,7 +690,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             camera_encoder: Video encoder settings for cameras (codec, quality, etc.).
                 When ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults` is used.
             depth_encoder: Video encoder settings for depth cameras (codec, quality, etc.).
-                When ``None``, :func:`~lerobot.configs.depth.depth_encoder_defaults` is used.
+                When ``None``, :func:`~lerobot.configs.video.depth_encoder_defaults` is used.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
             metadata_buffer_size: Number of episode metadata records to buffer
@@ -796,7 +796,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             camera_encoder: Video encoder settings for cameras (codec, quality, etc.).
                 When ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults` is used.
             depth_encoder: Video encoder settings for depth cameras (codec, quality, etc.).
-                When ``None``, :func:`~lerobot.configs.depth.depth_encoder_defaults` is used.
+                When ``None``, :func:`~lerobot.configs.video.depth_encoder_defaults` is used.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
             image_writer_processes: Subprocesses for async image writing.

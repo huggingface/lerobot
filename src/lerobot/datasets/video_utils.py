@@ -436,7 +436,28 @@ def encode_video_frames(
     log_level: int | None = av.logging.WARNING,
     overwrite: bool = False,
 ) -> None:
-    """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
+    """Encode a directory of image frames into an MP4 video.
+
+    When ``video_encoder`` is a :class:`~lerobot.configs.video.DepthEncoderConfig`,
+    frames are read from ``.tiff`` files and quantized to 12-bit depth codes using the
+    encoder's ``depth_min`` / ``depth_max`` / ``shift`` / ``use_log``; otherwise ``.png``
+    RGB frames are encoded directly.
+
+    Args:
+        imgs_dir: Directory containing the frames to encode, named ``frame-000000``
+            onwards (``.png`` for RGB, ``.tiff`` for depth).
+        video_path: Output path for the encoded ``.mp4`` file.
+        fps: Frame rate of the output video.
+        video_encoder: Encoder settings (codec, pixel format, quality, ...). When
+            ``None``, :func:`camera_encoder_defaults` is used. Pass a
+            :class:`~lerobot.configs.video.DepthEncoderConfig` to encode depth frames.
+        encoder_threads: Per-encoder thread count forwarded to the codec. ``None``
+            lets the codec decide.
+        log_level: libav log level to set while encoding, or ``None`` to leave the
+            current logging configuration unchanged.
+        overwrite: When ``False`` and ``video_path`` already exists, skip encoding and
+            log a warning. When ``True``, re-encode and replace the existing file.
+    """
     if video_encoder is None:
         video_encoder = camera_encoder_defaults()
     vcodec = video_encoder.vcodec
@@ -873,12 +894,15 @@ class StreamingVideoEncoder:
         """
         Args:
             fps: Frames per second for the output videos.
-            camera_encoder: Video encoder settings applied to all cameras.
+            camera_encoder: Video encoder settings applied to all RGB cameras.
                 When ``None``, :func:`camera_encoder_defaults` is used.
-            encoder_threads: Number of encoder threads (global setting).
-                ``None`` lets the codec decide.
+            depth_encoder: Video encoder settings applied to all depth cameras,
+                including the depth quantization parameters. When ``None``,
+                :func:`depth_encoder_defaults` is used.
             queue_maxsize: Max frames to buffer per camera before
                 back-pressure drops frames.
+            encoder_threads: Number of encoder threads (global setting).
+                ``None`` lets the codec decide.
         """
         self.fps = fps
         self._camera_encoder = camera_encoder or camera_encoder_defaults()
@@ -1145,7 +1169,15 @@ def get_video_info(
         video_path: Path to the encoded video file to probe.
         video_encoder: If provided, record the exact encoder settings used to encode this
             video. Stream-derived values take precedence — encoder fields are only written for keys
-            not already populated from the video file itself.
+            not already populated from the video file itself. When a
+            :class:`~lerobot.configs.video.DepthEncoderConfig` is passed, the depth
+            quantization parameters (``depth_min`` / ``depth_max`` / ``shift`` /
+            ``use_log``) are recorded so frames can be dequantized on read.
+
+    Returns:
+        The ``video.*`` / ``audio.*`` info dict, including ``is_depth_map`` which is
+        ``True`` only when ``video_encoder`` is a
+        :class:`~lerobot.configs.video.DepthEncoderConfig`.
     """
     logging.getLogger("libav").setLevel(av.logging.WARNING)
 
