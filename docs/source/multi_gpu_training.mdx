@@ -138,10 +138,10 @@ num_machines: 1
 num_processes: 4
 fsdp_config:
   fsdp_version: 1
-  fsdp_sharding_strategy: FULL_SHARD                          # params + grads + optimizer (ZeRO-3)
+  fsdp_sharding_strategy: FULL_SHARD # params + grads + optimizer (ZeRO-3)
   fsdp_auto_wrap_policy: TRANSFORMER_BASED_WRAP
-  fsdp_transformer_layer_cls_to_wrap: <YourTransformerBlock>  # repeated block class to shard
-  fsdp_use_orig_params: true                                  # required: optimizer is built pre-prepare
+  fsdp_transformer_layer_cls_to_wrap: <YourTransformerBlock> # repeated block class to shard
+  fsdp_use_orig_params: true # required: optimizer is built pre-prepare
   fsdp_state_dict_type: FULL_STATE_DICT
 ```
 
