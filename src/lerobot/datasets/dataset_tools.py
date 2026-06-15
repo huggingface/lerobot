@@ -55,6 +55,7 @@ from .compute_stats import (
     compute_relative_action_stats,
 )
 from .dataset_metadata import LeRobotDatasetMetadata
+from .image_writer import write_image
 from .io_utils import (
     get_parquet_file_size_in_mb,
     load_episodes,
@@ -69,6 +70,8 @@ from .utils import (
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
     DEFAULT_EPISODES_PATH,
+    DEPTH_FILE_PATTERN,
+    IMAGE_FILE_PATTERN,
     VIDEO_DIR,
     update_chunk_file_indices,
 )
@@ -1160,15 +1163,15 @@ def _save_episode_images_for_video(
     # Get all items for this episode
     episode_dataset = imgs_dataset.select(range(from_idx, to_idx))
 
+    is_depth = img_key in dataset.meta.depth_keys
+    frame_pattern = DEPTH_FILE_PATTERN if is_depth else IMAGE_FILE_PATTERN
+
     # Define function to save a single image
     def save_single_image(i_item_tuple):
         i, item = i_item_tuple
-        img = item[img_key]
-        # Use frame-XXXXXX.png format to match encode_video_frames expectations
-        img.save(str(imgs_dir / f"frame-{i:06d}.png"), quality=100)
+        write_image(item[img_key], imgs_dir / frame_pattern.format(frame_index=i))
         return i
 
-    # Save images with proper naming convention for encode_video_frames (frame-XXXXXX.png)
     items = list(enumerate(episode_dataset))
 
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
@@ -1200,16 +1203,14 @@ def _save_batch_episodes_images(
     hf_dataset = dataset.hf_dataset.with_format(None)
     imgs_dataset = hf_dataset.select_columns(img_key)
 
+    is_depth = img_key in dataset.meta.depth_keys
+    frame_pattern = DEPTH_FILE_PATTERN if is_depth else IMAGE_FILE_PATTERN
+
     # Define function to save a single image with global frame index
     # Defined once outside the loop to avoid repeated closure creation
     def save_single_image(i_item_tuple, base_frame_idx, img_key_param):
         i, item = i_item_tuple
-        img = item[img_key_param]
-        # Use global frame index for naming
-        if img_key_param in dataset.meta.depth_keys:
-            img.save(str(imgs_dir / f"frame-{base_frame_idx + i:06d}.tiff"), compression="raw")
-        else:
-            img.save(str(imgs_dir / f"frame-{base_frame_idx + i:06d}.png"), quality=100)
+        write_image(item[img_key_param], imgs_dir / frame_pattern.format(frame_index=base_frame_idx + i))
         return i
 
     episode_durations = []
@@ -1339,10 +1340,11 @@ def _estimate_frame_size_via_calibration(
         hf_dataset = dataset.hf_dataset.with_format(None)
         sample_indices = range(from_idx, from_idx + num_frames)
 
-        # Save calibration frames
+        # Save calibration frames using the suffix/format the encoder expects.
+        is_depth = img_key in dataset.meta.depth_keys
+        frame_pattern = DEPTH_FILE_PATTERN if is_depth else IMAGE_FILE_PATTERN
         for i, idx in enumerate(sample_indices):
-            img = hf_dataset[idx][img_key]
-            img.save(str(calibration_dir / f"frame-{i:06d}.png"), quality=100)
+            write_image(hf_dataset[idx][img_key], calibration_dir / frame_pattern.format(frame_index=i))
 
         # Encode calibration video
         calibration_video_path = calibration_dir / "calibration.mp4"

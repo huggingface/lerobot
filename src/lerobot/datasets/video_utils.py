@@ -481,7 +481,7 @@ def encode_video_frames(
     )
 
     if len(input_list) == 0:
-        raise FileNotFoundError(f"No images found in {imgs_dir}.")
+        raise FileNotFoundError(f"No images with suffix {suffix} found in {imgs_dir}.")
     with Image.open(input_list[0]) as dummy_image:
         width, height = dummy_image.size
 
