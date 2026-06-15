@@ -25,6 +25,11 @@ quantile statistics (q01, q10, q50, q90, q99) in their metadata. This script:
 3. If missing, computes quantile statistics for all features
 4. Updates the dataset metadata with the new quantile statistics
 
+Statistics are accumulated into a single running histogram per feature across
+all episodes, so the resulting quantiles estimate the whole-dataset
+distribution rather than aggregating per-episode quantile summaries. They stay
+histogram approximations, subject to discretization and range-rebinning error.
+
 Usage:
 
 ```bash
@@ -34,9 +39,7 @@ python src/lerobot/scripts/augment_dataset_quantile_stats.py \
 """
 
 import argparse
-import concurrent.futures
 import logging
-import os
 from pathlib import Path
 
 import numpy as np
@@ -49,12 +52,13 @@ from lerobot.datasets import (
     CODEBASE_VERSION,
     DEFAULT_QUANTILES,
     LeRobotDataset,
-    aggregate_stats,
-    get_feature_stats,
     write_stats,
 )
-from lerobot.datasets.compute_stats import sample_indices
+from lerobot.datasets.compute_stats import RunningQuantileStats, sample_indices
 from lerobot.utils.utils import init_logging
+
+# Non-numeric features carry no meaningful quantiles.
+NON_NUMERIC_DTYPES = ("string", "language")
 
 
 def has_quantile_stats(stats: dict[str, dict] | None, quantile_list_keys: list[str] | None = None) -> bool:
@@ -79,30 +83,33 @@ def has_quantile_stats(stats: dict[str, dict] | None, quantile_list_keys: list[s
     return False
 
 
-def process_single_episode(dataset: LeRobotDataset, episode_idx: int, use_sampling: bool = True) -> dict:
-    """Process a single episode and return its statistics.
+def collect_episode_arrays(
+    dataset: LeRobotDataset,
+    episode_idx: int,
+    use_sampling: bool = True,
+    skip_images: bool = False,
+) -> dict[str, np.ndarray]:
+    """Collect one episode's frames per feature, flattened to (num_samples, dim).
 
     Args:
         dataset: The LeRobot dataset
-        episode_idx: Index of the episode to process
-        use_sampling: If True, sub-sample image/video frames per episode to bound
-            memory. If False, use every frame (exact, higher memory).
+        episode_idx: Index of the episode to read
+        use_sampling: If True, sub-sample image/video frames to bound memory.
+            If False, use every frame (exact, higher memory).
+        skip_images: If True, skip image/video features entirely.
 
     Returns:
-        Dictionary containing episode statistics
+        Mapping of feature name to a 2D array of that episode's values.
     """
-    logging.info(f"Computing stats for episode {episode_idx}")
-
     start_idx = dataset.meta.episodes[episode_idx]["dataset_from_index"]
     end_idx = dataset.meta.episodes[episode_idx]["dataset_to_index"]
-
     episode_len = end_idx - start_idx
 
-    # Images/video are the memory hog, so sub-sample those frames per episode;
-    # numeric columns are cheap, so read them in full (exact).
     image_keys = [k for k in dataset.features if dataset.features[k]["dtype"] in ("image", "video")]
     numeric_keys = [
-        k for k in dataset.features if dataset.features[k]["dtype"] not in ("image", "video", "string")
+        k
+        for k in dataset.features
+        if dataset.features[k]["dtype"] not in ("image", "video", *NON_NUMERIC_DTYPES)
     ]
 
     collected_data: dict[str, list] = {}
@@ -114,7 +121,7 @@ def process_single_episode(dataset: LeRobotDataset, episode_idx: int, use_sampli
             collected_data[key] = [torch.as_tensor(v) for v in numeric_cols[key]]
 
     # Image/video features: decode only a sampled subset of frames.
-    if image_keys:
+    if image_keys and not skip_images:
         sampled_offsets = sample_indices(episode_len) if use_sampling else list(range(episode_len))
         for offset in sampled_offsets:
             item = dataset[start_idx + offset]
@@ -122,87 +129,68 @@ def process_single_episode(dataset: LeRobotDataset, episode_idx: int, use_sampli
                 if key in item:
                     collected_data.setdefault(key, []).append(item[key])
 
-    ep_stats = {}
+    episode_arrays: dict[str, np.ndarray] = {}
     for key, data_list in collected_data.items():
-        if dataset.features[key]["dtype"] == "string":
+        if not data_list:
             continue
 
         data = torch.stack(data_list).cpu().numpy()
-        if dataset.features[key]["dtype"] in ["image", "video"]:
+        if dataset.features[key]["dtype"] in ("image", "video"):
             if data.dtype == np.uint8:
                 data = data.astype(np.float32) / 255.0
-
-            axes_to_reduce = (0, 2, 3)
-            keepdims = True
+            # (N, C, H, W) -> (N * H * W, C) so quantiles are computed per channel.
+            channels = data.shape[1]
+            episode_arrays[key] = data.transpose(0, 2, 3, 1).reshape(-1, channels)
         else:
-            axes_to_reduce = 0
-            keepdims = data.ndim == 1
+            episode_arrays[key] = data.reshape(-1, data.shape[-1]) if data.ndim > 1 else data.reshape(-1, 1)
 
-        ep_stats[key] = get_feature_stats(
-            data, axis=axes_to_reduce, keepdims=keepdims, quantile_list=DEFAULT_QUANTILES
-        )
-
-        if dataset.features[key]["dtype"] in ["image", "video"]:
-            ep_stats[key] = {
-                k: v if k == "count" else np.squeeze(v, axis=0) for k, v in ep_stats[key].items()
-            }
-
-    return ep_stats
+    return episode_arrays
 
 
-def compute_quantile_stats_for_dataset(dataset: LeRobotDataset, use_sampling: bool = True) -> dict[str, dict]:
-    """Compute quantile statistics for all episodes in the dataset.
+def compute_quantile_stats_for_dataset(
+    dataset: LeRobotDataset,
+    use_sampling: bool = True,
+    skip_images: bool = False,
+) -> dict[str, dict]:
+    """Compute whole-dataset statistics with one running histogram per feature.
 
     Args:
         dataset: The LeRobot dataset to compute statistics for
         use_sampling: If True, sub-sample image/video frames per episode to bound
             memory. If False, use every frame (exact, higher memory).
+        skip_images: If True, skip image/video features and leave their stats untouched.
 
     Returns:
-        Dictionary containing aggregated statistics with quantiles
+        Dictionary containing statistics with histogram-based global quantile estimates
 
     Note:
-        Video decoding operations are not thread-safe, so we process episodes sequentially
-        when video keys are present. For datasets without videos, we use parallel processing
-        with ThreadPoolExecutor for better performance.
+        Episodes are accumulated sequentially because the running accumulators are
+        shared across all of them.
     """
     logging.info(f"Computing quantile statistics for dataset with {dataset.num_episodes} episodes")
 
-    episode_stats_list = []
-    has_videos = len(dataset.meta.video_keys) > 0
+    running_stats: dict[str, RunningQuantileStats] = {}
 
-    if has_videos:
-        logging.info("Dataset contains video keys - using sequential processing for thread safety")
-        for episode_idx in tqdm(range(dataset.num_episodes), desc="Processing episodes"):
-            ep_stats = process_single_episode(dataset, episode_idx, use_sampling)
-            episode_stats_list.append(ep_stats)
-    else:
-        logging.info("Dataset has no video keys - using parallel processing for better performance")
-        max_workers = min(dataset.num_episodes, int(os.environ.get("LEROBOT_STATS_MAX_WORKERS", 16)))
+    for episode_idx in tqdm(range(dataset.num_episodes), desc="Processing episodes"):
+        episode_arrays = collect_episode_arrays(
+            dataset, episode_idx, use_sampling=use_sampling, skip_images=skip_images
+        )
+        for key, array in episode_arrays.items():
+            running_stats.setdefault(key, RunningQuantileStats()).update(array)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_episode = {
-                executor.submit(process_single_episode, dataset, episode_idx, use_sampling): episode_idx
-                for episode_idx in range(dataset.num_episodes)
-            }
-
-            episode_results = {}
-            with tqdm(total=dataset.num_episodes, desc="Processing episodes") as pbar:
-                for future in concurrent.futures.as_completed(future_to_episode):
-                    episode_idx = future_to_episode[future]
-                    ep_stats = future.result()
-                    episode_results[episode_idx] = ep_stats
-                    pbar.update(1)
-
-        for episode_idx in range(dataset.num_episodes):
-            if episode_idx in episode_results:
-                episode_stats_list.append(episode_results[episode_idx])
-
-    if not episode_stats_list:
+    if not running_stats:
         raise ValueError("No episode data found for computing statistics")
 
-    logging.info(f"Aggregating statistics from {len(episode_stats_list)} episodes")
-    return aggregate_stats(episode_stats_list)
+    aggregated_stats: dict[str, dict] = {}
+    for key, accumulator in running_stats.items():
+        stats = accumulator.get_statistics()
+        if dataset.features[key]["dtype"] in ("image", "video"):
+            # Image stats are stored as (C, 1, 1) to broadcast over height and width.
+            stats = {k: v if k == "count" else v[:, np.newaxis, np.newaxis] for k, v in stats.items()}
+        aggregated_stats[key] = stats
+
+    logging.info(f"Computed global histogram statistics for {len(aggregated_stats)} features")
+    return aggregated_stats
 
 
 def augment_dataset_with_quantile_stats(
@@ -210,6 +198,7 @@ def augment_dataset_with_quantile_stats(
     root: str | Path | None = None,
     overwrite: bool = False,
     use_sampling: bool = True,
+    skip_images: bool = False,
 ) -> None:
     """Augment a dataset with quantile statistics if they are missing.
 
@@ -219,6 +208,7 @@ def augment_dataset_with_quantile_stats(
         overwrite: Overwrite existing quantile statistics if they already exist
         use_sampling: If True, sub-sample image/video frames per episode to bound
             memory. If False, use every frame (exact, higher memory).
+        skip_images: If True, skip image/video features and keep their existing stats
     """
     logging.info(f"Loading dataset: {repo_id}")
     dataset = LeRobotDataset(
@@ -232,7 +222,13 @@ def augment_dataset_with_quantile_stats(
 
     logging.info("Dataset does not contain quantile statistics. Computing them now...")
 
-    new_stats = compute_quantile_stats_for_dataset(dataset, use_sampling=use_sampling)
+    new_stats = compute_quantile_stats_for_dataset(
+        dataset, use_sampling=use_sampling, skip_images=skip_images
+    )
+
+    if skip_images and dataset.meta.stats:
+        for key, feature_stats in dataset.meta.stats.items():
+            new_stats.setdefault(key, feature_stats)
 
     logging.info("Updating dataset metadata with new quantile statistics")
     dataset.meta.stats = new_stats
@@ -280,6 +276,11 @@ def main():
             "image/video frames are sub-sampled per episode to bound memory."
         ),
     )
+    parser.add_argument(
+        "--skip-images",
+        action="store_true",
+        help="Skip image/video features and preserve their existing stats",
+    )
 
     args = parser.parse_args()
     root = Path(args.root) if args.root else None
@@ -291,6 +292,7 @@ def main():
         root=root,
         overwrite=args.overwrite,
         use_sampling=not args.no_sampling,
+        skip_images=args.skip_images,
     )
 
 
