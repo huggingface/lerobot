@@ -77,7 +77,6 @@ from .utils import (
 )
 from .video_utils import (
     encode_video_frames,
-    get_video_info,
     reencode_video,
 )
 
@@ -1887,14 +1886,11 @@ def convert_image_to_video_dataset(
         new_meta.info.total_tasks = dataset.meta.total_tasks
         new_meta.info.splits = {"train": f"0:{len(episode_indices)}"}
 
-        # Update video info for all image keys (now videos)
-        # We need to manually set video info since update_video_info() checks video_keys first
+        # Update video info for all image keys (now videos). They are registered as
+        # video features above, so update_video_info populates their (still-empty) info.
         for img_key in img_keys:
             target_encoder = depth_encoder if img_key in dataset.meta.depth_keys else camera_encoder
-            video_path = new_meta.root / new_meta.video_path.format(
-                video_key=img_key, chunk_index=0, file_index=0
-            )
-            new_meta.info.features[img_key]["info"] = get_video_info(video_path, video_encoder=target_encoder)
+            new_meta.update_video_info(video_key=img_key, video_encoder=target_encoder)
 
         write_info(new_meta.info, new_meta.root)
 
@@ -1976,7 +1972,7 @@ def reencode_dataset(
         if target_encoder is None:
             logging.info(f"No encoder provided for {video_key} video. Skipping re-encoding.")
         elif current_encoder != target_encoder:
-            video_keys_paths_dict[video_key] = (meta.root / VIDEO_DIR / video_key).rglob("*.mp4")
+            video_keys_paths_dict[video_key] = list((meta.root / VIDEO_DIR / video_key).rglob("*.mp4"))
             video_keys_encoders_dict[video_key] = target_encoder
         else:
             logging.info(f"{video_key} videos are already encoded with {target_encoder}. Nothing to do.")
@@ -2004,11 +2000,14 @@ def reencode_dataset(
         for args in tqdm(worker_args, desc="Re-encoding videos"):
             _reencode_video_worker(args)
 
-    # Refresh video info in metadata for every video key. For depth videos, preserve
-    # ``is_depth_map`` and the depth quantization parameters.
+    # Refresh video info in metadata for every re-encoded key. Re-encoding only
+    # changes codec/container params, so for depth videos we preserve ``is_depth_map``
+    # and the depth quantization params (``video.depth_min`` / ``video.depth_max`` /
+    # ...), which describe the data rather than the codec and must survive a transcode.
+    # RGB videos pass an empty set: still a refresh, but nothing to preserve.
     depth_preserve_keys = {"is_depth_map", *(f"video.{n}" for n in DEPTH_ENCODER_INFO_FIELD_NAMES)}
     for video_key, encoder in video_keys_encoders_dict.items():
-        preserve_keys = depth_preserve_keys if video_key in meta.depth_keys else None
+        preserve_keys = depth_preserve_keys if video_key in meta.depth_keys else set()
         meta.update_video_info(video_key=video_key, video_encoder=encoder, preserve_keys=preserve_keys)
 
     write_info(meta.info, meta.root)
