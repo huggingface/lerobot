@@ -147,6 +147,34 @@ class SmolVLMWithExpertModelKI(SmolVLMWithExpertModel):
     # cross-attention path is fully insulated. TODO: route the self-attn layers
     # through detached VLM KV too for strict insulation if ablations call for it.
 
+    def forward(self, *args, **kwargs):
+        """At inference, only run the first ``expert_attend_layers`` VLM layers.
+
+        The VLM layers beyond ``expert_attend_layers`` exist ONLY to feed the
+        ``lm_head`` for the training-time FAST token loss — the action expert reads
+        just the first ``expert_attend_layers`` layers, and beyond them those expert
+        slots are ``None`` so the expert hidden state is passed through unchanged
+        (see ``forward`` lines that append ``hidden_states`` when ``layer is None``).
+        Hence the expert's final output is bit-identical whether or not the extra
+        VLM layers run.
+
+        At train time we DO run them (full ``num_vlm_layers``) because the FAST loss
+        needs the full-depth VLM output under ``lm_head``. But at inference (KV-cache,
+        suffix-only denoise) the VLM contributes no new query in its self-attention
+        layers, and beyond ``expert_attend_layers`` the expert has no layer either —
+        so ``forward_attn_layer`` would build an empty query list and hit
+        ``torch.cat([])``. Capping the layer count to ``expert_attend_layers`` both
+        avoids that crash and halves deploy-time compute (the intended design).
+        """
+        if not self.training:
+            orig = self.num_vlm_layers
+            self.num_vlm_layers = min(self.expert_attend_layers, orig)
+            try:
+                return super().forward(*args, **kwargs)
+            finally:
+                self.num_vlm_layers = orig
+        return super().forward(*args, **kwargs)
+
 
 class VLAFlowMatchingKI(VLAFlowMatching):
     """Same as :class:`VLAFlowMatching` but builds the KI expert model and adds the
