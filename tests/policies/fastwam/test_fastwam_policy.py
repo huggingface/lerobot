@@ -224,7 +224,15 @@ class CoreWithFrozenComponents(FakeFastWAMCore):
 
 
 def test_from_pretrained_uses_base_loader_and_skips_wan_backbone(monkeypatch, tmp_path):
-    cfg = FastWAMConfig(action_dim=3, proprio_dim=2, action_horizon=4, n_action_steps=2, num_video_frames=5, action_video_freq_ratio=1, base_model_id=None)
+    cfg = FastWAMConfig(
+        action_dim=3,
+        proprio_dim=2,
+        action_horizon=4,
+        n_action_steps=2,
+        num_video_frames=5,
+        action_video_freq_ratio=1,
+        base_model_id=None,
+    )
 
     def build_core(self, config):
         core = CoreWithFrozenComponents()
@@ -256,7 +264,15 @@ def test_from_pretrained_uses_base_loader_and_skips_wan_backbone(monkeypatch, tm
 
 
 def test_save_pretrained_excludes_frozen_components(monkeypatch, tmp_path):
-    cfg = FastWAMConfig(action_dim=3, proprio_dim=2, action_horizon=4, n_action_steps=2, num_video_frames=5, action_video_freq_ratio=1, base_model_id=None)
+    cfg = FastWAMConfig(
+        action_dim=3,
+        proprio_dim=2,
+        action_horizon=4,
+        n_action_steps=2,
+        num_video_frames=5,
+        action_video_freq_ratio=1,
+        base_model_id=None,
+    )
     monkeypatch.setattr(FastWAMPolicy, "_build_core_model", lambda self, config: CoreWithFrozenComponents())
     policy = FastWAMPolicy(cfg)
 
@@ -278,7 +294,15 @@ def test_save_pretrained_excludes_frozen_components(monkeypatch, tmp_path):
 
 
 def test_frozen_components_excluded_from_params_but_follow_device_moves(monkeypatch):
-    cfg = FastWAMConfig(action_dim=3, proprio_dim=2, action_horizon=4, n_action_steps=2, num_video_frames=5, action_video_freq_ratio=1, base_model_id=None)
+    cfg = FastWAMConfig(
+        action_dim=3,
+        proprio_dim=2,
+        action_horizon=4,
+        n_action_steps=2,
+        num_video_frames=5,
+        action_video_freq_ratio=1,
+        base_model_id=None,
+    )
     monkeypatch.setattr(FastWAMPolicy, "_build_core_model", lambda self, config: CoreWithFrozenComponents())
     policy = FastWAMPolicy(cfg)
 
@@ -332,7 +356,7 @@ def test_vae_adapter_empty_build_encode_decode_shapes():
         "dim_mult": [1, 2, 4, 4],
         "num_res_blocks": 2,
         "attn_scales": [],
-        "temperal_downsample": [False, True, True],
+        "temporal_downsample": [False, True, True],
         "dropout": 0.0,
         "is_residual": True,
         "in_channels": 12,

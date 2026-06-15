@@ -425,7 +425,7 @@ class WanVideoDiT(WanModel):
         has_ref_conv: bool = False,
         add_control_adapter: bool = False,
         in_dim_control_adapter: int = 24,
-        seperated_timestep: bool = False,
+        separated_timestep: bool = False,
         require_vae_embedding: bool = False,
         require_clip_embedding: bool = False,
         fuse_vae_embedding_in_latents: bool = True,
@@ -489,7 +489,7 @@ class WanVideoDiT(WanModel):
 
         self.hidden_dim = hidden_dim
         self.attn_head_dim = attn_head_dim
-        self.seperated_timestep = seperated_timestep
+        self.separated_timestep = separated_timestep
         self.fuse_vae_embedding_in_latents = fuse_vae_embedding_in_latents
         self.video_attention_mask_mode = str(video_attention_mask_mode)
         self.action_conditioned = action_conditioned
@@ -647,7 +647,7 @@ class WanVideoDiT(WanModel):
             )
         tokens_per_frame = (x.shape[3] // patch_h) * (x.shape[4] // patch_w)
 
-        if not (self.seperated_timestep and fuse_vae_embedding_in_latents):
+        if not (self.separated_timestep and fuse_vae_embedding_in_latents):
             raise NotImplementedError(
                 "FastWAM currently requires separated timesteps with fused VAE latents."
             )

@@ -76,6 +76,13 @@ class FastWAMPolicy(PreTrainedPolicy):
             # Freeze the ~5B Wan video expert; get_optim_params filters on requires_grad,
             # so its params drop out of the optimizer (and DDP skips them).
             self.model.video_expert.requires_grad_(False)
+            # The transformer blocks are re-parented onto the MoTLayers (single FSDP owner), so
+            # `video_expert.requires_grad_` no longer reaches them — freeze them via the layers.
+            mot = getattr(self.model, "mot", None)
+            if mot is not None and getattr(mot, "layers", None) is not None:
+                for layer in mot.layers:
+                    if "video" in layer.blocks:
+                        layer.blocks["video"].requires_grad_(False)
         self.reset()
         # TEMPORARY DEBUG — revert before merge. Mark construction done so `reset()`
         # counts only eval-rollout resets (one per episode), not this __init__ one.
@@ -354,7 +361,9 @@ class FastWAMPolicy(PreTrainedPolicy):
         path = out_dir / f"ep{self._debug_episode_index:03d}_{slug}_true_vs_pred.mp4"
         frames = [np.asarray(pair) for pair in pairs]  # HWC uint8 RGB
         write_video(path, frames, fps=30)
-        logging.info("FASTWAM_DECODE_DEBUG: wrote %d-frame mp4 (left=true, right=pred) to %s", len(frames), path)
+        logging.info(
+            "FASTWAM_DECODE_DEBUG: wrote %d-frame mp4 (left=true, right=pred) to %s", len(frames), path
+        )
 
     def _build_core_model(self, config: FastWAMConfig) -> FastWAM:
         """Build the FastWAM core for training / inference.
@@ -485,9 +494,7 @@ def batch_device(batch: dict[str, Any]) -> torch.device:
 def _stack_video_from_images(batch: dict[str, Tensor], config: FastWAMConfig) -> Tensor:
     # Exclude the `*_is_pad` companion tensors that delta-timestamp loading adds alongside
     # each camera (shape [B, T]); they share the `observation.images.` prefix but are not frames.
-    image_keys = sorted(
-        k for k in batch if k.startswith("observation.images.") and not k.endswith("_is_pad")
-    )
+    image_keys = sorted(k for k in batch if k.startswith("observation.images.") and not k.endswith("_is_pad"))
     if not image_keys:
         raise KeyError("FastWAM batch must contain `video` or `observation.images.*` keys.")
     images = [batch[key] for key in image_keys]

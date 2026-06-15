@@ -133,9 +133,7 @@ def make_fastwam_pre_post_processors(
 
     # resize visual inputs to match model expected input size, if necessary
     visual_shapes = [
-        feature.shape
-        for feature in config.input_features.values()
-        if feature.type == FeatureType.VISUAL
+        feature.shape for feature in config.input_features.values() if feature.type == FeatureType.VISUAL
     ]
     resize_steps = []
     if visual_shapes:

@@ -42,6 +42,7 @@ WAN_DIT_PATTERN = "diffusion_pytorch_model*.safetensors"
 WAN_T5_TOKENIZER = "google/umt5-xxl"
 WAN22_DIFFUSERS_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
 
+
 class WanTextEncoder(torch.nn.Module):
     """FastWAM text-encoder contract over `transformers.UMT5EncoderModel`.
 
@@ -76,7 +77,11 @@ class WanTokenizer:
         self.seq_len = int(seq_len)
 
     def __call__(
-        self, sequence: str | Sequence[str], return_mask: bool = False, add_special_tokens: bool = True, **_: Any
+        self,
+        sequence: str | Sequence[str],
+        return_mask: bool = False,
+        add_special_tokens: bool = True,
+        **_: Any,
     ):
         if isinstance(sequence, str):
             sequence = [sequence]
@@ -99,9 +104,7 @@ def build_wan_tokenizer(*, tokenizer_max_len: int) -> WanTokenizer:
 
 def load_pretrained_wan_vae(*, torch_dtype: torch.dtype, device: str) -> WanVideoVAE38:
     """Load real Wan2.2 VAE weights from the diffusers repo (offline base creation)."""
-    vae = AutoencoderKLWan.from_pretrained(
-        WAN22_DIFFUSERS_MODEL_ID, subfolder="vae", torch_dtype=torch_dtype
-    )
+    vae = AutoencoderKLWan.from_pretrained(WAN22_DIFFUSERS_MODEL_ID, subfolder="vae", torch_dtype=torch_dtype)
     return WanVideoVAE38(dtype=torch_dtype, device=device, pretrained=vae)
 
 

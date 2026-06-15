@@ -68,7 +68,7 @@ def default_video_dit_config(action_dim: int) -> dict[str, Any]:
         "attn_head_dim": 128,
         "num_layers": 30,
         "eps": 1.0e-6,
-        "seperated_timestep": True,
+        "separated_timestep": True,
         "use_gradient_checkpointing": False,
         "video_attention_mask_mode": "first_frame_causal",
         "action_conditioned": False,
@@ -296,8 +296,7 @@ class FastWAMConfig(PreTrainedConfig):
         image_keys = sorted(
             key
             for key, feature in dataset_features.items()
-            if key.startswith("observation.images.")
-            and feature.get("dtype") in ("video", "image")
+            if key.startswith("observation.images.") and feature.get("dtype") in ("video", "image")
         )
         if not image_keys:
             return
