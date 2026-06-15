@@ -98,6 +98,7 @@ def save_checkpoint(
     postprocessor: PolicyProcessorPipeline | None = None,
     num_processes: int | None = None,
     batch_size: int | None = None,
+    model_state_dict: dict | None = None,
 ) -> None:
     """This function creates the following directory structure:
 
@@ -127,9 +128,14 @@ def save_checkpoint(
             resume. Defaults to None (not recorded).
         batch_size (int | None, optional): Per-process batch size to record for sample-exact
             resume. Defaults to None (not recorded).
+        model_state_dict: Pre-gathered full (unsharded) model state dict. Required under FSDP,
+            where `policy.state_dict()` would return sharded tensors; the caller gathers it via a
+            cross-rank collective and passes it here so rank 0 can write it directly. It holds
+            FSDP's fp32 master weights and is saved as-is (the loader casts to the policy dtype on
+            read). When None (DDP / single-GPU), the model is saved the normal way. Defaults to None.
     """
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
-    policy.save_pretrained(pretrained_dir)
+    policy.save_pretrained(pretrained_dir, state_dict=model_state_dict)
     cfg.save_pretrained(pretrained_dir)
     if cfg.peft is not None:
         # When using PEFT, policy.save_pretrained will only write the adapter weights + config, not the

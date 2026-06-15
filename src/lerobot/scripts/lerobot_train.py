@@ -189,6 +189,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     require_package("accelerate", extra="training")
     from accelerate import Accelerator
+    from accelerate.utils import DistributedDataParallelKwargs, DistributedType
 
     cfg.validate()
 
@@ -197,7 +198,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting the lr_scheduler steps based on the num_processes
     # We set find_unused_parameters=True to handle models with conditional computation
     if accelerator is None:
-        from accelerate.utils import DistributedDataParallelKwargs
 
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
         # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
@@ -558,20 +558,31 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step:
+            # All ranks must call get_state_dict; rank 0 gets the
+            # full state dict, others get an empty dict.
+            is_fsdp = accelerator.distributed_type == DistributedType.FSDP
+            model_state_dict = accelerator.get_state_dict(policy)
             if is_main_process:
                 logging.info(f"Checkpoint policy after step {step}")
                 checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
+                if is_fsdp:
+                    # TODO(fsdp): sharded optimizer-state save/resume is not wired up yet.
+                    logging.warning(
+                        "FSDP checkpoint: saving model weights only (optimizer state skipped; "
+                        "resume-from-checkpoint not supported under FSDP yet)."
+                    )
                 save_checkpoint(
                     checkpoint_dir=checkpoint_dir,
                     step=step,
                     cfg=cfg,
                     policy=accelerator.unwrap_model(policy),
-                    optimizer=optimizer,
+                    optimizer=None if is_fsdp else optimizer,
                     scheduler=lr_scheduler,
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
                     num_processes=accelerator.num_processes,
                     batch_size=cfg.batch_size,
+                    model_state_dict=model_state_dict,
                 )
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
