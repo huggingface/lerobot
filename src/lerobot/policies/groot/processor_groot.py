@@ -90,6 +90,30 @@ N1_7_EMBODIMENT_MAPPING = {
 }
 
 
+_GROOT_REF_HOLDER_KEY = "_groot_relative_ref_holder"  # private; dropped by _filter_groot_inputs, never reaches the model
+
+
+class _GrootRelativeRefHolder:
+    """Runtime-only carrier shared (by object identity) between the pack step (owner/writer of the
+    live reference), GrootPolicy.predict_action_chunk (freezes it at a real predict event), and the
+    decode step (reads the frozen reference). Not serialized. One instance per pack step."""
+
+    __slots__ = ("reference_state", "raw_state", "frozen_reference", "frozen_raw")
+
+    def __init__(self):
+        self.reference_state = None
+        self.raw_state = None
+        self.frozen_reference = None
+        self.frozen_raw = None
+
+    def freeze(self) -> None:
+        self.frozen_reference = self.reference_state
+        self.frozen_raw = self.raw_state
+
+    def clear(self) -> None:
+        self.reference_state = self.raw_state = self.frozen_reference = self.frozen_raw = None
+
+
 @dataclass
 class _GrootN17CheckpointProcessorAssets:
     """Processor metadata loaded from a raw Isaac-GR00T N1.7 checkpoint.
@@ -1180,6 +1204,9 @@ class GrootN17PackInputsStep(ProcessorStep):
     _last_raw_state: dict[str, np.ndarray] | None = field(default=None, init=False, repr=False)
     _last_reference_state: torch.Tensor | None = field(default=None, init=False, repr=False)
     _warned_image_keys: bool = field(default=False, init=False, repr=False)
+    _ref_holder: "_GrootRelativeRefHolder" = field(
+        default_factory=_GrootRelativeRefHolder, init=False, repr=False
+    )
 
     def _ordered_image_keys(self, obs: dict[str, Any]) -> list[str]:
         available = {key for key in obs if key.startswith(OBS_IMAGES)}
@@ -1301,6 +1328,7 @@ class GrootN17PackInputsStep(ProcessorStep):
                 start_idx += dim
             if grouped:
                 self._last_raw_state = grouped
+                self._ref_holder.raw_state = grouped
 
         img_keys = self._ordered_image_keys(obs)
         if img_keys:
@@ -1334,6 +1362,7 @@ class GrootN17PackInputsStep(ProcessorStep):
             if self.use_relative_actions:
                 relative_reference_state = state.detach().clone()
                 self._last_reference_state = relative_reference_state
+                self._ref_holder.reference_state = relative_reference_state
             if self.normalize_min_max:
                 state = _min_max_norm(state, OBS_STATE)
             state = state.unsqueeze(1)
@@ -1408,6 +1437,12 @@ class GrootN17PackInputsStep(ProcessorStep):
             comp["action_mask"] = action_mask
         comp["embodiment_id"] = torch.full((bsz,), emb_id, dtype=torch.int32, device=device)
 
+        # Publish the runtime-only reference holder so the policy can freeze it at the predict
+        # event and the decode step can read the frozen reference. It rides in COMPLEMENTARY_DATA,
+        # survives the VLM-encode step and DeviceProcessorStep as a non-tensor, and reaches the
+        # policy via the batch (by object identity) through the pipeline's shallow copies.
+        comp[_GROOT_REF_HOLDER_KEY] = self._ref_holder
+
         transition[TransitionKey.OBSERVATION] = obs
         transition[TransitionKey.COMPLEMENTARY_DATA] = comp
         return transition
@@ -1446,6 +1481,18 @@ class GrootN17PackInputsStep(ProcessorStep):
         """Return the latest RAW (pre-normalization) (B, D) state used for relative-action conversion."""
 
         return self._last_reference_state
+
+    def get_reference_holder(self) -> "_GrootRelativeRefHolder":
+        """Return the runtime-only holder shared with the policy (writer) and decode step (reader)."""
+
+        return self._ref_holder
+
+    def reset(self) -> None:
+        """Clear cached per-episode relative-action references (sync engine resets on episode boundaries)."""
+
+        self._last_reference_state = None
+        self._last_raw_state = None
+        self._ref_holder.clear()
 
     def state_dict(self) -> dict[str, torch.Tensor]:
         if not self.stats:
@@ -1843,7 +1890,14 @@ class GrootN17ActionDecodeStep(ProcessorStep):
             start_idx += dim
 
         if self.use_relative_action:
-            raw_state = self.pack_step.get_cached_raw_state() if self.pack_step is not None else None
+            # Prefer the raw state frozen at the chunk-prediction event (see the relative-action
+            # branch of GrootActionUnpackUnnormalizeStep). Falls back to the live cached raw state.
+            holder = self.pack_step.get_reference_holder() if self.pack_step is not None else None
+            raw_state = None
+            if holder is not None:
+                raw_state = holder.frozen_raw if holder.frozen_raw is not None else holder.raw_state
+            if raw_state is None and self.pack_step is not None:
+                raw_state = self.pack_step.get_cached_raw_state()
             if raw_state is None:
                 raise RuntimeError(
                     "GrootN17ActionDecodeStep requires the raw state cached by its connected "
@@ -1978,7 +2032,13 @@ class GrootActionUnpackUnnormalizeStep(ProcessorStep):
                     "Build both pipelines through make_groot_pre_post_processors (or load them together "
                     "via make_groot_pre_post_processors_from_pretrained)."
                 )
-            ref = self.pack_step.get_cached_reference_state()
+            # Prefer the reference frozen at the chunk-prediction event (set by
+            # GrootPolicy.predict_action_chunk via the shared holder) so every popped delta of a
+            # chunk reconstructs against that chunk's start state S_T, not the per-tick latest
+            # state. Falls back to the live reference when nothing was frozen (e.g. decode without
+            # a preceding predict event, or RTC/async where frozen == live).
+            holder = self.pack_step.get_reference_holder()
+            ref = holder.frozen_reference if holder.frozen_reference is not None else holder.reference_state
             if ref is None:
                 raise RuntimeError(
                     "GrootActionUnpackUnnormalizeStep.use_relative_actions requires the reference state "

@@ -543,6 +543,16 @@ class GrootPolicy(PreTrainedPolicy):
         """
         self.eval()
 
+        # Freeze the relative-action reference at the exact chunk-prediction event so every popped
+        # delta of this chunk is reconstructed (in the postprocessor) against this S_T, not the
+        # per-tick latest state. Driven by the predict event, so it is correct under any runtime
+        # n_action_steps/execution_horizon. No-op for non-relative checkpoints (holder absent/unused).
+        from .processor_groot import _GROOT_REF_HOLDER_KEY
+
+        holder = batch.get(_GROOT_REF_HOLDER_KEY)
+        if holder is not None:
+            holder.freeze()
+
         # Preprocessing is handled by the processor pipeline, so we just filter the batch.
         # During inference, we do not pass action because it is predicted.
         # N1.7 still carries a 2-D action horizon mask from its checkpoint processor.
