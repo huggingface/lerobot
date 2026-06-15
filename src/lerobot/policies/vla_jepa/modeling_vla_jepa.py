@@ -267,7 +267,7 @@ class VLAJEPAModel(nn.Module):
     ) -> Tensor:
         """Flow-matching action-head loss, repeated over `repeated_diffusion_steps`."""
         device_type = next(self.parameters()).device.type
-        with torch.autocast(device_type=device_type, dtype=torch.float32):
+        with _get_autocast_context(device_type, torch.float32):
             r = self.config.repeated_diffusion_steps
             horizon = self.config.chunk_size
             actions_target = actions[:, -horizon:, :].to(torch.float32).repeat(r, 1, 1)
