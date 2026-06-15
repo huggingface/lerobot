@@ -474,6 +474,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if reader.hf_dataset is None:
             # One-shot load after finalize()
             reader.load_and_activate()
+        if reader._absolute_to_relative_idx is not None and idx in reader._absolute_to_relative_idx:
+            idx = reader._absolute_to_relative_idx[idx]
         return reader.get_item(idx)
 
     def select_columns(self, column_names: str | list[str]):

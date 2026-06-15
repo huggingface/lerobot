@@ -435,8 +435,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     f"Resuming data order at epoch {sampler_state['epoch']}, "
                     f"sample {sampler_state['start_index']}"
                 )
-        if dataset.reader._absolute_to_relative_idx is not None:
-            sampler.indices = [dataset.reader._absolute_to_relative_idx[i] for i in sampler.indices]
     else:
         shuffle = True
         sampler = None
