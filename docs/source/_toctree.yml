@@ -163,6 +163,8 @@
 - sections:
   - local: phone_teleop
     title: Phone
+  - local: omy
+    title: ROBOTIS OMY-L100
   title: "Teleoperators"
 - sections:
   - local: cameras

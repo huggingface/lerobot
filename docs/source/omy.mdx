@@ -1,0 +1,46 @@
+# ROBOTIS OMY-L100
+
+The ROBOTIS OMY-L100 leader arm can be used as a LeRobot teleoperator through the external [`lerobot_teleoperator_omy`](https://github.com/charlie8612/lerobot_teleoperator_omy) plugin. The plugin registers an `omy_leader` teleoperator type, so it can be used by the standard LeRobot command line tools without patching LeRobot itself.
+
+This is a community-maintained integration for the 6-DoF OMY-L100 leader arm. It reads the arm's X-series Dynamixel motors directly over Protocol 2.0 and does not require a ROS 2 stack.
+
+## Install
+
+Install LeRobot first, then install the plugin in the same Python environment:
+
+```bash
+pip install git+https://github.com/charlie8612/lerobot_teleoperator_omy.git
+```
+
+Make sure your user can access the serial port connected to the Dynamixel bus, for example `/dev/ttyUSB0`.
+
+## Teleoperate
+
+Once installed, the plugin self-registers as `omy_leader`:
+
+```bash
+lerobot-teleoperate \
+  --teleop.type=omy_leader \
+  --teleop.port=/dev/ttyUSB0 \
+  --robot.type=<your_robot>
+```
+
+Pair the OMY leader with any compatible follower robot. If the leader and follower do not share the same joint layout, keep the joint mapping in a LeRobot processor so the teleoperator remains a generic OMY-L100 reader.
+
+## Output
+
+`get_action()` returns native joint angles in radians for:
+
+```text
+joint_1.pos joint_2.pos joint_3.pos joint_4.pos joint_5.pos joint_6.pos gripper.pos
+```
+
+## Key Options
+
+- `port`: serial port for the Dynamixel bus, for example `/dev/ttyUSB0`.
+- `baudrate`: bus baud rate, `4_000_000` by default.
+- `motor_ids`: motor IDs in arm joint order plus gripper.
+- `smoothing_factor`: optional exponential moving average on readings.
+- `gripper_spring_enabled`: enables current-control restoring torque for the leader gripper.
+
+For the full list of options and hardware notes, see the [`lerobot_teleoperator_omy` README](https://github.com/charlie8612/lerobot_teleoperator_omy).
