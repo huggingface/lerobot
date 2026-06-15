@@ -21,7 +21,8 @@ env "${COMMON_ENV[@]}" uv run lerobot-train \
   --policy.knowledge_insulation=true --policy.enable_fast_action_loss=true \
   --policy.train_expert_only=false --policy.push_to_hub=false --policy.device=cuda \
   --dataset.repo_id=HuggingFaceVLA/libero --env.type=libero --env.task=libero_spatial \
-  --batch_size=16 --num_workers=16 --steps="$STEPS" --log_freq=100 --eval_freq=200000 --save_freq=10000 \
+  --batch_size=16 --num_workers=16 --steps="$STEPS" --policy.scheduler_decay_steps="$STEPS" \
+  --log_freq=100 --eval_freq=200000 --save_freq=10000 \
   --wandb.enable=false --output_dir="./$DIR" > outputs/train_100k.log 2>&1
 log "100k training done rc=$?"
 
