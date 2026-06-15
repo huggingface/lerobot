@@ -73,6 +73,8 @@ class EvalConfig:
     # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
     # Defaults to True; automatically downgraded to SyncVectorEnv when batch_size=1.
     use_async_envs: bool = True
+    # Whether to record eval rollouts as a LeRobot v3.0 dataset on disk.
+    recording: bool = False
 
     def __post_init__(self) -> None:
         if self.batch_size == 0:
