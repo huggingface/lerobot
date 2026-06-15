@@ -204,9 +204,41 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         if packaging.version.parse(safetensors.__version__) >= packaging.version.parse("0.4.3"):
             kwargs["device"] = map_location
 
+        # Fix for legacy checkpoints: patch pos_grid BEFORE loading to avoid shape mismatch crash.
+        # See: https://github.com/huggingface/lerobot/issues/3802
+        from safetensors import safe_open
+        with safe_open(model_file, framework="pt") as f:
+            if "diffusion.rgb_encoder.pool.pos_grid" in f.keys():
+                ckpt_pos_grid = f.get_tensor("diffusion.rgb_encoder.pool.pos_grid")
+                model_pool = getattr(getattr(getattr(model, "diffusion", None), "rgb_encoder", None), "pool", None)
+                if model_pool is not None and hasattr(model_pool, "pos_grid"):
+                    if model_pool.pos_grid.shape != ckpt_pos_grid.shape:
+                        import logging
+                        logging.warning(f"pos_grid shape mismatch: checkpoint={ckpt_pos_grid.shape}, model={model_pool.pos_grid.shape}. Patching before load. See https://github.com/huggingface/lerobot/issues/3802")
+                        import torch
+                        model_pool.pos_grid = torch.nn.Parameter(ckpt_pos_grid, requires_grad=False)
         # Load the model with appropriate kwargs
         missing_keys, unexpected_keys = load_model_as_safetensor(model, model_file, **kwargs)
         log_model_loading_keys(missing_keys, unexpected_keys)
+        # Fix for legacy checkpoints where SpatialSoftmax pos_grid shape may differ
+        # due to architecture changes between lerobot versions. If the checkpoint
+        # pos_grid shape does not match the model, replace it with the checkpoint value.
+        # See: https://github.com/huggingface/lerobot/issues/3802
+        from safetensors import safe_open
+        with safe_open(model_file, framework="pt") as f:
+            if "diffusion.rgb_encoder.pool.pos_grid" in f.keys():
+                ckpt_pos_grid = f.get_tensor("diffusion.rgb_encoder.pool.pos_grid")
+                model_pool = getattr(getattr(getattr(model, "diffusion", None), "rgb_encoder", None), "pool", None)
+                if model_pool is not None and hasattr(model_pool, "pos_grid"):
+                    if model_pool.pos_grid.shape != ckpt_pos_grid.shape:
+                        import logging
+                        logging.warning(
+                            f"pos_grid shape mismatch: checkpoint has {ckpt_pos_grid.shape}, "
+                            f"model has {model_pool.pos_grid.shape}. "
+                            "Replacing with checkpoint value for backward compatibility. "
+                            "See https://github.com/huggingface/lerobot/issues/3802"
+                        )
+                        model_pool.pos_grid = ckpt_pos_grid
 
         # For older versions, manually move to device if needed
         if "device" not in kwargs and map_location != "cpu":
