@@ -68,6 +68,11 @@ class SmolVLAKIConfig(SmolVLAConfig):
     enable_fast_action_loss: bool = True
     fast_action_loss_weight: float = 1.0
     flow_loss_weight: float = 1.0
+    # A1 stage-1 (FAST-only VLM pretraining): when True, forward computes ONLY the
+    # FAST action-token loss to train the VLM via its lm_head; the flow expert is
+    # skipped entirely (no flow loss, no expert forward). Used to pretrain the VLM
+    # on action tokens before freezing it and training a fresh expert (A1 stage-2).
+    fast_pretrain_only: bool = False
     # FAST tokenizer (DCT + BPE). Either the universal PI tokenizer or a
     # dataset-specific fit (see auto_fit_fast_tokenizer).
     # lerobot's packaged universal FAST tokenizer (DCT+BPE) — loads cleanly with
@@ -105,3 +110,14 @@ class SmolVLAKIConfig(SmolVLAConfig):
                 "train_expert_only must be False. For a hard-frozen VLM (arm A1) set "
                 "knowledge_insulation=False and enable_fast_action_loss=False."
             )
+        if self.fast_pretrain_only:
+            if not self.enable_fast_action_loss:
+                raise ValueError(
+                    "fast_pretrain_only=True requires enable_fast_action_loss=True "
+                    "(it trains the VLM purely on the FAST action-token loss)."
+                )
+            if self.train_expert_only:
+                raise ValueError(
+                    "fast_pretrain_only=True trains the VLM (via FAST loss), so "
+                    "train_expert_only must be False."
+                )

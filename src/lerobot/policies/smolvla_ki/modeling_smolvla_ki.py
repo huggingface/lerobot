@@ -231,9 +231,22 @@ class VLAFlowMatchingKI(VLAFlowMatching):
         if self.enable_fast_action_loss:
             from transformers import AutoProcessor
 
-            self._fast_tokenizer = AutoProcessor.from_pretrained(
-                config.action_tokenizer_name, trust_remote_code=True
-            )
+            try:
+                self._fast_tokenizer = AutoProcessor.from_pretrained(
+                    config.action_tokenizer_name, trust_remote_code=True
+                )
+            except Exception as e:  # noqa: BLE001
+                # The FAST tokenizer is ONLY used by forward_fast at TRAIN time. At
+                # inference (eval) it is never touched, so a load failure here — e.g.
+                # HF_HUB_OFFLINE with an incompletely cached tokenizer — must not break
+                # eval. Leave it None; forward_fast raises clearly if training needs it.
+                import logging
+
+                logging.warning(
+                    f"FAST tokenizer '{config.action_tokenizer_name}' failed to load "
+                    f"({type(e).__name__}); fine for inference, training would fail."
+                )
+                self._fast_tokenizer = None
             self.fast_skip_tokens = config.fast_skip_tokens
             self.max_action_tokens = config.max_action_tokens
             self.vlm_vocab_size = self.vlm_with_expert.vlm.config.text_config.vocab_size
@@ -337,7 +350,23 @@ class SmolVLAKIPolicy(SmolVLAPolicy):
         self.reset()
 
     def forward(self, batch, noise=None, time=None, reduction: str = "mean"):
-        """Flow-matching loss (+ weighted FAST action-token loss when enabled)."""
+        """Flow-matching loss (+ weighted FAST action-token loss when enabled).
+
+        A1 stage-1 (``fast_pretrain_only``): compute ONLY the FAST action-token loss
+        to pretrain the VLM via its lm_head; the flow expert is skipped entirely.
+        """
+        if getattr(self.config, "fast_pretrain_only", False):
+            images, img_masks = self.prepare_images(batch)
+            state = self.prepare_state(batch)
+            lang_tokens = batch[OBS_LANGUAGE_TOKENS]
+            lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
+            actions = self.prepare_action(batch)
+            action_dim = self.config.action_feature.shape[0]
+            fast_loss = self.model.forward_fast(
+                images, img_masks, lang_tokens, lang_masks, state, actions, action_dim
+            )
+            return fast_loss, {"loss": float(fast_loss), "fast_action_loss": float(fast_loss)}
+
         flow_loss, loss_dict = super().forward(batch, noise=noise, time=time, reduction=reduction)
         total = self.config.flow_loss_weight * flow_loss
         loss_dict["flow_loss"] = float(flow_loss.mean()) if hasattr(flow_loss, "mean") else float(flow_loss)
