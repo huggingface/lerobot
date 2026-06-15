@@ -1,0 +1,41 @@
+# AgileX Piper
+
+The AgileX Piper can be used with LeRobot through the external [`lerobot_robot_piper`](https://github.com/charlie8612/lerobot_robot_piper) plugin. The plugin registers a `piper_follower` robot type, so it can be used by the standard LeRobot command line tools without patching LeRobot itself.
+
+This is a community-maintained integration. It controls the Piper arm over CAN using `piper-sdk` and exposes the six arm joints plus gripper through the LeRobot `Robot` interface.
+
+## Install
+
+Install LeRobot first, then install the plugin in the same Python environment:
+
+```bash
+pip install git+https://github.com/charlie8612/lerobot_robot_piper.git
+```
+
+You also need to bring up the CAN interface used by your Piper arm before connecting, for example `can0` or a named interface such as `piper_left`.
+
+## Teleoperate
+
+Once installed, the plugin self-registers as `piper_follower`:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=piper_follower \
+  --robot.can_port=can0 \
+  --robot.speed_rate=50 \
+  --teleop.type=keyboard
+```
+
+Replace the teleoperator configuration with the leader device you want to use.
+
+## Key Options
+
+- `can_port`: CAN interface name, for example `can0` or `piper_left`.
+- `speed_rate`: Piper MOVE-J speed percentage.
+- `unit`: API unit, `deg` by default or `rad` for policies/datasets that use radians.
+- `max_relative_target`: optional per-step target clamp in degrees.
+- `go_home_on_connect`: optionally interpolate to a configured home pose after connection.
+- `rest_position_deg`: configurable rest pose used before disabling the arm.
+- `use_mit_mode`: enables Piper MIT impedance control mode.
+
+For the full list of options and safety behavior, see the [`lerobot_robot_piper` README](https://github.com/charlie8612/lerobot_robot_piper).

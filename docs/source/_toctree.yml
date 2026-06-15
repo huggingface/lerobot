@@ -159,6 +159,8 @@
     title: OpenArm
   - local: rebot_b601
     title: reBot B601-DM
+  - local: piper
+    title: AgileX Piper
   title: "Robots"
 - sections:
   - local: phone_teleop
