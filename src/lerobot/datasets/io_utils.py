@@ -312,7 +312,10 @@ def to_parquet_with_hf_images(
 def to_parquet_one_row_group_per_episode(df: pandas.DataFrame, path: Path) -> None:
     """Write a (non-image) DataFrame to parquet with one row group per episode."""
     table = pa.Table.from_pandas(df, preserve_index=False)
-    write_table_one_row_group_per_episode(table, path)
+    if "episode_index" in table.column_names:
+        write_table_one_row_group_per_episode(table, path)
+    else:
+        pq.write_table(table, str(path))
 
 
 def item_to_torch(item: dict) -> dict:
