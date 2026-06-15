@@ -110,6 +110,7 @@ matplotlib-dep = ["matplotlib>=3.10.3,<4.0.0", "contourpy>=1.3.0,<2.0.0"] # NOTE
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
 dynamixel = ["dynamixel-sdk>=3.7.31,<3.9.0"]
+hiwonder = ["pyserial>=3.5,<4.0"]
 damiao = ["lerobot[can-dep]"]
 robstride = ["lerobot[can-dep]"]
 
