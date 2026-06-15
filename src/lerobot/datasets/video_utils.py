@@ -1284,6 +1284,8 @@ class VideoEncodingManager:
                 shutil.rmtree(img_dir)
                 logger.debug("Cleaned up empty images directory")
             else:
-                logger.debug(f"Images directory is not empty, containing {len(png_files)} PNG and {len(tiff_files)} TIFF files")
+                logger.debug(
+                    f"Images directory is not empty, containing {len(png_files)} PNG and {len(tiff_files)} TIFF files"
+                )
 
         return False  # Don't suppress the original exception
