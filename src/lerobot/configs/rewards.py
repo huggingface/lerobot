@@ -32,6 +32,7 @@ from lerobot.optim.schedulers import LRSchedulerConfig
 from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 from lerobot.utils.hub import HubMixin
 
+from .parser import parse_arg
 from .types import PolicyFeature
 
 T = TypeVar("T", bound="RewardModelConfig")
@@ -56,6 +57,9 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     device: str | None = None
 
     pretrained_path: str | None = None
+    # The specific model version to load when `pretrained_path` points to a Hugging Face Hub repo.
+    # Can be a branch name, a tag name, or a commit hash. Ignored for local paths.
+    revision: str | None = None
 
     push_to_hub: bool = False
     repo_id: str | None = None
@@ -119,6 +123,8 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         **reward_kwargs: Any,
     ) -> T:
         model_id = str(pretrained_name_or_path)
+        if revision is None:
+            revision = parse_arg("revision", reward_kwargs.get("cli_overrides") or [])
         config_file: str | None = None
         if Path(model_id).is_dir():
             if CONFIG_NAME in os.listdir(model_id):
@@ -161,4 +167,9 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
         cli_overrides = reward_kwargs.pop("cli_overrides", [])
         with draccus.config_type("json"):
-            return draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
+            parsed = draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
+
+        # This covers the case where `revision` was passed as an explicit kwarg rather than a CLI override.
+        if parsed.revision is None and revision is not None:
+            parsed.revision = revision
+        return parsed
