@@ -222,8 +222,12 @@ def build_dataset(scenario: str, args: argparse.Namespace):
         revision=MOLMO_REVISION,
         data_files_root=data_files_root,
         episode_pool_size=args.episode_pool_size,
+        max_buffer_input_shards=args.max_buffer_input_shards,
         video_decoder_cache_size=args.video_decoder_cache_size,
         tolerance_s=1e-3,
+        # Throughput benchmark: don't gate on the one-row-group-per-episode invariant (a public
+        # dataset may be collapsed); reshard() still yields per-episode shards where it holds.
+        validate_row_groups=False,
     )
     return dataset, meta, False, {"num_shards": dataset.num_shards, "data_files_root": data_files_root}
 
@@ -362,6 +366,9 @@ def run_scenario(scenario: str, args: argparse.Namespace) -> None:
         "batch_size": args.batch_size,
         "num_workers": args.num_workers,
         "episode_pool_size": None if is_map_style else args.episode_pool_size,
+        "max_buffer_input_shards": None
+        if is_map_style
+        else (args.max_buffer_input_shards or args.episode_pool_size),
         **info,
         "num_cameras": num_cameras,
         "image_shape": image_shape,
@@ -419,6 +426,8 @@ def submit_chain(args: argparse.Namespace) -> None:
         f"--video_decoder_cache_size {args.video_decoder_cache_size} --duration_s {args.duration_s} "
         f"--num_batches {args.num_batches} --out_dir {args.out_dir}"
     )
+    if args.max_buffer_input_shards is not None:
+        common += f" --max_buffer_input_shards {args.max_buffer_input_shards}"
     if args.local_root:
         common += f" --local_root {args.local_root}"
     env_prefix = "export TOKENIZERS_PARALLELISM=false"
@@ -490,6 +499,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--prefetch_factor", type=int, default=2)
     p.add_argument(
         "--episode_pool_size", type=int, default=1024, help="Streaming shuffle pool (randomness knob)."
+    )
+    p.add_argument(
+        "--max_buffer_input_shards",
+        type=int,
+        default=None,
+        help="Concurrently-live random episodes feeding the pool after reshard() "
+        "(default: episode_pool_size). The frac knob; set >= batch_size for frac->1.",
     )
     p.add_argument(
         "--video_decoder_cache_size", type=int, default=32, help="Max open video decoders (bounds RAM)."

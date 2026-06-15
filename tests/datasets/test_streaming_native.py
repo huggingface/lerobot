@@ -312,3 +312,119 @@ def test_pipeline_uses_native_primitives(tmp_path, lerobot_dataset_factory):
     assert isinstance(ds._pipeline, hf_datasets.IterableDataset)
     state = ds._pipeline.state_dict()  # the native resume protocol is available end-to-end
     assert state is not None
+
+
+# --- Plan B: random-episode admission via reshard() + multi-input-shard shuffle ---
+
+
+def test_reshard_makes_one_shard_per_episode(tmp_path, lerobot_dataset_factory):
+    """With one row group per episode (the writer's invariant), reshard() turns each episode into its
+    own shard, so num_shards == total_episodes even when many episodes share a single data file."""
+    import pyarrow.parquet as pq
+
+    repo_id = f"{DUMMY_REPO_ID}-reshard"
+    total_episodes = 3
+    # Default (large) data-file size packs all (unequal-length) episodes into one file, so the only way
+    # num_shards can reach total_episodes is per-row-group resharding.
+    lerobot_dataset_factory(
+        root=tmp_path / "ds",
+        repo_id=repo_id,
+        total_episodes=total_episodes,
+        total_frames=90,
+        use_videos=False,
+    )
+    ds = StreamingLeRobotDataset(repo_id=repo_id, root=tmp_path / "ds", shuffle=False, episode_pool_size=3)
+
+    file_to_eps = ds._episode_files()
+    assert len(file_to_eps) == 1, "test expects all episodes packed into a single data file"
+    for (chunk_idx, file_idx), eps in file_to_eps.items():
+        rel = ds.meta.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
+        assert pq.ParquetFile(str(ds.root / rel)).num_row_groups == len(eps)
+
+    assert ds.num_shards == total_episodes
+
+
+def test_max_buffer_input_shards_admits_random_episodes(tmp_path, lerobot_dataset_factory):
+    """max_buffer_input_shards (== concurrently-live random episodes) drives the per-batch episode mix:
+    a single batch should already span most of the live episodes."""
+    repo_id = f"{DUMMY_REPO_ID}-frac"
+    total_episodes = 8
+    lerobot_dataset_factory(
+        root=tmp_path / "ds",
+        repo_id=repo_id,
+        total_episodes=total_episodes,
+        total_frames=240,
+        use_videos=False,
+    )
+    ds = StreamingLeRobotDataset(
+        repo_id=repo_id,
+        root=tmp_path / "ds",
+        shuffle=True,
+        seed=0,
+        episode_pool_size=total_episodes,
+        max_buffer_input_shards=total_episodes,
+    )
+    assert ds.max_buffer_input_shards == total_episodes
+
+    batch = 32
+    head = {int(frame["episode_index"]) for _, frame in zip(range(batch), ds, strict=False)}
+    assert len(head) >= min(total_episodes, batch) - 2, f"batch did not mix random episodes: {head}"
+
+
+def test_collapsed_row_groups_raise(tmp_path, lerobot_dataset_factory):
+    """A data file that collapses several episodes into a single row group (bulk df.to_parquet /
+    push_to_hub) must be rejected with an actionable error: reshard() cannot address its episodes."""
+    import pyarrow.parquet as pq
+
+    repo_id = f"{DUMMY_REPO_ID}-collapsed"
+    lerobot_dataset_factory(
+        root=tmp_path / "ds", repo_id=repo_id, total_episodes=3, total_frames=90, use_videos=False
+    )
+    # Rewrite every data file as a single row group (simulating the aggregate/push_to_hub collapse).
+    for parquet_path in (tmp_path / "ds" / "data").rglob("*.parquet"):
+        pq.write_table(pq.read_table(parquet_path), parquet_path)
+
+    with pytest.raises(ValueError, match="ONE ROW GROUP PER EPISODE"):
+        StreamingLeRobotDataset(repo_id=repo_id, root=tmp_path / "ds", shuffle=False, episode_pool_size=3)
+
+
+def test_collapsed_row_groups_can_be_bypassed(tmp_path, lerobot_dataset_factory):
+    """validate_row_groups=False skips the row-group check (collapsed datasets still load, degraded)."""
+    import pyarrow.parquet as pq
+
+    repo_id = f"{DUMMY_REPO_ID}-collapsed-bypass"
+    lerobot_dataset_factory(
+        root=tmp_path / "ds", repo_id=repo_id, total_episodes=3, total_frames=90, use_videos=False
+    )
+    for parquet_path in (tmp_path / "ds" / "data").rglob("*.parquet"):
+        pq.write_table(pq.read_table(parquet_path), parquet_path)
+
+    ds = StreamingLeRobotDataset(
+        repo_id=repo_id, root=tmp_path / "ds", shuffle=False, episode_pool_size=3, validate_row_groups=False
+    )
+    assert sorted(int(frame["index"]) for frame in ds) == list(range(90))
+
+
+def test_distributed_divisibility_guard_raises(tmp_path, lerobot_dataset_factory):
+    """When num_shards (== episodes after reshard) is not divisible by world_size, every rank would
+    stream the whole dataset; the guard must raise instead of silently degrading."""
+    repo_id = f"{DUMMY_REPO_ID}-divis"
+    lerobot_dataset_factory(
+        root=tmp_path / "ds", repo_id=repo_id, total_episodes=3, total_frames=90, use_videos=False
+    )
+    with pytest.raises(ValueError, match="not divisible by world_size"):
+        StreamingLeRobotDataset(
+            repo_id=repo_id, root=tmp_path / "ds", shuffle=False, episode_pool_size=3, rank=0, world_size=2
+        )
+
+    # Bypassing the guard downgrades it to a warning (no raise).
+    ds = StreamingLeRobotDataset(
+        repo_id=repo_id,
+        root=tmp_path / "ds",
+        shuffle=False,
+        episode_pool_size=3,
+        rank=0,
+        world_size=2,
+        validate_row_groups=False,
+    )
+    assert ds.num_shards == 3

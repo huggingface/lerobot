@@ -17,6 +17,7 @@ from pathlib import Path
 import datasets
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import pytest
 from datasets import Dataset
 
@@ -33,6 +34,24 @@ from lerobot.datasets.utils import (
     DEFAULT_DATA_PATH,
     update_chunk_file_indices,
 )
+
+
+def _to_parquet_one_row_group_per_episode(hf_dataset: Dataset, path: Path) -> None:
+    """Write ``hf_dataset`` to ``path`` with one Parquet row group per episode.
+
+    Mirrors the LeRobot recording writer (one ``write_table`` per episode) so each episode stays an
+    independently addressable shard after ``datasets.IterableDataset.reshard()``, which
+    ``StreamingLeRobotDataset`` relies on. ``Dataset.to_parquet`` would collapse the file into a
+    single row group instead.
+    """
+    table = hf_dataset.with_format("arrow")[:]
+    episode_index = np.asarray(hf_dataset["episode_index"])
+    boundaries = np.where(np.diff(episode_index) != 0)[0] + 1
+    starts = [0, *boundaries.tolist()]
+    ends = [*boundaries.tolist(), len(episode_index)]
+    with pq.ParquetWriter(str(path), table.schema) as writer:
+        for start, end in zip(starts, ends, strict=True):
+            writer.write_table(table.slice(start, end - start))
 
 
 def write_hf_dataset(
@@ -67,7 +86,7 @@ def write_hf_dataset(
         # If the dataset is small enough, write it to a single file.
         path = local_dir / DEFAULT_DATA_PATH.format(chunk_index=0, file_index=0)
         path.parent.mkdir(parents=True, exist_ok=True)
-        hf_dataset.to_parquet(path)
+        _to_parquet_one_row_group_per_episode(hf_dataset, path)
         return
 
     # If the dataset is too large, split it into smaller chunks, keeping episodes whole.
@@ -114,8 +133,8 @@ def write_hf_dataset(
         path = local_dir / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Write the shard to a Parquet file.
-        dataset_shard.to_parquet(path)
+        # Write the shard to a Parquet file (one row group per episode).
+        _to_parquet_one_row_group_per_episode(dataset_shard, path)
 
         # Update chunk and file indices for the next iteration.
         chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, chunk_size)
