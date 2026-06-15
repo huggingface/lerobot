@@ -20,6 +20,7 @@ import datasets
 import numpy as np
 import pandas
 import pandas as pd
+import pyarrow as pa
 import pyarrow.dataset as pa_ds
 import pyarrow.parquet as pq
 import torch
@@ -270,21 +271,48 @@ def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[to
     return items_dict
 
 
+def write_table_one_row_group_per_episode(table: pa.Table, path: Path) -> None:
+    """Write ``table`` with one parquet row group per episode (in episode order).
+
+    Keeps shards random-access friendly (``read_row_group(i)`` fetches episode i),
+    mirroring the recording writer. ``table`` must carry a contiguous
+    ``episode_index`` column.
+    """
+    episode_index = table.column("episode_index").to_pylist()
+    writer = pq.ParquetWriter(str(path), table.schema, compression="snappy", use_dictionary=True)
+    try:
+        start = 0
+        for i in range(1, len(episode_index) + 1):
+            if i == len(episode_index) or episode_index[i] != episode_index[start]:
+                writer.write_table(table.slice(start, i - start))  # one episode -> one row group
+                start = i
+    finally:
+        writer.close()
+
+
 def to_parquet_with_hf_images(
     df: pandas.DataFrame, path: Path, features: datasets.Features | None = None
 ) -> None:
-    """This function correctly writes to parquet a panda DataFrame that contains images encoded by HF dataset.
-    This way, it can be loaded by HF dataset and correctly formatted images are returned.
+    """Write a DataFrame with HF-encoded images to parquet, one row group per episode.
 
-    Args:
-        df: DataFrame to write to parquet.
-        path: Path to write the parquet file.
-        features: Optional HuggingFace Features schema. If provided, ensures image columns
-                  are properly typed as Image() in the parquet schema.
+    Images are embedded into the arrow table first (``ParquetWriter.write_table``
+    does not embed external image files like ``Dataset.to_parquet`` does).
+    ``features`` types image columns as ``Image()`` in the parquet schema.
     """
-    # TODO(qlhoest): replace this weird synthax by `df.to_parquet(path)` only
     ds = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=features)
-    ds.to_parquet(path)
+    ds = embed_images(ds)
+    table = ds.with_format("arrow")[:]
+    if "episode_index" in table.column_names:
+        write_table_one_row_group_per_episode(table, path)
+    else:
+        # No episode boundaries to align row groups to — keep a single write.
+        pq.write_table(table, str(path))
+
+
+def to_parquet_one_row_group_per_episode(df: pandas.DataFrame, path: Path) -> None:
+    """Write a (non-image) DataFrame to parquet with one row group per episode."""
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    write_table_one_row_group_per_episode(table, path)
 
 
 def item_to_torch(item: dict) -> dict:
