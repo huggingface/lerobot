@@ -302,7 +302,7 @@ class VLAJEPAModel(nn.Module):
             return {"wm_loss": wm_loss}
 
         # ---- Step 4: Action Head ----
-        with torch.autocast(device_type=device_type, dtype=torch.float32):
+        with _get_autocast_context(device_type, torch.float32):
             actions_tensor = torch.tensor(
                 np.array(actions), device=last_hidden.device, dtype=torch.float32
             )  # [B, T_full, action_dim]
