@@ -281,7 +281,7 @@ class VideoFrameProvider:
             reencode_video(
                 src,
                 out_path,
-                camera_encoder=encoder,
+                video_encoder=encoder,
                 overwrite=True,
                 start_time_s=from_timestamp,
                 end_time_s=to_timestamp,

@@ -524,7 +524,7 @@ class TestReencodeVideo:
         src = TEST_ARTIFACTS_DIR / "clip_6frames.mp4"
         out = tmp_path / "trim_window.mp4"
         cfg = VideoEncoderConfig(vcodec="h264")
-        reencode_video(src, out, camera_encoder=cfg, start_time_s=0.05, end_time_s=0.12, overwrite=True)
+        reencode_video(src, out, video_encoder=cfg, start_time_s=0.05, end_time_s=0.12, overwrite=True)
 
         with av.open(str(out)) as container:
             frames = list(container.decode(video=0))
