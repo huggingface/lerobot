@@ -208,14 +208,14 @@ def test_episode_clip_path_trims_via_reencode_video(tmp_path: Path, monkeypatch)
     def fake_reencode(
         input_video_path,
         output_video_path,
-        camera_encoder=None,
+        video_encoder=None,
         overwrite=False,
         start_time_s=None,
         end_time_s=None,
     ):
         captured.update(
             src=Path(input_video_path),
-            encoder=camera_encoder,
+            encoder=video_encoder,
             start_time_s=start_time_s,
             end_time_s=end_time_s,
         )
