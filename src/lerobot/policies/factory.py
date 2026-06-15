@@ -55,6 +55,7 @@ from .pi0.configuration_pi0 import PI0Config
 from .pi05.configuration_pi05 import PI05Config
 from .pretrained import PreTrainedPolicy
 from .smolvla.configuration_smolvla import SmolVLAConfig
+from .smolvla_ki.configuration_smolvla_ki import SmolVLAKIConfig  # noqa: F401  (registers "smolvla_ki")
 from .tdmpc.configuration_tdmpc import TDMPCConfig
 from .utils import validate_visual_features_consistency
 from .vla_jepa.configuration_vla_jepa import VLAJEPAConfig
@@ -215,6 +216,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
+    elif name == "smolvla_ki":
+        from .smolvla_ki.modeling_smolvla_ki import SmolVLAKIPolicy
+
+        return SmolVLAKIPolicy
     elif name == "groot":
         from .groot.modeling_groot import GrootPolicy
 
@@ -287,6 +292,10 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return GaussianActorConfig(**kwargs)
     elif policy_type == "smolvla":
         return SmolVLAConfig(**kwargs)
+    elif policy_type == "smolvla_ki":
+        from .smolvla_ki.configuration_smolvla_ki import SmolVLAKIConfig
+
+        return SmolVLAKIConfig(**kwargs)
     elif policy_type == "groot":
         return GrootConfig(**kwargs)
     elif policy_type == "xvla":
