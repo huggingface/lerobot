@@ -41,7 +41,7 @@ from lerobot.policies.groot.processor_groot import (
     GrootN17ActionDecodeStep,
     GrootN17PackInputsStep,
     GrootN17VLMEncodeStep,
-    _transform_n1_7_image_for_vlm,
+    _transform_n1_7_image_for_vlm_albumentations,
     make_groot_pre_post_processors,
 )
 from lerobot.processor import (
@@ -1529,13 +1529,12 @@ def test_groot_n1_7_vlm_image_transform_matches_albumentations_eval_path():
 
     image_np = (np.arange(360 * 360 * 3, dtype=np.uint32) % 251).astype(np.uint8).reshape(360, 360, 3)
 
-    transformed = _transform_n1_7_image_for_vlm(
+    transformed = _transform_n1_7_image_for_vlm_albumentations(
         Image.fromarray(image_np),
         image_crop_size=[230, 230],
         image_target_size=[256, 256],
         shortest_image_edge=256,
         crop_fraction=0.95,
-        use_albumentations=True,
     )
 
     expected = cv2.resize(image_np, (256, 256), interpolation=cv2.INTER_AREA)

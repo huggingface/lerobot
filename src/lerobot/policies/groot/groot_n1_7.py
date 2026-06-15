@@ -32,6 +32,7 @@ from torch.distributions import Beta
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from .action_head.cross_attention_dit import AlternateVLDiT, DiT, SelfAttentionTransformer
+from .configuration_groot import N1_7_DEFAULT_IMAGE_CROP_SIZE, N1_7_DEFAULT_IMAGE_TARGET_SIZE
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoConfig, AutoModel, PretrainedConfig, PreTrainedModel
@@ -76,8 +77,8 @@ GR00T_N1_7_DEFAULTS: dict[str, Any] = {
     "use_flash_attention": True,
     "load_bf16": False,
     "backbone_trainable_params_fp32": True,
-    "image_crop_size": (230, 230),
-    "image_target_size": (256, 256),
+    "image_crop_size": N1_7_DEFAULT_IMAGE_CROP_SIZE,
+    "image_target_size": N1_7_DEFAULT_IMAGE_TARGET_SIZE,
     "shortest_image_edge": None,
     "crop_fraction": None,
     "random_rotation_angle": None,

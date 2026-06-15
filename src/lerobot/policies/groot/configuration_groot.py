@@ -42,6 +42,10 @@ GROOT_N1_5_REMOVAL_GUIDANCE = (
 )
 GROOT_N1_7_BASE_MODEL = "nvidia/GR00T-N1.7-3B"
 GROOT_N1_7_BACKBONE_MODEL = "nvidia/Cosmos-Reason2-2B"
+# Default GR00T N1.7 training resolution. Fallback if processor_config lacks sizing. Prevents mismatched
+# full-res patchification by forcing a resize. Mirrored by GR00T_N1_7_DEFAULTS in groot_n1_7.py.
+N1_7_DEFAULT_IMAGE_TARGET_SIZE = (256, 256)
+N1_7_DEFAULT_IMAGE_CROP_SIZE = (230, 230)
 GROOT_ACTION_DECODE_TRANSFORM_LIBERO = "libero"
 # Sentinel meaning "the user did not pick an action decode transform": __post_init__ resolves it
 # to the embodiment default ('libero' for 'libero_sim', otherwise None). It is distinct from an
