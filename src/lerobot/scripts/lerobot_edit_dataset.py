@@ -133,6 +133,15 @@ Convert image dataset to video format and save locally:
         --new_root /path/to/output/pusht_video \
         --operation.type convert_image_to_video
 
+Convert image dataset (with depth maps) to video format, customizing the depth encoder:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht_image \
+        --new_root /path/to/output/pusht_video \
+        --operation.type convert_image_to_video \
+        --operation.depth_encoder.depth_min 0.01 \
+        --operation.depth_encoder.depth_max 10.0 \
+        --operation.depth_encoder.use_log true
+
 Convert image dataset to video format and save with new repo_id:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht_image \
@@ -211,6 +220,13 @@ Re-encode videos in-place (overwrites original dataset):
         --operation.camera_encoder.vcodec h264 \
         --operation.overwrite true
 
+Re-encode both RGB and depth videos in a dataset (depth quantization params are preserved):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht_depth \
+        --operation.type reencode_videos \
+        --operation.camera_encoder.vcodec libx264 \
+        --operation.depth_encoder.vcodec ffv1
+
 Using JSON config file:
     lerobot-edit-dataset \
         --config_path path/to/edit_config.json
@@ -225,7 +241,13 @@ from pathlib import Path
 
 import draccus
 
-from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults, parser
+from lerobot.configs import (
+    DepthEncoderConfig,
+    VideoEncoderConfig,
+    camera_encoder_defaults,
+    depth_encoder_defaults,
+    parser,
+)
 from lerobot.datasets import (
     LeRobotDataset,
     convert_image_to_video_dataset,
@@ -288,6 +310,7 @@ class ModifyTasksConfig(OperationConfig):
 class ConvertImageToVideoConfig(OperationConfig):
     output_dir: str | None = None
     camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
+    depth_encoder: DepthEncoderConfig = field(default_factory=depth_encoder_defaults)
     episode_indices: list[int] | None = None
     num_workers: int = 4
     max_episodes_per_batch: int | None = None
@@ -309,6 +332,7 @@ class RecomputeStatsConfig(OperationConfig):
 @dataclass
 class ReencodeVideosConfig(OperationConfig):
     camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
+    depth_encoder: DepthEncoderConfig = field(default_factory=depth_encoder_defaults)
     num_workers: int = 0
     encoder_threads: int | None = None
     overwrite: bool = False
@@ -602,6 +626,7 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
         output_dir=output_dir,
         repo_id=output_repo_id,
         camera_encoder=getattr(cfg.operation, "camera_encoder", None) or camera_encoder_defaults(),
+        depth_encoder=getattr(cfg.operation, "depth_encoder", None) or depth_encoder_defaults(),
         episode_indices=getattr(cfg.operation, "episode_indices", None),
         num_workers=getattr(cfg.operation, "num_workers", 4),
         max_episodes_per_batch=getattr(cfg.operation, "max_episodes_per_batch", None),
@@ -719,10 +744,14 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
         shutil.copytree(input_root, output_root)
         dataset = LeRobotDataset(output_repo_id, root=output_root)
 
-    logging.info(f"Re-encoding videos in {output_repo_id} with {cfg.operation.camera_encoder}")
+    logging.info(
+        f"Re-encoding videos in {output_repo_id} with RGB encoder {cfg.operation.camera_encoder} "
+        f"and depth encoder {cfg.operation.depth_encoder}"
+    )
     reencode_dataset(
         dataset,
         camera_encoder=cfg.operation.camera_encoder,
+        depth_encoder=cfg.operation.depth_encoder,
         encoder_threads=cfg.operation.encoder_threads,
         num_workers=cfg.operation.num_workers,
     )

@@ -1380,12 +1380,24 @@ def test_convert_image_to_video_dataset_depth(tmp_path, empty_lerobot_dataset_fa
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(output_dir)
 
+        # Use non-default quantization params so the persisted metadata must
+        # come from the depth encoder (not RGB encoder defaults).
+        depth_encoder = DepthEncoderConfig(
+            vcodec="hevc",
+            pix_fmt="gray12le",
+            g=2,
+            crf=30,
+            depth_min=0.05,
+            depth_max=8.0,
+            shift=2.0,
+            use_log=False,
+        )
         video_dataset = convert_image_to_video_dataset(
             dataset=source_dataset,
             output_dir=output_dir,
             repo_id="dummy/depth_video",
             camera_encoder=VideoEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30),
-            depth_encoder=DepthEncoderConfig(vcodec="hevc", pix_fmt="gray12le", g=2, crf=30),
+            depth_encoder=depth_encoder,
             num_workers=1,
         )
 
@@ -1397,6 +1409,18 @@ def test_convert_image_to_video_dataset_depth(tmp_path, empty_lerobot_dataset_fa
 
     depth_path = video_dataset.root / video_dataset.meta.get_video_file_path(0, "observation.images.depth")
     assert depth_path.exists(), f"Depth video file should exist: {depth_path}"
+
+    # The persisted depth-video metadata must carry the depth quantization params
+    # from the depth encoder (so frames dequantize correctly on read), and the RGB
+    # camera must not be marked as a depth map.
+    persisted_info = load_info(video_dataset.root)
+    depth_info = persisted_info.features["observation.images.depth"]["info"]
+    assert depth_info["is_depth_map"] is True
+    assert DepthEncoderConfig.from_video_info(depth_info) == depth_encoder
+
+    cam_info = persisted_info.features["observation.images.cam"]["info"]
+    assert cam_info.get("is_depth_map") is False
+    assert "video.codec" in cam_info
 
 
 # ─── reencode_dataset ─────────────────────────────────────────────────

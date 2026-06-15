@@ -608,7 +608,7 @@ def _keep_episodes_from_video_with_av(
     output_path: Path,
     episodes_to_keep: list[tuple[int, int]],
     fps: float,
-    camera_encoder: VideoEncoderConfig,
+    video_encoder: VideoEncoderConfig,
 ) -> None:
     """Keep only specified episodes from a video file using PyAV.
 
@@ -622,7 +622,7 @@ def _keep_episodes_from_video_with_av(
             Ranges are half-open intervals: [start_frame, end_frame), where start_frame
             is inclusive and end_frame is exclusive.
         fps: Frame rate of the video.
-        camera_encoder: Video encoder settings used to re-encode the kept frames.
+        video_encoder: Video encoder settings used to re-encode the kept frames.
     """
     from fractions import Fraction
 
@@ -647,13 +647,13 @@ def _keep_episodes_from_video_with_av(
 
     # Convert fps to Fraction for PyAV compatibility.
     fps_fraction = Fraction(fps).limit_denominator(1000)
-    codec_options = camera_encoder.get_codec_options(as_strings=True)
-    v_out = out.add_stream(camera_encoder.vcodec, rate=fps_fraction, options=codec_options)
+    codec_options = video_encoder.get_codec_options(as_strings=True)
+    v_out = out.add_stream(video_encoder.vcodec, rate=fps_fraction, options=codec_options)
 
     # PyAV type stubs don't distinguish video streams from audio/subtitle streams.
     v_out.width = v_in.codec_context.width
     v_out.height = v_in.codec_context.height
-    v_out.pix_fmt = camera_encoder.pix_fmt
+    v_out.pix_fmt = video_encoder.pix_fmt
 
     # Set time_base to match the frame rate for proper timestamp handling.
     v_out.time_base = Fraction(1, int(fps))
@@ -1670,7 +1670,7 @@ def convert_image_to_video_dataset(
     output_dir: Path | None = None,
     repo_id: str | None = None,
     camera_encoder: VideoEncoderConfig | None = None,
-    depth_encoder: VideoEncoderConfig | None = None,
+    depth_encoder: DepthEncoderConfig | None = None,
     episode_indices: list[int] | None = None,
     num_workers: int = 4,
     max_episodes_per_batch: int | None = None,
@@ -1685,8 +1685,11 @@ def convert_image_to_video_dataset(
         dataset: The source LeRobot dataset with images
         output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
         repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
-        camera_encoder: Video encoder settings
+        camera_encoder: Video encoder settings applied to RGB cameras
             (``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`).
+        depth_encoder: Video encoder settings applied to depth-map cameras, including
+            the quantization parameters persisted to the dataset metadata
+            (``None`` uses :func:`~lerobot.configs.depth_encoder_defaults`).
         episode_indices: List of episode indices to convert (None = all episodes)
         num_workers: Number of threads for parallel processing (default: 4)
         max_episodes_per_batch: Maximum episodes per video batch to avoid memory issues (None = no limit)
@@ -1879,13 +1882,11 @@ def convert_image_to_video_dataset(
         # Update video info for all image keys (now videos)
         # We need to manually set video info since update_video_info() checks video_keys first
         for img_key in img_keys:
-            if not new_meta.features[img_key].get("info", None):
-                video_path = new_meta.root / new_meta.video_path.format(
-                    video_key=img_key, chunk_index=0, file_index=0
-                )
-                new_meta.info.features[img_key]["info"] = get_video_info(
-                    video_path, video_encoder=camera_encoder
-                )
+            target_encoder = depth_encoder if img_key in dataset.meta.depth_keys else camera_encoder
+            video_path = new_meta.root / new_meta.video_path.format(
+                video_key=img_key, chunk_index=0, file_index=0
+            )
+            new_meta.info.features[img_key]["info"] = get_video_info(video_path, video_encoder=target_encoder)
 
         write_info(new_meta.info, new_meta.root)
 
