@@ -42,6 +42,14 @@ GROOT_N1_5_REMOVAL_GUIDANCE = (
 )
 GROOT_N1_7_BASE_MODEL = "nvidia/GR00T-N1.7-3B"
 GROOT_N1_7_BACKBONE_MODEL = "nvidia/Cosmos-Reason2-2B"
+# Image preprocessing geometry the GR00T N1.7 backbone was trained on. The processor
+# falls back to these when a checkpoint ships no image sizing in its processor_config
+# (e.g. fine-tuning the raw nvidia/GR00T-N1.7-3B base with a new embodiment), so frames
+# are resized to the expected resolution instead of being patchified at full camera
+# resolution (which both slows training and is a train/checkpoint distribution mismatch).
+# Mirrored by GR00T_N1_7_DEFAULTS in groot_n1_7.py.
+N1_7_DEFAULT_IMAGE_TARGET_SIZE = (256, 256)
+N1_7_DEFAULT_IMAGE_CROP_SIZE = (230, 230)
 GROOT_ACTION_DECODE_TRANSFORM_LIBERO = "libero"
 # Sentinel meaning "the user did not pick an action decode transform": __post_init__ resolves it
 # to the embodiment default ('libero' for 'libero_sim', otherwise None). It is distinct from an
