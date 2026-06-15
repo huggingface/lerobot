@@ -47,6 +47,8 @@ from lerobot.processor import (
     RenameObservationsProcessorStep,
     batch_to_transition,
     policy_action_to_transition,
+    to_absolute_actions,
+    to_relative_actions,
     transition_to_batch,
     transition_to_policy_action,
 )
@@ -117,6 +119,39 @@ class _GrootN17CheckpointProcessorAssets:
     use_albumentations: bool
 
 
+def _resolve_base_model_local_dir(base_model_path: str | None) -> str | None:
+    """Resolve a base model path to a local snapshot dir holding its sidecar JSONs.
+
+    ``is_raw_groot_n1_7_checkpoint`` needs a local directory (or config.json) to inspect, so a
+    bare HF repo-id (e.g. ``nvidia/GR00T-N1.7-3B``) would never be recognised as a raw N1.7
+    checkpoint and the processor would fall back to LeRobot default image geometry instead of the
+    checkpoint's processor_config.json geometry. When the path is not already a local dir, this
+    downloads just the JSON sidecars and returns the local snapshot dir. Offline-safe: any failure
+    returns the original string unchanged. Only used on the fresh-build (training) path; inference
+    loads the serialized processor, so no per-inference network call is added.
+    """
+    if base_model_path is None:
+        return None
+    if Path(base_model_path).expanduser().is_dir():
+        return base_model_path
+    try:
+        from huggingface_hub import snapshot_download
+
+        local_dir = snapshot_download(
+            base_model_path,
+            repo_type="model",
+            allow_patterns=["*.json"],
+        )
+        logging.debug(
+            "Resolved GR00T base model '%s' to local snapshot '%s' for processor asset loading.",
+            base_model_path,
+            local_dir,
+        )
+        return local_dir
+    except Exception:  # noqa: BLE001 (offline-safe: fall back to the original path on any failure)
+        return base_model_path
+
+
 def _load_n1_7_checkpoint_processor_assets(config: GrootConfig) -> _GrootN17CheckpointProcessorAssets | None:
     """Load N1.7 processor settings from checkpoint sidecar JSON files.
 
@@ -124,10 +159,11 @@ def _load_n1_7_checkpoint_processor_assets(config: GrootConfig) -> _GrootN17Chec
     can keep using caller-provided dataset stats and config values.
     """
 
-    if not is_raw_groot_n1_7_checkpoint(config.base_model_path):
+    resolved_base_model_path = _resolve_base_model_local_dir(config.base_model_path)
+    if not is_raw_groot_n1_7_checkpoint(resolved_base_model_path):
         return None
 
-    checkpoint_path = Path(config.base_model_path).expanduser()
+    checkpoint_path = Path(resolved_base_model_path).expanduser()
     processor_config = _read_json(checkpoint_path / "processor_config.json")
     processor_kwargs = processor_config.get("processor_kwargs", {})
     if not isinstance(processor_kwargs, dict):
@@ -452,6 +488,40 @@ def _has_modality_stats(stats: dict[str, dict[str, Any]] | None) -> bool:
     return any(bool(modality_stats) for modality_stats in stats.values())
 
 
+def _build_relative_action_mask(
+    action_dim: int,
+    exclude_joints: list[str] | None,
+    action_names: list[str] | None,
+) -> list[bool]:
+    """Build the per-dim relative-action mask (True = convert to relative, False = keep absolute).
+
+    Replicates ``RelativeActionsProcessorStep._build_mask`` semantics: dims are excluded
+    (kept absolute) by case-insensitive token match against ``action_names``.
+
+    When ``action_names`` is None we cannot identify the gripper, so this returns all-True
+    (every dim treated as relative). The user should ensure ``config.action_feature_names`` is
+    populated (the factory does this from dataset meta) so the gripper can be kept absolute;
+    arm-relative still works either way, but a missing-name gripper would be treated as relative.
+    """
+    if not exclude_joints or action_names is None:
+        return [True] * action_dim
+
+    exclude_tokens = [str(name).lower() for name in exclude_joints if name]
+    if not exclude_tokens:
+        return [True] * action_dim
+
+    mask: list[bool] = []
+    for name in action_names[:action_dim]:
+        action_name = str(name).lower()
+        is_excluded = any(token == action_name or token in action_name for token in exclude_tokens)
+        mask.append(not is_excluded)
+
+    if len(mask) < action_dim:
+        mask.extend([True] * (action_dim - len(mask)))
+
+    return mask
+
+
 # GR00T normalizes state/action inside its own processor steps and so deliberately has no
 # NormalizerProcessorStep/UnnormalizerProcessorStep (see GrootConfig.normalization_mapping, which is
 # IDENTITY for every feature). lerobot-train nonetheless emits these standard override keys
@@ -653,8 +723,15 @@ def _reconnect_groot_n1_7_pack_decode_steps(
     if pack_step is None:
         return
 
+    # Both decode steps read the pack step's cached state via a non-serialized ``pack_step`` link:
+    # GrootN17ActionDecodeStep reads the per-modality raw state; the relative-action path
+    # (GrootActionUnpackUnnormalizeStep) reads the cached reference state. Restore both links after
+    # deserialization.
     for step in postprocessor.steps:
-        if isinstance(step, GrootN17ActionDecodeStep) and step.pack_step is None:
+        if (
+            isinstance(step, (GrootN17ActionDecodeStep, GrootActionUnpackUnnormalizeStep))
+            and step.pack_step is None
+        ):
             step.pack_step = pack_step
 
 
@@ -732,6 +809,9 @@ def make_groot_pre_post_processors(
         video_modality_keys=video_modality_keys,
         raw_stats=checkpoint_assets.raw_stats if checkpoint_assets is not None else None,
         modality_config=checkpoint_assets.modality_config if checkpoint_assets is not None else None,
+        use_relative_actions=config.use_relative_actions,
+        relative_exclude_joints=config.relative_exclude_joints,
+        action_feature_names=config.action_feature_names,
     )
 
     # Resolve the image preprocessing geometry. Honor the checkpoint's processor_config
@@ -791,6 +871,10 @@ def make_groot_pre_post_processors(
             stats=padded_stats,
             normalize_min_max=True,
             clip_normalized_action=True,
+            use_relative_actions=config.use_relative_actions,
+            relative_exclude_joints=config.relative_exclude_joints,
+            action_feature_names=config.action_feature_names,
+            pack_step=pack_step,
         )
     else:
         action_decode_step = GrootN17ActionDecodeStep(
@@ -1087,7 +1171,14 @@ class GrootN17PackInputsStep(ProcessorStep):
     video_modality_keys: list[str] | None = None
     raw_stats: dict[str, Any] | None = None
     modality_config: dict[str, Any] | None = None
+    # Opt-in relative-action support: convert absolute->relative actions inside this pack step
+    # (training) using the cached raw reference state, keeping excluded joints (e.g. gripper)
+    # absolute. The paired GrootActionUnpackUnnormalizeStep reconstructs absolute on decode.
+    use_relative_actions: bool = False
+    relative_exclude_joints: list[str] = field(default_factory=list)
+    action_feature_names: list[str] | None = None
     _last_raw_state: dict[str, np.ndarray] | None = field(default=None, init=False, repr=False)
+    _last_reference_state: torch.Tensor | None = field(default=None, init=False, repr=False)
     _warned_image_keys: bool = field(default=False, init=False, repr=False)
 
     def _ordered_image_keys(self, obs: dict[str, Any]) -> list[str]:
@@ -1229,6 +1320,9 @@ class GrootN17PackInputsStep(ProcessorStep):
             formalize_language=self.formalize_language,
         )
 
+        # Reference state for relative-action conversion (RAW, pre-normalization, (B, D)). Cached
+        # regardless of whether an action is present so inference caches it too for decode.
+        relative_reference_state: torch.Tensor | None = None
         if OBS_STATE in obs:
             state = obs[OBS_STATE]
             if state.dim() != 2:
@@ -1237,6 +1331,9 @@ class GrootN17PackInputsStep(ProcessorStep):
             if dim > self.max_state_dim:
                 raise ValueError(f"State dimension {dim} exceeds max_state_dim {self.max_state_dim}.")
             _cache_raw_state(state)
+            if self.use_relative_actions:
+                relative_reference_state = state.detach().clone()
+                self._last_reference_state = relative_reference_state
             if self.normalize_min_max:
                 state = _min_max_norm(state, OBS_STATE)
             state = state.unsqueeze(1)
@@ -1259,6 +1356,19 @@ class GrootN17PackInputsStep(ProcessorStep):
                 raise ValueError(f"Action horizon {horizon} exceeds action_horizon {self.action_horizon}.")
             if dim > self.max_action_dim:
                 raise ValueError(f"Action dimension {dim} exceeds max_action_dim {self.max_action_dim}.")
+            # Convert absolute->relative BEFORE normalization. The mask keeps excluded joints (e.g.
+            # gripper) absolute; to_relative_actions broadcasts the (B, D) reference state over T.
+            if self.use_relative_actions:
+                if relative_reference_state is None:
+                    raise RuntimeError(
+                        "GrootN17PackInputsStep.use_relative_actions requires observation.state "
+                        "(OBS_STATE) to be present alongside the action to build the relative "
+                        "reference, but no state was found in this transition."
+                    )
+                mask = _build_relative_action_mask(
+                    action.shape[-1], self.relative_exclude_joints, self.action_feature_names
+                )
+                action = to_relative_actions(action, relative_reference_state, mask)
             if self.normalize_min_max:
                 flat = _min_max_norm(action.reshape(bsz * horizon, dim), ACTION)
                 action = flat.view(bsz, horizon, dim)
@@ -1322,12 +1432,20 @@ class GrootN17PackInputsStep(ProcessorStep):
             "video_modality_keys": self.video_modality_keys,
             "raw_stats": self.raw_stats,
             "modality_config": self.modality_config,
+            "use_relative_actions": self.use_relative_actions,
+            "relative_exclude_joints": self.relative_exclude_joints,
+            "action_feature_names": self.action_feature_names,
         }
 
     def get_cached_raw_state(self) -> dict[str, np.ndarray] | None:
         """Return the latest unnormalized state split by checkpoint modality key."""
 
         return self._last_raw_state
+
+    def get_cached_reference_state(self) -> torch.Tensor | None:
+        """Return the latest RAW (pre-normalization) (B, D) state used for relative-action conversion."""
+
+        return self._last_reference_state
 
     def state_dict(self) -> dict[str, torch.Tensor]:
         if not self.stats:
@@ -1803,6 +1921,13 @@ class GrootActionUnpackUnnormalizeStep(ProcessorStep):
     clip_normalized_action: bool = False
     libero_gripper_action: bool = False
     libero_gripper_binarize: bool = True
+    # Opt-in relative-action reconstruction (paired with GrootN17PackInputsStep). After the
+    # min-max inverse, relative deltas (arm) + absolute gripper are converted back to absolute
+    # using the reference state cached by the linked pack_step (re-linked on reload).
+    use_relative_actions: bool = False
+    relative_exclude_joints: list[str] = field(default_factory=list)
+    action_feature_names: list[str] | None = None
+    pack_step: "GrootN17PackInputsStep | None" = field(default=None, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         # Expect model outputs to be in TransitionKey.ACTION as (B, T, D_model)
@@ -1842,6 +1967,29 @@ class GrootActionUnpackUnnormalizeStep(ProcessorStep):
             inv = (action + 1.0) * 0.5 * safe_denom + min_v
             action = torch.where(mask, inv, min_v)
 
+        # Reconstruct absolute actions from relative deltas (arm) + absolute gripper, using the
+        # reference state cached by the linked pack step. The link is restored on reload by
+        # _reconnect_groot_n1_7_pack_decode_steps.
+        if self.use_relative_actions:
+            if self.pack_step is None:
+                raise RuntimeError(
+                    "GrootActionUnpackUnnormalizeStep.use_relative_actions requires a linked "
+                    "GrootN17PackInputsStep to read the cached reference state, but pack_step is None. "
+                    "Build both pipelines through make_groot_pre_post_processors (or load them together "
+                    "via make_groot_pre_post_processors_from_pretrained)."
+                )
+            ref = self.pack_step.get_cached_reference_state()
+            if ref is None:
+                raise RuntimeError(
+                    "GrootActionUnpackUnnormalizeStep.use_relative_actions requires the reference state "
+                    "cached by its connected GrootN17PackInputsStep to convert relative actions back to "
+                    "absolute. Run the preprocessor on an observation before decoding actions."
+                )
+            relative_mask = _build_relative_action_mask(
+                action.shape[-1], self.relative_exclude_joints, self.action_feature_names
+            )
+            action = to_absolute_actions(action, ref, relative_mask)
+
         if self.libero_gripper_action and action.shape[-1] >= 7:
             gripper = action[..., -1]
             if self.libero_gripper_binarize:
@@ -1869,6 +2017,9 @@ class GrootActionUnpackUnnormalizeStep(ProcessorStep):
             "clip_normalized_action": self.clip_normalized_action,
             "libero_gripper_action": self.libero_gripper_action,
             "libero_gripper_binarize": self.libero_gripper_binarize,
+            "use_relative_actions": self.use_relative_actions,
+            "relative_exclude_joints": self.relative_exclude_joints,
+            "action_feature_names": self.action_feature_names,
         }
 
     def state_dict(self) -> dict[str, torch.Tensor]:

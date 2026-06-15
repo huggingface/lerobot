@@ -389,6 +389,40 @@ class GrootConfig(PreTrainedConfig):
     # Embodiment tag to use for training (e.g. 'new_embodiment', 'gr1')
     embodiment_tag: str = "new_embodiment"
 
+    # Inference-only override for the number of flow-matching denoising steps used to decode an
+    # action chunk. None = use the model checkpoint default (currently 4). Higher values trade
+    # inference speed for action quality; applied at base-model load via _create_groot_model.
+    num_inference_timesteps: int | None = None
+
+    # If set, caps the number of open-loop actions executed before replanning (inference cadence).
+    # Overrides the value inferred from the checkpoint/embodiment in _resolve_action_queue_steps.
+    execution_horizon: int | None = None
+
+    # Opt-in. Copy a pretrained embodiment category slot's action-head weights into the target
+    # embodiment slot at base-model build (in _create_groot_model), to warm-start a cold
+    # 'new_embodiment' slot. Accepts an embodiment name (e.g.
+    # 'oxe_droid_relative_eef_relative_joint') or an int embodiment id. Runs on every fresh
+    # base-model build (so it applies during lerobot-train, which uses __init__ not
+    # from_pretrained); on a fine-tuned checkpoint reload it is harmlessly overwritten.
+    warm_start_embodiment_slot: int | str | None = None
+
+    # Opt-in relative-action support for the 'new_embodiment' slot (sync-safe, GR00T-native).
+    # When True, GR00T converts absolute->relative inside its own pack step (training) and
+    # reconstructs absolute inside its own flat decode step (inference), using a cached
+    # reference state. The dataset stays absolute; compute relative ACTION stats with
+    # `lerobot-edit-dataset --operation.relative_action true --operation.relative_exclude_joints
+    # "['gripper']"` (this only rewrites stats, not actions).
+    use_relative_actions: bool = False
+
+    # Joint names kept absolute (not converted to relative) when use_relative_actions is True.
+    # Case-insensitive token match against action_feature_names.
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+
+    # Action dimension names from dataset metadata; auto-populated by the factory from dataset
+    # meta (see factory.py:528). Used to build the relative-action mask so the gripper can be
+    # identified and kept absolute. When None, the gripper cannot be identified.
+    action_feature_names: list[str] | None = None
+
     # Fine-tuning control arguments
 
     # Whether to fine-tune the llm backbone

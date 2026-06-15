@@ -54,6 +54,98 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound="GrootPolicy")
 
 
+def _resolve_embodiment_id(value: int | str) -> int:
+    """Resolve an embodiment id from an int or an N1.7 embodiment name.
+
+    Names are looked up in N1_7_EMBODIMENT_MAPPING (e.g. 'new_embodiment' -> 10).
+    Raises ValueError listing the known keys if the name is unknown.
+    """
+    from .processor_groot import N1_7_EMBODIMENT_MAPPING
+
+    if isinstance(value, bool):  # bool is a subclass of int; reject it explicitly.
+        raise ValueError(f"Embodiment id must be an int or embodiment name, got bool {value!r}.")
+    if isinstance(value, int):
+        return value
+    if value in N1_7_EMBODIMENT_MAPPING:
+        return N1_7_EMBODIMENT_MAPPING[value]
+    raise ValueError(
+        f"Unknown GR00T N1.7 embodiment name '{value}'. Known names: "
+        f"{sorted(N1_7_EMBODIMENT_MAPPING.keys())}."
+    )
+
+
+def _warm_start_embodiment_slot(model, source_id: int, target_id: int) -> None:
+    """Copy category-specific action-head weights from one embodiment slot to another.
+
+    Used at base-model load (training only) to warm-start a cold target embodiment slot
+    (e.g. 'new_embodiment') from a pretrained slot. Copies the per-category ``W``/``b``
+    parameters across every CategorySpecificLinear in the action head's state encoder,
+    action encoder, and action decoder. No-ops (with a logged warning) if the ids are out
+    of range or identical.
+    """
+    if source_id == target_id:
+        logger.warning(
+            "GR00T warm_start_embodiment_slot: source and target embodiment id are both %d; "
+            "skipping (nothing to copy).",
+            source_id,
+        )
+        return
+
+    action_head = getattr(model, "action_head", None)
+    if action_head is None:
+        logger.warning("GR00T warm_start_embodiment_slot: model has no action_head; skipping.")
+        return
+
+    # Each entry is (submodule, [CategorySpecificLinear attribute names]).
+    linear_groups = [
+        (getattr(action_head, "state_encoder", None), ["layer1", "layer2"]),
+        (getattr(action_head, "action_encoder", None), ["W1", "W2", "W3"]),
+        (getattr(action_head, "action_decoder", None), ["layer1", "layer2"]),
+    ]
+
+    copied: list[str] = []
+    with torch.no_grad():
+        for submodule, attr_names in linear_groups:
+            if submodule is None:
+                continue
+            submodule_name = type(submodule).__name__
+            for attr_name in attr_names:
+                lin = getattr(submodule, attr_name, None)
+                if lin is None or not hasattr(lin, "W") or not hasattr(lin, "b"):
+                    continue
+                num_categories = lin.W.shape[0]
+                if not (0 <= source_id < num_categories and 0 <= target_id < num_categories):
+                    logger.warning(
+                        "GR00T warm_start_embodiment_slot: source_id=%d/target_id=%d out of range "
+                        "for %s.%s (num_categories=%d); skipping this layer.",
+                        source_id,
+                        target_id,
+                        submodule_name,
+                        attr_name,
+                        num_categories,
+                    )
+                    continue
+                lin.W.data[target_id] = lin.W.data[source_id].clone()
+                lin.b.data[target_id] = lin.b.data[source_id].clone()
+                copied.append(f"{submodule_name}.{attr_name}")
+
+    if copied:
+        logger.info(
+            "GR00T warm_start_embodiment_slot: copied action-head weights from embodiment slot %d "
+            "to slot %d for: %s.",
+            source_id,
+            target_id,
+            ", ".join(copied),
+        )
+    else:
+        logger.warning(
+            "GR00T warm_start_embodiment_slot: no action-head weights were copied "
+            "(source_id=%d, target_id=%d).",
+            source_id,
+            target_id,
+        )
+
+
 class GrootPolicy(PreTrainedPolicy):
     """Wrapper around external Groot model for LeRobot integration."""
 
@@ -92,6 +184,25 @@ class GrootPolicy(PreTrainedPolicy):
             tune_vlln=True,
             transformers_loading_kwargs={"trust_remote_code": True},
         )
+
+        # Inference-only override for the number of flow-matching denoising steps. The action
+        # head reads self.num_inference_timesteps in get_action_with_features; dt (1/n) and the
+        # t schedule adapt automatically.
+        if self.config.num_inference_timesteps is not None:
+            n = int(self.config.num_inference_timesteps)
+            model.config.num_inference_timesteps = n
+            model.action_head.num_inference_timesteps = n
+
+        # Opt-in: warm-start a cold embodiment slot (e.g. 'new_embodiment') from a pretrained
+        # slot's action-head weights. Done here (not in from_pretrained) so it applies on every
+        # fresh base-model build -- training via make_policy instantiates GrootPolicy(config)
+        # directly (factory uses __init__ when cfg.pretrained_path is unset), it does NOT go
+        # through from_pretrained. On a fine-tuned checkpoint reload this also runs but is
+        # immediately overwritten by the loaded state_dict, so it is a harmless no-op there.
+        if self.config.warm_start_embodiment_slot is not None:
+            source_id = _resolve_embodiment_id(self.config.warm_start_embodiment_slot)
+            target_id = _resolve_embodiment_id(self.config.embodiment_tag)
+            _warm_start_embodiment_slot(model, source_id, target_id)
 
         return model
 
@@ -260,7 +371,11 @@ class GrootPolicy(PreTrainedPolicy):
             horizons.append(checkpoint_action_horizon)
         if execution_horizon is not None:
             horizons.append(execution_horizon)
-        return min(horizons)
+        # An explicit config override caps the open-loop horizon (inference cadence), overriding
+        # the value inferred from the checkpoint/embodiment.
+        if self.config.execution_horizon is not None:
+            horizons.append(max(1, int(self.config.execution_horizon)))
+        return max(1, min(horizons))
 
     def _resolve_prediction_horizon(self, actions: Tensor) -> int:
         """Return the policy-facing action horizon for a native GR00T prediction."""
