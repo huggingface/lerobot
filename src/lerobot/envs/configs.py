@@ -757,7 +757,7 @@ class RoboTwinEnvConfig(EnvConfig):
 
     task: str = "beat_block_hammer"  # single task or comma-separated list
     fps: int = 25
-    episode_length: int = 300
+    episode_length: int = 1200
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     # Available cameras from RoboTwin's aloha-agilex embodiment: head_camera
