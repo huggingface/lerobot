@@ -186,12 +186,6 @@ class WandBLogger:
             if custom_step_key is not None and k == custom_step_key:
                 continue
 
-            if isinstance(v, list):
-                for i, elem in enumerate(v):
-                    if isinstance(elem, (int | float)):
-                        batch_data[f"{mode}/{k}_{i}"] = elem
-                continue
-
             if not isinstance(v, (int | float | str)):
                 logging.warning(
                     f'WandB logging of key "{k}" was ignored as its type "{type(v)}" is not handled by this wrapper.'
