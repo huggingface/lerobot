@@ -278,11 +278,11 @@ def write_table_one_row_group_per_episode(table: pa.Table, path: Path) -> None:
     mirroring the recording writer. ``table`` must carry a contiguous
     ``episode_index`` column.
     """
-        episode_index = table.column("episode_index").to_numpy(zero_copy_only=False)
+    episode_index = table.column("episode_index").to_numpy(zero_copy_only=False)
     starts = np.concatenate(([0], np.nonzero(np.diff(episode_index))[0] + 1))
     writer = pq.ParquetWriter(str(path), table.schema, compression="snappy", use_dictionary=True)
     try:
-        for start, stop in zip(starts, np.append(starts[1:], len(episode_index))):
+        for start, stop in zip(starts, np.append(starts[1:], len(episode_index)), strict=True):
             writer.write_table(table.slice(start, stop - start))  # one episode -> one row group
     finally:
         writer.close()
