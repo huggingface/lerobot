@@ -115,7 +115,7 @@ def log_rerun_data(
                         )
                     else:
                         img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
-                    rr.log(key, entity=img_entity)
+                    rr.log(key, entity=img_entity, static=True)
 
     if action:
         for k, v in action.items():
