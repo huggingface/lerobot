@@ -26,10 +26,13 @@ lerobot-info
 """
 
 import importlib
+import logging
 import platform
 import shutil
 import subprocess
 from importlib.metadata import PackageNotFoundError, distribution
+
+logger = logging.getLogger(__name__)
 
 PACKAGE_NAME = "lerobot"
 
@@ -121,7 +124,7 @@ def main():
     Main function to print system info in markdown format.
     """
     system_info = get_sys_info()
-    print(format_dict_for_markdown(system_info))
+    logger.info(format_dict_for_markdown(system_info))
 
 
 if __name__ == "__main__":
