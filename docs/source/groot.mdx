@@ -5,7 +5,7 @@ GR00T is an NVIDIA foundation model family for generalized humanoid robot reason
 LeRobot integrates GR00T N1.7 through the `groot` policy type.
 
 > [!WARNING]
-> **Breaking change:** GR00T N1.5 support was removed from LeRobot, and current releases support GR00T N1.7 only. N1.5 checkpoints, configs, and `--policy.model_version=n1.5` are rejected with a clear error. To keep using an N1.5 checkpoint, pin the last release that supports it: `pip install 'lerobot==0.5.1'`. To use the current release, migrate to GR00T N1.7 (`model_version='n1.7'`, base model [`nvidia/GR00T-N1.7-3B`](https://huggingface.co/nvidia/GR00T-N1.7-3B)).
+> **Breaking change:** GR00T N1.5 support was removed from LeRobot, and current releases support GR00T N1.7 only. N1.5 checkpoints and configs are rejected with a migration note. To keep using an N1.5 checkpoint, pin the last release that supports it: `pip install 'lerobot==0.5.1'`. To use the current release, migrate to GR00T N1.7 (base model [`nvidia/GR00T-N1.7-3B`](https://huggingface.co/nvidia/GR00T-N1.7-3B)).
 
 ## Model Overview
 
@@ -31,46 +31,43 @@ This approach allows the model to be highly adaptable through post-training for 
 
 ## Installation Requirements
 
-GR00T is intended for NVIDIA GPU-accelerated systems. The `groot` extra still includes Flash Attention on non-macOS platforms, and Flash Attention needs a compatible PyTorch/CUDA environment before it is installed. Install the dependencies in this order:
+GR00T is intended for NVIDIA GPU-accelerated systems. Install LeRobot with the GR00T extra:
 
-1. Follow the Environment Setup in the [Installation Guide](./installation). Do not install `lerobot` yet.
-2. Install PyTorch, TorchVision, and the build dependencies used by Flash Attention:
+```bash
+pip install "lerobot[groot]"
+```
+
+For a source checkout:
+
+```bash
+pip install -e ".[groot]"
+```
+
+### Optional: Flash Attention acceleration
+
+Flash Attention is a purely optional performance optimization. **LeRobot neither installs nor requires it**, and setting it up is up to the user as it has environment-specific build requirements (a matching PyTorch/CUDA toolchain). To enable it:
+
+1. Install a `flash-attn` build matching your PyTorch/CUDA environment (see the [Flash Attention project](https://github.com/Dao-AILab/flash-attention)):
 
 ```bash
 # Check https://pytorch.org/get-started/locally/ for the right CUDA wheel index for your system.
 pip install "torch>=2.7,<2.12.0" "torchvision>=0.22.0,<0.27.0" \
   --index-url https://download.pytorch.org/whl/cu128
 pip install "ninja>=1.11.1,<2.0.0" "packaging>=24.2,<26.0"
-```
-
-3. Install and verify Flash Attention:
-
-```bash
 pip install "flash-attn>=2.5.9,<3.0.0" --no-build-isolation
 python -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} imported successfully')"
 ```
 
-4. Install LeRobot with the GR00T extra:
+2. Install lerobot with the groot extra.
 
-```bash
-pip install "lerobot[groot]"
-```
-
-For a source checkout, use the same order, then install the local package with:
-
-```bash
-pip install -e ".[groot]"
-```
-
-If your CUDA/PyTorch build needs a different Flash Attention wheel or source build, follow the [Flash Attention project](https://github.com/Dao-AILab/flash-attention) instructions, but keep the same ordering: PyTorch first, Flash Attention next, then `lerobot[groot]`.
+3. Opt in by passing `--policy.use_flash_attention=true` when training/evaluating GR00T. If the kernel is missing or fails to import, the backbone transparently falls back to SDPA.
 
 ## Usage
 
 To use GR00T N1.7:
 
 ```bash
---policy.type=groot \
---policy.model_version=n1.7
+--policy.type=groot
 ```
 
 ## Training
@@ -142,7 +139,6 @@ hf download nvidia/GR00T-N1.7-LIBERO \
 
 lerobot-eval \
   --policy.type=groot \
-  --policy.model_version=n1.7 \
   --policy.base_model_path=./GR00T-N1.7-LIBERO/libero_spatial \
   --policy.embodiment_tag=libero_sim \
   --env.type=libero \

@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import importlib
-import json
 import logging
 from contextlib import suppress
 from copy import deepcopy
@@ -35,7 +34,14 @@ from .action_head.cross_attention_dit import AlternateVLDiT, DiT, SelfAttentionT
 from .configuration_groot import N1_7_DEFAULT_IMAGE_CROP_SIZE, N1_7_DEFAULT_IMAGE_TARGET_SIZE
 
 if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoConfig, AutoModel, PretrainedConfig, PreTrainedModel
+    from transformers import (
+        AutoConfig,
+        AutoModel,
+        PretrainedConfig,
+        PreTrainedModel,
+        Qwen3VLConfig,
+        Qwen3VLForConditionalGeneration,
+    )
     from transformers.feature_extraction_utils import BatchFeature
 else:
     AutoConfig = None
@@ -43,23 +49,15 @@ else:
     PretrainedConfig = object
     PreTrainedModel = object
     BatchFeature = None
+    Qwen3VLConfig = None
+    Qwen3VLForConditionalGeneration = None
 
 try:
     import tree
 except ImportError:
     tree = None
 
-try:
-    from transformers import Qwen3VLConfig, Qwen3VLForConditionalGeneration
-except ImportError:
-    Qwen3VLConfig = None
-    Qwen3VLForConditionalGeneration = None
-
 logger = logging.getLogger(__name__)
-
-
-def _copy_default(value: Any) -> Any:
-    return deepcopy(value)
 
 
 GR00T_N1_7_DEFAULTS: dict[str, Any] = {
@@ -74,7 +72,7 @@ GR00T_N1_7_DEFAULTS: dict[str, Any] = {
     "tune_visual": False,
     "select_layer": 16,
     "reproject_vision": False,
-    "use_flash_attention": True,
+    "use_flash_attention": False,
     "load_bf16": False,
     "backbone_trainable_params_fp32": True,
     "image_crop_size": N1_7_DEFAULT_IMAGE_CROP_SIZE,
@@ -152,28 +150,9 @@ class GR00TN17Config(PretrainedConfig):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         for key, value in GR00T_N1_7_DEFAULTS.items():
-            setattr(self, key, _copy_default(kwargs.pop(key, value)))
+            setattr(self, key, deepcopy(kwargs.pop(key, value)))
         for key, value in kwargs.items():
             setattr(self, key, value)
-
-    def to_filtered_dict(self, exclude_augment: bool = True) -> dict[str, Any]:
-        cfg = self.to_dict()
-        if not exclude_augment:
-            return cfg
-        exclude_keys = {
-            "random_rotation_angle",
-            "color_jitter_params",
-            "use_albumentations_transforms",
-            "formalize_language",
-            "image_crop_size",
-            "image_target_size",
-            "shortest_image_edge",
-            "crop_fraction",
-        }
-        return {k: v for k, v in cfg.items() if k not in exclude_keys}
-
-    def to_filtered_json(self, exclude_augment: bool = True, **kwargs) -> str:
-        return json.dumps(self.to_filtered_dict(exclude_augment), indent=2, default=str, **kwargs)
 
 
 class CategorySpecificLinear(nn.Module):
@@ -275,13 +254,7 @@ class Qwen3Backbone(nn.Module):
         transformers_loading_kwargs: dict[str, Any] | None = None,
         load_pretrained_weights: bool = True,
     ):
-        if Qwen3VLForConditionalGeneration is None:
-            raise ImportError(
-                "Qwen3VLForConditionalGeneration is required for GR00T N1.7. "
-                "Install the GR00T optional dependencies with `pip install 'lerobot[groot]'` "
-                "or use a transformers version that provides Qwen3-VL support."
-            )
-
+        require_package("transformers", extra="groot")
         super().__init__()
         transformers_loading_kwargs = transformers_loading_kwargs or {"trust_remote_code": True}
 
@@ -361,11 +334,6 @@ class Qwen3Backbone(nn.Module):
         if _is_cosmos_reason2_backbone(model_name):
             backbone_config = _cosmos_reason2_qwen3_vl_config()
         else:
-            if AutoConfig is None:
-                raise ImportError(
-                    "AutoConfig is required to initialize a GR00T N1.7 backbone from config. "
-                    "Install the GR00T optional dependencies with `pip install 'lerobot[groot]'`."
-                )
             backbone_config = AutoConfig.from_pretrained(model_name, **config_kwargs)
         return Qwen3VLForConditionalGeneration._from_config(backbone_config, **model_kwargs)
 
@@ -762,11 +730,6 @@ def _is_cosmos_reason2_backbone(model_name: str) -> bool:
 
 
 def _cosmos_reason2_qwen3_vl_config() -> PretrainedConfig:
-    if Qwen3VLConfig is None:
-        raise ImportError(
-            "Qwen3VLConfig is required for GR00T N1.7. "
-            "Install the GR00T optional dependencies with `pip install 'lerobot[groot]'`."
-        )
     return Qwen3VLConfig(
         image_token_id=151655,
         video_token_id=151656,
@@ -844,6 +807,7 @@ class GR00TN17(PreTrainedModel):
         transformers_loading_kwargs: dict[str, Any] | None = None,
         load_backbone_weights: bool = True,
     ):
+        _register_with_transformers()
         super().__init__(config)
         transformers_loading_kwargs = transformers_loading_kwargs or {"trust_remote_code": True}
         self.config = config
@@ -949,6 +913,12 @@ class GR00TN17(PreTrainedModel):
 
 
 def _register_with_transformers() -> None:
+    """Register GR00T N1.7 with transformers' Auto* factories.
+
+    Idempotent: ``register(..., exist_ok=True)`` makes repeat calls no-ops (with a fallback that
+    suppresses the already-registered error on transformers builds whose ``register()`` predates
+    ``exist_ok``), so no run-once guard is needed.
+    """
     if AutoConfig is None or AutoModel is None:
         return
     try:
@@ -961,6 +931,3 @@ def _register_with_transformers() -> None:
     except TypeError:
         with suppress(ValueError):
             AutoModel.register(GR00TN17Config, GR00TN17)
-
-
-_register_with_transformers()

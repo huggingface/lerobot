@@ -30,6 +30,9 @@ from pathlib import Path
 from typing import TypeVar
 
 import torch
+from huggingface_hub import hf_hub_download
+from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
+from huggingface_hub.errors import HfHubHTTPError
 from torch import Tensor
 
 from lerobot.configs import FeatureType, PolicyFeature
@@ -46,8 +49,8 @@ from .configuration_groot import (
     infer_groot_model_version,
     infer_groot_n1_7_action_execution_horizon,
     infer_groot_n1_7_action_horizon,
-    normalize_groot_model_version,
 )
+from .groot_n1_7 import GR00TN17
 
 logger = logging.getLogger(__name__)
 
@@ -74,26 +77,29 @@ class GrootPolicy(PreTrainedPolicy):
         self.reset()
 
     def _create_groot_model(self):
-        """Create and initialize the GR00T N1.7 model using Isaac-GR00T APIs."""
-        # Handle Flash Attention compatibility issues
-        self._handle_flash_attention_compatibility()
-
+        """Create and initialize the GR00T N1.7 model using the ported components."""
         model_kwargs = {
             "pretrained_model_name_or_path": self.config.base_model_path,
             "tune_llm": self.config.tune_llm,
             "tune_visual": self.config.tune_visual,
             "tune_projector": self.config.tune_projector,
             "tune_diffusion_model": self.config.tune_diffusion_model,
+            # Forwarded as a GR00TN17Config override; read back by set_trainable_parameters.
+            "tune_top_llm_layers": self.config.tune_top_llm_layers,
+            "use_flash_attention": self.config.use_flash_attention,
         }
-        from .groot_n1_7 import GR00TN17
+        # Surface the inference-time knobs onto the model config only when the user set them; None
+        # leaves the value baked into the checkpoint untouched.
+        if self.config.num_inference_timesteps is not None:
+            model_kwargs["num_inference_timesteps"] = self.config.num_inference_timesteps
+        if self.config.rtc_ramp_rate is not None:
+            model_kwargs["rtc_ramp_rate"] = self.config.rtc_ramp_rate
 
-        model = GR00TN17.from_pretrained(
+        return GR00TN17.from_pretrained(
             **model_kwargs,
-            tune_vlln=True,
+            tune_vlln=self.config.tune_vlln,
             transformers_loading_kwargs={"trust_remote_code": True},
         )
-
-        return model
 
     def reset(self):
         """Reset policy state when environment resets."""
@@ -137,15 +143,7 @@ class GrootPolicy(PreTrainedPolicy):
         Returns:
             Initialized GrootPolicy instance with loaded model
         """
-        from huggingface_hub import hf_hub_download
-        from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
-        from huggingface_hub.errors import HfHubHTTPError
-
-        requested_version = (
-            normalize_groot_model_version(config.model_version)
-            if config is not None
-            else infer_groot_model_version(str(pretrained_name_or_path)) or GROOT_N1_7
-        )
+        requested_version = infer_groot_model_version(str(pretrained_name_or_path)) or GROOT_N1_7
         logger.info(
             "The Groot policy wraps NVIDIA's GR00T %s model. Loading pretrained model from: %s",
             requested_version,
@@ -199,10 +197,8 @@ class GrootPolicy(PreTrainedPolicy):
         logger.info("Detected base GR00T model, loading from HuggingFace...")
 
         if config is None:
-            model_version = infer_groot_model_version(str(pretrained_name_or_path)) or GROOT_N1_7
             # Create default config with the pretrained path
             config = GrootConfig(
-                model_version=model_version,
                 base_model_path=str(pretrained_name_or_path),
             )
 
@@ -225,11 +221,10 @@ class GrootPolicy(PreTrainedPolicy):
             if hasattr(config, key):
                 setattr(config, key, value)
 
-        config.model_version = normalize_groot_model_version(config.model_version)
         inferred_version = infer_groot_model_version(config.base_model_path)
-        if inferred_version is not None and inferred_version != config.model_version:
+        if inferred_version is not None and inferred_version != GROOT_N1_7:
             message = (
-                f"GR00T model_version '{config.model_version}' does not match base_model_path "
+                f"GR00T model_version '{GROOT_N1_7}' does not match base_model_path "
                 f"'{config.base_model_path}', which looks like '{inferred_version}'."
             )
             if inferred_version == GROOT_N1_5:
@@ -432,13 +427,11 @@ class GrootPolicy(PreTrainedPolicy):
         # During inference, we do not pass action because it is predicted.
         # N1.7 still carries a 2-D action horizon mask from its checkpoint processor.
         groot_inputs = self._filter_groot_inputs(batch, include_action=False)
-        groot_options = None
-        if self.config.model_version == GROOT_N1_7:
-            groot_inputs, groot_options = self._prepare_n1_7_rtc_inputs(
-                groot_inputs,
-                inference_delay=kwargs.get("inference_delay"),
-                prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
-            )
+        groot_inputs, groot_options = self._prepare_n1_7_rtc_inputs(
+            groot_inputs,
+            inference_delay=kwargs.get("inference_delay"),
+            prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
+        )
 
         # Get device from model parameters
         device = get_device_from_parameters(self)
@@ -469,26 +462,3 @@ class GrootPolicy(PreTrainedPolicy):
             actions = self.predict_action_chunk(batch)
             self._action_queue.extend(actions[:, : self._action_queue_steps].transpose(0, 1))
         return self._action_queue.popleft()
-
-    # -------------------------
-    # Internal helpers
-    # -------------------------
-    def _handle_flash_attention_compatibility(self) -> None:
-        """Log Flash Attention availability (diagnostic only).
-
-        The GR00T N1.7 backbone automatically falls back to SDPA when ``flash_attn`` is
-        unavailable (see ``Qwen3Backbone``), so this probe only emits a hint; it does not
-        change behaviour or mutate global state.
-        """
-        try:
-            import flash_attn
-
-            logger.debug("Flash Attention %s is available.", flash_attn.__version__)
-        except ImportError:
-            logger.debug("Flash Attention is not installed; the GR00T backbone will use SDPA.")
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Flash Attention failed to import (%s); the GR00T backbone will use SDPA. If this is "
-                "an 'undefined symbol' error, reinstall a flash-attn build matching your torch version.",
-                e,
-            )

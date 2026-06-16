@@ -14,15 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
+
+from .utils import read_json
 
 logger = logging.getLogger(__name__)
 
@@ -127,12 +127,7 @@ def is_raw_groot_n1_7_checkpoint(model_path: str | Path | None) -> bool:
     else:
         return False
 
-    try:
-        with config_path.open() as f:
-            config = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return False
-
+    config = read_json(config_path)
     return "type" not in config and _infer_groot_model_version_from_config(config) == GROOT_N1_7
 
 
@@ -141,11 +136,7 @@ def infer_groot_n1_7_embodiment_tag(model_path: str | Path | None) -> str | None
         return None
 
     processor_config_path = Path(model_path).expanduser() / "processor_config.json"
-    try:
-        with processor_config_path.open() as f:
-            processor_config = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
+    processor_config = read_json(processor_config_path)
 
     modality_configs = processor_config.get("processor_kwargs", {}).get("modality_configs", {})
     if not isinstance(modality_configs, dict):
@@ -164,11 +155,7 @@ def infer_groot_n1_7_action_horizon(
         return None
 
     processor_config_path = Path(model_path).expanduser() / "processor_config.json"
-    try:
-        with processor_config_path.open() as f:
-            processor_config = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
+    processor_config = read_json(processor_config_path)
 
     processor_kwargs = processor_config.get("processor_kwargs", {})
     if not isinstance(processor_kwargs, dict):
@@ -210,83 +197,6 @@ def infer_groot_n1_7_action_execution_horizon(
     return action_horizon
 
 
-def resolve_groot_n1_7_backbone_model(model_name: str, cache_dir: str | Path | None = None) -> str:
-    model_path = Path(model_name).expanduser()
-    if model_path.exists():
-        return str(model_path)
-
-    cached_snapshot = _find_cached_hf_snapshot(model_name, cache_dir=cache_dir)
-    return str(cached_snapshot) if cached_snapshot is not None else model_name
-
-
-def _find_cached_hf_snapshot(repo_id: str, cache_dir: str | Path | None = None) -> Path | None:
-    repo_cache_name = f"models--{repo_id.replace('/', '--')}"
-    required_files = (
-        "config.json",
-        "tokenizer_config.json",
-        "preprocessor_config.json",
-        "video_preprocessor_config.json",
-    )
-
-    for hub_cache in _candidate_hf_hub_caches(cache_dir):
-        repo_cache = hub_cache / repo_cache_name
-        snapshots_dir = repo_cache / "snapshots"
-        if not snapshots_dir.is_dir():
-            continue
-
-        candidates: list[Path] = []
-        ref_path = repo_cache / "refs" / "main"
-        try:
-            ref = ref_path.read_text().strip()
-        except OSError:
-            ref = ""
-        if ref:
-            candidates.append(snapshots_dir / ref)
-        candidates.extend(
-            sorted(
-                (path for path in snapshots_dir.iterdir() if path.is_dir()),
-                key=lambda path: path.stat().st_mtime,
-                reverse=True,
-            )
-        )
-
-        seen: set[Path] = set()
-        for snapshot in candidates:
-            if snapshot in seen:
-                continue
-            seen.add(snapshot)
-            if all((snapshot / filename).exists() for filename in required_files):
-                return snapshot
-    return None
-
-
-def _candidate_hf_hub_caches(cache_dir: str | Path | None) -> list[Path]:
-    candidates: list[Path] = []
-    if cache_dir is not None:
-        cache_path = Path(cache_dir).expanduser()
-        candidates.append(cache_path)
-        candidates.append(cache_path / "hub")
-
-    hub_cache = os.environ.get("HUGGINGFACE_HUB_CACHE")
-    if hub_cache:
-        candidates.append(Path(hub_cache).expanduser())
-
-    hf_home = os.environ.get("HF_HOME")
-    if hf_home:
-        candidates.append(Path(hf_home).expanduser() / "hub")
-
-    candidates.append(Path.home() / ".cache" / "huggingface" / "hub")
-
-    deduped: list[Path] = []
-    seen: set[Path] = set()
-    for candidate in candidates:
-        resolved = candidate.resolve() if candidate.exists() else candidate
-        if resolved not in seen:
-            seen.add(resolved)
-            deduped.append(candidate)
-    return deduped
-
-
 def _infer_groot_model_version_from_local_config(model_path: str) -> str | None:
     path = Path(model_path).expanduser()
     if path.is_dir():
@@ -296,16 +206,7 @@ def _infer_groot_model_version_from_local_config(model_path: str) -> str | None:
     else:
         return None
 
-    if not config_path.exists():
-        return None
-
-    try:
-        with config_path.open() as f:
-            config = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-
-    return _infer_groot_model_version_from_config(config)
+    return _infer_groot_model_version_from_config(read_json(config_path))
 
 
 def _infer_groot_model_version_from_config(config: dict) -> str | None:
@@ -368,14 +269,14 @@ class GrootConfig(PreTrainedConfig):
 
     # Groot-specific model parameters
 
-    # Explicit GR00T model family selection. LeRobot supports GR00T N1.7 only.
-    model_version: str = GROOT_N1_7
-
-    # Path or HuggingFace model ID for the base Groot model
+    # Path or HuggingFace model ID for the base GR00T N1.7 model whose backbone weights and
+    # checkpoint sidecars (statistics.json, processor_config.json, ...) are loaded. This is the
+    # model *source*, and is intentionally distinct from the inherited `pretrained_path`:
+    # `pretrained_path` (`--policy.path`) points at a saved LeRobot checkpoint directory whose
+    # `config.json` carries a `type` field, whereas a raw NVIDIA GR00T checkpoint has no such
+    # field and so can only be loaded through `base_model_path` (`--policy.base_model_path`).
+    # Defaults to GROOT_N1_7_BASE_MODEL when unset (resolved in __post_init__).
     base_model_path: str | None = None
-
-    # HF repo ID (or local path) for the GR00T N1.7 Cosmos/Qwen3-VL backbone processor.
-    n1_7_backbone_model: str = GROOT_N1_7_BACKBONE_MODEL
 
     # Optional named action transform applied after raw N1.7 checkpoint decoding and before env.step().
     # 'auto' (default) resolves to the embodiment default ('libero' for 'libero_sim', otherwise no
@@ -399,20 +300,31 @@ class GrootConfig(PreTrainedConfig):
     # Whether to fine-tune the diffusion model
     tune_diffusion_model: bool = True
 
-    # LoRA parameters (from groot_finetune_script.py)
-    # Rank for the LORA model. If 0, no LORA will be used.
-    lora_rank: int = 0
+    # Whether to fine-tune the VL LayerNorm + VL self-attention projector in the action head.
+    tune_vlln: bool = True
 
-    # Alpha value for the LORA model
-    lora_alpha: int = 16
+    # Number of top LLM backbone layers to fine-tune (0 = none). Lets you adapt just the final
+    # language layers without unfreezing the whole backbone; independent of `tune_llm`, which tunes
+    # the entire LLM.
+    tune_top_llm_layers: int = 0
 
-    # Dropout rate for the LORA model
-    lora_dropout: float = 0.1
+    # Inference-time knob: Number of flow-matching denoising steps used to decode an action chunk.
+    # Trades inference latency for action quality.
+    # None keeps the checkpoint value (GR00T N1.7 default: 4).
+    num_inference_timesteps: int | None = None
 
-    # Whether to use the full model for LORA
-    lora_full_model: bool = False
+    # Inference-time knob: Real-Time Chunking (RTC) overlap-blend ramp rate, used when the RTC engine
+    # supplies a previous-chunk prefix. Higher values blend the overlapping prefix more aggressively.
+    # None keeps the checkpoint value (GR00T N1.7 default: 6.0).
+    rtc_ramp_rate: float | None = None
 
-    # Training parameters (matching groot_finetune_script.py)
+    # Inference-time knob: Whether to request the flash-attention-2 kernel for the Qwen3-VL backbone.
+    # flash-attn is an optional, user-managed optimization; when it is absent (the default),
+    # the backbone transparently falls back to SDPA, which is numerically equivalent.
+    # Set to True only after installing a flash-attn build matching your torch/CUDA env.
+    use_flash_attention: bool = False
+
+    # Training parameters
     optimizer_lr: float = 1e-4
     optimizer_betas: tuple[float, float] = (0.95, 0.999)
     optimizer_eps: float = 1e-8
@@ -421,12 +333,18 @@ class GrootConfig(PreTrainedConfig):
     use_bf16: bool = True
 
     # TODO(Steven): Remove these deprecated fields in a future release.
-    # Deprecated Isaac-GR00T runner/N1.5 fields below — unused by the LeRobot N1.7 implementation
-    # (nothing in src/lerobot reads them). They are kept only so config.json files saved by
-    # earlier lerobot releases still parse: draccus rejects unknown fields, so removing them
-    # would break every previously saved groot checkpoint at config-load time.
+    # Deprecated Isaac-GR00T runner / GR00T N1.5 fields, plus the (never-wired) LoRA fields — all
+    # unused by the LeRobot N1.7 implementation except the `tokenizer_assets_repo` N1.5 tripwire and
+    # the `image_size` legacy remap in __post_init__. They are kept ONLY so a config.json saved by an
+    # earlier lerobot release (notably a GR00T N1.5 checkpoint) still parses under draccus — which
+    # rejects unknown fields — and is then rejected with a clear N1.5 removal message rather than an
+    # opaque draccus decoding error.
     image_size: tuple[int, int] = (256, 256)  # image sizing is handled by the backbone's image processor.
     tokenizer_assets_repo: str | None = None
+    lora_rank: int = 0
+    lora_alpha: int = 16
+    lora_dropout: float = 0.1
+    lora_full_model: bool = False
     video_backend: str = "decord"
     balance_dataset_weights: bool = True
     balance_trajectory_weights: bool = True
@@ -446,7 +364,6 @@ class GrootConfig(PreTrainedConfig):
                 f"like a legacy GR00T N1.5 checkpoint or config. {GROOT_N1_5_REMOVAL_GUIDANCE}"
             )
 
-        self.model_version = normalize_groot_model_version(self.model_version)
         self.action_decode_transform = normalize_groot_action_decode_transform(self.action_decode_transform)
         if self.base_model_path is None:
             self.base_model_path = GROOT_N1_7_BASE_MODEL
@@ -491,9 +408,9 @@ class GrootConfig(PreTrainedConfig):
                 setattr(self, field_name, n1_7_value)
 
         inferred_version = infer_groot_model_version(self.base_model_path)
-        if inferred_version is not None and inferred_version != self.model_version:
+        if inferred_version is not None and inferred_version != GROOT_N1_7:
             message = (
-                f"GR00T model_version '{self.model_version}' does not match base_model_path "
+                f"GR00T model_version '{GROOT_N1_7}' does not match base_model_path "
                 f"'{self.base_model_path}', which looks like '{inferred_version}'."
             )
             if inferred_version == GROOT_N1_5:
@@ -506,9 +423,6 @@ class GrootConfig(PreTrainedConfig):
             raise ValueError(
                 f"n_action_steps ({self.n_action_steps}) cannot exceed chunk_size ({self.chunk_size})"
             )
-
-        # groot_repo_path is now optional since we ported the components
-        # No validation needed
 
     def validate_features(self) -> None:
         """Validate and set up input/output features for Groot."""
