@@ -20,10 +20,22 @@ from collections.abc import Callable
 import serial
 from mock_serial import MockSerial
 
-from lerobot.motors.feetech.feetech import _split_into_byte_chunks, patch_setPacketTimeout
+from lerobot.motors.feetech.feetech import patch_setPacketTimeout
 from lerobot.motors.hiwonder import hiwonder_sdk as hw
 
 from .mock_serial_patch import WaitableStub
+
+
+def _split_into_byte_chunks(value: int, length: int) -> list[int]:
+    if length == 1:
+        return [value]
+    elif length == 2:
+        return [value & 0xFF, (value >> 8) & 0xFF]
+    elif length == 4:
+        lo = value & 0xFFFF
+        hi = (value >> 16) & 0xFFFF
+        return [lo & 0xFF, (lo >> 8) & 0xFF, hi & 0xFF, (hi >> 8) & 0xFF]
+    raise ValueError(f"Unsupported data length: {length}")
 
 
 class MockHiwonderPacket(abc.ABC):
