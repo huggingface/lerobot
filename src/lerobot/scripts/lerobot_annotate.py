@@ -130,14 +130,14 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
     repo_id = cfg.new_repo_id or cfg.repo_id
     commit_message = cfg.push_commit_message or "Add steerable annotations (lerobot-annotate)"
     api = HfApi()
-    print(f"[lerobot-annotate] creating/locating dataset repo {repo_id}...", flush=True)
+    logger.info(f"[lerobot-annotate] creating/locating dataset repo {repo_id}...")
     api.create_repo(
         repo_id=repo_id,
         repo_type="dataset",
         private=cfg.push_private,
         exist_ok=True,
     )
-    print(f"[lerobot-annotate] uploading {root} -> {repo_id}...", flush=True)
+    logger.info(f"[lerobot-annotate] uploading {root} -> {repo_id}...")
     commit_info = api.upload_folder(
         folder_path=str(root),
         repo_id=repo_id,
@@ -145,7 +145,7 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
         commit_message=commit_message,
         ignore_patterns=[".annotate_staging/**", "**/.DS_Store"],
     )
-    print(f"[lerobot-annotate] uploaded to https://huggingface.co/datasets/{repo_id}", flush=True)
+    logger.info(f"[lerobot-annotate] uploaded to https://huggingface.co/datasets/{repo_id}")
 
     # Tag the upload with the codebase version. ``LeRobotDatasetMetadata``
     # resolves the dataset revision via ``get_safe_version`` which scans
@@ -166,9 +166,8 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
             if isinstance(ds_version, str) and ds_version.startswith("v"):
                 version_tag = ds_version
         except Exception as exc:  # noqa: BLE001
-            print(
-                f"[lerobot-annotate] could not read codebase_version from info.json ({exc}); falling back to {version_tag}",
-                flush=True,
+            logger.warning(
+                f"[lerobot-annotate] could not read codebase_version from info.json ({exc}); falling back to {version_tag}"
             )
     revision = getattr(commit_info, "oid", None)
     tag_kwargs = {
@@ -187,14 +186,13 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
         with suppress(RevisionNotFoundError):
             api.delete_tag(repo_id, tag=version_tag, repo_type="dataset")
         api.create_tag(**tag_kwargs)
-        print(f"[lerobot-annotate] tagged {repo_id} as {version_tag}", flush=True)
+        logger.info(f"[lerobot-annotate] tagged {repo_id} as {version_tag}")
     except Exception as exc:  # noqa: BLE001
-        print(
+        logger.warning(
             f"[lerobot-annotate] WARNING: could not create tag {version_tag!r} on {repo_id}: {exc}. "
             "Dataset is uploaded but ``LeRobotDataset`` won't be able to load it until it's tagged. "
             "Run: from huggingface_hub import HfApi; "
-            f"HfApi().create_tag({repo_id!r}, tag={version_tag!r}, repo_type='dataset', exist_ok=True)",
-            flush=True,
+            f"HfApi().create_tag({repo_id!r}, tag={version_tag!r}, repo_type='dataset', exist_ok=True)"
         )
 
 
