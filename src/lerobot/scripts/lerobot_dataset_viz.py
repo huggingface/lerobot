@@ -76,6 +76,8 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD
 from lerobot.utils.utils import init_logging
 
+logger = logging.getLogger(__name__)
+
 
 def to_hwc_uint8_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
     assert chw_float32_torch.dtype == torch.float32
@@ -187,7 +189,7 @@ def visualize_dataset(
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
-            print("Ctrl-C received. Exiting.")
+            logger.info("Ctrl-C received. Exiting.")
 
 
 def main():
