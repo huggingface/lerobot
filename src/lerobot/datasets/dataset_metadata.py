@@ -608,13 +608,10 @@ class LeRobotDatasetMetadata:
         Warning: this function writes info from first episode videos, implicitly assuming that all videos have
         been encoded the same way. Also, this means it assumes the first episode exists.
 
-        Two modes, selected by ``preserve_keys``:
-
-        - **Populate** (``None``, default): write info for video keys that lack it,
-          skip the rest. Used when first encoding a dataset.
-        - **Refresh** (any iterable): re-probe and overwrite existing info, keeping
-          the listed keys. Used after re-encoding to preserve data-intrinsic entries
-          (``is_depth_map``, depth quantization params) while codec params change.
+        Always re-probes the videos and overwrites existing info for every recomputed
+        key. ``preserve_keys`` lists keys whose existing values must be kept (e.g.
+        data-intrinsic entries like ``is_depth_map`` and depth quantization params)
+        instead of being recomputed.
 
         Args:
             video_key: If provided, only update this video key. Otherwise update
@@ -623,23 +620,16 @@ class LeRobotDatasetMetadata:
                 videos. When provided, its fields are recorded as
                 ``video.<field>`` entries alongside the stream-derived
                 ``video.*`` entries (see :func:`get_video_info`).
-            preserve_keys: ``None`` (default) for populate-once mode. An iterable
-                (possibly empty) switches to refresh mode, keeping these keys'
-                existing values while recomputing the rest.
+            preserve_keys: Keys whose existing values are kept instead of being
+                recomputed. ``None`` (default) recomputes every key.
         """
         if video_key is not None and video_key not in self.video_keys:
             raise ValueError(f"Video key {video_key} not found in dataset")
 
         video_keys = [video_key] if video_key is not None else self.video_keys
-        refresh = preserve_keys is not None
         preserve_set = set(preserve_keys or ())
         for key in video_keys:
             existing = self.features[key].get("info") or {}
-            # ``is_depth_map`` is written at feature creation and does not count as real video info here.
-            already_populated = bool(set(existing.keys()) - {"is_depth_map"})
-            # Populate-once: never clobber info that has already been written unless a refresh is requested.
-            if already_populated and not refresh:
-                continue
             video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
             new_info = get_video_info(video_path, video_encoder=video_encoder)
             # Drop preserved keys so the existing values win on merge.
