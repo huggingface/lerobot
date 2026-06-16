@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 from copy import copy
 from dataclasses import dataclass, field, fields, is_dataclass
@@ -28,12 +27,22 @@ from einops import rearrange
 from PIL import Image
 from torchvision.transforms import InterpolationMode
 
-from lerobot.utils.import_utils import _transformers_available
+from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
-    from transformers import ProcessorMixin
+    from transformers import (
+        AutoTokenizer,
+        ProcessorMixin,
+        Qwen2VLImageProcessor,
+        Qwen3VLProcessor,
+        Qwen3VLVideoProcessor,
+    )
 else:
+    AutoTokenizer = None
     ProcessorMixin = object
+    Qwen2VLImageProcessor = None
+    Qwen3VLProcessor = None
+    Qwen3VLVideoProcessor = None
 
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
@@ -69,6 +78,19 @@ from .configuration_groot import (
     N1_7_DEFAULT_IMAGE_TARGET_SIZE,
     GrootConfig,
     is_raw_groot_n1_7_checkpoint,
+)
+from .utils import (
+    as_int_pair,
+    as_optional_float,
+    as_optional_int,
+    config_value,
+    flatten_n1_7_modality_stats,
+    has_modality_stats,
+    infer_n1_7_batch_size_and_device,
+    prepare_n1_7_language_batch,
+    read_json,
+    relative_eef_to_absolute,
+    stat_dim_from_entry,
 )
 
 N1_7_EMBODIMENT_MAPPING = {
@@ -128,12 +150,12 @@ def _load_n1_7_checkpoint_processor_assets(config: GrootConfig) -> _GrootN17Chec
         return None
 
     checkpoint_path = Path(config.base_model_path).expanduser()
-    processor_config = _read_json(checkpoint_path / "processor_config.json")
+    processor_config = read_json(checkpoint_path / "processor_config.json")
     processor_kwargs = processor_config.get("processor_kwargs", {})
     if not isinstance(processor_kwargs, dict):
         processor_kwargs = {}
 
-    all_stats = _read_json(checkpoint_path / "statistics.json")
+    all_stats = read_json(checkpoint_path / "statistics.json")
     raw_stats = all_stats.get(config.embodiment_tag)
     if not isinstance(raw_stats, dict):
         raw_stats = {}
@@ -185,25 +207,16 @@ def _load_n1_7_checkpoint_processor_assets(config: GrootConfig) -> _GrootN17Chec
         use_relative_action=use_relative_action,
         clip_outliers=clip_outliers,
         video_modality_keys=video_modality_keys,
-        image_crop_size=_as_int_pair(processor_kwargs.get("image_crop_size")),
-        image_target_size=_as_int_pair(processor_kwargs.get("image_target_size")),
-        shortest_image_edge=_as_optional_int(processor_kwargs.get("shortest_image_edge")),
-        crop_fraction=_as_optional_float(processor_kwargs.get("crop_fraction")),
+        image_crop_size=as_int_pair(processor_kwargs.get("image_crop_size")),
+        image_target_size=as_int_pair(processor_kwargs.get("image_target_size")),
+        shortest_image_edge=as_optional_int(processor_kwargs.get("shortest_image_edge")),
+        crop_fraction=as_optional_float(processor_kwargs.get("crop_fraction")),
         use_albumentations=use_albumentations,
     )
 
 
-def _read_json(path: Path) -> dict[str, Any]:
-    try:
-        with path.open() as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
 def _load_n1_7_embodiment_mapping(checkpoint_path: Path) -> dict[str, int] | None:
-    mapping = _read_json(checkpoint_path / "embodiment_id.json")
+    mapping = read_json(checkpoint_path / "embodiment_id.json")
     if not mapping:
         return None
     parsed: dict[str, int] = {}
@@ -234,7 +247,7 @@ def _load_n1_7_checkpoint_stats(
     """
 
     if raw_stats is None:
-        all_stats = _read_json(checkpoint_path / "statistics.json")
+        all_stats = read_json(checkpoint_path / "statistics.json")
         raw_stats = all_stats.get(embodiment_tag)
     if not isinstance(raw_stats, dict):
         return {}
@@ -249,14 +262,14 @@ def _load_n1_7_checkpoint_stats(
 
     use_percentiles = processor_kwargs.get("use_percentiles", False)
     return {
-        OBS_STATE: _flatten_n1_7_modality_stats(
+        OBS_STATE: flatten_n1_7_modality_stats(
             embodiment_stats=raw_stats,
             embodiment_config=modality_config,
             modality="state",
             use_percentiles=bool(use_percentiles),
             use_relative_action=use_relative_action,
         ),
-        ACTION: _flatten_n1_7_modality_stats(
+        ACTION: flatten_n1_7_modality_stats(
             embodiment_stats=raw_stats,
             embodiment_config=modality_config,
             modality="action",
@@ -322,134 +335,6 @@ def _load_n1_7_checkpoint_video_modality_keys(
         return None
     keys = [key for key in modality_keys if isinstance(key, str)]
     return keys or None
-
-
-def _as_int_pair(value: Any) -> list[int] | None:
-    if not isinstance(value, (list, tuple)) or len(value) != 2:
-        return None
-    try:
-        return [int(value[0]), int(value[1])]
-    except (TypeError, ValueError):
-        return None
-
-
-def _as_optional_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _as_optional_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _flatten_n1_7_modality_stats(
-    *,
-    embodiment_stats: dict[str, Any],
-    embodiment_config: dict[str, Any],
-    modality: str,
-    use_percentiles: bool,
-    use_relative_action: bool,
-) -> dict[str, list[float]]:
-    """Flatten one N1.7 modality's grouped statistics in checkpoint order.
-
-    When checkpoints request percentile normalization, q01/q99 replace min/max
-    for regular groups. Relative action groups read from ``relative_action``
-    stats and keep min/max, matching Isaac-GR00T's processor override.
-    """
-
-    source_stats = embodiment_stats.get(modality, {})
-    modality_config = embodiment_config.get(modality, {})
-    if not isinstance(source_stats, dict) or not isinstance(modality_config, dict):
-        return {}
-    modality_keys = modality_config.get("modality_keys", [])
-    if not isinstance(modality_keys, list):
-        return {}
-
-    flattened: dict[str, list[float]] = {}
-    action_configs = modality_config.get("action_configs", []) if modality == "action" else []
-    if not isinstance(action_configs, list):
-        action_configs = []
-    relative_stats = embodiment_stats.get("relative_action", {})
-    if not isinstance(relative_stats, dict):
-        relative_stats = {}
-
-    for stat_name in ("min", "max", "mean", "std"):
-        values: list[float] = []
-        source_stat_name = stat_name
-        if use_percentiles and stat_name == "min":
-            source_stat_name = "q01"
-        elif use_percentiles and stat_name == "max":
-            source_stat_name = "q99"
-
-        for idx, modality_key in enumerate(modality_keys):
-            if not isinstance(modality_key, str):
-                continue
-            key_source_stats = source_stats
-            key_stat_name = source_stat_name
-            if modality == "action" and use_relative_action and idx < len(action_configs):
-                action_config = action_configs[idx]
-                if isinstance(action_config, dict) and _config_value(action_config.get("rep")) == "relative":
-                    key_source_stats = relative_stats
-                    key_stat_name = stat_name
-            key_stats = key_source_stats.get(modality_key, {})
-            if not isinstance(key_stats, dict):
-                raise KeyError(f"Missing statistics for {modality}.{modality_key}")
-            raw_values = key_stats.get(key_stat_name)
-            if raw_values is None:
-                raise KeyError(f"Missing '{key_stat_name}' statistics for {modality}.{modality_key}")
-            values.extend(_as_float_list(raw_values))
-        if values:
-            flattened[stat_name] = values
-
-    return flattened
-
-
-def _as_float_list(values: Any) -> list[float]:
-    if values is None:
-        return []
-    if isinstance(values, torch.Tensor):
-        return values.detach().cpu().reshape(-1).float().tolist()
-    if isinstance(values, np.ndarray):
-        return values.reshape(-1).astype(np.float32).tolist()
-    if isinstance(values, (list, tuple)):
-        flattened: list[float] = []
-        for value in values:
-            flattened.extend(_as_float_list(value))
-        return flattened
-    return [float(values)]
-
-
-def _config_value(value: Any) -> str:
-    if hasattr(value, "value"):
-        value = value.value
-    text = str(value).lower()
-    return {
-        "relative": "relative",
-        "absolute": "absolute",
-        "delta": "delta",
-        "eef": "eef",
-        "non_eef": "non_eef",
-        "default": "default",
-        "xyz_rot6d": "xyz+rot6d",
-        "xyz+rot6d": "xyz+rot6d",
-        "xyz_rotvec": "xyz+rotvec",
-        "xyz+rotvec": "xyz+rotvec",
-    }.get(text, text)
-
-
-def _has_modality_stats(stats: dict[str, dict[str, Any]] | None) -> bool:
-    if not stats:
-        return False
-    return any(bool(modality_stats) for modality_stats in stats.values())
 
 
 # GR00T normalizes state/action inside its own processor steps and so deliberately has no
@@ -603,6 +488,9 @@ def _load_groot_processor_pipelines(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
+    # Register the GR00T N1.5 rejection stubs before deserializing, so a saved N1.5 pipeline
+    # referencing their registry names fails with the canonical removal guidance.
+    _register_removed_n1_5_step_stubs()
     preprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,
         config_filename=preprocessor_config_filename,
@@ -701,7 +589,7 @@ def make_groot_pre_post_processors(
         else action_horizon
     )
     checkpoint_stats = checkpoint_assets.stats if checkpoint_assets is not None else None
-    checkpoint_has_stats = _has_modality_stats(checkpoint_stats)
+    checkpoint_has_stats = has_modality_stats(checkpoint_stats)
     padded_stats = checkpoint_stats if checkpoint_has_stats else (dataset_stats or {})
     embodiment_mapping = (
         checkpoint_assets.embodiment_mapping
@@ -757,7 +645,7 @@ def make_groot_pre_post_processors(
         AddBatchDimensionProcessorStep(),
         pack_step,
         GrootN17VLMEncodeStep(
-            model_name=config.n1_7_backbone_model,
+            model_name=GROOT_N1_7_BACKBONE_MODEL,
             image_crop_size=image_crop_size,
             image_target_size=image_target_size,
             shortest_image_edge=shortest_image_edge,
@@ -768,7 +656,7 @@ def make_groot_pre_post_processors(
         DeviceProcessorStep(device=config.device),
     ]
 
-    if checkpoint_assets is not None and not checkpoint_has_stats and not _has_modality_stats(padded_stats):
+    if checkpoint_assets is not None and not checkpoint_has_stats and not has_modality_stats(padded_stats):
         raise ValueError(
             f"GR00T N1.7 checkpoint '{config.base_model_path}' has no statistics for embodiment tag "
             f"'{config.embodiment_tag}', and no dataset stats were provided to fall back to, so "
@@ -846,66 +734,8 @@ def _align_video_horizon(video: np.ndarray, horizon: int | None) -> np.ndarray:
     return np.concatenate([pad, video], axis=1)
 
 
-def _infer_n1_7_batch_size_and_device(
-    obs: dict[str, Any], action: torch.Tensor | None
-) -> tuple[int, torch.device]:
-    for value in list(obs.values()) + [action]:
-        if isinstance(value, torch.Tensor):
-            return value.shape[0], value.device
-    video = obs.get("video")
-    if isinstance(video, np.ndarray):
-        return video.shape[0], torch.device("cpu")
-    return 1, torch.device("cpu")
-
-
-def _prepare_n1_7_language_batch(
-    language: Any,
-    batch_size: int,
-    *,
-    formalize_language: bool,
-) -> list[str]:
-    default_language = "Perform the task."
-    if language is None or (isinstance(language, str) and language == ""):
-        languages = [default_language] * batch_size
-    elif isinstance(language, str):
-        languages = [language] * batch_size
-    elif isinstance(language, (list, tuple)):
-        languages = list(language)
-        if len(languages) == 0:
-            languages = [default_language] * batch_size
-        elif len(languages) == 1 and batch_size > 1:
-            languages = languages * batch_size
-        elif len(languages) != batch_size:
-            raise ValueError(
-                f"language batch has {len(languages)} entries, but GR00T N1.7 input batch has {batch_size}."
-            )
-    else:
-        languages = [str(language)] * batch_size
-
-    formatted = []
-    for item in languages:
-        text = str(item) if item else default_language
-        if formalize_language:
-            text = text.lower()
-            text = "".join(ch for ch in text if ch.isalnum() or ch.isspace() or ch == "_")
-        formatted.append(text)
-    return formatted
-
-
 def _build_n1_7_processor(model_name: str = GROOT_N1_7_BACKBONE_MODEL) -> ProcessorMixin:
-    try:
-        from transformers import (
-            AutoTokenizer,
-            Qwen2VLImageProcessor,
-            Qwen3VLProcessor,
-            Qwen3VLVideoProcessor,
-        )
-    except ImportError as exc:
-        raise ImportError(
-            "GR00T N1.7 preprocessing requires a transformers version with Qwen3-VL processor support. "
-            "Install the GR00T optional dependencies with `pip install 'lerobot[groot]'`."
-        ) from exc
-
+    require_package("transformers", extra="groot")
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     image_processor = Qwen2VLImageProcessor.from_pretrained(model_name, trust_remote_code=True)
     video_processor = Qwen3VLVideoProcessor.from_pretrained(model_name, trust_remote_code=True)
@@ -1201,8 +1031,8 @@ class GrootN17PackInputsStep(ProcessorStep):
             for k in image_keys_to_remove:
                 obs.pop(k, None)
 
-        bsz, _device = _infer_n1_7_batch_size_and_device(obs, transition.get(TransitionKey.ACTION))
-        comp["language"] = _prepare_n1_7_language_batch(
+        bsz, _device = infer_n1_7_batch_size_and_device(obs, transition.get(TransitionKey.ACTION))
+        comp["language"] = prepare_n1_7_language_batch(
             comp.get(self.language_key),
             bsz,
             formalize_language=self.formalize_language,
@@ -1269,7 +1099,7 @@ class GrootN17PackInputsStep(ProcessorStep):
             comp["action_mask"] = action_mask
 
         emb_id = self.embodiment_mapping.get(self.embodiment_tag, 0)
-        bsz, device = _infer_n1_7_batch_size_and_device(obs, transition.get(TransitionKey.ACTION))
+        bsz, device = infer_n1_7_batch_size_and_device(obs, transition.get(TransitionKey.ACTION))
         if "action_mask" not in comp:
             action_mask = torch.zeros(bsz, self.action_horizon, dtype=torch.float32, device=device)
             valid_horizon = min(self.valid_action_horizon, self.action_horizon)
@@ -1432,7 +1262,7 @@ class GrootN17VLMEncodeStep(ProcessorStep):
             return transition
 
         batch_size = int(video.shape[0])
-        languages = _prepare_n1_7_language_batch(
+        languages = prepare_n1_7_language_batch(
             comp.get("language"),
             batch_size,
             formalize_language=False,
@@ -1494,14 +1324,6 @@ class GrootN17VLMEncodeStep(ProcessorStep):
         }
 
 
-def _stat_dim_from_entry(entry: dict[str, Any]) -> int:
-    for stat_name in ("mean", "q01", "min", "max", "std"):
-        value = entry.get(stat_name)
-        if isinstance(value, list) and len(value) > 0:
-            return len(value)
-    return 0
-
-
 def _n1_7_decode_stats_for_action(
     raw_stats: dict[str, Any],
     key: str,
@@ -1512,7 +1334,7 @@ def _n1_7_decode_stats_for_action(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Select the min/max arrays needed to decode one checkpoint action group."""
 
-    is_relative = use_relative_action and _config_value(action_config.get("rep")) == "relative"
+    is_relative = use_relative_action and config_value(action_config.get("rep")) == "relative"
     modality = "relative_action" if is_relative else "action"
     stats = raw_stats.get(modality, {}).get(key, {})
     if not isinstance(stats, dict):
@@ -1535,38 +1357,6 @@ def _n1_7_decode_valid_horizon(action_config: dict[str, Any], action_np: np.ndar
     if not isinstance(delta_indices, list) or not delta_indices:
         return None
     return max(1, min(action_np.shape[1], len(delta_indices)))
-
-
-def _rot6d_to_matrix(rot6d: np.ndarray) -> np.ndarray:
-    rows = rot6d.reshape(2, 3).astype(np.float64)
-    row1 = rows[0] / np.linalg.norm(rows[0])
-    row2 = rows[1] - np.dot(row1, rows[1]) * row1
-    row2 = row2 / np.linalg.norm(row2)
-    row3 = np.cross(row1, row2)
-    return np.vstack([row1, row2, row3])
-
-
-def _xyz_rot6d_to_homogeneous(xyz_rot6d: np.ndarray) -> np.ndarray:
-    transform = np.eye(4, dtype=np.float64)
-    transform[:3, :3] = _rot6d_to_matrix(xyz_rot6d[3:])
-    transform[:3, 3] = xyz_rot6d[:3]
-    return transform
-
-
-def _homogeneous_to_xyz_rot6d(transform: np.ndarray) -> np.ndarray:
-    return np.concatenate([transform[:3, 3], transform[:2, :3].reshape(-1)], axis=0)
-
-
-def _relative_eef_to_absolute(action: np.ndarray, reference_state: np.ndarray) -> np.ndarray:
-    """Convert relative EEF deltas in xyz+rot6d format to absolute EEF poses."""
-
-    out = np.empty_like(action, dtype=np.float64)
-    for batch_idx in range(action.shape[0]):
-        reference = _xyz_rot6d_to_homogeneous(reference_state[batch_idx])
-        for timestep in range(action.shape[1]):
-            relative = _xyz_rot6d_to_homogeneous(action[batch_idx, timestep])
-            out[batch_idx, timestep] = _homogeneous_to_xyz_rot6d(reference @ relative)
-    return out.astype(np.float32)
 
 
 def _n1_7_action_group_slice(
@@ -1677,7 +1467,7 @@ class GrootN17ActionDecodeStep(ProcessorStep):
             stats_entry = self.raw_stats.get("action", {}).get(key, {})
             if not isinstance(stats_entry, dict):
                 continue
-            dim = _stat_dim_from_entry(stats_entry)
+            dim = stat_dim_from_entry(stats_entry)
             if dim <= 0:
                 continue
             cfg = (
@@ -1716,18 +1506,18 @@ class GrootN17ActionDecodeStep(ProcessorStep):
                 if not isinstance(key, str) or key not in decoded_groups or idx >= len(action_configs):
                     continue
                 cfg = action_configs[idx]
-                if not isinstance(cfg, dict) or _config_value(cfg.get("rep")) != "relative":
+                if not isinstance(cfg, dict) or config_value(cfg.get("rep")) != "relative":
                     continue
                 state_key = cfg.get("state_key") or key
                 if state_key not in raw_state:
                     raise KeyError(f"Missing cached raw state '{state_key}' for relative N1.7 action '{key}'")
                 reference = raw_state[state_key]
-                action_type = _config_value(cfg.get("type"))
-                action_format = _config_value(cfg.get("format"))
+                action_type = config_value(cfg.get("type"))
+                action_format = config_value(cfg.get("format"))
                 if action_type == "non_eef":
                     decoded_groups[key] = decoded_groups[key] + reference[:, None, :]
                 elif action_type == "eef" and action_format == "xyz+rot6d":
-                    decoded_groups[key] = _relative_eef_to_absolute(decoded_groups[key], reference)
+                    decoded_groups[key] = relative_eef_to_absolute(decoded_groups[key], reference)
                 else:
                     raise ValueError(f"Unsupported relative N1.7 action config for '{key}': {cfg}")
 
@@ -1886,15 +1676,27 @@ class GrootActionUnpackUnnormalizeStep(ProcessorStep):
             self.stats = reconstructed
 
 
-def _register_removed_n1_5_step_stub(registry_name: str) -> None:
-    """Register a stub for a processor step that only GR00T N1.5 pipelines serialize.
+# Registry names that only GR00T N1.5 processor pipelines serialize. Saved N1.5 checkpoints
+# reference these in their processor JSON, so deserializing one must fail with the canonical N1.5
+# removal guidance instead of an opaque registry KeyError (or, for
+# ``groot_action_unpack_unnormalize_v1``, silently loading the v2 step whose action-chunk
+# semantics changed).
+_REMOVED_N1_5_STEP_NAMES = (
+    "groot_pack_inputs_v3",
+    "groot_eagle_encode_v3",
+    "groot_eagle_collate_v3",
+    "groot_action_unpack_unnormalize_v1",
+)
 
-    Saved N1.5 checkpoints reference these registry names in their processor JSON
-    files. Deserializing them must fail with the canonical N1.5 removal guidance
-    instead of an opaque registry KeyError (or, for
-    ``groot_action_unpack_unnormalize_v1``, silently loading the v2 step whose
-    action-chunk semantics changed).
+
+def _register_removed_n1_5_step_stub(registry_name: str) -> None:
+    """Register a single rejecting stub for a removed GR00T N1.5 processor step name.
+
+    Idempotent: ``ProcessorStepRegistry.register`` raises on a duplicate name, so already-registered
+    names are skipped. This lets the caller re-run on every processor load without a run-once guard.
     """
+    if registry_name in ProcessorStepRegistry.list():
+        return
 
     @ProcessorStepRegistry.register(name=registry_name)
     class _RemovedGrootN15ProcessorStep(ProcessorStep):
@@ -1911,10 +1713,12 @@ def _register_removed_n1_5_step_stub(registry_name: str) -> None:
             raise NotImplementedError
 
 
-for _removed_n1_5_step_name in (
-    "groot_pack_inputs_v3",
-    "groot_eagle_encode_v3",
-    "groot_eagle_collate_v3",
-    "groot_action_unpack_unnormalize_v1",
-):
-    _register_removed_n1_5_step_stub(_removed_n1_5_step_name)
+def _register_removed_n1_5_step_stubs() -> None:
+    """Register the GR00T N1.5 removal stubs, lazily.
+
+    Deferred from import time so importing this module has no global side effects; invoked just
+    before a GR00T processor pipeline is deserialized (the only point at which a saved N1.5 pipeline
+    could reference these registry names). Idempotent via :func:`_register_removed_n1_5_step_stub`.
+    """
+    for registry_name in _REMOVED_N1_5_STEP_NAMES:
+        _register_removed_n1_5_step_stub(registry_name)
