@@ -22,9 +22,12 @@ lerobot-find-port
 ```
 """
 
+import logging
 import platform
 import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def find_available_ports():
@@ -43,11 +46,11 @@ def find_available_ports():
 
 
 def find_port():
-    print("Finding all available ports for the MotorsBus.")
+    logger.info("Finding all available ports for the MotorsBus.")
     ports_before = find_available_ports()
-    print("Ports before disconnecting:", ports_before)
+    logger.info("Ports before disconnecting: %s", ports_before)
 
-    print("Remove the USB cable from your MotorsBus and press Enter when done.")
+    logger.info("Remove the USB cable from your MotorsBus and press Enter when done.")
     input()  # Wait for user to disconnect the device
 
     time.sleep(0.5)  # Allow some time for port to be released
@@ -56,8 +59,8 @@ def find_port():
 
     if len(ports_diff) == 1:
         port = ports_diff[0]
-        print(f"The port of this MotorsBus is '{port}'")
-        print("Reconnect the USB cable.")
+        logger.info(f"The port of this MotorsBus is '{port}'")
+        logger.info("Reconnect the USB cable.")
     elif len(ports_diff) == 0:
         raise OSError(f"Could not detect the port. No difference was found ({ports_diff}).")
     else:
