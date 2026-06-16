@@ -35,6 +35,7 @@ lerobot-find-joint-limits \
 ```
 """
 
+import logging
 import time
 from dataclasses import dataclass
 
@@ -71,6 +72,8 @@ from lerobot.teleoperators import (  # noqa: F401
 )
 from lerobot.utils.robot_utils import precise_sleep
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class FindJointLimitsConfig:
@@ -96,17 +99,17 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
 
-    print(f"Connecting to robot: {cfg.robot.type}...")
+    logger.info(f"Connecting to robot: {cfg.robot.type}...")
     teleop.connect()
     robot.connect()
-    print("Devices connected.")
+    logger.info("Devices connected.")
 
     # Initialize Kinematics
     try:
         kinematics = RobotKinematics(cfg.urdf_path, cfg.target_frame_name)
     except Exception as e:
-        print(f"Error initializing kinematics: {e}")
-        print("Ensure URDF path and target frame name are correct.")
+        logger.error(f"Error initializing kinematics: {e}")
+        logger.error("Ensure URDF path and target frame name are correct.")
         robot.disconnect()
         teleop.disconnect()
         return
@@ -120,11 +123,11 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
     start_t = time.perf_counter()
     warmup_done = False
 
-    print("\n" + "=" * 40)
-    print(f"  WARMUP PHASE ({cfg.warmup_time_s}s)")
-    print("  Move the robot freely to ensure control works.")
-    print("  Data is NOT being recorded yet.")
-    print("=" * 40 + "\n")
+    logger.info("\n" + "=" * 40)
+    logger.info(f"  WARMUP PHASE ({cfg.warmup_time_s}s)")
+    logger.info("  Move the robot freely to ensure control works.")
+    logger.info("  Data is NOT being recorded yet.")
+    logger.info("=" * 40 + "\n")
 
     try:
         while True:
@@ -153,11 +156,11 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
             else:
                 # Phase Transition: Warmup -> Recording
                 if not warmup_done:
-                    print("\n" + "=" * 40)
-                    print("  RECORDING STARTED")
-                    print("  Move robot to ALL joint limits.")
-                    print("  Press Ctrl+C to stop early and save results.")
-                    print("=" * 40 + "\n")
+                    logger.info("\n" + "=" * 40)
+                    logger.info("  RECORDING STARTED")
+                    logger.info("  Move robot to ALL joint limits.")
+                    logger.info("  Press Ctrl+C to stop early and save results.")
+                    logger.info("=" * 40 + "\n")
 
                     # Initialize limits with current position at start of recording
                     max_pos = joint_positions.copy()
@@ -178,28 +181,28 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
 
                 # Simple throttle for print statements (every ~1 sec)
                 if int(recording_time * 100) % 100 == 0:
-                    print(f"Time remaining: {remaining:.1f}s", end="\r")
+                    logger.info(f"Time remaining: {remaining:.1f}s")
 
                 if recording_time > cfg.teleop_time_s:
-                    print("\nTime limit reached.")
+                    logger.info("Time limit reached.")
                     break
 
             precise_sleep(max(1.0 / cfg.control_loop_fps - (time.perf_counter() - t0), 0.0))
 
     except KeyboardInterrupt:
-        print("\n\nInterrupted by user. Stopping safely...")
+        logger.info("Interrupted by user. Stopping safely...")
 
     finally:
         # Safety: Disconnect devices
-        print("\nDisconnecting devices...")
+        logger.info("Disconnecting devices...")
         robot.disconnect()
         teleop.disconnect()
 
     # Results Output
     if max_pos is not None:
-        print("\n" + "=" * 40)
-        print("FINAL RESULTS")
-        print("=" * 40)
+        logger.info("\n" + "=" * 40)
+        logger.info("FINAL RESULTS")
+        logger.info("=" * 40)
 
         # Rounding for readability
         r_max_ee = np.round(max_ee, 4).tolist()
@@ -207,16 +210,16 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
         r_max_pos = np.round(max_pos, 4).tolist()
         r_min_pos = np.round(min_pos, 4).tolist()
 
-        print("\n# End Effector Bounds (x, y, z):")
-        print(f"max_ee = {r_max_ee}")
-        print(f"min_ee = {r_min_ee}")
+        logger.info("\n# End Effector Bounds (x, y, z):")
+        logger.info(f"max_ee = {r_max_ee}")
+        logger.info(f"min_ee = {r_min_ee}")
 
-        print("\n# Joint Position Limits (radians):")
-        print(f"max_pos = {r_max_pos}")
-        print(f"min_pos = {r_min_pos}")
+        logger.info("\n# Joint Position Limits (radians):")
+        logger.info(f"max_pos = {r_max_pos}")
+        logger.info(f"min_pos = {r_min_pos}")
 
     else:
-        print("No data recorded (exited during warmup).")
+        logger.warning("No data recorded (exited during warmup).")
 
 
 def main():
