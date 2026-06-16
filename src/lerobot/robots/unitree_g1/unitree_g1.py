@@ -337,6 +337,9 @@ class UnitreeG1(Robot):
 
         self.kp = np.array(self.config.kp, dtype=np.float32)
         self.kd = np.array(self.config.kd, dtype=np.float32)
+        if self.controller is not None and hasattr(self.controller, "kp"):
+            self.kp = np.array(self.controller.kp, dtype=np.float32)
+            self.kd = np.array(self.controller.kd, dtype=np.float32)
 
         for joint in G1_29_JointIndex:
             self.msg.motor_cmd[joint].mode = 1
@@ -372,6 +375,9 @@ class UnitreeG1(Robot):
 
         # Signal thread to stop and unblock any waits
         self._shutdown_event.set()
+
+        if self.controller is not None and hasattr(self.controller, "shutdown"):
+            self.controller.shutdown()
 
         # Wait for subscribe thread to finish
         if self.subscribe_thread is not None:
@@ -464,9 +470,11 @@ class UnitreeG1(Robot):
     def send_action(self, action: RobotAction) -> RobotAction:
         action_to_publish = action
         if self.controller is not None:
+            self._update_controller_action(action)
+            if getattr(self.controller, "full_body", False):
+                return action
             # Controller thread owns legs/waist. Here we only update joystick inputs
             # and publish arm targets from the teleoperator.
-            self._update_controller_action(action)
             arm_prefixes = tuple(j.name for j in G1_29_JointArmIndex)
             action_to_publish = {
                 key: value
