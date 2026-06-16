@@ -1,6 +1,6 @@
 # LeRobot
 
-English | [中文](https://github.com/Hiwonder/LeRobot/blob/main/README_cn.md)
+English | [中文](https://github.com/Hiwodner-official/LeRobot/blob/main/README_cn.md)
 
 <p align="center">
   <img src="./sources/images/lerobot.png" alt="LeRobot Logo" width="600"/>
@@ -44,7 +44,7 @@ SO-ARM101 provides a practical platform for studying learning-from-demonstration
 
 ## Official Resources
 
-### Official Hiwonder
+### Hiwonder
 - **Official Website**: [https://www.hiwonder.com/](https://www.hiwonder.com/)
 - **Product Page**: [https://www.hiwonder.com/products/lerobot-so-101](https://www.hiwonder.com/products/lerobot-so-101)
 - **Official Documentation**: [https://www.hiwonder.com.cn/store/learn/185.html](https://www.hiwonder.com.cn/store/learn/185.html)
@@ -58,106 +58,90 @@ SO-ARM101 provides a practical platform for studying learning-from-demonstration
 
 ## Key Features
 
-### AI Vision Functions
-- **Object Detection** - Real-time object detection and recognition
-- **Visual Grasping** - Hand-eye coordination for precise manipulation
-- **Target Tracking** - Advanced object tracking with AI algorithms
-- **AprilTag Recognition** - Precision tag-based positioning
-
-### Imitation Learning
-- **ACT Policy** - Action Chunking with Transformers
+### Imitation Learning Policies
+- **ACT** - Action Chunking with Transformers
 - **Diffusion Policy** - Diffusion-based action generation
-- **VQ-BeT** - Vector Quantized Behavior Transformer
-- **TDMPC** - Temporal Difference Model Predictive Control
+- **PI0 / PI0-Fast** - Flow matching policies
+- **SmolVLA** - Small vision-language-action model
 
 ### Robot Platforms
-- **SO-101** - Affordable robotic arm (€114 per arm)
-- **HopeJR** - Humanoid robot arm and hand for dexterous manipulation
-- **LeKiwi** - Mobile robot platform with wheels
-- **ALOHA** - Bimanual teleoperation system
+- **SO-101** - Affordable 6-DOF robotic arm
+- **HopeJR** - Humanoid robot arm and hand
+- **LeKiwi** - Mobile robot platform
+- **SO-ARM101** - Hiwonder high-torque robotic arm
+
+### Motor Support
+- **Feetech STS/SMS series** - Serial bus servos
+- **Dynamixel** - High-performance servos
+- **Hiwonder HX-30HM** - 30kg magnetic-encoder servo
 
 ### Programming Interface
 - **Python SDK** - Complete Python programming interface
-- **PyTorch Integration** - Deep learning framework support
-- **Hugging Face Hub** - Dataset and model sharing platform
-- **WandB Support** - Experiment tracking and visualization
-
-## Hardware Configuration
-- **Processor**: Compatible with various platforms (Raspberry Pi, PC, etc.)
-- **Vision System**: USB cameras, depth cameras
-- **Motor System**: Feetech servos, Dynamixel servos
-- **Communication**: USB, Serial, WiFi
+- **PyTorch** - Deep learning framework
+- **Hugging Face Hub** - Dataset and model sharing
+- **WandB** - Experiment tracking and visualization
 
 ## Project Structure
 
 ```
 lerobot/
-├── src/lerobot/              # Core library
-│   ├── cameras/              # Camera drivers and utilities
-│   ├── configs/              # Configuration files
-│   ├── datasets/             # Dataset handling
-│   ├── envs/                 # Simulation environments
-│   ├── model/                # Neural network models
-│   ├── motors/               # Motor control drivers
-│   ├── policies/             # Policy implementations
-│   │   ├── act/              # ACT policy
-│   │   ├── diffusion/        # Diffusion policy
-│   │   ├── tdmpc/            # TDMPC policy
-│   │   └── vqbet/            # VQ-BeT policy
-│   ├── robots/               # Robot configurations
-│   ├── scripts/              # Utility scripts
-│   ├── teleoperators/        # Teleoperation systems
-│   └── utils/                # Common utilities
-├── examples/                 # Example scripts
-├── tests/                    # Unit tests
-├── docs/                     # Documentation
-└── media/                    # Media resources
+├── src/lerobot/
+│   ├── cameras/          # Camera drivers
+│   ├── configs/          # Configuration files
+│   ├── datasets/         # Dataset handling
+│   ├── envs/             # Simulation environments
+│   ├── model/            # Neural network models
+│   ├── motors/           # Motor control drivers
+│   │   ├── feetech/      # Feetech STS/SMS servos
+│   │   ├── hiwonder/     # Hiwonder HX-30HM servos
+│   │   └── dynamixel/    # Dynamixel servos
+│   ├── policies/         # Policy implementations
+│   ├── robots/           # Robot configurations
+│   ├── scripts/          # Utility scripts
+│   └── teleoperators/    # Teleoperation systems
+├── tests/                # Unit tests
+└── sources/              # Media resources
 ```
 
 ## Installation
 
-### Environment Setup
+### Requirements
+- Python 3.12+
+- PyTorch 2.7+
 
-Create a virtual environment with Python 3.10 and activate it:
+### Install with uv (recommended)
 
 ```bash
-conda create -y -n lerobot python=3.10
-conda activate lerobot
+git clone https://github.com/Hiwodner-official/LeRobot.git
+cd LeRobot
+uv sync
 ```
 
-Install ffmpeg in your environment:
+### Install with pip
 
 ```bash
-conda install ffmpeg -c conda-forge
-```
-
-### Install LeRobot
-
-Clone the repository and install:
-
-```bash
-git clone https://github.com/Hiwonder/LeRobot.git
+git clone https://github.com/Hiwodner-official/LeRobot.git
 cd LeRobot
 pip install -e .
 ```
 
-For simulation environments:
+### Install with Hiwonder servo support
 
 ```bash
-pip install -e ".[aloha, pusht]"
+pip install -e ".[hiwonder]"
+```
+
+### Install with Feetech servo support
+
+```bash
+pip install -e ".[feetech]"
 ```
 
 ## Version Information
-- **Current Version**: Based on LeRobot v0.1.0
-- **Python Version**: 3.10+
-- **PyTorch Version**: 2.2+
-
-### Related Technologies
-- [PyTorch](https://pytorch.org/) - Deep Learning Framework
-- [Hugging Face](https://huggingface.co/) - AI Model Hub
-- [OpenCV](https://opencv.org/) - Computer Vision Library
-- [WandB](https://wandb.ai/) - Experiment Tracking
+- **Current Version**: v0.5.1 (based on upstream LeRobot v0.5.1)
+- **Python Version**: 3.12+
+- **PyTorch Version**: 2.7+
 
 ---
 
-**Note**: This repository is adapted from the original [Hugging Face LeRobot](https://github.com/huggingface/lerobot) for educational purposes. For detailed tutorials and documentation, please refer to the [Official LeRobot Documentation](https://huggingface.co/docs/lerobot).
+**Note**: This repository is adapted from the original [Hugging Face LeRobot](https://github.com/huggingface/lerobot) for use with Hiwonder hardware. For detailed tutorials and documentation, please refer to the [Official LeRobot Documentation](https://huggingface.co/docs/lerobot).
