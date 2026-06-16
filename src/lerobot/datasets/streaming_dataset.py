@@ -124,6 +124,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         video_decoder_cache_size: int | None = None,
         data_files_root: str | None = None,
         validate_row_groups: bool = True,
+        video_byte_cache_gb: float | None = 80.0,
+        byte_index_path: str | Path | None = None,
+        byte_index_build_in_memory: bool | None = None,
+        byte_index_workers: int = 8,
+        byte_index_max_episodes: int | None = None,
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -173,6 +178,16 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 ``num_shards`` is divisible by ``world_size`` for distributed runs, raising a clear
                 ``ValueError`` otherwise. Set False to skip the checks (e.g. single-process debugging);
                 the divisibility check then downgrades to a warning.
+            video_byte_cache_gb (float | None, optional): Node-local LRU for episode MP4 mdat slices.
+                When set (default 80 GB), episodes are prefetched via tight byte ranges before decode.
+                Set to 0 or None to disable and use remote per-seek decoding.
+            byte_index_path (str | Path | None, optional): Path to precomputed ``meta/byte_index/``
+                sidecar parquet tables. Defaults to ``{meta.root}/meta/byte_index``.
+            byte_index_build_in_memory (bool | None, optional): When True, build the byte index in RAM
+                at init (moov-only fetches, no parquet write). When None (default), build in memory only
+                if the sidecar parquet is missing on disk.
+            byte_index_workers (int, optional): Parallel moov-index workers for in-memory builds.
+            byte_index_max_episodes (int | None, optional): Cap episodes indexed (debug/smoke tests).
         """
         super().__init__()
         self.repo_id = repo_id
@@ -210,6 +225,14 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.rank, self.world_size = self._resolve_distributed(rank, world_size)
         self.video_decoder_cache_size = video_decoder_cache_size
         self.data_files_root = data_files_root.rstrip("/") if data_files_root else None
+        self.video_byte_cache_gb = video_byte_cache_gb
+        self.byte_index_path = Path(byte_index_path) if byte_index_path is not None else None
+        self.byte_index_build_in_memory = byte_index_build_in_memory
+        self.byte_index_workers = byte_index_workers
+        self.byte_index_max_episodes = byte_index_max_episodes
+        self._episode_byte_cache = None
+        self._byte_index = None
+        self._data_root = None
 
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
         self.video_decoder_cache = None
@@ -227,6 +250,37 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.revision = self.meta.revision
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
+
+        if self._use_episode_byte_cache():
+            from .byte_index import EpisodeByteIndex
+
+            data_root = self._resolve_data_root()
+            index_dir = self.byte_index_path or (self.meta.root / "meta" / "byte_index")
+            sidecar_exists = (index_dir / "files.parquet").exists() and (index_dir / "episodes.parquet").exists()
+            build_in_memory = (
+                self.byte_index_build_in_memory
+                if self.byte_index_build_in_memory is not None
+                else not sidecar_exists
+            )
+            if build_in_memory:
+                logger.info(
+                    "Building byte index in memory from %s (%s episodes, %d workers)",
+                    data_root,
+                    self.byte_index_max_episodes or self.meta.total_episodes,
+                    self.byte_index_workers,
+                )
+                self._byte_index = EpisodeByteIndex.from_memory_build(
+                    self.meta,
+                    data_root,
+                    workers=self.byte_index_workers,
+                    max_episodes=self.byte_index_max_episodes,
+                )
+            else:
+                self._byte_index = EpisodeByteIndex(
+                    index_dir,
+                    video_keys=self.meta.video_keys,
+                    num_episodes=self.meta.total_episodes,
+                )
 
         self.delta_timestamps = None
         self.delta_indices = None
@@ -417,6 +471,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 buffer_size=self.episode_pool_size,
                 max_buffer_input_shards=max_input_shards,
             )
+        if self._use_episode_byte_cache():
+            ds = ds.map(self._submit_episode_prefetch, batched=True)
         # A row-count-changing batched map must drop the input columns explicitly; the exploded
         # frames re-emit them (windowed keys replaced by their delta windows + *_is_pad masks).
         ds = ds.map(self._explode_episodes, batched=True, remove_columns=episode_columns)
@@ -472,6 +528,31 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             return VideoDecoderCache()
         return VideoDecoderCache(max_size=min((self.episode_pool_size + 1) * num_cameras, 128))
 
+    def _use_episode_byte_cache(self) -> bool:
+        return (
+            self.video_byte_cache_gb not in (None, 0)
+            and self.data_files_root is not None
+        )
+
+    def _make_episode_byte_cache(self):
+        from .episode_byte_cache import EpisodeByteCache
+
+        if self._byte_index is None:
+            raise RuntimeError("byte index required for episode byte cache; run build_byte_index.py")
+        max_bytes = int(float(self.video_byte_cache_gb) * 1e9)
+        return EpisodeByteCache(
+            self._byte_index,
+            max_bytes,
+            data_root=self._data_root,
+        )
+
+    def _submit_episode_prefetch(self, episode_batch: dict[str, list[list]]) -> dict[str, list[list]]:
+        if self._episode_byte_cache is None:
+            return episode_batch
+        for ep_idx in {int(v[0]) for v in episode_batch["episode_index"]}:
+            self._episode_byte_cache.submit_prefetch(ep_idx)
+        return episode_batch
+
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         # `datasets` reshuffles (and re-permutes shard order) per epoch from (seed, epoch);
         # DataLoader workers each advance their own copy's counter in lockstep. The in-flight
@@ -486,6 +567,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self._in_flight_epoch = 0
         self._pipeline.set_epoch(self._in_flight_epoch)
         self.video_decoder_cache = self._make_video_decoder_cache()
+        self._data_root = self._resolve_data_root()
+        if self._use_episode_byte_cache():
+            self._episode_byte_cache = self._make_episode_byte_cache()
+        else:
+            self._episode_byte_cache = None
 
         iterator = iter(self._pipeline)
         while True:
@@ -623,6 +709,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         """
 
         item = {}
+        if self._episode_byte_cache is not None:
+            self._episode_byte_cache.ensure_ready(ep_idx)
         for video_key, query_ts in query_timestamps.items():
             # query_ts is episode-local; shift to the absolute in-file timeline by the episode's offset.
             from_timestamp = self.meta.episodes[ep_idx][f"videos/{video_key}/from_timestamp"]
@@ -635,12 +723,16 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             else:
                 root = self.root
             video_path = f"{root}/{rel_path}"
+            episode_decoder = None
+            if self._episode_byte_cache is not None:
+                episode_decoder = self._episode_byte_cache.get_decoder(ep_idx, video_key)
             frames = decode_video_frames_torchcodec(
                 video_path,
                 shifted_query_ts,
                 self.tolerance_s,
                 decoder_cache=self.video_decoder_cache,
                 return_uint8=self._return_uint8,
+                episode_decoder=episode_decoder,
             )
 
             item[video_key] = frames.squeeze(0) if len(query_ts) == 1 else frames

@@ -326,6 +326,7 @@ def decode_video_frames_torchcodec(
     log_loaded_timestamps: bool = False,
     decoder_cache: VideoDecoderCache | None = None,
     return_uint8: bool = False,
+    episode_decoder: Any | None = None,
 ) -> torch.Tensor:
     """Loads frames associated with the requested timestamps of a video using torchcodec.
 
@@ -347,8 +348,10 @@ def decode_video_frames_torchcodec(
     if decoder_cache is None:
         decoder_cache = _default_decoder_cache
 
-    # Use cached decoder instead of creating new one each time
-    decoder = decoder_cache.get_decoder(str(video_path))
+    if episode_decoder is not None:
+        decoder = episode_decoder
+    else:
+        decoder = decoder_cache.get_decoder(str(video_path))
 
     loaded_ts = []
     loaded_frames = []
