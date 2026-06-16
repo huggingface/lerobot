@@ -93,6 +93,8 @@ from lerobot.datasets.video_utils import concatenate_video_files, get_video_dura
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.utils import flatten_dict, init_logging
 
+logger = logging.getLogger(__name__)
+
 V21 = "v2.1"
 V30 = "v3.0"
 
@@ -475,11 +477,11 @@ def convert_dataset(
     # First check if the dataset already has a v3.0 version
     if root is None and not force_conversion:
         try:
-            print("Trying to download v3.0 version of the dataset from the hub...")
+            logger.info("Trying to download v3.0 version of the dataset from the hub...")
             snapshot_download(repo_id, repo_type="dataset", revision=V30, local_dir=HF_LEROBOT_HOME / repo_id)
             return
         except Exception:
-            print("Dataset does not have an uploaded v3.0 version. Continuing with conversion.")
+            logger.info("Dataset does not have an uploaded v3.0 version. Continuing with conversion.")
 
     # Set root based on whether local dataset path is provided
     use_local_dataset = False
@@ -487,7 +489,7 @@ def convert_dataset(
     if root.exists():
         validate_local_dataset_version(root)
         use_local_dataset = True
-        print(f"Using local dataset at {root}")
+        logger.info(f"Using local dataset at {root}")
 
     old_root = root.parent / f"{root.name}_old"
     new_root = root.parent / f"{root.name}_v30"
@@ -522,7 +524,7 @@ def convert_dataset(
         try:
             hub_api.delete_tag(repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
         except HTTPError as e:
-            print(f"tag={CODEBASE_VERSION} probably doesn't exist. Skipping exception ({e})")
+            logger.warning(f"tag={CODEBASE_VERSION} probably doesn't exist. Skipping exception ({e})")
             pass
         hub_api.delete_files(
             delete_patterns=["data/chunk*/episode_*", "meta/*.jsonl", "videos/chunk*"],
