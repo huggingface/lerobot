@@ -370,6 +370,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.reader.load_and_activate()
         return self.reader.hf_dataset
 
+    @property
+    def absolute_to_relative_idx(self) -> dict[int, int] | None:
+        """Mapping from absolute frame indices to HF dataset row positions.
+
+        Non-None only for episode-filtered datasets where absolute indices
+        (from metadata) differ from row positions in the loaded HF dataset.
+        """
+        reader = self._ensure_reader()
+        if reader.hf_dataset is None:
+            reader.load_and_activate()
+        return reader._absolute_to_relative_idx
+
     # ── Writer-delegated methods ──────────────────────────────────────
 
     def add_frame(self, frame: dict) -> None:
@@ -474,8 +486,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if reader.hf_dataset is None:
             # One-shot load after finalize()
             reader.load_and_activate()
-        if reader._absolute_to_relative_idx is not None and idx in reader._absolute_to_relative_idx:
-            idx = reader._absolute_to_relative_idx[idx]
         return reader.get_item(idx)
 
     def select_columns(self, column_names: str | list[str]):
