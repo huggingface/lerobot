@@ -43,6 +43,8 @@ from lerobot.transforms import (
     make_transform_from_config,
 )
 
+logger = logging.getLogger(__name__)
+
 OUTPUT_DIR = Path("outputs/image_transforms")
 to_pil = ToPILImage()
 
@@ -56,8 +58,8 @@ def save_all_transforms(cfg: ImageTransformsConfig, original_frame, output_dir, 
         transformed_frame = tfs(original_frame)
         to_pil(transformed_frame).save(output_dir_all / f"{i}.png", quality=100)
 
-    print("Combined transforms examples saved to:")
-    print(f"    {output_dir_all}")
+    logger.info("Combined transforms examples saved to:")
+    logger.info(f"    {output_dir_all}")
 
 
 def save_each_transform(cfg: ImageTransformsConfig, original_frame, output_dir, n_examples):
@@ -67,7 +69,7 @@ def save_each_transform(cfg: ImageTransformsConfig, original_frame, output_dir, 
         )
         return
 
-    print("Individual transforms examples saved to:")
+    logger.info("Individual transforms examples saved to:")
     for tf_name, tf_cfg in cfg.tfs.items():
         # Apply a few transformation with random value in min_max range
         output_dir_single = output_dir / tf_name
@@ -101,7 +103,7 @@ def save_each_transform(cfg: ImageTransformsConfig, original_frame, output_dir, 
         to_pil(tf_frame_max).save(output_dir_single / "max.png", quality=100)
         to_pil(tf_frame_avg).save(output_dir_single / "mean.png", quality=100)
 
-        print(f"    {output_dir_single}")
+        logger.info(f"    {output_dir_single}")
 
 
 @draccus.wrap()
@@ -119,8 +121,8 @@ def visualize_image_transforms(cfg: DatasetConfig, output_dir: Path = OUTPUT_DIR
     # Get 1st frame from 1st camera of 1st episode
     original_frame = dataset[0][dataset.meta.camera_keys[0]]
     to_pil(original_frame).save(output_dir / "original_frame.png", quality=100)
-    print("\nOriginal frame saved to:")
-    print(f"    {output_dir / 'original_frame.png'}.")
+    logger.info("\nOriginal frame saved to:")
+    logger.info(f"    {output_dir / 'original_frame.png'}.")
 
     save_all_transforms(cfg.image_transforms, original_frame, output_dir, n_examples)
     save_each_transform(cfg.image_transforms, original_frame, output_dir, n_examples)
