@@ -156,6 +156,14 @@ def _log(message: str) -> None:
     print(message, flush=True)
 
 
+def _format_duration(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    if seconds < 3600:
+        return f"{seconds / 60:.1f}m"
+    return f"{seconds / 3600:.1f}h"
+
+
 def _root_join(data_root: str, relative_path: str) -> str:
     if data_root.startswith("hf://"):
         return f"{data_root.rstrip('/')}/{relative_path}"
@@ -505,8 +513,9 @@ def run_indexed_strategy(
 ) -> None:
     _log(f"starting_strategy: {label}")
     manifest_start = time.perf_counter()
-    manifest_episode_count = args.manifest_episodes or int(meta.total_episodes)
-    manifest_episode_count = min(manifest_episode_count, int(meta.total_episodes), args.num_episodes)
+    dataset_episode_count = int(meta.total_episodes)
+    manifest_episode_count = args.manifest_episodes or dataset_episode_count
+    manifest_episode_count = min(manifest_episode_count, dataset_episode_count, args.num_episodes)
     manifest = EpisodeVideoManifest.build(
         meta,
         data_root,
@@ -519,7 +528,8 @@ def run_indexed_strategy(
     manifest_s = time.perf_counter() - manifest_start
     _log(f"{label}: manifest_build_s={manifest_s:.2f}")
 
-    episodes = _episode_pool(int(meta.total_episodes), args.num_episodes, args.pool_size, args.seed)
+    benchmark_episode_count = min(dataset_episode_count, args.num_episodes)
+    episodes = _episode_pool(dataset_episode_count, args.num_episodes, args.pool_size, args.seed)
     byte_budget = int(args.byte_budget_gb * 1024**3)
     byte_count = _bytes_for(manifest, episodes)
     _log(
@@ -529,20 +539,28 @@ def run_indexed_strategy(
 
     _log(f"{label}: filling episode byte cache with {args.workers} workers")
     fetch_pool = run_fetch_pool(manifest, data_root, episodes, byte_budget, args.workers, range_backend)
+    estimated_dataset_s = dataset_episode_count / fetch_pool["fetch_episodes_s"]
+    estimated_benchmark_s = benchmark_episode_count / fetch_pool["fetch_episodes_s"]
 
     print(f"manifest_build_s: {manifest_s:.2f}")
     print(f"strategy: {label}")
     print(f"range_backend: {range_backend}")
     print(f"mp4_sidecar: {sidecar_path or 'none'}")
     print(f"data_root: {data_root}")
-    print(f"episodes: {episodes}")
+    print(f"dataset_episodes: {dataset_episode_count}")
+    print(f"benchmark_episodes: {benchmark_episode_count}")
+    print(f"pool_episodes: {len(episodes)}")
+    print(f"sampled_episodes: {episodes}")
     print(f"cameras: {manifest.video_keys}")
     print()
-    print("| Track | fetch MB/s | fetch eps/s | wall s | avg MB/camera | notes |")
-    print("|---|---:|---:|---:|---:|---|")
+    print(
+        "| Track | fetch MB/s | fetch eps/s | wall s | est benchmark | est full dataset | avg MB/camera | notes |"
+    )
+    print("|---|---:|---:|---:|---:|---:|---:|---|")
     print(
         f"| EPISODE POOL FETCH | {fetch_pool['fetch_mbps']:.1f} | "
         f"{fetch_pool['fetch_episodes_s']:.2f} | {fetch_pool['fetch_s']:.2f} | "
+        f"{_format_duration(estimated_benchmark_s)} | {_format_duration(estimated_dataset_s)} | "
         f"{fetch_pool['avg_mb_miss']:.1f} | {args.workers} workers, no decoder open/frame decode |"
     )
 
@@ -577,12 +595,16 @@ def run_indexed_strategy(
         )
         print(
             f"| DECODE COMPARISON | {parallel['fetch_mbps']:.1f} | {parallel['fetch_episodes_s']:.2f} | "
-            f"{parallel['fetch_s']:.2f} | {fetch_pool['avg_mb_miss']:.1f} | "
+            f"{parallel['fetch_s']:.2f} | "
+            f"{_format_duration(benchmark_episode_count / parallel['fetch_episodes_s'])} | "
+            f"{_format_duration(dataset_episode_count / parallel['fetch_episodes_s'])} | "
+            f"{fetch_pool['avg_mb_miss']:.1f} | "
             f"decoder open {parallel['decoder_ms_miss']:.1f} ms/miss, "
             f"decode {parallel['decode_samples_s']:.1f} samples/s, parquet {parallel['parquet_s']:.2f}s |"
         )
         print(
-            f"| OVERLAPPED E2E | - | - | {overlapped['wall_s']:.2f} | {fetch_pool['avg_mb_miss']:.1f} | "
+            f"| OVERLAPPED E2E | - | - | {overlapped['wall_s']:.2f} | - | - | "
+            f"{fetch_pool['avg_mb_miss']:.1f} | "
             f"{overlapped['samples_s']:.1f} samples/s; video+decode "
             f"{overlapped['video_wait_decode_s']:.2f}s, parquet {overlapped['parquet_wait_s']:.2f}s |"
         )
