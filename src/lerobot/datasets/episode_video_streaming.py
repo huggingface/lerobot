@@ -188,6 +188,9 @@ class NativeHTTPRangeFetcher:
             "range_header_s": 0.0,
             "range_first_byte_s": 0.0,
             "range_body_s": 0.0,
+            "range_retry_attempts": 0.0,
+            "range_retry_sleep_s": 0.0,
+            "range_failed_requests": 0.0,
         }
 
     def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
@@ -338,14 +341,27 @@ class NativeHTTPRangeFetcher:
 
     def _read_range_response(self, url: str, headers: dict[str, str]) -> tuple[bytes, int, dict[str, float]]:
         last_exc: Exception | None = None
+        retry_attempts = 0.0
+        retry_sleep_s = 0.0
         for attempt in range(self.max_retries + 1):
             try:
-                return self._read_range_response_once(url, headers)
+                payload, status_code, timings = self._read_range_response_once(url, headers)
+                timings["range_retry_attempts"] = retry_attempts
+                timings["range_retry_sleep_s"] = retry_sleep_s
+                return payload, status_code, timings
             except self._RETRYABLE_EXCEPTIONS as exc:
                 last_exc = exc
                 if attempt >= self.max_retries:
                     break
-                time.sleep(min(0.5 * 2**attempt, 5.0))
+                retry_attempts += 1.0
+                sleep_s = min(0.5 * 2**attempt, 5.0)
+                retry_sleep_s += sleep_s
+                time.sleep(sleep_s)
+        self._record_timing(
+            range_failed_requests=1.0,
+            range_retry_attempts=retry_attempts,
+            range_retry_sleep_s=retry_sleep_s,
+        )
         if last_exc is None:
             raise RuntimeError("HTTP range request failed without an exception")
         raise last_exc
@@ -400,11 +416,25 @@ class NativeHTTPRangeFetcher:
         self.client.close()
 
 
-def make_range_fetcher(data_root: str | Path, *, range_backend: str, workers: int):
+def make_range_fetcher(
+    data_root: str | Path,
+    *,
+    range_backend: str,
+    workers: int,
+    native_http_connections: int | None = None,
+    native_http_timeout: float = 60.0,
+    native_http_retries: int = 4,
+):
     if range_backend == "fsspec":
         return ThreadLocalRangeFetcher(data_root)
     if range_backend == "native-http":
-        return NativeHTTPRangeFetcher(data_root, max_connections=max(8, workers * 4))
+        max_connections = native_http_connections or max(8, workers)
+        return NativeHTTPRangeFetcher(
+            data_root,
+            max_connections=max_connections,
+            timeout=native_http_timeout,
+            max_retries=native_http_retries,
+        )
     raise ValueError(f"Unknown range backend: {range_backend}")
 
 
@@ -648,10 +678,20 @@ class EpisodeByteCache:
         byte_budget: int = 80 * 1024**3,
         workers: int = 8,
         range_backend: str = "fsspec",
+        native_http_connections: int | None = None,
+        native_http_timeout: float = 60.0,
+        native_http_retries: int = 4,
         open_decoders: bool = True,
     ):
         self.manifest = manifest
-        self.fetcher = make_range_fetcher(data_root, range_backend=range_backend, workers=workers)
+        self.fetcher = make_range_fetcher(
+            data_root,
+            range_backend=range_backend,
+            workers=workers,
+            native_http_connections=native_http_connections,
+            native_http_timeout=native_http_timeout,
+            native_http_retries=native_http_retries,
+        )
         self.byte_budget = byte_budget
         self.open_decoders = open_decoders
         self._pool = ThreadPoolExecutor(max_workers=workers)

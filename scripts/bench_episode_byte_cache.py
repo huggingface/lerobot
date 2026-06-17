@@ -69,6 +69,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pool-size", type=int, default=16)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument(
+        "--native-http-connections",
+        type=int,
+        default=None,
+        help="Max HTTP connections for --range-backend native-http. Defaults to --workers.",
+    )
+    parser.add_argument(
+        "--native-http-retries",
+        type=int,
+        default=8,
+        help="Retries per native HTTP range request.",
+    )
+    parser.add_argument(
+        "--native-http-timeout",
+        type=float,
+        default=120.0,
+        help="Timeout in seconds for native HTTP requests.",
+    )
+    parser.add_argument(
         "--include-decode",
         action="store_true",
         help="Also run decoder-opening/frame-decode comparison tracks. Fetch-only is the default.",
@@ -343,6 +361,7 @@ def run_fetch_pool(
     byte_budget: int,
     workers: int,
     range_backend: str,
+    args: argparse.Namespace,
 ) -> dict[str, float]:
     with EpisodeByteCache(
         manifest,
@@ -350,6 +369,9 @@ def run_fetch_pool(
         byte_budget=byte_budget,
         workers=workers,
         range_backend=range_backend,
+        native_http_connections=args.native_http_connections,
+        native_http_timeout=args.native_http_timeout,
+        native_http_retries=args.native_http_retries,
         open_decoders=False,
     ) as cache:
         elapsed = _fill_cache(cache, episodes)
@@ -571,10 +593,15 @@ def _print_range_timing_summary(fetch_pool: dict[str, float]) -> None:
         ("range_header_s", "http response headers"),
         ("range_first_byte_s", "http first body byte"),
         ("range_body_s", "http body drain"),
+        ("range_retry_sleep_s", "http retry sleep"),
     ):
         value = fetch_pool.get(key)
         if value is not None:
             print(f"| {label} | {value * 1000 / range_jobs:.3f} |")
+    if "range_retry_attempts" in fetch_pool:
+        print(f"| http retries | {fetch_pool['range_retry_attempts'] / range_jobs:.3f} |")
+    if fetch_pool.get("range_failed_requests"):
+        print(f"| http failed requests | {fetch_pool['range_failed_requests']:.0f} |")
     print(f"| range reads | {range_jobs:.0f} |")
     print(f"| avg MiB/range | {fetch_pool.get('range_bytes', 0.0) / range_jobs / 1024**2:.1f} |")
 
@@ -617,7 +644,7 @@ def run_indexed_strategy(
     )
 
     _log(f"{label}: filling episode byte cache with {args.workers} workers")
-    fetch_pool = run_fetch_pool(manifest, data_root, episodes, byte_budget, args.workers, range_backend)
+    fetch_pool = run_fetch_pool(manifest, data_root, episodes, byte_budget, args.workers, range_backend, args)
     estimated_dataset_s = dataset_episode_count / fetch_pool["fetch_episodes_s"]
     estimated_benchmark_s = benchmark_episode_count / fetch_pool["fetch_episodes_s"]
 
