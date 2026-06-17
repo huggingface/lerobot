@@ -209,6 +209,7 @@ all = [
     "lerobot[metaworld]",
     "lerobot[sarm]",
     "lerobot[peft]",
+    "lerobot[hiwonder]",
     # "lerobot[unitree_g1]", TODO: Unitree requires specific installation instructions for unitree_sdk2
 ]
 
