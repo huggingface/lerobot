@@ -644,6 +644,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if eval_env:
         close_envs(eval_env)
 
+    is_fsdp = accelerator.distributed_type == DistributedType.FSDP
+    model_state_dict = accelerator.get_state_dict(policy) if is_fsdp else None
     if is_main_process:
         logging.info("End of training")
 
@@ -653,7 +655,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             if not cfg.is_reward_model_training and cfg.policy.use_peft:
                 unwrapped_model.push_model_to_hub(cfg, peft_model=unwrapped_model)
             else:
-                unwrapped_model.push_model_to_hub(cfg)
+                unwrapped_model.push_model_to_hub(cfg, state_dict=model_state_dict)
             preprocessor.push_to_hub(active_cfg.repo_id)
             postprocessor.push_to_hub(active_cfg.repo_id)
 

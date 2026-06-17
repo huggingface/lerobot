@@ -303,6 +303,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self,
         cfg: TrainPipelineConfig,
         peft_model=None,
+        state_dict: dict[str, Tensor] | None = None,
     ):
         api = HfApi()
         repo_id = api.create_repo(
@@ -320,7 +321,8 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 peft_model.save_pretrained(saved_path)
                 self.config.save_pretrained(saved_path)
             else:
-                self.save_pretrained(saved_path)  # Calls _save_pretrained and stores model tensors
+                # Calls _save_pretrained and stores model tensors
+                self.save_pretrained(saved_path, state_dict=state_dict)
 
             card = self.generate_model_card(
                 cfg.dataset.repo_id, self.config.type, self.config.license, self.config.tags, cfg=cfg
