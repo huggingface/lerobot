@@ -145,6 +145,26 @@ class FastWAMPolicy(PreTrainedPolicy):
             model.to(map_location)
         return model
 
+    def _save_pretrained(self, save_directory: Path, state_dict: dict[str, Tensor] | None = None) -> None:
+        """Down-cast float tensors to the policy dtype before saving.
+
+        FSDP's FULL_STATE_DICT gather returns fp32 master weights, so the default save would
+        write a fp32 `model.safetensors` (~24 GB) even though FastWAM runs in
+        `config.torch_dtype` (bf16). That doubles disk/upload and, worse, makes reloading OOM
+        under FSDP — every rank materializes the full fp32 model on GPU before sharding.
+        Casting float tensors to the configured dtype here halves the checkpoint and keeps
+        loads within budget; non-float tensors (e.g. integer buffers) pass through unchanged.
+        The `state_dict is None` path (non-FSDP saves) already holds params at
+        `config.torch_dtype`, so it needs no cast.
+        """
+        if state_dict is not None:
+            dtype = _dtype_from_name(self.config.torch_dtype)
+            state_dict = {
+                key: (value.to(dtype) if torch.is_floating_point(value) else value)
+                for key, value in state_dict.items()
+            }
+        super()._save_pretrained(save_directory, state_dict)
+
     def get_optim_params(self) -> list[Tensor]:
         # Return the trainable tensors directly (a single param group). The optimizer
         # builder wraps these in a param group; returning a bare {"params": [...]} dict
@@ -331,7 +351,9 @@ class FastWAMPolicy(PreTrainedPolicy):
     def _debug_tensor_to_pil(image: Tensor):
         from PIL import Image
 
-        arr = ((image.detach().float().clamp(-1.0, 1.0) + 1.0) * 127.5).to(torch.uint8)
+        # `real` is the model input in [0, 1] (VISUAL is IDENTITY; the [-1,1] map lives at the VAE
+        # encode boundary), so map [0, 1] -> [0, 255] for display.
+        arr = (image.detach().float().clamp(0.0, 1.0) * 255.0).to(torch.uint8)
         return Image.fromarray(arr.cpu().permute(1, 2, 0).numpy())
 
     @staticmethod
@@ -491,13 +513,29 @@ def batch_device(batch: dict[str, Any]) -> torch.device:
     return torch.device("cpu")
 
 
+def _resize_frames(frames: Tensor, size: tuple[int, int]) -> Tensor:
+    """Resize a frame tensor to `size` (H, W), tolerating a leading temporal/batch stack.
+
+    `interpolate` only accepts a single leading batch dim (`[N, C, H, W]`), but FastWAM camera
+    tensors arrive as `[B, C, H, W]` (live eval) or `[B, T, C, H, W]` (temporal stack), so flatten
+    any leading dims into the batch, resize, then restore. A no-op when already at `size`.
+    """
+    if tuple(frames.shape[-2:]) == size:
+        return frames
+    lead = frames.shape[:-3]
+    flat = frames.reshape(-1, *frames.shape[-3:])
+    flat = torch.nn.functional.interpolate(flat, size=size, mode="bilinear", align_corners=False, antialias=True)
+    return flat.reshape(*lead, *flat.shape[-3:])
+
+
 def _stack_video_from_images(batch: dict[str, Tensor], config: FastWAMConfig) -> Tensor:
     # Exclude the `*_is_pad` companion tensors that delta-timestamp loading adds alongside
     # each camera (shape [B, T]); they share the `observation.images.` prefix but are not frames.
     image_keys = sorted(k for k in batch if k.startswith("observation.images.") and not k.endswith("_is_pad"))
     if not image_keys:
         raise KeyError("FastWAM batch must contain `video` or `observation.images.*` keys.")
-    images = [batch[key] for key in image_keys]
+    per_cam = (int(config.image_size[0]), int(config.image_size[1]) // len(image_keys))
+    images = [_resize_frames(batch[key], per_cam) for key in image_keys]
     # Cameras concatenate along width (last dim) in both the single-frame and temporal case.
     image = torch.cat(images, dim=-1) if len(images) > 1 else images[0]
     if image.ndim == 4:
@@ -530,11 +568,8 @@ def _prepare_infer_image(image: Tensor, config: FastWAMConfig) -> Tensor:
     if image.ndim != 4:
         raise ValueError(f"Expected image tensor [B,C,H,W] or [C,H,W], got {tuple(image.shape)}.")
 
-    target_h, target_w = config.image_size
-    if tuple(image.shape[-2:]) != (target_h, target_w):
-        raise ValueError(
-            "FastWAM policy expects preprocessed image tensors with shape "
-            f"[B,C,{target_h},{target_w}], got {tuple(image.shape)}. "
-            "Run the FastWAM preprocessor before calling the policy."
-        )
-    return image
+    # Resize to the full configured resolution (no-op when the video path already produced it, but
+    # also covers a directly-supplied `input_image`). The model owns its input resolution — see
+    # `_stack_video_from_images` — so we resize rather than assert on a mismatch.
+    target_h, target_w = int(config.image_size[0]), int(config.image_size[1])
+    return _resize_frames(image, (target_h, target_w))

@@ -24,7 +24,6 @@ from lerobot.processor import (
     ActionProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
-    ImageCropResizeProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
@@ -40,39 +39,6 @@ from lerobot.utils.constants import (
 )
 
 from .configuration_fastwam import FastWAMConfig
-
-
-@dataclass
-@ProcessorStepRegistry.register(name="fastwam_image_crop_resize_processor")
-class FastWAMImageCropResizeProcessorStep(ImageCropResizeProcessorStep):
-    """`ImageCropResizeProcessorStep` that tolerates a leading temporal/batch stack.
-
-    FastWAM loads a per-camera video stack, so image observations arrive as
-    ``[B, T, C, H, W]``. torchvision's crop/resize only accept ``[..., C, H, W]`` with a
-    single leading batch dim (resize raises on 5-D input), so we flatten any leading
-    dims into the batch, apply the base 4-D crop/resize, then restore the leading shape.
-    Crop/resize params and feature-shape bookkeeping are inherited unchanged.
-    """
-
-    def observation(self, observation: dict) -> dict:
-        # Delta-timestamp video loading adds `<image_key>_is_pad` boolean masks ([B, T]) that share
-        # the `observation.images.` prefix but are padding flags, not frames. The base crop/resize
-        # matches on the `"image"` substring, so set these aside and restore them untouched rather
-        # than letting it try to resize a mask.
-        pad_keys = {key: value for key, value in observation.items() if "_is_pad" in key}
-        leads: dict[str, tuple] = {}
-        flat_input = {key: value for key, value in observation.items() if key not in pad_keys}
-        for key, img in list(flat_input.items()):
-            if "image" in key and torch.is_tensor(img) and img.ndim > 4:
-                leads[key] = tuple(img.shape[:-3])
-                flat_input[key] = img.reshape(-1, *img.shape[-3:])
-        processed = super().observation(flat_input)
-        out = dict(processed)
-        for key, lead in leads.items():
-            im = processed[key]
-            out[key] = im.reshape(*lead, *im.shape[-3:])
-        out.update(pad_keys)
-        return out
 
 
 @dataclass
@@ -124,32 +90,25 @@ def make_fastwam_pre_post_processors(
         output processor pipelines discoverable by LeRobot.
     """
 
-    # force visual stats to be mean 0.5 and std 0.5 to map [0, 1] data to [-1, 1]
+    # NOTE: no visual normalization here. VISUAL is IDENTITY (see configuration_fastwam.normalization_mapping)
+    # — images pass through in [0, 1] and the model maps them to the Wan VAE's [-1, 1] at the encode
+    # boundary. This is deliberate: `lerobot_train.py` overrides the normalizer stats with
+    # `dataset.meta.stats` when fine-tuning, and a real dataset's per-channel image std is the tiny
+    # frame-to-frame brightness variance, which would blow images far outside [-1,1] and saturate them.
+    # STATE/ACTION still normalize with dataset stats below.
     normalization_stats: dict[str, dict[str, Any]] = dict(dataset_stats or {})
-    for key, feature in config.input_features.items():
-        if feature.type != FeatureType.VISUAL:
-            continue
-        channels = int(feature.shape[0])
-        normalization_stats[key] = {
-            "mean": torch.full((channels, 1, 1), 0.5, dtype=torch.float32),
-            "std": torch.full((channels, 1, 1), 0.5, dtype=torch.float32),
-        }
 
-    # resize visual inputs to match model expected input size, if necessary
-    visual_shapes = [
-        feature.shape for feature in config.input_features.values() if feature.type == FeatureType.VISUAL
-    ]
-    resize_steps = []
-    if visual_shapes:
-        target_hw = (int(visual_shapes[0][1]), int(visual_shapes[0][2]))
-        # FastWAM-aware resize: tolerates the leading temporal dim of the video stack.
-        resize_steps.append(FastWAMImageCropResizeProcessorStep(resize_size=target_hw))
+    # NOTE: no resize step here. The model is the single authority on input resolution: it resizes
+    # each camera to the per-camera target (image_size split across cameras) in
+    # `_stack_video_from_images` / `_prepare_infer_image`, on every path (train forward, rollout and
+    # eval select_action). A preprocessor resize step would be both redundant (the model re-resizes
+    # anyway) and unsafe across fine-tuning: its `resize_size` would be inherited from the base
+    # checkpoint's camera geometry, not this dataset's, making the concatenation N_cameras x too wide.
 
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
-        *resize_steps,
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,

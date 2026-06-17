@@ -68,7 +68,7 @@ def default_video_dit_config(action_dim: int) -> dict[str, Any]:
         "attn_head_dim": 128,
         "num_layers": 30,
         "eps": 1.0e-6,
-        "separated_timestep": True,
+        "seperated_timestep": True,
         "use_gradient_checkpointing": False,
         "video_attention_mask_mode": "first_frame_causal",
         "action_conditioned": False,
@@ -215,7 +215,7 @@ class FastWAMConfig(PreTrainedConfig):
     action_dit_config: dict[str, Any] | None = None
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "VISUAL": NormalizationMode.MEAN_STD,
+            "VISUAL": NormalizationMode.IDENTITY,
             "STATE": NormalizationMode.MEAN_STD,
             "ACTION": NormalizationMode.MEAN_STD,
         }

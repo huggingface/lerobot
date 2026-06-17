@@ -1075,6 +1075,10 @@ class FastWAM(torch.nn.Module):
 
     @torch.no_grad()
     def _encode_video_latents(self, video_tensor, tiled=False, tile_size=(30, 52), tile_stride=(15, 26)):
+        # The Wan VAE expects pixels in [-1, 1]; model inputs arrive in [0, 1] (VISUAL is IDENTITY in
+        # the preprocessor — see configuration_fastwam.normalization_mapping). Map here, at the single
+        # video-encode boundary, so it is applied exactly once on every path.
+        video_tensor = video_tensor * 2.0 - 1.0
         z = self.vae.encode(
             video_tensor,
             device=self.device,
@@ -1094,6 +1098,8 @@ class FastWAM(torch.nn.Module):
             raise ValueError(
                 f"`input_image` must have shape [1,3,H,W] or [3,H,W], got {tuple(input_image.shape)}"
             )
+        # [0, 1] -> [-1, 1] for the Wan VAE (mirrors `_encode_video_latents`); single image-encode boundary.
+        input_image = input_image * 2.0 - 1.0
         image = input_image.to(device=self.device)[0].unsqueeze(1)
         z = self.vae.encode(
             [image], device=self.device, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride
