@@ -974,16 +974,6 @@ def main() -> None:
             data_root,
             args,
             parquet_reader,
-            range_backend="native-http",
-            label="indexed-native-http-sidecar",
-            sidecar_path=str(sidecar_path),
-        )
-        print()
-        run_indexed_strategy(
-            meta,
-            data_root,
-            args,
-            parquet_reader,
             range_backend="fsspec",
             label="indexed-sidecar",
             sidecar_path=str(sidecar_path),
@@ -1010,13 +1000,14 @@ def main() -> None:
         )
         return
     if sidecar_path is not None and args.strategy == "native-http":
+        print("using_indexed_sidecar_for_native_http: sidecar mode uses HfFileSystem range reads")
         run_indexed_strategy(
             meta,
             data_root,
             args,
             parquet_reader,
-            range_backend="native-http",
-            label="indexed-native-http-sidecar",
+            range_backend="fsspec",
+            label="indexed-sidecar",
             sidecar_path=str(sidecar_path),
         )
         return
