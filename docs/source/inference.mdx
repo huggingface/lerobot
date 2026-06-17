@@ -117,7 +117,7 @@ lerobot-rollout \
     --strategy.num_episodes=20 \
     --policy.path=outputs/pretrain/checkpoints/last/pretrained_model \
     --robot.type=bi_openarm_follower \
-    --teleop.type=openarm_mini \
+    --teleop.type=bi_openarm_mini \
     --dataset.repo_id=${HF_USER}/rollout_hil_data \
     --dataset.single_task="Fold the T-shirt"
 ```

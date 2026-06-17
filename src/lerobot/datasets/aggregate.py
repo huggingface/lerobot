@@ -32,6 +32,7 @@ from .feature_utils import features_equal_for_merge, get_hf_features_from_featur
 from .io_utils import (
     get_file_size_in_mb,
     get_parquet_file_size_in_mb,
+    to_parquet_one_row_group_per_episode,
     to_parquet_with_hf_images,
     write_info,
     write_stats,
@@ -286,6 +287,8 @@ def aggregate_datasets(
     data_files_size_in_mb: int | None = None,
     video_files_size_in_mb: int | None = None,
     chunk_size: int | None = None,
+    concatenate_videos: bool = True,
+    concatenate_data: bool = True,
 ):
     """Aggregates multiple LeRobot datasets into a single unified dataset.
 
@@ -303,6 +306,8 @@ def aggregate_datasets(
         data_files_size_in_mb: Maximum size for data files in MB (defaults to DEFAULT_DATA_FILE_SIZE_IN_MB)
         video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
         chunk_size: Maximum number of files per chunk (defaults to DEFAULT_CHUNK_SIZE)
+        concatenate_videos: When False, keep one mp4 per source file instead of packing into shards.
+        concatenate_data: When False, keep one parquet per source file instead of packing into shards.
     """
     logging.info("Start aggregate_datasets")
 
@@ -351,8 +356,12 @@ def aggregate_datasets(
     dst_meta.episodes = {}
 
     for src_meta in tqdm.tqdm(all_metadata, desc="Copy data and videos"):
-        videos_idx = aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size)
-        data_idx = aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size)
+        videos_idx = aggregate_videos(
+            src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size, concatenate_videos
+        )
+        data_idx = aggregate_data(
+            src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size, concatenate_data
+        )
 
         meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx)
 
@@ -367,7 +376,9 @@ def aggregate_datasets(
     logging.info("Aggregation complete.")
 
 
-def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size):
+def aggregate_videos(
+    src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size, concatenate_videos=True
+):
     """Aggregates video chunks from a source dataset into the destination dataset.
 
     Handles video file concatenation and rotation based on file size limits.
@@ -379,6 +390,7 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
         videos_idx: Dictionary tracking video chunk and file indices.
         video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
         chunk_size: Maximum number of files per chunk (defaults to DEFAULT_CHUNK_SIZE)
+        concatenate_videos: When False, keep one mp4 per source file instead of packing into shards.
     Returns:
         dict: Updated videos_idx with current chunk and file indices.
     """
@@ -439,7 +451,7 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
             src_size = get_file_size_in_mb(src_path)
             dst_size = get_file_size_in_mb(dst_path)
 
-            if dst_size + src_size >= video_files_size_in_mb:
+            if not concatenate_videos or dst_size + src_size >= video_files_size_in_mb:
                 # Rotate to a new file - offset is 0
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, chunk_size)
                 dst_key = (chunk_idx, file_idx)
@@ -477,7 +489,7 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
     return videos_idx
 
 
-def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size):
+def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size, concatenate_data=True):
     """Aggregates data chunks from a source dataset into the destination dataset.
 
     Reads source data files, updates indices to match the aggregated dataset,
@@ -493,6 +505,7 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
         data_idx: Dictionary tracking data chunk and file indices.
         data_files_size_in_mb: Maximum size for data files in MB.
         chunk_size: Maximum number of files per chunk.
+        concatenate_data: When False, keep one parquet per source file instead of packing into shards.
 
     Returns:
         dict: Updated data_idx with current chunk and file indices.
@@ -538,6 +551,8 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
             contains_images=contains_images,
             aggr_root=dst_meta.root,
             hf_features=hf_features,
+            concatenate=concatenate_data,
+            one_row_group_per_episode=True,
         )
 
         # Record the mapping from source to actual destination
@@ -614,6 +629,8 @@ def append_or_create_parquet_file(
     contains_images: bool = False,
     aggr_root: Path = None,
     hf_features: datasets.Features | None = None,
+    concatenate: bool = True,
+    one_row_group_per_episode: bool = False,
 ) -> tuple[dict[str, int], tuple[int, int]]:
     """Appends data to an existing parquet file or creates a new one based on size constraints.
 
@@ -630,6 +647,9 @@ def append_or_create_parquet_file(
         contains_images: Whether the data contains images requiring special handling.
         aggr_root: Root path for the aggregated dataset.
         hf_features: Optional HuggingFace Features schema for proper image typing.
+        concatenate: When False, always rotate to a new file instead of appending to the current one.
+        one_row_group_per_episode: True for DATA parquet (emit one row group per episode); False for
+            the episodes-metadata parquet (already one row per episode).
 
     Returns:
         tuple: (updated_idx, (dst_chunk, dst_file)) where updated_idx is the index dict
@@ -642,6 +662,8 @@ def append_or_create_parquet_file(
         dst_path.parent.mkdir(parents=True, exist_ok=True)
         if contains_images:
             to_parquet_with_hf_images(df, dst_path, features=hf_features)
+        elif one_row_group_per_episode:
+            to_parquet_one_row_group_per_episode(df, dst_path)
         else:
             df.to_parquet(dst_path)
         return idx, (dst_chunk, dst_file)
@@ -649,7 +671,7 @@ def append_or_create_parquet_file(
     src_size = get_parquet_file_size_in_mb(src_path)
     dst_size = get_parquet_file_size_in_mb(dst_path)
 
-    if dst_size + src_size >= max_mb:
+    if not concatenate or dst_size + src_size >= max_mb:
         idx["chunk"], idx["file"] = update_chunk_file_indices(idx["chunk"], idx["file"], chunk_size)
         dst_chunk, dst_file = idx["chunk"], idx["file"]
         new_path = aggr_root / default_path.format(chunk_index=dst_chunk, file_index=dst_file)
@@ -668,6 +690,8 @@ def append_or_create_parquet_file(
 
     if contains_images:
         to_parquet_with_hf_images(final_df, target_path, features=hf_features)
+    elif one_row_group_per_episode:
+        to_parquet_one_row_group_per_episode(final_df, target_path)
     else:
         final_df.to_parquet(target_path)
 

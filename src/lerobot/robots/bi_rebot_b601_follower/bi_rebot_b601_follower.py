@@ -18,7 +18,8 @@ import logging
 from functools import cached_property
 
 from lerobot.types import RobotAction, RobotObservation
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.bimanual import BimanualMixin
+from lerobot.utils.decorators import check_if_not_connected
 
 from ..rebot_b601_follower import RebotB601Follower, RebotB601FollowerRobotConfig
 from ..robot import Robot
@@ -27,7 +28,7 @@ from .config_bi_rebot_b601_follower import BiRebotB601FollowerConfig
 logger = logging.getLogger(__name__)
 
 
-class BiRebotB601Follower(Robot):
+class BiRebotB601Follower(BimanualMixin, Robot):
     """Bimanual Seeed Studio reBot B601-DM follower.
 
     Composes two single-arm :class:`RebotB601Follower` instances. Observation and
@@ -41,6 +42,18 @@ class BiRebotB601Follower(Robot):
         super().__init__(config)
         self.config = config
 
+        # Top-level cameras are opened by `left_arm` for convenience, but their
+        # keys stay unprefixed in observations (tracked via `_top_level_cam_keys`).
+        self._top_level_cam_keys = set(config.cameras)
+        _collisions = self._top_level_cam_keys & set(
+            config.left_arm_config.cameras
+        ) | self._top_level_cam_keys & set(config.right_arm_config.cameras)
+        if _collisions:
+            raise ValueError(
+                f"Top-level camera names collide with per-arm camera names: {sorted(_collisions)}"
+            )
+        left_arm_cameras = {**config.left_arm_config.cameras, **config.cameras}
+
         left_arm_config = RebotB601FollowerRobotConfig(
             id=f"{config.id}_left" if config.id else None,
             calibration_dir=config.calibration_dir,
@@ -49,7 +62,7 @@ class BiRebotB601Follower(Robot):
             dm_serial_baud=config.left_arm_config.dm_serial_baud,
             disable_torque_on_disconnect=config.left_arm_config.disable_torque_on_disconnect,
             max_relative_target=config.left_arm_config.max_relative_target,
-            cameras=config.left_arm_config.cameras,
+            cameras=left_arm_cameras,
             motor_can_ids=config.left_arm_config.motor_can_ids,
             pos_vel_velocity=config.left_arm_config.pos_vel_velocity,
             gripper_torque_ratio=config.left_arm_config.gripper_torque_ratio,
@@ -86,10 +99,12 @@ class BiRebotB601Follower(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            **{f"left_{k}": v for k, v in self.left_arm._cameras_ft.items()},
-            **{f"right_{k}": v for k, v in self.right_arm._cameras_ft.items()},
-        }
+        out: dict[str, tuple] = {}
+        for k, v in self.left_arm._cameras_ft.items():
+            out[k if k in self._top_level_cam_keys else f"left_{k}"] = v
+        for k, v in self.right_arm._cameras_ft.items():
+            out[f"right_{k}"] = v
+        return out
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -99,32 +114,13 @@ class BiRebotB601Follower(Robot):
     def action_features(self) -> dict[str, type]:
         return self._motors_ft
 
-    @property
-    def is_connected(self) -> bool:
-        return self.left_arm.is_connected and self.right_arm.is_connected
-
-    @check_if_already_connected
-    def connect(self, calibrate: bool = True) -> None:
-        self.left_arm.connect(calibrate)
-        self.right_arm.connect(calibrate)
-
-    @property
-    def is_calibrated(self) -> bool:
-        return self.left_arm.is_calibrated and self.right_arm.is_calibrated
-
-    def calibrate(self) -> None:
-        self.left_arm.calibrate()
-        self.right_arm.calibrate()
-
-    def configure(self) -> None:
-        self.left_arm.configure()
-        self.right_arm.configure()
-
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        obs_dict = {}
-        obs_dict.update({f"left_{k}": v for k, v in self.left_arm.get_observation().items()})
-        obs_dict.update({f"right_{k}": v for k, v in self.right_arm.get_observation().items()})
+        obs_dict: RobotObservation = {}
+        for k, v in self.left_arm.get_observation().items():
+            obs_dict[k if k in self._top_level_cam_keys else f"left_{k}"] = v
+        for k, v in self.right_arm.get_observation().items():
+            obs_dict[f"right_{k}"] = v
         return obs_dict
 
     @check_if_not_connected
@@ -143,8 +139,3 @@ class BiRebotB601Follower(Robot):
             **{f"left_{k}": v for k, v in sent_action_left.items()},
             **{f"right_{k}": v for k, v in sent_action_right.items()},
         }
-
-    @check_if_not_connected
-    def disconnect(self) -> None:
-        self.left_arm.disconnect()
-        self.right_arm.disconnect()
