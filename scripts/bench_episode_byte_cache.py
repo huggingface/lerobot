@@ -53,6 +53,12 @@ def parse_args() -> argparse.Namespace:
         default="both",
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--range-backend",
+        choices=("fsspec", "native-http"),
+        default="fsspec",
+        help="Range reader used by indexed/full episode-pool fetch tracks.",
+    )
     parser.add_argument("--num-episodes", type=int, default=512)
     parser.add_argument(
         "--manifest-episodes",
@@ -730,6 +736,8 @@ def main() -> None:
     args = parse_args()
     if args.strategy == "full":
         args.strategy = "both"
+    if args.strategy == "native-http":
+        args.range_backend = "native-http"
     data_root = args.data_root
     if data_root.startswith("hf://") and not args.no_hub_branch_assert:
         assert_hf_hub_range_cache_branch()
@@ -753,8 +761,8 @@ def main() -> None:
             data_root,
             args,
             parquet_reader,
-            range_backend="fsspec",
-            label="indexed-sidecar",
+            range_backend=args.range_backend,
+            label=f"indexed-sidecar-{args.range_backend}",
             sidecar_path=str(sidecar_path),
         )
         return
@@ -764,20 +772,19 @@ def main() -> None:
             data_root,
             args,
             parquet_reader,
-            range_backend="fsspec",
-            label="indexed-sidecar",
+            range_backend=args.range_backend,
+            label=f"indexed-sidecar-{args.range_backend}",
             sidecar_path=str(sidecar_path),
         )
         return
     if sidecar_path is not None and args.strategy == "native-http":
-        print("using_indexed_sidecar_for_native_http: sidecar mode uses HfFileSystem range reads")
         run_indexed_strategy(
             meta,
             data_root,
             args,
             parquet_reader,
-            range_backend="fsspec",
-            label="indexed-sidecar",
+            range_backend="native-http",
+            label="indexed-sidecar-native-http",
             sidecar_path=str(sidecar_path),
         )
         return
