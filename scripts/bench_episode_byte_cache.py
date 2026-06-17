@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import random
+import resource
 import tempfile
 import threading
 import time
@@ -308,6 +309,44 @@ def _format_duration(seconds: float) -> str:
     if seconds < 3600:
         return f"{seconds / 60:.1f}m"
     return f"{seconds / 3600:.1f}h"
+
+
+def _current_rss_mib() -> float | None:
+    status_path = Path("/proc/self/status")
+    if not status_path.exists():
+        return None
+    for line in status_path.read_text().splitlines():
+        if line.startswith("VmRSS:"):
+            return float(line.split()[1]) / 1024
+    return None
+
+
+def _peak_rss_mib() -> float:
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Linux reports KiB; macOS reports bytes.
+    if rss > 10**8:
+        return rss / 1024**2
+    return rss / 1024
+
+
+def _memory_snapshot() -> dict[str, float | None]:
+    return {"rss_mib": _current_rss_mib(), "peak_rss_mib": _peak_rss_mib()}
+
+
+def _print_memory_summary(start: dict[str, float | None], end: dict[str, float | None]) -> None:
+    start_rss = start["rss_mib"]
+    end_rss = end["rss_mib"]
+    delta = None if start_rss is None or end_rss is None else end_rss - start_rss
+    print()
+    print("| Memory | MiB |")
+    print("|---|---:|")
+    if start_rss is not None:
+        print(f"| rss start | {start_rss:.1f} |")
+    if end_rss is not None:
+        print(f"| rss end | {end_rss:.1f} |")
+    if delta is not None:
+        print(f"| rss delta | {delta:.1f} |")
+    print(f"| peak rss | {end['peak_rss_mib']:.1f} |")
 
 
 def _root_join(data_root: str, relative_path: str) -> str:
@@ -665,6 +704,7 @@ def run_indexed_strategy(
     sidecar_path: str | None = None,
 ) -> None:
     _log(f"starting_strategy: {label}")
+    memory_start = _memory_snapshot()
     manifest_start = time.perf_counter()
     dataset_episode_count = int(meta.total_episodes)
     manifest_episode_count = args.manifest_episodes or dataset_episode_count
@@ -724,6 +764,7 @@ def run_indexed_strategy(
     print(f"| synthesize mini-MP4 | {fetch_pool['synthesize_ms']:.3f} |")
     print(f"| store in shared cache | {fetch_pool['store_ms']:.3f} |")
     print(f"| camera jobs | {fetch_pool['jobs']:.0f} |")
+    _print_memory_summary(memory_start, _memory_snapshot())
 
     if args.include_decode:
         timestamps = _timestamps(manifest, episodes, args.frames_per_episode, args.seed + 1)
@@ -783,6 +824,7 @@ def run_random_frame_strategy(
     if args.frame_pool_size <= 0:
         raise ValueError(f"frame-pool-size must be > 0, got {args.frame_pool_size}")
     _log(f"starting_strategy: {label}")
+    memory_start = _memory_snapshot()
     manifest_start = time.perf_counter()
     dataset_episode_count = int(meta.total_episodes)
     manifest_episode_count = args.manifest_episodes or dataset_episode_count
@@ -869,6 +911,7 @@ def run_random_frame_strategy(
     print(f"| raw byte windows | {len(windows)} |")
     print(f"| coalesced byte ranges | {len(coalesced)} |")
     print(f"| useful sample MiB | {useful_bytes / 1024**2:.1f} |")
+    _print_memory_summary(memory_start, _memory_snapshot())
 
 
 def run_remote_strategy(
