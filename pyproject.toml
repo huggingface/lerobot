@@ -127,7 +127,7 @@ viz = [
     "rerun-sdk>=0.24.0,<0.34.0",
 ]
 foxglove = [
-    "foxglove-sdk>=0.24.0,<1.0.0",
+    "foxglove-sdk>=0.25.1,<1.0.0",
 ]
 # ── User-facing composite extras (map to CLI scripts) ─────
 # lerobot-record, lerobot-replay, lerobot-calibrate, lerobot-teleoperate, etc.
