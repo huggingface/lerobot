@@ -735,6 +735,19 @@ class PlannerController(StandingEncoderDecoder):
     def build_encoder_obs(self):
         obs = np.zeros(1762, np.float32); obs[0] = float(self.encode_mode)
         with self.motion_lock:
+            if self.encode_mode == 2:
+                # SMPL whole-body imitation: the 720-dim SMPL window carries the
+                # target pose; the planner reference frame supplies anchor + wrist.
+                rf = min(self.ref_cursor, self.motion_timesteps - 1)
+                ref_pos  = self.motion_joint_positions[rf].astype(np.float32)
+                ref_quat = self.motion_body_quats[rf].astype(np.float32)
+                anchor = self._anchor_6d(self.h_quat[0], ref_quat)
+                wrist  = ref_pos[WRIST_IL]
+                obs[922:1642] = self.smpl_joints_10frame_step1
+                for f in range(10):
+                    obs[1642+6*f:1642+6*(f+1)] = anchor
+                    obs[1702+6*f:1702+6*(f+1)] = wrist
+                return obs
             for f in range(10):
                 tf = min(self.ref_cursor + f*5 if self.playing else self.ref_cursor,
                          self.motion_timesteps - 1)
@@ -809,6 +822,21 @@ def process_keyboard(key, ms, controller=None):
         print("\n  >> EMERGENCY STOP -> IDLE"); return False
     if key in ('r','R'):
         ms.needs_replan = True; print("\n  >> Manual replan"); return False
+    if key in ('m','M'):
+        if controller is not None and getattr(controller, "smpl_motion", None) is not None:
+            if controller.encode_mode == 2:
+                controller.encode_mode = 0
+                controller.playing = True; controller.reinit_heading = True
+                ms.needs_replan = True
+                print("\n  >> Motion OFF -> locomotion (mode 0). WASD to drive.")
+            else:
+                controller.encode_mode = 2
+                controller.reinit_heading = True
+                controller.smpl_motion.reset()
+                print("\n  >> Motion ON -> SMPL playback (mode 2)")
+        else:
+            print("\n  >> No motion loaded (start with --motion-file)")
+        return False
     if key in ('n','N','p','P'):
         ms.motion_set_idx = (ms.motion_set_idx + (1 if key in ('n','N') else -1)) % len(MOTION_SETS)
         name, modes = MOTION_SETS[ms.motion_set_idx]
