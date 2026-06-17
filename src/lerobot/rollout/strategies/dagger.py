@@ -56,10 +56,14 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.common.control_utils import is_headless
+from lerobot.common.control_utils import (
+    follower_smooth_move_to,
+    is_headless,
+    teleop_smooth_move_to,
+    teleop_supports_feedback,
+)
 from lerobot.datasets import VideoEncodingManager
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
-from lerobot.teleoperators import Teleoperator
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.import_utils import _pynput_available
@@ -69,7 +73,6 @@ from lerobot.utils.utils import log_say
 
 from ..configs import DAggerKeyboardConfig, DAggerPedalConfig, DAggerStrategyConfig
 from ..context import RolloutContext
-from ..robot_wrapper import ThreadSafeRobot
 from .core import RolloutStrategy, estimate_max_episode_seconds, safe_push_to_hub, send_next_action
 
 PYNPUT_AVAILABLE = _pynput_available
@@ -169,64 +172,6 @@ class DAggerEvents:
             self._phase = DAggerPhase.AUTONOMOUS
             self._pending_transition = None
         self.upload_requested.clear()
-
-
-# ---------------------------------------------------------------------------
-# Teleoperator helpers
-# ---------------------------------------------------------------------------
-
-
-def _teleop_supports_feedback(teleop: Teleoperator) -> bool:
-    """Return True when the teleop can receive position feedback (is actuated).
-    TODO(Maxime): See if it is possible to unify this interface across teleops instead of duck-typing.
-    """
-    return (
-        bool(teleop.feedback_features)
-        and hasattr(teleop, "disable_torque")
-        and hasattr(teleop, "enable_torque")
-    )
-
-
-def _teleop_smooth_move_to(
-    teleop: Teleoperator, target_pos: dict, duration_s: float = 2.0, fps: int = 30
-) -> None:
-    """Smoothly move an actuated teleop to ``target_pos`` via linear interpolation.
-
-    Requires the teleoperator to support feedback
-    (i.e. have non-empty ``feedback_features`` and implement ``disable_torque`` / ``enable_torque``).
-
-    TODO(Maxime): This blocks up to ``duration_s`` seconds, during this time
-    the follower robot doesn't receive new actions, this could be an issue on LeKiwi.
-    """
-    teleop.enable_torque()
-    current = teleop.get_action()
-    steps = max(int(duration_s * fps), 1)
-
-    for step in range(steps + 1):
-        t = step / steps
-        interp = {
-            k: current[k] * (1 - t) + target_pos[k] * t if k in target_pos else current[k] for k in current
-        }
-        teleop.send_feedback(interp)
-        time.sleep(1 / fps)
-
-
-def _follower_smooth_move_to(
-    robot: ThreadSafeRobot, current: dict, target: dict, duration_s: float = 1.0, fps: int = 30
-) -> None:
-    """Smoothly move the follower robot from ``current`` to ``target`` action.
-
-    Used when the teleop is non-actuated: instead of driving the leader arm
-    to the follower, we bring the follower to the teleop's current pose.
-    Both ``current`` and ``target`` must be in robot-action key space.
-    """
-    steps = max(int(duration_s * fps), 1)
-
-    for step in range(steps + 1):
-        t = step / steps
-        interp = {k: current[k] * (1 - t) + target[k] * t if k in target else current[k] for k in current}
-        robot.send_action(interp)
-        time.sleep(1 / fps)
 
 
 # ---------------------------------------------------------------------------
@@ -756,31 +701,31 @@ class DAggerStrategy(RolloutStrategy):
             logger.info("Pausing engine - robot holds position")
             engine.pause()
 
-            if _teleop_supports_feedback(teleop) and prev_action is not None:
+            if teleop_supports_feedback(teleop) and prev_action is not None:
                 # TODO(Maxime): prev_action is in robot action key space (output of robot_action_processor).
                 # send_feedback expects teleop feedback key space. For homogeneous setups (e.g. SO-101
                 # leader + SO-101 follower) the keys are identical so this works. If the processor pipeline
                 # does non-trivial key renaming (e.g. a rename_map on action keys), the interpolation in
-                # _teleop_smooth_move_to silently no-ops and the arm doesn't move.
+                # teleop_smooth_move_to silently no-ops and the arm doesn't move.
                 logger.info("Smooth handover: moving leader arm to follower position")
-                _teleop_smooth_move_to(teleop, prev_action)
+                teleop_smooth_move_to(teleop, prev_action)
 
         elif old_phase == DAggerPhase.PAUSED and new_phase == DAggerPhase.CORRECTING:
             logger.info("Entering correction mode - human teleop control")
-            if not _teleop_supports_feedback(teleop) and prev_action is not None:
+            if not teleop_supports_feedback(teleop) and prev_action is not None:
                 logger.info("Smooth handover: sliding follower to teleop position")
                 obs = robot.get_observation()
                 teleop_action = teleop.get_action()
                 processed = ctx.processors.teleop_action_processor((teleop_action, obs))
                 target = ctx.processors.robot_action_processor((processed, obs))
-                _follower_smooth_move_to(robot, prev_action, target)
+                follower_smooth_move_to(robot, prev_action, target)
 
             # unlock the teleop for human control
-            if _teleop_supports_feedback(teleop):
+            if teleop_supports_feedback(teleop):
                 teleop.disable_torque()
 
         elif old_phase == DAggerPhase.CORRECTING and new_phase == DAggerPhase.PAUSED:
-            if _teleop_supports_feedback(teleop):
+            if teleop_supports_feedback(teleop):
                 teleop.enable_torque()
 
         elif new_phase == DAggerPhase.AUTONOMOUS:
@@ -790,7 +735,7 @@ class DAggerStrategy(RolloutStrategy):
             engine.resume()
 
             # release teleop before resuming the policy
-            if _teleop_supports_feedback(teleop):
+            if teleop_supports_feedback(teleop):
                 teleop.disable_torque()
 
     # ------------------------------------------------------------------

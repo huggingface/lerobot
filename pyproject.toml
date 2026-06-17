@@ -115,8 +115,8 @@ dataset = [
 ]
 training = [
     "lerobot[dataset]",
-    "accelerate>=1.10.0,<2.0.0",
-    "wandb>=0.24.0,<0.25.0",
+    "wandb>=0.24.0,<0.28.0",
+    "lerobot[accelerate-dep]",
 ]
 hardware = [
     "lerobot[pynput-dep]",
@@ -145,7 +145,8 @@ pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 # (noble ships urdfdom 3.x). Cap below 0.9.16 until system urdfdom 4.x is broadly available.
 placo-dep = ["placo>=0.9.6,<0.9.16"]
 transformers-dep = ["transformers>=5.4.0,<5.6.0"]
-grpcio-dep = ["grpcio==1.73.1", "protobuf>=6.31.1,<6.32.0"]
+grpcio-dep = ["grpcio>=1.73.1,<2.0.0", "protobuf>=6.31.1,<8.0.0"]
+accelerate-dep = ["accelerate>=1.14.0,<2.0.0"]
 can-dep = ["python-can>=4.2.0,<5.0.0"]
 peft-dep = ["peft>=0.18.0,<1.0.0"]
 scipy-dep = ["scipy>=1.14.0,<2.0.0"]
@@ -180,7 +181,12 @@ unitree_g1 = [
     "lerobot[matplotlib-dep]",
     "lerobot[pygame-dep]",
 ]
-reachy2 = ["reachy2_sdk>=1.0.15,<1.1.0"]
+# reachy2-sdk caps grpcio<=1.73.1 and protobuf<=6.32.0; quarantined here so downstream users aren't held back. reachy2-sdk is unlikely to release new versions.
+reachy2 = [
+    "reachy2_sdk>=1.0.15,<1.1.0",
+    "grpcio<=1.73.1",
+    "protobuf<=6.32.0",
+]
 # Seeed Studio reBot B601-DM follower (motorbridge / CAN) + StarArm102 / reBot Arm 102
 # leader (motorbridge-smart-servo / FashionStar UART servos).
 rebot = ["lerobot[motorbridge-dep]", "lerobot[motorbridge-smart-servo-dep]"]
@@ -202,7 +208,7 @@ wallx = [
 ]
 pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 molmoact2 = ["lerobot[transformers-dep]", "lerobot[peft-dep]", "lerobot[scipy-dep]"]
-smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0"]
+smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "lerobot[accelerate-dep]"]
 multi_task_dit = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
 groot = [
     "lerobot[transformers-dep]",
@@ -215,26 +221,43 @@ groot = [
     "flash-attn>=2.5.9,<3.0.0 ; sys_platform != 'darwin'"
 ]
 sarm = ["lerobot[transformers-dep]", "pydantic>=2.0.0,<3.0.0", "faker>=33.0.0,<35.0.0", "lerobot[matplotlib-dep]", "lerobot[qwen-vl-utils-dep]"]
+robometer = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]", "lerobot[peft-dep]"]
 topreward = ["lerobot[transformers-dep]"]
 xvla = ["lerobot[transformers-dep]"]
 eo1 = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]"]
-hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
+hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.14,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
+vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
+# Annotation pipeline (lerobot-annotate). The only backend is ``openai``,
+# which talks to any OpenAI-compatible server (``vllm serve`` /
+# ``transformers serve`` / hosted). Distributed runs use Hugging Face Jobs
+# (see examples/annotations/run_hf_job.py).
+annotations = [
+    "lerobot[dataset]",
+    "lerobot[transformers-dep]",
+    "openai>=1.40,<2.0",
+    # ``vllm`` is intentionally NOT a hard dep: it pins an older torch, and
+    # uv's single unified lock would then cap ``torch`` for every extra
+    # (e.g. forcing 2.8 while ``torchcodec`` in [dataset] needs 2.11 -> ABI
+    # break in CI). The HF Jobs image (``vllm/vllm-openai``) provides vLLM;
+    # install it locally only if you run your own ``vllm serve``.
+]
+
 # Development
-dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1", "mypy>=1.19.1", "ruff>=0.14.1", "lerobot[notebook]"]
+dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools>=1.73.1,<2.0.0", "mypy>=1.19.1", "ruff>=0.14.1", "lerobot[notebook]"]
 notebook = ["jupyter>=1.0.0,<2.0.0", "ipykernel>=6.0.0,<7.0.0"]
 test = ["pytest>=8.1.0,<9.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.0.0,<8.0.0", "mock-serial>=0.0.1,<0.1.0 ; sys_platform != 'win32'"]
 video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
 # Simulation
 # NOTE: Explicitly listing scipy helps flatten the dependecy tree.
-aloha = ["lerobot[dataset]", "gym-aloha>=0.1.2,<0.2.0", "lerobot[scipy-dep]"]
+aloha = ["lerobot[dataset]", "gym-aloha>=0.1.4,<0.2.0", "lerobot[scipy-dep]"]
 pusht = ["lerobot[dataset]", "gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
-libero = ["lerobot[dataset]", "lerobot[transformers-dep]", "hf-libero>=0.1.3,<0.2.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
+libero = ["lerobot[dataset]", "lerobot[transformers-dep]", "hf-libero>=0.1.4,<0.2.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
 metaworld = ["lerobot[dataset]", "metaworld==3.0.0", "lerobot[scipy-dep]"]
 # NOTE: vlabench is NOT exposed as a `lerobot` extra. Its only distribution
 # is the OpenMOSS/VLABench GitHub repo (package name `VLABench`, no PyPI
@@ -284,6 +307,7 @@ all = [
     # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
     "lerobot[xvla]",
     "lerobot[hilserl]",
+    "lerobot[vla_jepa]",
     "lerobot[async]",
     "lerobot[dev]",
     "lerobot[test]",
@@ -294,6 +318,7 @@ all = [
     "lerobot[libero]; sys_platform == 'linux'",
     "lerobot[metaworld]",
     "lerobot[sarm]",
+    "lerobot[robometer]",
     "lerobot[topreward]",
     "lerobot[peft]",
     # "lerobot[unitree_g1]", TODO: Unitree requires specific installation instructions for unitree_sdk2
@@ -316,6 +341,7 @@ lerobot-find-joint-limits="lerobot.scripts.lerobot_find_joint_limits:main"
 lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
+lerobot-annotate="lerobot.scripts.lerobot_annotate:main"
 lerobot-rollout="lerobot.scripts.lerobot_rollout:main"
 
 # ---------------- Tool Configurations ----------------
@@ -334,7 +360,7 @@ torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 
 [tool.setuptools.package-data]
-lerobot = ["envs/*.json"]
+lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -201,8 +201,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         super().__init__()
         self.repo_id = repo_id
         self._requested_root = Path(root) if root else None
-        self.reader = None
-        self.set_image_transforms(image_transforms)
         self.delta_timestamps = delta_timestamps
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
@@ -249,6 +247,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             image_transforms=image_transforms,
             return_uint8=self._return_uint8,
         )
+        self.image_transforms = image_transforms
 
         # Load actual data
         if force_cache_sync or not self.reader.try_load():
@@ -505,15 +504,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def set_image_transforms(self, image_transforms: Callable | None) -> None:
         """Replace the transform applied to visual observations."""
-        if image_transforms is not None and not callable(image_transforms):
-            raise TypeError("image_transforms must be callable or None.")
+        self._ensure_reader().set_image_transforms(image_transforms)
         self.image_transforms = image_transforms
-        if self.reader is not None:
-            self.reader._image_transforms = image_transforms
 
     def clear_image_transforms(self) -> None:
         """Remove the transform applied to visual observations."""
-        self.set_image_transforms(None)
+        if self.reader is not None:
+            self.reader.set_image_transforms(None)
+        self.image_transforms = None
 
     # ── Hub methods (stay on facade) ──────────────────────────────────
 
@@ -524,7 +522,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         license: str | None = "apache-2.0",
         tag_version: bool = True,
         push_videos: bool = True,
-        private: bool = False,
+        private: bool | None = None,
         allow_patterns: list[str] | str | None = None,
         upload_large_folder: bool = False,
         **card_kwargs,
@@ -543,7 +541,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             tag_version: If ``True``, create a Git tag for the current codebase
                 version.
             push_videos: If ``False``, skip uploading the ``videos/`` directory.
-            private: If ``True``, create a private repository.
+            private: If ``True``, create a private repository. If ``None``
+                (default), defer to the org default on the Hub (only affects orgs).
             allow_patterns: Glob pattern(s) restricting which files to upload.
             upload_large_folder: If ``True``, use ``upload_large_folder`` instead
                 of ``upload_folder`` for very large datasets.
