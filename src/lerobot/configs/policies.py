@@ -31,6 +31,7 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 from lerobot.utils.hub import HubMixin
 
+from .parser import parse_arg
 from .types import FeatureType, PolicyFeature
 
 T = TypeVar("T", bound="PreTrainedConfig")
@@ -79,6 +80,9 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     # Either the repo ID of a model hosted on the Hub or a path to a directory containing weights
     # saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch.
     pretrained_path: Path | None = None
+    # The specific model version to load when `pretrained_path` points to a Hugging Face Hub repo.
+    # Can be a branch name, a tag name, or a commit hash. Ignored for local paths.
+    revision: str | None = None
 
     def __post_init__(self) -> None:
         if not self.device or not is_torch_device_available(self.device):
@@ -179,6 +183,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
         **policy_kwargs: Any,
     ) -> T:
         model_id = str(pretrained_name_or_path)
+        if revision is None:
+            revision = parse_arg("revision", policy_kwargs.get("cli_overrides") or [])
         config_file: str | None = None
         if Path(model_id).is_dir():
             if CONFIG_NAME in os.listdir(model_id):
@@ -223,4 +229,9 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
 
         cli_overrides = policy_kwargs.pop("cli_overrides", [])
         with draccus.config_type("json"):
-            return draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
+            parsed = draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
+
+        # This covers the case where `revision` was passed as an explicit kwarg rather than a CLI override.
+        if parsed.revision is None and revision is not None:
+            parsed.revision = revision
+        return parsed

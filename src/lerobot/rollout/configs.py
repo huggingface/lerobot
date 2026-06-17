@@ -321,11 +321,7 @@ class RolloutConfig:
         if self.robot is None:
             raise ValueError("--robot.type is required for rollout")
 
-        policy_path = parser.get_path_arg("policy")
-        if policy_path:
-            cli_overrides = parser.get_cli_overrides("policy")
-            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
-            self.policy.pretrained_path = policy_path
+        self.policy = parser.load_pretrained_config_from_cli("policy")
         if self.policy is None:
             raise ValueError("--policy.path is required for rollout")
 

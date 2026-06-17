@@ -268,7 +268,8 @@ def make_pre_post_processors(
     Args:
         policy_cfg: The configuration of the policy for which to create processors.
         pretrained_path: An optional path to load pretrained processor pipelines from.
-            If provided, pipelines are loaded from this path.
+            If provided, pipelines are loaded from this path. When it is a Hub repo id, the
+            pipelines are loaded from `policy_cfg.revision` (branch, tag, or commit hash).
         **kwargs: Keyword arguments for processor configuration, as defined in
             `ProcessorConfigKwargs`.
 
@@ -306,6 +307,7 @@ def make_pre_post_processors(
             config_filename=kwargs.get(
                 "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
             ),
+            revision=policy_cfg.revision,
             overrides=kwargs.get("preprocessor_overrides", {}),
             to_transition=batch_to_transition,
             to_output=transition_to_batch,
@@ -315,6 +317,7 @@ def make_pre_post_processors(
             config_filename=kwargs.get(
                 "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
             ),
+            revision=policy_cfg.revision,
             overrides=kwargs.get("postprocessor_overrides", {}),
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
@@ -557,6 +560,7 @@ def make_policy(
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
         kwargs["pretrained_name_or_path"] = cfg.pretrained_path
+        kwargs["revision"] = cfg.revision
         policy = policy_cls.from_pretrained(**kwargs)
     elif cfg.pretrained_path and cfg.use_peft:
         # Load a pretrained PEFT model on top of the policy. The pretrained path points to the folder/repo
@@ -567,7 +571,9 @@ def make_policy(
         logging.info("Loading policy's PEFT adapter.")
 
         peft_pretrained_path = str(cfg.pretrained_path)
-        peft_config = PeftConfig.from_pretrained(peft_pretrained_path)
+        # `cfg.revision` refers to the adapter repo (`pretrained_path`), not the base model, which
+        # lives in a separate repo with its own versioning. Only the adapter loads get the revision.
+        peft_config = PeftConfig.from_pretrained(peft_pretrained_path, revision=cfg.revision)
 
         kwargs["pretrained_name_or_path"] = peft_config.base_model_name_or_path
         if not kwargs["pretrained_name_or_path"]:
@@ -580,7 +586,7 @@ def make_policy(
 
         policy = policy_cls.from_pretrained(**kwargs)
         policy = PeftModel.from_pretrained(
-            policy, peft_pretrained_path, config=peft_config, is_trainable=True
+            policy, peft_pretrained_path, config=peft_config, is_trainable=True, revision=cfg.revision
         )
 
     else:

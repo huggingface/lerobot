@@ -23,7 +23,10 @@ from functools import wraps
 from pathlib import Path
 from pkgutil import ModuleInfo
 from types import ModuleType
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+if TYPE_CHECKING:
+    from lerobot.configs.policies import PreTrainedConfig
 
 import draccus
 import yaml  # type: ignore[import-untyped]
@@ -179,6 +182,20 @@ def get_path_arg(field_name: str, args: Sequence[str] | None = None) -> str | No
 
 def get_yaml_overrides(field_name: str) -> list[str]:
     return _config_yaml_overrides.get(field_name, [])
+
+
+def load_pretrained_config_from_cli(field_name: str = "policy") -> "PreTrainedConfig | None":
+    """Load a ``PreTrainedConfig`` from ``--{field_name}.path`` if it was passed on the CLI."""
+    from lerobot.configs.policies import PreTrainedConfig
+
+    path = get_path_arg(field_name)
+    if not path:
+        return None
+
+    overrides = get_yaml_overrides(field_name) + (get_cli_overrides(field_name) or [])
+    config = PreTrainedConfig.from_pretrained(path, cli_overrides=overrides)
+    config.pretrained_path = Path(path)
+    return config
 
 
 def get_type_arg(field_name: str, args: Sequence[str] | None = None) -> str | None:
