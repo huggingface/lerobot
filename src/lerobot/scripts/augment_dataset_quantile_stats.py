@@ -143,13 +143,12 @@ def compute_quantile_stats_for_dataset(
     aggregated_stats: dict[str, dict] = {}
     for key, rs in running_stats.items():
         stats = rs.get_statistics()
-        stats["count"] = np.array([stats["count"][0]])  # keep shape (1,)
 
         if feature_meta[key]["is_image_video"]:
-            # Expand dims to match (1, C, 1, 1) layout expected for image stats
+            # Expand dims to match (C, 1, 1) layout expected for image stats
             for stat_key in stats:
                 if stat_key != "count":
-                    stats[stat_key] = stats[stat_key][np.newaxis, :, np.newaxis, np.newaxis]
+                    stats[stat_key] = stats[stat_key][:, np.newaxis, np.newaxis]
 
         aggregated_stats[key] = stats
 
