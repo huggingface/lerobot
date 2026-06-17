@@ -132,11 +132,11 @@ class PacketHandler:
     def SCS_HIBYTE(self, w):  # noqa: N802
         return (w >> 8) & 0xFF
 
-    def SCS_LOWORD(self, l):  # noqa: N802
-        return l & 0xFFFF
+    def SCS_LOWORD(self, dw):  # noqa: N802
+        return dw & 0xFFFF
 
-    def SCS_HIWORD(self, l):  # noqa: N802
-        return (l >> 16) & 0xFFFF
+    def SCS_HIWORD(self, dw):  # noqa: N802
+        return (dw >> 16) & 0xFFFF
 
     def txPacket(self, txpacket):  # noqa: N802
         total_packet_length = txpacket[PKT_LENGTH] + 4
@@ -290,10 +290,14 @@ class PacketHandler:
     def read4ByteData(self, id_, address):  # noqa: N802
         data, result, error = self.readData(id_, address, 4)
         return (
-            self.makeWord32(self.makeWord16(data[0], data[1]), self.makeWord16(data[2], data[3]))
-            if result == COMM_SUCCESS
-            else 0
-        ), result, error
+            (
+                self.makeWord32(self.makeWord16(data[0], data[1]), self.makeWord16(data[2], data[3]))
+                if result == COMM_SUCCESS
+                else 0
+            ),
+            result,
+            error,
+        )
 
     def writeDataOnly(self, id_, address, length, data):  # noqa: N802
         txpacket = [0] * (length + 7)

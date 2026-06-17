@@ -15,7 +15,14 @@
 import logging
 from copy import deepcopy
 
-from lerobot.motors.feetech.feetech import DriveMode, FeetechMotorsBus, OperatingMode, TorqueMode, patch_setPacketTimeout
+from lerobot.motors.feetech.feetech import (
+    DriveMode,
+    FeetechMotorsBus,
+    OperatingMode,
+    TorqueMode,
+    patch_setPacketTimeout,
+)
+from lerobot.motors.feetech.tables import SCAN_BAUDRATES
 from lerobot.motors.motors_bus import Motor, MotorCalibration
 
 from . import hiwonder_sdk as hw
@@ -26,7 +33,6 @@ from .tables import (
     MODEL_NUMBER_TABLE,
     MODEL_PROTOCOL,
     MODEL_RESOLUTION,
-    SCAN_BAUDRATES,
 )
 
 DEFAULT_PROTOCOL_VERSION = 0
@@ -129,9 +135,7 @@ class HiwonderMotorsBus(FeetechMotorsBus):
             self.port_handler.is_using = False
             return data_list, result
 
-        self.port_handler.setPacketTimeoutMillis(
-            (wait_length * tx_time_per_byte) + (3.0 * hw.MAX_ID) + 16.0
-        )
+        self.port_handler.setPacketTimeoutMillis((wait_length * tx_time_per_byte) + (3.0 * hw.MAX_ID) + 16.0)
 
         rxpacket = []
         while not self.port_handler.isPacketTimeout() and rx_length < wait_length:

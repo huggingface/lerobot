@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .packet_handler import COMM_NOT_AVAILABLE, COMM_RX_CORRUPT, COMM_RX_TIMEOUT, COMM_SUCCESS
+from .packet_handler import COMM_NOT_AVAILABLE, COMM_RX_CORRUPT, COMM_SUCCESS
 
 
 class GroupSyncRead:
@@ -78,7 +78,7 @@ class GroupSyncRead:
             return result
         return self.rxPacket()
 
-    def _readRx(self, rxpacket, id_, data_length):
+    def _readRx(self, rxpacket, id_, data_length):  # noqa: N802
         data = []
         rx_length = len(rxpacket)
         rx_index = 0
@@ -105,7 +105,7 @@ class GroupSyncRead:
             cal_sum = id_ + (data_length + 2) + error
             data = [error]
             data.extend(rxpacket[rx_index : rx_index + data_length])
-            for i in range(data_length):
+            for _i in range(data_length):
                 cal_sum += rxpacket[rx_index]
                 rx_index += 1
             cal_sum = ~cal_sum & 0xFF
@@ -135,9 +135,7 @@ class GroupSyncRead:
             )
         elif data_length == 4:
             return self.packet_handler.makeWord32(
-                self.packet_handler.makeWord16(
-                    self.data_dict[id_][offset], self.data_dict[id_][offset + 1]
-                ),
+                self.packet_handler.makeWord16(self.data_dict[id_][offset], self.data_dict[id_][offset + 1]),
                 self.packet_handler.makeWord16(
                     self.data_dict[id_][offset + 2], self.data_dict[id_][offset + 3]
                 ),

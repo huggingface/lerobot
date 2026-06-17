@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from lerobot.motors.feetech.tables import (
-    SCAN_BAUDRATES,
     STS_SMS_SERIES_BAUDRATE_TABLE,
     STS_SMS_SERIES_CONTROL_TABLE,
     STS_SMS_SERIES_ENCODINGS_TABLE,
@@ -46,4 +45,3 @@ MODEL_NUMBER_TABLE = {
 MODEL_PROTOCOL = {
     "hx30hm": 0,
 }
-

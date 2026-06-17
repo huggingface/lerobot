@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
 import time
 
 import serial
@@ -62,10 +61,7 @@ class PortHandler:
         return self.ser.in_waiting
 
     def readPort(self, length):  # noqa: N802
-        if sys.version_info > (3, 0):
-            return self.ser.read(length)
-        else:
-            return [ord(ch) for ch in self.ser.read(length)]
+        return self.ser.read(length)
 
     def writePort(self, packet):  # noqa: N802
         return self.ser.write(packet)
@@ -110,6 +106,19 @@ class PortHandler:
         return True
 
     def getCFlagBaud(self, baudrate):  # noqa: N802
-        if baudrate in [4800, 9600, 14400, 19200, 38400, 57600, 76800, 115200, 128000, 250000, 500000, 1000000]:
+        if baudrate in [
+            4800,
+            9600,
+            14400,
+            19200,
+            38400,
+            57600,
+            76800,
+            115200,
+            128000,
+            250000,
+            500000,
+            1000000,
+        ]:
             return baudrate
         return -1
