@@ -167,6 +167,8 @@ def rollout(
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
     recording_dir: Path | None = None,
     env_features: dict | None = None,
+    recording_repo_id: str | None = None,
+    recording_private: bool = False,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -215,10 +217,13 @@ def rollout(
         fps = env.unwrapped.metadata.get("render_fps", 30)
         recording_datasets = []
         for i in range(env.num_envs):
-            root = str(recording_dir / f"env_{i}") if env.num_envs > 1 else str(recording_dir)
+            multi_env = env.num_envs > 1
+            root = str(recording_dir / f"env_{i}") if multi_env else str(recording_dir)
+            base_repo_id = recording_repo_id or "eval_recording"
+            repo_id = f"{base_repo_id}_env_{i}" if multi_env else base_repo_id
             recording_datasets.append(
                 LeRobotDataset.create(
-                    repo_id="eval_recording",
+                    repo_id=repo_id,
                     fps=fps,
                     features=features,
                     root=root,
@@ -364,6 +369,8 @@ def rollout(
     if recording_datasets is not None:
         for ds in recording_datasets:
             ds.finalize()
+            if recording_repo_id is not None:
+                ds.push_to_hub(private=recording_private)
 
     if hasattr(policy, "use_original_modules"):
         policy.use_original_modules()
@@ -385,6 +392,8 @@ def eval_policy(
     start_seed: int | None = None,
     recording_dir: Path | None = None,
     env_features: dict | None = None,
+    recording_repo_id: str | None = None,
+    recording_private: bool = False,
 ) -> dict:
     """
     Args:
@@ -475,6 +484,8 @@ def eval_policy(
             render_callback=render_frame if max_episodes_rendered > 0 else None,
             recording_dir=recording_dir,
             env_features=env_features,
+            recording_repo_id=recording_repo_id,
+            recording_private=recording_private,
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -697,6 +708,8 @@ def eval_main(cfg: EvalPipelineConfig):
             max_parallel_tasks=cfg.env.max_parallel_tasks,
             recording_dir=recording_dir,
             env_features=cfg.env.features if cfg.eval.recording else None,
+            recording_repo_id=cfg.eval.recording_repo_id,
+            recording_private=cfg.eval.recording_private,
         )
         print("Overall Aggregated Metrics:")
         print(info["overall"])
@@ -741,6 +754,8 @@ def eval_one(
     start_seed: int | None,
     recording_dir: Path | None = None,
     env_features: dict | None = None,
+    recording_repo_id: str | None = None,
+    recording_private: bool = False,
 ) -> TaskMetrics:
     """Evaluates one task_id of one suite using the provided vec env."""
 
@@ -760,6 +775,8 @@ def eval_one(
         start_seed=start_seed,
         recording_dir=recording_dir,
         env_features=env_features,
+        recording_repo_id=recording_repo_id,
+        recording_private=recording_private,
     )
 
     per_episode = task_result["per_episode"]
@@ -788,6 +805,8 @@ def run_one(
     start_seed: int | None,
     recording_dir: Path | None = None,
     env_features: dict | None = None,
+    recording_repo_id: str | None = None,
+    recording_private: bool = False,
 ):
     """
     Run eval_one for a single (task_group, task_id, env).
@@ -800,8 +819,11 @@ def run_one(
         task_videos_dir.mkdir(parents=True, exist_ok=True)
 
     task_recording_dir = None
+    task_repo_id = None
     if recording_dir is not None and env_features is not None:
         task_recording_dir = recording_dir / f"{task_group}_{task_id}"
+        if recording_repo_id is not None:
+            task_repo_id = f"{recording_repo_id}_{task_group}_{task_id}"
 
     metrics = eval_one(
         env,
@@ -817,6 +839,8 @@ def run_one(
         start_seed=start_seed,
         recording_dir=task_recording_dir,
         env_features=env_features,
+        recording_repo_id=task_repo_id,
+        recording_private=recording_private,
     )
 
     if max_episodes_rendered > 0:
@@ -836,6 +860,8 @@ def eval_policy_all(
     max_episodes_rendered: int = 0,
     recording_dir: Path | None = None,
     env_features: dict | None = None,
+    recording_repo_id: str | None = None,
+    recording_private: bool = False,
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
@@ -897,6 +923,8 @@ def eval_policy_all(
         start_seed=start_seed,
         recording_dir=recording_dir,
         env_features=env_features,
+        recording_repo_id=recording_repo_id,
+        recording_private=recording_private,
     )
 
     if max_parallel_tasks <= 1:

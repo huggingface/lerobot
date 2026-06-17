@@ -73,10 +73,17 @@ class EvalConfig:
     # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
     # Defaults to True; automatically downgraded to SyncVectorEnv when batch_size=1.
     use_async_envs: bool = True
-    # Whether to record eval rollouts as a LeRobot v3.0 dataset on disk.
+    # Whether to record eval rollouts as a LeRobot dataset on disk.
     recording: bool = False
+    # If set, push recorded eval datasets to the Hub under this repo id (one repo per task,
+    # suffixed by task and env index). Requires recording=true.
+    recording_repo_id: str | None = None
+    # Whether the pushed recording repositories should be private.
+    recording_private: bool = False
 
     def __post_init__(self) -> None:
+        if self.recording_repo_id is not None and not self.recording:
+            raise ValueError("eval.recording_repo_id requires eval.recording=true.")
         if self.batch_size == 0:
             self.batch_size = self._auto_batch_size()
         if self.batch_size > self.n_episodes:
