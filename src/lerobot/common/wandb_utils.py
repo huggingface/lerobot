@@ -180,7 +180,21 @@ class WandBLogger:
                 self._wandb_custom_step_key.add(new_custom_key)
                 self._wandb.define_metric(new_custom_key, hidden=True)
 
+        # Expand list/tuple of scalars (e.g. loss_per_dim) into per-index entries
+        # before the scalar type guard below; mixed-type or nested lists fall through.
+        expanded = {}
         for k, v in d.items():
+            if (
+                isinstance(v, (list, tuple))
+                and len(v) > 0
+                and all(isinstance(elem, (int, float)) and not isinstance(elem, bool) for elem in v)
+            ):
+                for i, elem in enumerate(v):
+                    expanded[f"{k}_{i}"] = elem
+            else:
+                expanded[k] = v
+
+        for k, v in expanded.items():
             if not isinstance(v, (int | float | str)):
                 logging.warning(
                     f'WandB logging of key "{k}" was ignored as its type "{type(v)}" is not handled by this wrapper.'
