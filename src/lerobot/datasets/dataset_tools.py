@@ -27,6 +27,7 @@ import logging
 import shutil
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from copy import deepcopy
 from pathlib import Path
 
 import datasets
@@ -261,6 +262,8 @@ def merge_datasets(
     datasets: list[LeRobotDataset],
     output_repo_id: str,
     output_dir: str | Path | None = None,
+    concatenate_videos: bool = True,
+    concatenate_data: bool = True,
 ) -> LeRobotDataset:
     """Merge multiple LeRobotDatasets into a single dataset.
 
@@ -270,6 +273,8 @@ def merge_datasets(
         datasets: List of LeRobotDatasets to merge.
         output_repo_id: Merged dataset identifier.
         output_dir: Root directory where the merged dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/output_repo_id.
+        concatenate_videos: When False, keep one mp4 per source file instead of packing into shards.
+        concatenate_data: When False, keep one parquet per source file instead of packing into shards.
     """
     if not datasets:
         raise ValueError("No datasets to merge")
@@ -284,6 +289,8 @@ def merge_datasets(
         aggr_repo_id=output_repo_id,
         roots=roots,
         aggr_root=output_dir,
+        concatenate_videos=concatenate_videos,
+        concatenate_data=concatenate_data,
     )
 
     merged_dataset = LeRobotDataset(
@@ -1095,7 +1102,9 @@ def _copy_episodes_metadata_and_stats(
     if dst_meta.video_keys and src_dataset.meta.video_keys:
         for key in dst_meta.video_keys:
             if key in src_dataset.meta.features:
-                dst_meta.info.features[key]["info"] = src_dataset.meta.info.features[key].get("info", {})
+                dst_meta.info.features[key]["info"] = deepcopy(
+                    src_dataset.meta.info.features[key].get("info", {})
+                )
 
     write_info(dst_meta.info, dst_meta.root)
 
