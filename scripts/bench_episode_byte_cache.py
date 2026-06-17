@@ -60,6 +60,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--pool-size", type=int, default=16)
     parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument(
+        "--include-decode",
+        action="store_true",
+        help="Also run decoder-opening/frame-decode comparison tracks. Fetch-only is the default.",
+    )
     parser.add_argument("--decode-workers", type=int, default=1)
     parser.add_argument("--prefetch-ahead", type=int, default=8)
     parser.add_argument("--frames-per-episode", type=int, default=16)
@@ -280,23 +285,22 @@ class EpisodeParquetReader:
         return row_groups
 
 
-def run_sequential(
+def run_fetch_pool(
     manifest: EpisodeVideoManifest,
     data_root: str,
     episodes: Sequence[int],
     byte_budget: int,
-    parquet_reader: EpisodeParquetReader,
+    workers: int,
     range_backend: str,
 ) -> dict[str, float]:
     with EpisodeByteCache(
         manifest,
         data_root,
         byte_budget=byte_budget,
-        workers=1,
+        workers=workers,
         range_backend=range_backend,
         open_decoders=False,
     ) as cache:
-        parquet_s = parquet_reader.read_episodes(episodes, workers=1)
         elapsed = _fill_cache(cache, episodes)
     byte_count = _bytes_for(manifest, episodes)
     episode_mb = byte_count / len(episodes) / 1024**2
@@ -305,7 +309,6 @@ def run_sequential(
         "fetch_mbps": byte_count / elapsed / 1024**2,
         "fetch_episodes_s": len(episodes) / elapsed,
         "episode_mb": episode_mb,
-        "parquet_s": parquet_s,
         "avg_mb_miss": byte_count / (len(episodes) * len(manifest.video_keys)) / 1024**2,
     }
 
@@ -519,7 +522,6 @@ def run_indexed_strategy(
     _log(f"{label}: manifest_build_s={manifest_s:.2f}")
 
     episodes = _episode_pool(int(meta.total_episodes), args.num_episodes, args.pool_size, args.seed)
-    timestamps = _timestamps(manifest, episodes, args.frames_per_episode, args.seed + 1)
     byte_budget = int(args.byte_budget_gb * 1024**3)
     byte_count = _bytes_for(manifest, episodes)
     _log(
@@ -527,35 +529,8 @@ def run_indexed_strategy(
         f"({byte_count / len(episodes) / 1024**2:.1f} MiB/episode)"
     )
 
-    _log(f"{label}: running sequential video fetch")
-    sequential = run_sequential(manifest, data_root, episodes, byte_budget, parquet_reader, range_backend)
-    _log(f"{label}: running parallel video fetch + decode-only")
-    parallel = run_parallel(
-        manifest,
-        data_root,
-        episodes,
-        timestamps,
-        byte_budget,
-        args.workers,
-        args.decode_workers,
-        args.frames_per_episode,
-        parquet_reader,
-        range_backend,
-    )
-    _log(f"{label}: running overlapped end-to-end")
-    overlapped = run_overlapped(
-        manifest,
-        data_root,
-        episodes,
-        timestamps,
-        byte_budget,
-        args.workers,
-        args.decode_workers,
-        args.frames_per_episode,
-        args.prefetch_ahead,
-        parquet_reader,
-        range_backend,
-    )
+    _log(f"{label}: filling episode byte cache with {args.workers} workers")
+    fetch_pool = run_fetch_pool(manifest, data_root, episodes, byte_budget, args.workers, range_backend)
 
     print(f"manifest_build_s: {manifest_s:.2f}")
     print(f"strategy: {label}")
@@ -565,24 +540,54 @@ def run_indexed_strategy(
     print(f"episodes: {episodes}")
     print(f"cameras: {manifest.video_keys}")
     print()
-    print("| Track | fetch MB/s | fetch eps/s | samples/s | avg MB/miss | notes |")
+    print("| Track | fetch MB/s | fetch eps/s | wall s | avg MB/camera | notes |")
     print("|---|---:|---:|---:|---:|---|")
     print(
-        f"| SEQUENTIAL | {sequential['fetch_mbps']:.1f} | {sequential['fetch_episodes_s']:.2f} | - | "
-        f"{sequential['avg_mb_miss']:.1f} | 1 worker video fetch, parquet {sequential['parquet_s']:.2f}s |"
+        f"| EPISODE POOL FETCH | {fetch_pool['fetch_mbps']:.1f} | "
+        f"{fetch_pool['fetch_episodes_s']:.2f} | {fetch_pool['fetch_s']:.2f} | "
+        f"{fetch_pool['avg_mb_miss']:.1f} | {args.workers} workers, no decoder open/frame decode |"
     )
-    print(
-        f"| PARALLEL | {parallel['fetch_mbps']:.1f} | {parallel['fetch_episodes_s']:.2f} | "
-        f"{parallel['decode_samples_s']:.1f} | "
-        f"{sequential['avg_mb_miss']:.1f} | decode-only, decoder open "
-        f"{parallel['decoder_ms_miss']:.1f} ms/miss, parquet {parallel['parquet_s']:.2f}s |"
-    )
-    print(
-        f"| OVERLAPPED | - | - | {overlapped['samples_s']:.1f} | {sequential['avg_mb_miss']:.1f} | "
-        f"end-to-end; video {overlapped['video_samples_s']:.1f} samples/s "
-        f"({overlapped['video_wait_decode_s']:.2f}s), parquet {overlapped['parquet_samples_s']:.1f} "
-        f"samples/s ({overlapped['parquet_wait_s']:.2f}s) |"
-    )
+
+    if args.include_decode:
+        timestamps = _timestamps(manifest, episodes, args.frames_per_episode, args.seed + 1)
+        _log(f"{label}: running parallel video fetch + decode-only")
+        parallel = run_parallel(
+            manifest,
+            data_root,
+            episodes,
+            timestamps,
+            byte_budget,
+            args.workers,
+            args.decode_workers,
+            args.frames_per_episode,
+            parquet_reader,
+            range_backend,
+        )
+        _log(f"{label}: running overlapped end-to-end")
+        overlapped = run_overlapped(
+            manifest,
+            data_root,
+            episodes,
+            timestamps,
+            byte_budget,
+            args.workers,
+            args.decode_workers,
+            args.frames_per_episode,
+            args.prefetch_ahead,
+            parquet_reader,
+            range_backend,
+        )
+        print(
+            f"| DECODE COMPARISON | {parallel['fetch_mbps']:.1f} | {parallel['fetch_episodes_s']:.2f} | "
+            f"{parallel['fetch_s']:.2f} | {fetch_pool['avg_mb_miss']:.1f} | "
+            f"decoder open {parallel['decoder_ms_miss']:.1f} ms/miss, "
+            f"decode {parallel['decode_samples_s']:.1f} samples/s, parquet {parallel['parquet_s']:.2f}s |"
+        )
+        print(
+            f"| OVERLAPPED E2E | - | - | {overlapped['wall_s']:.2f} | {fetch_pool['avg_mb_miss']:.1f} | "
+            f"{overlapped['samples_s']:.1f} samples/s; video+decode "
+            f"{overlapped['video_wait_decode_s']:.2f}s, parquet {overlapped['parquet_wait_s']:.2f}s |"
+        )
 
 
 def run_remote_strategy(
@@ -635,8 +640,9 @@ def main() -> None:
         print(f"using_mp4_sidecar: {sidecar_path}")
 
     if sidecar_path is not None and args.strategy == "both":
-        run_remote_strategy(meta, data_root, args, parquet_reader)
-        print()
+        if args.include_decode:
+            run_remote_strategy(meta, data_root, args, parquet_reader)
+            print()
         run_indexed_strategy(
             meta,
             data_root,
@@ -704,9 +710,9 @@ def main() -> None:
         )
     if args.strategy == "both":
         print()
-    if args.strategy in ("both", "remote-decoder"):
+    if args.strategy == "remote-decoder" or (args.strategy == "both" and args.include_decode):
         run_remote_strategy(meta, data_root, args, parquet_reader)
-    if args.strategy == "both":
+    if args.strategy == "both" and args.include_decode:
         print()
     if args.strategy in ("both", "native-http"):
         run_indexed_strategy(
