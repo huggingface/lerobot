@@ -111,12 +111,34 @@ def _foxglove_safe_name(name: str) -> str:
     return name.replace(".", "_")
 
 
-def _log_foxglove_scalars(topic: str, schema_name: str, values: dict[str, float]) -> None:
-    """Log a flat dict of scalars on a typed JSON channel, building the schema on first use.
+# Static schema shared by all scalar topics. Each message carries a flat list of ``{label, value}``
+# pairs rather than one field per feature, so the same schema fits any robot regardless of which
+# observation/action features it reports. The ``label`` field name is what Foxglove looks for to name
+# each series automatically, so a single filtered path plots every feature, e.g.
+# ``/observation/state.scalars[:].value``.
+_SCALARS_SCHEMA = {
+    "type": "object",
+    "title": "lerobot.Scalars",
+    "properties": {
+        "scalars": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "value": {"type": "number"},
+                },
+            },
+        }
+    },
+}
 
-    The schema is derived from the keys of the first message (stable for a given robot/session) so
-    Foxglove offers message-path autocomplete. ``additionalProperties`` keeps it permissive if a later
-    message carries extra keys.
+
+def _log_foxglove_scalars(topic: str, values: dict[str, float]) -> None:
+    """Log scalars on a typed JSON channel using the static :data:`_SCALARS_SCHEMA`.
+
+    ``values`` is an ordered mapping of feature name to value; it is emitted as a ``scalars`` array of
+    ``{label, value}`` objects. Insertion order is preserved so series stay stable across messages.
     """
 
     if not values:
@@ -126,16 +148,10 @@ def _log_foxglove_scalars(topic: str, schema_name: str, values: dict[str, float]
 
     channel = _foxglove_channels.get(topic)
     if channel is None:
-        schema = {
-            "type": "object",
-            "title": schema_name,
-            "properties": {name: {"type": "number"} for name in values},
-            "additionalProperties": {"type": "number"},
-        }
         channel = _foxglove_channels[topic] = foxglove.Channel(
-            topic, schema=schema, message_encoding="json"
+            topic, schema=_SCALARS_SCHEMA, message_encoding="json"
         )
-    channel.log(values)
+    channel.log({"scalars": [{"label": label, "value": value} for label, value in values.items()]})
 
 
 def log_rerun_data(
@@ -215,9 +231,10 @@ def log_foxglove_data(
     Mirrors :func:`log_rerun_data` but emits Foxglove messages over the server started by
     :func:`init_foxglove`. Data is mapped as follows:
     - Scalars (and elements of 1D arrays) are accumulated per source and logged on the
-      ``/observation/state`` and ``/action/state`` topics as typed JSON messages. Each topic gets a
-      schema generated from its field names so Foxglove provides message-path autocomplete. Field names
-      are sanitized (``.`` -> ``_``) so they don't need quoting when plotting.
+      ``/observation/state`` and ``/action/state`` topics as typed JSON messages using the static
+      ``lerobot.Scalars`` schema: a ``scalars`` array of ``{label, value}`` objects (see
+      :data:`_SCALARS_SCHEMA`). The ``label`` field lets Foxglove name each series automatically, so
+      ``/observation/state.scalars[:].value`` plots every feature at once.
     - 3D NumPy arrays that resemble images are transposed from CHW to HWC when needed and logged on a
       per-source topic (e.g. ``/observation/images/front``) as a ``RawImage`` (or a JPEG
       ``CompressedImage`` when ``compress_images`` is True).
@@ -283,7 +300,7 @@ def log_foxglove_data(
         for k, v in observation.items():
             if v is None:
                 continue
-            key = _foxglove_safe_name(k[len(OBS_PREFIX) :] if str(k).startswith(OBS_PREFIX) else str(k))
+            key = k[len(OBS_PREFIX) :] if str(k).startswith(OBS_PREFIX) else str(k)
             if _is_scalar(v):
                 obs_scalars[key] = float(v)
             elif isinstance(v, np.ndarray):
@@ -291,23 +308,22 @@ def log_foxglove_data(
                     for i, vi in enumerate(v):
                         obs_scalars[f"{key}_{i}"] = float(vi)
                 else:
-                    log_image(f"/{OBS_STR}/images/{key}", key, v)
-        _log_foxglove_scalars(f"/{OBS_STR}/state", "lerobot.Observation", obs_scalars)
+                    # Image topics still sanitize the name since it's used as a topic-path segment.
+                    log_image(f"/{OBS_STR}/images/{_foxglove_safe_name(key)}", key, v)
+        _log_foxglove_scalars(f"/{OBS_STR}/state", obs_scalars)
 
     if action:
         action_scalars: dict[str, float] = {}
         for k, v in action.items():
             if v is None:
                 continue
-            key = _foxglove_safe_name(
-                k[len(ACTION_PREFIX) :] if str(k).startswith(ACTION_PREFIX) else str(k)
-            )
+            key = k[len(ACTION_PREFIX) :] if str(k).startswith(ACTION_PREFIX) else str(k)
             if _is_scalar(v):
                 action_scalars[key] = float(v)
             elif isinstance(v, np.ndarray):
                 for i, vi in enumerate(v.flatten()):
                     action_scalars[f"{key}_{i}"] = float(vi)
-        _log_foxglove_scalars(f"/{ACTION}/state", "lerobot.Action", action_scalars)
+        _log_foxglove_scalars(f"/{ACTION}/state", action_scalars)
 
 
 # ── Backend-agnostic dispatch ─────────────────────────────────────────────
