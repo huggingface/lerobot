@@ -229,6 +229,21 @@ vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
+# Annotation pipeline (lerobot-annotate). The only backend is ``openai``,
+# which talks to any OpenAI-compatible server (``vllm serve`` /
+# ``transformers serve`` / hosted). Distributed runs use Hugging Face Jobs
+# (see examples/annotations/run_hf_job.py).
+annotations = [
+    "lerobot[dataset]",
+    "lerobot[transformers-dep]",
+    "openai>=1.40,<2.0",
+    # ``vllm`` is intentionally NOT a hard dep: it pins an older torch, and
+    # uv's single unified lock would then cap ``torch`` for every extra
+    # (e.g. forcing 2.8 while ``torchcodec`` in [dataset] needs 2.11 -> ABI
+    # break in CI). The HF Jobs image (``vllm/vllm-openai``) provides vLLM;
+    # install it locally only if you run your own ``vllm serve``.
+]
+
 # Development
 dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools>=1.73.1,<2.0.0", "mypy>=1.19.1", "ruff>=0.14.1", "lerobot[notebook]"]
 notebook = ["jupyter>=1.0.0,<2.0.0", "ipykernel>=6.0.0,<7.0.0"]
@@ -323,6 +338,7 @@ lerobot-find-joint-limits="lerobot.scripts.lerobot_find_joint_limits:main"
 lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
+lerobot-annotate="lerobot.scripts.lerobot_annotate:main"
 lerobot-rollout="lerobot.scripts.lerobot_rollout:main"
 
 # ---------------- Tool Configurations ----------------
@@ -341,7 +357,7 @@ torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 
 [tool.setuptools.package-data]
-lerobot = ["envs/*.json"]
+lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -18,16 +18,17 @@ import logging
 from functools import cached_property
 
 from lerobot.types import RobotAction
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.bimanual import BimanualMixin
+from lerobot.utils.decorators import check_if_not_connected
 
 from ..rebot_102_leader import RebotArm102Leader, RebotArm102LeaderTeleopConfig
 from ..teleoperator import Teleoperator
-from .config_bi_rebot_102_leader import BiRebotArm102LeaderConfig
+from .config_bi_rebot_102_leader import BiRebot102LeaderConfig
 
 logger = logging.getLogger(__name__)
 
 
-class BiRebotArm102Leader(Teleoperator):
+class BiRebot102Leader(BimanualMixin, Teleoperator):
     """Bimanual Seeed Studio StarArm102 / reBot Arm 102 leader.
 
     Composes two single-arm :class:`RebotArm102Leader` instances. Action keys of
@@ -35,10 +36,10 @@ class BiRebotArm102Leader(Teleoperator):
     leader can teleoperate a bimanual reBot B601 follower.
     """
 
-    config_class = BiRebotArm102LeaderConfig
+    config_class = BiRebot102LeaderConfig
     name = "bi_rebot_102_leader"
 
-    def __init__(self, config: BiRebotArm102LeaderConfig):
+    def __init__(self, config: BiRebot102LeaderConfig):
         super().__init__(config)
         self.config = config
 
@@ -76,27 +77,6 @@ class BiRebotArm102Leader(Teleoperator):
     def feedback_features(self) -> dict[str, type]:
         return {}
 
-    @property
-    def is_connected(self) -> bool:
-        return self.left_arm.is_connected and self.right_arm.is_connected
-
-    @check_if_already_connected
-    def connect(self, calibrate: bool = True) -> None:
-        self.left_arm.connect(calibrate)
-        self.right_arm.connect(calibrate)
-
-    @property
-    def is_calibrated(self) -> bool:
-        return self.left_arm.is_calibrated and self.right_arm.is_calibrated
-
-    def calibrate(self) -> None:
-        self.left_arm.calibrate()
-        self.right_arm.calibrate()
-
-    def configure(self) -> None:
-        self.left_arm.configure()
-        self.right_arm.configure()
-
     @check_if_not_connected
     def get_action(self) -> RobotAction:
         action_dict = {}
@@ -106,8 +86,3 @@ class BiRebotArm102Leader(Teleoperator):
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError("Feedback is not implemented for the reBot Arm 102 leader.")
-
-    @check_if_not_connected
-    def disconnect(self) -> None:
-        self.left_arm.disconnect()
-        self.right_arm.disconnect()
