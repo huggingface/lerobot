@@ -38,6 +38,7 @@ DEFAULT_REPO = "allenai/MolmoAct2-BimanualYAM-Dataset"
 DEFAULT_REVISION = "e9f21ae15074330839f2ac25ed4b49d76dfa1f9c"
 DEFAULT_DATA_ROOT = "hf://buckets/pepijn223/MolmoAct2-BimanualYAM-Dataset-bucket"
 SIDECAR_CACHE_DIR = Path(tempfile.gettempdir()) / "lerobot-sidecars"
+FULL_SIDECAR_NAME = "molmoact2-full.npz"
 
 
 def parse_args() -> argparse.Namespace:
@@ -162,16 +163,15 @@ def _root_join(data_root: str, relative_path: str) -> str:
 
 
 def _find_or_download_sidecar(data_root: str, manifest_episode_count: int) -> Path | None:
-    local = SIDECAR_CACHE_DIR / f"molmoact2-{manifest_episode_count}.npz"
+    _ = manifest_episode_count
+    local = SIDECAR_CACHE_DIR / FULL_SIDECAR_NAME
     if _valid_sidecar(local):
         return local
     if local.exists():
         print(f"mp4_sidecar_invalid_local: {local}")
         local.unlink()
-    full_local = SIDECAR_CACHE_DIR / "molmoact2-full.npz"
-    if _valid_sidecar(full_local):
-        return full_local
-    remote = _root_join(data_root, f"meta/mp4-sidecars/molmoact2-{manifest_episode_count}.npz")
+    remote_relative = f"meta/mp4-sidecars/{FULL_SIDECAR_NAME}"
+    remote = _root_join(data_root, remote_relative)
     protocol = "hf" if data_root.startswith("hf://") else "file"
     fs = fsspec.filesystem(protocol)
     if not fs.exists(remote):
@@ -179,9 +179,7 @@ def _find_or_download_sidecar(data_root: str, manifest_episode_count: int) -> Pa
     local.parent.mkdir(parents=True, exist_ok=True)
     print(f"downloading_mp4_sidecar: {remote} -> {local}")
     if data_root.startswith("hf://"):
-        _download_sidecar_native_http(
-            data_root, f"meta/mp4-sidecars/molmoact2-{manifest_episode_count}.npz", local
-        )
+        _download_sidecar_native_http(data_root, remote_relative, local)
     else:
         fs.get(remote, str(local))
     return local
@@ -686,13 +684,13 @@ def main() -> None:
         )
         return
     if args.strategy == "both":
-        expected_sidecar = SIDECAR_CACHE_DIR / f"molmoact2-{manifest_episode_count}.npz"
-        expected_remote = _root_join(data_root, f"meta/mp4-sidecars/molmoact2-{manifest_episode_count}.npz")
+        expected_sidecar = SIDECAR_CACHE_DIR / FULL_SIDECAR_NAME
+        expected_remote = _root_join(data_root, f"meta/mp4-sidecars/{FULL_SIDECAR_NAME}")
         print(f"mp4_sidecar_missing_local: {expected_sidecar}")
         print(f"mp4_sidecar_missing_remote: {expected_remote}")
         print(
             "build_mp4_sidecar: "
-            f"uv run --no-sync python scripts/build_mp4_sidecar.py --episodes {manifest_episode_count} "
+            "uv run --no-sync python scripts/build_mp4_sidecar.py "
             f"--workers {args.workers} --range-backend native-http --output {expected_sidecar}"
         )
         print("running_without_mp4_sidecar: indexed variants will build MP4 indexes online")

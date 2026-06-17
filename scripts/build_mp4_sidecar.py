@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def push_sidecar(local_path: str, data_root: str, episode_count: int) -> list[str]:
+def push_sidecar(local_path: str, data_root: str) -> list[str]:
     if not data_root.startswith("hf://"):
         return []
 
@@ -49,9 +49,6 @@ def push_sidecar(local_path: str, data_root: str, episode_count: int) -> list[st
     fs = fsspec.filesystem("hf")
     remote_dir = f"{data_root.rstrip('/')}/meta/mp4-sidecars"
     remote_paths = [f"{remote_dir}/{local.name}"]
-    alias = f"{remote_dir}/molmoact2-{episode_count}.npz"
-    if alias not in remote_paths:
-        remote_paths.append(alias)
 
     for remote in remote_paths:
         fs.put(str(local), remote)
@@ -87,7 +84,7 @@ def main() -> None:
     if args.no_push:
         print("push_skipped: --no-push")
     else:
-        pushed = push_sidecar(args.output, args.data_root, total)
+        pushed = push_sidecar(args.output, args.data_root)
         for remote in pushed:
             print(f"pushed {remote}")
 
