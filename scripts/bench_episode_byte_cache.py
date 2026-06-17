@@ -351,7 +351,7 @@ def run_fetch_pool(
     byte_count = _bytes_for(manifest, episodes)
     episode_mb = byte_count / len(episodes) / 1024**2
     job_count = max(timings["jobs"], 1.0)
-    return {
+    result = {
         "fetch_s": elapsed,
         "fetch_mbps": byte_count / elapsed / 1024**2,
         "fetch_episodes_s": len(episodes) / elapsed,
@@ -363,6 +363,8 @@ def run_fetch_pool(
         "synthesize_ms": timings["synthesize_s"] * 1000 / job_count,
         "store_ms": timings["store_s"] * 1000 / job_count,
     }
+    result.update({key: value for key, value in timings.items() if key.startswith("range_")})
+    return result
 
 
 def run_parallel(
@@ -547,6 +549,30 @@ def run_remote_decoder(
     }
 
 
+def _print_range_timing_summary(fetch_pool: dict[str, float]) -> None:
+    range_jobs = fetch_pool.get("range_jobs", 0.0)
+    if range_jobs <= 0:
+        return
+
+    print()
+    print("| Range Read Stage | avg ms/range |")
+    print("|---|---:|")
+    for key, label in (
+        ("range_open_s", "fsspec handle open/lookup"),
+        ("range_seek_s", "fsspec seek"),
+        ("range_read_s", "fsspec read"),
+        ("range_resolve_s", "http URL resolve"),
+        ("range_header_s", "http response headers"),
+        ("range_first_byte_s", "http first body byte"),
+        ("range_body_s", "http body drain"),
+    ):
+        value = fetch_pool.get(key)
+        if value is not None:
+            print(f"| {label} | {value * 1000 / range_jobs:.3f} |")
+    print(f"| range reads | {range_jobs:.0f} |")
+    print(f"| avg MiB/range | {fetch_pool.get('range_bytes', 0.0) / range_jobs / 1024**2:.1f} |")
+
+
 def run_indexed_strategy(
     meta: LeRobotDatasetMetadata,
     data_root: str,
@@ -618,6 +644,7 @@ def run_indexed_strategy(
     print(f"| synthesize mini-MP4 | {fetch_pool['synthesize_ms']:.3f} |")
     print(f"| store in shared cache | {fetch_pool['store_ms']:.3f} |")
     print(f"| camera jobs | {fetch_pool['jobs']:.0f} |")
+    _print_range_timing_summary(fetch_pool)
     _print_memory_summary(memory_start, _memory_snapshot())
 
     if args.include_decode:
