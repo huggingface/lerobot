@@ -79,6 +79,9 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     # Either the repo ID of a model hosted on the Hub or a path to a directory containing weights
     # saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch.
     pretrained_path: Path | None = None
+    # Hub revision used when loading a policy from `pretrained_path`. This is set by CLIs that accept
+    # `--policy.path` and need to pin both config and weights to a branch, tag, or commit.
+    revision: str | None = None
 
     def __post_init__(self) -> None:
         if not self.device or not is_torch_device_available(self.device):
