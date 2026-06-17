@@ -308,14 +308,21 @@ def run_fetch_pool(
         open_decoders=False,
     ) as cache:
         elapsed = _fill_cache(cache, episodes)
+        timings = cache.timing_summary()
     byte_count = _bytes_for(manifest, episodes)
     episode_mb = byte_count / len(episodes) / 1024**2
+    job_count = max(timings["jobs"], 1.0)
     return {
         "fetch_s": elapsed,
         "fetch_mbps": byte_count / elapsed / 1024**2,
         "fetch_episodes_s": len(episodes) / elapsed,
         "episode_mb": episode_mb,
         "avg_mb_miss": byte_count / (len(episodes) * len(manifest.video_keys)) / 1024**2,
+        "jobs": timings["jobs"],
+        "lookup_ms": timings["lookup_s"] * 1000 / job_count,
+        "range_fetch_ms": timings["fetch_s"] * 1000 / job_count,
+        "synthesize_ms": timings["synthesize_s"] * 1000 / job_count,
+        "store_ms": timings["store_s"] * 1000 / job_count,
     }
 
 
@@ -563,6 +570,14 @@ def run_indexed_strategy(
         f"{_format_duration(estimated_benchmark_s)} | {_format_duration(estimated_dataset_s)} | "
         f"{fetch_pool['avg_mb_miss']:.1f} | {args.workers} workers, no decoder open/frame decode |"
     )
+    print()
+    print("| Camera Job Stage | avg ms/job |")
+    print("|---|---:|")
+    print(f"| manifest lookup | {fetch_pool['lookup_ms']:.3f} |")
+    print(f"| remote byte-range fetch | {fetch_pool['range_fetch_ms']:.3f} |")
+    print(f"| synthesize mini-MP4 | {fetch_pool['synthesize_ms']:.3f} |")
+    print(f"| store in shared cache | {fetch_pool['store_ms']:.3f} |")
+    print(f"| camera jobs | {fetch_pool['jobs']:.0f} |")
 
     if args.include_decode:
         timestamps = _timestamps(manifest, episodes, args.frames_per_episode, args.seed + 1)
