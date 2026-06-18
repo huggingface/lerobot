@@ -22,13 +22,23 @@ from typing import TYPE_CHECKING, Any
 import torch
 from huggingface_hub import snapshot_download
 from safetensors.torch import load_file
-from transformers import AutoTokenizer, UMT5EncoderModel
+
+from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoTokenizer, UMT5EncoderModel
+else:
+    AutoTokenizer = None
+    UMT5EncoderModel = None
+
+if TYPE_CHECKING or _diffusers_available:
+    from diffusers import AutoencoderKLWan
+else:
+    AutoencoderKLWan = None
 
 if TYPE_CHECKING:
     from .wan_adapters import WanVideoVAE38
     from .wan_video_dit import WanVideoDiT
-
-from diffusers import AutoencoderKLWan
 
 from .wan_adapters import WanVideoVAE38
 from .wan_video_dit import WanVideoDiT
@@ -73,6 +83,7 @@ class WanTokenizer:
     FastWAM call site expects."""
 
     def __init__(self, name: str = WAN_T5_TOKENIZER, seq_len: int = 512) -> None:
+        require_package("transformers", extra="fastwam")
         self.tokenizer = AutoTokenizer.from_pretrained(name)
         self.seq_len = int(seq_len)
 
@@ -104,12 +115,14 @@ def build_wan_tokenizer(*, tokenizer_max_len: int) -> WanTokenizer:
 
 def load_pretrained_wan_vae(*, torch_dtype: torch.dtype, device: str) -> WanVideoVAE38:
     """Load real Wan2.2 VAE weights from the diffusers repo (offline base creation)."""
+    require_package("diffusers", extra="fastwam")
     vae = AutoencoderKLWan.from_pretrained(WAN22_DIFFUSERS_MODEL_ID, subfolder="vae", torch_dtype=torch_dtype)
     return WanVideoVAE38(dtype=torch_dtype, device=device, pretrained=vae)
 
 
 def load_pretrained_wan_text_encoder(*, torch_dtype: torch.dtype, device: str) -> WanTextEncoder:
     """Load real UMT5-XXL encoder weights from the diffusers repo (offline base creation)."""
+    require_package("transformers", extra="fastwam")
     encoder = UMT5EncoderModel.from_pretrained(
         WAN22_DIFFUSERS_MODEL_ID, subfolder="text_encoder", torch_dtype=torch_dtype
     )

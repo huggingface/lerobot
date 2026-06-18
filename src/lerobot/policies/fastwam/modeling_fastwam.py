@@ -23,6 +23,7 @@ from torch import Tensor
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.import_utils import require_package
 
 from .configuration_fastwam import FastWAMConfig
 from .modular_fastwam import ActionDiT, FastWAM, MoT
@@ -52,6 +53,11 @@ class FastWAMPolicy(PreTrainedPolicy):
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
         **kwargs: Any,
     ):
+        # FastWAM's Wan2.2 backbone needs transformers (UMT5 text encoder/tokenizer) and
+        # diffusers (Wan VAE), both behind the `fastwam` extra. Fail fast with an actionable
+        # message in base installs rather than deep in Wan component construction.
+        require_package("transformers", extra="fastwam")
+        require_package("diffusers", extra="fastwam")
         # `make_policy`/`from_pretrained` forward extra kwargs (e.g. `dataset_meta`); the
         # dataset feature metadata is already applied to `config` by make_policy upstream,
         # so we accept and ignore them, matching the other LeRobot policies.

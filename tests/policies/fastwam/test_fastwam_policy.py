@@ -21,6 +21,9 @@ import torch
 from safetensors import safe_open
 from torch import nn
 
+pytest.importorskip("transformers", reason="fastwam requires the `fastwam` extra (transformers)")
+pytest.importorskip("diffusers", reason="fastwam requires the `fastwam` extra (diffusers)")
+
 from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
 from lerobot.policies import FastWAMConfig, get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy

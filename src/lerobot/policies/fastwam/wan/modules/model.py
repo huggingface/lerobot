@@ -1,10 +1,24 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import math
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
-from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.models.modeling_utils import ModelMixin
+
+from lerobot.utils.import_utils import _diffusers_available
+
+if TYPE_CHECKING or _diffusers_available:
+    from diffusers.configuration_utils import ConfigMixin, register_to_config
+    from diffusers.models.modeling_utils import ModelMixin
+else:
+    class ModelMixin:
+        pass
+
+    class ConfigMixin:
+        pass
+
+    def register_to_config(init):
+        return init
 
 from .attention import flash_attention
 
