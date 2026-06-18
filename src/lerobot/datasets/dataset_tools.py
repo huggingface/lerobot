@@ -38,7 +38,7 @@ import torch
 from tqdm import tqdm
 
 from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults
-from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
+from lerobot.utils.constants import ACTION, DEFAULT_FEATURES, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
 from lerobot.utils.utils import flatten_dict
 
 from .aggregate import aggregate_datasets
@@ -48,6 +48,7 @@ from .compute_stats import (
     compute_relative_action_stats,
 )
 from .dataset_metadata import LeRobotDatasetMetadata
+from .feature_utils import detect_legacy_scalar_features
 from .io_utils import (
     get_parquet_file_size_in_mb,
     load_episodes,
@@ -545,8 +546,17 @@ def _copy_and_reindex_data(
         if new_task_idx is not None:
             task_mapping[old_task_idx] = new_task_idx
 
+    # Bookkeeping fields are excluded: the destination always declares them shape=(),
+    # so a physically-scalar episode_index/index/etc. should stay a bare scalar, not be
+    # wrapped into a length-1 list.
+    legacy_scalar_keys = (
+        detect_legacy_scalar_features(src_dataset.meta.features, src_dataset.root / "data")
+        - DEFAULT_FEATURES.keys()
+    )
+
     for src_path in tqdm(sorted(file_to_episodes.keys()), desc="Processing data files"):
         df = pd.read_parquet(src_dataset.root / src_path)
+        df = _reencode_legacy_scalar_columns(df, legacy_scalar_keys)
 
         all_episodes_in_file = set(df["episode_index"].unique())
         episodes_to_keep = file_to_episodes[src_path]
@@ -1005,9 +1015,14 @@ def _copy_data_with_feature_changes(
         raise ValueError(f"No parquet files found in {data_dir}")
 
     frame_idx = 0
+    # Bookkeeping fields excluded -- see comment in _copy_and_reindex_data.
+    legacy_scalar_keys = (
+        detect_legacy_scalar_features(dataset.meta.features, data_dir) - DEFAULT_FEATURES.keys()
+    )
 
     for src_path in tqdm(parquet_files, desc="Processing data files"):
         df = pd.read_parquet(src_path).reset_index(drop=True)
+        df = _reencode_legacy_scalar_columns(df, legacy_scalar_keys)
 
         relative_path = src_path.relative_to(dataset.root)
         chunk_dir = relative_path.parts[1]
@@ -1021,23 +1036,28 @@ def _copy_data_with_feature_changes(
 
         if add_features:
             end_idx = frame_idx + len(df)
-            for feature_name, (values, _) in add_features.items():
+            for feature_name, (values, feature_info) in add_features.items():
+                shape = feature_info["shape"]
                 if callable(values):
                     feature_values = []
                     for _, row in df.iterrows():
                         ep_idx = row["episode_index"]
                         frame_in_ep = row["frame_index"]
                         value = values(row.to_dict(), ep_idx, frame_in_ep)
-                        if isinstance(value, np.ndarray) and value.size == 1:
-                            value = value.item()
+                        if shape == ():
+                            # True scalar feature: squeeze a 1-element array to a bare value.
+                            if isinstance(value, np.ndarray) and value.size == 1:
+                                value = value.item()
+                        elif np.isscalar(value) or (isinstance(value, np.ndarray) and value.ndim == 0):
+                            # Declared as a vector (e.g. shape=(1,)): wrap a bare scalar to match.
+                            value = [value]
                         feature_values.append(value)
                     df[feature_name] = feature_values
                 else:
                     feature_slice = values[frame_idx:end_idx]
-                    if len(feature_slice.shape) > 1 and feature_slice.shape[1] == 1:
-                        df[feature_name] = feature_slice.flatten()
-                    else:
-                        df[feature_name] = feature_slice
+                    # Keep each row's full sub-array intact (e.g. a length-1 vector stays
+                    # length-1) rather than flattening away the feature dimension.
+                    df[feature_name] = list(feature_slice)
             frame_idx = end_idx
 
         # Write using the same chunk/file structure as source
@@ -1362,6 +1382,23 @@ def _estimate_frame_size_via_calibration(
             shutil.rmtree(calibration_dir)
 
 
+def _reencode_legacy_scalar_columns(df: pd.DataFrame, legacy_scalar_keys: frozenset[str]) -> pd.DataFrame:
+    """Re-wrap columns that were physically stored as bare scalars under the old convention
+    into length-1 lists, so the data matches the schema a freshly-written destination dataset
+    is expected to have.
+
+    Without this, copying a legacy dataset's raw parquet bytes into a new dataset produces a
+    physical encoding mismatch: the new dataset is written with the corrected (non-squeezed)
+    schema, but the copied columns are still scalar-squeezed. `legacy_scalar_keys` comes from
+    `detect_legacy_scalar_features`, which inspects the actual on-disk Arrow schema rather than
+    relying on any codebase-version bookkeeping.
+    """
+    for key in legacy_scalar_keys:
+        if key in df.columns:
+            df[key] = df[key].apply(lambda v: [v])
+    return df
+
+
 def _copy_data_without_images(
     src_dataset: LeRobotDataset,
     dst_meta: LeRobotDatasetMetadata,
@@ -1385,9 +1422,14 @@ def _copy_data_without_images(
         raise ValueError(f"No parquet files found in {data_dir}")
 
     episode_set = set(episode_indices)
+    # Bookkeeping fields excluded -- see comment in _copy_and_reindex_data.
+    legacy_scalar_keys = (
+        detect_legacy_scalar_features(src_dataset.meta.features, data_dir) - DEFAULT_FEATURES.keys()
+    )
 
     for src_path in tqdm(parquet_files, desc="Processing data files"):
         df = pd.read_parquet(src_path).reset_index(drop=True)
+        df = _reencode_legacy_scalar_columns(df, legacy_scalar_keys)
 
         # Filter to only include selected episodes
         df = df[df["episode_index"].isin(episode_set)].copy()

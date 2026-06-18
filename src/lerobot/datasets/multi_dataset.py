@@ -24,7 +24,7 @@ import torch.utils
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
 from .compute_stats import aggregate_stats
-from .feature_utils import get_hf_features_from_features
+from .feature_utils import detect_legacy_scalar_features, get_hf_features_from_features
 from .lerobot_dataset import LeRobotDataset
 from .video_utils import VideoFrame
 
@@ -139,10 +139,13 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
     def features(self) -> datasets.Features:
         features = {}
         for dataset in self._datasets:
+            legacy_scalar_keys = detect_legacy_scalar_features(dataset.features, dataset.root / "data")
             features.update(
                 {
                     k: v
-                    for k, v in get_hf_features_from_features(dataset.features).items()
+                    for k, v in get_hf_features_from_features(
+                        dataset.features, legacy_scalar_keys=legacy_scalar_keys
+                    ).items()
                     if k not in self.disabled_features
                 }
             )

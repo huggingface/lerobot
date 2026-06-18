@@ -14,10 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+from pathlib import Path
 from pprint import pformat
+from typing import Any
 
 import datasets
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 from PIL import Image as PILImage
 
 from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
@@ -40,11 +44,114 @@ from .utils import (
 )
 
 
-def get_hf_features_from_features(features: dict) -> datasets.Features:
+def _flat_names_length(names: Any) -> int | None:
+    """Return the number of leaf names in a `names` spec.
+
+    `names` is usually a flat list, but some datasets (notably bimanual setups) declare
+    it as a dict of groups, e.g. `{"motors": ["left_waist", ..., "right_gripper"]}`. Returns
+    None if `names` doesn't look like either shape, so callers can skip validation rather
+    than guess.
+    """
+    if isinstance(names, dict):
+        if not all(isinstance(v, (list, tuple)) for v in names.values()):
+            return None
+        return sum(len(v) for v in names.values())
+    if isinstance(names, (list, tuple)):
+        return len(names)
+    return None
+
+
+def validate_feature_shape_and_names(key: str, ft: dict) -> None:
+    """Validate that a feature's declared `shape` and `names` are mutually consistent.
+
+    A scalar (`shape=()`) has no axis to label, so `names` must be `None`. A vector
+    of length N (`shape=(N,)`, including N=0) must have exactly N names if `names`
+    is provided at all (`names` may be a flat list or a dict of groups, e.g.
+    `{"motors": [...]}`, whose values are flattened before counting).
+
+    Args:
+        key (str): The feature name, used for error messages.
+        ft (dict): The feature spec dict (must contain `shape` and `names`).
+
+    Raises:
+        ValueError: If `names` is inconsistent with `shape`.
+    """
+    shape = ft["shape"]
+    names = ft.get("names")
+    if shape == ():
+        if names:
+            raise ValueError(f"Feature '{key}' is a scalar (shape=()) but declares names={names!r}.")
+        return
+    names_length = _flat_names_length(names)
+    if names_length is not None and names_length != shape[0]:
+        raise ValueError(
+            f"Feature '{key}' has shape={shape!r} but names={names!r} has length {names_length}, expected {shape[0]}."
+        )
+
+
+def detect_legacy_scalar_features(features: dict, data_dir: Path) -> frozenset[str]:
+    """Find declared shape=(1,) features that are physically stored as bare scalars.
+
+    Before this fix, a shape=(1,) feature -- whether a true scalar (e.g. the bookkeeping
+    fields in `DEFAULT_FEATURES`) or a real length-1 vector -- was always squeezed to a bare
+    value at write time. Rather than tracking this with a codebase-version flag, inspect the
+    actual on-disk Arrow schema: a column that was squeezed shows up as a scalar Arrow type
+    (e.g. `float`), while one written under the corrected convention shows up as a list type
+    (e.g. `fixed_size_list<float>[1]`). This lets a dataset's *own* declared shape=(1,)
+    features be read back correctly, matching however they actually were written, without
+    any version bookkeeping.
+
+    This reports purely on physical encoding, regardless of whether a key is a `DEFAULT_FEATURES`
+    bookkeeping field -- callers that are instead preparing data to match a *different*
+    destination schema (e.g. `dataset_tools.py`'s copy/conversion helpers, where the
+    destination always declares bookkeeping fields as `shape=()`) should exclude
+    `DEFAULT_FEATURES` keys themselves before acting on the result.
+
+    Args:
+        features (dict): A LeRobot-style feature dictionary.
+        data_dir (Path): Directory containing the dataset's data parquet shards.
+
+    Returns:
+        frozenset[str]: Keys whose shape=(1,) declaration should be read as a scalar.
+    """
+    candidates = {
+        key
+        for key, ft in features.items()
+        if tuple(ft.get("shape", ())) == (1,) and ft["dtype"] not in ("image", "video", "string")
+    }
+    if not candidates:
+        return frozenset()
+
+    sample_file = next(data_dir.glob("*/*.parquet"), None)
+    if sample_file is None:
+        return frozenset()
+
+    schema = pq.read_schema(sample_file)
+    legacy = set()
+    for key in candidates:
+        if key in schema.names:
+            field_type = schema.field(key).type
+            if not (
+                pa.types.is_list(field_type)
+                or pa.types.is_large_list(field_type)
+                or pa.types.is_fixed_size_list(field_type)
+            ):
+                legacy.add(key)
+    return frozenset(legacy)
+
+
+def get_hf_features_from_features(
+    features: dict, legacy_scalar_keys: frozenset[str] = frozenset()
+) -> datasets.Features:
     """Convert a LeRobot features dictionary to a `datasets.Features` object.
 
     Args:
         features (dict): A LeRobot-style feature dictionary.
+        legacy_scalar_keys (frozenset[str]): Keys whose `shape == (1,)` declaration should be
+            interpreted as a scalar stored via `datasets.Value`, rather than the corrected
+            convention where a length-1 vector is never squeezed. Obtain this set by calling
+            `detect_legacy_scalar_features` against the dataset's actual on-disk schema when
+            reading a dataset that may have been recorded under the old convention.
 
     Returns:
         datasets.Features: The corresponding Hugging Face `datasets.Features` object.
@@ -54,6 +161,8 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
     """
     hf_features = {}
     for key, ft in features.items():
+        if not is_language_column(key) and ft["dtype"] not in ("image", "video"):
+            validate_feature_shape_and_names(key, ft)
         if is_language_column(key):
             hf_features[key] = (
                 language_persistent_column_feature()
@@ -64,8 +173,13 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
             continue
         elif ft["dtype"] == "image":
             hf_features[key] = datasets.Image()
-        elif ft["shape"] == (1,):
+        elif ft["shape"] == () or (key in legacy_scalar_keys and ft["shape"] == (1,)):
             hf_features[key] = datasets.Value(dtype=ft["dtype"])
+        elif ft["shape"] == (0,):
+            # A fixed-size datasets.Sequence(length=0, ...) is rejected by PyArrow
+            # ("list_size needs to be a strict positive integer"), so a zero-length
+            # feature must use a variable-length Sequence instead.
+            hf_features[key] = datasets.Sequence(feature=datasets.Value(dtype=ft["dtype"]))
         elif len(ft["shape"]) == 1:
             hf_features[key] = datasets.Sequence(
                 length=ft["shape"][0], feature=datasets.Value(dtype=ft["dtype"])

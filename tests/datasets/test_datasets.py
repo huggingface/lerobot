@@ -238,7 +238,8 @@ def test_add_frame(tmp_path, empty_lerobot_dataset_factory):
     assert len(dataset) == 1
     assert dataset[0]["task"] == "Dummy task"
     assert dataset[0]["task_index"] == 0
-    assert dataset[0]["state"].ndim == 0
+    # shape=(1,) is a length-1 vector, not a scalar -- it must not be squeezed.
+    assert dataset[0]["state"].shape == torch.Size([1])
 
 
 def test_add_frame_state_1d(tmp_path, empty_lerobot_dataset_factory):
@@ -298,11 +299,13 @@ def test_add_frame_state_numpy(tmp_path, empty_lerobot_dataset_factory):
     dataset.save_episode()
     dataset.finalize()
 
-    assert dataset[0]["state"].ndim == 0
+    # shape=(1,) is a length-1 vector, not a scalar -- it must not be squeezed.
+    assert dataset[0]["state"].shape == torch.Size([1])
 
 
 def test_add_frame_string(tmp_path, empty_lerobot_dataset_factory):
-    features = {"caption": {"dtype": "string", "shape": (1,), "names": None}}
+    # A single caption string per frame is a true scalar -- shape=(), not shape=(1,).
+    features = {"caption": {"dtype": "string", "shape": (), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
     dataset.add_frame({"caption": "Dummy caption", "task": "Dummy task"})
     dataset.save_episode()
@@ -385,10 +388,14 @@ def test_add_frame_image_pil(image_dataset):
     ],
     ids=["float32", "int64", "bool"],
 )
-def test_save_episode_shape_1_scalar_is_scalarized_before_hf_encoding(
+def test_save_episode_shape_1_vector_is_not_scalarized_before_hf_encoding(
     tmp_path, empty_lerobot_dataset_factory, monkeypatch, dtype, np_dtype, values, assert_fn
 ):
-    features = {"state": {"dtype": dtype, "shape": (1,), "names": None}}
+    """A shape=(1,) feature is a length-1 vector, not a true scalar (see DEFAULT_FEATURES,
+    which uses shape=() for true scalars). It must round-trip as (N, 1), never be squeezed
+    to (N,) -- collapsing the two was the root cause of a real bug across several policies
+    (each saw a batch of N length-1 states as indistinguishable from one N-dim example)."""
+    features = {"state": {"dtype": dtype, "shape": (1,), "names": ["x"]}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
     dataset.add_frame({"state": np.array([values[0]], dtype=np_dtype), "task": "Dummy task"})
     dataset.add_frame({"state": np.array([values[1]], dtype=np_dtype), "task": "Dummy task"})
@@ -407,8 +414,8 @@ def test_save_episode_shape_1_scalar_is_scalarized_before_hf_encoding(
 
     assert "state" in captured
     assert isinstance(captured["state"], np.ndarray)
-    assert captured["state"].shape == (2,)
-    assert_fn(captured["state"], np.array(values, dtype=np_dtype))
+    assert captured["state"].shape == (2, 1)
+    assert_fn(captured["state"], np.array(values, dtype=np_dtype).reshape(2, 1))
 
 
 def test_set_image_transforms_applies_transparently(image_dataset):
@@ -1724,15 +1731,16 @@ def test_delta_timestamps_query_returns_correct_values(tmp_path, empty_lerobot_d
     # Check frame 2 of episode 1 (which has absolute index 7, value 12)
     frame = filtered_dataset[2]
     state_values = frame["observation.state"].tolist()
-    # Should get [11, 12] - the previous and current values within episode 1
-    assert state_values == [11.0, 12.0], f"Expected [11.0, 12.0], got {state_values}"
+    # Should get [11, 12] - the previous and current values within episode 1.
+    # shape=(1,) is a length-1 vector, so each timestep keeps its own [x] sub-list.
+    assert state_values == [[11.0], [12.0]], f"Expected [[11.0], [12.0]], got {state_values}"
 
     # Check first frame - previous frame should be clamped to episode start (padded)
     first_frame = filtered_dataset[0]
     state_values = first_frame["observation.state"].tolist()
     is_pad = first_frame["observation.state_is_pad"].tolist()
     # Previous frame is outside episode, so it's clamped to first frame and marked as padded
-    assert state_values == [10.0, 10.0], f"Expected [10.0, 10.0], got {state_values}"
+    assert state_values == [[10.0], [10.0]], f"Expected [[10.0], [10.0]], got {state_values}"
     assert is_pad == [True, False], f"Expected [True, False], got {is_pad}"
 
 

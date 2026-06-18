@@ -77,12 +77,13 @@ HF_LEROBOT_CALIBRATION = Path(os.getenv("HF_LEROBOT_CALIBRATION", default_calibr
 
 
 # Dataset meta-features (auto-populated by the recording pipeline)
+# shape=() because these are true per-frame scalars, not length-1 feature vectors.
 DEFAULT_FEATURES = {
-    "timestamp": {"dtype": "float32", "shape": (1,), "names": None},
-    "frame_index": {"dtype": "int64", "shape": (1,), "names": None},
-    "episode_index": {"dtype": "int64", "shape": (1,), "names": None},
-    "index": {"dtype": "int64", "shape": (1,), "names": None},
-    "task_index": {"dtype": "int64", "shape": (1,), "names": None},
+    "timestamp": {"dtype": "float32", "shape": (), "names": None},
+    "frame_index": {"dtype": "int64", "shape": (), "names": None},
+    "episode_index": {"dtype": "int64", "shape": (), "names": None},
+    "index": {"dtype": "int64", "shape": (), "names": None},
+    "task_index": {"dtype": "int64", "shape": (), "names": None},
 }
 
 # ImageNet normalization constants

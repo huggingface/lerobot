@@ -25,10 +25,15 @@ import pandas as pd
 import tqdm
 
 from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
+from lerobot.utils.constants import DEFAULT_FEATURES
 
 from .compute_stats import aggregate_stats
 from .dataset_metadata import LeRobotDatasetMetadata
-from .feature_utils import features_equal_for_merge, get_hf_features_from_features
+from .feature_utils import (
+    detect_legacy_scalar_features,
+    features_equal_for_merge,
+    get_hf_features_from_features,
+)
 from .io_utils import (
     get_file_size_in_mb,
     get_parquet_file_size_in_mb,
@@ -522,6 +527,14 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
 
     # retrieve features schema for proper image typing in parquet
     hf_features = get_hf_features_from_features(dst_meta.features) if contains_images else None
+    # Only the image path actually casts against hf_features (to_parquet_with_hf_images below);
+    # the non-image path writes df.to_parquet() directly, preserving whatever physical encoding
+    # the source already has, so it never hits a schema mismatch regardless of source convention.
+    legacy_scalar_keys = (
+        detect_legacy_scalar_features(src_meta.features, src_meta.root / "data") - DEFAULT_FEATURES.keys()
+        if contains_images
+        else frozenset()
+    )
 
     # Track source to destination file mapping for metadata update
     # This is critical for handling datasets that are already results of a merge
@@ -535,6 +548,9 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
             # Use HuggingFace datasets to read source data to preserve image format
             src_ds = datasets.Dataset.from_parquet(str(src_path))
             df = src_ds.to_pandas()
+            for key in legacy_scalar_keys:
+                if key in df.columns:
+                    df[key] = df[key].apply(lambda v: [v])
         else:
             df = pd.read_parquet(src_path)
         df = update_data_df(df, src_meta, dst_meta)

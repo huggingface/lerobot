@@ -190,7 +190,10 @@ def stats_factory():
     ) -> dict:
         stats = {}
         for key, ft in features.items():
-            shape = ft["shape"]
+            # Real stats always keep at least one dimension (see compute_stats.py's
+            # keepdims=True reduction and _validate_stat_value's ndim>=1 requirement),
+            # even for a true scalar (shape=()) feature.
+            shape = ft["shape"] or (1,)
             dtype = ft["dtype"]
             if dtype in ["image", "video"]:
                 stats[key] = {
@@ -388,7 +391,7 @@ def hf_dataset_factory(features_factory, tasks_factory, episodes_factory, img_ar
                     img_array_factory(height=ft["shape"][1], width=ft["shape"][0], content=f"{key}-{i}")
                     for i in range(len(index_col))
                 ]
-            elif ft["shape"][0] > 1 and ft["dtype"] != "video":
+            elif len(ft["shape"]) > 0 and ft["shape"][0] > 1 and ft["dtype"] != "video":
                 robot_cols[key] = np.random.random((len(index_col), ft["shape"][0])).astype(ft["dtype"])
 
         hf_features = get_hf_features_from_features(features)

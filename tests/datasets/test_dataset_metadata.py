@@ -67,11 +67,14 @@ def _make_dummy_stats(features: dict) -> dict:
                 "count": np.array([5]),
             }
         elif ft["dtype"] in ("float32", "float64", "int64"):
+            # Real stats always keep at least one dimension, even for a true
+            # scalar (shape=()) feature -- see compute_stats.py's keepdims=True.
+            shape = ft["shape"] or (1,)
             stats[key] = {
-                "max": np.ones(ft["shape"], dtype=np.float32),
-                "mean": np.full(ft["shape"], 0.5, dtype=np.float32),
-                "min": np.zeros(ft["shape"], dtype=np.float32),
-                "std": np.full(ft["shape"], 0.25, dtype=np.float32),
+                "max": np.ones(shape, dtype=np.float32),
+                "mean": np.full(shape, 0.5, dtype=np.float32),
+                "min": np.zeros(shape, dtype=np.float32),
+                "std": np.full(shape, 0.25, dtype=np.float32),
                 "count": np.array([5]),
             }
     return stats

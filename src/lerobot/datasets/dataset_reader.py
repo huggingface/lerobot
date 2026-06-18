@@ -25,6 +25,7 @@ import torch
 from .dataset_metadata import LeRobotDatasetMetadata
 from .feature_utils import (
     check_delta_timestamps,
+    detect_legacy_scalar_features,
     get_delta_indices,
     get_hf_features_from_features,
 )
@@ -137,7 +138,8 @@ class DatasetReader:
 
     def _load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
-        features = get_hf_features_from_features(self._meta.features)
+        legacy_scalar_keys = detect_legacy_scalar_features(self._meta.features, self.root / "data")
+        features = get_hf_features_from_features(self._meta.features, legacy_scalar_keys=legacy_scalar_keys)
         hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
