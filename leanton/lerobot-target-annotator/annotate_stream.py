@@ -37,23 +37,25 @@ Setup:
     pip install ultralytics pyzmq
 
 Run:
-    python annotate_stream_v5.py
-    python annotate_stream_v5.py --zmq-port 5556 --zmq-name wrist_annotated
-    python annotate_stream_v5.py --no-zmq          # disable ZMQ (annotation only)
-    python annotate_stream_v5.py --camera 1 --classes "cup,bottle,toy"
-    python annotate_stream_v5.py --passthrough      # raw camera passthrough, no YOLO
+    python annotate_stream.py
+    python annotate_stream.py --zmq-port 5556 --zmq-name wrist_annotated
+    python annotate_stream.py --no-zmq          # disable ZMQ (annotation only)
+    python annotate_stream.py --camera 1 --classes "cup,bottle,toy"
+    python annotate_stream.py --passthrough      # raw camera passthrough, no YOLO
 
 Controls:
+    P   — toggle passthrough / annotated (requires model loaded)
     F   — freeze / unfreeze target (buffer resets on unfreeze)
+    [ ] / PgUp PgDn — cycle through detected objects
     A   — toggle show-all secondary detections
     C   — next camera
-    R   — toggle raw / annotated
+    R   — toggle raw view (display only — detection + ZMQ continue)
     S   — save snapshot
     Z   — define pick zone / clear
     X   — define exclusion zone / clear
     Q   — quit (auto-saves state)
 
-State file: annotate_stream_state_v5.json (camera, classes, zones, last frozen bbox).
+State file: annotate_stream_state.json (camera, classes, zones, last frozen bbox).
 Pass --fresh to skip loading saved state.
 """
 
@@ -214,7 +216,7 @@ def open_camera(idx, resolution=RESOLUTION):
 
 # ── State persistence ─────────────────────────────────────────────────────────
 
-STATE_FILE = Path(__file__).with_name("annotate_stream_state_v5.json")
+STATE_FILE = Path(__file__).with_name("annotate_stream_state.json")
 
 
 def save_state(cam_idx, classes, pick_zone, excl_zone, frozen, frozen_bbox, frozen_label):
@@ -404,6 +406,7 @@ class DetectionBuffer:
         self._challenger    = _ChallengerBuffer()
 
     def reset(self):
+        """Normal reset — enforces cooldown if target was committed before loss."""
         was_committed = self.is_stable or self.in_hysteresis
         self._buf.clear()
         self._stale_count   = 0
@@ -413,6 +416,16 @@ class DetectionBuffer:
         self._challenger.reset()
         if was_committed:
             self._lost_at = time.monotonic()
+
+    def hard_reset(self):
+        """Operator-forced reset — no cooldown, accept next detection immediately."""
+        self._buf.clear()
+        self._stale_count   = 0
+        self._last_label    = ""
+        self._stable_at     = None
+        self._last_valid_at = None
+        self._lost_at       = None
+        self._challenger.reset()
 
     def _protected(self):
         return (self._last_valid_at is not None and
@@ -502,9 +515,12 @@ def draw_annotated_stream(frame, bbox, buf, frozen):
     out = frame.copy()
     if bbox is None or not (frozen or buf.is_stable):
         return out
-    color = COLOR_FROZEN if frozen else COLOR_STABLE
+    # Always render the bbox in STABLE green on the ZMQ stream.
+    # The policy sees this frame — it shouldn't know or care whether the
+    # operator froze the target.  Freeze vs stable distinction is for the
+    # operator HUD (draw_target_hud) only.
     x1, y1, x2, y2 = bbox
-    cv2.rectangle(out, (x1, y1), (x2, y2), color, 3)
+    cv2.rectangle(out, (x1, y1), (x2, y2), COLOR_STABLE, 3)
     return out
 
 
@@ -517,9 +533,9 @@ def draw_target_hud(frame, bbox, label, conf, buf, frozen):
     x1, y1, x2, y2 = bbox
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3)
     text_y = y1 - 10 if y1 > 25 else y2 + 20
-    cv2.putText(frame, tag, (x1, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.75, color, 2)
+    cv2.putText(frame, tag, (x1, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.50, color, 1)
     cv2.putText(frame, f"bbox [{x1},{y1},{x2},{y2}]",
-                (10, frame.shape[0] - 30),
+                (10, frame.shape[0] - 50),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.48, color, 1)
 
 
@@ -533,7 +549,7 @@ def draw_secondary(frame, detections):
 def draw_stability_bar(frame, buf, frozen):
     h, w = frame.shape[:2]
     bar_w, bar_h = 120, 10
-    bx, by = w - bar_w - 10, 45
+    bx, by = w - bar_w - 10, 50
     cv2.rectangle(frame, (bx, by), (bx + bar_w, by + bar_h), (50, 50, 50), -1)
     if frozen:
         fill_color, fill_px, label = COLOR_FROZEN, bar_w, "FROZEN"
@@ -565,16 +581,16 @@ def draw_hud(frame, cam_idx, available, fps, info, show_all, frozen, zmq_port, r
     cv2.putText(frame, mode_label, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, mode_color, 1)
     cv2.putText(frame, f"{fps:.1f} fps  |  r:{read_ms:.0f}  i:{infer_ms:.0f}  t:{total_ms:.0f} ms",
                 (w - 310, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-    cv2.putText(frame, info, (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 220, 220), 1)
+    cv2.putText(frame, info, (10, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 220, 220), 1)
     if show_all:
-        cv2.putText(frame, "[ALL]", (w - 60, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 0), 1)
+        cv2.putText(frame, "[ALL]", (w - 60, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 0), 1)
     # ZMQ status indicator
     if zmq_port is not None:
         zmq_label = f"ZMQ:{zmq_port}"
-        cv2.putText(frame, zmq_label, (w - 90, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (100, 220, 100), 1)
+        cv2.putText(frame, zmq_label, (w - 90, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (100, 220, 100), 1)
     cam_str = "CAM [" + "  ".join(f">{c}<" if c == cam_idx else str(c) for c in available) + "]"
     cv2.putText(frame, cam_str, (10, h - 28), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 220, 255), 1)
-    hint = "Q=quit  F=freeze  C=cam  A=all  R=raw  S=snap  Z=pick-zone  X=excl-zone"
+    hint = "Q=quit  P=passthrough  F=freeze  [/]=cycle  C=cam  A=all  R=raw  S=snap  Z=pick-zone  X=excl-zone"
     cv2.putText(frame, hint, (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (120, 120, 120), 1)
 
 
@@ -657,13 +673,16 @@ def main():
         model, active_device = load_model(args.device, classes)
         buf    = DetectionBuffer()
         frozen = False
+    passthrough_active = args.passthrough  # runtime toggle via 'P' key
     frozen_bbox  = None
     frozen_label = ""
     frozen_conf  = 0.0
     disp_conf    = 0.0
 
-    show_raw     = False
-    show_all     = args.show_all
+    show_raw       = False
+    show_all       = args.show_all
+    selected_det_idx = None   # None=auto, 0..N-1=manual selection via [/] or PgUp/PgDn
+    prev_sel_idx     = None   # track changes to force buffer reset on switch
     pick_zone    = state.get("pick_zone") if state else None
     excl_zone    = state.get("excl_zone") if state else None
 
@@ -687,7 +706,7 @@ def main():
     avg_read     = avg_infer = avg_total = 0.0
     info_str     = "Initialising..."
 
-    print("\nControls: Q=quit  F=freeze  C=cam  A=all  R=raw  S=snap  Z=pick-zone  X=excl-zone\n")
+    print("\nControls: Q=quit  P=passthrough  F=freeze  [/]=cycle  C=cam  A=all  R=raw  S=snap  Z=pick-zone  X=excl-zone\n")
 
     while True:
         t0 = time.perf_counter()
@@ -709,7 +728,7 @@ def main():
 
         # ── compute current bbox ───────────────────────────────────────────────
         detections = []   # always defined for the HUD block below
-        if args.passthrough:
+        if passthrough_active:
             median_bbox = None
             disp_label  = ""
             disp_conf   = 0.0
@@ -718,26 +737,36 @@ def main():
             median_bbox = frozen_bbox
             disp_label  = frozen_label
             disp_conf   = frozen_conf
-        elif show_raw:
-            median_bbox = None
-            disp_label  = ""
-            disp_conf   = 0.0
         else:
             detections  = raw_detect(frame, model, pick_zone, excl_zone)
-            # Prefer the detection that matches the current buffer to avoid
-            # rank oscillation when two objects of similar size swap rank0
-            # every frame — each resetting the other's challenger.
-            best_match = None
-            if detections:
-                current = buf.median()
-                if current is not None:
-                    for d in detections:
-                        _, x1, y1, x2, y2, _, _ = d
-                        if _iou((x1, y1, x2, y2), current) >= IOU_GATE:
-                            best_match = d
-                            break
-                if best_match is None:
-                    best_match = detections[0]
+            # ── manual selection override ──────────────────────────────────
+            if selected_det_idx is not None:
+                if not detections:
+                    selected_det_idx = None   # no objects, release selection
+                elif selected_det_idx >= len(detections):
+                    selected_det_idx = None   # list shortened, release selection
+            # Force-reset buffer when selection changes — no cooldown,
+            # the operator explicitly chose a different target.
+            if selected_det_idx != prev_sel_idx:
+                buf.hard_reset()
+            # ── pick best_match ────────────────────────────────────────────
+            if selected_det_idx is not None:
+                best_match = detections[selected_det_idx]
+            else:
+                # Prefer the detection that matches the current buffer to avoid
+                # rank oscillation when two objects of similar size swap rank0
+                # every frame — each resetting the other's challenger.
+                best_match = None
+                if detections:
+                    current = buf.median()
+                    if current is not None:
+                        for d in detections:
+                            _, x1, y1, x2, y2, _, _ = d
+                            if _iou((x1, y1, x2, y2), current) >= IOU_GATE:
+                                best_match = d
+                                break
+                    if best_match is None:
+                        best_match = detections[0]
             median_bbox = buf.update(best_match)
             if best_match is not None:
                 _, _, _, _, _, disp_label, disp_conf = best_match
@@ -745,7 +774,7 @@ def main():
                 disp_label, disp_conf = buf.label, 0.0
 
         # ── stream 3: annotated frame for ZMQ ─────────────────────────────────
-        if args.passthrough:
+        if passthrough_active:
             # Passthrough: publish raw frame directly, no annotation overlay
             annotated = frame
         else:
@@ -756,15 +785,16 @@ def main():
         # ── stream 4: operator HUD ────────────────────────────────────────────
         display = frame.copy()
 
-        if args.passthrough:
+        if passthrough_active:
             # Minimal HUD — just fps, camera indicator, and passthrough label
             pass
-        elif show_raw:
-            info_str = "RAW"
         else:
-            if not frozen and show_all and len(detections) > 1:
-                draw_secondary(display, detections)
-            draw_target_hud(display, median_bbox, disp_label, disp_conf, buf, frozen)
+            # Draw bbox overlays only when not in raw view
+            if not show_raw:
+                if not frozen and show_all and len(detections) > 1:
+                    draw_secondary(display, detections)
+                draw_target_hud(display, median_bbox, disp_label, disp_conf, buf, frozen)
+            # Detection state info — always computed (raw view hides overlays, not state)
             if frozen:
                 info_str = f"FROZEN  bbox {frozen_bbox}"
             elif buf.in_hysteresis:
@@ -779,15 +809,20 @@ def main():
                 info_str = "No objects detected"
             else:
                 n          = len(detections)
+                sel_tag    = f"  [SEL {selected_det_idx+1}/{n}]" if selected_det_idx is not None else ""
                 stable_tag = "  [STABLE]" if buf.is_stable else f"  [{int(buf.fill*100)}%]"
-                info_str   = f"{n} object{'s' if n != 1 else ''} detected{stable_tag}"
+                info_str   = f"{n} object{'s' if n != 1 else ''} detected{sel_tag}{stable_tag}"
+            if show_raw:
+                info_str = "[RAW] " + info_str
 
-        if not args.passthrough:
+        if not passthrough_active and not show_raw:
             draw_stability_bar(display, buf, frozen)
             draw_zone_overlays(display, pick_zone, excl_zone)
         draw_hud(display, cam_idx, available, fps, info_str, show_all, frozen, zmq_port_active,
                  avg_read, avg_infer, avg_total, active_device)
         cv2.imshow("Annotation Stream v5", display)
+
+        prev_sel_idx = selected_det_idx  # track for change detection next frame
 
         t2 = time.perf_counter()
         buf_read.append((t1 - t0) * 1000)
@@ -803,15 +838,28 @@ def main():
             save_state(cam_idx, classes, pick_zone, excl_zone, frozen, frozen_bbox, frozen_label)
             break
 
+        elif key == ord('p'):
+            if model is not None:
+                passthrough_active = not passthrough_active
+                selected_det_idx  = None
+                if passthrough_active:
+                    buf.hard_reset()
+                    print("Passthrough ON — raw camera feed, YOLO bypassed")
+                else:
+                    buf.hard_reset()
+                    print("Passthrough OFF — YOLO annotation resumed")
+            else:
+                print("Passthrough toggle unavailable — model not loaded (start without --passthrough)")
+
         elif key == ord('f'):
-            if args.passthrough:
+            if passthrough_active:
                 pass  # no detection → nothing to freeze
             elif frozen:
                 frozen = False
                 frozen_bbox = None
                 frozen_label = ""
                 frozen_conf = 0.0
-                buf.reset()
+                buf.hard_reset()
                 save_state(cam_idx, classes, pick_zone, excl_zone, False, None, "")
                 print("Unfrozen. Buffer reset. State saved.")
             else:
@@ -825,13 +873,36 @@ def main():
                     print(f"Frozen: {frozen_bbox}  label={frozen_label}  State saved.")
                 else:
                     print("Nothing to freeze — no stable detection yet.")
+            selected_det_idx = None   # unfreeze also releases manual selection
+
+        elif key == ord('[') or key == 0xFF55 or key == 0x210000:   # [ or PageUp
+            if not passthrough_active and detections:
+                n = len(detections)
+                if selected_det_idx is None:
+                    selected_det_idx = 0
+                else:
+                    selected_det_idx = (selected_det_idx - 1) % n
+                print(f"Selected object {selected_det_idx+1}/{n}  label={detections[selected_det_idx][5]}")
+            elif passthrough_active:
+                print("Selection unavailable — passthrough active")
+
+        elif key == ord(']') or key == 0xFF56 or key == 0x220000:   # ] or PageDown
+            if not passthrough_active and detections:
+                n = len(detections)
+                if selected_det_idx is None:
+                    selected_det_idx = 0
+                else:
+                    selected_det_idx = (selected_det_idx + 1) % n
+                print(f"Selected object {selected_det_idx+1}/{n}  label={detections[selected_det_idx][5]}")
+            elif passthrough_active:
+                print("Selection unavailable — passthrough active")
 
         elif key == ord('a'):
-            if not args.passthrough:
+            if not passthrough_active:
                 show_all = not show_all
 
         elif key == ord('r'):
-            if not args.passthrough:
+            if not passthrough_active:
                 show_raw = not show_raw
 
         elif key == ord('s'):
@@ -841,7 +912,7 @@ def main():
             print(f"Snapshot: {path}")
 
         elif key == ord('z'):
-            if args.passthrough:
+            if passthrough_active:
                 pass
             elif pick_zone is not None:
                 pick_zone = None
@@ -857,7 +928,7 @@ def main():
                 print(f"Pick zone: {pick_zone}" if pick_zone else "Cancelled.")
 
         elif key == ord('x'):
-            if args.passthrough:
+            if passthrough_active:
                 pass
             elif excl_zone is not None:
                 excl_zone = None
