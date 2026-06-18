@@ -658,8 +658,8 @@ def control_loop(
         if use_gripper:
             features["complementary_info.discrete_penalty"] = {
                 "dtype": "float32",
-                "shape": (1,),
-                "names": ["discrete_penalty"],
+                "shape": (),
+                "names": None,
             }
 
         for key, value in transition[TransitionKey.OBSERVATION].items():
@@ -731,7 +731,7 @@ def control_loop(
                         "discrete_penalty", 0.0
                     )
                     frame["complementary_info.discrete_penalty"] = np.array(
-                        [discrete_penalty], dtype=np.float32
+                        discrete_penalty, dtype=np.float32
                     )
 
                 if dataset is not None:
