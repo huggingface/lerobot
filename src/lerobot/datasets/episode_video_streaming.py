@@ -335,6 +335,7 @@ class NativeHTTPRangeFetcher:
             range_jobs=1.0,
             range_bytes=float(len(payload)),
             range_resolve_s=resolve_s,
+            **{f"range_status_{status_code}": 1.0},
             **timings,
         )
         return payload
