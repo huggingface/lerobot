@@ -11,6 +11,7 @@ if TYPE_CHECKING or _diffusers_available:
     from diffusers.configuration_utils import ConfigMixin, register_to_config
     from diffusers.models.modeling_utils import ModelMixin
 else:
+
     class ModelMixin:
         pass
 
@@ -19,6 +20,7 @@ else:
 
     def register_to_config(init):
         return init
+
 
 from .attention import flash_attention
 
