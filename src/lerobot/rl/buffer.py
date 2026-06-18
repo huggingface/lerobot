@@ -530,8 +530,8 @@ class ReplayBuffer:
         features[ACTION] = act_info
 
         # Add "reward" and "done"
-        features[REWARD] = {"dtype": "float32", "shape": (1,)}
-        features[DONE] = {"dtype": "bool", "shape": (1,)}
+        features[REWARD] = {"dtype": "float32", "shape": ()}
+        features[DONE] = {"dtype": "bool", "shape": ()}
 
         # Add state keys
         for key in self.states:
@@ -574,8 +574,8 @@ class ReplayBuffer:
 
             # Fill action, reward, done
             frame_dict[ACTION] = self.actions[actual_idx].cpu()
-            frame_dict[REWARD] = torch.tensor([self.rewards[actual_idx]], dtype=torch.float32).cpu()
-            frame_dict[DONE] = torch.tensor([self.dones[actual_idx]], dtype=torch.bool).cpu()
+            frame_dict[REWARD] = self.rewards[actual_idx].cpu()
+            frame_dict[DONE] = self.dones[actual_idx].cpu()
             frame_dict["task"] = task_name
 
             # Add complementary_info if available

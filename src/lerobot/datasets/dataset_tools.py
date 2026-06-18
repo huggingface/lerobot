@@ -331,7 +331,7 @@ def modify_features(
         new_dataset = modify_features(
             dataset,
             add_features={
-                "reward": (reward_array, {"dtype": "float32", "shape": [1], "names": None}),
+                "reward": (reward_array, {"dtype": "float32", "shape": [], "names": None}),
             },
             remove_features=["old_feature"],
             output_dir="./output",

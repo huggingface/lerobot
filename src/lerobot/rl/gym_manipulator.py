@@ -652,8 +652,8 @@ def control_loop(
             }
         features = {
             ACTION: action_features,
-            REWARD: {"dtype": "float32", "shape": (1,), "names": None},
-            DONE: {"dtype": "bool", "shape": (1,), "names": None},
+            REWARD: {"dtype": "float32", "shape": (), "names": None},
+            DONE: {"dtype": "bool", "shape": (), "names": None},
         }
         if use_gripper:
             features["complementary_info.discrete_penalty"] = {
@@ -723,8 +723,8 @@ def control_loop(
                 frame = {
                     **observation,
                     ACTION: action_to_record.cpu(),
-                    REWARD: np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
-                    DONE: np.array([terminated or truncated], dtype=bool),
+                    REWARD: np.array(transition[TransitionKey.REWARD], dtype=np.float32),
+                    DONE: np.array(terminated or truncated, dtype=bool),
                 }
                 if use_gripper:
                     discrete_penalty = transition[TransitionKey.COMPLEMENTARY_DATA].get(
