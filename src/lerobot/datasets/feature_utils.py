@@ -117,7 +117,7 @@ def detect_legacy_scalar_features(features: dict, data_dir: Path) -> frozenset[s
     candidates = {
         key
         for key, ft in features.items()
-        if tuple(ft.get("shape", ())) == (1,) and ft["dtype"] not in ("image", "video", "string")
+        if tuple(ft.get("shape", ())) == (1,) and ft["dtype"] not in ("image", "video", "string", "language")
     }
     if not candidates:
         return frozenset()
