@@ -45,6 +45,8 @@
     title: Language Columns and Recipes
   - local: tools
     title: Tools
+  - local: annotation_pipeline
+    title: Annotation Pipeline
   - local: video_encoding_parameters
     title: Video encoding parameters
   - local: streaming_video_encoding
