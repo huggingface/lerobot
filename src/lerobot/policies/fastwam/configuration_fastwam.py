@@ -28,7 +28,7 @@ from lerobot.optim import AdamWConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 WAN22_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B"
-FASTWAM_BASE_MODEL_ID = "lerobot/fastwam-base"
+FASTWAM_BASE_MODEL_ID = "lerobot/fastwam_base"
 
 
 _FASTWAM_VIDEO_BASE_COMPAT_KEYS = (
@@ -130,7 +130,7 @@ def _validate_wan_model_id(value: str, field_name: str) -> str:
 
 
 def is_fastwam_base_compatible_config(config: FastWAMConfig) -> bool:
-    """Return whether `fastwam-base` partial weights can initialize this config."""
+    """Return whether `fastwam_base` partial weights can initialize this config."""
 
     default_video_config = default_video_dit_config(config.action_dim)
     default_action_config = default_action_dit_config(config.action_dim)

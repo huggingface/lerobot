@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from pathlib import Path
 from typing import Any
 
 import torch
@@ -122,26 +121,6 @@ class FastWAMPolicy(PreTrainedPolicy):
         if map_location and map_location != "cpu":
             model.to(map_location)
         return model
-
-    def _save_pretrained(self, save_directory: Path, state_dict: dict[str, Tensor] | None = None) -> None:
-        """Down-cast float tensors to the policy dtype before saving.
-
-        FSDP's FULL_STATE_DICT gather returns fp32 master weights, so the default save would
-        write a fp32 `model.safetensors` (~24 GB) even though FastWAM runs in
-        `config.torch_dtype` (bf16). That doubles disk/upload and, worse, makes reloading OOM
-        under FSDP — every rank materializes the full fp32 model on GPU before sharding.
-        Casting float tensors to the configured dtype here halves the checkpoint and keeps
-        loads within budget; non-float tensors (e.g. integer buffers) pass through unchanged.
-        The `state_dict is None` path (non-FSDP saves) already holds params at
-        `config.torch_dtype`, so it needs no cast.
-        """
-        if state_dict is not None:
-            dtype = _dtype_from_name(self.config.torch_dtype)
-            state_dict = {
-                key: (value.to(dtype) if torch.is_floating_point(value) else value)
-                for key, value in state_dict.items()
-            }
-        super()._save_pretrained(save_directory, state_dict)
 
     def get_optim_params(self) -> list[Tensor]:
         # Return the trainable tensors directly (a single param group). The optimizer
@@ -385,7 +364,9 @@ def _resize_frames(frames: Tensor, size: tuple[int, int]) -> Tensor:
         return frames
     lead = frames.shape[:-3]
     flat = frames.reshape(-1, *frames.shape[-3:])
-    flat = torch.nn.functional.interpolate(flat, size=size, mode="bilinear", align_corners=False, antialias=True)
+    flat = torch.nn.functional.interpolate(
+        flat, size=size, mode="bilinear", align_corners=False, antialias=True
+    )
     return flat.reshape(*lead, *flat.shape[-3:])
 
 

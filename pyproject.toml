@@ -442,7 +442,8 @@ default.extend-ignore-identifiers-re = [
     "is_compileable",
     "ROBOTIS",
     "OT_VALUE",
-    "VanderBilt"
+    "VanderBilt",
+    "seperated_timestep",
 ]
 
 # TODO: Uncomment when ready to use
