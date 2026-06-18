@@ -163,6 +163,17 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
         else:
             continue
 
+        if type in (FeatureType.STATE, FeatureType.ENV) and tuple(shape) == (0,):
+            # A zero-length state/env feature (e.g. a camera-only robot) carries no
+            # information for a policy to consume. Omitting it here, rather than
+            # emitting a PolicyFeature with an empty shape, keeps every existing
+            # `if config.robot_state_feature:` truthiness check and
+            # `if OBS_STATE in self.input_features:` membership check correct
+            # without needing to touch either pattern individually -- a
+            # PolicyFeature instance is truthy regardless of its shape, so a
+            # present-but-empty entry would silently look like "has state."
+            continue
+
         policy_features[key] = PolicyFeature(
             type=type,
             shape=shape,
