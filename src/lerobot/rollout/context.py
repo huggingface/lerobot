@@ -344,7 +344,7 @@ def build_rollout_context(
             if isinstance(cfg.strategy, DAggerStrategyConfig):
                 dataset_features["intervention"] = {
                     "dtype": "bool",
-                    "shape": (1,),
+                    "shape": (),
                     "names": None,
                 }
 

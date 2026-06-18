@@ -442,7 +442,7 @@ class DAggerStrategy(RolloutStrategy):
                                 **obs_frame,
                                 **action_frame,
                                 "task": task_str,
-                                "intervention": np.array([True], dtype=bool),
+                                "intervention": np.array(True, dtype=bool),
                             }
                             dataset.add_frame(frame)
                         record_tick += 1
@@ -470,7 +470,7 @@ class DAggerStrategy(RolloutStrategy):
                                     **obs_frame,
                                     **action_frame,
                                     "task": task_str,
-                                    "intervention": np.array([False], dtype=bool),
+                                    "intervention": np.array(False, dtype=bool),
                                 }
                                 dataset.add_frame(frame)
                             record_tick += 1
@@ -624,7 +624,7 @@ class DAggerStrategy(RolloutStrategy):
                                     **obs_frame,
                                     **action_frame,
                                     "task": task_str,
-                                    "intervention": np.array([True], dtype=bool),
+                                    "intervention": np.array(True, dtype=bool),
                                 }
                             )
                         record_tick += 1
