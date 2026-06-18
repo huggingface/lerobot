@@ -34,8 +34,10 @@ from torch.optim import Optimizer
 from tqdm import tqdm
 
 from lerobot.common.train_utils import (
+    gather_fsdp_state_dicts,
     get_step_checkpoint_dir,
     get_step_identifier,
+    load_fsdp_optimizer_state,
     load_training_batch_size,
     load_training_num_processes,
     load_training_state,
@@ -369,7 +371,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     step = 0  # number of policy updates (forward + backward + optim)
 
     if cfg.resume:
-        step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
+        # Under FSDP the optimizer state is sharded and must be loaded after `accelerator.prepare()`
+        # (see load_fsdp_optimizer_state below), so skip the optimizer here and load it then.
+        is_fsdp = accelerator.distributed_type == DistributedType.FSDP
+        step, optimizer, lr_scheduler = load_training_state(
+            cfg.checkpoint_path, optimizer, lr_scheduler, load_optimizer=not is_fsdp
+        )
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
@@ -459,6 +466,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
         policy, optimizer, dataloader, lr_scheduler
     )
+
+    # FSDP optimizer state is sharded across ranks, so it can only be loaded once the optimizer and
+    # model are FSDP-wrapped (i.e. after `prepare`). Collective: every rank must participate.
+    if cfg.resume and accelerator.distributed_type == DistributedType.FSDP:
+        load_fsdp_optimizer_state(policy, optimizer, cfg.checkpoint_path)
+
     dl_iter = cycle(dataloader)
 
     policy.train()
@@ -557,31 +570,30 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step:
-            # All ranks must call get_state_dict; rank 0 gets the
-            # full state dict, others get an empty dict.
+            # Under FSDP, gathering the full model + optimizer state dicts is a cross-rank collective,
+            # so all ranks must participate; rank 0 then writes the materialized dicts. For DDP /
+            # single-GPU the state dicts are saved the normal way inside save_checkpoint.
             is_fsdp = accelerator.distributed_type == DistributedType.FSDP
-            model_state_dict = accelerator.get_state_dict(policy)
+            if is_fsdp:
+                model_state_dict, optim_state_dict = gather_fsdp_state_dicts(policy, optimizer)
+            else:
+                model_state_dict, optim_state_dict = None, None
             if is_main_process:
                 logging.info(f"Checkpoint policy after step {step}")
                 checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
-                if is_fsdp:
-                    # TODO(fsdp): sharded optimizer-state save/resume is not wired up yet.
-                    logging.warning(
-                        "FSDP checkpoint: saving model weights only (optimizer state skipped; "
-                        "resume-from-checkpoint not supported under FSDP yet)."
-                    )
                 save_checkpoint(
                     checkpoint_dir=checkpoint_dir,
                     step=step,
                     cfg=cfg,
                     policy=accelerator.unwrap_model(policy),
-                    optimizer=None if is_fsdp else optimizer,
+                    optimizer=optimizer,
                     scheduler=lr_scheduler,
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
                     num_processes=accelerator.num_processes,
                     batch_size=cfg.batch_size,
                     model_state_dict=model_state_dict,
+                    optim_state_dict=optim_state_dict,
                 )
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
