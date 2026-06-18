@@ -517,11 +517,11 @@ class ReplayBuffer:
 
         # Create features dictionary for the dataset
         features = {
-            "index": {"dtype": "int64", "shape": [1]},  # global index across episodes
-            "episode_index": {"dtype": "int64", "shape": [1]},  # which episode
-            "frame_index": {"dtype": "int64", "shape": [1]},  # index inside an episode
-            "timestamp": {"dtype": "float32", "shape": [1]},  # for now we store dummy
-            "task_index": {"dtype": "int64", "shape": [1]},
+            "index": {"dtype": "int64", "shape": ()},  # global index across episodes
+            "episode_index": {"dtype": "int64", "shape": ()},  # which episode
+            "frame_index": {"dtype": "int64", "shape": ()},  # index inside an episode
+            "timestamp": {"dtype": "float32", "shape": ()},  # for now we store dummy
+            "task_index": {"dtype": "int64", "shape": ()},
         }
 
         # Add "action"
