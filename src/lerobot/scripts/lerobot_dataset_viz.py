@@ -59,6 +59,18 @@ distant$ lerobot-dataset-viz \
 local$ rerun rerun+http://IP:GRPC_PORT/proxy
 ```
 
+- Visualize data in Foxglove with a seekable, scrubbable timeline:
+```
+local$ lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --episode-index 0 \
+    --display-mode foxglove
+
+# then open the Foxglove app and connect to ws://127.0.0.1:8765
+```
+This starts a Foxglove WebSocket server that serves the episode on demand from the on-disk dataset,
+so you can play/pause and scrub anywhere in the episode using Foxglove's playback controls.
+
 """
 
 import argparse
@@ -150,8 +162,26 @@ def visualize_dataset(
     save: bool = False,
     output_dir: Path | None = None,
     display_compressed_images: bool = False,
+    display_mode: str = "rerun",
+    host: str = "127.0.0.1",
+    port: int = 8765,
     **kwargs,
 ) -> Path | None:
+    if display_mode == "foxglove":
+        if save:
+            logging.warning("--save is ignored with --display-mode foxglove (no .rrd file is written).")
+        from lerobot.utils.visualization_utils import serve_foxglove_dataset_playback
+
+        logging.info("Starting Foxglove server")
+        serve_foxglove_dataset_playback(
+            dataset,
+            episode_index,
+            host=host,
+            port=port,
+            compress_images=display_compressed_images,
+        )
+        return None
+
     if save:
         assert output_dir is not None, (
             "Set an output directory where to write .rrd files with `--output-dir path/to/directory`."
@@ -351,7 +381,31 @@ def main():
     parser.add_argument(
         "--display-compressed-images",
         action="store_true",
-        help="If set, display compressed images in Rerun instead of uncompressed ones.",
+        help="If set, display compressed (JPEG) images instead of uncompressed ones.",
+    )
+
+    parser.add_argument(
+        "--display-mode",
+        type=str,
+        default="rerun",
+        choices=["rerun", "foxglove"],
+        help=(
+            "Visualization backend. 'rerun' uses the Rerun viewer (--mode/--save/--*-port apply). "
+            "'foxglove' starts a Foxglove WebSocket server that serves the episode as a seekable, "
+            "scrubbable timeline; connect the Foxglove app to ws://HOST:PORT (--host/--port)."
+        ),
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Host to bind the Foxglove WebSocket server to when `--display-mode foxglove` is set.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Port to bind the Foxglove WebSocket server to when `--display-mode foxglove` is set.",
     )
 
     args = parser.parse_args()
