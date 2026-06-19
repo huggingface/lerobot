@@ -19,6 +19,8 @@ from __future__ import annotations
 ########################################################################################
 import logging
 import os
+import sys
+import threading
 import time
 import traceback
 from contextlib import nullcontext
@@ -166,6 +168,108 @@ def handle_key(kind: str, events: dict) -> None:
         print("Escape key pressed. Stopping data recording...")
         events["stop_recording"] = True
         events["exit_early"] = True
+
+
+class TerminalKeyListener:
+    """
+    Display-independent keyboard listener that reads control keys from the terminal (stdin).
+
+    Used as the Wayland/headless equivalent of the ``pynput`` listener. ``pynput`` needs an X11
+    backend and cannot capture global hotkeys under Wayland, but a controlling TTY still delivers
+    key bytes to the foreground process. This backend puts the terminal into cbreak mode and reads
+    bytes on a daemon thread, recognizing:
+
+    - the same Right / Left / Esc controls via their ANSI escape sequences (``ESC [ C`` / ``ESC [ D``
+      / bare ``ESC``), routed through :func:`handle_key` so behavior matches the ``pynput`` path; and
+    - ``n`` / ``r`` / ``q`` letter fallbacks (next / re-record / quit) for keymaps where the arrow
+      keys are inconvenient.
+
+    Only a *bare* ``ESC`` maps to "stop"; other CSI sequences such as the up/down arrows
+    (``ESC [ A`` / ``ESC [ B``) are intentionally ignored so they cannot accidentally trigger a
+    stop. The original terminal attributes are captured on :meth:`start` and restored on
+    :meth:`stop`, so the terminal is never left in cbreak mode.
+
+    The POSIX-only modules (``termios``/``tty``/``select``) are imported lazily inside the methods
+    so this module remains importable on platforms without them (e.g. Windows).
+    """
+
+    def __init__(self, events: dict):
+        self._events = events
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self._fd: int | None = None
+        self._old_attrs = None
+
+    def _read_char(self, timeout: float) -> str | None:
+        """Return one character from stdin within ``timeout`` seconds, or ``None`` on timeout."""
+        import select
+
+        if self._fd is None:
+            return None
+        ready, _, _ = select.select([self._fd], [], [], timeout)
+        if not ready:
+            return None
+        return os.read(self._fd, 1).decode(errors="ignore")
+
+    def _run(self) -> None:
+        while self._running:
+            ch = self._read_char(timeout=0.05)
+            if ch is None:
+                continue
+
+            if ch == "\x1b":
+                # Start of a possible ANSI escape sequence (e.g. arrow keys: ``ESC [ <code>``).
+                # Use short follow-up reads so a *bare* ESC isn't mistaken for a sequence.
+                ch2 = self._read_char(timeout=0.02)
+                if ch2 is None:
+                    handle_key("esc", self._events)
+                    continue
+                ch3 = self._read_char(timeout=0.02)
+                seq = ch2 + (ch3 or "")
+                if seq == "[C":
+                    handle_key("right", self._events)
+                elif seq == "[D":
+                    handle_key("left", self._events)
+                # Any other sequence (incl. up/down "[A"/"[B") is ignored on purpose.
+                continue
+
+            lowered = ch.lower()
+            if lowered == "n":
+                handle_key("right", self._events)
+            elif lowered == "r":
+                handle_key("left", self._events)
+            elif lowered == "q":
+                handle_key("esc", self._events)
+
+    def start(self) -> None:
+        """Switch the terminal to cbreak mode and begin reading keys on a daemon thread.
+
+        No-op when stdin is not a TTY (e.g. piped/redirected input), so non-interactive
+        runs are never affected.
+        """
+        import termios
+        import tty
+
+        if not sys.stdin.isatty():
+            return
+        self._fd = sys.stdin.fileno()
+        self._old_attrs = termios.tcgetattr(self._fd)
+        tty.setcbreak(self._fd)
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Stop the reader thread and restore the original terminal attributes."""
+        self._running = False
+        if self._thread is not None:
+            self._thread.join(timeout=0.5)
+            self._thread = None
+        if self._fd is not None and self._old_attrs is not None:
+            import termios
+
+            termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old_attrs)
+            self._old_attrs = None
 
 
 def init_keyboard_listener():
