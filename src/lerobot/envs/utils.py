@@ -126,6 +126,26 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     if "camera_obs" in observations:
         return_observations[f"{OBS_STR}.camera_obs"] = observations["camera_obs"]
 
+    # Pass through any remaining ndarray/tensor keys not already handled above,
+    # so env plugins can expose extra observation keys via get_env_processors().
+    _handled = {"pixels", "environment_state", "agent_pos", "robot_state", "policy", "camera_obs"}
+    for key, value in observations.items():
+        if key in _handled:
+            continue
+        target = f"{OBS_STR}.{key}"
+        if target in return_observations:
+            continue
+        if isinstance(value, np.ndarray):
+            val = torch.from_numpy(value).float()
+            if val.dim() == 1:
+                val = val.unsqueeze(0)
+            return_observations[target] = val
+        elif isinstance(value, Tensor):
+            val = value.float()
+            if val.dim() == 1:
+                val = val.unsqueeze(0)
+            return_observations[target] = val
+
     return return_observations
 
 
