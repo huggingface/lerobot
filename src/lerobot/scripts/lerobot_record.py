@@ -98,7 +98,6 @@ from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.common.control_utils import (
     init_keyboard_listener,
-    is_headless,
     sanity_check_dataset_robot_compatibility,
 )
 from lerobot.configs import parser
@@ -508,7 +507,7 @@ def record(
         if teleop and teleop.is_connected:
             teleop.disconnect()
 
-        if not is_headless() and listener:
+        if listener is not None:
             listener.stop()
 
         if cfg.dataset.push_to_hub:

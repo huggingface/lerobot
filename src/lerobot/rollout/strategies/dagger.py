@@ -328,7 +328,7 @@ class DAggerStrategy(RolloutStrategy):
         logger.info("Stopping DAgger recording")
         log_say("Stopping DAgger recording", play_sounds)
 
-        if self._listener is not None and not is_headless():
+        if self._listener is not None:
             logger.info("Stopping keyboard listener")
             self._listener.stop()
 

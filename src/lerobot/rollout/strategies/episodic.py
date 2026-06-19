@@ -36,7 +36,6 @@ import time
 from lerobot.common.control_utils import (
     follower_smooth_move_to,
     init_keyboard_listener,
-    is_headless,
     teleop_smooth_move_to,
     teleop_supports_feedback,
 )
@@ -307,7 +306,7 @@ class EpisodicStrategy(RolloutStrategy):
 
         log_say("Stop recording", play_sounds, blocking=True)
 
-        if not is_headless() and self._listener is not None:
+        if self._listener is not None:
             self._listener.stop()
 
         if ctx.data.dataset is not None:
