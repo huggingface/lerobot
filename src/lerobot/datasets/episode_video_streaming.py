@@ -113,7 +113,7 @@ class ThreadLocalRangeFetcher:
     def _record_timing(self, **kwargs: float) -> None:
         with self._timing_lock:
             for key, value in kwargs.items():
-                self._timing_totals[key] += value
+                self._timing_totals[key] = self._timing_totals.get(key, 0.0) + value
 
     def timing_summary(self) -> dict[str, float]:
         with self._timing_lock:
@@ -419,7 +419,7 @@ class NativeHTTPRangeFetcher:
     def _record_timing(self, **kwargs: float) -> None:
         with self._timing_lock:
             for key, value in kwargs.items():
-                self._timing_totals[key] += value
+                self._timing_totals[key] = self._timing_totals.get(key, 0.0) + value
 
     def timing_summary(self) -> dict[str, float]:
         with self._timing_lock:
