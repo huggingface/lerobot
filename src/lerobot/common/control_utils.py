@@ -280,9 +280,18 @@ def init_keyboard_listener():
     the program flow during execution, such as stopping recording or exiting loops. It gracefully
     handles headless environments where keyboard listening is not possible.
 
+    Backend selection:
+        - On an X11 display, the ``pynput`` global listener is used.
+        - On a Wayland session (where ``pynput`` cannot capture global hotkeys) or a headless
+          machine (where ``pynput`` is unavailable), a terminal listener reads the same keys from
+          stdin instead, as long as stdin is an interactive TTY.
+        - When neither backend is usable (e.g. stdin is not a TTY in an automated run), no listener
+          is created and recording relies on the episode/reset timers.
+
     Returns:
         A tuple containing:
-        - The `pynput.keyboard.Listener` instance, or `None` if in a headless environment.
+        - A listener instance exposing ``stop()`` (``pynput.keyboard.Listener`` or
+          :class:`TerminalKeyListener`), or ``None`` when no keyboard backend is available.
         - A dictionary of event flags (e.g., `exit_early`) that are set by key presses.
     """
     # Allow to exit early while recording an episode or resetting the environment,
@@ -293,30 +302,44 @@ def init_keyboard_listener():
     events["rerecord_episode"] = False
     events["stop_recording"] = False
 
-    if is_headless():
-        logging.warning(
-            "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
-        )
-        listener = None
+    # pynput needs an X11 backend. It is unavailable on headless machines, and on Wayland it still
+    # imports but cannot capture *global* hotkeys, so the arrow/Esc shortcuts are non-functional.
+    if not is_headless() and not is_wayland():
+        from pynput import keyboard
+
+        def on_press(key):
+            try:
+                if key == keyboard.Key.right:
+                    handle_key("right", events)
+                elif key == keyboard.Key.left:
+                    handle_key("left", events)
+                elif key == keyboard.Key.esc:
+                    handle_key("esc", events)
+            except Exception as e:
+                print(f"Error handling key press: {e}")
+
+        listener = keyboard.Listener(on_press=on_press)
+        listener.start()
         return listener, events
 
-    # Only import pynput if not in a headless environment
-    from pynput import keyboard
+    # Display-independent fallback (Wayland / headless): read the same keys from the terminal.
+    # This requires an interactive TTY; otherwise there is nothing to read from.
+    session = "Headless environment" if is_headless() else "Wayland session"
+    if not sys.stdin.isatty():
+        logging.warning(
+            "%s detected and stdin is not a TTY: keyboard controls are unavailable. "
+            "Recording will rely on the episode/reset timers (or Ctrl+C).",
+            session,
+        )
+        return None, events
 
-    def on_press(key):
-        try:
-            if key == keyboard.Key.right:
-                handle_key("right", events)
-            elif key == keyboard.Key.left:
-                handle_key("left", events)
-            elif key == keyboard.Key.esc:
-                handle_key("esc", events)
-        except Exception as e:
-            print(f"Error handling key press: {e}")
-
-    listener = keyboard.Listener(on_press=on_press)
+    logging.info(
+        "%s detected - enabling terminal keyboard listener. "
+        "Controls: Right/Left/Esc (or n=next, r=re-record, q=quit).",
+        session,
+    )
+    listener = TerminalKeyListener(events)
     listener.start()
-
     return listener, events
 
 
