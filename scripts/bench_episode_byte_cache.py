@@ -618,6 +618,8 @@ def _print_range_timing_summary(fetch_pool: dict[str, float]) -> None:
         ("range_header_s", "http response headers"),
         ("range_first_byte_s", "http first body byte"),
         ("range_body_s", "http body drain"),
+        ("range_chunk_gap_s", "http chunk wait"),
+        ("range_join_s", "join response chunks"),
         ("range_retry_sleep_s", "http retry sleep"),
     ):
         value = fetch_pool.get(key)
@@ -635,6 +637,14 @@ def _print_range_timing_summary(fetch_pool: dict[str, float]) -> None:
     if status_counts:
         summary = ", ".join(f"{status}={count:.0f}" for status, count in sorted(status_counts.items()))
         print(f"| http status counts | {summary} |")
+    chunks = fetch_pool.get("range_chunks", 0.0)
+    if chunks > 0:
+        bytes_read = fetch_pool.get("range_bytes", 0.0)
+        body_s = fetch_pool.get("range_body_s", 0.0)
+        print(f"| http chunks/range | {chunks / range_jobs:.1f} |")
+        print(f"| http avg KiB/chunk | {bytes_read / chunks / 1024:.1f} |")
+        if body_s > 0:
+            print(f"| http body MiB/s | {bytes_read / body_s / 1024**2:.1f} |")
     print(f"| range reads | {range_jobs:.0f} |")
     print(f"| avg MiB/range | {fetch_pool.get('range_bytes', 0.0) / range_jobs / 1024**2:.1f} |")
 

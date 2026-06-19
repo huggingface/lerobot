@@ -387,20 +387,32 @@ class NativeHTTPRangeFetcher:
             chunks = []
             first_byte_s = 0.0
             first_chunk = True
-            body_start = time.perf_counter()
+            chunk_gap_s = 0.0
+            chunk_count = 0.0
+            previous_chunk_at = body_start = time.perf_counter()
             for chunk in response.iter_bytes():
+                now = time.perf_counter()
                 if first_chunk:
-                    first_byte_s = time.perf_counter() - body_start
+                    first_byte_s = now - body_start
                     first_chunk = False
+                chunk_gap_s += now - previous_chunk_at
+                previous_chunk_at = now
+                chunk_count += 1.0
                 chunks.append(chunk)
             body_s = time.perf_counter() - body_start
+            join_start = time.perf_counter()
+            payload = b"".join(chunks)
+            join_s = time.perf_counter() - join_start
             return (
-                b"".join(chunks),
+                payload,
                 response.status_code,
                 {
                     "range_header_s": header_s,
                     "range_first_byte_s": first_byte_s,
                     "range_body_s": body_s,
+                    "range_join_s": join_s,
+                    "range_chunks": chunk_count,
+                    "range_chunk_gap_s": chunk_gap_s,
                 },
             )
 
