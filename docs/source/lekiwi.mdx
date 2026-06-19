@@ -319,7 +319,7 @@ If you want to dive deeper into this important topic, you can check out the [blo
 
 #### Troubleshooting:
 
-- On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
+- On Linux, if the left and right arrow keys and escape key don't have any effect during data recording on an X11 session, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux). On a Wayland session or a headless machine, `pynput` cannot capture these keys at all; run the recording from an interactive terminal and the same controls (plus the `n`/`r`/`q` letter equivalents) are read from the terminal instead — no `$DISPLAY` needed.
 
 ## Replay an episode
 

@@ -394,6 +394,9 @@ Control the data recording flow using keyboard shortcuts:
 - Press **Left Arrow (`←`)**: Cancel the current episode and re-record it.
 - Press **Escape (`ESC`)**: Immediately stop the session, encode videos, and upload the dataset.
 
+> [!NOTE]
+> The arrow/Esc shortcuts above use `pynput`, which only works on an X11 display. On a Wayland session (the default on recent GNOME/KDE and on Raspberry Pi OS) or a headless machine, `pynput` cannot capture these keys. In those cases, as long as you launch `lerobot-record` from an interactive terminal, the same controls are read directly from that terminal instead. If your keyboard's arrow keys are awkward there, you can use the letter equivalents: `n` (next, same as `→`), `r` (re-record, same as `←`), and `q` (quit, same as `ESC`). No `$DISPLAY` setup is needed.
+
 #### Tips for gathering data
 
 Once you're comfortable with data recording, you can create a larger dataset for training. A good starting task is grasping an object at different locations and placing it in a bin. We suggest recording at least 50 episodes, with 10 episodes per location. Keep the cameras fixed and maintain consistent grasping behavior throughout the recordings. Also make sure the object you are manipulating is visible on the camera's. A good rule of thumb is you should be able to do the task yourself by only looking at the camera images.
@@ -406,7 +409,7 @@ If you want to dive deeper into this important topic, you can check out the [blo
 
 #### Troubleshooting:
 
-- On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
+- On Linux, if the left and right arrow keys and escape key don't have any effect during data recording on an X11 session, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux). On a Wayland session or a headless machine, `pynput` cannot capture these keys at all; run `lerobot-record` from an interactive terminal and the same controls (plus the `n`/`r`/`q` letter equivalents) are read from the terminal instead — no `$DISPLAY` needed.
 
 ## Visualize a dataset
 
