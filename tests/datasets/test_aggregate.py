@@ -32,6 +32,26 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from tests.fixtures.constants import DUMMY_REPO_ID
 
 
+def assert_data_shards_one_row_group_per_episode(root):
+    """Every aggregated DATA shard must have exactly one parquet row group per episode."""
+    import pyarrow.parquet as pq
+
+    shards = sorted((root / "data").rglob("*.parquet"))
+    assert shards, f"no data shards found under {root}/data"
+    n_episodes = 0
+    for shard in shards:
+        pf = pq.ParquetFile(shard)
+        episodes = pf.read(columns=["episode_index"]).column("episode_index").to_pylist()
+        assert pf.metadata.num_row_groups == len(set(episodes)), shard
+        for i in range(pf.metadata.num_row_groups):
+            rg_episodes = set(
+                pf.read_row_group(i, columns=["episode_index"]).column("episode_index").to_pylist()
+            )
+            assert len(rg_episodes) == 1, f"{shard} row group {i} spans episodes {rg_episodes}"
+        n_episodes += len(set(episodes))
+    return n_episodes
+
+
 def assert_episode_and_frame_counts(aggr_ds, expected_episodes, expected_frames):
     """Test that total number of episodes and frames are correctly aggregated."""
     assert aggr_ds.num_episodes == expected_episodes, (
@@ -564,6 +584,41 @@ def assert_image_frames_integrity(aggr_ds, ds_0, ds_1):
             assert images_equal(aggr_ds[i][key], ds_1[i - len(ds_0)][key]), (
                 f"Image frames at position {i} should be equal between aggregated and ds_1"
             )
+
+
+@pytest.mark.parametrize("use_videos", [True, False], ids=["video", "image"])
+def test_aggregate_one_row_group_per_episode(tmp_path, lerobot_dataset_factory, use_videos):
+    """Aggregated DATA shards keep one row group per episode (not one collapsed group).
+
+    Covers both the non-image (``df.to_parquet``) and image
+    (``to_parquet_with_hf_images``) write branches, including the merge-into-
+    existing-file branch via a low file-size threshold that forces packing.
+    """
+    ds_0 = lerobot_dataset_factory(
+        root=tmp_path / "rg_0",
+        repo_id=f"{DUMMY_REPO_ID}_rg_0",
+        total_episodes=3,
+        total_frames=60,
+        use_videos=use_videos,
+    )
+    ds_1 = lerobot_dataset_factory(
+        root=tmp_path / "rg_1",
+        repo_id=f"{DUMMY_REPO_ID}_rg_1",
+        total_episodes=4,
+        total_frames=80,
+        use_videos=use_videos,
+    )
+
+    aggr_root = tmp_path / "rg_aggr"
+    aggregate_datasets(
+        repo_ids=[ds_0.repo_id, ds_1.repo_id],
+        roots=[ds_0.root, ds_1.root],
+        aggr_repo_id=f"{DUMMY_REPO_ID}_rg_aggr",
+        aggr_root=aggr_root,
+    )
+
+    n_episodes = assert_data_shards_one_row_group_per_episode(aggr_root)
+    assert n_episodes == ds_0.num_episodes + ds_1.num_episodes
 
 
 def test_aggregate_image_datasets(tmp_path, lerobot_dataset_factory):

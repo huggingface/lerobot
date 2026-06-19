@@ -32,6 +32,7 @@ from .feature_utils import features_equal_for_merge, get_hf_features_from_featur
 from .io_utils import (
     get_file_size_in_mb,
     get_parquet_file_size_in_mb,
+    to_parquet_one_row_group_per_episode,
     to_parquet_with_hf_images,
     write_info,
     write_stats,
@@ -551,6 +552,7 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
             aggr_root=dst_meta.root,
             hf_features=hf_features,
             concatenate=concatenate_data,
+            one_row_group_per_episode=True,
         )
 
         # Record the mapping from source to actual destination
@@ -628,6 +630,7 @@ def append_or_create_parquet_file(
     aggr_root: Path = None,
     hf_features: datasets.Features | None = None,
     concatenate: bool = True,
+    one_row_group_per_episode: bool = False,
 ) -> tuple[dict[str, int], tuple[int, int]]:
     """Appends data to an existing parquet file or creates a new one based on size constraints.
 
@@ -645,6 +648,8 @@ def append_or_create_parquet_file(
         aggr_root: Root path for the aggregated dataset.
         hf_features: Optional HuggingFace Features schema for proper image typing.
         concatenate: When False, always rotate to a new file instead of appending to the current one.
+        one_row_group_per_episode: True for DATA parquet (emit one row group per episode); False for
+            the episodes-metadata parquet (already one row per episode).
 
     Returns:
         tuple: (updated_idx, (dst_chunk, dst_file)) where updated_idx is the index dict
@@ -657,6 +662,8 @@ def append_or_create_parquet_file(
         dst_path.parent.mkdir(parents=True, exist_ok=True)
         if contains_images:
             to_parquet_with_hf_images(df, dst_path, features=hf_features)
+        elif one_row_group_per_episode:
+            to_parquet_one_row_group_per_episode(df, dst_path)
         else:
             df.to_parquet(dst_path)
         return idx, (dst_chunk, dst_file)
@@ -683,6 +690,8 @@ def append_or_create_parquet_file(
 
     if contains_images:
         to_parquet_with_hf_images(final_df, target_path, features=hf_features)
+    elif one_row_group_per_episode:
+        to_parquet_one_row_group_per_episode(final_df, target_path)
     else:
         final_df.to_parquet(target_path)
 
