@@ -142,11 +142,11 @@ class TeleoperateConfig:
     # Display all cameras on screen
     display_data: bool = False
     # Visualization backend used when display_data is True: "rerun" or "foxglove".
-    # "foxglove" starts a WebSocket server (default ws://127.0.0.1:8765) to stream data to the Foxglove app.
     display_mode: str = "rerun"
-    # For "rerun": IP of a remote Rerun server to connect to. Unused by "foxglove".
+    # For "rerun": IP of a remote server to send to. For "foxglove": interface to bind the WebSocket
+    # server to (127.0.0.1 for local only, 0.0.0.0 for all interfaces).
     display_ip: str | None = None
-    # For "rerun": port of the remote Rerun server. For "foxglove": port to bind the WebSocket server to.
+    # For "rerun": port of the remote server. For "foxglove": port to bind the WebSocket server to.
     display_port: int | None = None
     # Whether to display compressed (JPEG) images instead of raw frames
     display_compressed_images: bool = False

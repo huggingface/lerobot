@@ -104,14 +104,13 @@ def visualize_dataset(
     batch_size: int = 32,
     num_workers: int = 0,
     mode: str = "local",
-    web_port: int = 9090,
+    web_port: int | None = None,
     grpc_port: int = 9876,
     save: bool = False,
     output_dir: Path | None = None,
     display_compressed_images: bool = False,
     display_mode: str = "rerun",
     host: str = "127.0.0.1",
-    port: int = 8765,
     **kwargs,
 ) -> Path | None:
     if display_mode == "foxglove":
@@ -124,7 +123,7 @@ def visualize_dataset(
             dataset,
             episode_index,
             host=host,
-            port=port,
+            port=web_port if web_port is not None else 8765,
             compress_images=display_compressed_images,
         )
         return None
@@ -164,7 +163,9 @@ def visualize_dataset(
     if mode == "distant":
         server_uri = rr.serve_grpc(grpc_port=grpc_port)
         logging.info(f"Connect to a Rerun Server: rerun rerun+http://IP:{grpc_port}/proxy")
-        rr.serve_web_viewer(open_browser=False, web_port=web_port, connect_to=server_uri)
+        rr.serve_web_viewer(
+            open_browser=False, web_port=web_port if web_port is not None else 9090, connect_to=server_uri
+        )
 
     logging.info("Logging to Rerun")
 
@@ -273,8 +274,11 @@ def main():
     parser.add_argument(
         "--web-port",
         type=int,
-        default=9090,
-        help="Web port for rerun.io when `--mode distant` is set.",
+        default=None,
+        help=(
+            "Web/WebSocket port. For rerun `--mode distant` it is the web viewer port (default 9090); "
+            "for `--display-mode foxglove` it is the server bind port (default 8765)."
+        ),
     )
     parser.add_argument(
         "--ws-port",
@@ -323,20 +327,17 @@ def main():
         help=(
             "Visualization backend. 'rerun' uses the Rerun viewer (--mode/--save/--*-port apply). "
             "'foxglove' starts a Foxglove WebSocket server that serves the episode as a seekable, "
-            "scrubbable timeline; connect the Foxglove app to ws://HOST:PORT (--host/--port)."
+            "scrubbable timeline; connect the Foxglove app to ws://HOST:PORT (--host/--web-port)."
         ),
     )
     parser.add_argument(
         "--host",
         type=str,
         default="127.0.0.1",
-        help="Host to bind the Foxglove WebSocket server to when `--display-mode foxglove` is set.",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8765,
-        help="Port to bind the Foxglove WebSocket server to when `--display-mode foxglove` is set.",
+        help=(
+            "Host to bind the Foxglove WebSocket server to when `--display-mode foxglove` is set "
+            "(127.0.0.1 for local only, 0.0.0.0 for all interfaces)."
+        ),
     )
 
     args = parser.parse_args()
