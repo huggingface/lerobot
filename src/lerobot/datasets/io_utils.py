@@ -181,8 +181,11 @@ def write_tasks(tasks: pandas.DataFrame, local_dir: Path) -> None:
     tasks.to_parquet(path)
 
 
-def load_tasks(local_dir: Path) -> pandas.DataFrame:
-    tasks = pd.read_parquet(local_dir / DEFAULT_TASKS_PATH)
+def load_tasks(local_dir: Path) -> pandas.DataFrame | None:
+    path = local_dir / DEFAULT_TASKS_PATH
+    if not path.exists():
+        return None
+    tasks = pd.read_parquet(path)
     tasks.index.name = "task"
     return tasks
 
@@ -209,8 +212,11 @@ def write_episodes(episodes: Dataset, local_dir: Path) -> None:
     episodes.to_parquet(fpath)
 
 
-def load_episodes(local_dir: Path) -> datasets.Dataset:
-    episodes = load_nested_dataset(local_dir / EPISODES_DIR)
+def load_episodes(local_dir: Path) -> datasets.Dataset | None:
+    episodes_dir = local_dir / EPISODES_DIR
+    if not any(episodes_dir.glob("*/*.parquet")):
+        return None
+    episodes = load_nested_dataset(episodes_dir)
     # Select episode features/columns containing references to episode data and videos
     # (e.g. tasks, dataset_from_index, dataset_to_index, data/chunk_index, data/file_index, etc.)
     # This is to speedup access to these data, instead of having to load episode stats.
