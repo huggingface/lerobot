@@ -18,6 +18,7 @@ from __future__ import annotations
 # Utilities
 ########################################################################################
 import logging
+import os
 import time
 import traceback
 from contextlib import nullcontext
@@ -71,6 +72,25 @@ def is_headless():
         return True
 
 
+@cache
+def is_wayland() -> bool:
+    """
+    Detects whether the current session is a Wayland session.
+
+    ``pynput`` relies on an X11 backend. Under Wayland it only observes XWayland clients and
+    cannot capture *global* hotkeys reliably, so the documented arrow/Esc shortcuts are
+    non-functional while a Wayland-native window has focus. Unlike a missing display, this case
+    is invisible to :func:`is_headless` because ``pynput`` still imports successfully (XWayland is
+    usually present and ``$DISPLAY`` is set), which is why a dedicated check is needed.
+
+    Returns:
+        True if a Wayland session is detected, False otherwise.
+    """
+    return os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland" or bool(
+        os.environ.get("WAYLAND_DISPLAY")
+    )
+
+
 def predict_action(
     observation: dict[str, np.ndarray],
     policy: PreTrainedPolicy,
@@ -122,6 +142,32 @@ def predict_action(
     return action
 
 
+def handle_key(kind: str, events: dict) -> None:
+    """
+    Applies a recording control key press to the shared ``events`` dict.
+
+    Centralizes the mapping from a logical key (``"right"`` / ``"left"`` / ``"esc"``) to the
+    corresponding event flags so every keyboard backend (pynput on X11, and the terminal reader
+    used on Wayland/headless sessions) produces identical behavior.
+
+    Args:
+        kind: One of ``"right"`` (end episode early), ``"left"`` (re-record episode), or
+            ``"esc"`` (stop recording).
+        events: The shared event-flag dict mutated in place.
+    """
+    if kind == "right":
+        print("Right arrow key pressed. Exiting loop...")
+        events["exit_early"] = True
+    elif kind == "left":
+        print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
+        events["rerecord_episode"] = True
+        events["exit_early"] = True
+    elif kind == "esc":
+        print("Escape key pressed. Stopping data recording...")
+        events["stop_recording"] = True
+        events["exit_early"] = True
+
+
 def init_keyboard_listener():
     """
     Initializes a non-blocking keyboard listener for real-time user interaction.
@@ -156,16 +202,11 @@ def init_keyboard_listener():
     def on_press(key):
         try:
             if key == keyboard.Key.right:
-                print("Right arrow key pressed. Exiting loop...")
-                events["exit_early"] = True
+                handle_key("right", events)
             elif key == keyboard.Key.left:
-                print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
-                events["rerecord_episode"] = True
-                events["exit_early"] = True
+                handle_key("left", events)
             elif key == keyboard.Key.esc:
-                print("Escape key pressed. Stopping data recording...")
-                events["stop_recording"] = True
-                events["exit_early"] = True
+                handle_key("esc", events)
         except Exception as e:
             print(f"Error handling key press: {e}")
 
