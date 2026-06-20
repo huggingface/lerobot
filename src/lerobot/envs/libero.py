@@ -327,7 +327,17 @@ class LiberoEnv(gym.Env):
     def reset(self, seed=None, **kwargs):
         self._ensure_env()
         super().reset(seed=seed)
-        self._env.seed(seed)
+        # Seed the underlying environment.  LIBERO's ControlEnv.seed()
+        # delegates to its inner robosuite env (``self.env.seed()``), which
+        # may raise ``AttributeError`` if that inner env was cleaned up or is
+        # unavailable in certain LIBERO/robosuite versions.  Fall back to
+        # ``np.random.seed()``, which is all that robosuite's
+        # ``Environment.seed()`` does internally.
+        try:
+            self._env.seed(seed)
+        except AttributeError:
+            if seed is not None:
+                np.random.seed(seed)
         raw_obs = self._env.reset()
         if self.init_states and self._init_states is not None:
             raw_obs = self._env.set_init_state(self._init_states[self.init_state_id % len(self._init_states)])
@@ -380,6 +390,15 @@ class LiberoEnv(gym.Env):
     def close(self):
         if self._env is not None:
             self._env.close()
+            # Reset to None so that _ensure_env() recreates the underlying
+            # OffScreenRenderEnv on the next reset()/step() call.  LIBERO's
+            # ControlEnv.close() deletes its inner ``self.env`` (``del
+            # self.env``); without this assignment _ensure_env() would see a
+            # non-None ``self._env`` and skip recreation, causing
+            # ``AttributeError: 'OffScreenRenderEnv' object has no attribute
+            # 'env'`` on the next seed()/reset() (e.g. during the second
+            # evaluation round in lerobot-train).
+            self._env = None
 
 
 def _make_env_fns(
