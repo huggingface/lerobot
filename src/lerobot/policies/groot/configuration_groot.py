@@ -268,7 +268,6 @@ class GrootConfig(PreTrainedConfig):
     )
 
     # Groot-specific model parameters
-    model_version: str = GROOT_N1_7
 
     # Path or HuggingFace model ID for the base GR00T N1.7 model whose backbone weights and
     # checkpoint sidecars (statistics.json, processor_config.json, ...) are loaded. This is the
@@ -325,11 +324,10 @@ class GrootConfig(PreTrainedConfig):
     # Set to True only after installing a flash-attn build matching your torch/CUDA env.
     use_flash_attention: bool = False
 
-    # Train on state-relative action chunks. The listed joints stay absolute, which is normally used
-    # for gripper channels whose command frame is not the arm joint state.
+    # Enable GR00T-style state-relative action chunks. Prefer deriving action representation from
+    # embodiment metadata; relative_exclude_joints is a flat-vector override for datasets without it.
     use_relative_actions: bool = False
     relative_exclude_joints: list[str] = field(default_factory=list)
-    action_feature_names: list[str] | None = None
 
     # Training parameters
     optimizer_lr: float = 1e-4
@@ -365,8 +363,6 @@ class GrootConfig(PreTrainedConfig):
     resume: bool = False
 
     def __post_init__(self):
-        self.model_version = normalize_groot_model_version(self.model_version)
-
         if self.tokenizer_assets_repo is not None:
             raise ValueError(
                 "Config sets 'tokenizer_assets_repo', which only existed for GR00T N1.5; this looks "
@@ -417,9 +413,9 @@ class GrootConfig(PreTrainedConfig):
                 setattr(self, field_name, n1_7_value)
 
         inferred_version = infer_groot_model_version(self.base_model_path)
-        if inferred_version is not None and inferred_version != self.model_version:
+        if inferred_version is not None and inferred_version != GROOT_N1_7:
             message = (
-                f"GR00T model_version '{self.model_version}' does not match base_model_path "
+                f"GR00T model_version '{GROOT_N1_7}' does not match base_model_path "
                 f"'{self.base_model_path}', which looks like '{inferred_version}'."
             )
             if inferred_version == GROOT_N1_5:

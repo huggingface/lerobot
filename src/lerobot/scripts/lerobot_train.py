@@ -256,11 +256,7 @@ def _iter_action_state_training_samples(dataset: Any):
         yield item.get(ACTION), item.get(OBS_STATE), item.get(f"{ACTION}_is_pad")
 
 
-def _resolve_action_feature_names(active_cfg: Any, dataset: Any) -> list[str] | None:
-    config_names = getattr(active_cfg, "action_feature_names", None)
-    if config_names is not None:
-        return list(config_names)
-
+def _resolve_action_feature_names(dataset: Any) -> list[str] | None:
     features = getattr(getattr(dataset, "meta", None), "features", {}) or {}
     action_feature = features.get(ACTION) if isinstance(features, dict) else None
     if isinstance(action_feature, dict):
@@ -475,14 +471,14 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         processor_stats = _make_relative_action_training_stats(
             dataset,
             exclude_joints=getattr(active_cfg, "relative_exclude_joints", []),
-            action_names=_resolve_action_feature_names(active_cfg, dataset),
+            action_names=_resolve_action_feature_names(dataset),
         )
 
     processor_kwargs = {}
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
         processor_kwargs["dataset_stats"] = processor_stats
 
-    if cfg.is_reward_model_training:
+    if cfg.is_reward_model_training or getattr(active_cfg, "use_relative_actions", False):
         processor_kwargs["dataset_meta"] = dataset.meta
 
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:
@@ -506,7 +502,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             preprocessor_overrides["relative_actions_processor"] = {
                 "enabled": True,
                 "exclude_joints": getattr(active_cfg, "relative_exclude_joints", []),
-                "action_names": _resolve_action_feature_names(active_cfg, dataset),
+                "action_names": _resolve_action_feature_names(dataset),
             }
             postprocessor_overrides["absolute_actions_processor"] = {"enabled": True}
         processor_kwargs["preprocessor_overrides"] = preprocessor_overrides

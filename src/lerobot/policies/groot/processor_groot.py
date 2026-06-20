@@ -434,6 +434,7 @@ def make_groot_pre_post_processors_from_pretrained(
     pretrained_path: str,
     *,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    dataset_meta: Any | None = None,
     preprocessor_overrides: dict[str, Any] | None = None,
     postprocessor_overrides: dict[str, Any] | None = None,
     preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
@@ -456,6 +457,7 @@ def make_groot_pre_post_processors_from_pretrained(
         preprocessor, postprocessor = make_groot_pre_post_processors(
             config=processor_cfg,
             dataset_stats=dataset_stats,
+            dataset_meta=dataset_meta,
         )
         # Raw checkpoints have no serialized pipelines to load overrides into,
         # so apply the caller overrides (e.g. device and rename_map from
@@ -545,8 +547,20 @@ def _reconnect_groot_n1_7_pack_decode_steps(
             step.pack_step = pack_step
 
 
+def _resolve_action_feature_names_from_dataset_meta(dataset_meta: Any | None) -> list[str] | None:
+    features = getattr(dataset_meta, "features", {}) or {}
+    action_feature = features.get(ACTION) if isinstance(features, dict) else None
+    if isinstance(action_feature, dict):
+        names = action_feature.get("names")
+    else:
+        names = getattr(action_feature, "names", None)
+    return list(names) if names is not None else None
+
+
 def make_groot_pre_post_processors(
-    config: GrootConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
+    config: GrootConfig,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    dataset_meta: Any | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -659,7 +673,7 @@ def make_groot_pre_post_processors(
         relative_step = RelativeActionsProcessorStep(
             enabled=True,
             exclude_joints=list(config.relative_exclude_joints or []),
-            action_names=config.action_feature_names,
+            action_names=_resolve_action_feature_names_from_dataset_meta(dataset_meta),
         )
         input_steps.insert(2, relative_step)
 

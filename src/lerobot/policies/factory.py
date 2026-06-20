@@ -288,6 +288,7 @@ def make_pre_post_processors(
                 config=policy_cfg,
                 pretrained_path=pretrained_path,
                 dataset_stats=kwargs.get("dataset_stats"),
+                dataset_meta=kwargs.get("dataset_meta"),
                 preprocessor_overrides=kwargs.get("preprocessor_overrides"),
                 postprocessor_overrides=kwargs.get("postprocessor_overrides"),
                 preprocessor_config_filename=kwargs.get(
@@ -402,6 +403,7 @@ def make_pre_post_processors(
         processors = make_groot_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+            dataset_meta=kwargs.get("dataset_meta"),
         )
 
     elif isinstance(policy_cfg, XVLAConfig):

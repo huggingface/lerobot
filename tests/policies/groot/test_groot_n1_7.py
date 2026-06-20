@@ -67,11 +67,10 @@ def _groot_features(
     )
 
 
-def _groot_config(model_version: str = GROOT_N1_7) -> GrootConfig:
+def _groot_config() -> GrootConfig:
     input_features, output_features = _groot_features(state_dim=8, action_dim=7)
     kwargs = {"action_decode_transform": GROOT_ACTION_DECODE_TRANSFORM_LIBERO}
     return GrootConfig(
-        model_version=model_version,
         input_features=input_features,
         output_features=output_features,
         device="cpu",
@@ -83,7 +82,6 @@ def _groot_config(model_version: str = GROOT_N1_7) -> GrootConfig:
 def _raw_n1_7_libero_config(model_path) -> GrootConfig:
     input_features, output_features = _groot_features(state_dim=8, action_dim=7)
     return GrootConfig(
-        model_version=GROOT_N1_7,
         base_model_path=str(model_path),
         embodiment_tag="libero_sim",
         input_features=input_features,
@@ -351,7 +349,6 @@ class _DummyGrootModel(nn.Module):
 def test_groot_defaults_use_n1_7():
     config = GrootConfig(device="cpu")
 
-    assert config.model_version == GROOT_N1_7
     assert config.base_model_path == GROOT_N1_7_BASE_MODEL
     assert config.max_state_dim == 132
     assert config.max_action_dim == 132
@@ -362,7 +359,6 @@ def test_groot_defaults_use_n1_7():
 
 def test_groot_n1_7_accepts_named_action_decode_transform():
     config = GrootConfig(
-        model_version=GROOT_N1_7,
         action_decode_transform="libero",
         device="cpu",
     )
@@ -374,23 +370,15 @@ def test_groot_n1_7_accepts_named_action_decode_transform():
 def test_groot_n1_7_rejects_legacy_libero_gripper_action_decode_transform(legacy_transform):
     with pytest.raises(ValueError, match="Unsupported GR00T N1.7 action decode transform"):
         GrootConfig(
-            model_version=GROOT_N1_7,
-            action_decode_transform=legacy_transform,
+                action_decode_transform=legacy_transform,
             device="cpu",
         )
-
-
-@pytest.mark.parametrize("legacy_version", ["n1.5", "n1_5", "n15", "1.5"])
-def test_groot_rejects_n1_5_aliases(legacy_version):
-    with pytest.raises(ValueError, match="Unsupported GR00T model_version"):
-        GrootConfig(model_version=legacy_version, device="cpu")
 
 
 def test_groot_config_rejects_mismatched_n1_5_path_for_n1_7():
     with pytest.raises(ValueError, match="does not match base_model_path"):
         GrootConfig(
-            model_version=GROOT_N1_7,
-            base_model_path="nvidia/GR00T-N1.5-3B",
+                base_model_path="nvidia/GR00T-N1.5-3B",
             device="cpu",
         )
 
@@ -398,10 +386,9 @@ def test_groot_config_rejects_mismatched_n1_5_path_for_n1_7():
 def test_groot_n1_7_can_be_selected_from_policy_config_factory_without_external_gr00t():
     sys.modules.pop("gr00t", None)
 
-    config = make_policy_config("groot", model_version=GROOT_N1_7, device="cpu")
+    config = make_policy_config("groot", device="cpu")
 
     assert isinstance(config, GrootConfig)
-    assert config.model_version == GROOT_N1_7
     assert "gr00t" not in sys.modules
 
 
@@ -417,7 +404,7 @@ def test_groot_predict_action_chunk_forwards_n1_7_rtc_prefix(monkeypatch):
 
     dummy_model = _DummyGrootModel()
     monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(lambda cls, **kwargs: dummy_model))
-    config = _groot_config(GROOT_N1_7)
+    config = _groot_config()
     policy = GrootPolicy(config)
     policy.config.rtc_config = SimpleNamespace(execution_horizon=6)
 
@@ -446,7 +433,7 @@ def test_groot_predict_action_chunk_strips_padded_n1_7_rtc_prefix(monkeypatch):
 
     dummy_model = _DummyGrootModel()
     monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(lambda cls, **kwargs: dummy_model))
-    config = _groot_config(GROOT_N1_7)
+    config = _groot_config()
     policy = GrootPolicy(config)
     policy.config.rtc_config = SimpleNamespace(execution_horizon=6)
 
@@ -490,7 +477,6 @@ def test_groot_n1_7_predict_action_chunk_truncates_to_checkpoint_valid_horizon(t
     monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(lambda cls, **kwargs: HorizonModel()))
     input_features, output_features = _groot_features(state_dim=8, action_dim=7)
     config = GrootConfig(
-        model_version=GROOT_N1_7,
         base_model_path=str(model_path),
         embodiment_tag="libero_sim",
         input_features=input_features,
@@ -518,8 +504,7 @@ def test_groot_from_pretrained_rejects_mismatched_caller_config(tmp_path):
     # so construction itself raises before from_pretrained is reached.
     with pytest.raises(ValueError, match="does not match base_model_path"):
         config = GrootConfig(
-            model_version=GROOT_N1_7,
-            base_model_path="nvidia/GR00T-N1.5-3B",
+                base_model_path="nvidia/GR00T-N1.5-3B",
             input_features=input_features,
             output_features=output_features,
             device="cpu",
@@ -534,13 +519,12 @@ def test_groot_from_pretrained_keeps_matching_caller_config(tmp_path, monkeypatc
 
     model_path = tmp_path / "GR00T-N1.7-local"
     model_path.mkdir()
-    config = _groot_config(GROOT_N1_7)
+    config = _groot_config()
 
     monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(lambda cls, **kwargs: _DummyGrootModel()))
 
     policy = GrootPolicy.from_pretrained(model_path, config=config)
 
-    assert policy.config.model_version == GROOT_N1_7
     assert policy.config.base_model_path == str(model_path)
 
 
@@ -555,7 +539,6 @@ def test_groot_from_pretrained_infers_n1_7_from_ambiguous_local_config(tmp_path,
 
     policy = GrootPolicy.from_pretrained(model_path)
 
-    assert policy.config.model_version == GROOT_N1_7
     assert policy.config.base_model_path == str(model_path)
 
 
@@ -1340,8 +1323,7 @@ def test_groot_from_pretrained_rejects_caller_config_mismatch_from_local_config(
     # so construction itself raises before from_pretrained is reached.
     with pytest.raises(ValueError, match="does not match base_model_path"):
         config = GrootConfig(
-            model_version=GROOT_N1_7,
-            base_model_path="nvidia/GR00T-N1.5-3B",
+                base_model_path="nvidia/GR00T-N1.5-3B",
             input_features=input_features,
             output_features=output_features,
             device="cpu",
@@ -1353,7 +1335,7 @@ def test_groot_from_pretrained_rejects_caller_config_mismatch_from_local_config(
 
 def test_groot_n1_7_processors_are_registered_lazily_without_external_gr00t():
     sys.modules.pop("gr00t", None)
-    config = _groot_config(GROOT_N1_7)
+    config = _groot_config()
 
     preprocessor, _ = make_groot_pre_post_processors(config)
     step_types = {type(step) for step in preprocessor.steps}
@@ -1692,7 +1674,7 @@ def test_groot_n1_7_processor_uses_qwen_component_assets(monkeypatch):
 
 
 def test_groot_n1_7_saved_processors_reload_through_factory(tmp_path):
-    config = _groot_config(GROOT_N1_7)
+    config = _groot_config()
     dataset_stats = {
         OBS_STATE: {
             "min": torch.zeros(8),
@@ -1724,7 +1706,7 @@ def test_groot_n1_7_saved_processors_reload_through_factory(tmp_path):
 
 
 def test_groot_n1_7_saved_processors_reload_through_factory_preserves_saved_stats(tmp_path):
-    config = _groot_config(GROOT_N1_7)
+    config = _groot_config()
     saved_stats = {
         OBS_STATE: {
             "min": torch.full((8,), -2.0),
@@ -1774,7 +1756,6 @@ def test_groot_n1_7_relative_action_training_processors_save_relative_action_sta
         action_decode_transform=None,
         use_relative_actions=True,
         relative_exclude_joints=["gripper"],
-        action_feature_names=action_names,
     )
     absolute_dataset_stats = {
         OBS_STATE: {
@@ -1829,7 +1810,9 @@ def test_groot_n1_7_relative_action_training_processors_save_relative_action_sta
         "max": torch.tensor([2.0, 3.0, 4.0, 5.0, 6.0, 100.0]),
     }
 
-    preprocessor, postprocessor = make_groot_pre_post_processors(config, dataset_stats=relative_dataset_stats)
+    preprocessor, postprocessor = make_groot_pre_post_processors(
+        config, dataset_stats=relative_dataset_stats, dataset_meta=_RelativeStatsDataset.meta
+    )
     preprocessor.save_pretrained(tmp_path)
     postprocessor.save_pretrained(tmp_path)
 
@@ -1867,7 +1850,7 @@ def test_groot_policy_selects_n1_7_model_class(monkeypatch):
 
     monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(fake_from_pretrained))
 
-    policy = GrootPolicy(_groot_config(GROOT_N1_7))
+    policy = GrootPolicy(_groot_config())
 
     assert called["pretrained_model_name_or_path"] == GROOT_N1_7_BASE_MODEL
     assert isinstance(policy._groot_model, _DummyGrootModel)
@@ -1878,7 +1861,7 @@ def test_groot_policy_forwards_n1_7_qwen_inputs(monkeypatch):
 
     dummy_model = _DummyGrootModel()
     monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(lambda cls, **kwargs: dummy_model))
-    policy = GrootPolicy(_groot_config(GROOT_N1_7))
+    policy = GrootPolicy(_groot_config())
 
     batch = {
         "state": torch.zeros(2, 1, 132),
@@ -1941,7 +1924,6 @@ def test_groot_n1_7_select_action_uses_checkpoint_valid_horizon(tmp_path, monkey
     monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(lambda cls, **kwargs: HorizonModel()))
     input_features, output_features = _groot_features(state_dim=8, action_dim=7)
     config = GrootConfig(
-        model_version=GROOT_N1_7,
         base_model_path=str(model_path),
         embodiment_tag="libero_sim",
         input_features=input_features,
