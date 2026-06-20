@@ -23,6 +23,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 import torch
+from safetensors.torch import load_file
 from torch import nn
 
 from lerobot.configs import FeatureType, PolicyFeature
@@ -49,6 +50,7 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
 )
+from lerobot.scripts.lerobot_train import _make_relative_action_training_stats
 from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
@@ -1752,6 +1754,106 @@ def test_groot_n1_7_saved_processors_reload_through_factory_preserves_saved_stat
     assert unpack_step.env_action_dim == 7
 
 
+
+
+def test_groot_n1_7_relative_action_training_processors_save_relative_action_stats(tmp_path):
+    input_features, output_features = _groot_features(state_dim=6, action_dim=6)
+    action_names = [
+        "shoulder_pan.pos",
+        "shoulder_lift.pos",
+        "elbow_flex.pos",
+        "wrist_flex.pos",
+        "wrist_roll.pos",
+        "gripper.pos",
+    ]
+    config = GrootConfig(
+        input_features=input_features,
+        output_features=output_features,
+        device="cpu",
+        use_bf16=False,
+        action_decode_transform=None,
+        use_relative_actions=True,
+        relative_exclude_joints=["gripper"],
+        action_feature_names=action_names,
+    )
+    absolute_dataset_stats = {
+        OBS_STATE: {
+            "min": torch.tensor([-50.0, -60.0, -70.0, -80.0, -90.0, 0.0]),
+            "max": torch.tensor([50.0, 60.0, 70.0, 80.0, 90.0, 100.0]),
+        },
+        ACTION: {
+            "min": torch.tensor([-100.0, -110.0, -120.0, -130.0, -140.0, 0.0]),
+            "max": torch.tensor([100.0, 110.0, 120.0, 130.0, 140.0, 100.0]),
+        },
+    }
+    samples = [
+        {
+            OBS_STATE: torch.tensor([10.0, 20.0, 30.0, 40.0, 50.0, 0.0]),
+            ACTION: torch.tensor(
+                [
+                    [8.0, 17.0, 26.0, 35.0, 44.0, 0.0],
+                    [12.0, 23.0, 34.0, 45.0, 56.0, 100.0],
+                ]
+            ),
+        },
+        {
+            OBS_STATE: torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 50.0]),
+            ACTION: torch.tensor(
+                [
+                    [-1.0, -2.0, -3.0, -4.0, -5.0, 25.0],
+                    [1.0, 2.0, 3.0, 4.0, 5.0, 75.0],
+                ]
+            ),
+        },
+    ]
+
+    class _RelativeStatsDataset:
+        meta = SimpleNamespace(
+            stats=absolute_dataset_stats,
+            features={ACTION: {"names": action_names}},
+        )
+
+        def __len__(self):
+            return len(samples)
+
+        def __getitem__(self, idx):
+            return samples[idx]
+
+    relative_dataset_stats = _make_relative_action_training_stats(
+        _RelativeStatsDataset(),
+        exclude_joints=["gripper"],
+        action_names=action_names,
+    )
+    expected_relative_action_stats = {
+        "min": torch.tensor([-2.0, -3.0, -4.0, -5.0, -6.0, 0.0]),
+        "max": torch.tensor([2.0, 3.0, 4.0, 5.0, 6.0, 100.0]),
+    }
+
+    preprocessor, postprocessor = make_groot_pre_post_processors(config, dataset_stats=relative_dataset_stats)
+    preprocessor.save_pretrained(tmp_path)
+    postprocessor.save_pretrained(tmp_path)
+
+    preprocessor_config = json.loads((tmp_path / "policy_preprocessor.json").read_text())
+    assert any(step.get("registry_name") == "relative_actions_processor" for step in preprocessor_config["steps"])
+    pack_entry = next(
+        step
+        for step in preprocessor_config["steps"]
+        if step.get("registry_name") == "groot_n1_7_pack_inputs_v1"
+    )
+    pack_state = load_file(tmp_path / pack_entry["state_file"])
+    torch.testing.assert_close(pack_state[f"{ACTION}.min"], expected_relative_action_stats["min"])
+    torch.testing.assert_close(pack_state[f"{ACTION}.max"], expected_relative_action_stats["max"])
+
+    postprocessor_config = json.loads((tmp_path / "policy_postprocessor.json").read_text())
+    assert any(step.get("registry_name") == "absolute_actions_processor" for step in postprocessor_config["steps"])
+    unpack_entry = next(
+        step
+        for step in postprocessor_config["steps"]
+        if step.get("registry_name", "").startswith("groot_action_unpack_unnormalize")
+    )
+    unpack_state = load_file(tmp_path / unpack_entry["state_file"])
+    torch.testing.assert_close(unpack_state[f"{ACTION}.min"], expected_relative_action_stats["min"])
+    torch.testing.assert_close(unpack_state[f"{ACTION}.max"], expected_relative_action_stats["max"])
 
 
 def test_groot_policy_selects_n1_7_model_class(monkeypatch):

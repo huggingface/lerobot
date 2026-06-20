@@ -654,6 +654,14 @@ def make_groot_pre_post_processors(
         ),
         DeviceProcessorStep(device=config.device),
     ]
+    relative_step: RelativeActionsProcessorStep | None = None
+    if config.use_relative_actions:
+        relative_step = RelativeActionsProcessorStep(
+            enabled=True,
+            exclude_joints=list(config.relative_exclude_joints or []),
+            action_names=config.action_feature_names,
+        )
+        input_steps.insert(2, relative_step)
 
     if checkpoint_assets is not None and not checkpoint_has_stats and not has_modality_stats(padded_stats):
         raise ValueError(
@@ -686,10 +694,10 @@ def make_groot_pre_post_processors(
             action_decode_transform=config.action_decode_transform,
         )
 
-    output_steps: list[ProcessorStep] = [
-        action_decode_step,
-        DeviceProcessorStep(device="cpu"),
-    ]
+    output_steps: list[ProcessorStep] = [action_decode_step]
+    if relative_step is not None:
+        output_steps.append(AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step))
+    output_steps.append(DeviceProcessorStep(device="cpu"))
 
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](

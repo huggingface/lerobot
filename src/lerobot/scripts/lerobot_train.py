@@ -22,6 +22,7 @@ import dataclasses
 import logging
 import time
 from contextlib import nullcontext
+from copy import deepcopy
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
 
@@ -54,6 +55,7 @@ from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
+from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
@@ -169,6 +171,169 @@ def update_policy(
     if torch.cuda.is_available():
         train_metrics.gpu_mem_gb = torch.cuda.max_memory_allocated() / (1024**3)
     return train_metrics, output_dict
+
+
+def _as_int(value: Any) -> int:
+    if isinstance(value, torch.Tensor):
+        return int(value.item())
+    item = getattr(value, "item", None)
+    if callable(item):
+        return int(item())
+    return int(value)
+
+
+def _to_float_tensor(value: Any, *, key: str) -> torch.Tensor:
+    if value is None:
+        raise ValueError(f"Cannot compute relative action statistics: sample is missing '{key}'.")
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().float()
+    return torch.as_tensor(value, dtype=torch.float32)
+
+
+def _state_reference_batch(state: torch.Tensor) -> torch.Tensor:
+    if state.ndim == 1:
+        return state.unsqueeze(0)
+    if state.ndim == 2:
+        return state
+    if state.ndim > 2:
+        return state.reshape(-1, state.shape[-1])[-1:].contiguous()
+    raise ValueError(f"observation.state must have at least 1 dimension, got shape {tuple(state.shape)}.")
+
+
+def _action_training_batch(action: torch.Tensor, state_batch: torch.Tensor) -> torch.Tensor:
+    if action.ndim == 1:
+        return action.unsqueeze(0)
+    if action.ndim == 2:
+        # A single training sample uses (T, D) action chunks with a single (1, D) state reference.
+        # Batched callers may pass (B, D); keep that shape when the state batch makes it unambiguous.
+        if state_batch.shape[0] == action.shape[0] and state_batch.shape[0] > 1:
+            return action
+        return action.unsqueeze(0)
+    if action.ndim == 3:
+        return action
+    raise ValueError(f"action must be (D,), (T, D), (B, D), or (B, T, D), got {tuple(action.shape)}.")
+
+
+def _unpadded_relative_action_vectors(relative_action: torch.Tensor, pad_mask: Any | None) -> torch.Tensor:
+    if pad_mask is None:
+        return relative_action.reshape(-1, relative_action.shape[-1])
+
+    keep = ~torch.as_tensor(pad_mask, dtype=torch.bool).cpu()
+    if relative_action.ndim == 3 and keep.ndim == 1 and relative_action.shape[0] == 1:
+        return relative_action[0, keep]
+    if relative_action.ndim == 3 and keep.ndim == 2 and tuple(keep.shape) == tuple(relative_action.shape[:2]):
+        return relative_action[keep]
+    if relative_action.ndim == 2 and keep.ndim == 1 and keep.numel() == relative_action.shape[0]:
+        return relative_action[keep]
+    return relative_action.reshape(-1, relative_action.shape[-1])
+
+
+def _iter_action_state_training_samples(dataset: Any):
+    """Yield action chunks, reference states, and action padding masks without decoding videos when possible."""
+
+    ensure_reader = getattr(dataset, "_ensure_reader", None)
+    if callable(ensure_reader):
+        reader = ensure_reader()
+        if reader.hf_dataset is None:
+            reader.load_and_activate()
+        delta_indices = getattr(reader, "delta_indices", None)
+        for idx in range(len(dataset)):
+            item = reader.hf_dataset[idx]
+            action = item.get(ACTION)
+            state = item.get(OBS_STATE)
+            pad_mask = None
+            if delta_indices is not None and ACTION in delta_indices:
+                ep_idx = _as_int(item["episode_index"])
+                abs_idx = _as_int(item["index"])
+                query_indices, padding = reader._get_query_indices(abs_idx, ep_idx)
+                action = reader._query_hf_dataset({ACTION: query_indices[ACTION]})[ACTION]
+                pad_mask = padding.get(f"{ACTION}_is_pad")
+            yield action, state, pad_mask
+        return
+
+    for idx in range(len(dataset)):
+        item = dataset[idx]
+        yield item.get(ACTION), item.get(OBS_STATE), item.get(f"{ACTION}_is_pad")
+
+
+def _resolve_action_feature_names(active_cfg: Any, dataset: Any) -> list[str] | None:
+    config_names = getattr(active_cfg, "action_feature_names", None)
+    if config_names is not None:
+        return list(config_names)
+
+    features = getattr(getattr(dataset, "meta", None), "features", {}) or {}
+    action_feature = features.get(ACTION) if isinstance(features, dict) else None
+    if isinstance(action_feature, dict):
+        names = action_feature.get("names")
+    else:
+        names = getattr(action_feature, "names", None)
+    return list(names) if names is not None else None
+
+
+def _make_relative_action_training_stats(
+    dataset: Any,
+    *,
+    exclude_joints: list[str] | None,
+    action_names: list[str] | None,
+) -> dict[str, dict[str, Any]]:
+    """Return dataset stats whose action entry describes the relative action tensor used for training."""
+
+    from lerobot.datasets.compute_stats import RunningQuantileStats
+    from lerobot.processor.relative_action_processor import RelativeActionsProcessorStep, to_relative_actions
+
+    try:
+        dataset_len = len(dataset)
+    except TypeError as exc:
+        raise ValueError(
+            "Cannot compute relative action statistics for a dataset without a finite length. "
+            "Disable streaming or provide precomputed relative action statistics."
+        ) from exc
+
+    if dataset_len == 0:
+        raise ValueError("Cannot compute relative action statistics for an empty dataset.")
+
+    stats = deepcopy(getattr(getattr(dataset, "meta", None), "stats", {}) or {})
+    running_stats = RunningQuantileStats()
+    relative_step = RelativeActionsProcessorStep(
+        enabled=True,
+        exclude_joints=list(exclude_joints or []),
+        action_names=action_names,
+    )
+    num_vectors = 0
+
+    for action_value, state_value, pad_mask in _iter_action_state_training_samples(dataset):
+        action = _to_float_tensor(action_value, key=ACTION)
+        state = _to_float_tensor(state_value, key=OBS_STATE)
+        state_batch = _state_reference_batch(state)
+        action_batch = _action_training_batch(action, state_batch)
+        if action_batch.shape[0] != state_batch.shape[0]:
+            if state_batch.shape[0] == 1:
+                state_batch = state_batch.expand(action_batch.shape[0], -1)
+            else:
+                raise ValueError(
+                    "Cannot compute relative action statistics: action and state batch sizes differ "
+                    f"({action_batch.shape[0]} vs {state_batch.shape[0]})."
+                )
+
+        relative_action = to_relative_actions(
+            action_batch,
+            state_batch,
+            relative_step._build_mask(action_batch.shape[-1]),
+        )
+        vectors = _unpadded_relative_action_vectors(relative_action, pad_mask)
+        if vectors.numel() == 0:
+            continue
+        vector_count = int(vectors.reshape(-1, vectors.shape[-1]).shape[0])
+        running_stats.update(vectors.numpy())
+        num_vectors += vector_count
+
+    if num_vectors < 2:
+        raise ValueError(
+            "Cannot compute relative action statistics from fewer than 2 unpadded action vectors."
+        )
+
+    stats[ACTION] = running_stats.get_statistics()
+    return stats
 
 
 @parser.wrap()
@@ -303,10 +468,19 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     active_cfg = cfg.trainable_config
     processor_pretrained_path = active_cfg.pretrained_path
+    processor_stats = dataset.meta.stats
+    if not cfg.is_reward_model_training and getattr(active_cfg, "use_relative_actions", False):
+        if is_main_process:
+            logging.info("Computing relative-action output statistics for processor normalization")
+        processor_stats = _make_relative_action_training_stats(
+            dataset,
+            exclude_joints=getattr(active_cfg, "relative_exclude_joints", []),
+            action_names=_resolve_action_feature_names(active_cfg, dataset),
+        )
 
     processor_kwargs = {}
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
-        processor_kwargs["dataset_stats"] = dataset.meta.stats
+        processor_kwargs["dataset_stats"] = processor_stats
 
     if cfg.is_reward_model_training:
         processor_kwargs["dataset_meta"] = dataset.meta
@@ -315,7 +489,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         preprocessor_overrides = {
             "device_processor": {"device": device.type},
             "normalizer_processor": {
-                "stats": dataset.meta.stats,
+                "stats": processor_stats,
                 "features": {**policy.config.input_features, **policy.config.output_features},
                 "norm_map": policy.config.normalization_mapping,
             },
@@ -323,7 +497,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         }
         postprocessor_overrides = {
             "unnormalizer_processor": {
-                "stats": dataset.meta.stats,
+                "stats": processor_stats,
                 "features": policy.config.output_features,
                 "norm_map": policy.config.normalization_mapping,
             },
@@ -332,7 +506,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             preprocessor_overrides["relative_actions_processor"] = {
                 "enabled": True,
                 "exclude_joints": getattr(active_cfg, "relative_exclude_joints", []),
-                "action_names": getattr(active_cfg, "action_feature_names", None),
+                "action_names": _resolve_action_feature_names(active_cfg, dataset),
             }
             postprocessor_overrides["absolute_actions_processor"] = {"enabled": True}
         processor_kwargs["preprocessor_overrides"] = preprocessor_overrides
