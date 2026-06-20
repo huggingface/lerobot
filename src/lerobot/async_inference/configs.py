@@ -137,6 +137,23 @@ class RobotClientConfig:
     chunk_size_threshold: float = field(default=0.5, metadata={"help": "Threshold for chunk size control"})
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
 
+    # Supervisor monitor configuration (optional event-triggered replanning)
+    supervisor_enabled: bool = field(
+        default=False, metadata={"help": "Enable supervisor camera monitor for event-triggered replanning"}
+    )
+    supervisor_camera: str = field(
+        default="overall", metadata={"help": "Camera key used by the supervisor monitor"}
+    )
+    supervisor_poll_fps: int = field(
+        default=20, metadata={"help": "Supervisor monitor polling rate (Hz)"}
+    )
+    supervisor_cooldown_s: float = field(
+        default=1.0, metadata={"help": "Minimum seconds between supervisor triggers"}
+    )
+    supervisor_motion_threshold: float = field(
+        default=0.02, metadata={"help": "Fraction of frame pixels in motion to fire a trigger"}
+    )
+
     # Aggregate function configuration (CLI-compatible)
     aggregate_fn_name: str = field(
         default="weighted_average",
@@ -179,6 +196,16 @@ class RobotClientConfig:
         if self.actions_per_chunk <= 0:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
 
+        if self.supervisor_enabled:
+            if self.supervisor_poll_fps <= 0:
+                raise ValueError(f"supervisor_poll_fps must be positive, got {self.supervisor_poll_fps}")
+            if self.supervisor_cooldown_s < 0:
+                raise ValueError(f"supervisor_cooldown_s must be non-negative, got {self.supervisor_cooldown_s}")
+            if not 0 < self.supervisor_motion_threshold <= 1:
+                raise ValueError(
+                    f"supervisor_motion_threshold must be in (0, 1], got {self.supervisor_motion_threshold}"
+                )
+
         self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)
 
     @classmethod
@@ -200,4 +227,9 @@ class RobotClientConfig:
             "task": self.task,
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
             "aggregate_fn_name": self.aggregate_fn_name,
+            "supervisor_enabled": self.supervisor_enabled,
+            "supervisor_camera": self.supervisor_camera,
+            "supervisor_poll_fps": self.supervisor_poll_fps,
+            "supervisor_cooldown_s": self.supervisor_cooldown_s,
+            "supervisor_motion_threshold": self.supervisor_motion_threshold,
         }

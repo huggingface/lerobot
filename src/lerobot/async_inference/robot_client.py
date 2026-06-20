@@ -78,6 +78,7 @@ from .helpers import (
     map_robot_keys_to_lerobot_features,
     visualize_action_queue_size,
 )
+from .supervisor import MotionDetector, SupervisorMonitor
 
 
 class RobotClient:
@@ -136,6 +137,16 @@ class RobotClient:
         self.must_go = threading.Event()
         self.must_go.set()  # Initially set - observations qualify for direct processing
 
+        # Optional supervisor monitor for event-triggered replanning (Tier 2)
+        self.supervisor = None
+        if config.supervisor_enabled:
+            self.supervisor = SupervisorMonitor(
+                camera=self.robot.cameras[config.supervisor_camera],
+                detect_fn=MotionDetector(motion_area_threshold=config.supervisor_motion_threshold),
+                poll_fps=config.supervisor_poll_fps,
+                cooldown_s=config.supervisor_cooldown_s,
+            )
+
     @property
     def running(self):
         return not self.shutdown_event.is_set()
@@ -173,6 +184,9 @@ class RobotClient:
     def stop(self):
         """Stop the robot client"""
         self.shutdown_event.set()
+
+        if self.supervisor is not None:
+            self.supervisor.stop()
 
         self.robot.disconnect()
         self.logger.debug("Robot disconnected")
@@ -403,7 +417,11 @@ class RobotClient:
     def _ready_to_send_observation(self):
         """Flags when the client is ready to send an observation"""
         with self.action_queue_lock:
-            return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
+            queue_ready = self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
+        if queue_ready:
+            return True
+        # Event-triggered early replan: fire the instant the supervisor detects a change
+        return self.supervisor is not None and self.supervisor.consume_trigger()
 
     def control_loop_observation(self, task: str, verbose: bool = False) -> RawObservation:
         try:
@@ -499,6 +517,10 @@ def async_client(cfg: RobotClientConfig):
 
         # Start action receiver thread
         action_receiver_thread.start()
+
+        # Start supervisor monitor thread (event-triggered replanning), if enabled
+        if client.supervisor is not None:
+            client.supervisor.start()
 
         try:
             # The main thread runs the control loop
