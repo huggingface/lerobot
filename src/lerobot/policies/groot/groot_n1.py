@@ -87,6 +87,19 @@ class EagleBackbone(nn.Module):
             print(f"[GROOT] Warning: failed to prepare Eagle cache for backbone: {exc}")
 
         config = AutoConfig.from_pretrained(str(cache_dir), trust_remote_code=True)
+        # flash-attn が無い環境 (例: aarch64) では FA2 を sdpa にフォールバックさせる。
+        # Eagle のモデルクラスは _supports_sdpa=True を宣言しており sdpa を完全サポートする。
+        try:
+            import flash_attn  # noqa: F401
+
+            has_flash_attn = True
+        except Exception:
+            has_flash_attn = False
+        if not has_flash_attn:
+            for sub in (config, getattr(config, "vision_config", None), getattr(config, "text_config", None)):
+                if sub is not None:
+                    sub._attn_implementation = "sdpa"
+                    sub._attn_implementation_autoset = True
         self.eagle_model = AutoModel.from_config(config, trust_remote_code=True)
 
         if project_to_dim is not None:
