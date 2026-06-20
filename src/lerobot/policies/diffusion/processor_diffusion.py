@@ -25,6 +25,7 @@ from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
     RenameObservationsProcessorStep,
+    TokenizerProcessorStep,
     UnnormalizerProcessorStep,
     policy_action_to_transition,
     transition_to_policy_action,
@@ -46,9 +47,10 @@ def make_diffusion_pre_post_processors(
 
     The pre-processing pipeline prepares the input data for the model by:
     1. Renaming features.
-    2. Normalizing the input and output features based on dataset statistics.
-    3. Adding a batch dimension.
+    2. Adding a batch dimension.
+    3. Tokenizing the task description when language conditioning is enabled.
     4. Moving the data to the specified device.
+    5. Normalizing the input and output features based on dataset statistics.
 
     The post-processing pipeline handles the model's output by:
     1. Moving the data to the CPU.
@@ -67,13 +69,27 @@ def make_diffusion_pre_post_processors(
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
-        DeviceProcessorStep(device=config.device),
-        NormalizerProcessorStep(
-            features={**config.input_features, **config.output_features},
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats,
-        ),
     ]
+    if config.use_language_conditioning:
+        input_steps.append(
+            TokenizerProcessorStep(
+                tokenizer_name=config.language_encoder_name,
+                max_length=config.tokenizer_max_length,
+                padding=config.tokenizer_padding,
+                padding_side=config.tokenizer_padding_side,
+                truncation=config.tokenizer_truncation,
+            )
+        )
+    input_steps.extend(
+        [
+            DeviceProcessorStep(device=config.device),
+            NormalizerProcessorStep(
+                features={**config.input_features, **config.output_features},
+                norm_map=config.normalization_mapping,
+                stats=dataset_stats,
+            ),
+        ]
+    )
     output_steps = [
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats

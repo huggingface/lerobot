@@ -21,6 +21,7 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.policies.diffusion import processor_diffusion
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.diffusion.processor_diffusion import make_diffusion_pre_post_processors
 from lerobot.processor import (
@@ -28,12 +29,52 @@ from lerobot.processor import (
     DataProcessorPipeline,
     DeviceProcessorStep,
     NormalizerProcessorStep,
+    ProcessorStep,
     RenameObservationsProcessorStep,
     TransitionKey,
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import create_transition, transition_to_batch
-from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
+from lerobot.utils.constants import (
+    ACTION,
+    OBS_IMAGE,
+    OBS_LANGUAGE_ATTENTION_MASK,
+    OBS_LANGUAGE_TOKENS,
+    OBS_STATE,
+)
+
+
+class FakeTokenizerProcessorStep(ProcessorStep):
+    """Tiny tokenizer stand-in so language processor tests avoid downloads."""
+
+    def __init__(
+        self,
+        tokenizer_name: str,
+        max_length: int,
+        padding: str,
+        padding_side: str,
+        truncation: bool,
+    ):
+        self.tokenizer_name = tokenizer_name
+        self.max_length = max_length
+        self.padding = padding
+        self.padding_side = padding_side
+        self.truncation = truncation
+
+    def __call__(self, transition):
+        self._current_transition = transition.copy()
+        new_transition = self._current_transition
+        observation = dict(new_transition[TransitionKey.OBSERVATION])
+        complementary_data = new_transition[TransitionKey.COMPLEMENTARY_DATA]
+        task = complementary_data["task"]
+        batch_size = len(task) if isinstance(task, list) else 1
+        observation[OBS_LANGUAGE_TOKENS] = torch.ones(batch_size, self.max_length, dtype=torch.long)
+        observation[OBS_LANGUAGE_ATTENTION_MASK] = torch.ones(batch_size, self.max_length, dtype=torch.bool)
+        new_transition[TransitionKey.OBSERVATION] = observation
+        return new_transition
+
+    def transform_features(self, features):
+        return features
 
 
 def create_default_config():
@@ -86,6 +127,39 @@ def test_make_diffusion_processor_basic():
     assert len(postprocessor.steps) == 2
     assert isinstance(postprocessor.steps[0], UnnormalizerProcessorStep)
     assert isinstance(postprocessor.steps[1], DeviceProcessorStep)
+
+
+def test_make_diffusion_processor_with_language_conditioning(monkeypatch):
+    """Test language-conditioned Diffusion processor tokenizes the task field."""
+    monkeypatch.setattr(processor_diffusion, "TokenizerProcessorStep", FakeTokenizerProcessorStep)
+    config = create_default_config()
+    config.use_language_conditioning = True
+    config.tokenizer_max_length = 8
+    stats = create_default_stats()
+
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
+
+    assert len(preprocessor.steps) == 5
+    assert isinstance(preprocessor.steps[0], RenameObservationsProcessorStep)
+    assert isinstance(preprocessor.steps[1], AddBatchDimensionProcessorStep)
+    assert isinstance(preprocessor.steps[2], FakeTokenizerProcessorStep)
+    assert isinstance(preprocessor.steps[3], DeviceProcessorStep)
+    assert isinstance(preprocessor.steps[4], NormalizerProcessorStep)
+    assert len(postprocessor.steps) == 2
+
+    observation = {
+        OBS_STATE: torch.randn(7),
+        OBS_IMAGE: torch.randn(3, 224, 224),
+    }
+    action = torch.randn(6)
+    transition = create_transition(observation, action, complementary_data={"task": "pick up the cube"})
+    batch = transition_to_batch(transition)
+
+    processed = preprocessor(batch)
+
+    assert processed[OBS_LANGUAGE_TOKENS].shape == (1, config.tokenizer_max_length)
+    assert processed[OBS_LANGUAGE_ATTENTION_MASK].shape == (1, config.tokenizer_max_length)
+    assert processed[OBS_LANGUAGE_ATTENTION_MASK].dtype == torch.bool
 
 
 def test_diffusion_processor_with_images():

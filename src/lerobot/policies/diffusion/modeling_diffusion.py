@@ -32,8 +32,15 @@ import torch.nn.functional as F  # noqa: N812
 import torchvision
 from torch import Tensor, nn
 
-from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
-from lerobot.utils.import_utils import _diffusers_available, require_package
+from lerobot.utils.constants import (
+    ACTION,
+    OBS_ENV_STATE,
+    OBS_IMAGES,
+    OBS_LANGUAGE_ATTENTION_MASK,
+    OBS_LANGUAGE_TOKENS,
+    OBS_STATE,
+)
+from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
 
 if TYPE_CHECKING or _diffusers_available:
     from diffusers.schedulers.scheduling_ddim import DDIMScheduler
@@ -41,6 +48,11 @@ if TYPE_CHECKING or _diffusers_available:
 else:
     DDIMScheduler = None
     DDPMScheduler = None
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import CLIPTextModel
+else:
+    CLIPTextModel = None
 
 from ..pretrained import PreTrainedPolicy
 from ..utils import (
@@ -50,6 +62,18 @@ from ..utils import (
     populate_queues,
 )
 from .configuration_diffusion import DiffusionConfig
+
+LANGUAGE_CONDITIONING_KEYS = (OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK)
+
+
+def _validate_language_conditioning_inputs(batch: dict[str, Tensor]) -> None:
+    missing = [key for key in LANGUAGE_CONDITIONING_KEYS if key not in batch]
+    if missing:
+        raise ValueError(
+            "Diffusion language conditioning is enabled, but the preprocessed batch is missing "
+            f"{missing}. Make sure each sample includes a `task` field and the diffusion preprocessor "
+            "runs `TokenizerProcessorStep`."
+        )
 
 
 class DiffusionPolicy(PreTrainedPolicy):
@@ -103,8 +127,11 @@ class DiffusionPolicy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         # stack n latest observations from the queue
-        batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
-        actions = self.diffusion.generate_actions(batch, noise=noise)
+        queued_batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
+        if self.config.use_language_conditioning:
+            _validate_language_conditioning_inputs(batch)
+            queued_batch.update({key: batch[key] for key in LANGUAGE_CONDITIONING_KEYS})
+        actions = self.diffusion.generate_actions(queued_batch, noise=noise)
 
         return actions
 
@@ -175,6 +202,40 @@ def _make_noise_scheduler(name: str, **kwargs: dict):
         raise ValueError(f"Unsupported noise scheduler type {name}")
 
 
+class DiffusionTextEncoder(nn.Module):
+    """Encode task language with a CLIP text model and project it for Diffusion conditioning."""
+
+    def __init__(self, config: DiffusionConfig):
+        super().__init__()
+        require_package("transformers", extra="transformers-dep")
+        if CLIPTextModel is None:
+            raise ImportError(
+                "`CLIPTextModel` is required for Diffusion language conditioning. "
+                "Install it with `pip install 'lerobot[transformers-dep]'`."
+            )
+
+        self.language_encoder_freeze = config.language_encoder_freeze
+        self.text_encoder = CLIPTextModel.from_pretrained(config.language_encoder_name)
+        if self.language_encoder_freeze:
+            for param in self.text_encoder.parameters():
+                param.requires_grad = False
+
+        self.projection = nn.Linear(self.text_encoder.config.hidden_size, config.language_condition_dim)
+
+    def forward(self, input_ids: Tensor, attention_mask: Tensor) -> Tensor:
+        device = self.projection.weight.device
+        input_ids = input_ids.to(device=device, dtype=torch.long)
+        attention_mask = attention_mask.to(device=device)
+
+        if self.language_encoder_freeze:
+            with torch.no_grad():
+                outputs = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask)
+        else:
+            outputs = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask)
+
+        return self.projection(outputs.pooler_output)
+
+
 class DiffusionModel(nn.Module):
     def __init__(self, config: DiffusionConfig):
         super().__init__()
@@ -193,6 +254,11 @@ class DiffusionModel(nn.Module):
                 global_cond_dim += self.rgb_encoder.feature_dim * num_images
         if self.config.env_state_feature:
             global_cond_dim += self.config.env_state_feature.shape[0]
+        if self.config.use_language_conditioning:
+            self.language_encoder = DiffusionTextEncoder(config)
+            global_cond_dim += self.config.language_condition_dim
+        else:
+            self.language_encoder = None
 
         self.unet = DiffusionConditionalUnet1d(config, global_cond_dim=global_cond_dim * config.n_obs_steps)
 
@@ -255,7 +321,7 @@ class DiffusionModel(nn.Module):
         return sample
 
     def _prepare_global_conditioning(self, batch: dict[str, Tensor]) -> Tensor:
-        """Encode image features and concatenate them all together along with the state vector."""
+        """Encode available observation modalities and concatenate them into a global condition."""
         batch_size, n_obs_steps = batch[OBS_STATE].shape[:2]
         global_cond_feats = [batch[OBS_STATE]]
         # Extract image features.
@@ -288,6 +354,20 @@ class DiffusionModel(nn.Module):
 
         if self.config.env_state_feature:
             global_cond_feats.append(batch[OBS_ENV_STATE])
+
+        if self.config.use_language_conditioning:
+            _validate_language_conditioning_inputs(batch)
+            assert self.language_encoder is not None
+            language_features = self.language_encoder(
+                batch[OBS_LANGUAGE_TOKENS],
+                batch[OBS_LANGUAGE_ATTENTION_MASK],
+            )
+            if language_features.shape[0] != batch_size:
+                raise ValueError(
+                    "Language conditioning batch size does not match observations. "
+                    f"Got {language_features.shape[0]} and {batch_size}."
+                )
+            global_cond_feats.append(language_features.unsqueeze(1).expand(-1, n_obs_steps, -1))
 
         # Concatenate features then flatten to (B, global_cond_dim).
         return torch.cat(global_cond_feats, dim=-1).flatten(start_dim=1)
