@@ -114,7 +114,7 @@ class ImageServer:
             self.capture_threads[name] = capture_thread
 
         # ZMQ PUB socket
-        self.context = zmq.Context()  # type: ignore[attr-defined]  # pyzmq stubs lack constants/Context re-export at top level; see https://github.com/zeromq/pyzmq/issues
+        self.context = zmq.Context()  # type: ignore[attr-defined]  # pyzmq stubs lack constants/Context re-export at top level
         self.socket = self.context.socket(zmq.PUB)  # type: ignore[attr-defined]
         self.socket.setsockopt(zmq.SNDHWM, 20)  # type: ignore[attr-defined]
         self.socket.setsockopt(zmq.LINGER, 0)  # type: ignore[attr-defined]
