@@ -36,6 +36,10 @@ from numpy.typing import NDArray
 
 from lerobot.utils.import_utils import _zmq_available, require_package
 
+if TYPE_CHECKING:
+    from zmq.sugar.context import Context
+    from zmq.sugar.socket import Socket
+
 if TYPE_CHECKING or _zmq_available:
     import zmq
 else:
@@ -80,6 +84,9 @@ class ZMQCamera(Camera):
         ```
     """
 
+    width: int | None
+    height: int | None
+
     def __init__(self, config: ZMQCameraConfig):
         require_package("pyzmq", extra="pyzmq-dep", import_name="zmq")
         super().__init__(config)
@@ -92,8 +99,8 @@ class ZMQCamera(Camera):
         self.timeout_ms = config.timeout_ms
 
         # ZMQ Context and Socket
-        self.context: zmq.Context | None = None
-        self.socket: zmq.Socket | None = None
+        self.context: Context | None = None
+        self.socket: Socket | None = None
         self._connected = False
 
         # Threading resources
@@ -124,11 +131,11 @@ class ZMQCamera(Camera):
         logger.info(f"Connecting to {self}...")
 
         try:
-            self.context = zmq.Context()
-            self.socket = self.context.socket(zmq.SUB)
-            self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
-            self.socket.setsockopt(zmq.RCVTIMEO, self.timeout_ms)
-            self.socket.setsockopt(zmq.CONFLATE, True)
+            self.context = zmq.Context()  # type: ignore[attr-defined]  # pyzmq stubs lack constants/Context re-export at top level; see https://github.com/zeromq/pyzmq/issues
+            self.socket = self.context.socket(zmq.SUB)  # type: ignore[attr-defined]
+            self.socket.setsockopt_string(zmq.SUBSCRIBE, "")  # type: ignore[attr-defined]
+            self.socket.setsockopt(zmq.RCVTIMEO, self.timeout_ms)  # type: ignore[attr-defined]
+            self.socket.setsockopt(zmq.CONFLATE, True)  # type: ignore[attr-defined]
             self.socket.connect(f"tcp://{self.server_address}:{self.port}")
             self._connected = True
 
@@ -185,7 +192,7 @@ class ZMQCamera(Camera):
 
         try:
             message = self.socket.recv_string()
-        except zmq.Again as e:
+        except zmq.Again as e:  # type: ignore[attr-defined]  # pyzmq stubs lack Again re-export at top level; runtime attribute is valid
             raise TimeoutError(f"{self} timeout after {self.timeout_ms}ms") from e
 
         # Decode JSON message
