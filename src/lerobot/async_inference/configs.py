@@ -144,14 +144,44 @@ class RobotClientConfig:
     supervisor_camera: str = field(
         default="overall", metadata={"help": "Camera key used by the supervisor monitor"}
     )
-    supervisor_poll_fps: int = field(
-        default=20, metadata={"help": "Supervisor monitor polling rate (Hz)"}
-    )
+    supervisor_poll_fps: int = field(default=20, metadata={"help": "Supervisor monitor polling rate (Hz)"})
     supervisor_cooldown_s: float = field(
         default=1.0, metadata={"help": "Minimum seconds between supervisor triggers"}
     )
     supervisor_motion_threshold: float = field(
         default=0.02, metadata={"help": "Fraction of frame pixels in motion to fire a trigger"}
+    )
+    supervisor_detector_type: str = field(
+        default="motion", metadata={"help": "Supervisor detector type. Options: motion, red_cube_speed"}
+    )
+    supervisor_slow_speed_px_s: float = field(
+        default=40.0,
+        metadata={"help": "Red cube speed mapped to the minimum adaptive replan threshold"},
+    )
+    supervisor_fast_speed_px_s: float = field(
+        default=200.0,
+        metadata={"help": "Red cube speed mapped to the maximum adaptive replan threshold"},
+    )
+    supervisor_urgent_speed_px_s: float = field(
+        default=250.0, metadata={"help": "Red cube speed that triggers immediate replanning"}
+    )
+    supervisor_min_chunk_size_threshold: float = field(
+        default=0.25, metadata={"help": "Adaptive threshold used when the red cube is slow"}
+    )
+    supervisor_max_chunk_size_threshold: float = field(
+        default=0.75, metadata={"help": "Adaptive threshold used when the red cube is fast"}
+    )
+    supervisor_red_hue_tolerance_deg: float = field(
+        default=20.0, metadata={"help": "HSV hue tolerance around red for the cube mask"}
+    )
+    supervisor_red_saturation_min: float = field(
+        default=0.45, metadata={"help": "Minimum HSV saturation for the red cube mask"}
+    )
+    supervisor_red_value_min: float = field(
+        default=0.25, metadata={"help": "Minimum HSV value for the red cube mask"}
+    )
+    supervisor_red_min_area_ratio: float = field(
+        default=0.001, metadata={"help": "Minimum frame area occupied by the red cube mask"}
     )
 
     # Aggregate function configuration (CLI-compatible)
@@ -200,10 +230,65 @@ class RobotClientConfig:
             if self.supervisor_poll_fps <= 0:
                 raise ValueError(f"supervisor_poll_fps must be positive, got {self.supervisor_poll_fps}")
             if self.supervisor_cooldown_s < 0:
-                raise ValueError(f"supervisor_cooldown_s must be non-negative, got {self.supervisor_cooldown_s}")
+                raise ValueError(
+                    f"supervisor_cooldown_s must be non-negative, got {self.supervisor_cooldown_s}"
+                )
             if not 0 < self.supervisor_motion_threshold <= 1:
                 raise ValueError(
                     f"supervisor_motion_threshold must be in (0, 1], got {self.supervisor_motion_threshold}"
+                )
+            if self.supervisor_detector_type not in {"motion", "red_cube_speed"}:
+                raise ValueError(
+                    "supervisor_detector_type must be one of {'motion', 'red_cube_speed'}, "
+                    f"got {self.supervisor_detector_type}"
+                )
+            if self.supervisor_slow_speed_px_s < 0:
+                raise ValueError(
+                    f"supervisor_slow_speed_px_s must be non-negative, got {self.supervisor_slow_speed_px_s}"
+                )
+            if self.supervisor_fast_speed_px_s <= self.supervisor_slow_speed_px_s:
+                raise ValueError(
+                    "supervisor_fast_speed_px_s must be greater than supervisor_slow_speed_px_s, "
+                    f"got {self.supervisor_fast_speed_px_s} <= {self.supervisor_slow_speed_px_s}"
+                )
+            if self.supervisor_urgent_speed_px_s < self.supervisor_slow_speed_px_s:
+                raise ValueError(
+                    "supervisor_urgent_speed_px_s must be at least supervisor_slow_speed_px_s, "
+                    f"got {self.supervisor_urgent_speed_px_s} < {self.supervisor_slow_speed_px_s}"
+                )
+            if not 0 <= self.supervisor_min_chunk_size_threshold <= 1:
+                raise ValueError(
+                    "supervisor_min_chunk_size_threshold must be between 0 and 1, "
+                    f"got {self.supervisor_min_chunk_size_threshold}"
+                )
+            if not 0 <= self.supervisor_max_chunk_size_threshold <= 1:
+                raise ValueError(
+                    "supervisor_max_chunk_size_threshold must be between 0 and 1, "
+                    f"got {self.supervisor_max_chunk_size_threshold}"
+                )
+            if self.supervisor_min_chunk_size_threshold > self.supervisor_max_chunk_size_threshold:
+                raise ValueError(
+                    "supervisor_min_chunk_size_threshold must be <= supervisor_max_chunk_size_threshold, "
+                    f"got {self.supervisor_min_chunk_size_threshold} > "
+                    f"{self.supervisor_max_chunk_size_threshold}"
+                )
+            if not 0 <= self.supervisor_red_hue_tolerance_deg <= 180:
+                raise ValueError(
+                    "supervisor_red_hue_tolerance_deg must be between 0 and 180, "
+                    f"got {self.supervisor_red_hue_tolerance_deg}"
+                )
+            if not 0 <= self.supervisor_red_saturation_min <= 1:
+                raise ValueError(
+                    "supervisor_red_saturation_min must be between 0 and 1, "
+                    f"got {self.supervisor_red_saturation_min}"
+                )
+            if not 0 <= self.supervisor_red_value_min <= 1:
+                raise ValueError(
+                    f"supervisor_red_value_min must be between 0 and 1, got {self.supervisor_red_value_min}"
+                )
+            if not 0 < self.supervisor_red_min_area_ratio <= 1:
+                raise ValueError(
+                    f"supervisor_red_min_area_ratio must be in (0, 1], got {self.supervisor_red_min_area_ratio}"
                 )
 
         self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)
@@ -232,4 +317,14 @@ class RobotClientConfig:
             "supervisor_poll_fps": self.supervisor_poll_fps,
             "supervisor_cooldown_s": self.supervisor_cooldown_s,
             "supervisor_motion_threshold": self.supervisor_motion_threshold,
+            "supervisor_detector_type": self.supervisor_detector_type,
+            "supervisor_slow_speed_px_s": self.supervisor_slow_speed_px_s,
+            "supervisor_fast_speed_px_s": self.supervisor_fast_speed_px_s,
+            "supervisor_urgent_speed_px_s": self.supervisor_urgent_speed_px_s,
+            "supervisor_min_chunk_size_threshold": self.supervisor_min_chunk_size_threshold,
+            "supervisor_max_chunk_size_threshold": self.supervisor_max_chunk_size_threshold,
+            "supervisor_red_hue_tolerance_deg": self.supervisor_red_hue_tolerance_deg,
+            "supervisor_red_saturation_min": self.supervisor_red_saturation_min,
+            "supervisor_red_value_min": self.supervisor_red_value_min,
+            "supervisor_red_min_area_ratio": self.supervisor_red_min_area_ratio,
         }
