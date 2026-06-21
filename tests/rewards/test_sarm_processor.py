@@ -692,3 +692,41 @@ class TestSARMEncodingProcessorStepEndToEnd:
             assert abs(actual_dense - expected_dense) < 0.01, (
                 f"Frame {frame}: dense mismatch {actual_dense:.3f} vs expected {expected_dense:.3f}"
             )
+
+    def test_missing_dense_subtask_columns_warns(self, processor_with_mocks, caplog):
+        """Dense/dual episodes that lack subtask columns must warn instead of
+        silently producing all-zero targets (#3842)."""
+        import logging
+
+        import pandas as pd
+
+        processor = processor_with_mocks
+        dense_names = processor.dense_subtask_names
+
+        # Episode metadata with no dense subtask columns at all.
+        df_missing = pd.DataFrame([{"episode_index": 0}])
+        with caplog.at_level(logging.WARNING):
+            result = processor._load_episode_annotations(0, df_missing, "dense", dense_names)
+        assert result == (None, None, None)
+        assert "no usable 'dense' subtask annotations" in caplog.text
+        assert "all-zero" in caplog.text
+
+        # Warns once per (annotation_type, episode): a repeat call stays quiet.
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            processor._load_episode_annotations(0, df_missing, "dense", dense_names)
+        assert "no usable" not in caplog.text
+
+    def test_nan_dense_subtask_column_warns(self, processor_with_mocks, caplog):
+        """A NaN subtask-names cell should warn too, not silently zero out (#3842)."""
+        import logging
+
+        import pandas as pd
+
+        processor = processor_with_mocks
+        dense_names = processor.dense_subtask_names
+        df_nan = pd.DataFrame([{"episode_index": 0, "dense_subtask_names": float("nan")}])
+        with caplog.at_level(logging.WARNING):
+            result = processor._load_episode_annotations(0, df_nan, "dense", dense_names)
+        assert result == (None, None, None)
+        assert "is NaN" in caplog.text
