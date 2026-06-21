@@ -131,7 +131,7 @@ class ZMQCamera(Camera):
         logger.info(f"Connecting to {self}...")
 
         try:
-            self.context = zmq.Context()  # type: ignore[attr-defined]  # pyzmq stubs lack constants/Context re-export at top level; see https://github.com/zeromq/pyzmq/issues
+            self.context = zmq.Context()  # type: ignore[attr-defined]  # pyzmq stubs lack constants/Context re-export at top level
             self.socket = self.context.socket(zmq.SUB)  # type: ignore[attr-defined]
             self.socket.setsockopt_string(zmq.SUBSCRIBE, "")  # type: ignore[attr-defined]
             self.socket.setsockopt(zmq.RCVTIMEO, self.timeout_ms)  # type: ignore[attr-defined]
