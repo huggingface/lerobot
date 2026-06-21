@@ -78,7 +78,7 @@ from .helpers import (
     map_robot_keys_to_lerobot_features,
     visualize_action_queue_size,
 )
-from .supervisor import MotionDetector, SupervisorMonitor
+from .supervisor import MotionDetector, RedCubeSpeedDetector, SupervisorMonitor
 
 
 class RobotClient:
@@ -140,9 +140,24 @@ class RobotClient:
         # Optional supervisor monitor for event-triggered replanning (Tier 2)
         self.supervisor = None
         if config.supervisor_enabled:
+            if config.supervisor_detector_type == "red_cube_speed":
+                detect_fn = RedCubeSpeedDetector(
+                    slow_speed_px_s=config.supervisor_slow_speed_px_s,
+                    fast_speed_px_s=config.supervisor_fast_speed_px_s,
+                    min_chunk_size_threshold=config.supervisor_min_chunk_size_threshold,
+                    max_chunk_size_threshold=config.supervisor_max_chunk_size_threshold,
+                    urgent_speed_px_s=config.supervisor_urgent_speed_px_s,
+                    hue_tolerance_deg=config.supervisor_red_hue_tolerance_deg,
+                    saturation_min=config.supervisor_red_saturation_min,
+                    value_min=config.supervisor_red_value_min,
+                    min_area_ratio=config.supervisor_red_min_area_ratio,
+                )
+            else:
+                detect_fn = MotionDetector(motion_area_threshold=config.supervisor_motion_threshold)
+
             self.supervisor = SupervisorMonitor(
                 camera=self.robot.cameras[config.supervisor_camera],
-                detect_fn=MotionDetector(motion_area_threshold=config.supervisor_motion_threshold),
+                detect_fn=detect_fn,
                 poll_fps=config.supervisor_poll_fps,
                 cooldown_s=config.supervisor_cooldown_s,
             )
@@ -416,12 +431,35 @@ class RobotClient:
 
     def _ready_to_send_observation(self):
         """Flags when the client is ready to send an observation"""
+        chunk_size_threshold = self._adaptive_chunk_size_threshold()
         with self.action_queue_lock:
-            queue_ready = self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
+            queue_ready = self.action_queue.qsize() / self.action_chunk_size <= chunk_size_threshold
         if queue_ready:
             return True
-        # Event-triggered early replan: fire the instant the supervisor detects a change
-        return self.supervisor is not None and self.supervisor.consume_trigger()
+
+        if self.supervisor is None:
+            return False
+
+        # Event-triggered early replan: fire instantly for urgent detector outputs.
+        trigger_output = self.supervisor.consume_trigger()
+        if trigger_output is None:
+            return False
+        self.logger.debug(
+            "Supervisor trigger consumed"
+            f" | reason={trigger_output.reason}"
+            f" | speed_px_s={trigger_output.speed_px_s}"
+        )
+        return True
+
+    def _adaptive_chunk_size_threshold(self) -> float:
+        if self.supervisor is None:
+            return self._chunk_size_threshold
+
+        latest_output = self.supervisor.latest_output()
+        if latest_output is None or latest_output.effective_chunk_size_threshold is None:
+            return self._chunk_size_threshold
+
+        return latest_output.effective_chunk_size_threshold
 
     def control_loop_observation(self, task: str, verbose: bool = False) -> RawObservation:
         try:
