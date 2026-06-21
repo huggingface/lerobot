@@ -171,23 +171,6 @@ def test_full_pipeline_roundtrip(dataset, action_dim):
     torch.testing.assert_close(recovered_actions, original_actions, atol=1e-4, rtol=1e-4)
 
 
-def test_relative_actions_processor_reset_clears_cached_state():
-    relative_step = RelativeActionsProcessorStep(enabled=True)
-    transition = batch_to_transition(
-        {
-            OBS_STATE: torch.tensor([[1.0, 2.0]]),
-            ACTION: torch.tensor([[[1.5, 1.0]]]),
-        }
-    )
-
-    relative_step(transition)
-    assert relative_step.get_cached_state() is not None
-
-    relative_step.reset()
-
-    assert relative_step.get_cached_state() is None
-
-
 def test_normalized_relative_values_are_reasonable(dataset, action_dim):
     """With correct chunk stats, normalized relative actions should be in a reasonable range."""
     action_chunks, states = _build_action_chunks(dataset, CHUNK_SIZE)

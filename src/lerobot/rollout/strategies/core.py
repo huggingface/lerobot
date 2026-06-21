@@ -116,22 +116,6 @@ class RolloutStrategy(abc.ABC):
             engine.resume()
         return False
 
-    def _reset_inference_after_robot_episode_done(self, ctx: RolloutContext) -> None:
-        """Reset rollout-side episode state when a robot backend reports an environment reset."""
-        response = ctx.hardware.robot_wrapper.pop_last_action_response()
-        if not isinstance(response, dict) or not response.get("done"):
-            return
-
-        logger.info(
-            "Robot reported episode done (success=%s); resetting rollout inference state",
-            response.get("success"),
-        )
-        if self._engine is not None:
-            self._engine.reset()
-        if self._interpolator is not None:
-            self._interpolator.reset()
-        self._cached_obs_processed = None
-
     def _teardown_hardware(self, hw: HardwareContext, return_to_initial_position: bool = True) -> None:
         """Stop the inference engine, optionally return robot to initial position, and disconnect hardware."""
         if self._engine is not None:

@@ -67,8 +67,6 @@ class BaseStrategy(RolloutStrategy):
 
             action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
             self._log_telemetry(obs_processed, action_dict, ctx.runtime)
-            if action_dict is not None:
-                self._reset_inference_after_robot_episode_done(ctx)
 
             dt = time.perf_counter() - loop_start
             if (sleep_t := control_interval - dt) > 0:

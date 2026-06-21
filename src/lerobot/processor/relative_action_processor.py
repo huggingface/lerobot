@@ -146,9 +146,6 @@ class RelativeActionsProcessorStep(ProcessorStep):
         """Return the cached ``observation.state`` used as the reference point for relative/absolute action conversions."""
         return self._last_state
 
-    def reset(self) -> None:
-        self._last_state = None
-
     def get_config(self) -> dict[str, Any]:
         return {
             "enabled": self.enabled,
