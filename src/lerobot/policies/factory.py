@@ -528,8 +528,14 @@ def make_policy(
         features = env_to_policy_features(env_cfg)
 
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
-    if not cfg.input_features:
-        cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
+    # Always populate input_features from the actual dataset (or env),
+    # overriding any generic defaults baked into a base model's config.json
+    # (e.g., pi0fast-base ships with LIBERO-style keys like base_0_rgb).
+    # Apply rename_map so config keys match what the rename_observations_processor
+    # will produce at runtime (the policy's prepare_images sees post-rename keys).
+    if rename_map:
+        features = {rename_map.get(k, k): v for k, v in features.items()}
+    cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
 
     # Store action feature names for relative_exclude_joints support
     if ds_meta is not None and hasattr(cfg, "action_feature_names"):
