@@ -249,6 +249,18 @@ class _RecordControlWebServer:
                     events["stop_recording"] = True
                     events["exit_early"] = True
                     self._send_page("Stop Recording clicked.")
+                elif self.path.startswith("/frame.jpg"):
+                    frame = events.get("_control_frame_jpeg")
+                    if frame is None:
+                        self.send_response(204)
+                        self.end_headers()
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/jpeg")
+                    self.send_header("Cache-Control", "no-store, max-age=0")
+                    self.send_header("Content-Length", str(len(frame)))
+                    self.end_headers()
+                    self.wfile.write(frame)
                 else:
                     self._send_page("Ready.")
 
@@ -262,9 +274,11 @@ class _RecordControlWebServer:
   <meta charset="utf-8">
   <title>LeRobot Recording Controls</title>
   <style>
-    body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 32px; max-width: 460px; }}
+    body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 24px; max-width: 760px; }}
     h1 {{ font-size: 24px; margin-bottom: 8px; }}
     p {{ color: #444; }}
+    .layout {{ display: grid; grid-template-columns: 300px 1fr; gap: 18px; align-items: start; }}
+    .video {{ width: 100%; border-radius: 8px; background: #111; border: 1px solid #d1d5db; }}
     a {{ display: block; margin: 12px 0; padding: 16px 18px; border-radius: 8px; text-decoration: none;
          color: white; background: #2563eb; font-size: 18px; font-weight: 700; text-align: center; }}
     a.secondary {{ background: #d97706; }}
@@ -275,10 +289,18 @@ class _RecordControlWebServer:
 <body tabindex="0">
   <h1>LeRobot Recording Controls</h1>
   <p>Press Space or click Finish Episode for both task completion and reset completion.</p>
-  <a href="/finish" id="finish">Finish Episode</a>
-  <a class="secondary" href="/rerecord">Rerecord Episode</a>
-  <a class="danger" href="/stop">Stop Recording</a>
-  <div class="status" id="status">{status}</div>
+  <div class="layout">
+    <div>
+      <a href="/finish" id="finish">Finish Episode</a>
+      <a class="secondary" href="/rerecord">Rerecord Episode</a>
+      <a class="danger" href="/stop">Stop Recording</a>
+      <div class="status" id="status">{status}</div>
+    </div>
+    <div>
+      <img id="live" class="video" alt="Waiting for live camera feed">
+      <p>Live camera feed</p>
+    </div>
+  </div>
   <script>
     document.body.focus();
     let sending = false;
@@ -298,6 +320,10 @@ class _RecordControlWebServer:
         finishEpisode();
       }}
     }});
+    const live = document.getElementById("live");
+    setInterval(() => {{
+      live.src = "/frame.jpg?t=" + Date.now();
+    }}, 150);
     window.addEventListener("focus", () => document.body.focus());
   </script>
 </body>

@@ -169,6 +169,7 @@ If the browser does not open automatically, open that URL manually and use:
 - Finish Episode: finish and save the current episode.
 - Rerecord Episode: discard and redo the current episode.
 - Stop Recording: stop the whole recording session.
+- Live camera feed: shown on the right side of the page.
 
 During reset:
 
@@ -266,6 +267,43 @@ lerobot-rollout \
 ```
 
 Keep one hand near follower power during rollout. If motion is jerky or wrong, stop power immediately and lower `--robot.max_relative_target`.
+
+## Compare Training Lighting With Live Camera
+
+Use this to compare a recorded training frame against the current camera feed before rollout:
+
+```bash
+cd ~/lerobot
+conda activate lerobot
+
+python scripts/compare_training_feed.py
+```
+
+The script lists trained policy checkpoints. Select the policy you want, then it plays recorded training frames side-by-side with the live camera:
+
+- Left: recorded training frame from the dataset used by that policy.
+- Right: current live camera feed.
+- Spacebar: pause/play recorded training frames.
+- `n`: next training frame.
+- `p`: previous training frame.
+- `r`: random training frame.
+- `q`: quit.
+
+Direct command for the 50-episode policy:
+
+```bash
+python scripts/compare_training_feed.py \
+  --policy=outputs/train/act_so101_overhead_50ep/checkpoints/020000/pretrained_model \
+  --camera-index=0 \
+  --play-fps=10
+```
+
+Match the current view to training data before rollout:
+
+- Same camera position and crop.
+- Same object/bin region.
+- Similar lighting value and small light delta.
+- Same table/background clutter.
 
 ## Camera Preview
 

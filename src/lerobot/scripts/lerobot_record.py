@@ -91,6 +91,9 @@ import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
 
+import cv2
+import numpy as np
+
 from lerobot.cameras import CameraConfig  # noqa: F401
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.reachy2_camera import Reachy2CameraConfig  # noqa: F401
@@ -191,6 +194,46 @@ class RecordConfig:
             )
 
 
+def _to_uint8_rgb(image) -> np.ndarray:
+    if hasattr(image, "detach"):
+        image = image.detach().cpu().numpy()
+    image = np.asarray(image)
+
+    if image.ndim == 3 and image.shape[0] in (1, 3):
+        image = np.moveaxis(image, 0, -1)
+    if image.ndim == 2:
+        image = np.repeat(image[..., None], 3, axis=-1)
+    if image.shape[-1] == 1:
+        image = np.repeat(image, 3, axis=-1)
+
+    if image.dtype != np.uint8:
+        max_value = float(np.nanmax(image)) if image.size else 1.0
+        if max_value <= 1.5:
+            image = image * 255.0
+        image = np.clip(image, 0, 255).astype(np.uint8)
+
+    return image[..., :3]
+
+
+def _update_control_web_frame(events: dict, observation: RobotObservation) -> None:
+    for key, value in observation.items():
+        if not hasattr(value, "shape"):
+            continue
+        shape = tuple(value.shape)
+        if len(shape) != 3:
+            continue
+        if not (shape[-1] in (1, 3, 4) or shape[0] in (1, 3, 4)):
+            continue
+
+        rgb = _to_uint8_rgb(value)
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        ok, encoded = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        if ok:
+            events["_control_frame_jpeg"] = encoded.tobytes()
+            events["_control_frame_key"] = key
+        return
+
+
 """ --------------- record_loop() data flow --------------------------
        [ Robot ]
            V
@@ -284,6 +327,7 @@ def record_loop(
 
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
+        _update_control_web_frame(events, obs_processed)
 
         if dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
