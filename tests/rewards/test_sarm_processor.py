@@ -692,3 +692,82 @@ class TestSARMEncodingProcessorStepEndToEnd:
             assert abs(actual_dense - expected_dense) < 0.01, (
                 f"Frame {frame}: dense mismatch {actual_dense:.3f} vs expected {expected_dense:.3f}"
             )
+
+    def test_warns_when_dense_annotation_column_missing(self, mock_clip_model, caplog):
+        """A multi-stage dense head with no dense_subtask_* columns must warn about predict-all-zero.
+
+        Regression guard for the silent collapse: without annotations every target is 0 and the
+        head never learns, but nothing used to tell the user.
+        """
+        import logging
+
+        from lerobot.rewards.sarm.processor_sarm import SARMEncodingProcessorStep
+
+        config = MockConfig(
+            annotation_mode="dense_only",
+            dense_subtask_names=["d1", "d2", "d3", "d4"],
+            dense_temporal_proportions=[0.25, 0.25, 0.25, 0.25],
+        )
+        # episodes metadata WITHOUT any dense_subtask_* columns
+        episodes = [
+            {"dataset_from_index": 0, "dataset_to_index": 100, "task": "t"},
+            {"dataset_from_index": 100, "dataset_to_index": 200, "task": "t"},
+        ]
+        dataset_meta = MockDatasetMeta(episodes)
+
+        with caplog.at_level(logging.WARNING, logger="lerobot.rewards.sarm.processor_sarm"):
+            SARMEncodingProcessorStep(config=config, dataset_meta=dataset_meta)
+
+        assert any("predict-all-zero" in m for m in caplog.messages), (
+            f"expected a predict-all-zero warning, got: {caplog.messages}"
+        )
+
+    def test_warns_when_dense_annotations_all_null(self, mock_clip_model, caplog):
+        """A present-but-all-NaN dense column must also warn (e.g. only some episodes annotated)."""
+        import logging
+
+        from lerobot.rewards.sarm.processor_sarm import SARMEncodingProcessorStep
+
+        config = MockConfig(
+            annotation_mode="dense_only",
+            dense_subtask_names=["d1", "d2", "d3", "d4"],
+            dense_temporal_proportions=[0.25, 0.25, 0.25, 0.25],
+        )
+        episodes = [
+            {"dataset_from_index": 0, "dataset_to_index": 100, "task": "t", "dense_subtask_names": None},
+            {"dataset_from_index": 100, "dataset_to_index": 200, "task": "t", "dense_subtask_names": None},
+        ]
+        dataset_meta = MockDatasetMeta(episodes)
+
+        with caplog.at_level(logging.WARNING, logger="lerobot.rewards.sarm.processor_sarm"):
+            SARMEncodingProcessorStep(config=config, dataset_meta=dataset_meta)
+
+        assert any("predict-all-zero" in m for m in caplog.messages)
+
+    def test_no_warning_when_dense_annotations_present(self, mock_clip_model, caplog):
+        """A fully-annotated dataset must not emit the predict-all-zero warning."""
+        import logging
+
+        from lerobot.rewards.sarm.processor_sarm import SARMEncodingProcessorStep
+
+        config = MockConfig(
+            annotation_mode="dense_only",
+            dense_subtask_names=["d1", "d2", "d3", "d4"],
+            dense_temporal_proportions=[0.25, 0.25, 0.25, 0.25],
+        )
+        episodes = [
+            {
+                "dataset_from_index": 0,
+                "dataset_to_index": 100,
+                "task": "t",
+                "dense_subtask_names": ["d1", "d2", "d3", "d4"],
+                "dense_subtask_start_frames": [0, 25, 50, 75],
+                "dense_subtask_end_frames": [25, 50, 75, 100],
+            }
+        ]
+        dataset_meta = MockDatasetMeta(episodes)
+
+        with caplog.at_level(logging.WARNING, logger="lerobot.rewards.sarm.processor_sarm"):
+            SARMEncodingProcessorStep(config=config, dataset_meta=dataset_meta)
+
+        assert not any("predict-all-zero" in m for m in caplog.messages)
