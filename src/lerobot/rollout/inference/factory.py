@@ -28,6 +28,7 @@ from threading import Event
 
 import draccus
 
+from lerobot.detectors import SupervisorConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.processor import PolicyProcessorPipeline
@@ -72,6 +73,11 @@ class RTCInferenceConfig(InferenceEngineConfig):
     # (e.g. ``--inference.rtc.execution_horizon=...``).
     rtc: RTCConfig = field(default_factory=RTCConfig)
     queue_threshold: int = 30
+
+    # Optional event-triggered / speed-adaptive replanning. Disabled by default;
+    # enable with ``--inference.supervisor.enabled=true`` and pick a detector via
+    # ``--inference.supervisor.detector.type=motion|red_cube_speed``.
+    supervisor: SupervisorConfig = field(default_factory=SupervisorConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +129,7 @@ def create_inference_engine(
             use_torch_compile=use_torch_compile,
             compile_warmup_inferences=compile_warmup_inferences,
             rtc_queue_threshold=config.queue_threshold,
+            supervisor_config=config.supervisor,
             shutdown_event=shutdown_event,
         )
     raise ValueError(f"Unknown inference engine type: {type(config).__name__}")

@@ -49,6 +49,7 @@ import torch
 
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.detectors import make_detector
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -78,7 +79,7 @@ from .helpers import (
     map_robot_keys_to_lerobot_features,
     visualize_action_queue_size,
 )
-from .supervisor import MotionDetector, RedCubeSpeedDetector, SupervisorMonitor
+from .supervisor import SupervisorMonitor
 
 
 class RobotClient:
@@ -139,27 +140,12 @@ class RobotClient:
 
         # Optional supervisor monitor for event-triggered replanning (Tier 2)
         self.supervisor = None
-        if config.supervisor_enabled:
-            if config.supervisor_detector_type == "red_cube_speed":
-                detect_fn = RedCubeSpeedDetector(
-                    slow_speed_px_s=config.supervisor_slow_speed_px_s,
-                    fast_speed_px_s=config.supervisor_fast_speed_px_s,
-                    min_chunk_size_threshold=config.supervisor_min_chunk_size_threshold,
-                    max_chunk_size_threshold=config.supervisor_max_chunk_size_threshold,
-                    urgent_speed_px_s=config.supervisor_urgent_speed_px_s,
-                    hue_tolerance_deg=config.supervisor_red_hue_tolerance_deg,
-                    saturation_min=config.supervisor_red_saturation_min,
-                    value_min=config.supervisor_red_value_min,
-                    min_area_ratio=config.supervisor_red_min_area_ratio,
-                )
-            else:
-                detect_fn = MotionDetector(motion_area_threshold=config.supervisor_motion_threshold)
-
+        if config.supervisor.enabled:
             self.supervisor = SupervisorMonitor(
-                camera=self.robot.cameras[config.supervisor_camera],
-                detect_fn=detect_fn,
-                poll_fps=config.supervisor_poll_fps,
-                cooldown_s=config.supervisor_cooldown_s,
+                camera=self.robot.cameras[config.supervisor.camera],
+                detect_fn=make_detector(config.supervisor.detector),
+                poll_fps=config.supervisor.poll_fps,
+                cooldown_s=config.supervisor.cooldown_s,
             )
 
     @property
