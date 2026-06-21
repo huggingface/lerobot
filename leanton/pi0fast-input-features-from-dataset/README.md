@@ -2,7 +2,7 @@
 
 **Target:** `src/lerobot/policies/factory.py`
 **Status:** active
-**GitHub:** Not filed
+**GitHub:** [#3845](https://github.com/huggingface/lerobot/issues/3845)
 **Diff basis:** `origin/main` @ `30790de1` (clean upstream, 2026-06-21)
 
 ## What

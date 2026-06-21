@@ -14,6 +14,9 @@
 | [#3747](https://github.com/huggingface/lerobot/issues/3747) | DAGGER resume: RTC engine uses stale observation after correction, causing snap-back | 2026-06-09 | bug, policies | `dagger-rtc-fresh-obs-on-resume` |
 | [#3793](https://github.com/huggingface/lerobot/issues/3793) | Push intermediate training checkpoints to Hub | 2026-06-13 | enhancement, training | `mid-training-hub-push` |
 | [#3794](https://github.com/huggingface/lerobot/issues/3794) | Post-hoc EMA smoothing and velocity clipping for rollout actions | 2026-06-13 | enhancement, policies | `action-smoothing-ema-clip` |
+| [#3845](https://github.com/huggingface/lerobot/issues/3845) | pi0_fast: make_policy retains stale input_features from base model, breaking custom datasets | 2026-06-21 | bug, policies | `pi0fast-input-features-from-dataset` |
+| [#3846](https://github.com/huggingface/lerobot/issues/3846) | pi0_fast: --policy.action_tokenizer_name has no effect | 2026-06-21 | bug, policies, training | `pi0fast-action-tokenizer-override` |
+| [#3847](https://github.com/huggingface/lerobot/issues/3847) | pi0fast.mdx: wrong model ID in training/eval code blocks | 2026-06-21 | bug, documentation | `pi0fast-docs-wrong-model-id` |
 
 ## Closed (Merged / Fixed Upstream)
 

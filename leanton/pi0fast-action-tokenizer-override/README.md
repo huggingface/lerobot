@@ -2,7 +2,7 @@
 
 **Target:** `src/lerobot/scripts/lerobot_train.py`
 **Status:** active
-**GitHub:** Not filed
+**GitHub:** [#3846](https://github.com/huggingface/lerobot/issues/3846)
 **Diff basis:** `origin/main` @ `30790de1` (clean upstream, 2026-06-21)
 
 ## What

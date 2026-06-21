@@ -2,7 +2,7 @@
 
 **Target:** `docs/source/pi0fast.mdx`
 **Status:** active
-**GitHub:** Not filed
+**GitHub:** [#3847](https://github.com/huggingface/lerobot/issues/3847)
 **Diff basis:** `origin/main` @ `30790de1` (clean upstream, 2026-06-21)
 
 ## What
