@@ -31,6 +31,7 @@ from typing import Any
 
 import torch
 
+from lerobot.detectors import SupervisorConfig, make_detector, normalize_detector_output
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc import ActionQueue, LatencyTracker, reanchor_relative_rtc_prefix
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
@@ -104,6 +105,7 @@ class RTCInferenceEngine(InferenceEngine):
         use_torch_compile: bool = False,
         compile_warmup_inferences: int = 2,
         rtc_queue_threshold: int = 30,
+        supervisor_config: SupervisorConfig | None = None,
         shutdown_event: Event | None = None,
     ) -> None:
         self._policy = policy
@@ -118,6 +120,27 @@ class RTCInferenceEngine(InferenceEngine):
         self._use_torch_compile = use_torch_compile
         self._compile_warmup_inferences = compile_warmup_inferences
         self._rtc_queue_threshold = rtc_queue_threshold
+
+        # Optional event-triggered / speed-adaptive replanning (Tier 2/3). The
+        # detector runs on the control-loop observation frame, so no extra camera
+        # thread is needed. Disabled by default -> behaviour is unchanged.
+        self._supervisor_config = supervisor_config
+        self._detector = None
+        self._supervisor_camera: str | None = None
+        self._supervisor_cooldown_s: float = 0.0
+        self._chunk_size: int | None = None
+        self._last_detector_fire: float = -1.0
+        self._last_detector_frame_id: int | None = None
+        self._dynamic_queue_threshold: float | None = None
+        if supervisor_config is not None and supervisor_config.enabled:
+            self._detector = make_detector(supervisor_config.detector)
+            self._supervisor_camera = supervisor_config.camera
+            self._supervisor_cooldown_s = supervisor_config.cooldown_s
+            logger.info(
+                "RTC detector enabled: type=%s camera=%s (dynamic replan)",
+                supervisor_config.detector.type,
+                supervisor_config.camera,
+            )
 
         self._action_queue: ActionQueue | None = None
         self._obs_holder: dict[str, Any] = {}
@@ -224,6 +247,13 @@ class RTCInferenceEngine(InferenceEngine):
         self._postprocessor.reset()
         if self._action_queue is not None:
             self._action_queue.clear()
+        # Rebuild the detector so per-episode state (previous frame, cube track) is
+        # cleared, and forget any cached dynamic threshold / trigger timing.
+        if self._supervisor_config is not None and self._supervisor_config.enabled:
+            self._detector = make_detector(self._supervisor_config.detector)
+        self._last_detector_fire = -1.0
+        self._last_detector_frame_id = None
+        self._dynamic_queue_threshold = None
 
     # ------------------------------------------------------------------
     # Action production (called from main thread)
@@ -239,6 +269,51 @@ class RTCInferenceEngine(InferenceEngine):
         """Publish the latest observation for the RTC thread to consume."""
         with self._obs_lock:
             self._obs_holder["obs"] = obs
+
+    # ------------------------------------------------------------------
+    # Detector-driven dynamic replanning (optional)
+    # ------------------------------------------------------------------
+
+    def _evaluate_detector(self, obs: dict) -> tuple[bool, float | None]:
+        """Run the detector on the latest camera frame and gate an early replan.
+
+        Returns ``(replan_now, dynamic_queue_threshold)``. The detector is run at
+        most once per new observation frame (so speed estimates use the true
+        control-loop dt); between frames the cached threshold is reused and no new
+        trigger fires. A fractional ``effective_chunk_size_threshold`` is mapped to
+        an absolute queue threshold via the chunk length captured at inference.
+        """
+        frame = obs.get(self._supervisor_camera)
+        if frame is None:
+            return False, self._dynamic_queue_threshold
+
+        frame_id = id(frame)
+        if frame_id == self._last_detector_frame_id:
+            # Same frame as last poll: reuse cached threshold, do not re-fire.
+            return False, self._dynamic_queue_threshold
+        self._last_detector_frame_id = frame_id
+
+        try:
+            output = normalize_detector_output(self._detector(frame))
+        except Exception as e:  # noqa: BLE001 - detector must never crash the RTC loop
+            logger.debug("RTC detector skipped frame: %s", e)
+            return False, self._dynamic_queue_threshold
+
+        if output.effective_chunk_size_threshold is not None and self._chunk_size:
+            self._dynamic_queue_threshold = output.effective_chunk_size_threshold * self._chunk_size
+
+        if output.replan_now:
+            now = time.perf_counter()
+            if now - self._last_detector_fire > self._supervisor_cooldown_s:
+                self._last_detector_fire = now
+                logger.info(
+                    "RTC early replan (detector): reason=%s speed_px_s=%s",
+                    output.reason,
+                    output.speed_px_s,
+                )
+                return True, self._dynamic_queue_threshold
+
+        return False, self._dynamic_queue_threshold
 
     # ------------------------------------------------------------------
     # RTC: background inference thread
@@ -267,7 +342,14 @@ class RTCInferenceEngine(InferenceEngine):
                     time.sleep(_RTC_IDLE_SLEEP_S)
                     continue
 
-                if queue.qsize() <= self._rtc_queue_threshold:
+                effective_threshold = self._rtc_queue_threshold
+                detector_replan = False
+                if self._detector is not None:
+                    detector_replan, dynamic_threshold = self._evaluate_detector(obs)
+                    if dynamic_threshold is not None:
+                        effective_threshold = dynamic_threshold
+
+                if queue.qsize() <= effective_threshold or detector_replan:
                     try:
                         current_time = time.perf_counter()
                         idx_before = queue.get_action_index()
@@ -309,6 +391,9 @@ class RTCInferenceEngine(InferenceEngine):
                         )
 
                         original = actions.squeeze(0).clone()
+                        # Chunk length, used to map a detector's fractional threshold
+                        # (0-1) onto this engine's absolute queue threshold.
+                        self._chunk_size = int(original.shape[0])
                         processed = self._postprocessor(actions).squeeze(0)
                         new_latency = time.perf_counter() - current_time
                         new_delay = math.ceil(new_latency / time_per_chunk)
