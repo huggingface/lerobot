@@ -22,14 +22,12 @@ import dataclasses
 import logging
 import time
 from contextlib import nullcontext
-from copy import deepcopy
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from accelerate import Accelerator
 
-import numpy as np
 import torch
 from termcolor import colored
 from torch.optim import Optimizer
@@ -56,7 +54,6 @@ from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
-from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
@@ -172,241 +169,6 @@ def update_policy(
     if torch.cuda.is_available():
         train_metrics.gpu_mem_gb = torch.cuda.max_memory_allocated() / (1024**3)
     return train_metrics, output_dict
-
-
-def _as_int(value: Any) -> int:
-    if isinstance(value, torch.Tensor):
-        return int(value.item())
-    item = getattr(value, "item", None)
-    if callable(item):
-        return int(item())
-    return int(value)
-
-
-def _to_float_tensor(value: Any, *, key: str) -> torch.Tensor:
-    if value is None:
-        raise ValueError(f"Cannot compute relative action statistics: sample is missing '{key}'.")
-    if isinstance(value, torch.Tensor):
-        return value.detach().cpu().float()
-    return torch.as_tensor(value, dtype=torch.float32)
-
-
-def _state_reference_batch(state: torch.Tensor) -> torch.Tensor:
-    if state.ndim == 1:
-        return state.unsqueeze(0)
-    if state.ndim == 2:
-        return state
-    if state.ndim > 2:
-        return state.reshape(-1, state.shape[-1])[-1:].contiguous()
-    raise ValueError(f"observation.state must have at least 1 dimension, got shape {tuple(state.shape)}.")
-
-
-def _action_training_batch(action: torch.Tensor, state_batch: torch.Tensor) -> torch.Tensor:
-    if action.ndim == 1:
-        return action.unsqueeze(0)
-    if action.ndim == 2:
-        # A single training sample uses (T, D) action chunks with a single (1, D) state reference.
-        # Batched callers may pass (B, D); keep that shape when the state batch makes it unambiguous.
-        if state_batch.shape[0] == action.shape[0] and state_batch.shape[0] > 1:
-            return action
-        return action.unsqueeze(0)
-    if action.ndim == 3:
-        return action
-    raise ValueError(f"action must be (D,), (T, D), (B, D), or (B, T, D), got {tuple(action.shape)}.")
-
-
-def _unpadded_relative_action_vectors(relative_action: torch.Tensor, pad_mask: Any | None) -> torch.Tensor:
-    if pad_mask is None:
-        return relative_action.reshape(-1, relative_action.shape[-1])
-
-    keep = ~torch.as_tensor(pad_mask, dtype=torch.bool).cpu()
-    if relative_action.ndim == 3 and keep.ndim == 1 and relative_action.shape[0] == 1:
-        return relative_action[0, keep]
-    if relative_action.ndim == 3 and keep.ndim == 2 and tuple(keep.shape) == tuple(relative_action.shape[:2]):
-        return relative_action[keep]
-    if relative_action.ndim == 2 and keep.ndim == 1 and keep.numel() == relative_action.shape[0]:
-        return relative_action[keep]
-    return relative_action.reshape(-1, relative_action.shape[-1])
-
-
-def _relative_action_chunks_by_horizon(
-    relative_action: torch.Tensor, pad_mask: Any | None
-) -> list[list[np.ndarray]]:
-    """Return per-horizon lists of valid relative action vectors."""
-
-    if relative_action.ndim == 2:
-        relative_action = relative_action.unsqueeze(0)
-    if relative_action.ndim != 3:
-        raise ValueError(
-            "Cannot compute horizon-preserving relative action statistics from "
-            f"shape {tuple(relative_action.shape)}."
-        )
-
-    batch_size, horizon, _action_dim = relative_action.shape
-    keep = torch.ones(batch_size, horizon, dtype=torch.bool)
-    if pad_mask is not None:
-        mask = torch.as_tensor(pad_mask, dtype=torch.bool).cpu()
-        if mask.ndim == 1 and batch_size == 1 and mask.numel() == horizon:
-            keep[0] = ~mask
-        elif mask.ndim == 2 and tuple(mask.shape) == (batch_size, horizon):
-            keep = ~mask
-
-    chunks: list[list[np.ndarray]] = [[] for _ in range(horizon)]
-    relative_np = relative_action.detach().cpu().numpy()
-    for batch_idx in range(batch_size):
-        for horizon_idx in range(horizon):
-            if keep[batch_idx, horizon_idx]:
-                chunks[horizon_idx].append(relative_np[batch_idx, horizon_idx])
-    return chunks
-
-
-def _compute_horizon_relative_action_stats(chunks_by_horizon: list[list[np.ndarray]]) -> dict[str, np.ndarray]:
-    if not chunks_by_horizon or not any(chunks_by_horizon):
-        raise ValueError("Cannot compute relative action statistics without unpadded action vectors.")
-
-    stats: dict[str, list[np.ndarray]] = {key: [] for key in ("min", "max", "mean", "std", "q01", "q99")}
-    counts: list[int] = []
-    for horizon_idx, vectors in enumerate(chunks_by_horizon):
-        if len(vectors) < 2:
-            raise ValueError(
-                "Cannot compute horizon-preserving relative action statistics from fewer than 2 "
-                f"unpadded vectors at action timestep {horizon_idx}."
-            )
-        values = np.stack(vectors, axis=0).astype(np.float32)
-        stats["min"].append(np.min(values, axis=0))
-        stats["max"].append(np.max(values, axis=0))
-        stats["mean"].append(np.mean(values, axis=0))
-        stats["std"].append(np.std(values, axis=0))
-        stats["q01"].append(np.quantile(values, 0.01, axis=0).astype(np.float32))
-        stats["q99"].append(np.quantile(values, 0.99, axis=0).astype(np.float32))
-        counts.append(len(vectors))
-
-    computed = {key: np.stack(values, axis=0) for key, values in stats.items()}
-    computed["count"] = np.asarray(counts, dtype=np.int64)
-    return computed
-
-
-def _iter_action_state_training_samples(dataset: Any):
-    """Yield action chunks, reference states, and action padding masks without decoding videos when possible."""
-
-    ensure_reader = getattr(dataset, "_ensure_reader", None)
-    if callable(ensure_reader):
-        reader = ensure_reader()
-        if reader.hf_dataset is None:
-            reader.load_and_activate()
-        delta_indices = getattr(reader, "delta_indices", None)
-        for idx in range(len(dataset)):
-            item = reader.hf_dataset[idx]
-            action = item.get(ACTION)
-            state = item.get(OBS_STATE)
-            pad_mask = None
-            if delta_indices is not None and ACTION in delta_indices:
-                ep_idx = _as_int(item["episode_index"])
-                abs_idx = _as_int(item["index"])
-                query_indices, padding = reader._get_query_indices(abs_idx, ep_idx)
-                action = reader._query_hf_dataset({ACTION: query_indices[ACTION]})[ACTION]
-                pad_mask = padding.get(f"{ACTION}_is_pad")
-            yield action, state, pad_mask
-        return
-
-    for idx in range(len(dataset)):
-        item = dataset[idx]
-        yield item.get(ACTION), item.get(OBS_STATE), item.get(f"{ACTION}_is_pad")
-
-
-def _resolve_action_feature_names(dataset: Any) -> list[str] | None:
-    features = getattr(getattr(dataset, "meta", None), "features", {}) or {}
-    action_feature = features.get(ACTION) if isinstance(features, dict) else None
-    if isinstance(action_feature, dict):
-        names = action_feature.get("names")
-    else:
-        names = getattr(action_feature, "names", None)
-    return list(names) if names is not None else None
-
-
-def _make_relative_action_training_stats(
-    dataset: Any,
-    *,
-    exclude_joints: list[str] | None,
-    action_names: list[str] | None,
-    preserve_action_horizon: bool = False,
-) -> dict[str, dict[str, Any]]:
-    """Return dataset stats whose action entry describes the relative action tensor used for training."""
-
-    from lerobot.datasets.compute_stats import RunningQuantileStats
-    from lerobot.processor.relative_action_processor import RelativeActionsProcessorStep, to_relative_actions
-
-    try:
-        dataset_len = len(dataset)
-    except TypeError as exc:
-        raise ValueError(
-            "Cannot compute relative action statistics for a dataset without a finite length. "
-            "Disable streaming or provide precomputed relative action statistics."
-        ) from exc
-
-    if dataset_len == 0:
-        raise ValueError("Cannot compute relative action statistics for an empty dataset.")
-
-    stats = deepcopy(getattr(getattr(dataset, "meta", None), "stats", {}) or {})
-    running_stats = RunningQuantileStats()
-    relative_step = RelativeActionsProcessorStep(
-        enabled=True,
-        exclude_joints=list(exclude_joints or []),
-        action_names=action_names,
-    )
-    num_vectors = 0
-    chunks_by_horizon: list[list[np.ndarray]] | None = None
-
-    for action_value, state_value, pad_mask in _iter_action_state_training_samples(dataset):
-        action = _to_float_tensor(action_value, key=ACTION)
-        state = _to_float_tensor(state_value, key=OBS_STATE)
-        state_batch = _state_reference_batch(state)
-        action_batch = _action_training_batch(action, state_batch)
-        if action_batch.shape[0] != state_batch.shape[0]:
-            if state_batch.shape[0] == 1:
-                state_batch = state_batch.expand(action_batch.shape[0], -1)
-            else:
-                raise ValueError(
-                    "Cannot compute relative action statistics: action and state batch sizes differ "
-                    f"({action_batch.shape[0]} vs {state_batch.shape[0]})."
-                )
-
-        relative_action = to_relative_actions(
-            action_batch,
-            state_batch,
-            relative_step._build_mask(action_batch.shape[-1]),
-        )
-        if preserve_action_horizon:
-            sample_chunks = _relative_action_chunks_by_horizon(relative_action, pad_mask)
-            if chunks_by_horizon is None:
-                chunks_by_horizon = [[] for _ in range(len(sample_chunks))]
-            if len(sample_chunks) != len(chunks_by_horizon):
-                raise ValueError(
-                    "Cannot compute horizon-preserving relative action statistics from samples with "
-                    f"different action horizons ({len(sample_chunks)} vs {len(chunks_by_horizon)})."
-                )
-            for horizon_idx, vectors in enumerate(sample_chunks):
-                chunks_by_horizon[horizon_idx].extend(vectors)
-                num_vectors += len(vectors)
-        else:
-            vectors = _unpadded_relative_action_vectors(relative_action, pad_mask)
-            if vectors.numel() == 0:
-                continue
-            vector_count = int(vectors.reshape(-1, vectors.shape[-1]).shape[0])
-            running_stats.update(vectors.numpy())
-            num_vectors += vector_count
-
-    if num_vectors < 2:
-        raise ValueError(
-            "Cannot compute relative action statistics from fewer than 2 unpadded action vectors."
-        )
-
-    stats[ACTION] = (
-        _compute_horizon_relative_action_stats(chunks_by_horizon or [])
-        if preserve_action_horizon
-        else running_stats.get_statistics()
-    )
-    return stats
 
 
 @parser.wrap()
@@ -541,29 +303,19 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     active_cfg = cfg.trainable_config
     processor_pretrained_path = active_cfg.pretrained_path
-    processor_stats = dataset.meta.stats
-    if not cfg.is_reward_model_training and getattr(active_cfg, "use_relative_actions", False):
-        if is_main_process:
-            logging.info("Computing relative-action output statistics for processor normalization")
-        processor_stats = _make_relative_action_training_stats(
-            dataset,
-            exclude_joints=getattr(active_cfg, "relative_exclude_joints", []),
-            action_names=_resolve_action_feature_names(dataset),
-            preserve_action_horizon=getattr(active_cfg, "type", None) == "groot",
-        )
 
     processor_kwargs = {}
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
-        processor_kwargs["dataset_stats"] = processor_stats
+        processor_kwargs["dataset_stats"] = dataset.meta.stats
 
-    if cfg.is_reward_model_training or getattr(active_cfg, "use_relative_actions", False):
+    if cfg.is_reward_model_training:
         processor_kwargs["dataset_meta"] = dataset.meta
 
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:
         preprocessor_overrides = {
             "device_processor": {"device": device.type},
             "normalizer_processor": {
-                "stats": processor_stats,
+                "stats": dataset.meta.stats,
                 "features": {**policy.config.input_features, **policy.config.output_features},
                 "norm_map": policy.config.normalization_mapping,
             },
@@ -571,7 +323,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         }
         postprocessor_overrides = {
             "unnormalizer_processor": {
-                "stats": processor_stats,
+                "stats": dataset.meta.stats,
                 "features": policy.config.output_features,
                 "norm_map": policy.config.normalization_mapping,
             },
@@ -580,7 +332,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             preprocessor_overrides["relative_actions_processor"] = {
                 "enabled": True,
                 "exclude_joints": getattr(active_cfg, "relative_exclude_joints", []),
-                "action_names": _resolve_action_feature_names(dataset),
+                "action_names": getattr(active_cfg, "action_feature_names", None),
             }
             postprocessor_overrides["absolute_actions_processor"] = {"enabled": True}
         processor_kwargs["preprocessor_overrides"] = preprocessor_overrides

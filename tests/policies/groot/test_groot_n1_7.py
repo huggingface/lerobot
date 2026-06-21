@@ -41,6 +41,7 @@ from lerobot.policies.groot.processor_groot import (
     GrootN17ActionDecodeStep,
     GrootN17PackInputsStep,
     GrootN17VLMEncodeStep,
+    _make_relative_action_training_stats,
     _transform_n1_7_image_for_vlm_albumentations,
     make_groot_pre_post_processors,
 )
@@ -49,7 +50,6 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
 )
-from lerobot.scripts.lerobot_train import _make_relative_action_training_stats
 from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
@@ -1988,6 +1988,101 @@ def test_groot_n1_7_relative_action_training_processors_save_native_grouped_stat
     ]
     assert decode_config["raw_stats"]["relative_action"]["single_arm"]["count"] == [2, 2]
     assert decode_config["raw_stats"]["action"]["gripper"]["max"] == [100.0]
+
+
+def test_groot_n1_7_relative_action_processors_compute_stats_from_runtime_dataset_meta(
+    monkeypatch, tmp_path
+):
+    input_features, output_features = _groot_features(state_dim=6, action_dim=6)
+    action_names = [
+        "shoulder_pan.pos",
+        "shoulder_lift.pos",
+        "elbow_flex.pos",
+        "wrist_flex.pos",
+        "wrist_roll.pos",
+        "gripper.pos",
+    ]
+    config = GrootConfig(
+        input_features=input_features,
+        output_features=output_features,
+        device="cpu",
+        use_bf16=False,
+        action_decode_transform=None,
+        chunk_size=2,
+        n_action_steps=2,
+        use_relative_actions=True,
+        relative_exclude_joints=["gripper"],
+    )
+    absolute_dataset_stats = {
+        OBS_STATE: {
+            "min": torch.tensor([-50.0, -60.0, -70.0, -80.0, -90.0, 0.0]),
+            "max": torch.tensor([50.0, 60.0, 70.0, 80.0, 90.0, 100.0]),
+        },
+        ACTION: {
+            "min": torch.tensor([-100.0, -110.0, -120.0, -130.0, -140.0, 0.0]),
+            "max": torch.tensor([100.0, 110.0, 120.0, 130.0, 140.0, 100.0]),
+        },
+    }
+    samples = [
+        {
+            OBS_STATE: torch.tensor([10.0, 20.0, 30.0, 40.0, 50.0, 0.0]),
+            ACTION: torch.tensor(
+                [
+                    [8.0, 17.0, 26.0, 35.0, 44.0, 0.0],
+                    [12.0, 23.0, 34.0, 45.0, 56.0, 100.0],
+                ]
+            ),
+        },
+        {
+            OBS_STATE: torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 50.0]),
+            ACTION: torch.tensor(
+                [
+                    [-1.0, -2.0, -3.0, -4.0, -5.0, 25.0],
+                    [1.0, 2.0, 3.0, 4.0, 5.0, 75.0],
+                ]
+            ),
+        },
+    ]
+    runtime_meta = SimpleNamespace(
+        repo_id="local/relative",
+        root=tmp_path,
+        revision="main",
+        fps=30,
+        stats=absolute_dataset_stats,
+        features={ACTION: {"names": action_names}},
+    )
+
+    class _RelativeStatsDataset:
+        meta = runtime_meta
+
+        def __len__(self):
+            return len(samples)
+
+        def __getitem__(self, idx):
+            return samples[idx]
+
+    def _fake_lerobot_dataset(repo_id, **kwargs):
+        assert repo_id == runtime_meta.repo_id
+        assert kwargs["root"] == runtime_meta.root
+        assert kwargs["revision"] == runtime_meta.revision
+        assert kwargs["download_videos"] is False
+        assert kwargs["delta_timestamps"][ACTION] == [0.0, 1 / runtime_meta.fps]
+        return _RelativeStatsDataset()
+
+    monkeypatch.setattr("lerobot.datasets.lerobot_dataset.LeRobotDataset", _fake_lerobot_dataset)
+    config._runtime_dataset_meta = runtime_meta
+
+    preprocessor, postprocessor = make_groot_pre_post_processors(config, dataset_stats=absolute_dataset_stats)
+
+    assert not any(isinstance(step, RelativeActionsProcessorStep) for step in preprocessor.steps)
+    assert isinstance(postprocessor.steps[0], GrootN17ActionDecodeStep)
+    pack_step = next(step for step in preprocessor.steps if isinstance(step, GrootN17PackInputsStep))
+    assert pack_step.raw_stats["relative_action"]["single_arm"]["min"] == [
+        [-2.0, -3.0, -4.0, -5.0, -6.0],
+        [1.0, 2.0, 3.0, 4.0, 5.0],
+    ]
+    assert pack_step.raw_stats["relative_action"]["single_arm"]["count"] == [2, 2]
+    assert pack_step.raw_stats["action"]["gripper"]["max"] == [100.0]
 
 
 def test_groot_n1_7_generated_relative_stats_match_oss_gr00t_reference_numbers():

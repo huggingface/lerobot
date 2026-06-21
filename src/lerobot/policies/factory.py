@@ -538,6 +538,7 @@ def make_policy(
         set_dataset_feature_metadata = getattr(cfg, "set_dataset_feature_metadata", None)
         if callable(set_dataset_feature_metadata):
             set_dataset_feature_metadata(ds_meta.features)
+        cfg._runtime_dataset_meta = ds_meta
 
     kwargs["config"] = cfg
 
