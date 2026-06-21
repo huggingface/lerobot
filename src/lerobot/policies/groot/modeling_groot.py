@@ -73,6 +73,7 @@ class GrootPolicy(PreTrainedPolicy):
         # Initialize GR00T model using ported components
         self._groot_model = self._create_groot_model()
         self._action_queue_steps = self._resolve_action_queue_steps()
+        self._warned_native_relative_rtc_prefix_disabled = False
 
         self.reset()
 
@@ -305,6 +306,17 @@ class GrootPolicy(PreTrainedPolicy):
         prev_chunk_left_over: object,
     ) -> tuple[dict[str, Tensor], dict[str, object] | None]:
         if prev_chunk_left_over is None:
+            return inputs, None
+        if getattr(self.config, "use_relative_actions", False):
+            # Generic RTC only provides normalized leftovers from the previous chunk. For
+            # native relative-action N1.7 checkpoints those rows are tied to the old
+            # observation state and old per-horizon stats row, so using them as the next
+            # prefix can push the policy in the wrong direction. Run without native RTC
+            # overlap guidance until a GROOT-specific RTC path can pass re-anchored
+            # absolute leftovers through.
+            if not getattr(self, "_warned_native_relative_rtc_prefix_disabled", False):
+                logger.info("Disabling native GR00T RTC prefix for relative-action policy")
+                self._warned_native_relative_rtc_prefix_disabled = True
             return inputs, None
         if not isinstance(prev_chunk_left_over, torch.Tensor):
             raise TypeError("prev_chunk_left_over must be a torch.Tensor for GR00T N1.7 RTC.")

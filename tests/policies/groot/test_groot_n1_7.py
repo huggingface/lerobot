@@ -1074,6 +1074,22 @@ def test_groot_n1_7_pack_inputs_trains_native_relative_groups_with_absolute_grip
     torch.testing.assert_close(output[TransitionKey.ACTION], expected_actions)
 
 
+def test_groot_policy_ignores_rtc_leftovers_for_relative_actions():
+    policy = object.__new__(GrootPolicy)
+    policy.config = SimpleNamespace(use_relative_actions=True)
+    policy._warned_native_relative_rtc_prefix_disabled = False
+    inputs = {"state": torch.zeros(1, 1, 132)}
+
+    output_inputs, options = policy._prepare_n1_7_rtc_inputs(
+        inputs,
+        inference_delay=1,
+        prev_chunk_left_over=torch.ones(8, 6),
+    )
+
+    assert output_inputs is inputs
+    assert options is None
+
+
 def test_groot_n1_7_pack_inputs_adds_inference_action_horizon_mask():
     step = GrootN17PackInputsStep(
         action_horizon=40,
@@ -1096,6 +1112,49 @@ def test_groot_n1_7_pack_inputs_adds_inference_action_horizon_mask():
     assert action_mask[:, :16].sum().item() == 32
     assert action_mask[:, 16:].sum().item() == 0
     assert output[TransitionKey.COMPLEMENTARY_DATA]["embodiment_id"].dtype == torch.int32
+
+
+def test_groot_n1_7_pack_inputs_masks_padded_action_horizons():
+    step = GrootN17PackInputsStep(
+        action_horizon=4,
+        valid_action_horizon=4,
+        max_state_dim=3,
+        max_action_dim=5,
+        normalize_min_max=False,
+    )
+    action = torch.arange(2 * 4 * 3, dtype=torch.float32).view(2, 4, 3)
+    action_is_pad = torch.tensor(
+        [
+            [False, True, False, True],
+            [True, False, False, False],
+        ]
+    )
+    transition = {
+        TransitionKey.OBSERVATION: {
+            OBS_STATE: torch.zeros(2, 3),
+        },
+        TransitionKey.ACTION: action.clone(),
+        TransitionKey.COMPLEMENTARY_DATA: {
+            "task": ["Move", "Place"],
+            "action_is_pad": action_is_pad,
+        },
+    }
+
+    output = step(transition)
+
+    expected_valid = (~action_is_pad).float()
+    action_mask = output[TransitionKey.COMPLEMENTARY_DATA]["action_mask"]
+    assert action_mask.shape == (2, 4, 5)
+    torch.testing.assert_close(action_mask[..., :3], expected_valid.unsqueeze(-1).expand(-1, -1, 3))
+    assert action_mask[..., 3:].sum().item() == 0
+
+    packed_action = output[TransitionKey.ACTION]
+    assert packed_action.shape == (2, 4, 5)
+    torch.testing.assert_close(packed_action[0, 0, :3], action[0, 0])
+    torch.testing.assert_close(packed_action[0, 2, :3], action[0, 2])
+    assert packed_action[0, 1].abs().sum().item() == 0
+    assert packed_action[0, 3].abs().sum().item() == 0
+    assert packed_action[1, 0].abs().sum().item() == 0
 
 
 def test_groot_n1_7_pack_inputs_orders_video_by_checkpoint_modality_keys():
@@ -1904,6 +1963,7 @@ def test_groot_n1_7_relative_action_training_processors_save_native_grouped_stat
         [-2.0, -3.0, -4.0, -5.0, -6.0],
         [1.0, 2.0, 3.0, 4.0, 5.0],
     ]
+    assert pack_config["raw_stats"]["relative_action"]["single_arm"]["count"] == [2, 2]
     assert pack_config["raw_stats"]["action"]["gripper"]["min"] == [0.0]
     assert pack_config["raw_stats"]["action"]["gripper"]["max"] == [100.0]
 
@@ -1926,6 +1986,7 @@ def test_groot_n1_7_relative_action_training_processors_save_native_grouped_stat
         [-1.0, -2.0, -3.0, -4.0, -5.0],
         [2.0, 3.0, 4.0, 5.0, 6.0],
     ]
+    assert decode_config["raw_stats"]["relative_action"]["single_arm"]["count"] == [2, 2]
     assert decode_config["raw_stats"]["action"]["gripper"]["max"] == [100.0]
 
 

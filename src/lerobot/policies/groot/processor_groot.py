@@ -588,6 +588,9 @@ def _slice_stats_entry(stats: dict[str, Any], indices: list[int]) -> dict[str, A
     max_index = max(indices)
     sliced: dict[str, Any] = {}
     for stat_name, value in stats.items():
+        if stat_name == "count":
+            sliced[stat_name] = torch.as_tensor(value).flatten().tolist()
+            continue
         tensor = torch.as_tensor(value, dtype=torch.float32)
         if tensor.ndim >= 2:
             if tensor.shape[-1] <= max_index:
@@ -1537,13 +1540,34 @@ class GrootN17PackInputsStep(ProcessorStep):
                 )
                 action = torch.cat([action, pad], dim=1)
                 horizon = self.action_horizon
-            if valid_horizon < horizon:
+            horizon_valid = torch.zeros(bsz, horizon, dtype=torch.bool, device=action.device)
+            horizon_valid[:, :valid_horizon] = True
+            action_is_pad = comp.get(f"{ACTION}_is_pad")
+            if action_is_pad is None:
+                action_is_pad = comp.get("action_horizon_is_pad")
+            if action_is_pad is not None:
+                action_pad = torch.as_tensor(action_is_pad, dtype=torch.bool, device=action.device)
+                if action_pad.ndim == 1:
+                    if bsz == 1 and action_pad.numel() == horizon:
+                        action_pad = action_pad.unsqueeze(0)
+                    elif horizon == 1 and action_pad.numel() == bsz:
+                        action_pad = action_pad.view(bsz, 1)
+                if action_pad.ndim != 2 or action_pad.shape[0] != bsz:
+                    raise ValueError(
+                        "action_is_pad must have shape (B, T) matching the action batch; "
+                        f"got {tuple(action_pad.shape)} for action {tuple(action.shape)}."
+                    )
+                pad_horizon = min(horizon, action_pad.shape[1])
+                horizon_valid[:, :pad_horizon] &= ~action_pad[:, :pad_horizon]
+
+            if valid_horizon < horizon or action_is_pad is not None:
                 action = action.clone()
                 action[:, valid_horizon:, :] = 0
+                action = action * horizon_valid.unsqueeze(-1).to(dtype=action.dtype)
             action_mask = torch.zeros(
                 bsz, horizon, self.max_action_dim, dtype=torch.float32, device=action.device
             )
-            action_mask[:, :valid_horizon, :valid_dim] = 1.0
+            action_mask[:, :, :valid_dim] = horizon_valid.unsqueeze(-1).to(dtype=action_mask.dtype)
             transition[TransitionKey.ACTION] = action
             comp["action_mask"] = action_mask
 
