@@ -30,7 +30,6 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.policies.factory import make_policy_config, make_pre_post_processors
 from lerobot.policies.groot.configuration_groot import (
     GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
-    GROOT_N1_7,
     GROOT_N1_7_BASE_MODEL,
     GrootConfig,
     infer_groot_n1_7_action_execution_horizon,
@@ -370,7 +369,7 @@ def test_groot_n1_7_accepts_named_action_decode_transform():
 def test_groot_n1_7_rejects_legacy_libero_gripper_action_decode_transform(legacy_transform):
     with pytest.raises(ValueError, match="Unsupported GR00T N1.7 action decode transform"):
         GrootConfig(
-                action_decode_transform=legacy_transform,
+            action_decode_transform=legacy_transform,
             device="cpu",
         )
 
@@ -378,7 +377,7 @@ def test_groot_n1_7_rejects_legacy_libero_gripper_action_decode_transform(legacy
 def test_groot_config_rejects_mismatched_n1_5_path_for_n1_7():
     with pytest.raises(ValueError, match="does not match base_model_path"):
         GrootConfig(
-                base_model_path="nvidia/GR00T-N1.5-3B",
+            base_model_path="nvidia/GR00T-N1.5-3B",
             device="cpu",
         )
 
@@ -504,7 +503,7 @@ def test_groot_from_pretrained_rejects_mismatched_caller_config(tmp_path):
     # so construction itself raises before from_pretrained is reached.
     with pytest.raises(ValueError, match="does not match base_model_path"):
         config = GrootConfig(
-                base_model_path="nvidia/GR00T-N1.5-3B",
+            base_model_path="nvidia/GR00T-N1.5-3B",
             input_features=input_features,
             output_features=output_features,
             device="cpu",
@@ -1004,6 +1003,77 @@ def test_groot_n1_7_pack_inputs_normalizes_action_chunk_per_dimension_before_pad
     assert action_mask[0, :, 3:].sum().item() == 0
 
 
+def test_groot_n1_7_pack_inputs_trains_native_relative_groups_with_absolute_gripper():
+    step = GrootN17PackInputsStep(
+        action_horizon=2,
+        valid_action_horizon=2,
+        max_state_dim=6,
+        max_action_dim=6,
+        normalize_min_max=True,
+        clip_outliers=False,
+        stats={
+            OBS_STATE: {
+                "min": [-100.0, -100.0, -100.0, -100.0, -100.0, 0.0],
+                "max": [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
+            },
+            ACTION: {
+                "min": [-10.0, -10.0, -10.0, -10.0, -10.0, 0.0],
+                "max": [10.0, 10.0, 10.0, 10.0, 10.0, 100.0],
+            },
+        },
+        raw_stats={
+            "state": {
+                "single_arm": {"min": [-100.0] * 5, "max": [100.0] * 5},
+                "gripper": {"min": [0.0], "max": [100.0]},
+            },
+            "action": {
+                "single_arm": {"min": [-100.0] * 5, "max": [100.0] * 5},
+                "gripper": {"min": [0.0], "max": [100.0]},
+            },
+            "relative_action": {
+                "single_arm": {"min": [-10.0] * 5, "max": [10.0] * 5},
+            },
+        },
+        modality_config={
+            "state": {"modality_keys": ["single_arm", "gripper"]},
+            "action": {
+                "modality_keys": ["single_arm", "gripper"],
+                "action_configs": [
+                    {"rep": "RELATIVE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None},
+                    {"rep": "ABSOLUTE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None},
+                ],
+                "delta_indices": [0, 1],
+            },
+        },
+    )
+    transition = {
+        TransitionKey.OBSERVATION: {
+            OBS_STATE: torch.tensor([[10.0, 20.0, 30.0, 40.0, 50.0, 25.0]]),
+        },
+        TransitionKey.ACTION: torch.tensor(
+            [
+                [
+                    [12.0, 18.0, 35.0, 30.0, 55.0, 0.0],
+                    [9.0, 21.0, 27.0, 43.0, 50.0, 100.0],
+                ]
+            ]
+        ),
+        TransitionKey.COMPLEMENTARY_DATA: {"task": ["Move"]},
+    }
+
+    output = step(transition)
+
+    expected_actions = torch.tensor(
+        [
+            [
+                [0.2, -0.2, 0.5, -1.0, 0.5, -1.0],
+                [-0.1, 0.1, -0.3, 0.3, 0.0, 1.0],
+            ]
+        ]
+    )
+    torch.testing.assert_close(output[TransitionKey.ACTION], expected_actions)
+
+
 def test_groot_n1_7_pack_inputs_adds_inference_action_horizon_mask():
     step = GrootN17PackInputsStep(
         action_horizon=40,
@@ -1323,7 +1393,7 @@ def test_groot_from_pretrained_rejects_caller_config_mismatch_from_local_config(
     # so construction itself raises before from_pretrained is reached.
     with pytest.raises(ValueError, match="does not match base_model_path"):
         config = GrootConfig(
-                base_model_path="nvidia/GR00T-N1.5-3B",
+            base_model_path="nvidia/GR00T-N1.5-3B",
             input_features=input_features,
             output_features=output_features,
             device="cpu",
@@ -1736,9 +1806,7 @@ def test_groot_n1_7_saved_processors_reload_through_factory_preserves_saved_stat
     assert unpack_step.env_action_dim == 7
 
 
-
-
-def test_groot_n1_7_relative_action_training_processors_save_relative_action_stats(tmp_path):
+def test_groot_n1_7_relative_action_training_processors_save_native_grouped_stats(tmp_path):
     input_features, output_features = _groot_features(state_dim=6, action_dim=6)
     action_names = [
         "shoulder_pan.pos",
@@ -1817,26 +1885,41 @@ def test_groot_n1_7_relative_action_training_processors_save_relative_action_sta
     postprocessor.save_pretrained(tmp_path)
 
     preprocessor_config = json.loads((tmp_path / "policy_preprocessor.json").read_text())
-    assert any(step.get("registry_name") == "relative_actions_processor" for step in preprocessor_config["steps"])
+    assert not any(
+        step.get("registry_name") == "relative_actions_processor" for step in preprocessor_config["steps"]
+    )
     pack_entry = next(
         step
         for step in preprocessor_config["steps"]
         if step.get("registry_name") == "groot_n1_7_pack_inputs_v1"
     )
+    pack_config = pack_entry["config"]
+    assert pack_config["modality_config"]["action"]["modality_keys"] == ["single_arm", "gripper"]
+    assert pack_config["modality_config"]["action"]["action_configs"] == [
+        {"rep": "RELATIVE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None},
+        {"rep": "ABSOLUTE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None},
+    ]
+    assert pack_config["raw_stats"]["relative_action"]["single_arm"]["min"] == [-2.0, -3.0, -4.0, -5.0, -6.0]
+    assert pack_config["raw_stats"]["action"]["gripper"]["min"] == [0.0]
+    assert pack_config["raw_stats"]["action"]["gripper"]["max"] == [100.0]
+
     pack_state = load_file(tmp_path / pack_entry["state_file"])
     torch.testing.assert_close(pack_state[f"{ACTION}.min"], expected_relative_action_stats["min"])
     torch.testing.assert_close(pack_state[f"{ACTION}.max"], expected_relative_action_stats["max"])
 
     postprocessor_config = json.loads((tmp_path / "policy_postprocessor.json").read_text())
-    assert any(step.get("registry_name") == "absolute_actions_processor" for step in postprocessor_config["steps"])
-    unpack_entry = next(
+    assert not any(
+        step.get("registry_name") == "absolute_actions_processor" for step in postprocessor_config["steps"]
+    )
+    decode_entry = next(
         step
         for step in postprocessor_config["steps"]
-        if step.get("registry_name", "").startswith("groot_action_unpack_unnormalize")
+        if step.get("registry_name") == "groot_n1_7_action_decode_v1"
     )
-    unpack_state = load_file(tmp_path / unpack_entry["state_file"])
-    torch.testing.assert_close(unpack_state[f"{ACTION}.min"], expected_relative_action_stats["min"])
-    torch.testing.assert_close(unpack_state[f"{ACTION}.max"], expected_relative_action_stats["max"])
+    decode_config = decode_entry["config"]
+    assert decode_config["use_relative_action"] is True
+    assert decode_config["raw_stats"]["relative_action"]["single_arm"]["max"] == [2.0, 3.0, 4.0, 5.0, 6.0]
+    assert decode_config["raw_stats"]["action"]["gripper"]["max"] == [100.0]
 
 
 def test_groot_policy_selects_n1_7_model_class(monkeypatch):

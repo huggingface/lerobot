@@ -138,6 +138,13 @@ class _GrootN17CheckpointProcessorAssets:
     use_albumentations: bool
 
 
+@dataclass(frozen=True)
+class _GrootN17ActionGroup:
+    key: str
+    indices: list[int]
+    relative: bool
+
+
 def _load_n1_7_checkpoint_processor_assets(config: GrootConfig) -> _GrootN17CheckpointProcessorAssets | None:
     """Load N1.7 processor settings from checkpoint sidecar JSON files.
 
@@ -547,14 +554,250 @@ def _reconnect_groot_n1_7_pack_decode_steps(
             step.pack_step = pack_step
 
 
-def _resolve_action_feature_names_from_dataset_meta(dataset_meta: Any | None) -> list[str] | None:
+def _resolve_feature_names_from_dataset_meta(dataset_meta: Any | None, feature_key: str) -> list[str] | None:
     features = getattr(dataset_meta, "features", {}) or {}
-    action_feature = features.get(ACTION) if isinstance(features, dict) else None
-    if isinstance(action_feature, dict):
-        names = action_feature.get("names")
-    else:
-        names = getattr(action_feature, "names", None)
+    feature = features.get(feature_key) if isinstance(features, dict) else None
+    names = feature.get("names") if isinstance(feature, dict) else getattr(feature, "names", None)
     return list(names) if names is not None else None
+
+
+def _resolve_action_feature_names_from_dataset_meta(dataset_meta: Any | None) -> list[str] | None:
+    return _resolve_feature_names_from_dataset_meta(dataset_meta, ACTION)
+
+
+def _resolve_visual_modality_keys_from_dataset_meta(dataset_meta: Any | None) -> list[str] | None:
+    features = getattr(dataset_meta, "features", {}) or {}
+    if not isinstance(features, dict):
+        return None
+
+    keys: list[str] = []
+    for key, value in features.items():
+        dtype = value.get("dtype") if isinstance(value, dict) else getattr(value, "dtype", None)
+        feature_type = value.get("type") if isinstance(value, dict) else getattr(value, "type", None)
+        is_visual = dtype in {"image", "video"} or str(feature_type).upper().endswith("VISUAL")
+        if not is_visual or not isinstance(key, str) or not key.startswith(f"{OBS_IMAGES}."):
+            continue
+        keys.append(key.removeprefix(f"{OBS_IMAGES}."))
+    return keys or None
+
+
+def _slice_stats_entry(stats: dict[str, Any], indices: list[int]) -> dict[str, list[float]]:
+    if not indices:
+        return {}
+
+    max_index = max(indices)
+    sliced: dict[str, list[float]] = {}
+    for stat_name, value in stats.items():
+        tensor = torch.as_tensor(value, dtype=torch.float32).flatten()
+        if tensor.numel() <= max_index:
+            continue
+        sliced[stat_name] = [float(tensor[index].item()) for index in indices]
+
+    if "min" in sliced and "max" in sliced:
+        if "mean" not in sliced:
+            sliced["mean"] = [
+                (low + high) * 0.5 for low, high in zip(sliced["min"], sliced["max"], strict=True)
+            ]
+        if "std" not in sliced:
+            sliced["std"] = [
+                abs(high - low) * 0.5 for low, high in zip(sliced["min"], sliced["max"], strict=True)
+            ]
+    return sliced
+
+
+def _feature_group_key(name: str) -> str:
+    base = name.removesuffix(".pos").split(".")[-1]
+    return base.replace(" ", "_") or "action"
+
+
+def _infer_n1_7_action_groups(
+    action_names: list[str],
+    *,
+    action_dim: int,
+    exclude_joints: list[str],
+) -> list[_GrootN17ActionGroup]:
+    if not action_names or action_dim <= 0:
+        return []
+
+    names = list(action_names[:action_dim])
+    exclude_tokens = [str(token).lower() for token in exclude_joints if token]
+    groups: list[_GrootN17ActionGroup] = []
+    current_indices: list[int] = []
+
+    def flush_relative_group() -> None:
+        if not current_indices:
+            return
+        key = (
+            "single_arm"
+            if not any(group.key == "single_arm" for group in groups)
+            else f"single_arm_{len(groups)}"
+        )
+        groups.append(_GrootN17ActionGroup(key=key, indices=list(current_indices), relative=True))
+        current_indices.clear()
+
+    for index, name in enumerate(names):
+        lowered = str(name).lower()
+        is_excluded = any(token == lowered or token in lowered for token in exclude_tokens)
+        if is_excluded:
+            flush_relative_group()
+            groups.append(
+                _GrootN17ActionGroup(key=_feature_group_key(str(name)), indices=[index], relative=False)
+            )
+        else:
+            current_indices.append(index)
+
+    flush_relative_group()
+    return groups
+
+
+def _group_stats_by_action_groups(
+    stats: dict[str, Any], groups: list[_GrootN17ActionGroup]
+) -> dict[str, dict[str, list[float]]]:
+    return {group.key: _slice_stats_entry(stats, group.indices) for group in groups}
+
+
+def _grouped_stats_support_percentiles(
+    raw_stats: dict[str, Any],
+    modality_config: dict[str, Any],
+    *,
+    use_relative_action: bool,
+) -> bool:
+    state_keys = modality_config.get("state", {}).get("modality_keys", [])
+    for key in state_keys:
+        stats = raw_stats.get("state", {}).get(key, {})
+        if "q01" not in stats or "q99" not in stats:
+            return False
+
+    action_cfg = modality_config.get("action", {})
+    action_keys = action_cfg.get("modality_keys", [])
+    action_configs = action_cfg.get("action_configs", [])
+    for idx, key in enumerate(action_keys):
+        cfg = action_configs[idx] if idx < len(action_configs) else {}
+        is_relative = (
+            use_relative_action and isinstance(cfg, dict) and config_value(cfg.get("rep")) == "relative"
+        )
+        if is_relative:
+            continue
+        stats = raw_stats.get("action", {}).get(key, {})
+        if "q01" not in stats or "q99" not in stats:
+            return False
+    return True
+
+
+def _build_n1_7_relative_action_processor_assets(
+    config: GrootConfig,
+    dataset_stats: dict[str, dict[str, Any]] | None,
+    dataset_meta: Any | None,
+    *,
+    base_assets: _GrootN17CheckpointProcessorAssets | None = None,
+) -> _GrootN17CheckpointProcessorAssets | None:
+    if not config.use_relative_actions or not dataset_stats:
+        return None
+
+    try:
+        action_dim = int(config.output_features[ACTION].shape[0])
+    except Exception:
+        return None
+
+    action_names = _resolve_action_feature_names_from_dataset_meta(dataset_meta)
+    if not action_names:
+        return None
+
+    groups = _infer_n1_7_action_groups(
+        action_names,
+        action_dim=action_dim,
+        exclude_joints=list(config.relative_exclude_joints or []),
+    )
+    if not groups or not any(group.relative for group in groups):
+        return None
+
+    meta_stats = getattr(dataset_meta, "stats", None) or {}
+    state_stats = (meta_stats.get(OBS_STATE) if isinstance(meta_stats, dict) else None) or dataset_stats.get(
+        OBS_STATE, {}
+    )
+    absolute_action_stats = (
+        meta_stats.get(ACTION) if isinstance(meta_stats, dict) else None
+    ) or dataset_stats.get(ACTION, {})
+    relative_action_stats = dataset_stats.get(ACTION, {})
+    if not state_stats or not absolute_action_stats or not relative_action_stats:
+        return None
+
+    raw_stats: dict[str, Any] = {
+        "state": _group_stats_by_action_groups(state_stats, groups),
+        "action": _group_stats_by_action_groups(absolute_action_stats, groups),
+        "relative_action": {
+            group.key: _slice_stats_entry(relative_action_stats, group.indices)
+            for group in groups
+            if group.relative
+        },
+    }
+
+    action_configs = [
+        {
+            "rep": "RELATIVE" if group.relative else "ABSOLUTE",
+            "type": "NON_EEF",
+            "format": "DEFAULT",
+            "state_key": None,
+        }
+        for group in groups
+    ]
+    action_horizon = min(config.chunk_size, 40)
+    modality_config: dict[str, Any] = {
+        "state": {"modality_keys": [group.key for group in groups]},
+        "action": {
+            "modality_keys": [group.key for group in groups],
+            "action_configs": action_configs,
+            "delta_indices": list(range(action_horizon)),
+        },
+    }
+    video_modality_keys = (
+        base_assets.video_modality_keys if base_assets is not None else None
+    ) or _resolve_visual_modality_keys_from_dataset_meta(dataset_meta)
+    if video_modality_keys:
+        modality_config["video"] = {
+            "modality_keys": list(video_modality_keys),
+            "delta_indices": [0],
+        }
+
+    use_percentiles = _grouped_stats_support_percentiles(raw_stats, modality_config, use_relative_action=True)
+    flat_stats = {
+        OBS_STATE: flatten_n1_7_modality_stats(
+            embodiment_stats=raw_stats,
+            embodiment_config=modality_config,
+            modality="state",
+            use_percentiles=use_percentiles,
+            use_relative_action=True,
+        ),
+        ACTION: flatten_n1_7_modality_stats(
+            embodiment_stats=raw_stats,
+            embodiment_config=modality_config,
+            modality="action",
+            use_percentiles=use_percentiles,
+            use_relative_action=True,
+        ),
+    }
+
+    return _GrootN17CheckpointProcessorAssets(
+        stats=flat_stats,
+        raw_stats=raw_stats,
+        modality_config=modality_config,
+        embodiment_mapping=base_assets.embodiment_mapping
+        if base_assets is not None
+        else dict(N1_7_EMBODIMENT_MAPPING),
+        formalize_language=base_assets.formalize_language if base_assets is not None else True,
+        valid_action_horizon=action_horizon,
+        max_action_horizon=action_horizon,
+        video_horizon=base_assets.video_horizon if base_assets is not None else None,
+        use_percentiles=use_percentiles,
+        use_relative_action=True,
+        clip_outliers=base_assets.clip_outliers if base_assets is not None else True,
+        video_modality_keys=video_modality_keys,
+        image_crop_size=base_assets.image_crop_size if base_assets is not None else None,
+        image_target_size=base_assets.image_target_size if base_assets is not None else None,
+        shortest_image_edge=base_assets.shortest_image_edge if base_assets is not None else None,
+        crop_fraction=base_assets.crop_fraction if base_assets is not None else None,
+        use_albumentations=base_assets.use_albumentations if base_assets is not None else False,
+    )
 
 
 def make_groot_pre_post_processors(
@@ -591,6 +834,20 @@ def make_groot_pre_post_processors(
     """
 
     checkpoint_assets = _load_n1_7_checkpoint_processor_assets(config)
+    checkpoint_stats = checkpoint_assets.stats if checkpoint_assets is not None else None
+    checkpoint_has_stats = has_modality_stats(checkpoint_stats)
+    if config.use_relative_actions and not checkpoint_has_stats:
+        relative_assets = _build_n1_7_relative_action_processor_assets(
+            config,
+            dataset_stats,
+            dataset_meta,
+            base_assets=checkpoint_assets,
+        )
+        if relative_assets is not None:
+            checkpoint_assets = relative_assets
+            checkpoint_stats = checkpoint_assets.stats
+            checkpoint_has_stats = has_modality_stats(checkpoint_stats)
+
     action_horizon = (
         checkpoint_assets.max_action_horizon
         if checkpoint_assets is not None and checkpoint_assets.max_action_horizon is not None
@@ -601,8 +858,6 @@ def make_groot_pre_post_processors(
         if checkpoint_assets is not None and checkpoint_assets.valid_action_horizon is not None
         else action_horizon
     )
-    checkpoint_stats = checkpoint_assets.stats if checkpoint_assets is not None else None
-    checkpoint_has_stats = has_modality_stats(checkpoint_stats)
     padded_stats = checkpoint_stats if checkpoint_has_stats else (dataset_stats or {})
     embodiment_mapping = (
         checkpoint_assets.embodiment_mapping
@@ -668,8 +923,11 @@ def make_groot_pre_post_processors(
         ),
         DeviceProcessorStep(device=config.device),
     ]
+    uses_native_relative_actions = bool(
+        checkpoint_assets is not None and checkpoint_assets.use_relative_action
+    )
     relative_step: RelativeActionsProcessorStep | None = None
-    if config.use_relative_actions:
+    if config.use_relative_actions and not uses_native_relative_actions:
         relative_step = RelativeActionsProcessorStep(
             enabled=True,
             exclude_joints=list(config.relative_exclude_joints or []),
@@ -987,9 +1245,92 @@ class GrootN17PackInputsStep(ProcessorStep):
                 )
         return ordered
 
+    def _state_groups_from_tensor(self, state: torch.Tensor) -> dict[str, torch.Tensor]:
+        if self.modality_config is None or self.raw_stats is None:
+            return {}
+        state_config = self.modality_config.get("state", {})
+        if not isinstance(state_config, dict):
+            return {}
+        state_keys = state_config.get("modality_keys", [])
+        if not isinstance(state_keys, list):
+            return {}
+
+        grouped: dict[str, torch.Tensor] = {}
+        start_idx = 0
+        for key in state_keys:
+            if not isinstance(key, str):
+                continue
+            key_stats = self.raw_stats.get("state", {}).get(key, {})
+            dim = stat_dim_from_entry(key_stats) if isinstance(key_stats, dict) else 0
+            if dim <= 0:
+                continue
+            grouped[key] = state[:, start_idx : start_idx + dim]
+            start_idx += dim
+        return grouped
+
+    def _convert_relative_action_groups_for_training(
+        self, action: torch.Tensor, state: torch.Tensor
+    ) -> torch.Tensor:
+        if self.modality_config is None or self.raw_stats is None:
+            return action
+
+        action_config = self.modality_config.get("action", {})
+        if not isinstance(action_config, dict):
+            return action
+        action_keys = action_config.get("modality_keys", [])
+        action_configs = action_config.get("action_configs", [])
+        if not isinstance(action_keys, list) or not isinstance(action_configs, list):
+            return action
+
+        state_groups = self._state_groups_from_tensor(state)
+        if not state_groups:
+            return action
+
+        converted = action
+        start_idx = 0
+        cloned = False
+        for idx, key in enumerate(action_keys):
+            if not isinstance(key, str):
+                continue
+            key_stats = self.raw_stats.get("action", {}).get(key, {})
+            dim = stat_dim_from_entry(key_stats) if isinstance(key_stats, dict) else 0
+            if dim <= 0:
+                continue
+            end_idx = start_idx + dim
+            if end_idx > action.shape[-1]:
+                break
+
+            cfg = (
+                action_configs[idx]
+                if idx < len(action_configs) and isinstance(action_configs[idx], dict)
+                else {}
+            )
+            if config_value(cfg.get("rep")) == "relative":
+                action_type = config_value(cfg.get("type"))
+                if action_type != "non_eef":
+                    raise ValueError(f"Unsupported relative N1.7 action config for '{key}': {cfg}")
+                state_key = cfg.get("state_key") or key
+                reference = state_groups.get(state_key)
+                if reference is None:
+                    raise KeyError(f"Missing raw state group '{state_key}' for relative N1.7 action '{key}'")
+                if reference.shape[-1] != dim:
+                    raise ValueError(
+                        f"Relative N1.7 action group '{key}' has dim {dim}, but state group "
+                        f"'{state_key}' has dim {reference.shape[-1]}."
+                    )
+                if not cloned:
+                    converted = action.clone()
+                    cloned = True
+                converted[..., start_idx:end_idx] -= reference[:, None, :]
+
+            start_idx = end_idx
+
+        return converted
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         obs = transition.get(TransitionKey.OBSERVATION, {}) or {}
         comp = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}) or {}
+        raw_state_for_action: torch.Tensor | None = None
 
         def _align_vec(vec: Any, target_dim: int, *, default: float) -> torch.Tensor:
             t = torch.as_tensor(vec)
@@ -1074,6 +1415,7 @@ class GrootN17PackInputsStep(ProcessorStep):
             if dim > self.max_state_dim:
                 raise ValueError(f"State dimension {dim} exceeds max_state_dim {self.max_state_dim}.")
             _cache_raw_state(state)
+            raw_state_for_action = state
             if self.normalize_min_max:
                 state = _min_max_norm(state, OBS_STATE)
             state = state.unsqueeze(1)
@@ -1096,6 +1438,8 @@ class GrootN17PackInputsStep(ProcessorStep):
                 raise ValueError(f"Action horizon {horizon} exceeds action_horizon {self.action_horizon}.")
             if dim > self.max_action_dim:
                 raise ValueError(f"Action dimension {dim} exceeds max_action_dim {self.max_action_dim}.")
+            if raw_state_for_action is not None:
+                action = self._convert_relative_action_groups_for_training(action, raw_state_for_action)
             if self.normalize_min_max:
                 flat = _min_max_norm(action.reshape(bsz * horizon, dim), ACTION)
                 action = flat.view(bsz, horizon, dim)
