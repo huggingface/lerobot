@@ -319,6 +319,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             },
             "rename_observations_processor": {"rename_map": cfg.rename_map},
         }
+        # Flow policy-level action_tokenizer_name to the preprocessor step,
+        # overriding whatever the base model's policy_preprocessor.json hardcodes.
+        if getattr(active_cfg, "action_tokenizer_name", None) is not None:
+            preprocessor_overrides["action_tokenizer_processor"] = {
+                "action_tokenizer_name": active_cfg.action_tokenizer_name,
+            }
         postprocessor_overrides = {
             "unnormalizer_processor": {
                 "stats": dataset.meta.stats,
