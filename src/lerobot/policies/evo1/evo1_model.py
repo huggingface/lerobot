@@ -21,8 +21,8 @@ import torch
 import torch.nn as nn
 from PIL import Image
 
-from lerobot.policies.evo1.flow_matching import FlowmatchingActionHead
-from lerobot.policies.evo1.internvl3_embedder import InternVL3Embedder
+from .flow_matching import FlowmatchingActionHead
+from .internvl3_embedder import InternVL3Embedder
 
 
 def _cfgget(config: Any, key: str, default=None):
@@ -162,37 +162,6 @@ class EVO1(nn.Module):
             action_mask=action_mask,
             embodiment_id=embodiment_ids,
         )
-
-    @torch.no_grad()
-    def run_inference(
-        self,
-        images: list[Image.Image | torch.Tensor],
-        image_mask: torch.Tensor,
-        prompt: str,
-        state_input: list | torch.Tensor,
-        return_cls_only: bool | None = None,
-        action_mask: torch.Tensor | None = None,
-        embodiment_ids: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        if image_mask.dim() == 1:
-            image_mask = image_mask.unsqueeze(0)
-
-        fused_tokens = self.get_vl_embeddings(
-            images=[images],
-            image_mask=image_mask,
-            prompt=[prompt],
-            return_cls_only=return_cls_only,
-        )
-        state_tensor = self.prepare_state(state_input)
-        action = self.predict_action(
-            fused_tokens,
-            state_tensor,
-            action_mask=action_mask,
-            embodiment_ids=embodiment_ids,
-        )
-        if isinstance(action, torch.Tensor) and action.dtype == torch.bfloat16:
-            action = action.to(torch.float32)
-        return action
 
     def forward(
         self,

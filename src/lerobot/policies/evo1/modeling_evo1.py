@@ -45,6 +45,7 @@ class EVO1Policy(PreTrainedPolicy):
         self.config = config
         self.model = EVO1(self._build_model_config(config))
         self.model.set_finetune_flags()
+        self._keep_frozen_embedder_eval()
         self.reset()
 
     @classmethod
@@ -64,7 +65,7 @@ class EVO1Policy(PreTrainedPolicy):
         **kwargs,
     ) -> T:
         if strict is None:
-            strict = not (config is not None and getattr(config, "training_stage", None) == "stage2")
+            strict = True
         return super().from_pretrained(
             pretrained_name_or_path=pretrained_name_or_path,
             config=config,
@@ -85,6 +86,7 @@ class EVO1Policy(PreTrainedPolicy):
             "device": config.device,
             "return_cls_only": config.return_cls_only,
             "vlm_name": config.vlm_model_name,
+            "image_size": int(config.image_resolution[0]),
             "vlm_num_layers": config.vlm_num_layers,
             "vlm_dtype": config.vlm_dtype,
             "use_flash_attn": config.use_flash_attn,
@@ -100,7 +102,8 @@ class EVO1Policy(PreTrainedPolicy):
             "dropout": config.dropout,
             "num_inference_timesteps": config.num_inference_timesteps,
             "num_categories": config.num_categories,
-            "enable_gradient_checkpointing": config.enable_gradient_checkpointing,
+            "enable_gradient_checkpointing": config.enable_gradient_checkpointing
+            and bool(config.finetune_vlm or config.finetune_language_model or config.finetune_vision_model),
             "gradient_checkpointing_use_reentrant": config.gradient_checkpointing_use_reentrant,
             "finetune_vlm": config.finetune_vlm,
             "finetune_language_model": config.finetune_language_model,
@@ -303,6 +306,18 @@ class EVO1Policy(PreTrainedPolicy):
             or self.config.finetune_vision_model
         )
 
+    def _keep_frozen_embedder_eval(self) -> None:
+        if self._tracks_vlm_gradients:
+            return
+        embedder = getattr(self.model, "embedder", None)
+        if embedder is not None:
+            embedder.eval()
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        self._keep_frozen_embedder_eval()
+        return self
+
     def _collect_image_batches(self, batch: dict[str, Tensor]) -> tuple[list[list[Tensor]], Tensor]:
         camera_keys = self._camera_keys or sorted(key for key in batch if key.startswith(f"{OBS_IMAGES}."))
         if not camera_keys:
@@ -348,23 +363,13 @@ class EVO1Policy(PreTrainedPolicy):
     ) -> Tensor:
         track_vlm_gradients = self._tracks_vlm_gradients
         grad_context = nullcontext() if track_vlm_gradients else torch.no_grad()
-        embedder = getattr(self.model, "embedder", None)
-        embedder_was_training = embedder.training if embedder is not None else None
-
-        if not track_vlm_gradients and embedder is not None:
-            embedder.eval()
-
-        try:
-            with grad_context:
-                fused_tokens = self.model.get_vl_embeddings(
-                    images=image_batches,
-                    image_mask=image_masks,
-                    prompt=prompts,
-                    return_cls_only=self.config.return_cls_only,
-                )
-        finally:
-            if not track_vlm_gradients and embedder is not None and embedder_was_training is not None:
-                embedder.train(embedder_was_training)
+        with grad_context:
+            fused_tokens = self.model.get_vl_embeddings(
+                images=image_batches,
+                image_mask=image_masks,
+                prompt=prompts,
+                return_cls_only=self.config.return_cls_only,
+            )
 
         if not track_vlm_gradients:
             fused_tokens = fused_tokens.detach()
@@ -439,7 +444,7 @@ class EVO1Policy(PreTrainedPolicy):
                 embodiment_ids=embodiment_ids,
             )
         actions = actions.view(states.shape[0], self.config.chunk_size, self.config.max_action_dim)
-        return actions[:, :, : self._env_action_dim]
+        return actions
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:

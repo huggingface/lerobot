@@ -311,6 +311,14 @@ def make_pre_post_processors(
             to_output=transition_to_policy_action,
         )
         _reconnect_relative_absolute_steps(preprocessor, postprocessor)
+        if isinstance(policy_cfg, Evo1Config):
+            from .evo1.processor_evo1 import ensure_evo1_processor_steps
+
+            preprocessor, postprocessor = ensure_evo1_processor_steps(
+                policy_cfg,
+                preprocessor,
+                postprocessor,
+            )
         return preprocessor, postprocessor
 
     # Create a new processor based on policy type

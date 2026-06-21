@@ -26,7 +26,6 @@ from gymnasium.envs.registration import registry as gym_registry
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.processor import (
     IsaaclabArenaProcessorStep,
-    LiberoActionProcessorStep,
     LiberoProcessorStep,
     PolicyProcessorPipeline,
 )
@@ -128,7 +127,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
             vec = env_cls([_make_one for _ in range(n_envs)], **extra_kwargs)
         return {self.type: {0: vec}}
 
-    def get_env_processors(self, policy_cfg: Any | None = None):
+    def get_env_processors(self):
         """Return (preprocessor, postprocessor) for this env. Default: identity."""
         return PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[])
 
@@ -357,7 +356,6 @@ class LiberoEnv(EnvConfig):
         }
     )
     control_mode: str = "relative"  # or "absolute"
-    binarize_gripper: bool | None = None
 
     def __post_init__(self):
         if self.obs_type == "pixels":
@@ -442,22 +440,10 @@ class LiberoEnv(EnvConfig):
             is_libero_plus=self.is_libero_plus,
         )
 
-    def get_env_processors(self, policy_cfg: Any | None = None):
-        is_evo1 = getattr(policy_cfg, "type", None) == "evo1"
-        max_state_dim = getattr(policy_cfg, "max_state_dim", None) if is_evo1 else None
-        action_feature = self.features.get(ACTION)
-        action_dim = int(action_feature.shape[0]) if action_feature is not None else 7
-        binarize_gripper = is_evo1 if self.binarize_gripper is None else self.binarize_gripper
+    def get_env_processors(self):
         return (
-            PolicyProcessorPipeline(steps=[LiberoProcessorStep(max_state_dim=max_state_dim)]),
-            PolicyProcessorPipeline(
-                steps=[
-                    LiberoActionProcessorStep(
-                        action_dim=action_dim,
-                        binarize_gripper=binarize_gripper,
-                    )
-                ]
-            ),
+            PolicyProcessorPipeline(steps=[LiberoProcessorStep()]),
+            PolicyProcessorPipeline(steps=[]),
         )
 
 
@@ -723,7 +709,7 @@ class IsaaclabArenaEnv(HubEnvConfig):
     def gym_kwargs(self) -> dict:
         return {}
 
-    def get_env_processors(self, policy_cfg: Any | None = None):
+    def get_env_processors(self):
         state_keys = tuple(k.strip() for k in (self.state_keys or "").split(",") if k.strip())
         camera_keys = tuple(k.strip() for k in (self.camera_keys or "").split(",") if k.strip())
         if not state_keys and not camera_keys:

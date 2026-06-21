@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint
-import torchvision.transforms.functional as TF
+import torchvision.transforms.functional as tvf
 from PIL import Image
 from torchvision.transforms.functional import to_pil_image
 
@@ -46,6 +46,26 @@ logger = logging.getLogger(__name__)
 
 
 def _patch_vision_encoder_checkpointing(encoder: nn.Module, use_reentrant: bool) -> None:
+    for attr_name in ("_gradient_checkpointing_func", "gradient_checkpointing_func"):
+        original_func = getattr(encoder, attr_name, None)
+        if not callable(original_func):
+            continue
+        patch_attr = f"_evo1_{attr_name}_patch_applied"
+        if getattr(encoder, patch_attr, False):
+            encoder.gradient_checkpointing_use_reentrant = use_reentrant
+            return
+
+        def checkpoint_with_kwargs(
+            function, *checkpoint_args, _original_func=original_func, **checkpoint_kwargs
+        ):
+            checkpoint_kwargs.setdefault("use_reentrant", encoder.gradient_checkpointing_use_reentrant)
+            return _original_func(function, *checkpoint_args, **checkpoint_kwargs)
+
+        encoder.gradient_checkpointing_use_reentrant = use_reentrant
+        setattr(encoder, attr_name, checkpoint_with_kwargs)
+        setattr(encoder, patch_attr, True)
+        return
+
     if getattr(encoder, "_evo1_checkpoint_patch_applied", False):
         encoder.gradient_checkpointing_use_reentrant = use_reentrant
         return
@@ -59,6 +79,9 @@ def _patch_vision_encoder_checkpointing(encoder: nn.Module, use_reentrant: bool)
             checkpoint_kwargs.setdefault("use_reentrant", self.gradient_checkpointing_use_reentrant)
             return original_checkpoint(function, *checkpoint_args, **checkpoint_kwargs)
 
+        # Some InternVL3 remote-code versions call torch.utils.checkpoint.checkpoint
+        # directly and do not expose a per-encoder checkpoint function to patch.
+        # Keep this compatibility fallback scoped to encoder.forward and restore it.
         torch.utils.checkpoint.checkpoint = checkpoint
         try:
             return original_forward(*args, **kwargs)
@@ -280,11 +303,13 @@ class InternVL3Embedder(nn.Module):
 
     def _preprocess_single_image(self, image: Image.Image | torch.Tensor) -> torch.Tensor:
         if isinstance(image, torch.Tensor):
+            # Match upstream EVO1/InternVL preprocessing, which converts tensors
+            # through PIL before tiling and ImageNet normalization.
             pil_image = to_pil_image(image.detach().cpu())
         else:
             pil_image = image.convert("RGB")
         tiles = dynamic_preprocess(pil_image, image_size=self.image_size)
-        tile_tensors = torch.stack([TF.to_tensor(tile) for tile in tiles]).to(
+        tile_tensors = torch.stack([tvf.to_tensor(tile) for tile in tiles]).to(
             device=self.device, dtype=torch.bfloat16
         )
         mean = torch.tensor(IMAGENET_MEAN, device=self.device, dtype=torch.bfloat16).view(1, 3, 1, 1)

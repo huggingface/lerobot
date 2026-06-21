@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import pytest
 import torch
 from torch import nn
 
@@ -23,7 +24,15 @@ import lerobot.policies.evo1.modeling_evo1 as modeling_evo1
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.evo1.configuration_evo1 import Evo1Config
 from lerobot.policies.evo1.flow_matching import FlowmatchingActionHead
+from lerobot.policies.evo1.processor_evo1 import (
+    Evo1ActionProcessorStep,
+    Evo1PadActionProcessorStep,
+    Evo1PadStateProcessorStep,
+    ensure_evo1_processor_steps,
+    make_evo1_pre_post_processors,
+)
 from lerobot.policies.factory import get_policy_class, make_policy_config
+from lerobot.processor import NormalizerProcessorStep, PolicyProcessorPipeline, UnnormalizerProcessorStep
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 STATE_DIM = 4
@@ -106,6 +115,19 @@ def make_batch(include_action=True):
     if include_action:
         batch[ACTION] = torch.randn(2, CHUNK_SIZE, ACTION_DIM)
     return batch
+
+
+def make_stats(state_dim=STATE_DIM, action_dim=ACTION_DIM):
+    return {
+        OBS_STATE: {
+            "min": torch.full((state_dim,), -2.0),
+            "max": torch.full((state_dim,), 2.0),
+        },
+        ACTION: {
+            "min": torch.full((action_dim,), -1.0),
+            "max": torch.full((action_dim,), 1.0),
+        },
+    }
 
 
 def test_evo1_factory_registration():
@@ -191,22 +213,151 @@ def test_evo1_stage_defaults_and_consistency():
         raise AssertionError("Expected inconsistent finetune config to raise ValueError")
 
 
+def test_evo1_rejects_non_square_image_resolution():
+    with pytest.raises(ValueError, match="square image_resolution"):
+        make_config(image_resolution=(448, 320))
+
+
+def test_evo1_build_model_config_uses_image_resolution_and_trainable_checkpointing():
+    stage1 = make_config(training_stage="stage1", image_resolution=(224, 224))
+    stage1_model_config = modeling_evo1.EVO1Policy._build_model_config(stage1)
+
+    assert stage1_model_config["image_size"] == 224
+    assert stage1_model_config["enable_gradient_checkpointing"] is False
+
+    stage2 = make_config(training_stage="stage2", image_resolution=(224, 224))
+    stage2_model_config = modeling_evo1.EVO1Policy._build_model_config(stage2)
+
+    assert stage2_model_config["enable_gradient_checkpointing"] is True
+
+
+def test_evo1_policy_processors_pad_state_crop_action_and_binarize_gripper():
+    libero_action_dim = 7
+    config = make_config(
+        max_state_dim=MAX_STATE_DIM,
+        max_action_dim=8,
+        postprocess_action_dim=libero_action_dim,
+        binarize_gripper=True,
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(libero_action_dim,))},
+    )
+    stats = make_stats(action_dim=libero_action_dim)
+
+    preprocessor, postprocessor = make_evo1_pre_post_processors(config, dataset_stats=stats)
+
+    assert isinstance(preprocessor.steps[2], Evo1PadStateProcessorStep)
+    assert isinstance(preprocessor.steps[3], Evo1PadActionProcessorStep)
+    assert isinstance(preprocessor.steps[4], NormalizerProcessorStep)
+    assert isinstance(postprocessor.steps[0], UnnormalizerProcessorStep)
+    assert isinstance(postprocessor.steps[1], Evo1ActionProcessorStep)
+
+    normalizer = preprocessor.steps[4]
+    assert normalizer.features[OBS_STATE].shape == (MAX_STATE_DIM,)
+    assert normalizer.features[ACTION].shape == (8,)
+    assert normalizer._tensor_stats[OBS_STATE]["min"].shape == (MAX_STATE_DIM,)
+    assert normalizer._tensor_stats[ACTION]["min"].shape == (8,)
+
+    processed_batch = preprocessor(
+        {
+            "task": "pick the block",
+            OBS_STATE: torch.zeros(STATE_DIM),
+            ACTION: torch.zeros(libero_action_dim),
+            f"{OBS_IMAGES}.front": torch.rand(3, 16, 16),
+        }
+    )
+    processed_state = processed_batch[OBS_STATE]
+    assert processed_state.shape == (1, MAX_STATE_DIM)
+    assert torch.allclose(processed_state, torch.zeros_like(processed_state))
+    assert processed_batch[ACTION].shape == (1, 8)
+    assert torch.allclose(processed_batch[ACTION], torch.zeros_like(processed_batch[ACTION]))
+    assert processed_batch["action_mask"].shape == (1, 8)
+    assert processed_batch["action_mask"][:, :libero_action_dim].all()
+    assert not processed_batch["action_mask"][:, libero_action_dim:].any()
+
+    action = torch.tensor(
+        [
+            [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.5, 0.7],
+            [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+        ],
+        dtype=torch.float32,
+    )
+    processed = postprocessor(action)
+
+    assert processed.shape == (2, 7)
+    assert torch.allclose(processed[:, :6], action[:, :6])
+    assert torch.equal(processed[:, 6], torch.tensor([1.0, -1.0]))
+
+
+def test_evo1_legacy_processors_are_completed_before_normalization():
+    config = make_config(
+        max_state_dim=MAX_STATE_DIM,
+        max_action_dim=8,
+        postprocess_action_dim=7,
+        binarize_gripper=True,
+    )
+    stats = make_stats(action_dim=7)
+    legacy_pre = PolicyProcessorPipeline(
+        steps=[
+            NormalizerProcessorStep(
+                features={**config.input_features, **config.output_features},
+                norm_map=config.normalization_mapping,
+                stats=stats,
+            )
+        ]
+    )
+    legacy_post = PolicyProcessorPipeline(
+        steps=[
+            UnnormalizerProcessorStep(
+                features=config.output_features,
+                norm_map=config.normalization_mapping,
+                stats=stats,
+            )
+        ]
+    )
+
+    preprocessor, postprocessor = ensure_evo1_processor_steps(config, legacy_pre, legacy_post)
+
+    assert isinstance(preprocessor.steps[0], Evo1PadStateProcessorStep)
+    assert isinstance(preprocessor.steps[1], Evo1PadActionProcessorStep)
+    assert isinstance(preprocessor.steps[2], NormalizerProcessorStep)
+    assert isinstance(postprocessor.steps[0], UnnormalizerProcessorStep)
+    assert isinstance(postprocessor.steps[1], Evo1ActionProcessorStep)
+    assert postprocessor.steps[1].action_dim == 7
+    assert postprocessor.steps[1].binarize_gripper is True
+    assert preprocessor.steps[2].features[OBS_STATE].shape == (MAX_STATE_DIM,)
+    assert preprocessor.steps[2]._tensor_stats[OBS_STATE]["min"].shape == (MAX_STATE_DIM,)
+    assert preprocessor.steps[2]._tensor_stats[ACTION]["min"].shape == (8,)
+    assert postprocessor.steps[0].features[ACTION].shape == (8,)
+    assert postprocessor.steps[0]._tensor_stats[ACTION]["min"].shape == (8,)
+
+    preprocessor, postprocessor = ensure_evo1_processor_steps(config, preprocessor, postprocessor)
+    assert sum(isinstance(step, Evo1PadStateProcessorStep) for step in preprocessor.steps) == 1
+    assert sum(isinstance(step, Evo1PadActionProcessorStep) for step in preprocessor.steps) == 1
+    assert sum(isinstance(step, Evo1ActionProcessorStep) for step in postprocessor.steps) == 1
+
+
 def test_evo1_policy_forward_and_inference_use_batched_embedding(monkeypatch):
     monkeypatch.setattr(modeling_evo1, "EVO1", DummyEVO1)
     policy = modeling_evo1.EVO1Policy(make_config())
+    preprocessor, _postprocessor = make_evo1_pre_post_processors(policy.config, dataset_stats=make_stats())
+    training_batch = preprocessor(make_batch(include_action=True))
 
-    loss, metrics = policy.forward(make_batch(include_action=True))
+    assert training_batch[ACTION].shape == (2, CHUNK_SIZE, MAX_ACTION_DIM)
+    assert training_batch["action_mask"].shape == (2, CHUNK_SIZE, MAX_ACTION_DIM)
+    assert training_batch["action_mask"][:, :, :ACTION_DIM].all()
+    assert not training_batch["action_mask"][:, :, ACTION_DIM:].any()
+
+    loss, metrics = policy.forward(training_batch)
     assert loss.ndim == 0
     assert torch.isfinite(loss)
     assert metrics["active_action_dims"] == ACTION_DIM * CHUNK_SIZE
     assert policy.model.get_vl_embeddings_calls == 1
 
     action_chunk = policy.predict_action_chunk(make_batch(include_action=False))
-    assert action_chunk.shape == (2, CHUNK_SIZE, ACTION_DIM)
+    assert action_chunk.shape == (2, CHUNK_SIZE, MAX_ACTION_DIM)
 
     policy.reset()
     selected = policy.select_action(make_batch(include_action=False))
-    assert selected.shape == (2, ACTION_DIM)
+    assert selected.shape == (2, MAX_ACTION_DIM)
 
 
 def test_stage1_frozen_vlm_embeddings_do_not_track_gradients(monkeypatch):
@@ -220,7 +371,7 @@ def test_stage1_frozen_vlm_embeddings_do_not_track_gradients(monkeypatch):
     assert policy.model.grad_enabled_calls == [False]
     assert policy.model.embedder_training_calls == [False]
     assert not fused_tokens.requires_grad
-    assert policy.model.embedder.training is True
+    assert policy.model.embedder.training is False
 
 
 def test_stage2_vlm_embeddings_track_gradients(monkeypatch):

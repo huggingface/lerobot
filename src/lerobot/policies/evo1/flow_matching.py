@@ -129,7 +129,10 @@ class MultiEmbodimentActionEncoder(nn.Module):
 
     def forward(self, action_seq: torch.Tensor, category_id: torch.LongTensor):
         batch_size, horizon, action_dim = action_seq.shape
-        assert self.horizon == horizon, "Action sequence length must match horizon"
+        if self.horizon != horizon:
+            raise ValueError(
+                f"Action sequence length must match horizon: got {horizon}, expected {self.horizon}."
+            )
 
         x = action_seq.reshape(batch_size * horizon, action_dim)
         if category_id.dim() == 0:

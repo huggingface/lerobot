@@ -139,6 +139,8 @@ every finetuning flag.
 | `policy.n_action_steps`                       | `50`                     | Number of actions consumed from a sampled chunk                   |
 | `policy.max_state_dim`                        | `24`                     | State padding dimension                                           |
 | `policy.max_action_dim`                       | `24`                     | Action padding dimension                                          |
+| `policy.postprocess_action_dim`               | `null`                   | Optional action dimension returned after EVO1 postprocessing      |
+| `policy.binarize_gripper`                     | `false`                  | Binarizes the postprocessed gripper channel for LIBERO-style eval |
 | `policy.task_field`                           | `task`                   | Batch field used as the language prompt                           |
 
 ## Results
@@ -161,16 +163,20 @@ pixel embeddings, VLM fused tokens, normalized actions, and denormalized actions
 The published checkpoint expects the raw LIBERO camera feature names
 `observation.images.agentview_image` and `observation.images.robot0_eye_in_hand_image`. The official EVO1 LIBERO
 rollout protocol also replans every 14 actions and binarizes the gripper command before stepping the simulator.
-The LIBERO environment postprocessor applies the gripper binarization automatically for EVO1 policies. To run the
-converted checkpoint with LeRobot LIBERO evaluation for the same one-episode-per-task setting, keep the raw camera
-names instead of the default `image`/`image2` mapping and override `policy.n_action_steps` to 14:
+The EVO1 policy postprocessor can crop the padded 24D action back to the 7D LIBERO action space and apply that
+gripper binarization. To run the converted checkpoint with LeRobot LIBERO evaluation for the same
+one-episode-per-task setting, keep the raw camera names instead of the default `image`/`image2` mapping, enable
+FlashAttention, and set the LIBERO action postprocessing flags:
 
 ```bash
 lerobot-eval \
   --policy.path=javadcc/evo1-libero-lerobot \
   --policy.vlm_model_name=OpenGVLab/InternVL3-1B \
   --policy.device=cuda \
+  --policy.use_flash_attn=true \
   --policy.n_action_steps=14 \
+  --policy.postprocess_action_dim=7 \
+  --policy.binarize_gripper=true \
   --env.type=libero \
   --env.task=libero_object \
   --env.camera_name_mapping="{agentview_image: agentview_image, robot0_eye_in_hand_image: robot0_eye_in_hand_image}" \

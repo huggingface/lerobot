@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 
@@ -25,6 +26,8 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+
+logger = logging.getLogger(__name__)
 
 
 @LRSchedulerConfig.register_subclass("evo1_exact")
@@ -59,6 +62,12 @@ class Evo1Config(PreTrainedConfig):
     max_views: int = 3
     image_resolution: tuple[int, int] = (448, 448)
     empty_cameras: int = 0
+    postprocess_action_dim: int | None = None
+    binarize_gripper: bool = False
+    gripper_index: int = 6
+    gripper_threshold: float = 0.5
+    gripper_below_threshold_value: float = 1.0
+    gripper_above_threshold_value: float = -1.0
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -114,16 +123,32 @@ class Evo1Config(PreTrainedConfig):
             )
 
         if self.apply_training_stage_defaults:
-            if self.training_stage == "stage1":
-                self.finetune_vlm = False
-                self.finetune_language_model = False
-                self.finetune_vision_model = False
-                self.finetune_action_head = True
-            elif self.training_stage == "stage2":
-                self.finetune_vlm = True
-                self.finetune_language_model = True
-                self.finetune_vision_model = True
-                self.finetune_action_head = True
+            stage_defaults = {
+                "stage1": {
+                    "finetune_vlm": False,
+                    "finetune_language_model": False,
+                    "finetune_vision_model": False,
+                    "finetune_action_head": True,
+                },
+                "stage2": {
+                    "finetune_vlm": True,
+                    "finetune_language_model": True,
+                    "finetune_vision_model": True,
+                    "finetune_action_head": True,
+                },
+            }[self.training_stage]
+            for flag_name, default_value in stage_defaults.items():
+                current_value = getattr(self, flag_name)
+                if current_value is not None and current_value != default_value:
+                    logger.warning(
+                        "EVO1 %s=%s is overridden by training_stage=%s default %s. "
+                        "Set apply_training_stage_defaults=false to keep explicit finetuning flags.",
+                        flag_name,
+                        current_value,
+                        self.training_stage,
+                        default_value,
+                    )
+                setattr(self, flag_name, default_value)
         elif self.training_stage == "stage1":
             if self.finetune_vlm is None:
                 self.finetune_vlm = False
@@ -170,6 +195,11 @@ class Evo1Config(PreTrainedConfig):
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"n_action_steps ({self.n_action_steps}) must be <= chunk_size ({self.chunk_size})"
+            )
+        if len(self.image_resolution) != 2 or self.image_resolution[0] != self.image_resolution[1]:
+            raise ValueError(
+                "EVO1 currently expects a square image_resolution because InternVL3 preprocessing "
+                f"uses a scalar image_size, got {self.image_resolution}."
             )
 
     def validate_features(self) -> None:

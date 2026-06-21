@@ -15,7 +15,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import inspect
 from typing import Any
 
 import gymnasium as gym
@@ -53,14 +52,7 @@ def make_env_pre_post_processors(
 
         return make_xvla_libero_pre_post_processors()
 
-    get_processors = env_cfg.get_env_processors
-    signature = inspect.signature(get_processors)
-    supports_policy_cfg = "policy_cfg" in signature.parameters or any(
-        param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
-    )
-    if supports_policy_cfg:
-        return get_processors(policy_cfg=policy_cfg)
-    return get_processors()
+    return env_cfg.get_env_processors()
 
 
 def make_env(
