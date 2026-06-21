@@ -18,11 +18,19 @@ from __future__ import annotations
 # Utilities
 ########################################################################################
 import logging
+import os
+import select
+import subprocess
+import sys
+import termios
+import threading
 import time
 import traceback
+import webbrowser
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -38,6 +46,291 @@ else:
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
+
+
+class _TerminalKeyboardListener:
+    """Fallback listener for terminals where pynput does not receive macOS key events."""
+
+    def __init__(self, events: dict[str, bool]):
+        self.events = events
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._fd: int | None = None
+        self._old_settings = None
+
+    def start(self) -> bool:
+        if not sys.stdin.isatty():
+            return False
+
+        try:
+            import tty
+
+            self._fd = sys.stdin.fileno()
+            self._old_settings = termios.tcgetattr(self._fd)
+            tty.setcbreak(self._fd)
+        except Exception as exc:
+            logging.debug("Could not start terminal keyboard fallback: %s", exc)
+            return False
+
+        self._thread = threading.Thread(target=self._read_loop, daemon=True)
+        self._thread.start()
+        return True
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=0.5)
+        if self._fd is not None and self._old_settings is not None:
+            try:
+                termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old_settings)
+            except Exception as exc:
+                logging.debug("Could not restore terminal settings: %s", exc)
+
+    def _read_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                readable, _, _ = select.select([sys.stdin], [], [], 0.1)
+                if not readable:
+                    continue
+                char = sys.stdin.read(1)
+                if char != "\x1b":
+                    continue
+
+                sequence = char
+                for _ in range(2):
+                    readable, _, _ = select.select([sys.stdin], [], [], 0.02)
+                    if not readable:
+                        break
+                    sequence += sys.stdin.read(1)
+
+                if sequence == "\x1b[C":
+                    print("Right arrow key pressed. Exiting loop...")
+                    self.events["exit_early"] = True
+                elif sequence == "\x1b[D":
+                    print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
+                    self.events["rerecord_episode"] = True
+                    self.events["exit_early"] = True
+                elif sequence == "\x1b":
+                    print("Escape key pressed. Stopping data recording...")
+                    self.events["stop_recording"] = True
+                    self.events["exit_early"] = True
+            except Exception as exc:
+                logging.debug("Error handling terminal key press: %s", exc)
+
+
+class _CombinedKeyboardListener:
+    def __init__(self, *listeners):
+        self.listeners = [listener for listener in listeners if listener is not None]
+
+    def stop(self) -> None:
+        for listener in self.listeners:
+            try:
+                listener.stop()
+            except Exception as exc:
+                logging.debug("Could not stop listener %s: %s", listener, exc)
+
+
+class _RecordControlWindow:
+    """Small click UI for episode controls when keyboard hooks are unreliable."""
+
+    def __init__(self, events: dict[str, bool]):
+        self.events = events
+        self._command_fpath = f"/tmp/lerobot_record_controls_{os.getpid()}.txt"
+        self._process: subprocess.Popen | None = None
+        self._stop_event = threading.Event()
+        self._poll_thread: threading.Thread | None = None
+
+    def start(self) -> bool:
+        script = r'''
+import pathlib
+import sys
+import tkinter as tk
+
+command_fpath = pathlib.Path(sys.argv[1])
+
+def write_command(command):
+    command_fpath.write_text(command)
+
+root = tk.Tk()
+root.title("LeRobot Recording Controls")
+root.attributes("-topmost", True)
+root.resizable(False, False)
+root.geometry("+80+120")
+
+frame = tk.Frame(root, padx=16, pady=14)
+frame.pack()
+
+tk.Label(frame, text="LeRobot Recording Controls", font=("Helvetica", 16, "bold")).pack(pady=(0, 10))
+tk.Label(frame, text="Click buttons to control episodes.", font=("Helvetica", 12)).pack(pady=(0, 12))
+
+tk.Button(frame, text="Finish Episode", command=lambda: write_command("finish"), width=24, height=2).pack(pady=(0, 8))
+tk.Button(frame, text="Rerecord Episode", command=lambda: write_command("rerecord"), width=24, height=2).pack(pady=(0, 8))
+tk.Button(frame, text="Stop Recording", command=lambda: write_command("stop"), width=24, height=2).pack()
+
+root.lift()
+root.focus_force()
+root.mainloop()
+'''
+        try:
+            try:
+                os.remove(self._command_fpath)
+            except FileNotFoundError:
+                pass
+            self._process = subprocess.Popen([sys.executable, "-c", script, self._command_fpath])
+            self._poll_thread = threading.Thread(target=self._poll_commands, daemon=True)
+            self._poll_thread.start()
+            print("LeRobot Recording Controls popup opened.")
+            return True
+        except Exception as exc:
+            logging.warning("Could not open recording control UI: %s", exc)
+            return False
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._poll_thread is not None:
+            self._poll_thread.join(timeout=0.5)
+        if self._process is not None and self._process.poll() is None:
+            self._process.terminate()
+        try:
+            os.remove(self._command_fpath)
+        except FileNotFoundError:
+            pass
+
+    def _poll_commands(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                if not os.path.exists(self._command_fpath):
+                    time.sleep(0.1)
+                    continue
+                with open(self._command_fpath) as f:
+                    command = f.read().strip()
+                os.remove(self._command_fpath)
+                if command == "finish":
+                    print("Finish Episode clicked. Exiting loop...")
+                    self.events["exit_early"] = True
+                elif command == "rerecord":
+                    print("Rerecord Episode clicked. Exiting loop and rerecording the last episode...")
+                    self.events["rerecord_episode"] = True
+                    self.events["exit_early"] = True
+                elif command == "stop":
+                    print("Stop Recording clicked. Stopping data recording...")
+                    self.events["stop_recording"] = True
+                    self.events["exit_early"] = True
+            except Exception as exc:
+                logging.debug("Error reading recording control UI command: %s", exc)
+            time.sleep(0.1)
+
+
+class _RecordControlWebServer:
+    """Local browser controls for episode recording."""
+
+    def __init__(self, events: dict[str, bool]):
+        self.events = events
+        self._server: ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+        self.url: str | None = None
+
+    def start(self) -> bool:
+        events = self.events
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                if self.path.startswith("/finish"):
+                    print("Finish Episode clicked. Exiting loop...")
+                    events["exit_early"] = True
+                    self._send_page("Finish Episode clicked.")
+                elif self.path.startswith("/rerecord"):
+                    print("Rerecord Episode clicked. Exiting loop and rerecording the last episode...")
+                    events["rerecord_episode"] = True
+                    events["exit_early"] = True
+                    self._send_page("Rerecord Episode clicked.")
+                elif self.path.startswith("/stop"):
+                    print("Stop Recording clicked. Stopping data recording...")
+                    events["stop_recording"] = True
+                    events["exit_early"] = True
+                    self._send_page("Stop Recording clicked.")
+                else:
+                    self._send_page("Ready.")
+
+            def log_message(self, format: str, *args) -> None:
+                return
+
+            def _send_page(self, status: str) -> None:
+                html = f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>LeRobot Recording Controls</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 32px; max-width: 460px; }}
+    h1 {{ font-size: 24px; margin-bottom: 8px; }}
+    p {{ color: #444; }}
+    a {{ display: block; margin: 12px 0; padding: 16px 18px; border-radius: 8px; text-decoration: none;
+         color: white; background: #2563eb; font-size: 18px; font-weight: 700; text-align: center; }}
+    a.secondary {{ background: #d97706; }}
+    a.danger {{ background: #dc2626; }}
+    .status {{ margin-top: 18px; padding: 12px; background: #f1f5f9; border-radius: 8px; }}
+  </style>
+</head>
+<body tabindex="0">
+  <h1>LeRobot Recording Controls</h1>
+  <p>Press Space or click Finish Episode for both task completion and reset completion.</p>
+  <a href="/finish" id="finish">Finish Episode</a>
+  <a class="secondary" href="/rerecord">Rerecord Episode</a>
+  <a class="danger" href="/stop">Stop Recording</a>
+  <div class="status" id="status">{status}</div>
+  <script>
+    document.body.focus();
+    let sending = false;
+    async function finishEpisode() {{
+      if (sending) return;
+      sending = true;
+      document.getElementById("status").textContent = "Finish Episode sent.";
+      try {{
+        await fetch("/finish");
+      }} finally {{
+        setTimeout(() => {{ sending = false; }}, 500);
+      }}
+    }}
+    document.addEventListener("keydown", (event) => {{
+      if (event.code === "Space") {{
+        event.preventDefault();
+        finishEpisode();
+      }}
+    }});
+    window.addEventListener("focus", () => document.body.focus());
+  </script>
+</body>
+</html>"""
+                body = html.encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        try:
+            try:
+                self._server = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
+            except OSError:
+                self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            port = self._server.server_address[1]
+            self.url = f"http://127.0.0.1:{port}"
+            self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+            self._thread.start()
+            print(f"LeRobot browser recording controls: {self.url}", flush=True)
+            webbrowser.open(self.url)
+            return True
+        except Exception as exc:
+            logging.warning("Could not start browser recording controls: %s", exc)
+            return False
+
+    def stop(self) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+        if self._thread is not None:
+            self._thread.join(timeout=0.5)
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.robots import Robot
 from lerobot.types import PolicyAction
@@ -143,34 +436,49 @@ def init_keyboard_listener():
     events["rerecord_episode"] = False
     events["stop_recording"] = False
 
-    if is_headless():
-        logging.warning(
-            "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
-        )
-        listener = None
-        return listener, events
-
-    # Only import pynput if not in a headless environment
-    from pynput import keyboard
-
-    def on_press(key):
+    pynput_listener = None
+    if not is_headless():
         try:
-            if key == keyboard.Key.right:
-                print("Right arrow key pressed. Exiting loop...")
-                events["exit_early"] = True
-            elif key == keyboard.Key.left:
-                print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
-                events["rerecord_episode"] = True
-                events["exit_early"] = True
-            elif key == keyboard.Key.esc:
-                print("Escape key pressed. Stopping data recording...")
-                events["stop_recording"] = True
-                events["exit_early"] = True
-        except Exception as e:
-            print(f"Error handling key press: {e}")
+            from pynput import keyboard
 
-    listener = keyboard.Listener(on_press=on_press)
-    listener.start()
+            def on_press(key):
+                try:
+                    if key == keyboard.Key.right:
+                        print("Right arrow key pressed. Exiting loop...")
+                        events["exit_early"] = True
+                    elif key == keyboard.Key.left:
+                        print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
+                        events["rerecord_episode"] = True
+                        events["exit_early"] = True
+                    elif key == keyboard.Key.esc:
+                        print("Escape key pressed. Stopping data recording...")
+                        events["stop_recording"] = True
+                        events["exit_early"] = True
+                except Exception as e:
+                    print(f"Error handling key press: {e}")
+
+            pynput_listener = keyboard.Listener(on_press=on_press)
+            pynput_listener.start()
+        except Exception as exc:
+            logging.warning("pynput keyboard controls unavailable: %s", exc)
+    else:
+        logging.warning("Headless keyboard detection failed; browser recording controls will still be enabled.")
+
+    terminal_listener = _TerminalKeyboardListener(events)
+    if terminal_listener.start():
+        logging.info("Terminal keyboard fallback enabled for arrow-key recording controls.")
+    else:
+        terminal_listener = None
+
+    control_window = None
+
+    web_controls = _RecordControlWebServer(events)
+    if web_controls.start():
+        logging.info("Browser recording controls enabled at %s.", web_controls.url)
+    else:
+        web_controls = None
+
+    listener = _CombinedKeyboardListener(pynput_listener, terminal_listener, control_window, web_controls)
 
     return listener, events
 
