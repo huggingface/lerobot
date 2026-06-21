@@ -1872,10 +1872,11 @@ def test_groot_n1_7_relative_action_training_processors_save_native_grouped_stat
         _RelativeStatsDataset(),
         exclude_joints=["gripper"],
         action_names=action_names,
+        preserve_action_horizon=True,
     )
     expected_relative_action_stats = {
-        "min": torch.tensor([-2.0, -3.0, -4.0, -5.0, -6.0, 0.0]),
-        "max": torch.tensor([2.0, 3.0, 4.0, 5.0, 6.0, 100.0]),
+        "min": torch.tensor([-2.0, -3.0, -4.0, -5.0, -6.0, 1.0, 2.0, 3.0, 4.0, 5.0, 0.0]),
+        "max": torch.tensor([-1.0, -2.0, -3.0, -4.0, -5.0, 2.0, 3.0, 4.0, 5.0, 6.0, 100.0]),
     }
 
     preprocessor, postprocessor = make_groot_pre_post_processors(
@@ -1899,7 +1900,10 @@ def test_groot_n1_7_relative_action_training_processors_save_native_grouped_stat
         {"rep": "RELATIVE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None},
         {"rep": "ABSOLUTE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None},
     ]
-    assert pack_config["raw_stats"]["relative_action"]["single_arm"]["min"] == [-2.0, -3.0, -4.0, -5.0, -6.0]
+    assert pack_config["raw_stats"]["relative_action"]["single_arm"]["min"] == [
+        [-2.0, -3.0, -4.0, -5.0, -6.0],
+        [1.0, 2.0, 3.0, 4.0, 5.0],
+    ]
     assert pack_config["raw_stats"]["action"]["gripper"]["min"] == [0.0]
     assert pack_config["raw_stats"]["action"]["gripper"]["max"] == [100.0]
 
@@ -1918,8 +1922,183 @@ def test_groot_n1_7_relative_action_training_processors_save_native_grouped_stat
     )
     decode_config = decode_entry["config"]
     assert decode_config["use_relative_action"] is True
-    assert decode_config["raw_stats"]["relative_action"]["single_arm"]["max"] == [2.0, 3.0, 4.0, 5.0, 6.0]
+    assert decode_config["raw_stats"]["relative_action"]["single_arm"]["max"] == [
+        [-1.0, -2.0, -3.0, -4.0, -5.0],
+        [2.0, 3.0, 4.0, 5.0, 6.0],
+    ]
     assert decode_config["raw_stats"]["action"]["gripper"]["max"] == [100.0]
+
+
+def test_groot_n1_7_generated_relative_stats_match_oss_gr00t_reference_numbers():
+    input_features, output_features = _groot_features(state_dim=6, action_dim=6)
+    action_names = [
+        "shoulder_pan.pos",
+        "shoulder_lift.pos",
+        "elbow_flex.pos",
+        "wrist_flex.pos",
+        "wrist_roll.pos",
+        "gripper.pos",
+    ]
+    config = GrootConfig(
+        input_features=input_features,
+        output_features=output_features,
+        device="cpu",
+        use_bf16=False,
+        action_decode_transform=None,
+        chunk_size=3,
+        n_action_steps=3,
+        use_relative_actions=True,
+        relative_exclude_joints=["gripper"],
+    )
+    absolute_dataset_stats = {
+        OBS_STATE: {
+            "min": torch.tensor([-20.0, -30.0, -40.0, -50.0, -60.0, 0.0]),
+            "max": torch.tensor([80.0, 70.0, 60.0, 50.0, 40.0, 100.0]),
+            "mean": torch.tensor([30.0, 20.0, 10.0, 0.0, -10.0, 50.0]),
+            "std": torch.tensor([10.0, 10.0, 10.0, 10.0, 10.0, 10.0]),
+            "q01": torch.tensor([-10.0, -20.0, -30.0, -40.0, -50.0, 10.0]),
+            "q99": torch.tensor([70.0, 60.0, 50.0, 40.0, 30.0, 90.0]),
+        },
+        ACTION: {
+            "min": torch.tensor([-5.0, -20.0, 0.0, -25.0, 10.0, 20.0]),
+            "max": torch.tensor([20.0, 30.0, 45.0, 60.0, 70.0, 90.0]),
+            "mean": torch.tensor([5.0, 5.0, 20.0, 20.0, 40.0, 55.0]),
+            "std": torch.tensor([5.0, 10.0, 10.0, 20.0, 20.0, 25.0]),
+            "q01": torch.tensor([-4.0, -19.0, 1.0, -24.0, 11.0, 20.0]),
+            "q99": torch.tensor([19.0, 29.0, 44.0, 59.0, 69.0, 90.0]),
+        },
+    }
+    state_a = torch.tensor([10.0, 20.0, 30.0, 40.0, 50.0, 25.0])
+    state_b = torch.tensor([0.0, -10.0, 10.0, -20.0, 20.0, 75.0])
+    action_a = torch.tensor(
+        [
+            [11.0, 22.0, 33.0, 44.0, 55.0, 20.0],
+            [12.0, 24.0, 36.0, 48.0, 60.0, 80.0],
+            [13.0, 26.0, 39.0, 52.0, 65.0, 90.0],
+        ]
+    )
+    action_b = torch.tensor(
+        [
+            [-1.0, -8.0, 13.0, -16.0, 25.0, 30.0],
+            [-2.0, -6.0, 16.0, -12.0, 30.0, 40.0],
+            [-3.0, -4.0, 19.0, -8.0, 35.0, 50.0],
+        ]
+    )
+    samples = [
+        {OBS_STATE: state_a, ACTION: action_a},
+        {OBS_STATE: state_b, ACTION: action_b},
+    ]
+
+    class _Dataset:
+        meta = SimpleNamespace(
+            stats=absolute_dataset_stats,
+            features={ACTION: {"names": action_names}},
+        )
+
+        def __len__(self):
+            return len(samples)
+
+        def __getitem__(self, idx):
+            return samples[idx]
+
+    relative_dataset_stats = _make_relative_action_training_stats(
+        _Dataset(),
+        exclude_joints=["gripper"],
+        action_names=action_names,
+        preserve_action_horizon=True,
+    )
+
+    # Static reference values from OSS GR00T's JointActionChunk.relative_chunking +
+    # calculate_stats_for_key path: stats are computed per chunk timestep, not
+    # flattened over all timesteps.
+    oss_arm_min = torch.tensor(
+        [
+            [-1.0, 2.0, 3.0, 4.0, 5.0],
+            [-2.0, 4.0, 6.0, 8.0, 10.0],
+            [-3.0, 6.0, 9.0, 12.0, 15.0],
+        ]
+    )
+    oss_arm_max = torch.tensor(
+        [
+            [1.0, 2.0, 3.0, 4.0, 5.0],
+            [2.0, 4.0, 6.0, 8.0, 10.0],
+            [3.0, 6.0, 9.0, 12.0, 15.0],
+        ]
+    )
+    oss_arm_mean = torch.tensor(
+        [
+            [0.0, 2.0, 3.0, 4.0, 5.0],
+            [0.0, 4.0, 6.0, 8.0, 10.0],
+            [0.0, 6.0, 9.0, 12.0, 15.0],
+        ]
+    )
+    oss_arm_std = torch.tensor(
+        [
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0, 0.0, 0.0],
+        ]
+    )
+    oss_arm_q01 = torch.tensor(
+        [
+            [-0.98, 2.0, 3.0, 4.0, 5.0],
+            [-1.96, 4.0, 6.0, 8.0, 10.0],
+            [-2.94, 6.0, 9.0, 12.0, 15.0],
+        ]
+    )
+    oss_arm_q99 = torch.tensor(
+        [
+            [0.98, 2.0, 3.0, 4.0, 5.0],
+            [1.96, 4.0, 6.0, 8.0, 10.0],
+            [2.94, 6.0, 9.0, 12.0, 15.0],
+        ]
+    )
+
+    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["min"][:, :5]), oss_arm_min)
+    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["max"][:, :5]), oss_arm_max)
+    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["mean"][:, :5]), oss_arm_mean)
+    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["std"][:, :5]), oss_arm_std)
+    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["q01"][:, :5]), oss_arm_q01)
+    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["q99"][:, :5]), oss_arm_q99)
+
+    preprocessor, postprocessor = make_groot_pre_post_processors(
+        config,
+        dataset_stats=relative_dataset_stats,
+        dataset_meta=_Dataset.meta,
+    )
+    pack_step = next(step for step in preprocessor.steps if isinstance(step, GrootN17PackInputsStep))
+    decode_step = next(step for step in postprocessor.steps if isinstance(step, GrootN17ActionDecodeStep))
+
+    assert pack_step.use_percentiles is True
+    torch.testing.assert_close(
+        torch.as_tensor(pack_step.raw_stats["relative_action"]["single_arm"]["min"]),
+        oss_arm_min,
+    )
+    torch.testing.assert_close(
+        torch.as_tensor(pack_step.raw_stats["relative_action"]["single_arm"]["q99"]),
+        oss_arm_q99,
+    )
+    assert pack_step.stats[ACTION]["min"] == pytest.approx([*oss_arm_min.flatten().tolist(), 20.0])
+    assert pack_step.stats[ACTION]["max"] == pytest.approx([*oss_arm_max.flatten().tolist(), 90.0])
+
+    packed = pack_step(
+        {
+            TransitionKey.OBSERVATION: {OBS_STATE: state_a.unsqueeze(0)},
+            TransitionKey.ACTION: action_a.unsqueeze(0),
+            TransitionKey.COMPLEMENTARY_DATA: {"task": ["Move the vial"]},
+        }
+    )
+    expected_normalized = torch.tensor(
+        [
+            [1.0, 0.0, 0.0, 0.0, 0.0, -1.0],
+            [1.0, 0.0, 0.0, 0.0, 0.0, 5.0 / 7.0],
+            [1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        ]
+    )
+    torch.testing.assert_close(packed[TransitionKey.ACTION][0, :3, :6], expected_normalized)
+
+    decoded = decode_step({TransitionKey.ACTION: packed[TransitionKey.ACTION]})
+    torch.testing.assert_close(decoded[TransitionKey.ACTION], action_a.unsqueeze(0), atol=1e-5, rtol=1e-5)
 
 
 def test_groot_policy_selects_n1_7_model_class(monkeypatch):

@@ -111,7 +111,14 @@ def has_modality_stats(stats: dict[str, dict[str, Any]] | None) -> bool:
 def stat_dim_from_entry(entry: dict[str, Any]) -> int:
     for stat_name in ("mean", "q01", "min", "max", "std"):
         value = entry.get(stat_name)
+        if isinstance(value, torch.Tensor):
+            return int(value.shape[-1]) if value.ndim > 0 else 1
+        if isinstance(value, np.ndarray):
+            return int(value.shape[-1]) if value.ndim > 0 else 1
         if isinstance(value, list) and len(value) > 0:
+            first = value[0]
+            if isinstance(first, (list, tuple)) and len(first) > 0:
+                return len(first)
             return len(value)
     return 0
 

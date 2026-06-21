@@ -581,27 +581,31 @@ def _resolve_visual_modality_keys_from_dataset_meta(dataset_meta: Any | None) ->
     return keys or None
 
 
-def _slice_stats_entry(stats: dict[str, Any], indices: list[int]) -> dict[str, list[float]]:
+def _slice_stats_entry(stats: dict[str, Any], indices: list[int]) -> dict[str, Any]:
     if not indices:
         return {}
 
     max_index = max(indices)
-    sliced: dict[str, list[float]] = {}
+    sliced: dict[str, Any] = {}
     for stat_name, value in stats.items():
-        tensor = torch.as_tensor(value, dtype=torch.float32).flatten()
-        if tensor.numel() <= max_index:
-            continue
-        sliced[stat_name] = [float(tensor[index].item()) for index in indices]
+        tensor = torch.as_tensor(value, dtype=torch.float32)
+        if tensor.ndim >= 2:
+            if tensor.shape[-1] <= max_index:
+                continue
+            sliced[stat_name] = tensor[..., indices].tolist()
+        else:
+            tensor = tensor.flatten()
+            if tensor.numel() <= max_index:
+                continue
+            sliced[stat_name] = [float(tensor[index].item()) for index in indices]
 
     if "min" in sliced and "max" in sliced:
+        min_arr = np.asarray(sliced["min"], dtype=np.float32)
+        max_arr = np.asarray(sliced["max"], dtype=np.float32)
         if "mean" not in sliced:
-            sliced["mean"] = [
-                (low + high) * 0.5 for low, high in zip(sliced["min"], sliced["max"], strict=True)
-            ]
+            sliced["mean"] = ((min_arr + max_arr) * 0.5).tolist()
         if "std" not in sliced:
-            sliced["std"] = [
-                abs(high - low) * 0.5 for low, high in zip(sliced["min"], sliced["max"], strict=True)
-            ]
+            sliced["std"] = (np.abs(max_arr - min_arr) * 0.5).tolist()
     return sliced
 
 
@@ -887,6 +891,7 @@ def make_groot_pre_post_processors(
         clip_outliers=clip_outliers,
         video_modality_keys=video_modality_keys,
         raw_stats=checkpoint_assets.raw_stats if checkpoint_assets is not None else None,
+        use_percentiles=checkpoint_assets.use_percentiles if checkpoint_assets is not None else False,
         modality_config=checkpoint_assets.modality_config if checkpoint_assets is not None else None,
     )
 
@@ -1179,6 +1184,7 @@ class GrootN17PackInputsStep(ProcessorStep):
     normalize_min_max: bool = True
     stats: dict[str, dict[str, Any]] | None = None
     clip_outliers: bool = True
+    use_percentiles: bool = False
     video_modality_keys: list[str] | None = None
     raw_stats: dict[str, Any] | None = None
     modality_config: dict[str, Any] | None = None
@@ -1327,6 +1333,73 @@ class GrootN17PackInputsStep(ProcessorStep):
 
         return converted
 
+    def _normalize_action_groups_for_training(self, action: torch.Tensor) -> torch.Tensor | None:
+        if self.modality_config is None or self.raw_stats is None:
+            return None
+
+        action_config = self.modality_config.get("action", {})
+        if not isinstance(action_config, dict):
+            return None
+        action_keys = action_config.get("modality_keys", [])
+        action_configs = action_config.get("action_configs", [])
+        if not isinstance(action_keys, list) or not isinstance(action_configs, list):
+            return None
+
+        normalized_groups: list[torch.Tensor] = []
+        start_idx = 0
+        for idx, key in enumerate(action_keys):
+            if not isinstance(key, str):
+                continue
+            cfg = (
+                action_configs[idx]
+                if idx < len(action_configs) and isinstance(action_configs[idx], dict)
+                else {}
+            )
+            is_relative = config_value(cfg.get("rep")) == "relative"
+            stats_modality = "relative_action" if is_relative else "action"
+            key_stats = self.raw_stats.get(stats_modality, {}).get(key, {})
+            dim = stat_dim_from_entry(key_stats) if isinstance(key_stats, dict) else 0
+            if dim <= 0:
+                continue
+            end_idx = start_idx + dim
+            if end_idx > action.shape[-1]:
+                return None
+
+            min_v, max_v = _n1_7_decode_stats_for_action(
+                self.raw_stats,
+                key,
+                cfg,
+                use_relative_action=True,
+                use_percentiles=self.use_percentiles,
+            )
+            group = action[..., start_idx:end_idx]
+            min_t = torch.as_tensor(min_v, dtype=group.dtype, device=group.device)
+            max_t = torch.as_tensor(max_v, dtype=group.dtype, device=group.device)
+            if min_t.ndim == 1:
+                min_t = min_t.view(1, 1, -1)
+                max_t = max_t.view(1, 1, -1)
+            elif min_t.ndim == 2:
+                if group.shape[1] > min_t.shape[0]:
+                    return None
+                min_t = min_t[: group.shape[1]].unsqueeze(0)
+                max_t = max_t[: group.shape[1]].unsqueeze(0)
+            else:
+                return None
+
+            denom = max_t - min_t
+            mask = denom != 0
+            safe_denom = torch.where(mask, denom, torch.ones_like(denom))
+            normalized = torch.where(mask, 2 * (group - min_t) / safe_denom - 1, torch.zeros_like(group))
+            if self.clip_outliers:
+                normalized = normalized.clamp(-1.0, 1.0)
+            normalized_groups.append(normalized)
+            start_idx = end_idx
+
+        if not normalized_groups or start_idx != action.shape[-1]:
+            return None
+        return torch.cat(normalized_groups, dim=-1)
+
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         obs = transition.get(TransitionKey.OBSERVATION, {}) or {}
         comp = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}) or {}
@@ -1441,8 +1514,12 @@ class GrootN17PackInputsStep(ProcessorStep):
             if raw_state_for_action is not None:
                 action = self._convert_relative_action_groups_for_training(action, raw_state_for_action)
             if self.normalize_min_max:
-                flat = _min_max_norm(action.reshape(bsz * horizon, dim), ACTION)
-                action = flat.view(bsz, horizon, dim)
+                normalized_action = self._normalize_action_groups_for_training(action)
+                if normalized_action is not None:
+                    action = normalized_action
+                else:
+                    flat = _min_max_norm(action.reshape(bsz * horizon, dim), ACTION)
+                    action = flat.view(bsz, horizon, dim)
             valid_dim = min(dim, self.max_action_dim)
             valid_horizon = min(horizon, self.valid_action_horizon, self.action_horizon)
             if dim < self.max_action_dim:
@@ -1500,6 +1577,7 @@ class GrootN17PackInputsStep(ProcessorStep):
             "embodiment_mapping": self.embodiment_mapping,
             "normalize_min_max": self.normalize_min_max,
             "clip_outliers": self.clip_outliers,
+            "use_percentiles": self.use_percentiles,
             "video_modality_keys": self.video_modality_keys,
             "raw_stats": self.raw_stats,
             "modality_config": self.modality_config,

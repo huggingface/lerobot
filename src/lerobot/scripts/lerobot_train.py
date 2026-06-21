@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from accelerate import Accelerator
 
+import numpy as np
 import torch
 from termcolor import colored
 from torch.optim import Optimizer
@@ -228,6 +229,63 @@ def _unpadded_relative_action_vectors(relative_action: torch.Tensor, pad_mask: A
     return relative_action.reshape(-1, relative_action.shape[-1])
 
 
+def _relative_action_chunks_by_horizon(
+    relative_action: torch.Tensor, pad_mask: Any | None
+) -> list[list[np.ndarray]]:
+    """Return per-horizon lists of valid relative action vectors."""
+
+    if relative_action.ndim == 2:
+        relative_action = relative_action.unsqueeze(0)
+    if relative_action.ndim != 3:
+        raise ValueError(
+            "Cannot compute horizon-preserving relative action statistics from "
+            f"shape {tuple(relative_action.shape)}."
+        )
+
+    batch_size, horizon, _action_dim = relative_action.shape
+    keep = torch.ones(batch_size, horizon, dtype=torch.bool)
+    if pad_mask is not None:
+        mask = torch.as_tensor(pad_mask, dtype=torch.bool).cpu()
+        if mask.ndim == 1 and batch_size == 1 and mask.numel() == horizon:
+            keep[0] = ~mask
+        elif mask.ndim == 2 and tuple(mask.shape) == (batch_size, horizon):
+            keep = ~mask
+
+    chunks: list[list[np.ndarray]] = [[] for _ in range(horizon)]
+    relative_np = relative_action.detach().cpu().numpy()
+    for batch_idx in range(batch_size):
+        for horizon_idx in range(horizon):
+            if keep[batch_idx, horizon_idx]:
+                chunks[horizon_idx].append(relative_np[batch_idx, horizon_idx])
+    return chunks
+
+
+def _compute_horizon_relative_action_stats(chunks_by_horizon: list[list[np.ndarray]]) -> dict[str, np.ndarray]:
+    if not chunks_by_horizon or not any(chunks_by_horizon):
+        raise ValueError("Cannot compute relative action statistics without unpadded action vectors.")
+
+    stats: dict[str, list[np.ndarray]] = {key: [] for key in ("min", "max", "mean", "std", "q01", "q99")}
+    counts: list[int] = []
+    for horizon_idx, vectors in enumerate(chunks_by_horizon):
+        if len(vectors) < 2:
+            raise ValueError(
+                "Cannot compute horizon-preserving relative action statistics from fewer than 2 "
+                f"unpadded vectors at action timestep {horizon_idx}."
+            )
+        values = np.stack(vectors, axis=0).astype(np.float32)
+        stats["min"].append(np.min(values, axis=0))
+        stats["max"].append(np.max(values, axis=0))
+        stats["mean"].append(np.mean(values, axis=0))
+        stats["std"].append(np.std(values, axis=0))
+        stats["q01"].append(np.quantile(values, 0.01, axis=0).astype(np.float32))
+        stats["q99"].append(np.quantile(values, 0.99, axis=0).astype(np.float32))
+        counts.append(len(vectors))
+
+    computed = {key: np.stack(values, axis=0) for key, values in stats.items()}
+    computed["count"] = np.asarray(counts, dtype=np.int64)
+    return computed
+
+
 def _iter_action_state_training_samples(dataset: Any):
     """Yield action chunks, reference states, and action padding masks without decoding videos when possible."""
 
@@ -271,6 +329,7 @@ def _make_relative_action_training_stats(
     *,
     exclude_joints: list[str] | None,
     action_names: list[str] | None,
+    preserve_action_horizon: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """Return dataset stats whose action entry describes the relative action tensor used for training."""
 
@@ -296,6 +355,7 @@ def _make_relative_action_training_stats(
         action_names=action_names,
     )
     num_vectors = 0
+    chunks_by_horizon: list[list[np.ndarray]] | None = None
 
     for action_value, state_value, pad_mask in _iter_action_state_training_samples(dataset):
         action = _to_float_tensor(action_value, key=ACTION)
@@ -316,19 +376,36 @@ def _make_relative_action_training_stats(
             state_batch,
             relative_step._build_mask(action_batch.shape[-1]),
         )
-        vectors = _unpadded_relative_action_vectors(relative_action, pad_mask)
-        if vectors.numel() == 0:
-            continue
-        vector_count = int(vectors.reshape(-1, vectors.shape[-1]).shape[0])
-        running_stats.update(vectors.numpy())
-        num_vectors += vector_count
+        if preserve_action_horizon:
+            sample_chunks = _relative_action_chunks_by_horizon(relative_action, pad_mask)
+            if chunks_by_horizon is None:
+                chunks_by_horizon = [[] for _ in range(len(sample_chunks))]
+            if len(sample_chunks) != len(chunks_by_horizon):
+                raise ValueError(
+                    "Cannot compute horizon-preserving relative action statistics from samples with "
+                    f"different action horizons ({len(sample_chunks)} vs {len(chunks_by_horizon)})."
+                )
+            for horizon_idx, vectors in enumerate(sample_chunks):
+                chunks_by_horizon[horizon_idx].extend(vectors)
+                num_vectors += len(vectors)
+        else:
+            vectors = _unpadded_relative_action_vectors(relative_action, pad_mask)
+            if vectors.numel() == 0:
+                continue
+            vector_count = int(vectors.reshape(-1, vectors.shape[-1]).shape[0])
+            running_stats.update(vectors.numpy())
+            num_vectors += vector_count
 
     if num_vectors < 2:
         raise ValueError(
             "Cannot compute relative action statistics from fewer than 2 unpadded action vectors."
         )
 
-    stats[ACTION] = running_stats.get_statistics()
+    stats[ACTION] = (
+        _compute_horizon_relative_action_stats(chunks_by_horizon or [])
+        if preserve_action_horizon
+        else running_stats.get_statistics()
+    )
     return stats
 
 
@@ -472,6 +549,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             dataset,
             exclude_joints=getattr(active_cfg, "relative_exclude_joints", []),
             action_names=_resolve_action_feature_names(dataset),
+            preserve_action_horizon=getattr(active_cfg, "type", None) == "groot",
         )
 
     processor_kwargs = {}
