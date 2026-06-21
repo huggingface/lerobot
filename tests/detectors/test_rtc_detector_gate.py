@@ -43,6 +43,8 @@ def _engine_with_detector(detector, *, chunk_size=50, cooldown_s=0.0) -> RTCInfe
     eng._detector = detector
     eng._supervisor_camera = "cam"
     eng._supervisor_cooldown_s = cooldown_s
+    eng._target_visible_required = False
+    eng._detector_waiting_for_target = False
     eng._chunk_size = chunk_size
     eng._last_detector_fire = -1.0
     eng._last_detector_frame_id = None
@@ -81,6 +83,33 @@ def test_urgent_replan_fires_once_then_respects_cooldown():
 
     assert first is True
     assert second is False  # suppressed by cooldown
+
+
+def test_target_visibility_gate_tracks_waiting_state():
+    det = _ScriptedDetector(DetectorOutput(target_visible=False, reason="red_cube_not_visible"))
+    eng = _engine_with_detector(det)
+    eng._target_visible_required = True
+
+    replan, _ = eng._evaluate_detector({"cam": np.zeros((4, 4, 3))})
+
+    assert replan is False
+    assert eng._detector_waiting_for_target is True
+
+    det.output = DetectorOutput(target_visible=True, center_px=(1.0, 2.0), reason="red_cube_initialized")
+    replan, _ = eng._evaluate_detector({"cam": np.ones((4, 4, 3))})
+
+    assert replan is False
+    assert eng._detector_waiting_for_target is False
+
+
+def test_target_visibility_gate_suppresses_queue_replan_only():
+    det = _ScriptedDetector(DetectorOutput())
+    eng = _engine_with_detector(det)
+    eng._target_visible_required = True
+    eng._detector_waiting_for_target = True
+
+    assert eng._should_run_inference(queue_size=0, effective_threshold=30, detector_replan=False) is False
+    assert eng._should_run_inference(queue_size=0, effective_threshold=30, detector_replan=True) is True
 
 
 def test_missing_camera_reuses_cached_threshold():

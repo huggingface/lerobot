@@ -65,7 +65,7 @@ class RedCubeSpeedDetector:
         if area_ratio < self.min_area_ratio:
             self._prev_center = None
             self._prev_time_s = None
-            return DetectorOutput(reason="red_cube_not_visible")
+            return DetectorOutput(target_visible=False, reason="red_cube_not_visible")
 
         ys, xs = np.nonzero(mask)
         center = (float(xs.mean()), float(ys.mean()))
@@ -74,13 +74,14 @@ class RedCubeSpeedDetector:
         self._prev_time_s = now_s
 
         if speed_px_s is None:
-            return DetectorOutput(center_px=center, reason="red_cube_initialized")
+            return DetectorOutput(target_visible=True, center_px=center, reason="red_cube_initialized")
 
         threshold = self._map_speed_to_threshold(speed_px_s)
         replan_now = speed_px_s >= self.urgent_speed_px_s
         reason = "red_cube_urgent_speed" if replan_now else "red_cube_speed"
         return DetectorOutput(
             replan_now=replan_now,
+            target_visible=True,
             center_px=center,
             speed_px_s=speed_px_s,
             effective_chunk_size_threshold=threshold,

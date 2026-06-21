@@ -52,8 +52,10 @@ def test_red_cube_speed_detector_estimates_speed_and_threshold():
     first = detector.detect(_frame_with_red_square(10), now_s=1.0)
     second = detector.detect(_frame_with_red_square(30), now_s=1.1)
 
+    assert first.target_visible is True
     assert first.center_px == (14.5, 24.5)
     assert first.speed_px_s is None
+    assert second.target_visible is True
     assert second.center_px == (34.5, 24.5)
     assert second.speed_px_s == pytest.approx(200.0)
     assert second.effective_chunk_size_threshold == pytest.approx(0.75)
@@ -87,7 +89,7 @@ def test_red_cube_speed_detector_ignores_frames_without_red_cube():
 
     output = detector.detect(np.zeros((64, 64, 3), dtype=np.uint8), now_s=1.0)
 
-    assert output == DetectorOutput(reason="red_cube_not_visible")
+    assert output == DetectorOutput(target_visible=False, reason="red_cube_not_visible")
 
 
 def test_motion_detector_fires_on_change():
