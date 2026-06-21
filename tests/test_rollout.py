@@ -177,6 +177,26 @@ def test_thread_safe_robot_delegates():
     robot.disconnect()
 
 
+def test_thread_safe_robot_tracks_action_response_metadata():
+    from lerobot.rollout.robot_wrapper import ThreadSafeRobot
+
+    class MetadataRobot:
+        def get_observation(self):
+            return {}
+
+        def send_action(self, action):
+            self.last_action_response = {"action": action, "done": True, "success": False}
+            return action
+
+    robot = MetadataRobot()
+    wrapper = ThreadSafeRobot(robot)
+
+    action = {"motor_1.pos": 0.0, "motor_2.pos": 1.0, "motor_3.pos": 2.0}
+    assert wrapper.send_action(action) == action
+    assert wrapper.pop_last_action_response() == {"action": action, "done": True, "success": False}
+    assert wrapper.pop_last_action_response() is None
+
+
 def test_thread_safe_robot_properties():
     from lerobot.rollout.robot_wrapper import ThreadSafeRobot
     from tests.mocks.mock_robot import MockRobot, MockRobotConfig
@@ -192,6 +212,42 @@ def test_thread_safe_robot_properties():
     assert wrapper.inner is robot
 
     robot.disconnect()
+
+
+def test_base_strategy_resets_inference_when_robot_reports_episode_done():
+    from lerobot.rollout import BaseStrategy, BaseStrategyConfig
+
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = MagicMock()
+    strategy._interpolator = MagicMock()
+    strategy._cached_obs_processed = {"stale": True}
+
+    ctx = MagicMock()
+    ctx.hardware.robot_wrapper.pop_last_action_response.return_value = {"done": True, "success": False}
+
+    strategy._reset_inference_after_robot_episode_done(ctx)
+
+    strategy._engine.reset.assert_called_once()
+    strategy._interpolator.reset.assert_called_once()
+    assert strategy._cached_obs_processed is None
+
+
+def test_base_strategy_ignores_action_responses_without_episode_done():
+    from lerobot.rollout import BaseStrategy, BaseStrategyConfig
+
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = MagicMock()
+    strategy._interpolator = MagicMock()
+    strategy._cached_obs_processed = {"cached": True}
+
+    ctx = MagicMock()
+    ctx.hardware.robot_wrapper.pop_last_action_response.return_value = {"done": False}
+
+    strategy._reset_inference_after_robot_episode_done(ctx)
+
+    strategy._engine.reset.assert_not_called()
+    strategy._interpolator.reset.assert_not_called()
+    assert strategy._cached_obs_processed == {"cached": True}
 
 
 # ---------------------------------------------------------------------------

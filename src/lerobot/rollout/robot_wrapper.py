@@ -36,6 +36,7 @@ class ThreadSafeRobot:
     def __init__(self, robot: Robot) -> None:
         self._robot = robot
         self._lock = Lock()
+        self._last_action_response: Any | None = None
 
     # -- Lock-protected I/O --------------------------------------------------
 
@@ -45,7 +46,15 @@ class ThreadSafeRobot:
 
     def send_action(self, action: dict[str, Any] | Any) -> Any:
         with self._lock:
-            return self._robot.send_action(action)
+            response = self._robot.send_action(action)
+            self._last_action_response = getattr(self._robot, "last_action_response", response)
+            return response
+
+    def pop_last_action_response(self) -> Any | None:
+        with self._lock:
+            response = self._last_action_response
+            self._last_action_response = None
+            return response
 
     # -- Read-only proxies (no lock needed) -----------------------------------
 
