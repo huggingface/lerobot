@@ -385,42 +385,74 @@ def run_pool_stream_simulation(
             break
 
     locks = _decoder_locks(cache.manifest, resident)
-    sample_period = 1.0 / target_samples_s if target_samples_s > 0 else 0.0
+    batch_size = max(1, batch_size)
     refill_wait_s = 0.0
     deadline_miss_s = 0.0
     replacement_count = 0
     decoded_samples: list[tuple[int, float]] = []
     start = time.perf_counter()
-    next_deadline = start + sample_period
 
-    for idx in range(sample_count):
-        if idx > 0 and samples_per_episode > 0 and idx % samples_per_episode == 0 and pending:
-            new_ep = pending.pop(0)
-            wait_start = time.perf_counter()
-            cache.ensure_ready(new_ep)
-            for camera_key in cache.manifest.video_keys:
-                locks[(new_ep, camera_key)] = threading.Lock()
-                cache.get_decoder(new_ep, camera_key)
-            refill_wait_s += time.perf_counter() - wait_start
-            old_ep = resident.pop(0)
-            resident_set.discard(old_ep)
-            resident.append(new_ep)
-            resident_set.add(new_ep)
-            replacement_count += 1
-            schedule_one()
+    def consume_ready_replacement() -> bool:
+        nonlocal refill_wait_s, replacement_count
+        if not pending:
+            return False
+        new_ep = pending.pop(0)
+        wait_start = time.perf_counter()
+        cache.ensure_ready(new_ep)
+        _open_resident_decoders(cache, [new_ep], decode_workers=decode_workers)
+        for camera_key in cache.manifest.video_keys:
+            locks[(new_ep, camera_key)] = threading.Lock()
+        refill_wait_s += time.perf_counter() - wait_start
+        old_ep = resident.pop(0)
+        resident_set.discard(old_ep)
+        resident.append(new_ep)
+        resident_set.add(new_ep)
+        replacement_count += 1
+        schedule_one()
+        return True
 
-        ep = rng.choice(resident)
-        relative_t = rng.random()
-        _decode_training_sample(cache, ep, relative_t, locks)
-        decoded_samples.append((ep, relative_t))
+    def decode_batch(batch: list[tuple[int, float]], pool: ThreadPoolExecutor | None) -> None:
+        if pool is None:
+            for ep, relative_t in batch:
+                _decode_training_sample(cache, ep, relative_t, locks)
+            return
+        futures = [
+            pool.submit(_decode_training_sample, cache, ep, relative_t, locks) for ep, relative_t in batch
+        ]
+        for future in futures:
+            future.result()
 
-        if sample_period > 0:
-            now = time.perf_counter()
-            if now < next_deadline:
-                time.sleep(next_deadline - now)
-            else:
-                deadline_miss_s += now - next_deadline
-            next_deadline += sample_period
+    samples_done = 0
+    decode_pool = ThreadPoolExecutor(max_workers=decode_workers) if decode_workers > 1 else None
+    try:
+        while samples_done < sample_count:
+            batch_start = time.perf_counter()
+
+            if samples_per_episode > 0:
+                target_replacements = samples_done // samples_per_episode
+                while replacement_count < target_replacements and consume_ready_replacement():
+                    pass
+
+            current_batch_size = min(batch_size, sample_count - samples_done)
+            batch = [(rng.choice(resident), rng.random()) for _ in range(current_batch_size)]
+            decode_batch(batch, decode_pool)
+            decoded_samples.extend(batch)
+            samples_done += current_batch_size
+
+            if samples_per_episode > 0:
+                target_replacements = samples_done // samples_per_episode
+                while replacement_count < target_replacements and consume_ready_replacement():
+                    pass
+
+            target_batch_s = current_batch_size / target_samples_s if target_samples_s > 0 else 0.0
+            batch_elapsed = time.perf_counter() - batch_start
+            if target_batch_s > 0 and batch_elapsed < target_batch_s:
+                time.sleep(target_batch_s - batch_elapsed)
+            elif target_batch_s > 0:
+                deadline_miss_s += batch_elapsed - target_batch_s
+    finally:
+        if decode_pool is not None:
+            decode_pool.shutdown(wait=True)
 
     elapsed = time.perf_counter() - start
     result = {
@@ -433,6 +465,8 @@ def run_pool_stream_simulation(
         "replacement_episodes_s": replacement_count / elapsed if elapsed > 0 else 0.0,
         "samples_per_episode": float(samples_per_episode),
         "prefetch_episodes": float(prefetch_episodes),
+        "batch_size": float(batch_size),
+        "decode_workers": float(decode_workers),
         "kept_up": 1.0
         if sample_count / elapsed >= target_samples_s * 0.98 and deadline_miss_s < elapsed * 0.02
         else 0.0,
@@ -504,10 +538,10 @@ def _current_rss_mib() -> float | None:
 
 def _peak_rss_mib() -> float:
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    # Linux reports KiB; macOS reports bytes.
-    if rss > 10**8:
-        return rss / 1024**2
-    return rss / 1024
+    # Linux reports KiB even for very large processes; macOS reports bytes.
+    if Path("/proc/self/status").exists():
+        return rss / 1024
+    return rss / 1024**2
 
 
 def _memory_snapshot() -> dict[str, float | None]:
@@ -1181,6 +1215,8 @@ def run_indexed_strategy(
         print(f"| target samples/s | {fetch_pool['pool_stream_target_samples_s']:.1f} |")
         print(f"| actual samples/s | {fetch_pool['pool_stream_actual_samples_s']:.1f} |")
         print(f"| kept up | {'yes' if fetch_pool['pool_stream_kept_up'] else 'no'} |")
+        print(f"| batch size | {fetch_pool['pool_stream_batch_size']:.0f} |")
+        print(f"| decode workers | {fetch_pool['pool_stream_decode_workers']:.0f} |")
         print(f"| stream wall s | {fetch_pool['pool_stream_stream_wall_s']:.3f} |")
         print(f"| refill wait s | {fetch_pool['pool_stream_refill_wait_s']:.3f} |")
         print(f"| deadline miss s | {fetch_pool['pool_stream_deadline_miss_s']:.3f} |")
