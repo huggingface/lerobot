@@ -129,7 +129,7 @@ def test_degenerate_gripper_range_does_not_divide_by_zero():
 
 def test_config_defaults_register_and_round_trip():
     cfg = SO101LeaderArmConfig()
-    assert cfg.type == "isaac_teleop_so101_leader"
+    assert cfg.type == "so101_leader"
     assert cfg.collection_id == "so101_leader"
     # Provisional defaults: open < close so the normalized mapping is monotonic.
     assert cfg.gripper_open_rad < cfg.gripper_close_rad

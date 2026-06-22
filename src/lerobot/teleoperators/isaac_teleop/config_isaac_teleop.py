@@ -24,7 +24,7 @@ config subclass (e.g. :class:`XRControllerConfig`, and future ``ManusConfig``).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import ClassVar, Literal
 
 from lerobot.teleoperators.config import TeleoperatorConfig
 
@@ -35,7 +35,18 @@ class IsaacTeleopConfig(TeleoperatorConfig):
 
     Subclassed per input device (XR controller, Manus gloves, hand tracking,
     ...). Abstract: register the concrete device subclasses, not this base.
+
+    Its own draccus choice registry (own ``_choice_registry``, decoupled from the
+    global :class:`TeleoperatorConfig` one) so a config field typed ``IsaacTeleopConfig``
+    resolves ``--teleop.type`` against ONLY the Isaac devices. This lets them claim short,
+    natural names (``xr_controller``, ``so101_leader``) without colliding with the global
+    teleop registry — e.g. the serial ``so101_leader`` (``so_leader``) keeps its global key.
+    Selected this way by ``examples/isaac_teleop_to_so101/teleoperate.py``; these devices
+    drive a bespoke clutch/IK/align loop and are not routed through
+    ``make_teleoperator_from_config``.
     """
+
+    _choice_registry: ClassVar[dict] = {}
 
     app_name: str = "LeTeleop"
     """Application name for the OpenXR / Isaac Teleop session."""
@@ -78,7 +89,7 @@ _DEFAULT_BASE_T_ANCHOR: list[list[float]] = [
 ]
 
 
-@TeleoperatorConfig.register_subclass("isaac_teleop_controller")
+@IsaacTeleopConfig.register_subclass("xr_controller")
 @dataclass(kw_only=True)
 class XRControllerConfig(IsaacTeleopConfig):
     """Config for Isaac Teleop XR (VR) controller teleoperation.
@@ -129,7 +140,7 @@ _DEFAULT_GRIPPER_OPEN_RAD = -0.074
 _DEFAULT_GRIPPER_CLOSE_RAD = 1.460
 
 
-@TeleoperatorConfig.register_subclass("isaac_teleop_so101_leader")
+@IsaacTeleopConfig.register_subclass("so101_leader")
 @dataclass(kw_only=True)
 class SO101LeaderArmConfig(IsaacTeleopConfig):
     """Config for an Isaac Teleop SO-101 *leader arm* (generic joint-space device).
@@ -147,6 +158,15 @@ class SO101LeaderArmConfig(IsaacTeleopConfig):
     ``{joint}.pos`` values that can be sent straight to ``robot.send_action`` (no IK, no
     clutch, no retargeter on the LeRobot side).
     """
+
+    port: str = ""
+    """Serial port of the physical LEADER arm (e.g. ``/dev/ttyACM1``).
+
+    The leader's servos are read by the native ``so101_leader`` *plugin*, not by this
+    device (which only consumes the plugin's ``JointStateOutput`` stream over the OpenXR
+    tensor transport). When the example script launches the plugin (its ``--launch_plugin``
+    path), it forwards this port to the plugin as its device path. Empty (default) -> the
+    plugin runs its synthetic trajectory (no leader hardware -> a dry run of the transport)."""
 
     collection_id: str = "so101_leader"
     """Tensor collection id the leader plugin pushes on; must match the running

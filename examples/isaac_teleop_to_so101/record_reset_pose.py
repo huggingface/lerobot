@@ -30,7 +30,7 @@ Usage::
     cat reset_pose.json
 
     # 3. Launch teleop — it will now reset to this pose on startup
-    python teleoperate.py
+    python teleoperate.py --robot.type=so101_follower --robot.port=/dev/ttyACM0 --teleop.type=xr_controller
 """
 
 import argparse
@@ -43,7 +43,9 @@ RESET_POSE_FILE = Path(__file__).parent / "reset_pose.json"
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--port", type=str, default="/dev/ttyACM0")
     parser.add_argument("--id", type=str, default="so101_follower_arm")
     return parser.parse_args()

@@ -287,8 +287,8 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
         orientation_weight: Weight for the orientation constraint passed to
             ``RobotKinematics.inverse_kinematics``. Defaults to ``0.01`` (matching the solver
             default, so existing callers are unchanged). Set to ``0.0`` for position-only IK on
-            under-actuated arms (e.g. the 5-DOF SO-101, whose terminal roll is recovered
-            separately post-IK).
+            under-actuated arms; a small nonzero weight gives soft-orientation IK on the 5-DOF
+            SO-101, where the wrist tracks orientation only partially (position dominates).
     """
 
     kinematics: RobotKinematics
