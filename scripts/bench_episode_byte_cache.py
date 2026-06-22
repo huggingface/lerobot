@@ -620,6 +620,7 @@ def _print_range_timing_summary(fetch_pool: dict[str, float]) -> None:
         ("range_body_s", "http body drain"),
         ("range_chunk_gap_s", "http chunk wait"),
         ("range_join_s", "join response chunks"),
+        ("range_failed_attempt_s", "http failed attempts"),
         ("range_retry_sleep_s", "http retry sleep"),
     ):
         value = fetch_pool.get(key)
@@ -627,8 +628,18 @@ def _print_range_timing_summary(fetch_pool: dict[str, float]) -> None:
             print(f"| {label} | {value * 1000 / range_jobs:.3f} |")
     if "range_retry_attempts" in fetch_pool:
         print(f"| http retries | {fetch_pool['range_retry_attempts'] / range_jobs:.3f} |")
+    if "range_exception_attempts" in fetch_pool:
+        print(f"| http exceptions | {fetch_pool['range_exception_attempts'] / range_jobs:.3f} |")
     if fetch_pool.get("range_failed_requests"):
         print(f"| http failed requests | {fetch_pool['range_failed_requests']:.0f} |")
+    exception_counts = {
+        key.removeprefix("range_exception_"): value
+        for key, value in fetch_pool.items()
+        if key.startswith("range_exception_")
+    }
+    if exception_counts:
+        summary = ", ".join(f"{name}={count:.0f}" for name, count in sorted(exception_counts.items()))
+        print(f"| http exception counts | {summary} |")
     status_counts = {
         key.removeprefix("range_status_"): value
         for key, value in fetch_pool.items()

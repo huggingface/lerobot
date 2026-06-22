@@ -344,14 +344,25 @@ class NativeHTTPRangeFetcher:
         last_exc: Exception | None = None
         retry_attempts = 0.0
         retry_sleep_s = 0.0
+        failed_attempt_s = 0.0
+        exception_attempts = 0.0
+        exception_counts: dict[str, float] = {}
         for attempt in range(self.max_retries + 1):
+            attempt_start = time.perf_counter()
             try:
                 payload, status_code, timings = self._read_range_response_once(url, headers)
                 timings["range_retry_attempts"] = retry_attempts
                 timings["range_retry_sleep_s"] = retry_sleep_s
+                timings["range_failed_attempt_s"] = failed_attempt_s
+                timings["range_exception_attempts"] = exception_attempts
+                timings.update(exception_counts)
                 return payload, status_code, timings
             except self._RETRYABLE_EXCEPTIONS as exc:
                 last_exc = exc
+                failed_attempt_s += time.perf_counter() - attempt_start
+                exception_attempts += 1.0
+                exception_key = f"range_exception_{type(exc).__name__}"
+                exception_counts[exception_key] = exception_counts.get(exception_key, 0.0) + 1.0
                 if attempt >= self.max_retries:
                     break
                 retry_attempts += 1.0
@@ -362,6 +373,9 @@ class NativeHTTPRangeFetcher:
             range_failed_requests=1.0,
             range_retry_attempts=retry_attempts,
             range_retry_sleep_s=retry_sleep_s,
+            range_failed_attempt_s=failed_attempt_s,
+            range_exception_attempts=exception_attempts,
+            **exception_counts,
         )
         if last_exc is None:
             raise RuntimeError("HTTP range request failed without an exception")
