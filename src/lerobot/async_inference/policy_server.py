@@ -90,6 +90,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None
         self.postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None
         self._loaded_policy_setup_key = None
+        self._policy_setup_lock = threading.Lock()
 
     @property
     def running(self):
@@ -190,34 +191,35 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.actions_per_chunk = policy_specs.actions_per_chunk
         self.rename_map = policy_specs.rename_map
 
-        policy_setup_key = self._make_policy_setup_key(policy_specs)
-        if (
-            self._loaded_policy_setup_key == policy_setup_key
-            and self.policy is not None
-            and self.preprocessor is not None
-            and self.postprocessor is not None
-        ):
-            self.logger.info("Policy setup unchanged; reusing loaded policy and processors.")
-            return services_pb2.Empty()
+        with self._policy_setup_lock:
+            policy_setup_key = self._make_policy_setup_key(policy_specs)
+            if (
+                self._loaded_policy_setup_key == policy_setup_key
+                and self.policy is not None
+                and self.preprocessor is not None
+                and self.postprocessor is not None
+            ):
+                self.logger.info("Policy setup unchanged; reusing loaded policy and processors.")
+                return services_pb2.Empty()
 
-        start = time.perf_counter()
-        self.policy = self._load_policy(self.policy_type, policy_specs.pretrained_name_or_path)
-        self.policy.to(self.device)
+            start = time.perf_counter()
+            self.policy = self._load_policy(self.policy_type, policy_specs.pretrained_name_or_path)
+            self.policy.to(self.device)
 
-        # Load preprocessor and postprocessor, overriding device to match requested device
-        device_override = {"device": self.device}
-        self.preprocessor, self.postprocessor = make_pre_post_processors(
-            self._policy_config,
-            pretrained_path=policy_specs.pretrained_name_or_path,
-            preprocessor_overrides={
-                "device_processor": device_override,
-                "rename_observations_processor": {"rename_map": policy_specs.rename_map},
-            },
-            postprocessor_overrides={"device_processor": device_override},
-        )
+            # Load preprocessor and postprocessor, overriding device to match requested device
+            device_override = {"device": self.device}
+            self.preprocessor, self.postprocessor = make_pre_post_processors(
+                self._policy_config,
+                pretrained_path=policy_specs.pretrained_name_or_path,
+                preprocessor_overrides={
+                    "device_processor": device_override,
+                    "rename_observations_processor": {"rename_map": policy_specs.rename_map},
+                },
+                postprocessor_overrides={"device_processor": device_override},
+            )
 
-        end = time.perf_counter()
-        self._loaded_policy_setup_key = policy_setup_key
+            end = time.perf_counter()
+            self._loaded_policy_setup_key = policy_setup_key
 
         self.logger.info(f"Time taken to put policy on {self.device}: {end - start:.4f} seconds")
 
