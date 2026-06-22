@@ -30,6 +30,7 @@ pytest.importorskip("pandas", reason="pandas is required (install lerobot[datase
 import pyarrow.parquet as pq  # noqa: E402
 
 from lerobot.annotations.steerable_pipeline.config import (  # noqa: E402
+    AdvantageConfig,
     AnnotationPipelineConfig,
     InterjectionsConfig,
     PlanConfig,
@@ -37,6 +38,7 @@ from lerobot.annotations.steerable_pipeline.config import (  # noqa: E402
 )
 from lerobot.annotations.steerable_pipeline.executor import Executor  # noqa: E402
 from lerobot.annotations.steerable_pipeline.modules import (  # noqa: E402
+    AdvantageModule,
     GeneralVqaModule,
     InterjectionsAndSpeechModule,
     PlanSubtasksMemoryModule,
@@ -132,6 +134,7 @@ def _build_executor() -> Executor:
         plan=PlanSubtasksMemoryModule(vlm=vlm, config=config.plan),
         interjections=InterjectionsAndSpeechModule(vlm=vlm, config=config.interjections, seed=config.seed),
         vqa=GeneralVqaModule(vlm=vlm, config=config.vqa, seed=config.seed),
+        advantage=AdvantageModule(config=AdvantageConfig(enabled=False)),
         writer=LanguageColumnsWriter(),
         validator=StagingValidator(),
     )
