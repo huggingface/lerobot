@@ -18,12 +18,13 @@
 
 :class:`IsaacTeleopConfig` holds the fields shared by every Isaac Teleop input
 device (currently just the session ``app_name``); each device adds its own
-config subclass (e.g. :class:`SO101LeaderArmConfig`, and future ``ManusConfig``).
+config subclass (e.g. :class:`XRControllerConfig`, and future ``ManusConfig``).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
 
 from lerobot.teleoperators.config import TeleoperatorConfig
 
@@ -61,6 +62,60 @@ class IsaacTeleopConfig(TeleoperatorConfig):
     manual flow told you to ``source`` (that is launcher OUTPUT, now handled
     automatically). ``None`` keeps the launcher's default auto-WebRTC profile,
     which matches today's manual default.
+    """
+
+
+# Static rebase from the OpenXR controller anchor frame into the robot base
+# frame (X=Forward, Y=Left, Z=Up). Applied upstream of the SO-101 retargeters
+# via Isaac Teleop's native ``ControllerTransform`` so the clutch/roll/gripper
+# retargeters operate directly in the robot base frame. A proper rotation
+# (det=+1): controller motion to the right maps to robot +X etc.
+_DEFAULT_BASE_T_ANCHOR: list[list[float]] = [
+    [0.0, 0.0, -1.0, 0.0],
+    [-1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+]
+
+
+@TeleoperatorConfig.register_subclass("isaac_teleop_controller")
+@dataclass(kw_only=True)
+class XRControllerConfig(IsaacTeleopConfig):
+    """Config for Isaac Teleop XR (VR) controller teleoperation.
+
+    Exposes the raw XR controller grip pose (base-frame), squeeze, and trigger
+    via NVIDIA Isaac Teleop's ``ControllersSource``. There are no retargeters:
+    the clutch (engage latch + delta rebase onto the EE) and the gripper mapping
+    live in the owning loop (see
+    :class:`~lerobot.teleoperators.isaac_teleop.teleop_xr_controller.XRController`
+    and ``examples/isaac_teleop_to_so101/teleoperate.py``).
+
+    Frames: :attr:`base_T_anchor` statically rebases the controller anchor frame
+    into the robot base frame so the grip pose this device emits is already in the
+    robot base frame.
+    """
+
+    hand_side: Literal["left", "right"] = "right"
+    """Which controller hand to use."""
+
+    clutch_threshold: float = 0.5
+    """Squeeze value above which the owning loop's clutch engages.
+
+    Mirrors the phone teleoperator's hold-to-enable button: while the controller
+    squeeze is held above this threshold the owning loop drives the robot;
+    releasing it freezes the robot and re-arms the engage origin. The device only
+    reports the raw squeeze — the threshold is applied by the owning loop.
+    """
+
+    base_T_anchor: list[list[float]] = field(  # noqa: N815  (frameA_T_frameB transform-matrix convention)
+        default_factory=lambda: _DEFAULT_BASE_T_ANCHOR
+    )
+    """Static 4x4 ``base_T_anchor`` transform [row-major] rebasing the OpenXR controller
+    anchor frame into the robot base frame, applied to the controller grip pose in the device.
+
+    Defaults to the OpenXR (X=Right, Y=Up, Z=Backward) -> robot (X=Forward, Y=Left, Z=Up)
+    rotation. Kept as plain nested lists (not numpy) so the config stays serializable; the
+    device materializes it to a float32 4x4 once at construction.
     """
 
 
