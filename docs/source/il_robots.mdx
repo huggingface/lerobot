@@ -526,7 +526,9 @@ If your local computer doesn't have a powerful GPU you could utilize Google Cola
 
 Hugging Face jobs let's you easily select hardware and run the training in the cloud. So if you don't have a powerful GPU or you need more VRAM or just want to train a model much faster use HF Jobs! It's pay as you go and you simply pay for each second of use, you can see the pricing and additional information [here](https://huggingface.co/docs/hub/jobs).
 
-To run the training use this command:
+> **Tip:** if you just want to launch a standard training run, you can skip building the command below and use the integrated **Train on HF Jobs via `--job.target`** flow described further down — `lerobot-train` then submits the job, uploads a local-only dataset for you, and streams the logs.
+
+To run the training manually use this command:
 
 <hfoptions id="train_with_hf_jobs">
 <hfoption id="Command">
@@ -598,6 +600,33 @@ For longer training sessions increase the timeout.
 Once the training is started you can go to [Jobs](https://huggingface.co/settings/jobs) and see if your jobs is running as well as all the outputs. Sometimes it takes a few minutes to schedule your job so be patient.
 
 After training the model will be pushed to hub and you can use it as any other model with LeRobot.
+
+#### Train on HF Jobs via `--job.target` (integrated CLI)
+
+`lerobot-train` runs locally by default. To run on a HuggingFace GPU without constructing the Docker command yourself, pass `--job.target` with a hardware flavor name:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/so101_test \
+  --policy.type=act \
+  --policy.repo_id=${HF_USER}/my_policy \
+  --job.target=a10g-small
+```
+
+List available flavors and pricing with `hf jobs hardware`. The run streams its logs to your terminal; press Ctrl-C to detach (the job keeps running in the cloud). Re-attach or cancel with:
+
+```bash
+hf jobs logs <job-id>
+hf jobs cancel <job-id>
+```
+
+If your dataset exists only locally (not yet on the Hub), it is automatically pushed to a **private** Hub repo so the job can download it by `repo_id` (nothing is made public). The trained model is pushed to the model repo at the end of the run. To also push every intermediate checkpoint to the Hub as it is saved (so you can monitor progress mid-run), add `--save_checkpoint_to_hub=true` — this requires a runtime image that includes this feature.
+
+Every job (and any dataset pushed by the run) is tagged `lerobot` so it's easy to find on the Hub. Add your own with `--job.tags '["my-tag"]'`.
+
+By default the job runs until training finishes, with no time limit. Cap it with an HF Jobs duration string if you want a hard ceiling, e.g. `--job.timeout=4h`.
+
+**Prerequisites:** run `hf auth login` before submitting. For Weights & Biases integration, run `wandb login` or set `WANDB_API_KEY` on your machine — the key is forwarded to the job automatically.
 
 #### Upload policy checkpoints
 
