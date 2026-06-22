@@ -661,6 +661,63 @@ def _print_range_timing_summary(fetch_pool: dict[str, float]) -> None:
     if status_counts:
         summary = ", ".join(f"{status}={count:.0f}" for status, count in sorted(status_counts.items()))
         print(f"| http status counts | {summary} |")
+    for method in ("head", "get"):
+        request_count = fetch_pool.get(f"range_hffs_{method}_requests", 0.0)
+        if request_count <= 0:
+            continue
+        print(f"| hffs {method.upper()} requests/range | {request_count / range_jobs:.3f} |")
+        print(
+            f"| hffs {method.upper()} total | {fetch_pool[f'range_hffs_{method}_s'] * 1000 / range_jobs:.3f} |"
+        )
+        retries = fetch_pool.get(f"range_hffs_{method}_retries", 0.0)
+        exceptions = fetch_pool.get(f"range_hffs_{method}_exception_attempts", 0.0)
+        if retries:
+            print(f"| hffs {method.upper()} retries/range | {retries / range_jobs:.3f} |")
+            print(
+                f"| hffs {method.upper()} retry sleep | "
+                f"{fetch_pool.get(f'range_hffs_{method}_retry_sleep_s', 0.0) * 1000 / range_jobs:.3f} |"
+            )
+        if exceptions:
+            print(f"| hffs {method.upper()} exceptions/range | {exceptions / range_jobs:.3f} |")
+            print(
+                f"| hffs {method.upper()} failed attempts | "
+                f"{fetch_pool.get(f'range_hffs_{method}_failed_attempt_s', 0.0) * 1000 / range_jobs:.3f} |"
+            )
+        bytes_read = fetch_pool.get(f"range_hffs_{method}_bytes", 0.0)
+        total_s = fetch_pool.get(f"range_hffs_{method}_s", 0.0)
+        if bytes_read > 0 and total_s > 0:
+            print(f"| hffs {method.upper()} MiB/s | {bytes_read / total_s / 1024**2:.1f} |")
+        hffs_status_counts = {
+            key.removeprefix(f"range_hffs_{method}_status_"): value
+            for key, value in fetch_pool.items()
+            if key.startswith(f"range_hffs_{method}_status_")
+        }
+        if hffs_status_counts:
+            summary = ", ".join(
+                f"{status}={count:.0f}" for status, count in sorted(hffs_status_counts.items())
+            )
+            print(f"| hffs {method.upper()} status counts | {summary} |")
+        hffs_failed_status_counts = {
+            key.removeprefix(f"range_hffs_{method}_failed_status_"): value
+            for key, value in fetch_pool.items()
+            if key.startswith(f"range_hffs_{method}_failed_status_")
+        }
+        if hffs_failed_status_counts:
+            summary = ", ".join(
+                f"{status}={count:.0f}" for status, count in sorted(hffs_failed_status_counts.items())
+            )
+            print(f"| hffs {method.upper()} failed status counts | {summary} |")
+        hffs_exception_counts = {
+            key.removeprefix(f"range_hffs_{method}_exception_"): value
+            for key, value in fetch_pool.items()
+            if key.startswith(f"range_hffs_{method}_exception_")
+            and key != f"range_hffs_{method}_exception_attempts"
+        }
+        if hffs_exception_counts:
+            summary = ", ".join(
+                f"{name}={count:.0f}" for name, count in sorted(hffs_exception_counts.items())
+            )
+            print(f"| hffs {method.upper()} exception counts | {summary} |")
     chunks = fetch_pool.get("range_chunks", 0.0)
     if chunks > 0:
         bytes_read = fetch_pool.get("range_bytes", 0.0)

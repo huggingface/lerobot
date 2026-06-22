@@ -18,6 +18,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
+from types import MethodType
 from typing import Any
 from urllib.parse import quote, urljoin, urlparse
 
@@ -25,7 +26,7 @@ import fsspec
 import httpx
 import numpy as np
 from huggingface_hub import HfApi, HfFileSystem, constants
-from huggingface_hub.utils import hf_raise_for_status
+from huggingface_hub.utils import get_session, hf_raise_for_status
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.mp4 import Mp4Index, Mp4SampleSlice, fetch_mp4_index, synthesize_mp4
@@ -85,6 +86,7 @@ class ThreadLocalRangeFetcher:
             handle = self.fs.open(
                 self._url(relative_path), "rb", block_size=self.block_size, cache_type=self.cache_type
             )
+            self._instrument_hf_handle(handle)
             handles[relative_path] = handle
         return handle
 
@@ -114,6 +116,117 @@ class ThreadLocalRangeFetcher:
         with self._timing_lock:
             for key, value in kwargs.items():
                 self._timing_totals[key] = self._timing_totals.get(key, 0.0) + value
+
+    def _instrument_hf_handle(self, handle: Any) -> None:
+        if getattr(handle, "_lerobot_range_timing", False):
+            return
+        if not hasattr(handle, "_request_with_retry"):
+            return
+
+        def request_with_retry(
+            handle_self,
+            method: str,
+            url: str,
+            *,
+            headers: dict[str, str],
+            follow_redirects: bool | None = None,
+            max_retries: int = 5,
+        ) -> httpx.Response:
+            from huggingface_hub.hf_file_system import _RANGE_RETRY_EXCEPTIONS, _RANGE_RETRY_STATUS_CODES
+
+            method_key = method.lower()
+            sleep_time = 1.0
+            retry_attempts = 0.0
+            retry_sleep_s = 0.0
+            failed_attempt_s = 0.0
+            exception_attempts = 0.0
+            extra_counts: dict[str, float] = {}
+            call_start = time.perf_counter()
+            request_kwargs: dict[str, Any] = {
+                "headers": headers,
+                "timeout": constants.HF_HUB_DOWNLOAD_TIMEOUT,
+            }
+            if follow_redirects is not None:
+                request_kwargs["follow_redirects"] = follow_redirects
+
+            for attempt in range(max_retries + 1):
+                attempt_start = time.perf_counter()
+                try:
+                    response = get_session().request(method, url, **request_kwargs)
+                except _RANGE_RETRY_EXCEPTIONS as exc:
+                    failed_attempt_s += time.perf_counter() - attempt_start
+                    exception_attempts += 1.0
+                    key = f"range_hffs_{method_key}_exception_{type(exc).__name__}"
+                    extra_counts[key] = extra_counts.get(key, 0.0) + 1.0
+                    if attempt == max_retries:
+                        self._record_hffs_request_timing(
+                            method_key,
+                            time.perf_counter() - call_start,
+                            retry_attempts,
+                            retry_sleep_s,
+                            failed_attempt_s,
+                            exception_attempts,
+                            None,
+                            0,
+                            extra_counts,
+                        )
+                        raise
+                else:
+                    elapsed = time.perf_counter() - attempt_start
+                    if response.status_code not in _RANGE_RETRY_STATUS_CODES or attempt == max_retries:
+                        self._record_hffs_request_timing(
+                            method_key,
+                            time.perf_counter() - call_start,
+                            retry_attempts,
+                            retry_sleep_s,
+                            failed_attempt_s,
+                            exception_attempts,
+                            response.status_code,
+                            len(response.content),
+                            extra_counts,
+                        )
+                        return response
+
+                    failed_attempt_s += elapsed
+                    key = f"range_hffs_{method_key}_failed_status_{response.status_code}"
+                    extra_counts[key] = extra_counts.get(key, 0.0) + 1.0
+                    response.close()
+
+                time.sleep(sleep_time)
+                retry_attempts += 1.0
+                retry_sleep_s += sleep_time
+                sleep_time = min(8.0, sleep_time * 2)
+
+            raise RuntimeError("unreachable")
+
+        handle._request_with_retry = MethodType(request_with_retry, handle)
+        handle._lerobot_range_timing = True
+
+    def _record_hffs_request_timing(
+        self,
+        method_key: str,
+        total_s: float,
+        retry_attempts: float,
+        retry_sleep_s: float,
+        failed_attempt_s: float,
+        exception_attempts: float,
+        status_code: int | None,
+        byte_count: int,
+        extra_counts: dict[str, float],
+    ) -> None:
+        timings = {
+            f"range_hffs_{method_key}_requests": 1.0,
+            f"range_hffs_{method_key}_s": total_s,
+            f"range_hffs_{method_key}_retries": retry_attempts,
+            f"range_hffs_{method_key}_retry_sleep_s": retry_sleep_s,
+            f"range_hffs_{method_key}_failed_attempt_s": failed_attempt_s,
+            f"range_hffs_{method_key}_exception_attempts": exception_attempts,
+            f"range_hffs_{method_key}_bytes": float(byte_count),
+        }
+        if status_code is not None:
+            timings[f"range_hffs_{method_key}_status_{status_code}"] = 1.0
+        timings.update(extra_counts)
+        self._record_timing(**timings)
 
     def timing_summary(self) -> dict[str, float]:
         with self._timing_lock:
