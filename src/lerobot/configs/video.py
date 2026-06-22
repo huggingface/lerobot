@@ -69,35 +69,18 @@ DEPTH_ENCODER_INFO_FIELD_NAMES: frozenset[str] = frozenset({"depth_min", "depth_
 
 @dataclass
 class VideoEncoderConfig:
-    """Video encoder configuration.
+    """Video encoder configuration."""
 
-    Attributes:
-        vcodec: Video encoder name. ``"auto"`` is resolved during
-            construction (HW encoder if available, else ``libsvtav1``).
-        pix_fmt: Pixel format (e.g. ``"yuv420p"``).
-        g: GOP size (keyframe interval).
-        crf: Quality level — mapped to the native quality parameter of the
-            codec (``crf`` for software, ``qp`` for NVENC/VAAPI,
-            ``q:v`` for VideoToolbox, ``global_quality`` for QSV).
-        preset: Speed/quality preset. Accepted type is per-codec.
-        fast_decode: Fast-decode tuning. For ``libsvtav1`` this is a level (0-2)
-            embedded in ``svtav1-params``. For ``h264`` and ``hevc`` non-zero values
-            set ``tune=fastdecode``. Ignored for other codecs.
-        video_backend: Python to be used for encoding. Only ``"pyav"``
-            is currently supported.
-        extra_options: Free-form dictionary of additional video encoder options
-            (e.g. ``{"tune": "film", "profile:v": "high", "bf": 2}``).
-    """
-
-    vcodec: str = "libsvtav1"  # TODO(CarolinePascal): rename to codec ?
-    pix_fmt: str = "yuv420p"
-    g: int | None = 2
-    crf: int | float | None = 30
-    preset: int | str | None = None
-    fast_decode: int = 0
+    vcodec: str = "libsvtav1"  # Video codec name. "auto" picks a hardware codec if available, else libsvtav1.
+    pix_fmt: str = "yuv420p"  # Pixel format (e.g. yuv420p).
+    g: int | None = 2  # GOP size (keyframe interval).
+    crf: int | float | None = 30  # Quality level. Lower means better quality and larger files.
+    preset: int | str | None = None  # Speed/quality preset. Accepted values are codec-specific.
+    fast_decode: int = 0  # Fast-decode tuning. Accepted values are codec-specific, 0 disables it.
     # TODO(CarolinePascal): add torchcodec support + find a way to unify the
     # two backends (encoding and decoding).
-    video_backend: str = "pyav"
+    video_backend: str = "pyav"  # Encoding backend. Only "pyav" is currently supported.
+    # Extra codec options merged last, e.g. {"tune": "film"}.
     extra_options: dict[str, Any] = field(default_factory=dict)
 
     # Source-data channel count this encoder is expected to handle (3 for RGB,
@@ -272,29 +255,18 @@ class DepthEncoderConfig(VideoEncoderConfig):
     """Encoder configuration for depth-map streams.
 
     Inherits the full :class:`VideoEncoderConfig` surface (codec, GOP, CRF,
-    preset, ``extra_options``…) and adds the four parameters of the depth
-    quantizer.
-
-    Defaults flip ``vcodec`` to ``"hevc"`` (Main 12 profile) and ``pix_fmt``
-    to ``"gray12le"``.
-
-
-    Attributes:
-        depth_min: Minimum depth in physical units (e.g. metres) represented
-            by quantum ``0``.
-        depth_max: Maximum depth represented by quantum :data:`DEPTH_QMAX`.
-        shift: Pre-log offset for numerical stability near zero.
-        use_log: ``True`` for logarithmic quantization (default; matches
-            sensor error profile), ``False`` for linear.
+    preset, ``extra_options``…) and adds the parameters of the depth quantizer.
+    Defaults flip ``vcodec`` to ``"hevc"`` (Main 12 profile) and ``pix_fmt`` to
+    ``"gray12le"``.
     """
 
     vcodec: str = "hevc"
     pix_fmt: str = "gray12le"
 
-    depth_min: float = DEFAULT_DEPTH_MIN
-    depth_max: float = DEFAULT_DEPTH_MAX
-    shift: float = DEFAULT_DEPTH_SHIFT
-    use_log: bool = DEFAULT_DEPTH_USE_LOG
+    depth_min: float = DEFAULT_DEPTH_MIN  # Minimum depth in meters, mapped to the lowest quantum.
+    depth_max: float = DEFAULT_DEPTH_MAX  # Maximum depth in meters, mapped to the highest quantum.
+    shift: float = DEFAULT_DEPTH_SHIFT  # Pre-log offset in meters for numerical stability near zero.
+    use_log: bool = DEFAULT_DEPTH_USE_LOG  # Use logarithmic quantization (True) or linear (False).
 
     _DEFAULT_CHANNELS: ClassVar[int] = 1
 
