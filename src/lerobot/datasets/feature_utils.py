@@ -13,21 +13,30 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 from pprint import pformat
 
 import datasets
 import numpy as np
 from PIL import Image as PILImage
 
+from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
 from lerobot.utils.constants import DEFAULT_FEATURES
 from lerobot.utils.utils import is_valid_numpy_dtype_string
 
+from .language import (
+    LANGUAGE_PERSISTENT,
+    is_language_column,
+    language_events_column_feature,
+    language_persistent_column_feature,
+)
 from .utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
+    DatasetInfo,
 )
 
 
@@ -45,7 +54,13 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
     """
     hf_features = {}
     for key, ft in features.items():
-        if ft["dtype"] == "video":
+        if is_language_column(key):
+            hf_features[key] = (
+                language_persistent_column_feature()
+                if key == LANGUAGE_PERSISTENT
+                else language_events_column_feature()
+            )
+        elif ft["dtype"] == "video":
             continue
         elif ft["dtype"] == "image":
             hf_features[key] = datasets.Image()
@@ -78,8 +93,8 @@ def create_empty_dataset_info(
     chunks_size: int | None = None,
     data_files_size_in_mb: int | None = None,
     video_files_size_in_mb: int | None = None,
-) -> dict:
-    """Create a template dictionary for a new dataset's `info.json`.
+) -> DatasetInfo:
+    """Create a template ``DatasetInfo`` object for a new dataset's ``meta/info.json``.
 
     Args:
         codebase_version (str): The version of the LeRobot codebase.
@@ -87,25 +102,59 @@ def create_empty_dataset_info(
         features (dict): The LeRobot features dictionary for the dataset.
         use_videos (bool): Whether the dataset will store videos.
         robot_type (str | None): The type of robot used, if any.
+        chunks_size (int | None): Max files per chunk directory. Defaults to ``DEFAULT_CHUNK_SIZE``.
+        data_files_size_in_mb (int | None): Max parquet file size in MB. Defaults to ``DEFAULT_DATA_FILE_SIZE_IN_MB``.
+        video_files_size_in_mb (int | None): Max video file size in MB. Defaults to ``DEFAULT_VIDEO_FILE_SIZE_IN_MB``.
 
     Returns:
-        dict: A dictionary with the initial dataset metadata.
+        DatasetInfo: A typed dataset information object with initial metadata.
     """
-    return {
-        "codebase_version": codebase_version,
-        "robot_type": robot_type,
-        "total_episodes": 0,
-        "total_frames": 0,
-        "total_tasks": 0,
-        "chunks_size": chunks_size or DEFAULT_CHUNK_SIZE,
-        "data_files_size_in_mb": data_files_size_in_mb or DEFAULT_DATA_FILE_SIZE_IN_MB,
-        "video_files_size_in_mb": video_files_size_in_mb or DEFAULT_VIDEO_FILE_SIZE_IN_MB,
-        "fps": fps,
-        "splits": {},
-        "data_path": DEFAULT_DATA_PATH,
-        "video_path": DEFAULT_VIDEO_PATH if use_videos else None,
-        "features": features,
-    }
+    return DatasetInfo(
+        codebase_version=codebase_version,
+        fps=fps,
+        features=features,
+        robot_type=robot_type,
+        chunks_size=chunks_size or DEFAULT_CHUNK_SIZE,
+        data_files_size_in_mb=data_files_size_in_mb or DEFAULT_DATA_FILE_SIZE_IN_MB,
+        video_files_size_in_mb=video_files_size_in_mb or DEFAULT_VIDEO_FILE_SIZE_IN_MB,
+        data_path=DEFAULT_DATA_PATH,
+        video_path=DEFAULT_VIDEO_PATH if use_videos else None,
+    )
+
+
+def features_equal_for_merge(features_a: dict[str, dict], features_b: dict[str, dict]) -> bool:
+    """Return whether two LeRobotDatasetMetadata ``features`` dicts are compatible for aggregation.
+
+    For video features, keys under ``info`` related to video encoding parameters are ignored during
+    comparison as they do not prevent aggregation.
+    """
+
+    def _without_encoder_info_keys(feature: dict) -> dict:
+        filtered = dict(feature)
+        filtered_info = filtered.get("info")
+        if isinstance(filtered_info, dict):
+            filtered["info"] = {
+                info_key: info_value
+                for info_key, info_value in filtered_info.items()
+                if info_key not in VIDEO_ENCODER_INFO_KEYS
+            }
+        return filtered
+
+    if set(features_a) != set(features_b):
+        return False
+    for key in features_a:
+        fa_key = features_a[key]
+        fb_key = features_b[key]
+        if fa_key.get("dtype") != fb_key.get("dtype"):
+            return False
+        if fa_key.get("dtype") != "video":
+            if fa_key != fb_key:
+                return False
+            continue
+
+        if _without_encoder_info_keys(fa_key) != _without_encoder_info_keys(fb_key):
+            return False
+    return True
 
 
 def check_delta_timestamps(
@@ -242,6 +291,8 @@ def validate_feature_dtype_and_shape(
         return validate_feature_image_or_video(name, expected_shape, value)
     elif expected_dtype == "string":
         return validate_feature_string(name, value)
+    elif expected_dtype == "language":
+        return validate_feature_language(name, value)
     else:
         raise NotImplementedError(f"The feature dtype '{expected_dtype}' is not implemented yet.")
 
@@ -318,6 +369,30 @@ def validate_feature_string(name: str, value: str) -> str:
     """
     if not isinstance(value, str):
         return f"The feature '{name}' is expected to be of type 'str', but type '{type(value)}' provided instead.\n"
+    return ""
+
+
+def validate_feature_language(name: str, value) -> str:
+    """Validate a feature that is expected to hold language annotations.
+
+    Language columns (``language_persistent`` / ``language_events``) are
+    populated after recording by the annotation pipeline, not at record time.
+    Any value supplied here is dropped before the frame is written, so a
+    non-empty value almost certainly signals a mistake. We warn rather than
+    fail to keep recording resilient.
+
+    Args:
+        name (str): The name of the feature.
+        value: The value to validate.
+
+    Returns:
+        str: Always an empty string — language values are non-fatal.
+    """
+    if value is not None:
+        logging.warning(
+            f"The feature '{name}' is a 'language' column populated by the annotation pipeline, "
+            f"not at record time. The provided value will be dropped."
+        )
     return ""
 
 

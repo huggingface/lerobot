@@ -13,9 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -27,9 +26,14 @@ from lerobot.utils.import_utils import _transformers_available
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
+    from huggingface_hub.dataclasses import strict
     from transformers import AutoConfig, AutoModel, PretrainedConfig, PreTrainedModel
     from transformers.feature_extraction_utils import BatchFeature
 else:
+
+    def strict(cls):
+        return cls
+
     AutoConfig = None
     AutoModel = None
     PretrainedConfig = object
@@ -174,22 +178,20 @@ N_COLOR_CHANNELS = 3
 
 
 # config
-@dataclass
+@strict
 class GR00TN15Config(PretrainedConfig):
     model_type = "gr00t_n1_5"
-    backbone_cfg: dict = field(init=False, metadata={"help": "Backbone configuration."})
 
-    action_head_cfg: dict = field(init=False, metadata={"help": "Action head configuration."})
+    backbone_cfg: dict[str, Any] | None = None
+    action_head_cfg: dict[str, Any] | None = None
+    action_horizon: int = 0
+    action_dim: int = 0
+    compute_dtype: str = "float32"
 
-    action_horizon: int = field(init=False, metadata={"help": "Action horizon."})
-
-    action_dim: int = field(init=False, metadata={"help": "Action dimension."})
-    compute_dtype: str = field(default="float32", metadata={"help": "Compute dtype."})
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+    def __post_init__(self, **kwargs):
+        self.backbone_cfg = {} if self.backbone_cfg is None else self.backbone_cfg
+        self.action_head_cfg = {} if self.action_head_cfg is None else self.action_head_cfg
+        super().__post_init__(**kwargs)
 
 
 # real model

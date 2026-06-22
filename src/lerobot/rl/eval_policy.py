@@ -17,7 +17,6 @@ import logging
 
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
-from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets import LeRobotDataset
 from lerobot.policies import make_policy
 from lerobot.robots import (  # noqa: F401
@@ -31,6 +30,7 @@ from lerobot.teleoperators import (
 )
 
 from .gym_manipulator import make_robot_env
+from .train_rl import TrainRLServerPipelineConfig
 
 logging.basicConfig(level=logging.INFO)
 

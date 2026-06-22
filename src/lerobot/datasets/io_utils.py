@@ -20,6 +20,7 @@ import datasets
 import numpy as np
 import pandas
 import pandas as pd
+import pyarrow as pa
 import pyarrow.dataset as pa_ds
 import pyarrow.parquet as pq
 import torch
@@ -31,14 +32,15 @@ from torchvision import transforms
 from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.utils import SuppressProgressBars, flatten_dict, unflatten_dict
 
+from .language import LANGUAGE_COLUMNS
 from .utils import (
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_EPISODES_PATH,
-    DEFAULT_SUBTASKS_PATH,
     DEFAULT_TASKS_PATH,
     EPISODES_DIR,
     INFO_PATH,
     STATS_PATH,
+    DatasetInfo,
     serialize_dict,
 )
 
@@ -115,25 +117,21 @@ def embed_images(dataset: datasets.Dataset) -> datasets.Dataset:
     return dataset
 
 
-def write_info(info: dict, local_dir: Path) -> None:
-    write_json(info, local_dir / INFO_PATH)
+def write_info(info: DatasetInfo, local_dir: Path) -> None:
+    write_json(info.to_dict(), local_dir / INFO_PATH)
 
 
-def load_info(local_dir: Path) -> dict:
+def load_info(local_dir: Path) -> DatasetInfo:
     """Load dataset info metadata from its standard file path.
-
-    Also converts shape lists to tuples for consistency.
 
     Args:
         local_dir (Path): The root directory of the dataset.
 
     Returns:
-        dict: The dataset information dictionary.
+        DatasetInfo: The typed dataset information object.
     """
-    info = load_json(local_dir / INFO_PATH)
-    for ft in info["features"].values():
-        ft["shape"] = tuple(ft["shape"])
-    return info
+    raw = load_json(local_dir / INFO_PATH)
+    return DatasetInfo.from_dict(raw)
 
 
 def write_stats(stats: dict, local_dir: Path) -> None:
@@ -156,7 +154,7 @@ def cast_stats_to_numpy(stats: dict) -> dict[str, dict[str, np.ndarray]]:
     Returns:
         dict: The statistics dictionary with values cast to numpy arrays.
     """
-    stats = {key: np.array(value) for key, value in flatten_dict(stats).items()}
+    stats = {key: np.atleast_1d(np.array(value)) for key, value in flatten_dict(stats).items()}
     return unflatten_dict(stats)
 
 
@@ -187,14 +185,6 @@ def load_tasks(local_dir: Path) -> pandas.DataFrame:
     tasks = pd.read_parquet(local_dir / DEFAULT_TASKS_PATH)
     tasks.index.name = "task"
     return tasks
-
-
-def load_subtasks(local_dir: Path) -> pandas.DataFrame | None:
-    """Load subtasks from subtasks.parquet if it exists."""
-    subtasks_path = local_dir / DEFAULT_SUBTASKS_PATH
-    if subtasks_path.exists():
-        return pd.read_parquet(subtasks_path)
-    return None
 
 
 def write_episodes(episodes: Dataset, local_dir: Path) -> None:
@@ -268,32 +258,62 @@ def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[to
         dict: The batch with items converted to torch tensors.
     """
     for key in items_dict:
+        if key in LANGUAGE_COLUMNS:
+            continue
         first_item = items_dict[key][0]
         if isinstance(first_item, PILImage.Image):
             to_tensor = transforms.ToTensor()
             items_dict[key] = [to_tensor(img) for img in items_dict[key]]
-        elif first_item is None:
+        elif first_item is None or isinstance(first_item, dict):
             pass
         else:
             items_dict[key] = [x if isinstance(x, str) else torch.tensor(x) for x in items_dict[key]]
     return items_dict
 
 
+def write_table_one_row_group_per_episode(table: pa.Table, path: Path) -> None:
+    """Write ``table`` with one parquet row group per episode (in episode order).
+
+    Keeps shards random-access friendly (``read_row_group(i)`` fetches episode i),
+    mirroring the recording writer. ``table`` must carry a contiguous
+    ``episode_index`` column.
+    """
+    episode_index = table.column("episode_index").to_numpy(zero_copy_only=False)
+    starts = np.concatenate(([0], np.nonzero(np.diff(episode_index))[0] + 1))
+    writer = pq.ParquetWriter(str(path), table.schema, compression="snappy", use_dictionary=True)
+    try:
+        for start, stop in zip(starts, np.append(starts[1:], len(episode_index)), strict=True):
+            writer.write_table(table.slice(start, stop - start))  # one episode -> one row group
+    finally:
+        writer.close()
+
+
 def to_parquet_with_hf_images(
     df: pandas.DataFrame, path: Path, features: datasets.Features | None = None
 ) -> None:
-    """This function correctly writes to parquet a panda DataFrame that contains images encoded by HF dataset.
-    This way, it can be loaded by HF dataset and correctly formatted images are returned.
+    """Write a DataFrame with HF-encoded images to parquet, one row group per episode.
 
-    Args:
-        df: DataFrame to write to parquet.
-        path: Path to write the parquet file.
-        features: Optional HuggingFace Features schema. If provided, ensures image columns
-                  are properly typed as Image() in the parquet schema.
+    Images are embedded into the arrow table first (``ParquetWriter.write_table``
+    does not embed external image files like ``Dataset.to_parquet`` does).
+    ``features`` types image columns as ``Image()`` in the parquet schema.
     """
-    # TODO(qlhoest): replace this weird synthax by `df.to_parquet(path)` only
     ds = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=features)
-    ds.to_parquet(path)
+    ds = embed_images(ds)
+    table = ds.with_format("arrow")[:]
+    if "episode_index" in table.column_names:
+        write_table_one_row_group_per_episode(table, path)
+    else:
+        # No episode boundaries to align row groups to — keep a single write.
+        pq.write_table(table, str(path))
+
+
+def to_parquet_one_row_group_per_episode(df: pandas.DataFrame, path: Path) -> None:
+    """Write a (non-image) DataFrame to parquet with one row group per episode."""
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    if "episode_index" in table.column_names:
+        write_table_one_row_group_per_episode(table, path)
+    else:
+        pq.write_table(table, str(path))
 
 
 def item_to_torch(item: dict) -> dict:
@@ -307,8 +327,9 @@ def item_to_torch(item: dict) -> dict:
     Returns:
         dict: Dictionary with all tensor-like items converted to torch.Tensor.
     """
+    skip_keys = {"task", *LANGUAGE_COLUMNS}
     for key, val in item.items():
-        if isinstance(val, (np.ndarray | list)) and key not in ["task"]:
+        if isinstance(val, (np.ndarray | list)) and key not in skip_keys:
             # Convert numpy arrays and lists to torch tensors
             item[key] = torch.tensor(val)
     return item

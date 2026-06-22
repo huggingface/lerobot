@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import builtins
-import copy
 import logging
 import math
 from collections import deque
@@ -30,6 +29,7 @@ from lerobot.utils.import_utils import _transformers_available, require_package
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
+    from transformers.cache_utils import DynamicCache
     from transformers.models.auto import CONFIG_MAPPING
     from transformers.models.gemma import modeling_gemma
 
@@ -41,6 +41,7 @@ if TYPE_CHECKING or _transformers_available:
     )
 else:
     CONFIG_MAPPING = None
+    DynamicCache = None
     modeling_gemma = None
     PiGemmaForCausalLM = None
     _gated_residual = None
@@ -141,6 +142,15 @@ def make_att_2d_masks(pad_masks, att_masks):  # see openpi `make_att_2d_masks` (
     return att_2d_masks & pad_2d_masks
 
 
+def clone_past_key_values(past_key_values):
+    """Clone the DynamicCache returned by prefix prefill for compiled denoising."""
+    return DynamicCache(
+        tuple(
+            (keys.clone(), values.clone(), sliding_window) for keys, values, sliding_window in past_key_values
+        )
+    )
+
+
 def pad_vector(vector, new_dim):
     """Pad the last dimension of a vector to new_dim with zeros.
 
@@ -227,16 +237,13 @@ def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
 
 
 # Define the complete layer computation function for gradient checkpointing
-def compute_layer_complete(
-    layer_idx, inputs_embeds, attention_mask, position_ids, adarms_cond, paligemma, gemma_expert
-):
-    models = [paligemma.model.language_model, gemma_expert.model]
+def compute_layer_complete(inputs_embeds, attention_mask, position_ids, adarms_cond, layers, rotary_emb):
     query_states = []
     key_states = []
     value_states = []
     gates = []
     for i, hidden_states in enumerate(inputs_embeds):
-        layer = models[i].layers[layer_idx]
+        layer = layers[i]
         hidden_states, gate = layernorm_forward(layer.input_layernorm, hidden_states, adarms_cond[i])
         gates.append(gate)
         input_shape = hidden_states.shape[:-1]
@@ -258,15 +265,16 @@ def compute_layer_complete(
         device=query_states.device,
         dtype=query_states.dtype,
     )
-    cos, sin = paligemma.model.language_model.rotary_emb(dummy_tensor, position_ids)
+    cos, sin = rotary_emb(dummy_tensor, position_ids)
     query_states, key_states = modeling_gemma.apply_rotary_pos_emb(
         query_states, key_states, cos, sin, unsqueeze_dim=1
     )
     batch_size = query_states.shape[0]
-    scaling = paligemma.model.language_model.layers[layer_idx].self_attn.scaling
+    paligemma_layer = layers[0]
+    scaling = paligemma_layer.self_attn.scaling
     # Attention computation
     att_output, _ = modeling_gemma.eager_attention_forward(
-        paligemma.model.language_model.layers[layer_idx].self_attn,
+        paligemma_layer.self_attn,
         query_states,
         key_states,
         value_states,
@@ -274,13 +282,13 @@ def compute_layer_complete(
         scaling,
     )
     # Get head_dim from the current layer, not from the model
-    head_dim = paligemma.model.language_model.layers[layer_idx].self_attn.head_dim
+    head_dim = paligemma_layer.self_attn.head_dim
     att_output = att_output.reshape(batch_size, -1, 1 * 8 * head_dim)
     # Process layer outputs
     outputs_embeds = []
     start_pos = 0
     for i, hidden_states in enumerate(inputs_embeds):
-        layer = models[i].layers[layer_idx]
+        layer = layers[i]
         end_pos = start_pos + hidden_states.shape[1]
         if att_output.dtype != layer.self_attn.o_proj.weight.dtype:
             att_output = att_output.to(layer.self_attn.o_proj.weight.dtype)
@@ -444,13 +452,13 @@ class PaliGemmaWithExpertModel(
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
         image_outputs = self.paligemma.model.get_image_features(image)
-        features = image_outputs.pooler_output * self.paligemma.config.text_config.hidden_size**0.5
+        features = image_outputs.pooler_output
         if features.dtype != out_dtype:
             features = features.to(out_dtype)
         return features
 
     def embed_language_tokens(self, tokens: torch.Tensor):
-        return self.paligemma.model.language_model.embed_tokens(tokens)
+        return self.paligemma.model.language_model.get_input_embeddings()(tokens)
 
     def forward(
         self,
@@ -488,8 +496,9 @@ class PaliGemmaWithExpertModel(
             prefix_output = None
             prefix_past_key_values = None
         else:
-            models = [self.paligemma.model.language_model, self.gemma_expert.model]
-            num_layers = self.paligemma.config.text_config.num_hidden_layers
+            paligemma_layers = self.paligemma.model.language_model.layers
+            gemma_expert_layers = self.gemma_expert.model.layers
+            rotary_emb = self.paligemma.model.language_model.rotary_emb
 
             # Check if gradient checkpointing is enabled for any of the models
             use_gradient_checkpointing = (
@@ -499,36 +508,39 @@ class PaliGemmaWithExpertModel(
             ) or (hasattr(self, "gradient_checkpointing") and self.gradient_checkpointing and self.training)
 
             # Process all layers with gradient checkpointing if enabled
-            for layer_idx in range(num_layers):
+            for layers in zip(paligemma_layers, gemma_expert_layers, strict=True):
                 if use_gradient_checkpointing:
                     inputs_embeds = torch.utils.checkpoint.checkpoint(
                         compute_layer_complete,
-                        layer_idx,
                         inputs_embeds,
                         attention_mask,
                         position_ids,
                         adarms_cond,
                         use_reentrant=False,
                         preserve_rng_state=False,
-                        paligemma=self.paligemma,
-                        gemma_expert=self.gemma_expert,
+                        layers=layers,
+                        rotary_emb=rotary_emb,
                     )
                 else:
                     inputs_embeds = compute_layer_complete(
-                        layer_idx,
                         inputs_embeds,
                         attention_mask,
                         position_ids,
                         adarms_cond,
-                        paligemma=self.paligemma,
-                        gemma_expert=self.gemma_expert,
+                        layers=layers,
+                        rotary_emb=rotary_emb,
                     )
 
             # final norm
+            final_norms = (
+                self.paligemma.model.language_model.norm,
+                self.gemma_expert.model.norm,
+            )
+
             def compute_final_norms(inputs_embeds, adarms_cond):
                 outputs_embeds = []
                 for i, hidden_states in enumerate(inputs_embeds):
-                    out_emb, _ = layernorm_forward(models[i].norm, hidden_states, adarms_cond[i])
+                    out_emb, _ = layernorm_forward(final_norms[i], hidden_states, adarms_cond[i])
                     outputs_embeds.append(out_emb)
                 return outputs_embeds
 
@@ -666,8 +678,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         # Process language tokens
         def lang_embed_func(lang_tokens):
             lang_emb = self.paligemma_with_expert.embed_language_tokens(lang_tokens)
-            lang_emb_dim = lang_emb.shape[-1]
-            return lang_emb * math.sqrt(lang_emb_dim)
+            return lang_emb
 
         lang_emb = self._apply_checkpoint(lang_embed_func, lang_tokens)
         embs.append(lang_emb)
@@ -748,16 +759,8 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         return embs, pad_masks, att_masks, adarms_cond
 
-    def forward(
-        self, images, img_masks, lang_tokens, lang_masks, state, actions, noise=None, time=None
-    ) -> Tensor:
+    def forward(self, images, img_masks, lang_tokens, lang_masks, state, actions, noise, time) -> Tensor:
         """Do a full training forward pass and compute the loss."""
-        if noise is None:
-            noise = self.sample_noise(actions.shape, actions.device)
-
-        if time is None:
-            time = self.sample_time(actions.shape[0], actions.device)
-
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
@@ -916,7 +919,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
 
-        past_key_values = copy.deepcopy(past_key_values)
+        past_key_values = clone_past_key_values(past_key_values)
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks_4d,
             position_ids=position_ids,
@@ -1292,8 +1295,11 @@ class PI0Policy(PreTrainedPolicy):
         state = self.prepare_state(batch)
         actions = self.prepare_action(batch)
 
+        noise = self.model.sample_noise(actions.shape, actions.device)
+        time = self.model.sample_time(actions.shape[0], actions.device)
+
         # Compute loss
-        losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions)
+        losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
 
         # Truncate losses to actual action dimensions
         original_action_dim = self.config.output_features[ACTION].shape[0]
