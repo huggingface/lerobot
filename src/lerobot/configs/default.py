@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from lerobot.transforms import ImageTransformsConfig
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
+from .video import DEFAULT_DEPTH_UNIT
+
 
 @dataclass
 class DatasetConfig:
@@ -38,9 +40,9 @@ class DatasetConfig:
     # When True, RGB video frames are returned as uint8 tensors (0-255) instead of float32 (0.0-1.0).
     # This reduces memory and speeds up DataLoader IPC. The training pipeline handles the conversion.
     return_uint8: bool = False
-    # Physical unit depth maps are dequantized to at load time: "mm" (millimetres) or "m" (metres).
+    # Physical unit depth maps are dequantized to at load time: "mm" (millimeters) or "m" (metres).
     # Has no effect on datasets without depth cameras.
-    depth_output_unit: str = "mm"
+    depth_output_unit: str = DEFAULT_DEPTH_UNIT
     streaming: bool = False
 
     def __post_init__(self) -> None:

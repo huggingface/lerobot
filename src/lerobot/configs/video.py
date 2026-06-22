@@ -62,6 +62,7 @@ DEFAULT_DEPTH_MAX: float = 10.0
 DEFAULT_DEPTH_SHIFT: float = 3.5
 DEFAULT_DEPTH_USE_LOG: bool = True
 DEFAULT_DEPTH_PIX_FMT: str = "gray12le"
+DEFAULT_DEPTH_UNIT = "mm"
 
 # Depth-specific tuning fields persisted under ``features[*]["info"]`` as ``video.<name>``.
 DEPTH_ENCODER_INFO_FIELD_NAMES: frozenset[str] = frozenset({"depth_min", "depth_max", "shift", "use_log"})

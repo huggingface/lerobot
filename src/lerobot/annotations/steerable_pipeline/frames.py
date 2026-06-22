@@ -36,7 +36,7 @@ from typing import Any, Protocol
 import PIL.Image
 import torch
 
-from lerobot.configs.video import VideoEncoderConfig
+from lerobot.configs import VideoEncoderConfig
 from lerobot.datasets.video_utils import decode_video_frames, reencode_video
 
 from .reader import EpisodeRecord, snap_to_frame

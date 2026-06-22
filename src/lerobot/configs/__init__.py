@@ -33,6 +33,7 @@ from .types import (
     RTCAttentionSchedule,
 )
 from .video import (
+    DEFAULT_DEPTH_UNIT,
     VALID_VIDEO_CODECS,
     VIDEO_ENCODER_INFO_KEYS,
     DepthEncoderConfig,
@@ -67,6 +68,7 @@ __all__ = [
     # Factories
     "encoder_config_from_video_info",
     # Constants
+    "DEFAULT_DEPTH_UNIT",
     "VALID_VIDEO_CODECS",
     "VIDEO_ENCODER_INFO_KEYS",
 ]

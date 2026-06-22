@@ -22,7 +22,7 @@ from pathlib import Path
 import datasets
 import torch
 
-from lerobot.configs.video import DepthEncoderConfig
+from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .depth_utils import dequantize_depth
@@ -54,7 +54,7 @@ class DatasetReader:
         delta_timestamps: dict[str, list[float]] | None,
         image_transforms: Callable | None,
         return_uint8: bool = False,
-        depth_output_unit: str = "mm",
+        depth_output_unit: str = DEFAULT_DEPTH_UNIT,
     ):
         """Initialize the reader with metadata, filtering, and transform config.
 
