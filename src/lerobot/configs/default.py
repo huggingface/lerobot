@@ -43,6 +43,8 @@ class DatasetConfig:
     eval_split: float = 0.0
 
     def __post_init__(self) -> None:
+        if not (0.0 <= self.eval_split < 1.0):
+            raise ValueError(f"eval_split must be in [0.0, 1.0), got {self.eval_split}")
         if self.episodes is not None:
             if any(ep < 0 for ep in self.episodes):
                 raise ValueError(

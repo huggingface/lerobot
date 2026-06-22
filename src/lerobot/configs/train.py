@@ -213,6 +213,9 @@ class TrainPipelineConfig(HubMixin):
             self.optimizer = active_cfg.get_optimizer_preset()
             self.scheduler = active_cfg.get_scheduler_preset()
 
+        if self.eval_steps > 0 and self.dataset.eval_split == 0.0:
+            raise ValueError("eval_steps > 0 requires dataset.eval_split > 0.0 to hold out eval data.")
+
         if hasattr(active_cfg, "push_to_hub") and active_cfg.push_to_hub and not active_cfg.repo_id:
             raise ValueError("'repo_id' argument missing. Please specify it to push the model to the hub.")
 
