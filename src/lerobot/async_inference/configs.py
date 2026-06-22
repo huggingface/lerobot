@@ -142,6 +142,10 @@ class RobotClientConfig:
         default="weighted_average",
         metadata={"help": f"Name of aggregate function to use. Options: {list(AGGREGATE_FUNCTIONS.keys())}"},
     )
+    rename_map: dict[str, str] = field(
+        default_factory=dict,
+        metadata={"help": "Observation key mapping from robot keys to policy keys."},
+    )
 
     # Debug configuration
     debug_visualize_queue_size: bool = field(
@@ -200,4 +204,5 @@ class RobotClientConfig:
             "task": self.task,
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
             "aggregate_fn_name": self.aggregate_fn_name,
+            "rename_map": self.rename_map,
         }
