@@ -145,6 +145,7 @@ class NativeHTTPRangeFetcher:
         httpx.RemoteProtocolError,
         httpx.PoolTimeout,
     )
+    _RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 
     def __init__(
         self,
@@ -331,6 +332,8 @@ class NativeHTTPRangeFetcher:
                 timings[key] += value
         if status_code == 403:
             raise PermissionError(f"HTTP range request returned 403 after URL refresh: {relative_path}")
+        if status_code != 206:
+            raise RuntimeError(f"HTTP range request returned {status_code} after retries: {relative_path}")
         self._record_timing(
             range_jobs=1.0,
             range_bytes=float(len(payload)),
@@ -351,6 +354,23 @@ class NativeHTTPRangeFetcher:
             attempt_start = time.perf_counter()
             try:
                 payload, status_code, timings = self._read_range_response_once(url, headers)
+                if status_code in self._RETRYABLE_STATUS_CODES:
+                    failed_attempt_s += time.perf_counter() - attempt_start
+                    exception_attempts += 1.0
+                    status_key = f"range_failed_status_{status_code}"
+                    exception_counts[status_key] = exception_counts.get(status_key, 0.0) + 1.0
+                    if attempt >= self.max_retries:
+                        timings["range_retry_attempts"] = retry_attempts
+                        timings["range_retry_sleep_s"] = retry_sleep_s
+                        timings["range_failed_attempt_s"] = failed_attempt_s
+                        timings["range_exception_attempts"] = exception_attempts
+                        timings.update(exception_counts)
+                        return payload, status_code, timings
+                    retry_attempts += 1.0
+                    sleep_s = min(0.5 * 2**attempt, 5.0)
+                    retry_sleep_s += sleep_s
+                    time.sleep(sleep_s)
+                    continue
                 timings["range_retry_attempts"] = retry_attempts
                 timings["range_retry_sleep_s"] = retry_sleep_s
                 timings["range_failed_attempt_s"] = failed_attempt_s
@@ -387,7 +407,7 @@ class NativeHTTPRangeFetcher:
         header_start = time.perf_counter()
         with self.client.stream("GET", url, headers=headers) as response:
             header_s = time.perf_counter() - header_start
-            if response.status_code == 403:
+            if response.status_code == 403 or response.status_code in self._RETRYABLE_STATUS_CODES:
                 return (
                     b"",
                     response.status_code,

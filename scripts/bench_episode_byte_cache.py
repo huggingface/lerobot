@@ -640,6 +640,14 @@ def _print_range_timing_summary(fetch_pool: dict[str, float]) -> None:
     if exception_counts:
         summary = ", ".join(f"{name}={count:.0f}" for name, count in sorted(exception_counts.items()))
         print(f"| http exception counts | {summary} |")
+    failed_status_counts = {
+        key.removeprefix("range_failed_status_"): value
+        for key, value in fetch_pool.items()
+        if key.startswith("range_failed_status_")
+    }
+    if failed_status_counts:
+        summary = ", ".join(f"{status}={count:.0f}" for status, count in sorted(failed_status_counts.items()))
+        print(f"| http failed status counts | {summary} |")
     status_counts = {
         key.removeprefix("range_status_"): value
         for key, value in fetch_pool.items()
