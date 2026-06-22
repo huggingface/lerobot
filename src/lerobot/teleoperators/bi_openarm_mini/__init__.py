@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_openarm_mini import OpenArmMiniConfig, OpenArmMiniConfigBase
-from .openarm_mini import OpenArmMini
+from .bi_openarm_mini import BiOpenArmMini
+from .config_bi_openarm_mini import BiOpenArmMiniConfig
 
-__all__ = ["OpenArmMini", "OpenArmMiniConfig", "OpenArmMiniConfigBase"]
+__all__ = ["BiOpenArmMini", "BiOpenArmMiniConfig"]

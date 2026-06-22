@@ -18,7 +18,8 @@ import logging
 from functools import cached_property
 
 from lerobot.types import RobotAction
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.bimanual import BimanualMixin
+from lerobot.utils.decorators import check_if_not_connected
 
 from ..openarm_leader import OpenArmLeader, OpenArmLeaderConfig
 from ..teleoperator import Teleoperator
@@ -27,7 +28,7 @@ from .config_bi_openarm_leader import BiOpenArmLeaderConfig
 logger = logging.getLogger(__name__)
 
 
-class BiOpenArmLeader(Teleoperator):
+class BiOpenArmLeader(BimanualMixin, Teleoperator):
     """
     Bimanual OpenArm Leader Arms
     """
@@ -86,27 +87,6 @@ class BiOpenArmLeader(Teleoperator):
     def feedback_features(self) -> dict[str, type]:
         return {}
 
-    @property
-    def is_connected(self) -> bool:
-        return self.left_arm.is_connected and self.right_arm.is_connected
-
-    @check_if_already_connected
-    def connect(self, calibrate: bool = True) -> None:
-        self.left_arm.connect(calibrate)
-        self.right_arm.connect(calibrate)
-
-    @property
-    def is_calibrated(self) -> bool:
-        return self.left_arm.is_calibrated and self.right_arm.is_calibrated
-
-    def calibrate(self) -> None:
-        self.left_arm.calibrate()
-        self.right_arm.calibrate()
-
-    def configure(self) -> None:
-        self.left_arm.configure()
-        self.right_arm.configure()
-
     def setup_motors(self) -> None:
         raise NotImplementedError(
             "Motor ID configuration is typically done via manufacturer tools for CAN motors."
@@ -129,8 +109,3 @@ class BiOpenArmLeader(Teleoperator):
     def send_feedback(self, feedback: dict[str, float]) -> None:
         # TODO: Implement force feedback
         raise NotImplementedError
-
-    @check_if_not_connected
-    def disconnect(self) -> None:
-        self.left_arm.disconnect()
-        self.right_arm.disconnect()
