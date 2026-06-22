@@ -630,12 +630,17 @@ def _print_range_timing_summary(fetch_pool: dict[str, float]) -> None:
         print(f"| http retries | {fetch_pool['range_retry_attempts'] / range_jobs:.3f} |")
     if "range_exception_attempts" in fetch_pool:
         print(f"| http exceptions | {fetch_pool['range_exception_attempts'] / range_jobs:.3f} |")
+        if fetch_pool["range_exception_attempts"] > 0:
+            print(
+                f"| http failed attempt avg s | "
+                f"{fetch_pool.get('range_failed_attempt_s', 0.0) / fetch_pool['range_exception_attempts']:.1f} |"
+            )
     if fetch_pool.get("range_failed_requests"):
         print(f"| http failed requests | {fetch_pool['range_failed_requests']:.0f} |")
     exception_counts = {
         key.removeprefix("range_exception_"): value
         for key, value in fetch_pool.items()
-        if key.startswith("range_exception_")
+        if key.startswith("range_exception_") and key != "range_exception_attempts"
     }
     if exception_counts:
         summary = ", ".join(f"{name}={count:.0f}" for name, count in sorted(exception_counts.items()))
