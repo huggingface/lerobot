@@ -39,6 +39,7 @@ import draccus
 import grpc
 import torch
 
+from lerobot.configs import PreTrainedConfig
 from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.transport import (
@@ -125,7 +126,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
                     "No pretrained model name found in adapter config. Can't instantiate the base policy."
                 )
 
-            policy = policy_class.from_pretrained(peft_config.base_model_name_or_path)
+            policy_config = PreTrainedConfig.from_pretrained(pretrained_name_or_path)
+            policy = policy_class.from_pretrained(peft_config.base_model_name_or_path, config=policy_config)
             return PeftModel.from_pretrained(policy, pretrained_name_or_path, config=peft_config)
 
         return policy_class.from_pretrained(pretrained_name_or_path)
