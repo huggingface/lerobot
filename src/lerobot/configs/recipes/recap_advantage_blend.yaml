@@ -1,0 +1,41 @@
+# RECAP full recipe with advantage conditioning and subtask blending.
+#
+# Blend of two training modes:
+# 1. advantage_conditioned (70%): Task + advantage indicator → action
+# 2. unconditional (30%): Task only → action (no advantage, trains CFG baseline)
+#
+# This achieves the same effect as per-frame dropout in the annotation module
+# but at the recipe level, giving explicit control over the conditioning ratio.
+# Use this instead of annotation-level dropout if you want a fixed split.
+#
+# Paper: pi*0.6, Appendix E (classifier-free guidance requires both branches).
+
+blend:
+  advantage_conditioned:
+    weight: 0.7
+    messages:
+      - role: user
+        content: "${task}\nAdvantage: ${advantage}"
+        stream: high_level
+        if_present: advantage
+
+      - role: user
+        content: "${task}"
+        stream: high_level
+
+      - role: assistant
+        content: "${subtask}"
+        stream: low_level
+        target: true
+
+  unconditional:
+    weight: 0.3
+    messages:
+      - role: user
+        content: "${task}"
+        stream: high_level
+
+      - role: assistant
+        content: "${subtask}"
+        stream: low_level
+        target: true
