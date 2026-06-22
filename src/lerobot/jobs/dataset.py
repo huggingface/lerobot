@@ -1,0 +1,56 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Make a training dataset reachable from an HF Job pod.
+
+The pod can't see the host's ~/.cache/huggingface/lerobot, so the dataset has to
+live on the Hub: the pod downloads it by repo_id at train time (the forwarded
+HF_TOKEN covers private datasets). A dataset already on the Hub is used as-is; a
+local-only dataset is pushed to a PRIVATE repo first (never public).
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from huggingface_hub.errors import RepositoryNotFoundError
+
+
+def ensure_dataset_available(repo_id: str, *, api, tags: list[str] | None = None) -> None:
+    """Ensure repo_id resolves on the Hub, pushing a local-only dataset privately first.
+
+    `tags` are attached to the dataset only when we push it (an already-on-Hub
+    dataset is left untouched). Raises RuntimeError if the dataset is neither on
+    the Hub nor in the local cache.
+    """
+    try:
+        api.dataset_info(repo_id)
+        return
+    except RepositoryNotFoundError:
+        pass
+
+    cache_root = Path(os.environ.get("HF_LEROBOT_HOME", "~/.cache/huggingface/lerobot")).expanduser()
+    local_present = (cache_root / repo_id / "meta" / "info.json").is_file()
+    if not local_present:
+        raise RuntimeError(
+            f"Dataset '{repo_id}' is neither on the Hub nor in the local cache "
+            f"({cache_root}). Record or download it first."
+        )
+
+    print(f"[dataset] '{repo_id}' is local-only; pushing to a PRIVATE Hub repo...")
+    # Lazy import: LeRobotDataset pulls in heavy dataset deps; defer until actually needed.
+    from lerobot.datasets import LeRobotDataset
+
+    LeRobotDataset(repo_id).push_to_hub(private=True, tags=tags)
+    print(f"[dataset] '{repo_id}' uploaded (private). The job will download it by repo_id.")

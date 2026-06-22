@@ -41,6 +41,7 @@ from lerobot.common.train_utils import (
     load_training_batch_size,
     load_training_num_processes,
     load_training_state,
+    push_checkpoint_to_hub,
     save_checkpoint,
     update_last_checkpoint,
 )
@@ -188,6 +189,11 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         cfg: A `TrainPipelineConfig` object containing all training configurations.
         accelerator: Optional Accelerator instance. If None, one will be created automatically.
     """
+    if cfg.job.is_remote:
+        from lerobot.jobs import submit_to_hf
+
+        return submit_to_hf(cfg)
+
     from lerobot.utils.import_utils import require_package
 
     require_package("accelerate", extra="training")
@@ -655,6 +661,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     optim_state_dict=optim_state_dict,
                 )
                 update_last_checkpoint(checkpoint_dir)
+                if cfg.save_checkpoint_to_hub:
+                    push_checkpoint_to_hub(
+                        checkpoint_dir,
+                        cfg.policy.repo_id,
+                        private=cfg.policy.private,
+                    )
                 if wandb_logger:
                     wandb_logger.log_policy(checkpoint_dir)
 
@@ -735,8 +747,29 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     accelerator.end_training()
 
 
+def _remote_target_in_argv() -> bool:
+    """True when the CLI requests a remote HF Jobs run (--job.target=<non-local>)."""
+    import sys
+
+    from lerobot.configs.default import JobConfig
+
+    target = None
+    args = sys.argv[1:]
+    for i, tok in enumerate(args):
+        if tok == "--job.target" and i + 1 < len(args):
+            target = args[i + 1]
+        elif tok.startswith("--job.target="):
+            target = tok.split("=", 1)[1]
+    return JobConfig.is_remote_target(target)
+
+
 def main():
     register_third_party_plugins()
+    if _remote_target_in_argv():
+        # The policy device is resolved on the remote pod, not here, so silence the
+        # client-side "Device '...' is not available" warning PreTrainedConfig emits
+        # while parsing the config (it fires before train() can dispatch remotely).
+        logging.getLogger("lerobot.configs.policies").setLevel(logging.ERROR)
     train()
 
 
