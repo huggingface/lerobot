@@ -111,9 +111,10 @@ def make_pi05_pre_post_processors(
     1. Renaming features to match pretrained configurations.
     2. Normalizing input and output features based on dataset statistics.
     3. Adding a batch dimension.
-    4. Appending a newline character to the task description for tokenizer compatibility.
-    5. Tokenizing the text prompt using the PaliGemma tokenizer.
-    6. Moving all data to the specified device.
+    4. (Optional) Rendering language annotations via recipe YAML.
+    5. (Optional) Flattening rendered messages into the task string.
+    6. Tokenizing the text prompt using the PaliGemma tokenizer.
+    7. Moving all data to the specified device.
 
     The post-processing pipeline handles the model's output by:
     1. Moving data to the CPU.
@@ -122,8 +123,6 @@ def make_pi05_pre_post_processors(
     Args:
         config: The configuration object for the PI0 policy.
         dataset_stats: A dictionary of statistics for normalization.
-        preprocessor_kwargs: Additional arguments for the pre-processor pipeline.
-        postprocessor_kwargs: Additional arguments for the post-processor pipeline.
 
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.
@@ -147,15 +146,30 @@ def make_pi05_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        Pi05PrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
-        TokenizerProcessorStep(
-            tokenizer_name="google/paligemma-3b-pt-224",
-            max_length=config.tokenizer_max_length,
-            padding_side="right",
-            padding="max_length",
-        ),
-        DeviceProcessorStep(device=config.device),
     ]
+
+    # Insert language rendering steps when a recipe is configured (e.g. RECAP advantage)
+    if config.recipe_path is not None:
+        from lerobot.configs.recipe import load_recipe
+        from lerobot.processor.render_messages_processor import RenderMessagesStep
+        from lerobot.processor.rendered_messages_to_task import RenderedMessagesToTaskStep
+
+        recipe = load_recipe(config.recipe_path)
+        input_steps.append(RenderMessagesStep(recipe=recipe))
+        input_steps.append(RenderedMessagesToTaskStep())
+
+    input_steps.extend(
+        [
+            Pi05PrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
+            TokenizerProcessorStep(
+                tokenizer_name="google/paligemma-3b-pt-224",
+                max_length=config.tokenizer_max_length,
+                padding_side="right",
+                padding="max_length",
+            ),
+            DeviceProcessorStep(device=config.device),
+        ]
+    )
 
     output_steps: list[ProcessorStep] = [
         UnnormalizerProcessorStep(
