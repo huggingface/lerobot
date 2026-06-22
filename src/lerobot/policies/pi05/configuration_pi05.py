@@ -92,6 +92,12 @@ class PI05Config(PreTrainedConfig):
     # the recipe YAML before prompt construction.
     recipe_path: str | None = None
 
+    # Classifier-Free Guidance (CFG) scale for inference (Eq. 13 in RECAP paper).
+    # 1.0 = no guidance (default). >1.0 enables dual-path denoising where:
+    #   v = v_uncond + cfg_beta * (v_cond - v_uncond)
+    # VLM runs twice (cond + uncond prompts), action expert runs 2x per step.
+    cfg_beta: float = 1.0
+
     # Optimizer settings: see openpi `AdamW`
     optimizer_lr: float = 2.5e-5  # see openpi `CosineDecaySchedule: peak_lr`
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
