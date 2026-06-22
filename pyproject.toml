@@ -478,6 +478,19 @@ ignore_errors = true
 module = "lerobot.envs.*"
 ignore_errors = false
 
+[[tool.mypy.overrides]]
+module = "lerobot.annotations.*"
+ignore_errors = false
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "lerobot.transforms.*"
+ignore_errors = false
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.utils.*"
