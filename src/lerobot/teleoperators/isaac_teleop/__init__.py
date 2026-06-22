@@ -17,20 +17,28 @@
 """NVIDIA Isaac Teleop teleoperators for LeRobot.
 
 Isaac Teleop is a multi-modal teleoperation framework. Each input device is a
-:class:`IsaacTeleopTeleoperator` subclass: :class:`SO101LeaderArm` (a
-back-drivable SO-101 leader arm on the generic joint-space device path) ships
-today; XR/VR controllers, Manus gloves, hand tracking, and full-body tracking
-are the natural next devices (add a ``teleop_<device>.py`` + device config).
+:class:`IsaacTeleopTeleoperator` subclass: :class:`XRController` (XR/VR
+controller) and :class:`SO101LeaderArm` (a back-drivable SO-101 leader arm on
+the generic joint-space device path) ship today; Manus gloves, hand tracking,
+and full-body tracking are the natural next devices (add a ``teleop_<device>.py``
++ device config).
 """
 
 from .base import IsaacTeleopTeleoperator
-from .config_isaac_teleop import IsaacTeleopConfig, SO101LeaderArmConfig
+from .config_isaac_teleop import IsaacTeleopConfig, SO101LeaderArmConfig, XRControllerConfig
 from .teleop_so101_leader_arm import SO101LeaderArm, leader_joints_to_robot_action
+from .teleop_xr_controller import XRController
+from .wrist_roll_processor import OverwriteWristRollFromAngle
+from .xr_controller_processor import MapXRControllerActionToRobotAction
 
 __all__ = [
     "IsaacTeleopConfig",
     "IsaacTeleopTeleoperator",
+    "MapXRControllerActionToRobotAction",
+    "OverwriteWristRollFromAngle",
     "SO101LeaderArm",
     "SO101LeaderArmConfig",
+    "XRController",
+    "XRControllerConfig",
     "leader_joints_to_robot_action",
 ]
