@@ -106,6 +106,8 @@ class DAggerKeyboardConfig:
     pause_resume: str = "space"
     correction: str = "tab"
     upload: str = "enter"
+    success: str = "s"
+    failure: str = "f"
 
 
 @dataclass
@@ -119,6 +121,8 @@ class DAggerPedalConfig:
     pause_resume: str = "KEY_A"
     correction: str = "KEY_B"
     upload: str = "KEY_C"
+    success: str = "KEY_D"
+    failure: str = "KEY_E"
 
 
 @RolloutStrategyConfig.register_subclass("episodic")
@@ -164,6 +168,10 @@ class DAggerStrategyConfig(RolloutStrategyConfig):
     1. **pause_resume** — toggle policy execution on/off.
     2. **correction** — toggle human correction recording.
     3. **upload** — push dataset to hub on demand (corrections-only mode).
+
+    Episode success labeling:
+    4. **success** — mark current episode as successful.
+    5. **failure** — mark current episode as failed.
 
     When ``record_autonomous=False`` (default) only human-correction windows
     are recorded — each correction becomes its own episode.  Set to ``True``
