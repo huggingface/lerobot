@@ -11,16 +11,19 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import threading
 import time
 from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
 from types import MethodType
 from typing import Any
 from urllib.parse import quote, urljoin, urlparse
+from uuid import uuid4
 
 import fsspec
 import httpx
@@ -30,6 +33,8 @@ from huggingface_hub.utils import get_session, hf_raise_for_status
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.mp4 import Mp4Index, Mp4SampleSlice, fetch_mp4_index, synthesize_mp4
+
+_HTTP_FAILURE_LOG_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -50,6 +55,78 @@ class VideoFileRecord:
     file_path: str
     file_size: int
     mp4: Mp4Index
+
+
+def _get_header(headers: Any, name: str) -> str | None:
+    if hasattr(headers, "get"):
+        return headers.get(name)
+    lower_name = name.lower()
+    for key, value in headers.items():
+        if key.lower() == lower_name:
+            return value
+    return None
+
+
+def _ensure_request_id(headers: dict[str, str]) -> str:
+    request_id = _get_header(headers, "X-Amzn-Trace-Id") or _get_header(headers, "X-Request-Id")
+    if request_id is None:
+        request_id = str(uuid4())
+        headers["X-Amzn-Trace-Id"] = request_id
+    return request_id
+
+
+def _log_http_failure(
+    *,
+    backend: str,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    elapsed_s: float,
+    status_code: int | None = None,
+    exception: Exception | None = None,
+    attempt: int | None = None,
+    response_headers: Any | None = None,
+) -> None:
+    log_path = os.environ.get("LEROBOT_HTTP_FAILURE_LOG")
+    if not log_path:
+        return
+    parsed = urlparse(url)
+    record = {
+        "ts": datetime.now(UTC).isoformat(),
+        "backend": backend,
+        "method": method,
+        "host": parsed.netloc,
+        "path": parsed.path,
+        "range": _get_header(headers, "Range") or _get_header(headers, "range"),
+        "request_id": _get_header(headers, "X-Amzn-Trace-Id") or _get_header(headers, "X-Request-Id"),
+        "elapsed_s": round(elapsed_s, 6),
+    }
+    if attempt is not None:
+        record["attempt"] = attempt
+    if status_code is not None:
+        record["status_code"] = status_code
+    if exception is not None:
+        record["exception_type"] = type(exception).__name__
+        record["exception"] = str(exception)
+    if response_headers is not None:
+        record["response_request_id"] = (
+            _get_header(response_headers, "x-request-id")
+            or _get_header(response_headers, "x-amz-cf-id")
+            or _get_header(response_headers, "x-amz-request-id")
+        )
+        record["cache_status"] = (
+            _get_header(response_headers, "x-cache")
+            or _get_header(response_headers, "cf-cache-status")
+            or _get_header(response_headers, "x-hf-cache")
+        )
+        record["content_range"] = _get_header(response_headers, "content-range")
+        record["content_length"] = _get_header(response_headers, "content-length")
+
+    path = Path(log_path).expanduser()
+    with _HTTP_FAILURE_LOG_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a") as out:
+            out.write(json.dumps(record, sort_keys=True) + "\n")
 
 
 class ThreadLocalRangeFetcher:
@@ -146,6 +223,7 @@ class ThreadLocalRangeFetcher:
                 "headers": headers,
                 "timeout": constants.HF_HUB_DOWNLOAD_TIMEOUT,
             }
+            _ensure_request_id(headers)
             if follow_redirects is not None:
                 request_kwargs["follow_redirects"] = follow_redirects
 
@@ -154,10 +232,20 @@ class ThreadLocalRangeFetcher:
                 try:
                     response = get_session().request(method, url, **request_kwargs)
                 except _RANGE_RETRY_EXCEPTIONS as exc:
-                    failed_attempt_s += time.perf_counter() - attempt_start
+                    attempt_s = time.perf_counter() - attempt_start
+                    failed_attempt_s += attempt_s
                     exception_attempts += 1.0
                     key = f"range_hffs_{method_key}_exception_{type(exc).__name__}"
                     extra_counts[key] = extra_counts.get(key, 0.0) + 1.0
+                    _log_http_failure(
+                        backend="hffs",
+                        method=method,
+                        url=url,
+                        headers=headers,
+                        elapsed_s=attempt_s,
+                        exception=exc,
+                        attempt=attempt,
+                    )
                     if attempt == max_retries:
                         self._record_hffs_request_timing(
                             method_key,
@@ -191,6 +279,17 @@ class ThreadLocalRangeFetcher:
                     key = f"range_hffs_{method_key}_failed_status_{response.status_code}"
                     extra_counts[key] = extra_counts.get(key, 0.0) + 1.0
                     response.close()
+
+                    _log_http_failure(
+                        backend="hffs",
+                        method=method,
+                        url=url,
+                        headers=headers,
+                        elapsed_s=elapsed,
+                        status_code=response.status_code,
+                        attempt=attempt,
+                        response_headers=response.headers,
+                    )
 
                 time.sleep(sleep_time)
                 retry_attempts += 1.0
@@ -463,15 +562,26 @@ class NativeHTTPRangeFetcher:
         failed_attempt_s = 0.0
         exception_attempts = 0.0
         exception_counts: dict[str, float] = {}
+        _ensure_request_id(headers)
         for attempt in range(self.max_retries + 1):
             attempt_start = time.perf_counter()
             try:
                 payload, status_code, timings = self._read_range_response_once(url, headers)
                 if status_code in self._RETRYABLE_STATUS_CODES:
-                    failed_attempt_s += time.perf_counter() - attempt_start
+                    attempt_s = time.perf_counter() - attempt_start
+                    failed_attempt_s += attempt_s
                     exception_attempts += 1.0
                     status_key = f"range_failed_status_{status_code}"
                     exception_counts[status_key] = exception_counts.get(status_key, 0.0) + 1.0
+                    _log_http_failure(
+                        backend="native-http",
+                        method="GET",
+                        url=url,
+                        headers=headers,
+                        elapsed_s=attempt_s,
+                        status_code=status_code,
+                        attempt=attempt,
+                    )
                     if attempt >= self.max_retries:
                         timings["range_retry_attempts"] = retry_attempts
                         timings["range_retry_sleep_s"] = retry_sleep_s
@@ -492,10 +602,20 @@ class NativeHTTPRangeFetcher:
                 return payload, status_code, timings
             except self._RETRYABLE_EXCEPTIONS as exc:
                 last_exc = exc
-                failed_attempt_s += time.perf_counter() - attempt_start
+                attempt_s = time.perf_counter() - attempt_start
+                failed_attempt_s += attempt_s
                 exception_attempts += 1.0
                 exception_key = f"range_exception_{type(exc).__name__}"
                 exception_counts[exception_key] = exception_counts.get(exception_key, 0.0) + 1.0
+                _log_http_failure(
+                    backend="native-http",
+                    method="GET",
+                    url=url,
+                    headers=headers,
+                    elapsed_s=attempt_s,
+                    exception=exc,
+                    attempt=attempt,
+                )
                 if attempt >= self.max_retries:
                     break
                 retry_attempts += 1.0

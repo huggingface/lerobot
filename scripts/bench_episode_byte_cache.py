@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import resource
 import tempfile
@@ -91,6 +92,11 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=10.0,
         help="Print episode-pool fill progress every N seconds. Set 0 to disable.",
+    )
+    parser.add_argument(
+        "--http-failure-log",
+        default=None,
+        help="Optional JSONL file for failed/retried HTTP range attempts.",
     )
     parser.add_argument(
         "--include-decode",
@@ -889,6 +895,9 @@ def main() -> None:
         args.strategy = "both"
     if args.strategy == "native-http":
         args.range_backend = "native-http"
+    if args.http_failure_log:
+        os.environ["LEROBOT_HTTP_FAILURE_LOG"] = args.http_failure_log
+        print(f"http_failure_log: {args.http_failure_log}")
     data_root = args.data_root
     if data_root.startswith("hf://") and not args.no_hub_branch_assert:
         assert_hf_hub_range_cache_branch()
