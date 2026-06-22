@@ -34,8 +34,10 @@ from torch.optim import Optimizer
 from tqdm import tqdm
 
 from lerobot.common.train_utils import (
+    gather_fsdp_state_dicts,
     get_step_checkpoint_dir,
     get_step_identifier,
+    load_fsdp_optimizer_state,
     load_training_batch_size,
     load_training_num_processes,
     load_training_state,
@@ -189,6 +191,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     require_package("accelerate", extra="training")
     from accelerate import Accelerator
+    from accelerate.utils import DistributedDataParallelKwargs, DistributedType
 
     cfg.validate()
 
@@ -197,8 +200,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting the lr_scheduler steps based on the num_processes
     # We set find_unused_parameters=True to handle models with conditional computation
     if accelerator is None:
-        from accelerate.utils import DistributedDataParallelKwargs
-
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
         # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
         # Force the device to be CPU when the active config's device is set to CPU (works for both policy and reward model training).
@@ -371,7 +372,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     step = 0  # number of policy updates (forward + backward + optim)
 
     if cfg.resume:
-        step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
+        # Under FSDP the optimizer state is sharded and must be loaded after `accelerator.prepare()`
+        # (see load_fsdp_optimizer_state below), so skip the optimizer here and load it then.
+        is_fsdp = accelerator.distributed_type == DistributedType.FSDP
+        step, optimizer, lr_scheduler = load_training_state(
+            cfg.checkpoint_path, optimizer, lr_scheduler, load_optimizer=not is_fsdp
+        )
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
@@ -461,6 +467,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
         policy, optimizer, dataloader, lr_scheduler
     )
+
+    # FSDP optimizer state is sharded across ranks, so it can only be loaded once the optimizer and
+    # model are FSDP-wrapped (i.e. after `prepare`). Collective: every rank must participate.
+    if cfg.resume and accelerator.distributed_type == DistributedType.FSDP:
+        load_fsdp_optimizer_state(policy, optimizer, cfg.checkpoint_path)
+
     dl_iter = cycle(dataloader)
 
     policy.train()
@@ -559,6 +571,14 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step:
+            # Under FSDP, gathering the full model + optimizer state dicts is a cross-rank collective,
+            # so all ranks must participate; rank 0 then writes the materialized dicts. For DDP /
+            # single-GPU the state dicts are saved the normal way inside save_checkpoint.
+            is_fsdp = accelerator.distributed_type == DistributedType.FSDP
+            if is_fsdp:
+                model_state_dict, optim_state_dict = gather_fsdp_state_dicts(policy, optimizer)
+            else:
+                model_state_dict, optim_state_dict = None, None
             if is_main_process:
                 logging.info(f"Checkpoint policy after step {step}")
                 checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
@@ -573,6 +593,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     postprocessor=postprocessor,
                     num_processes=accelerator.num_processes,
                     batch_size=cfg.batch_size,
+                    model_state_dict=model_state_dict,
+                    optim_state_dict=optim_state_dict,
                 )
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
@@ -635,6 +657,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if eval_env:
         close_envs(eval_env)
 
+    is_fsdp = accelerator.distributed_type == DistributedType.FSDP
+    model_state_dict = accelerator.get_state_dict(policy) if is_fsdp else None
     if is_main_process:
         logging.info("End of training")
 
@@ -644,7 +668,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             if not cfg.is_reward_model_training and cfg.policy.use_peft:
                 unwrapped_model.push_model_to_hub(cfg, peft_model=unwrapped_model)
             else:
-                unwrapped_model.push_model_to_hub(cfg)
+                unwrapped_model.push_model_to_hub(cfg, state_dict=model_state_dict)
             preprocessor.push_to_hub(active_cfg.repo_id)
             postprocessor.push_to_hub(active_cfg.repo_id)
 
