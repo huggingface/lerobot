@@ -77,7 +77,7 @@ def test_config_validates_features_model_ids_and_saved_auto_route(tmp_path):
         FastWAMConfig(tokenizer_model_id="somebody/other-tokenizer")
 
 
-def test_preprocessor_normalizes_images_and_postprocessor_toggles_actions(tmp_path):
+def test_preprocessor_passes_images_through_and_postprocessor_toggles_actions(tmp_path):
     cfg = FastWAMConfig(
         action_dim=3,
         proprio_dim=2,
@@ -127,8 +127,9 @@ def test_preprocessor_normalizes_images_and_postprocessor_toggles_actions(tmp_pa
     postprocessor.save_pretrained(tmp_path, config_filename="policy_postprocessor.json")
     _, loaded_postprocessor = make_pre_post_processors(cfg, pretrained_path=str(tmp_path))
 
+    # VISUAL normalization is IDENTITY
     expected_image = torch.tensor(
-        [[[[-1.0, 0.0], [1.0, 0.0]], [[-1.0, 0.0], [1.0, 0.0]], [[-1.0, 0.0], [1.0, 0.0]]]]
+        [[[[0.0, 0.5], [1.0, 0.5]], [[0.0, 0.5], [1.0, 0.5]], [[0.0, 0.5], [1.0, 0.5]]]]
     )
     assert preprocessor.name == "policy_preprocessor"
     assert postprocessor.name == "policy_postprocessor"
