@@ -54,10 +54,10 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     bi_so_follower,
     koch_follower,
+    lekiwi,
     make_robot_from_config,
     omx_follower,
     so_follower,
-    lekiwi,
 )
 from lerobot.transport import (
     services_pb2,  # type: ignore
