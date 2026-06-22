@@ -121,6 +121,8 @@ class DAggerPedalConfig:
     pause_resume: str = "KEY_A"
     correction: str = "KEY_B"
     upload: str = "KEY_C"
+    success: str = "KEY_D"
+    failure: str = "KEY_E"
 
 
 @RolloutStrategyConfig.register_subclass("episodic")

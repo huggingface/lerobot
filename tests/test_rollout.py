@@ -338,6 +338,103 @@ def test_dagger_events_reset():
     assert not events.upload_requested.is_set()
 
 
+def test_dagger_mark_success():
+    """mark_success sets the episode label to True."""
+    from lerobot.rollout.strategies import DAggerEvents
+
+    events = DAggerEvents()
+    assert events.consume_episode_success() is None
+
+    events.mark_success()
+    assert events.consume_episode_success() is True
+    # Consuming clears the label
+    assert events.consume_episode_success() is None
+
+
+def test_dagger_mark_failure():
+    """mark_failure sets the episode label to False."""
+    from lerobot.rollout.strategies import DAggerEvents
+
+    events = DAggerEvents()
+    events.mark_failure()
+    assert events.consume_episode_success() is False
+
+
+def test_dagger_success_overrides_failure():
+    """Last label wins — success after failure overrides."""
+    from lerobot.rollout.strategies import DAggerEvents
+
+    events = DAggerEvents()
+    events.mark_failure()
+    events.mark_success()
+    assert events.consume_episode_success() is True
+
+
+def test_dagger_reset_clears_success_label():
+    """reset() clears any pending episode success label."""
+    from lerobot.rollout.strategies import DAggerEvents
+
+    events = DAggerEvents()
+    events.mark_success()
+    events.reset()
+    assert events.consume_episode_success() is None
+
+
+def test_stamp_episode_success_labels_terminal_frame():
+    """_stamp_episode_success sets last frame's next.success to True."""
+    import numpy as np
+
+    from lerobot.rollout.strategies.dagger import DAggerStrategy
+
+    strategy = DAggerStrategy.__new__(DAggerStrategy)
+    strategy.config = MagicMock()
+
+    from lerobot.rollout.strategies import DAggerEvents
+
+    strategy._events = DAggerEvents()
+    strategy._events.mark_success()
+
+    dataset = MagicMock()
+    dataset.writer.episode_buffer = {
+        "next.success": [
+            np.array([False], dtype=bool),
+            np.array([False], dtype=bool),
+            np.array([False], dtype=bool),
+        ],
+    }
+
+    strategy._stamp_episode_success(dataset)
+
+    assert dataset.writer.episode_buffer["next.success"][-1].item() is True
+    assert dataset.writer.episode_buffer["next.success"][0].item() is False
+
+
+def test_stamp_episode_success_no_label_stays_false():
+    """Without a label, all frames remain False."""
+    import numpy as np
+
+    from lerobot.rollout.strategies.dagger import DAggerStrategy
+
+    strategy = DAggerStrategy.__new__(DAggerStrategy)
+    strategy.config = MagicMock()
+
+    from lerobot.rollout.strategies import DAggerEvents
+
+    strategy._events = DAggerEvents()
+
+    dataset = MagicMock()
+    dataset.writer.episode_buffer = {
+        "next.success": [
+            np.array([False], dtype=bool),
+            np.array([False], dtype=bool),
+        ],
+    }
+
+    strategy._stamp_episode_success(dataset)
+
+    assert all(v.item() is False for v in dataset.writer.episode_buffer["next.success"])
+
+
 # ---------------------------------------------------------------------------
 # Context dataclass
 # ---------------------------------------------------------------------------

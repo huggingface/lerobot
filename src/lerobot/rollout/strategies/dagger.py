@@ -118,6 +118,9 @@ class DAggerEvents:
         # Episode success labeling
         self._episode_success: bool | None = None
 
+        # Episode success labeling
+        self._episode_success: bool | None = None
+
     # -- Thread-safe phase access ------------------------------------------
 
     @property
@@ -163,6 +166,23 @@ class DAggerEvents:
             self._episode_success = None
         self.upload_requested.clear()
         self.save_episode_requested.clear()
+
+    def mark_success(self) -> None:
+        """Mark the current episode as successful (called from input threads)."""
+        with self._lock:
+            self._episode_success = True
+
+    def mark_failure(self) -> None:
+        """Mark the current episode as failed (called from input threads)."""
+        with self._lock:
+            self._episode_success = False
+
+    def consume_episode_success(self) -> bool | None:
+        """Consume and reset the episode success label. Returns None if unlabeled."""
+        with self._lock:
+            result = self._episode_success
+            self._episode_success = None
+            return result
 
     def mark_success(self) -> None:
         """Mark the current episode as successful (called from input threads)."""
@@ -243,6 +263,12 @@ def _init_dagger_pedal(events: DAggerEvents, cfg: DAggerPedalConfig):
             events.request_transition(code_to_event[code])
         if code == cfg.upload:
             events.upload_requested.set()
+        if code == cfg.success:
+            events.mark_success()
+            logger.info("Episode marked as SUCCESS (pedal)")
+        if code == cfg.failure:
+            events.mark_failure()
+            logger.info("Episode marked as FAILURE (pedal)")
 
     logger.info("Initializing DAgger foot pedal listener (device=%s)", cfg.device_path)
     return start_pedal_listener(on_press, device_path=cfg.device_path)
@@ -365,7 +391,6 @@ class DAggerStrategy(RolloutStrategy):
             return
 
         label = self._events.consume_episode_success()
-        logger.info("_stamp_episode_success: label=%s, buffer_len=%d", label, len(success_buf))
 
         if label:
             success_buf[-1] = np.array([True], dtype=bool)
