@@ -15,10 +15,17 @@
 import sys
 
 import draccus
+import pytest
 
-from lerobot.configs.train import TrainPipelineConfig
-from lerobot.policies.act.configuration_act import ACTConfig  # noqa: F401  (registers --policy.type act)
-from lerobot.scripts.lerobot_train import _remote_target_in_argv, train
+# Importing lerobot_train eagerly pulls in lerobot.datasets, which needs the
+# `dataset` extra. The base CI tier runs without it, so skip the whole module there.
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+from lerobot.configs.train import TrainPipelineConfig  # noqa: E402
+from lerobot.policies.act.configuration_act import (
+    ACTConfig,  # noqa: E402, F401  (registers --policy.type act)
+)
+from lerobot.scripts.lerobot_train import _remote_target_in_argv, train  # noqa: E402
 
 
 def _set_argv(monkeypatch, *args):
