@@ -15,7 +15,7 @@
 # limitations under the License.
 
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
@@ -24,6 +24,7 @@ from lerobot.common.train_utils import (
     load_training_num_processes,
     load_training_state,
     load_training_step,
+    push_checkpoint_to_hub,
     save_checkpoint,
     save_training_state,
     save_training_step,
@@ -151,3 +152,35 @@ def test_load_training_state_skip_optimizer(tmp_path, optimizer, scheduler):
     assert loaded_step == 10
     assert loaded_optimizer is optimizer
     assert loaded_scheduler is scheduler
+
+
+def test_push_checkpoint_to_hub_creates_repo_and_uploads(tmp_path, monkeypatch):
+    import huggingface_hub
+
+    ckpt = tmp_path / "010000"
+    (ckpt / "pretrained_model").mkdir(parents=True)
+    api = MagicMock()
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda *a, **k: api)
+    push_checkpoint_to_hub(ckpt, "user/run", private=True)
+    api.create_repo.assert_called_once()
+    assert api.create_repo.call_args.kwargs["private"] is True
+    assert api.create_repo.call_args.kwargs["repo_type"] == "model"
+    api.upload_folder.assert_called_once()
+    kwargs = api.upload_folder.call_args.kwargs
+    assert kwargs["repo_id"] == "user/run"
+    assert kwargs["repo_type"] == "model"
+    assert kwargs["path_in_repo"] == "checkpoints/010000"
+    assert kwargs["folder_path"] == str(ckpt)
+    assert kwargs["commit_message"] == "checkpoint 010000"
+
+
+def test_push_checkpoint_to_hub_defaults_to_hub_default_visibility(tmp_path, monkeypatch):
+    import huggingface_hub
+
+    ckpt = tmp_path / "010000"
+    (ckpt / "pretrained_model").mkdir(parents=True)
+    api = MagicMock()
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda *a, **k: api)
+    push_checkpoint_to_hub(ckpt, "user/run")
+    api.create_repo.assert_called_once()
+    assert api.create_repo.call_args.kwargs["private"] is None

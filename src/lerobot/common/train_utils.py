@@ -283,3 +283,28 @@ def load_fsdp_optimizer_state(model, optimizer, checkpoint_dir: Path) -> None:
     with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, state_cfg, optim_cfg):
         sharded_osd = FSDP.optim_state_dict_to_load(model=model, optim=optimizer, optim_state_dict=full_osd)
     optimizer.load_state_dict(sharded_osd)
+
+
+def push_checkpoint_to_hub(
+    checkpoint_dir: Path,
+    repo_id: str,
+    *,
+    private: bool | None = None,
+) -> None:
+    """Upload a saved checkpoint directory to the Hub under checkpoints/<name>/.
+
+    Called once per save step when save_checkpoint_to_hub is enabled, so a
+    timed-out or crashed run still leaves recoverable checkpoints on the Hub.
+    The model repo is created idempotently.
+    """
+    from huggingface_hub import HfApi
+
+    api = HfApi()
+    api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
+    api.upload_folder(
+        folder_path=str(checkpoint_dir),
+        repo_id=repo_id,
+        repo_type="model",
+        path_in_repo=f"checkpoints/{checkpoint_dir.name}",
+        commit_message=f"checkpoint {checkpoint_dir.name}",
+    )

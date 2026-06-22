@@ -145,3 +145,31 @@ class PeftConfig:
     # If None, the PEFT library defaults to alpha=8, which may dampen high-rank adapters.
     # Common values are r (alpha == rank) or 2*r.
     lora_alpha: int | None = None
+
+
+@dataclass
+class JobConfig:
+    # Where training runs. None (omitted) or "local" runs on this machine.
+    # Any other value is an HF Jobs flavor and submits the run to HF Jobs.
+    # List available flavors + pricing with `hf jobs hardware` command.
+    target: str | None = None
+    # Runtime image for the remote job (ignored for local runs).
+    image: str = "huggingface/lerobot-gpu:latest"
+    # Max wall-clock for the remote job as an HF Jobs duration string (e.g. "2h").
+    # None (default) imposes no timeout — the job runs until the command finishes.
+    timeout: str | None = None
+    # Submit and exit instead of streaming the job logs in the foreground.
+    detach: bool = False
+    # Extra tags attached to the HF job and to any dataset this run pushes to the
+    # Hub. A "lerobot" tag is always added; e.g. --job.tags '["lelab"]' adds more.
+    tags: list[str] = field(default_factory=list)
+
+    @staticmethod
+    def is_remote_target(target: str | None) -> bool:
+        """True when `target` names an HF Jobs flavor rather than a local run."""
+        return target not in (None, "local")
+
+    @property
+    def is_remote(self) -> bool:
+        """True when training should run on HF Jobs rather than this machine."""
+        return self.is_remote_target(self.target)

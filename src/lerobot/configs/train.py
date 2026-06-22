@@ -30,7 +30,7 @@ from lerobot.utils.hub import HubMixin
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
-from .default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
+from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, WandBConfig
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
 
@@ -117,6 +117,13 @@ class TrainPipelineConfig(HubMixin):
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
     peft: PeftConfig | None = None
+
+    # Where to run training (local default, or an HF Jobs flavor). See JobConfig.
+    job: JobConfig = field(default_factory=JobConfig)
+    # Push each saved checkpoint to the Hub (policy.repo_id) as it is written, not
+    # just the final model (useful to monitor progress mid-run). Optional; the
+    # final model is pushed regardless. Works the same locally and remotely.
+    save_checkpoint_to_hub: bool = False
 
     # Sample weighting configuration (e.g., for RA-BC training)
     sample_weighting: SampleWeightingConfig | None = None
@@ -218,6 +225,9 @@ class TrainPipelineConfig(HubMixin):
 
         if hasattr(active_cfg, "push_to_hub") and active_cfg.push_to_hub and not active_cfg.repo_id:
             raise ValueError("'repo_id' argument missing. Please specify it to push the model to the hub.")
+
+        if self.save_checkpoint_to_hub and not (self.policy is not None and self.policy.repo_id):
+            raise ValueError("save_checkpoint_to_hub requires --policy.repo_id.")
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
