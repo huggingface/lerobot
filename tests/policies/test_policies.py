@@ -283,6 +283,46 @@ def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
     policy_cls(policy_cfg)
 
 
+def test_make_policy_overrides_stale_input_features(dummy_dataset_metadata):
+    """`make_policy` must derive `input_features` from the dataset, not preserve stale defaults.
+
+    Regression test for issue #3845: a pretrained base model config can ship with `input_features`
+    that don't match the dataset being fine-tuned on (e.g. LIBERO-style camera keys on pi0_fast).
+    Those stale keys must be replaced by the actual dataset features, otherwise training fails with
+    "All image features are missing from the batch".
+    """
+    policy_cfg = make_policy_config("act", pretrained_backbone_weights=None, device=DEVICE)
+    # Simulate a base model config that ships with input_features for a different camera setup.
+    stale_key = f"{OBS_IMAGES}.stale_camera"
+    policy_cfg.input_features = {stale_key: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 84, 84))}
+
+    make_policy(policy_cfg, ds_meta=dummy_dataset_metadata)
+
+    assert stale_key not in policy_cfg.input_features
+    assert f"{OBS_IMAGES}.laptop" in policy_cfg.input_features
+    assert OBS_STATE in policy_cfg.input_features
+
+
+def test_make_policy_applies_rename_map_to_input_features(dummy_dataset_metadata):
+    """`make_policy` must rename input feature keys so the config matches the post-rename batch.
+
+    Regression test for issue #3845: when a `rename_map` is supplied, `RenameObservationsProcessorStep`
+    renames observation keys at runtime, so `cfg.input_features` must use the renamed keys. Action
+    (output) features are never renamed by that step and must keep their original names.
+    """
+    policy_cfg = make_policy_config("act", pretrained_backbone_weights=None, device=DEVICE)
+    original_key = f"{OBS_IMAGES}.laptop"
+    renamed_key = f"{OBS_IMAGES}.renamed"
+    rename_map = {original_key: renamed_key}
+
+    make_policy(policy_cfg, ds_meta=dummy_dataset_metadata, rename_map=rename_map)
+
+    assert renamed_key in policy_cfg.input_features
+    assert original_key not in policy_cfg.input_features
+    # Action keys are produced by the policy, not the observation rename step, so they are untouched.
+    assert ACTION in policy_cfg.output_features
+
+
 @pytest.mark.parametrize("policy_name", AVAILABLE_POLICIES)
 def test_save_and_load_pretrained(dummy_dataset_metadata, tmp_path, policy_name: str):
     policy_cls = get_policy_class(policy_name)
