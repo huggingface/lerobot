@@ -64,6 +64,8 @@ class RenderedMessagesToTaskStep(ComplementaryDataProcessorStep):
 
         if user_parts:
             task = complementary_data.get("task")
+            # Preserve the original task for CFG unconditional prompt
+            new_complementary_data["base_task"] = task
             # Wrap in list if the original task was a list (batched)
             joined = "\n".join(user_parts)
             if isinstance(task, list):

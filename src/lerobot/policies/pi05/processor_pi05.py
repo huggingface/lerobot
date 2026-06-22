@@ -40,6 +40,8 @@ from lerobot.processor import (
 )
 from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
+    OBS_LANGUAGE_UNCOND_ATTENTION_MASK,
+    OBS_LANGUAGE_UNCOND_TOKENS,
     OBS_STATE,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
@@ -57,6 +59,7 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
 
     max_state_dim: int = 32
     task_key: str = "task"
+    cfg_enabled: bool = False
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
@@ -84,8 +87,25 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
             full_prompts.append(full_prompt)
 
         transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = full_prompts
-        # Normalize state to [-1, 1] range if needed (assuming it's already normalized by normalizer processor step!!)
-        # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
+
+        # Build unconditional prompts for CFG (same state but original task without advantage)
+        if self.cfg_enabled:
+            base_tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get("base_task")
+            if base_tasks is None:
+                base_tasks = tasks
+
+            if isinstance(base_tasks, str):
+                base_tasks = [base_tasks] * len(tasks)
+
+            uncond_prompts = []
+            for i, base_task in enumerate(base_tasks):
+                cleaned_text = base_task.strip().replace("_", " ").replace("\n", " ")
+                state_str = " ".join(map(str, discretized_states[i]))
+                uncond_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
+                uncond_prompts.append(uncond_prompt)
+
+            transition[TransitionKey.COMPLEMENTARY_DATA]["uncond_task"] = uncond_prompts
+
         return transition
 
     def transform_features(
@@ -158,18 +178,38 @@ def make_pi05_pre_post_processors(
         input_steps.append(RenderMessagesStep(recipe=recipe))
         input_steps.append(RenderedMessagesToTaskStep())
 
+    cfg_enabled = config.cfg_beta > 1.0
+
     input_steps.extend(
         [
-            Pi05PrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
+            Pi05PrepareStateTokenizerProcessorStep(
+                max_state_dim=config.max_state_dim,
+                cfg_enabled=cfg_enabled,
+            ),
             TokenizerProcessorStep(
                 tokenizer_name="google/paligemma-3b-pt-224",
                 max_length=config.tokenizer_max_length,
                 padding_side="right",
                 padding="max_length",
             ),
-            DeviceProcessorStep(device=config.device),
         ]
     )
+
+    # Add unconditional prompt tokenizer for CFG inference
+    if cfg_enabled:
+        input_steps.append(
+            TokenizerProcessorStep(
+                tokenizer_name="google/paligemma-3b-pt-224",
+                max_length=config.tokenizer_max_length,
+                padding_side="right",
+                padding="max_length",
+                task_key="uncond_task",
+                output_tokens_key=OBS_LANGUAGE_UNCOND_TOKENS,
+                output_mask_key=OBS_LANGUAGE_UNCOND_ATTENTION_MASK,
+            )
+        )
+
+    input_steps.append(DeviceProcessorStep(device=config.device))
 
     output_steps: list[ProcessorStep] = [
         UnnormalizerProcessorStep(
