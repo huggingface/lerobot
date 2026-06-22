@@ -23,8 +23,7 @@ and must be testable without the XR runtime.
 The clutch (engage latch, no-teleport, hold while disengaged) now lives in the
 owning loop (``examples/isaac_teleop_to_so101/teleoperate.py``); it is not part of
 these processor steps. These tests cover only the LeRobot-side glue: the stateless
-absolute-pose mapper, the static ``base_T_anchor`` config matrix, and the post-IK
-wrist-roll overwrite (a standalone step still available for richer pipelines).
+absolute-pose mapper and the static ``base_T_anchor`` config matrix.
 """
 
 import numpy as np
@@ -34,7 +33,6 @@ from lerobot.teleoperators.isaac_teleop.config_isaac_teleop import (
     _DEFAULT_BASE_T_ANCHOR,
     XRControllerConfig,
 )
-from lerobot.teleoperators.isaac_teleop.wrist_roll_processor import OverwriteWristRollFromAngle
 from lerobot.teleoperators.isaac_teleop.xr_controller_processor import (
     MapXRControllerActionToRobotAction,
 )
@@ -181,44 +179,6 @@ def test_base_t_anchor_axis_mapping():
     assert np.allclose(rot @ [0.0, 1.0, 0.0], [0.0, 0.0, 1.0])
     # controller toward-user (anchor +Z) -> robot -X (robot +X is forward)
     assert np.allclose(rot @ [0.0, 0.0, 1.0], [-1.0, 0.0, 0.0])
-
-
-# ----------------------------------------------------------------------------
-# OverwriteWristRollFromAngle: post-IK rad -> deg overwrite
-# ----------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("wrist_roll_rad", "expected_deg"),
-    [(np.pi, 180.0), (0.0, 0.0), (-np.pi / 2, -90.0)],
-)
-def test_overwrite_wrist_roll_from_angle(wrist_roll_rad, expected_deg):
-    step = OverwriteWristRollFromAngle()
-    out = step.action({"wrist_roll": float(wrist_roll_rad)})
-    assert out["wrist_roll.pos"] == pytest.approx(expected_deg)
-    assert "wrist_roll" not in out
-
-
-def test_overwrite_wrist_roll_noop_when_absent():
-    # No-op (leaves an existing wrist_roll.pos untouched) when no roll command is present.
-    step = OverwriteWristRollFromAngle()
-    out = step.action({"wrist_roll.pos": 12.0})
-    assert out["wrist_roll.pos"] == pytest.approx(12.0)
-    assert "wrist_roll" not in out
-
-
-def test_overwrite_wrist_roll_transform_features():
-    step = OverwriteWristRollFromAngle()
-    from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-
-    features = {
-        PipelineFeatureType.ACTION: {
-            "wrist_roll": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
-        }
-    }
-    out = step.transform_features(features)[PipelineFeatureType.ACTION]
-    assert "wrist_roll" not in out
-    assert "wrist_roll.pos" in out
 
 
 # ---------------------------------------------------------------------------

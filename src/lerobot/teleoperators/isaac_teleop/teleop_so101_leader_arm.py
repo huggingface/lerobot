@@ -32,7 +32,8 @@ follower's native units instead of an Isaac Lab radian action. This makes the de
 drop-in joint-space leader: :meth:`get_action` returns ``{joint}.pos`` ready for
 ``robot.send_action`` (direct joint drive, like ``lerobot-teleoperate`` with the serial
 ``so101_leader``), so no LeRobot-side ``JointStateRetargeter`` / ``TensorReorderer`` /
-processor pipeline is needed. See ``examples/isaac_teleop_to_so101/teleoperate_leader.py``.
+processor pipeline is needed. See the ``leader`` subcommand of
+``examples/isaac_teleop_to_so101/teleoperate.py``.
 
 Units (the conversion lives in the device so its output is always follower-valid -- there
 is no raw-radians intermediate a caller could accidentally send to the follower):

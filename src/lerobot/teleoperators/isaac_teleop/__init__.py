@@ -28,14 +28,12 @@ from .base import IsaacTeleopTeleoperator
 from .config_isaac_teleop import IsaacTeleopConfig, SO101LeaderArmConfig, XRControllerConfig
 from .teleop_so101_leader_arm import SO101LeaderArm, leader_joints_to_robot_action
 from .teleop_xr_controller import XRController
-from .wrist_roll_processor import OverwriteWristRollFromAngle
 from .xr_controller_processor import MapXRControllerActionToRobotAction
 
 __all__ = [
     "IsaacTeleopConfig",
     "IsaacTeleopTeleoperator",
     "MapXRControllerActionToRobotAction",
-    "OverwriteWristRollFromAngle",
     "SO101LeaderArm",
     "SO101LeaderArmConfig",
     "XRController",
