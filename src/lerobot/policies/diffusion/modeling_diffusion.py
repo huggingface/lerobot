@@ -100,7 +100,7 @@ class DiffusionPolicy(PreTrainedPolicy):
             self._queues[OBS_ENV_STATE] = deque(maxlen=self.config.n_obs_steps)
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         # Consolidate per-camera image keys into a single observation.images key,
         # mirroring what select_action does before populate_queues.

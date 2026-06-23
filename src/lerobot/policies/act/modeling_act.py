@@ -123,8 +123,12 @@ class ACTPolicy(PreTrainedPolicy):
         return self._action_queue.popleft()
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+        """Predict a chunk of actions given environment observations.
+
+        Accepts and ignores extra kwargs (e.g., inference_delay, prev_chunk_left_over from RTC)
+        for compatibility with the inference engine protocol.
+        """
         self.eval()
 
         if self.config.image_features:
