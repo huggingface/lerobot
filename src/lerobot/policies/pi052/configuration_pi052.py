@@ -206,6 +206,15 @@ class PI052Config(PI05Config):
     # at -4.5% step time on H100 (bench job 22161421); peak memory
     # unchanged. ``fused_linear_cross_entropy`` ships separately via
     # ``_shifted_lin_ce`` / ``_fast_lin_ce``.
+    use_flashrt_fp8_mlp: bool = False
+    """Opt-in: swap every Gemma GeGLU MLP (action expert + prefix LM) and the
+    SigLIP vision MLP to FlashRT fused FP8 kernels (Hugging Face Kernel Hub
+    ``flashrt/*``). The swap needs a one-time activation calibration on a real
+    observation, so it is applied explicitly via
+    ``PI052Policy.apply_flashrt_fp8_mlp(batch)`` after loading (not at build).
+    Degrades gracefully to BF16 if ``kernels`` / the FlashRT packages are
+    missing. Default off keeps behaviour identical to the BF16 path."""
+
     use_hf_kernels: bool = True
     """Deprecated. Liger HF kernels are patched unconditionally by
     ``_enable_hf_kernels`` — this field is retained as a no-op for

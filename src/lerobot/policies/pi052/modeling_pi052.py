@@ -1080,6 +1080,18 @@ class PI052Policy(PreTrainedPolicy):
         # subtask can be held across several chunks (see subtask_replan_steps).
         self._subtask_chunk_counter = 0
 
+    def apply_flashrt_fp8_mlp(self, batch: dict[str, Tensor], *, safety: float = 1.05) -> bool:
+        """Opt-in: swap every Gemma + SigLIP MLP to FlashRT fused FP8 kernels.
+
+        Calibrates static activation scales once on ``batch`` (one representative
+        observation, already through the preprocessor) and swaps the MLP modules
+        in place. Returns False (no-op, BF16 kept) if the kernels are missing.
+        Gated by ``config.use_flashrt_fp8_mlp`` — see flashrt_fp8.py.
+        """
+        from .flashrt_fp8 import apply_fp8_mlp  # noqa: PLC0415
+
+        return apply_fp8_mlp(self, batch, safety=safety)
+
     # ------------------------------------------------------------------
     # Head unfreeze helper
     # ------------------------------------------------------------------
@@ -2376,6 +2388,13 @@ class PI052Policy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         self.eval()
+
+        # Opt-in FlashRT FP8: calibrate static scales on the first real observation
+        # and swap the MLPs in place. Guard set before the call so the calibration
+        # forward (which re-enters predict_action_chunk) does not recurse.
+        if self.config.use_flashrt_fp8_mlp and not getattr(self, "_fp8_applied", False):
+            self._fp8_applied = True
+            self.apply_flashrt_fp8_mlp(batch)
 
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
