@@ -97,7 +97,6 @@ class DatasetReader:
             check_delta_timestamps(delta_timestamps, meta.fps, tolerance_s)
             self.delta_indices = get_delta_indices(delta_timestamps, meta.fps)
 
-        ##TODO(CarolinePascal): Should we rather use a more lightweight structure ?
         self._depth_encoder_configs: dict[str, DepthEncoderConfig] = {
             vid_key: DepthEncoderConfig.from_video_info(self._meta.features[vid_key].get("info"))
             for vid_key in self._meta.depth_keys
