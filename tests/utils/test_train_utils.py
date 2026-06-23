@@ -20,6 +20,8 @@ from unittest.mock import Mock, patch
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
+    load_training_batch_size,
+    load_training_num_processes,
     load_training_state,
     load_training_step,
     save_checkpoint,
@@ -61,6 +63,28 @@ def test_load_training_step(tmp_path):
     save_training_step(step, tmp_path)
     loaded_step = load_training_step(tmp_path)
     assert loaded_step == step
+
+
+def test_save_training_state_records_num_processes(tmp_path, optimizer, scheduler):
+    save_training_state(tmp_path, 10, optimizer, scheduler, num_processes=4)
+    assert load_training_num_processes(tmp_path) == 4
+
+
+def test_load_training_num_processes_absent_returns_none(tmp_path, optimizer, scheduler):
+    # Checkpoints written before the world size was recorded must still load (back-compat).
+    save_training_state(tmp_path, 10, optimizer, scheduler)
+    assert load_training_num_processes(tmp_path) is None
+
+
+def test_save_training_state_records_batch_size(tmp_path, optimizer, scheduler):
+    save_training_state(tmp_path, 10, optimizer, scheduler, batch_size=32)
+    assert load_training_batch_size(tmp_path) == 32
+
+
+def test_load_training_batch_size_absent_returns_none(tmp_path, optimizer, scheduler):
+    # Checkpoints written before the batch size was recorded must still load (back-compat).
+    save_training_state(tmp_path, 10, optimizer, scheduler)
+    assert load_training_batch_size(tmp_path) is None
 
 
 def test_update_last_checkpoint(tmp_path):
@@ -109,6 +133,21 @@ def test_save_training_state(tmp_path, optimizer, scheduler):
 def test_save_load_training_state(tmp_path, optimizer, scheduler):
     save_training_state(tmp_path, 10, optimizer, scheduler)
     loaded_step, loaded_optimizer, loaded_scheduler = load_training_state(tmp_path, optimizer, scheduler)
+    assert loaded_step == 10
+    assert loaded_optimizer is optimizer
+    assert loaded_scheduler is scheduler
+
+
+def test_load_training_state_skip_optimizer(tmp_path, optimizer, scheduler):
+    # FSDP loads optimizer separately (after accelerator.prepare)
+    # load_training_state(load_optimizer=False) must restore step + scheduler but leave the
+    # optimizer untouched and never touch the on-disk optimizer state.
+    save_training_state(tmp_path, 10, optimizer, scheduler)
+    with patch("lerobot.common.train_utils.load_optimizer_state") as mock_load_optimizer_state:
+        loaded_step, loaded_optimizer, loaded_scheduler = load_training_state(
+            tmp_path, optimizer, scheduler, load_optimizer=False
+        )
+    mock_load_optimizer_state.assert_not_called()
     assert loaded_step == 10
     assert loaded_optimizer is optimizer
     assert loaded_scheduler is scheduler
