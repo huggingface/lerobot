@@ -366,17 +366,24 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
     hub_versions = get_repo_versions(repo_id)
 
     if not hub_versions:
-        raise RevisionNotFoundError(
-            f"""Your dataset must be tagged with a codebase version.
-            Assuming _version_ is the codebase_version value in the info.json, you can run this:
-            ```python
-            from huggingface_hub import HfApi
-
-            hub_api = HfApi()
-            hub_api.create_tag("{repo_id}", tag="_version_", repo_type="dataset")
-            ```
-            """
+        msg = (
+            f"Repo {repo_id!r} has no codebase-version tags. The dataset "
+            f"either doesn't exist on the Hub yet, or it was uploaded "
+            f"without a ``v3.x``-style tag. To tag an existing dataset run:\n"
+            f"  from huggingface_hub import HfApi\n"
+            f"  HfApi().create_tag({repo_id!r}, tag='v3.0', repo_type='dataset', exist_ok=True)"
         )
+        # ``RevisionNotFoundError`` extends ``HfHubHTTPError`` whose
+        # ``__init__`` indexes ``response.headers`` unconditionally on
+        # current ``huggingface_hub`` versions. Constructing it without
+        # a real ``Response`` object crashes with either
+        # ``TypeError: missing 1 required keyword-only argument`` (old
+        # builds) or ``AttributeError: 'NoneType' object has no attribute
+        # 'headers'`` (new builds). Skip that path entirely — this isn't
+        # really an HTTP error, it's a configuration issue — and raise a
+        # plain ``RuntimeError`` so the message actually reaches the
+        # caller.
+        raise RuntimeError(msg)
 
     if target_version in hub_versions:
         return f"v{target_version}"

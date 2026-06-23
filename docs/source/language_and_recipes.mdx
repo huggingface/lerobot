@@ -141,6 +141,11 @@ sample["target_message_indices"]
 
 The renderer does not apply a tokenizer chat template. Policy processors decide how to serialize the messages for their backbone, which keeps the same dataset usable across SmolVLA, Pi0.5, and any future VLM that expects OpenAI-style chat messages.
 
+## Blends
+
+Blend recipes select one weighted sub-recipe deterministically from the sample index.
+`recipes/subtask_mem.yaml` trains the compact core blend — high-level subtask prediction, low-level execution, and memory. `recipes/subtask_mem_vqa_speech.yaml` is the fuller variant that also adds VQA and spoken interjection responses.
+
 ## Graceful absence
 
 If both language columns are missing, `None`, or empty, `RenderMessagesStep` is a no-op.

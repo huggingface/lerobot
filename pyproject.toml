@@ -85,6 +85,11 @@ dependencies = [
     "termcolor>=2.4.0,<4.0.0",
     "tqdm>=4.66.0,<5.0.0",
 
+    # Training utilities
+    # EMA of policy parameters (Diffusion Policy / pi05 style). Tiny
+    # pure-python dependency — preferred over a hand-rolled implementation.
+    "ema-pytorch>=0.7.7,<1.0.0",
+
     # Build tools (required by opencv-python-headless on some platforms)
     "cmake>=3.29.0.1,<4.2.0",
     "setuptools>=71.0.0,<81.0.0",
@@ -142,6 +147,7 @@ pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 # (noble ships urdfdom 3.x). Cap below 0.9.16 until system urdfdom 4.x is broadly available.
 placo-dep = ["placo>=0.9.6,<0.9.16"]
 transformers-dep = ["transformers>=5.4.0,<5.6.0"]
+sentencepiece-dep = ["sentencepiece>=0.2.0,<0.3.0"] # FAST action tokenizer backend (pi052, pi0_fast)
 grpcio-dep = ["grpcio>=1.73.1,<2.0.0", "protobuf>=6.31.1,<8.0.0"]
 accelerate-dep = ["accelerate>=1.14.0,<2.0.0"]
 can-dep = ["python-can>=4.2.0,<5.0.0"]
@@ -203,7 +209,7 @@ wallx = [
     "torchdiffeq>=0.2.4,<0.3.0",
     "lerobot[qwen-vl-utils-dep]",
 ]
-pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
+pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]", "lerobot[sentencepiece-dep]"]
 molmoact2 = ["lerobot[transformers-dep]", "lerobot[peft-dep]", "lerobot[scipy-dep]"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "lerobot[accelerate-dep]"]
 multi_task_dit = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
@@ -242,6 +248,14 @@ annotations = [
     # (e.g. forcing 2.8 while ``torchcodec`` in [dataset] needs 2.11 -> ABI
     # break in CI). The HF Jobs image (``vllm/vllm-openai``) provides vLLM;
     # install it locally only if you run your own ``vllm serve``.
+]
+
+# Tool implementations under src/lerobot/tools/. Each tool's dependencies
+# are isolated so adding a new tool doesn't bloat the base install.
+# Currently only `say` (Kyutai pocket-tts; CPU-only, ~100M params).
+tools = [
+    "pocket-tts>=1.0.0,<3.0.0",
+    "scipy>=1.11.0,<2.0.0",  # SayTool.output_dir uses scipy.io.wavfile
 ]
 
 # Development
@@ -340,6 +354,8 @@ lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 lerobot-annotate="lerobot.scripts.lerobot_annotate:main"
 lerobot-rollout="lerobot.scripts.lerobot_rollout:main"
+# Interactive hierarchical-VLA runtime for PI052 (PaliGemma backbone).
+lerobot-pi052-runtime="lerobot.scripts.lerobot_pi052_runtime:main"
 
 # ---------------- Tool Configurations ----------------
 

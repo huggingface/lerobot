@@ -20,6 +20,7 @@ Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wand
 
 import dataclasses
 import logging
+import os
 import time
 from contextlib import nullcontext
 from pprint import pformat
@@ -47,7 +48,12 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state, make_dataset
+from lerobot.datasets import (
+    EpisodeAwareSampler,
+    WeightedEpisodeAwareSampler,
+    compute_sampler_state,
+    make_dataset,
+)
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
@@ -170,6 +176,161 @@ def update_policy(
     return train_metrics, output_dict
 
 
+def _print_debug_text_predictions(policy: Any, batch: dict[str, Any], step: int, n_samples: int = 5) -> None:
+    """Forward the current batch and print head-argmax vs label per supervised position.
+
+    Opt-in via ``LEROBOT_DEBUG_PREDS_EVERY=<step_interval>``. Only the
+    policy types that expose ``debug_text_predictions`` participate
+    (currently PI052); others are silently skipped. Pretty-prints up to
+    ``n_samples`` samples from the current batch, showing the prompt,
+    every supervised position's (label, prediction, ✓/✗), and a
+    per-sample token-accuracy summary — the cheapest "is text training
+    actually learning anything" signal.
+    """
+    # Accelerator/DDP wraps the policy in a ``module`` attribute and
+    # doesn't proxy custom methods through, so a naive
+    # ``hasattr(policy, "debug_text_predictions")`` returns False on the
+    # wrapper — and the helper would silently no-op. Walk through any
+    # ``.module`` indirection (DDP, FSDP, ``accelerator.prepare`` wrappers)
+    # to reach the raw policy that actually defines the method.
+    inner = policy
+    while hasattr(inner, "module") and not hasattr(inner, "debug_text_predictions"):
+        inner = inner.module
+    if not hasattr(inner, "debug_text_predictions"):
+        logging.warning(
+            "LEROBOT_DEBUG_PREDS_EVERY set but policy %s has no "
+            "debug_text_predictions method — skipping dump.",
+            type(inner).__name__,
+        )
+        return
+    try:
+        debug = inner.debug_text_predictions(batch, max_samples=n_samples)
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("debug_text_predictions failed: %s", exc, exc_info=True)
+        return
+    if not debug:
+        logging.warning(
+            "debug_text_predictions returned no supervised samples — current batch has no text labels."
+        )
+        return
+    policy = inner  # used below for select_message-style decoding parity
+
+    # Build a tokenizer for decoding — match training side exactly.
+    try:
+        from transformers import AutoTokenizer  # noqa: PLC0415
+
+        from lerobot.policies.pi052.text_processor_pi052 import (  # noqa: PLC0415
+            register_paligemma_loc_tokens,
+        )
+
+        tok_name = getattr(policy.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
+        tokenizer = register_paligemma_loc_tokens(AutoTokenizer.from_pretrained(tok_name))
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("debug preds: tokenizer load failed: %s", exc)
+        return
+
+    ids = debug["input_ids"]
+    labels = debug["labels"]
+    preds = debug["predictions"]
+    attn = debug["attention_mask"]
+
+    n = ids.shape[0]
+    print(
+        f"\n========== STEP {step} DEBUG PREDICTIONS ({n} samples) ==========",
+        flush=True,
+    )
+    for s in range(n):
+        a = attn[s].tolist()
+        real = sum(a)
+        sid = ids[s].tolist()
+        sl = labels[s].tolist()
+        sp = preds[s].tolist()
+        prompt = tokenizer.decode(sid[:real], skip_special_tokens=False)
+        print(f"\n  --- sample {s + 1}/{n} ---", flush=True)
+        print(f"  prompt: {prompt!r}", flush=True)
+
+        # Ground-truth target (the contiguous supervised label span).
+        sup_ids = [int(sid[i]) for i in range(real) if sl[i] != -100]
+        if sup_ids:
+            print(
+                f"  target  (ground truth)        : {tokenizer.decode(sup_ids, skip_special_tokens=False)!r}",
+                flush=True,
+            )
+
+        # Training-side teacher-forced argmax on the same prompt+target.
+        n_sup = n_ok = 0
+        teacher_chars: list[int] = []
+        for i in range(1, real):
+            label = sl[i]
+            if label == -100:
+                continue
+            n_sup += 1
+            pred = int(sp[i - 1])
+            teacher_chars.append(pred)
+            if label == pred:
+                n_ok += 1
+        teacher_text = tokenizer.decode(teacher_chars, skip_special_tokens=False) if teacher_chars else ""
+        acc = n_ok / max(n_sup, 1)
+        print(
+            f"  training argmax (teacher-fed) : {teacher_text!r}   acc={n_ok}/{n_sup}={acc:.1%}",
+            flush=True,
+        )
+    print("=" * 60 + "\n", flush=True)
+
+
+def _build_vqa_oversample_weights(dataset: Any, target_fraction: float) -> "torch.Tensor | None":
+    """Build per-frame sampling weights that oversample VQA-annotated frames.
+
+    Scans the dataset's ``language_events`` column for frames carrying a
+    ``vqa``-style annotation and returns a weight tensor (length == total
+    dataset frames) such that, under multinomial sampling, VQA frames make up
+    roughly ``target_fraction`` of the training stream.
+
+    Returns ``None`` (⇒ fall back to uniform episode-aware sampling) when VQA
+    frames cannot be detected or there are none.
+    """
+    if not 0.0 < target_fraction < 1.0:
+        logging.warning(
+            "vqa_target_fraction must be in (0, 1); got %s — VQA oversampling disabled.",
+            target_fraction,
+        )
+        return None
+    hf = getattr(dataset, "hf_dataset", None)
+    if hf is None or "language_events" not in getattr(hf, "column_names", []):
+        logging.warning("Dataset has no `language_events` column — VQA oversampling disabled.")
+        return None
+
+    events_col = hf["language_events"]
+    n_frames = len(events_col)
+    is_vqa = torch.zeros(n_frames, dtype=torch.bool)
+    for i, rows in enumerate(events_col):
+        if rows and any((row or {}).get("style") == "vqa" for row in rows):
+            is_vqa[i] = True
+
+    n_vqa = int(is_vqa.sum())
+    if n_vqa == 0:
+        logging.warning("No `vqa` annotations found in the dataset — VQA oversampling disabled.")
+        return None
+    n_other = n_frames - n_vqa
+
+    # Solve target = (n_vqa·w) / (n_vqa·w + n_other) for the VQA weight w.
+    # Clamp to ≥ 1 so VQA frames are never *down*-weighted below uniform.
+    weight = (target_fraction * n_other) / ((1.0 - target_fraction) * max(n_vqa, 1))
+    weight = max(weight, 1.0)
+    weights = torch.ones(n_frames, dtype=torch.double)
+    weights[is_vqa] = weight
+    logging.info(
+        "VQA oversampling: %d/%d frames carry a `vqa` annotation (%.2f%%); "
+        "weighting them x%.2f to target ~%.0f%% of the training stream.",
+        n_vqa,
+        n_frames,
+        100.0 * n_vqa / n_frames,
+        weight,
+        100.0 * target_fraction,
+    )
+    return weights
+
+
 @parser.wrap()
 def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     """
@@ -200,13 +361,26 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting the lr_scheduler steps based on the num_processes
     # We set find_unused_parameters=True to handle models with conditional computation
     if accelerator is None:
+        from datetime import timedelta
+
+        from accelerate.utils import InitProcessGroupKwargs
+
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        # Bump the c10d store-get / barrier timeout so the rank-0-only
+        # ``make_dataset`` block below doesn't trigger a barrier crash on
+        # large datasets. Default is 10 min (``store->get`` 600 s); a
+        # 32 k-episode v3 dataset (e.g. ``robocasa_pretrain_human300_v4``)
+        # spends >13 min on rank 0 building the episode/frame index
+        # while ranks 1-N idle at ``wait_for_everyone()`` and crash with
+        # ``DistBackendError: ... wait timeout after 600000ms``. 2 h is
+        # plenty of headroom; fast paths are unaffected.
+        ipg_kwargs = InitProcessGroupKwargs(timeout=timedelta(hours=2))
         # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
         # Force the device to be CPU when the active config's device is set to CPU (works for both policy and reward model training).
         force_cpu = cfg.trainable_config.device == "cpu"
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,
-            kwargs_handlers=[ddp_kwargs],
+            kwargs_handlers=[ddp_kwargs, ipg_kwargs],
             cpu=force_cpu,
         )
 
@@ -302,6 +476,27 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     active_cfg = cfg.trainable_config
     processor_pretrained_path = active_cfg.pretrained_path
+    # pi052: even when loading pretrained weights, build the processors
+    # from the current pi052 config so the recipe text-label and FAST
+    # action-label steps are generated and not silently swapped for the
+    # checkpoint's older processor stack.
+    if cfg.policy.type == "pi052" and processor_pretrained_path is not None and not cfg.resume:
+        logging.warning(
+            "pi052 is loading pretrained weights from %s, but building processors from the current "
+            "pi052 config so recipe text labels and FAST action labels are generated.",
+            processor_pretrained_path,
+        )
+        processor_pretrained_path = None
+    if (
+        getattr(active_cfg, "use_relative_actions", False)
+        and processor_pretrained_path is not None
+        and not cfg.resume
+    ):
+        logging.warning(
+            "use_relative_actions=true with pretrained processors can skip relative transforms if "
+            "the checkpoint processors do not define them. Building processors from current policy config."
+        )
+        processor_pretrained_path = None
 
     processor_kwargs = {}
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
@@ -309,6 +504,14 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     if cfg.is_reward_model_training:
         processor_kwargs["dataset_meta"] = dataset.meta
+
+    # For pi052 (and any future policy that auto-fits part of its
+    # preprocessing per-dataset), pass the dataset repo id so the
+    # processor factory can locate/refresh dataset-specific artifacts
+    # (e.g. fitted FAST tokenizers per Pertsch et al. 2025 [64],
+    # π0.5 §III.C).
+    if cfg.policy.type == "pi052":
+        processor_kwargs["dataset_repo_id"] = cfg.dataset.repo_id
 
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:
         preprocessor_overrides = {
@@ -406,14 +609,33 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         # same permutation. accelerate then shards it disjointly across ranks via BatchSamplerShard
         # without needing a `generator` attribute to synchronize an RNG, and resume is sample-exact.
         shuffle = False
-        sampler = EpisodeAwareSampler(
-            dataset.meta.episodes["dataset_from_index"],
-            dataset.meta.episodes["dataset_to_index"],
-            episode_indices_to_use=dataset.episodes,
-            drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
-            shuffle=True,
-            seed=cfg.seed if cfg.seed is not None else 0,
-        )
+        from_indices = dataset.meta.episodes["dataset_from_index"]
+        to_indices = dataset.meta.episodes["dataset_to_index"]
+        seed = cfg.seed if cfg.seed is not None else 0
+
+        # When `vqa_target_fraction` is set, oversample VQA-annotated
+        # frames via a weighted sampler; otherwise plain episode-aware.
+        vqa_weights = None
+        if cfg.vqa_target_fraction is not None:
+            vqa_weights = _build_vqa_oversample_weights(dataset, cfg.vqa_target_fraction)
+        if vqa_weights is not None:
+            sampler = WeightedEpisodeAwareSampler(
+                from_indices,
+                to_indices,
+                vqa_weights,
+                episode_indices_to_use=dataset.episodes,
+                drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
+                seed=seed,
+            )
+        else:
+            sampler = EpisodeAwareSampler(
+                from_indices,
+                to_indices,
+                episode_indices_to_use=dataset.episodes,
+                drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
+                shuffle=True,
+                seed=seed,
+            )
         if cfg.resume and step > 0:
             # The resume offset depends on the (num_processes, batch_size) that produced `step`, so
             # use the values recorded in the checkpoint (falling back to the current ones for older
@@ -477,6 +699,53 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     policy.train()
 
+    # ------------------------------------------------------------------
+    # EMA setup
+    # ------------------------------------------------------------------
+    # Shadow copy of the trainable params for late-training averaging
+    # (Chi et al. 2023 Diffusion Policy §V.D; openpi JAX trainer ships
+    # this with decay=0.999 for pi05_libero; openpi PyTorch port and
+    # LeRobot main both skip it). Off by default; opt in with
+    # ``--ema.enable=true``. Implemented via ema-pytorch
+    # (https://github.com/lucidrains/ema-pytorch) — the standard PyTorch
+    # EMA library, also used by lucidrains' diffusion repos.
+    ema = None
+    if cfg.ema.enable and is_main_process:
+        from ema_pytorch import EMA  # noqa: PLC0415
+
+        ema = EMA(
+            accelerator.unwrap_model(policy),
+            beta=cfg.ema.decay,
+            update_after_step=cfg.ema.warmup_steps,
+            update_every=1,  # update on every ema.update() call
+            # Don't register the live model as an ema submodule — accelerator
+            # already owns its lifecycle, and double-registration would
+            # double-count its params in ``ema.state_dict()``.
+            include_online_model=False,
+        )
+        ema.to(accelerator.device)
+        logging.info(
+            "EMA enabled (ema-pytorch): beta=%g, update_after_step=%d, use_for_eval=%s",
+            cfg.ema.decay,
+            cfg.ema.warmup_steps,
+            cfg.ema.use_for_eval,
+        )
+
+        # Resume the EMA shadow if a previous run wrote one.
+        if cfg.checkpoint_path is not None:
+            ema_path = cfg.checkpoint_path / "training_state" / "ema_state.pt"
+            if ema_path.exists():
+                logging.info("Resuming EMA shadow from %s", ema_path)
+                try:
+                    ema.load_state_dict(
+                        torch.load(ema_path, map_location=accelerator.device, weights_only=True)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logging.warning(
+                        "Failed to load EMA shadow (%s) — restarting EMA from current live weights",
+                        exc,
+                    )
+
     train_metrics = {
         # Per-rank loss reflects only one shard of the global batch; mean recovers the loss DDP
         # is actually optimizing. grad_norm and lr are already identical on every rank (post
@@ -539,6 +808,14 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             sample_weighter=sample_weighter,
         )
 
+        # EMA update: pull one step of the live weights into the shadow.
+        # Runs only on the main process (the shadow lives there); other
+        # ranks rely on the live model staying in sync via accelerator.
+        # ``ema-pytorch`` holds an internal reference to the online model
+        # (set at construction), so ``ema.update()`` takes no args.
+        if ema is not None:
+            ema.update()
+
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
         step += 1
@@ -548,6 +825,23 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
+
+        # Optional periodic head-prediction dump for the LM head:
+        # ``LEROBOT_DEBUG_PREDS_EVERY=1000`` prints 5 samples + per-token
+        # (label, argmax, ✓/✗) every 1000 steps. Cheap diagnostic to see
+        # whether the text head is actually learning what we expect, vs
+        # collapsing to a fixed token. Refilling the recipe-sample dump
+        # budget at the same cadence also redumps the raw input shapes.
+        _debug_preds_every = int(os.environ.get("LEROBOT_DEBUG_PREDS_EVERY", "0"))
+        if _debug_preds_every > 0 and step % _debug_preds_every == 0 and is_main_process:
+            try:
+                from lerobot.policies.pi052 import text_processor_pi052 as _tp  # noqa: PLC0415
+
+                _tp._DUMPED_SO_FAR = 0
+                _tp._DUMP_BUDGET = max(_tp._DUMP_BUDGET, 5)
+            except Exception as exc:  # noqa: BLE001
+                logging.debug("Could not reset PI052 debug dump budget: %s", exc, exc_info=True)
+            _print_debug_text_predictions(policy, batch, step, n_samples=5)
 
         if is_log_step:
             # Collective reduce must run on every rank, before the main-process gate below.
@@ -567,8 +861,33 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     if sample_weighter is not None:
                         weighter_stats = sample_weighter.get_stats()
                         wandb_log_dict.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
+                    # EMA observability: ``ema.step`` is the count of
+                    # ``ema.update()`` calls (= optimizer steps once EMA is
+                    # enabled); ``ema.initted`` flips to True once we've
+                    # crossed ``update_after_step``.
+                    if ema is not None:
+                        wandb_log_dict["ema/step"] = int(ema.step.item())
+                        wandb_log_dict["ema/initted"] = float(ema.initted.item())
+                        wandb_log_dict["ema/beta"] = float(cfg.ema.decay)
                     wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
+
+        # Periodic W&B example table (camera images + text fields + action endpoints).
+        if (
+            wandb_logger is not None
+            and cfg.wandb.log_examples_freq > 0
+            and step % cfg.wandb.log_examples_freq == 0
+            and is_main_process
+        ):
+            try:
+                wandb_logger.log_training_examples(
+                    batch=batch,
+                    step=step,
+                    camera_keys=list(dataset.meta.camera_keys),
+                    n_samples=cfg.wandb.log_examples_n,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("wandb log_training_examples failed: %s", exc)
 
         if cfg.save_checkpoint and is_saving_step:
             # Under FSDP, gathering the full model + optimizer state dicts is a cross-rank collective,
@@ -597,6 +916,18 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     optim_state_dict=optim_state_dict,
                 )
                 update_last_checkpoint(checkpoint_dir)
+                # Save the EMA shadow alongside the training state so a
+                # resumed run picks up exactly where the live EMA left off.
+                # ``ema-pytorch.state_dict()`` returns the full shadow
+                # nn.Module's state dict + step/initted buffers; saved as
+                # .pt (the rest of training_state mixes formats already).
+                if ema is not None:
+                    try:
+                        ema_path = checkpoint_dir / "training_state" / "ema_state.pt"
+                        ema_path.parent.mkdir(parents=True, exist_ok=True)
+                        torch.save(ema.state_dict(), ema_path)
+                    except Exception as exc:  # noqa: BLE001
+                        logging.warning("Failed to save EMA shadow: %s", exc)
                 if wandb_logger:
                     wandb_logger.log_policy(checkpoint_dir)
 
@@ -606,10 +937,20 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             if is_main_process:
                 step_id = get_step_identifier(step, cfg.steps)
                 logging.info(f"Eval policy at step {step}")
+                # Use the EMA shadow model for eval when enabled —
+                # standard practice for diffusion-style policies (~1–3%
+                # lift on closed-loop success). ``ema.ema_model`` is a
+                # full nn.Module clone, so we just pass it through; no
+                # swap/restore on the live policy needed.
+                eval_target_policy = (
+                    ema.ema_model
+                    if (ema is not None and cfg.ema.use_for_eval)
+                    else accelerator.unwrap_model(policy)
+                )
                 with torch.no_grad(), accelerator.autocast():
                     eval_info = eval_policy_all(
                         envs=eval_env,  # dict[suite][task_id] -> vec_env
-                        policy=accelerator.unwrap_model(policy),
+                        policy=eval_target_policy,
                         env_preprocessor=env_preprocessor,
                         env_postprocessor=env_postprocessor,
                         preprocessor=preprocessor,

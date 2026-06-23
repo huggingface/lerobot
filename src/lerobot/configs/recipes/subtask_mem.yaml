@@ -1,0 +1,56 @@
+# subtask_mem — compact Hi-Robot blend with memory.
+#
+# Trains the core subtask + action objectives and memory updates:
+#
+#   high_level_subtask         — predict the subtask from the task.
+#   low_level_execution        — flow loss with [images, subtask, state].
+#   memory_update              — compress progress into a memory note.
+#
+# Plan is intentionally left out — memory is the only persistent
+# high-level state here, keeping the prompt short.
+#
+# Requires the dataset to carry `subtask` and `memory` annotations.
+# Sub-recipes whose `if_present` bindings are missing simply don't
+# render for that sample.
+
+blend:
+
+  high_level_subtask:
+    weight: 0.30
+    messages:
+      - {role: user, content: "${task}", stream: high_level}
+      - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
+
+  low_level_execution:
+    weight: 0.55
+    messages:
+      # The action expert is conditioned on the SUBTASK — at inference
+      # `HighLevelSubtaskFwd` generates it via the LM head and feeds it
+      # here. `stream: low_level` flips `predict_actions=True` so the
+      # flow loss fires; no text-CE target (subtask prediction is owned
+      # by `high_level_subtask`).
+      - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
+
+  memory_update:
+    # At inference, `MemoryUpdateFwd` is triggered only on
+    # `subtask_change` events (sparse). Training densely with
+    # `active_at` — i.e. on every frame inside a subtask interval,
+    # not just the boundary frame — supervises the same
+    # (prior_memory, completed_subtask) → current_memory mapping
+    # against varied observations within the interval. The model
+    # learns a stateless transformation; the *when* to emit lives in
+    # the inference trigger, not the model. Annotations only exist
+    # for ~1% of frames as boundary events, so `emitted_at` would
+    # waste 99% of the blend draws (and silently leak them into a
+    # task-conditioned fallback); `active_at` lifts the renderable
+    # rate to ~87% on this dataset.
+    weight: 0.15
+    bindings:
+      prior_memory: "nth_prev(style=memory, offset=1)"
+      current_memory: "active_at(t, style=memory)"
+      completed_subtask: "nth_prev(style=subtask, offset=1)"
+    messages:
+      - {role: user, content: "${task}", stream: high_level}
+      - {role: assistant, content: "Previous memory: ${prior_memory}", stream: high_level, if_present: prior_memory}
+      - {role: user, content: "Completed subtask: ${completed_subtask}", stream: high_level, if_present: completed_subtask}
+      - {role: assistant, content: "${current_memory}", stream: high_level, target: true, if_present: current_memory}

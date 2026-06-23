@@ -62,6 +62,22 @@ class WandBConfig:
     run_id: str | None = None
     mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
     add_tags: bool = True  # If True, save configuration as tags in the WandB run.
+    # Periodic W&B table with sampled images/text and action endpoints. Set to 0 to disable.
+    log_examples_freq: int = 5000
+    log_examples_n: int = 4
+
+
+@dataclass
+class EMAConfig:
+    """EMA shadow for flow/diffusion policies. Off by default because it doubles model memory."""
+
+    enable: bool = False
+    # Target EMA decay beta in theta_ema <- beta * theta_ema + (1 - beta) * theta_live.
+    decay: float = 0.99
+    # Initial update calls that keep the shadow as a hard copy before averaging starts.
+    warmup_steps: int = 0
+    # Use the EMA model for periodic eval.
+    use_for_eval: bool = True
 
 
 @dataclass

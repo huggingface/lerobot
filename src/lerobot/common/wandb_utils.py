@@ -207,3 +207,91 @@ class WandBLogger:
 
         wandb_video = self._wandb.Video(video_path, fps=self.env_fps, format="mp4")
         self._wandb.log({f"{mode}/video": wandb_video}, step=step)
+
+    def log_training_examples(
+        self,
+        batch: dict,
+        step: int,
+        *,
+        camera_keys: list[str],
+        n_samples: int = 4,
+        mode: str = "train",
+    ) -> None:
+        """Log a small W&B table with sampled images/text and action endpoints."""
+        import logging  # noqa: PLC0415
+
+        import numpy as np  # noqa: PLC0415
+        import torch  # noqa: PLC0415
+
+        if mode not in {"train", "eval"}:
+            raise ValueError(mode)
+
+        # Batch size — first tensor-like value wins.
+        bsz = next(
+            (int(v.shape[0]) for v in batch.values() if hasattr(v, "shape") and v.ndim > 0),
+            None,
+        )
+        if not bsz:
+            return
+        n = min(int(n_samples), bsz)
+
+        present_cameras = [c for c in camera_keys if c in batch]
+        text_keys = [k for k in ("task", "subtask", "memory", "instruction") if k in batch]
+
+        columns = ["sample"]
+        columns.extend(c.removeprefix("observation.images.") or c for c in present_cameras)
+        columns.extend(text_keys)
+        columns += ["gt_action_first", "gt_action_last"]
+
+        table = self._wandb.Table(columns=columns)
+
+        def _to_uint8_hwc(t: torch.Tensor) -> np.ndarray:
+            if t.ndim == 4:
+                t = t[0]
+            if t.ndim == 3 and t.shape[0] in (1, 3, 4) and t.shape[-1] not in (1, 3, 4):
+                t = t.permute(1, 2, 0)
+            arr = t.detach().cpu().float().numpy()
+            if arr.size and float(arr.max()) <= 1.5:
+                arr = arr * 255.0
+            return np.clip(arr, 0, 255).astype(np.uint8)
+
+        def _action_endpoints(a: torch.Tensor) -> tuple[str, str]:
+            arr = a.detach().cpu().float().numpy()
+            if arr.ndim == 2:
+                return str(np.round(arr[0], 3).tolist()), str(np.round(arr[-1], 3).tolist())
+            if arr.ndim == 1:
+                rounded = np.round(arr, 3).tolist()
+                return str(rounded), str(rounded)
+            text = str(arr.tolist())
+            return text, text
+
+        for i in range(n):
+            row: list = [i]
+            for cam in present_cameras:
+                try:
+                    row.append(self._wandb.Image(_to_uint8_hwc(batch[cam][i])))
+                except Exception as exc:  # noqa: BLE001
+                    logging.warning(
+                        "log_training_examples: camera %s sample %d failed (%s)",
+                        cam,
+                        i,
+                        exc,
+                    )
+                    row.append(None)
+            for tk in text_keys:
+                v = batch[tk]
+                if isinstance(v, list | tuple):
+                    row.append(str(v[i]) if i < len(v) else "")
+                else:
+                    row.append(str(v))
+            action = batch.get("action")
+            if isinstance(action, torch.Tensor) and action.ndim >= 1:
+                first, last = _action_endpoints(action[i])
+                row.append(first)
+                row.append(last)
+            else:
+                row.append("")
+                row.append("")
+            table.add_data(*row)
+
+        self._wandb.log({f"{mode}/examples": table}, step=step)

@@ -147,7 +147,16 @@ class TrainingRecipe:
         return cls.from_dict(data)
 
     def _validate_message_recipe(self) -> None:
-        """Ensure every templated binding is known and at least one turn is a target."""
+        """Ensure every templated binding is known and the recipe supervises something.
+
+        A recipe is valid if it has at least one of:
+
+        * a ``target: true`` assistant turn (drives text-CE supervision), or
+        * a ``stream: low_level`` turn (drives flow / action supervision via
+          ``predict_actions=True``, even when no assistant turn is targeted —
+          e.g. π0.5-style ``low_level_execution`` where the action expert
+          conditions on a user-only ``${subtask}`` prompt).
+        """
         assert self.messages is not None
         known_bindings = set(DEFAULT_BINDINGS) | set(self.bindings or {}) | {"task"}
 
@@ -156,8 +165,14 @@ class TrainingRecipe:
             if missing:
                 raise ValueError(f"MessageTurn references unknown binding(s): {sorted(missing)}")
 
-        if not any(turn.target for turn in self.messages):
-            raise ValueError("Message recipes must contain at least one target turn.")
+        has_target = any(turn.target for turn in self.messages)
+        has_low_level = any(turn.stream == "low_level" for turn in self.messages)
+        if not (has_target or has_low_level):
+            raise ValueError(
+                "Message recipes must contain at least one supervised turn — "
+                "either ``target: true`` (text CE) or ``stream: low_level`` "
+                "(flow/action loss)."
+            )
 
     def _validate_blend_recipe(self) -> None:
         """Ensure each blend component is a non-empty, weighted message recipe."""

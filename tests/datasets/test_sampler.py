@@ -25,7 +25,7 @@ from datasets import Dataset  # noqa: E402
 from lerobot.datasets.io_utils import (
     hf_transform_to_torch,
 )
-from lerobot.datasets.sampler import EpisodeAwareSampler
+from lerobot.datasets.sampler import EpisodeAwareSampler, WeightedEpisodeAwareSampler, compute_sampler_state
 
 
 def calculate_episode_data_index(hf_dataset: Dataset) -> dict[str, torch.Tensor]:
@@ -152,9 +152,53 @@ def test_partial_episode_drop_warns(caplog):
     assert "Episode 0" in caplog.text
 
 
-# --- seeded (seed, epoch) shuffling, resume, and state ---
+# --- WeightedEpisodeAwareSampler --------------------------------------------
 
-from lerobot.datasets.sampler import compute_sampler_state  # noqa: E402
+
+def test_weighted_sampler_respects_episode_drop_and_length():
+    """The episode-boundary frame filtering is applied before weighting,
+    and one epoch still yields ``len(indices)`` samples."""
+    # One episode, 10 frames; drop the last 2.
+    sampler = WeightedEpisodeAwareSampler([0], [10], frame_weights=torch.ones(10), drop_n_last_frames=2)
+    assert sampler.indices == list(range(8))
+    assert len(sampler) == 8
+    draws = list(sampler)
+    assert len(draws) == 8
+    # Dropped frames 8 and 9 must never be sampled.
+    assert all(d in set(range(8)) for d in draws)
+
+
+def test_weighted_sampler_oversamples_high_weight_frames():
+    """A heavily-weighted frame dominates the draws."""
+    torch.manual_seed(0)
+    # 100 frames, frame 7 is weighted 1000x.
+    weights = torch.ones(100)
+    weights[7] = 1000.0
+    sampler = WeightedEpisodeAwareSampler([0], [100], frame_weights=weights)
+    counts = {}
+    for _ in range(20):  # 20 epochs
+        for d in sampler:
+            counts[d] = counts.get(d, 0) + 1
+    total = sum(counts.values())
+    # Frame 7 should be the overwhelming majority of the 2000 draws.
+    assert counts.get(7, 0) / total > 0.9
+
+
+def test_weighted_sampler_zero_weights_fall_back_to_uniform():
+    """If every surviving frame has zero weight, sampling is uniform
+    rather than crashing."""
+    sampler = WeightedEpisodeAwareSampler([0], [6], frame_weights=torch.zeros(6))
+    draws = set(sampler)
+    assert draws.issubset(set(range(6)))
+    assert len(list(sampler)) == 6
+
+
+def test_weighted_sampler_rejects_short_weight_vector():
+    with pytest.raises(ValueError, match="frame_weights"):
+        WeightedEpisodeAwareSampler([0], [10], frame_weights=torch.ones(5))
+
+
+# --- seeded (seed, epoch) shuffling, resume, and state ---
 
 EPISODE_BOUNDS = ([0, 2, 3], [2, 3, 6])  # episodes of 2, 1 and 3 frames
 

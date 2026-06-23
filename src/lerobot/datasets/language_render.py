@@ -170,6 +170,29 @@ def render_sample(
     """
     persistent_rows = _normalize_rows(persistent or [])
     event_rows = _normalize_rows(events or [])
+
+    # VQA-priority routing. A ``vqa`` annotation is sparse and
+    # view-dependent; the plain weighted blend would (a) waste a draw
+    # whenever it picks an ``ask_vqa*`` sub-recipe for a frame that has
+    # no VQA, and (b) silently drop a VQA-annotated frame whenever it
+    # picks a non-VQA sub-recipe. So: if the blend has ``ask_vqa*``
+    # sub-recipes and *this* frame carries one of their VQA bindings,
+    # render VQA here regardless of the weighted draw. That makes VQA's
+    # recipe-side training share equal the VQA-annotation density (the
+    # maximum reachable without a dataset-level oversampling sampler).
+    if recipe.blend is not None:
+        vqa_rendered = _render_vqa_if_present(
+            recipe,
+            persistent=persistent_rows,
+            events=event_rows,
+            t=t,
+            sample_idx=sample_idx,
+            task=task,
+            dataset_ctx=dataset_ctx,
+        )
+        if vqa_rendered is not None:
+            return vqa_rendered
+
     selected_recipe = _select_recipe(recipe, sample_idx)
     bindings = _resolve_bindings(
         selected_recipe,
@@ -181,6 +204,59 @@ def render_sample(
         dataset_ctx=dataset_ctx,
     )
     return _render_message_recipe(selected_recipe, bindings)
+
+
+def _render_vqa_if_present(
+    recipe: TrainingRecipe,
+    *,
+    persistent: Sequence[LanguageRow],
+    events: Sequence[LanguageRow],
+    t: float,
+    sample_idx: int,
+    task: str | None,
+    dataset_ctx: Any | None,
+) -> RenderedMessages | None:
+    """Render an ``ask_vqa*`` sub-recipe iff this frame carries a VQA
+    annotation; otherwise return ``None`` so the caller falls back to the
+    normal weighted blend.
+
+    When several VQA sub-recipes resolve (e.g. a frame annotated for more
+    than one camera), one is chosen deterministically by relative weight.
+    """
+    assert recipe.blend is not None
+    renderable: list[tuple[float, RenderedMessages]] = []
+    for name, component in recipe.blend.items():
+        if not name.startswith("ask_vqa"):
+            continue
+        bindings = _resolve_bindings(
+            component,
+            persistent=persistent,
+            events=events,
+            t=t,
+            sample_idx=sample_idx,
+            task=task,
+            dataset_ctx=dataset_ctx,
+        )
+        rendered = _render_message_recipe(component, bindings)
+        if rendered is not None:
+            renderable.append((float(component.weight or 0.0), rendered))
+
+    if not renderable:
+        return None
+    if len(renderable) == 1:
+        return renderable[0][1]
+
+    # Multiple cameras have a VQA for this frame — deterministic pick by
+    # relative weight (fall back to a uniform draw if all weights are 0).
+    total = sum(w for w, _ in renderable) or float(len(renderable))
+    digest = hashlib.blake2b(f"vqa:{sample_idx}".encode(), digest_size=8).digest()
+    draw = int.from_bytes(digest, "big") / 2**64 * total
+    cumulative = 0.0
+    for w, rendered in renderable:
+        cumulative += w or (total / len(renderable))
+        if draw < cumulative:
+            return rendered
+    return renderable[-1][1]
 
 
 def _select_recipe(recipe: TrainingRecipe, sample_idx: int) -> TrainingRecipe:
@@ -346,7 +422,15 @@ def _render_message_recipe(
         if turn.target:
             target_indices.append(message_idx)
 
-    if not target_indices:
+    # A render is meaningful if it supervises *something*: either a
+    # text-CE target turn, or a ``low_level`` stream turn (flow / action
+    # supervision — e.g. the flow-only ``low_level_execution`` recipe,
+    # ``user(${subtask})`` with ``stream: low_level`` and no target).
+    # Without this, a flow-only recipe renders to ``None`` every time
+    # the blend draws it → ``predict_actions`` is never True → the
+    # action expert never receives a flow loss.
+    has_low_level = any(stream == "low_level" for stream in streams)
+    if not target_indices and not has_low_level:
         return None
 
     rendered = {
@@ -403,8 +487,10 @@ def _validate_rendered(rendered: RenderedMessages) -> None:
 
     if len(streams) != len(messages):
         raise ValueError("message_streams must be aligned with messages.")
-    if not target_indices:
-        raise ValueError("Rendered samples must contain at least one target message.")
+    # Valid iff it supervises something: a text-CE target turn OR a
+    # ``low_level`` stream turn (flow / action supervision).
+    if not target_indices and not any(s == "low_level" for s in streams):
+        raise ValueError("Rendered samples must contain a target message or a low_level-stream message.")
     for idx in target_indices:
         if idx < 0 or idx >= len(messages):
             raise ValueError(f"Target message index {idx} is out of bounds.")

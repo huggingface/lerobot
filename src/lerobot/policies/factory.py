@@ -63,6 +63,87 @@ from .wall_x.configuration_wall_x import WallXConfig
 from .xvla.configuration_xvla import XVLAConfig
 
 
+def _restore_pi052_pretrained_state(
+    preprocessor: PolicyProcessorPipeline,
+    postprocessor: PolicyProcessorPipeline,
+    pretrained_path: str,
+) -> None:
+    """Transplant saved stateful blobs from a pi052 checkpoint into fresh pipelines.
+
+    pi052's preprocessor includes steps whose constructor args don't
+    JSON-roundtrip (``RenderMessagesStep.recipe`` is a Python object,
+    ``ActionTokenizerProcessorStep.action_tokenizer_name`` is a
+    fitted-tokenizer path that may not exist at eval time). We rebuild
+    those pipelines fresh from ``config.recipe_path`` and then walk
+    over the saved ``policy_{pre,post}processor.json`` files to find
+    each step's ``state_file`` reference and load the bytes back into
+    the corresponding fresh step. Today that's only the
+    NormalizerProcessorStep / UnnormalizerProcessorStep (the action /
+    state quantile stats), but the loop is generic so any future
+    stateful step picks up its blob automatically.
+
+    Pairing is by ``registry_name`` AND position so a benign reorder
+    on the saved side surfaces a warning rather than silently feeding
+    the wrong tensors into the wrong step.
+    """
+    import json  # noqa: PLC0415
+    import logging  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    from safetensors.torch import load_file  # noqa: PLC0415
+
+    base = Path(pretrained_path)
+    if not base.exists():
+        return
+
+    log = logging.getLogger(__name__)
+
+    for pipeline, config_filename in [
+        (preprocessor, f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"),
+        (postprocessor, f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"),
+    ]:
+        config_path = base / config_filename
+        if not config_path.exists():
+            continue
+        saved = json.loads(config_path.read_text())
+
+        for idx, (saved_step, fresh_step) in enumerate(
+            zip(saved.get("steps", []), pipeline.steps, strict=False)
+        ):
+            state_file = saved_step.get("state_file")
+            if not state_file:
+                continue
+            saved_name = saved_step.get("registry_name")
+            fresh_name = getattr(type(fresh_step), "_registry_name", None)
+            if saved_name and fresh_name and saved_name != fresh_name:
+                log.warning(
+                    "PI052 state restore: %s step %d registry name mismatch "
+                    "(saved=%s, fresh=%s); skipping %s",
+                    config_filename,
+                    idx,
+                    saved_name,
+                    fresh_name,
+                    state_file,
+                )
+                continue
+            state_path = base / state_file
+            if not state_path.exists():
+                log.warning(
+                    "PI052 state restore: %s missing at %s; %s left at fresh init",
+                    state_file,
+                    base,
+                    fresh_name,
+                )
+                continue
+            fresh_step.load_state_dict(load_file(str(state_path)))
+            log.info(
+                "PI052 state restore: loaded %s into %s (step %d)",
+                state_file,
+                fresh_name,
+                idx,
+            )
+
+
 def _reconnect_relative_absolute_steps(
     preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline
 ) -> None:
@@ -130,6 +211,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .pi05.modeling_pi05 import PI05Policy
 
         return PI05Policy
+    elif name == "pi052":
+        from .pi052.modeling_pi052 import PI052Policy
+
+        return PI052Policy
     elif name == "gaussian_actor":
         from .gaussian_actor.modeling_gaussian_actor import GaussianActorPolicy
 
@@ -178,8 +263,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
 
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
-                     "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05", "gaussian_actor",
-                     "smolvla", "wall_x", "molmoact2".
+                     "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05",
+                     "pi052", "gaussian_actor", "smolvla", "wall_x", "molmoact2".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -202,6 +287,10 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI0Config(**kwargs)
     elif policy_type == "pi05":
         return PI05Config(**kwargs)
+    elif policy_type == "pi052":
+        from .pi052.configuration_pi052 import PI052Config
+
+        return PI052Config(**kwargs)
     elif policy_type == "gaussian_actor":
         return GaussianActorConfig(**kwargs)
     elif policy_type == "smolvla":
@@ -246,6 +335,12 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     preprocessor_overrides: dict[str, Any] | None
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
+    # Optional: HF Hub repo id of the dataset the policy is being
+    # trained on. Used by policies that auto-fit pieces of their
+    # preprocessing (e.g. pi052's FAST action tokenizer per
+    # Pertsch et al. 2025 [64], π0.5 §III.C). When omitted, those
+    # policies fall back to their universal pre-fitted tokenizers.
+    dataset_repo_id: str | None
     dataset_meta: Any | None
 
 
@@ -280,6 +375,29 @@ def make_pre_post_processors(
         NotImplementedError: If a processor factory is not implemented for the given
             policy configuration type.
     """
+    if pretrained_path and getattr(policy_cfg, "type", None) == "pi052":
+        # pi052 pipelines don't roundtrip through the saved
+        # ``policy_preprocessor.json``: ``RenderMessagesStep`` holds a
+        # Python ``TrainingRecipe`` (not JSON-serializable; saved as
+        # ``{}``) and ``ActionTokenizerProcessorStep`` saves a host-only
+        # FAST tokenizer path. Generic ``from_pretrained`` then dies
+        # with ``RenderMessagesStep.__init__() missing 1 required
+        # positional argument: 'recipe'`` (job 22164494).
+        #
+        # Mirror ``lerobot_pi052_runtime``'s bootstrap: build pipelines
+        # fresh from ``config.recipe_path`` and transplant the saved
+        # stateful blobs (normalizer stats) from the checkpoint dir.
+        from .pi052.processor_pi052 import make_pi052_pre_post_processors
+
+        preprocessor, postprocessor = make_pi052_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_repo_id=kwargs.get("dataset_repo_id"),
+        )
+        _restore_pi052_pretrained_state(preprocessor, postprocessor, pretrained_path)
+        _reconnect_relative_absolute_steps(preprocessor, postprocessor)
+        return preprocessor, postprocessor
+
     if pretrained_path:
         # TODO(Steven): Temporary patch, implement correctly the processors for Gr00t
         if isinstance(policy_cfg, GrootConfig):
@@ -374,6 +492,22 @@ def make_pre_post_processors(
         processors = make_pi0_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif policy_cfg.type == "pi052":
+        # NOTE: PI052Config subclasses PI05Config, so this branch MUST
+        # come before the PI05Config isinstance check below (otherwise
+        # pi052 would silently pick up π0.5's processor).
+        from .pi052.processor_pi052 import make_pi052_pre_post_processors
+
+        processors = make_pi052_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            # ``dataset_repo_id`` flows in via kwargs when FAST CE is
+            # enabled — the train loop sets it from ``--dataset.repo_id``.
+            # When ``None``, ``make_pi052_pre_post_processors`` skips
+            # the auto-fit and uses the universal tokenizer.
+            dataset_repo_id=kwargs.get("dataset_repo_id"),
         )
 
     elif isinstance(policy_cfg, PI05Config):

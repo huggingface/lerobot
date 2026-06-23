@@ -35,7 +35,6 @@ from .dataset_tools import (
     remove_feature,
     split_dataset,
 )
-from .factory import make_dataset, resolve_delta_timestamps
 from .image_writer import safe_stop_image_writer
 from .io_utils import load_episodes, write_stats
 from .language import (
@@ -50,10 +49,23 @@ from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from .pyav_utils import check_video_encoder_parameters_pyav, detect_available_encoders_pyav
-from .sampler import EpisodeAwareSampler, compute_sampler_state
+from .sampler import EpisodeAwareSampler, WeightedEpisodeAwareSampler, compute_sampler_state
 from .streaming_dataset import StreamingLeRobotDataset
 from .utils import DEFAULT_EPISODES_PATH, create_lerobot_dataset_card
 from .video_utils import VideoEncodingManager
+
+
+def make_dataset(*args, **kwargs):
+    from .factory import make_dataset as _make_dataset
+
+    return _make_dataset(*args, **kwargs)
+
+
+def resolve_delta_timestamps(*args, **kwargs):
+    from .factory import resolve_delta_timestamps as _resolve_delta_timestamps
+
+    return _resolve_delta_timestamps(*args, **kwargs)
+
 
 # NOTE: Low-level I/O functions (cast_stats_to_numpy, get_parquet_file_size_in_mb, etc.)
 # and legacy migration constants are intentionally NOT re-exported here.
@@ -65,6 +77,7 @@ __all__ = [
     "DEFAULT_QUANTILES",
     "EVENT_ONLY_STYLES",
     "EpisodeAwareSampler",
+    "WeightedEpisodeAwareSampler",
     "LANGUAGE_EVENTS",
     "LANGUAGE_PERSISTENT",
     "LeRobotDataset",
