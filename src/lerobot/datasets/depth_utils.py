@@ -31,6 +31,8 @@ from lerobot.configs.video import (
     DEFAULT_DEPTH_PIX_FMT,
     DEFAULT_DEPTH_SHIFT,
     DEFAULT_DEPTH_USE_LOG,
+    DEPTH_METER_UNIT,
+    DEPTH_MILLIMETER_UNIT,
     DEPTH_QMAX,
 )
 
@@ -51,11 +53,13 @@ def _validate_log_quant_params(depth_min: float, shift: float) -> None:
 
 def _depth_input_to_float32_and_unit(
     depth: NDArray[np.integer] | NDArray[np.floating],
-    input_unit: Literal["auto", "m", "mm"],
-) -> tuple[NDArray[np.float32], Literal["m", "mm"]]:
+    input_unit: Literal["auto", DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT],
+) -> tuple[NDArray[np.float32], Literal[DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT]]:
     """Convert depth to float32 in the chosen unit, and return the resolved unit."""
     resolved_unit = (
-        ("m" if np.issubdtype(depth.dtype, np.floating) else "mm") if input_unit == "auto" else input_unit
+        (DEPTH_METER_UNIT if np.issubdtype(depth.dtype, np.floating) else DEPTH_MILLIMETER_UNIT)
+        if input_unit == "auto"
+        else input_unit
     )
     return depth.astype(np.float32, order="K"), resolved_unit
 
@@ -68,7 +72,7 @@ def quantize_depth(
     use_log: bool = DEFAULT_DEPTH_USE_LOG,
     pix_fmt: str = DEFAULT_DEPTH_PIX_FMT,
     video_backend: str | None = "pyav",
-    input_unit: Literal["auto", "m", "mm"] = "auto",
+    input_unit: Literal["auto", DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT] = "auto",
 ) -> NDArray[np.uint16] | av.VideoFrame:
     """Quantize depth to 12-bit codes (``uint16``, values ``0…DEPTH_QMAX``).
 
@@ -106,8 +110,10 @@ def quantize_depth(
         ValueError: If ``input_unit`` is not ``"auto"``, ``"mm"``, or ``"m"``.
         ValueError: If ``use_log=True`` and ``depth_min + shift <= 0``.
     """
-    if input_unit not in ("auto", "m", "mm"):
-        raise ValueError(f"input_unit must be 'auto', 'm', or 'mm', got {input_unit!r}")
+    if input_unit not in ("auto", DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT):
+        raise ValueError(
+            f"input_unit must be 'auto', '{DEPTH_METER_UNIT}', or '{DEPTH_MILLIMETER_UNIT}', got {input_unit!r}"
+        )
 
     if isinstance(depth, torch.Tensor):
         depth = depth.detach().cpu().numpy()
@@ -119,9 +125,13 @@ def quantize_depth(
     depth_f, resolved_unit = _depth_input_to_float32_and_unit(depth, input_unit=input_unit)
 
     # Convert depth_min, depth_max, and shift to the resolved input unit.
-    depth_min_u = np.float32(depth_min) if resolved_unit == "m" else np.float32(depth_min * _MM_PER_METRE)
-    depth_max_u = np.float32(depth_max) if resolved_unit == "m" else np.float32(depth_max * _MM_PER_METRE)
-    shift_u = np.float32(shift) if resolved_unit == "m" else np.float32(shift * _MM_PER_METRE)
+    depth_min_u = (
+        np.float32(depth_min) if resolved_unit == DEPTH_METER_UNIT else np.float32(depth_min * _MM_PER_METRE)
+    )
+    depth_max_u = (
+        np.float32(depth_max) if resolved_unit == DEPTH_METER_UNIT else np.float32(depth_max * _MM_PER_METRE)
+    )
+    shift_u = np.float32(shift) if resolved_unit == DEPTH_METER_UNIT else np.float32(shift * _MM_PER_METRE)
 
     # Normalization and quantization is performed in the resolved input unit.
     if use_log:
@@ -149,7 +159,7 @@ def dequantize_depth(
     shift: float = DEFAULT_DEPTH_SHIFT,
     use_log: bool = DEFAULT_DEPTH_USE_LOG,
     pix_fmt: str = DEFAULT_DEPTH_PIX_FMT,
-    output_unit: Literal["m", "mm"] = "mm",
+    output_unit: Literal[DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT] = DEPTH_MILLIMETER_UNIT,
     output_tensor: bool = True,
     output_channel_last: bool = False,
 ) -> NDArray[np.uint16] | NDArray[np.float32] | torch.Tensor:
@@ -184,8 +194,10 @@ def dequantize_depth(
         ValueError: If ``output_unit`` is not ``"m"`` or ``"mm"``.
         ValueError: If ``use_log=True`` and ``depth_min + shift <= 0``.
     """
-    if output_unit not in ("m", "mm"):
-        raise ValueError(f"output_unit must be 'm' or 'mm', got {output_unit!r}")
+    if output_unit not in (DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT):
+        raise ValueError(
+            f"output_unit must be '{DEPTH_METER_UNIT}' or '{DEPTH_MILLIMETER_UNIT}', got {output_unit!r}"
+        )
     if use_log:
         _validate_log_quant_params(depth_min, shift)
 
@@ -219,7 +231,7 @@ def dequantize_depth(
         buf.clamp_(depth_min_m, depth_max_m)
         buf.unsqueeze_(-1) if output_channel_last else buf.unsqueeze_(-3)
 
-        if output_unit == "m":
+        if output_unit == DEPTH_METER_UNIT:
             return buf if output_tensor else buf.cpu().numpy()
 
         # mm path: round + clamp in float32, skipping the uint16 round-trip
@@ -244,7 +256,7 @@ def dequantize_depth(
     np.clip(buf, depth_min_m, depth_max_m, out=buf)
     buf = np.expand_dims(buf, axis=-1) if output_channel_last else np.expand_dims(buf, axis=-3)
 
-    if output_unit == "m":
+    if output_unit == DEPTH_METER_UNIT:
         return torch.from_numpy(buf) if output_tensor else buf
 
     np.multiply(buf, _MM_PER_METRE, out=buf)

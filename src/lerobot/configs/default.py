@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from lerobot.transforms import ImageTransformsConfig
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
-from .video import DEFAULT_DEPTH_UNIT
+from .video import DEFAULT_DEPTH_UNIT, DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT
 
 
 @dataclass
@@ -46,8 +46,10 @@ class DatasetConfig:
     streaming: bool = False
 
     def __post_init__(self) -> None:
-        if self.depth_output_unit not in ("m", "mm"):
-            raise ValueError(f"depth_output_unit must be 'm' or 'mm', got {self.depth_output_unit!r}")
+        if self.depth_output_unit not in (DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT):
+            raise ValueError(
+                f"depth_output_unit must be '{DEPTH_METER_UNIT}' or '{DEPTH_MILLIMETER_UNIT}', got {self.depth_output_unit!r}"
+            )
         if self.episodes is not None:
             if any(ep < 0 for ep in self.episodes):
                 raise ValueError(
