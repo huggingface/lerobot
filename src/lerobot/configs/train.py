@@ -119,6 +119,11 @@ class TrainPipelineConfig(HubMixin):
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
     checkpoint_path: Path | None = field(init=False, default=None)
+    # Adaptive batch sizing configuration
+    adaptive_batch: bool = False
+    adaptive_batch_min_size: int = 1
+    adaptive_batch_max_size: int = 256
+    adaptive_batch_safety_margin: float = 0.9
 
     @property
     def is_reward_model_training(self) -> bool:
@@ -207,6 +212,20 @@ class TrainPipelineConfig(HubMixin):
         elif self.use_policy_training_preset and not self.resume:
             self.optimizer = active_cfg.get_optimizer_preset()
             self.scheduler = active_cfg.get_scheduler_preset()
+
+        if self.adaptive_batch:
+            if self.adaptive_batch_min_size < 1:
+                raise ValueError(f"adaptive_batch_min_size must be >= 1, got {self.adaptive_batch_min_size}")
+            if self.adaptive_batch_max_size < self.adaptive_batch_min_size:
+                raise ValueError(
+                    f"adaptive_batch_max_size ({self.adaptive_batch_max_size}) must be >= "
+                    f"adaptive_batch_min_size ({self.adaptive_batch_min_size})"
+                )
+            if not (0.0 < self.adaptive_batch_safety_margin <= 1.0):
+                raise ValueError(
+                    f"adaptive_batch_safety_margin must be in (0.0, 1.0], got {self.adaptive_batch_safety_margin}"
+                )    
+            
 
         if hasattr(active_cfg, "push_to_hub") and active_cfg.push_to_hub and not active_cfg.repo_id:
             raise ValueError("'repo_id' argument missing. Please specify it to push the model to the hub.")

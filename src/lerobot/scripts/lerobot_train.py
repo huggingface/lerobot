@@ -44,6 +44,7 @@ from lerobot.common.train_utils import (
     save_checkpoint,
     update_last_checkpoint,
 )
+from lerobot.common.memory_utils import estimate_batch_size_from_memory, get_device_memory_stats
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
@@ -395,7 +396,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{dataset.num_episodes=}")
         num_processes = accelerator.num_processes
         effective_bs = cfg.batch_size * num_processes
-        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
+        adaptive_tag = " (adaptive)" if cfg.adaptive_batch else ""
+        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}{adaptive_tag}")
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
@@ -449,6 +451,40 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # declares language columns; otherwise stay on PyTorch's default
     # collate so non-language training runs are unaffected.
     collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
+    # Adaptive batch sizing: estimate safe batch size based on available GPU memory
+    if cfg.adaptive_batch and device.type == "cuda":
+        try:
+            if is_main_process:
+                logging.info("Estimating adaptive batch size from GPU memory...")
+                memory_stats = get_device_memory_stats(device.index if hasattr(device, "index") else 0)
+                
+                test_batch_data = dataset[0:1]
+                test_tensor = torch.stack([test_batch_data[key] for key in test_batch_data.keys() if isinstance(test_batch_data[key], torch.Tensor)])
+                torch.cuda.empty_cache()
+                torch.cuda.reset_peak_memory_stats()
+                
+                with torch.no_grad():
+                    policy(test_tensor)
+                
+                peak_memory = torch.cuda.max_memory_allocated() / (1024 ** 3)
+                peak_memory_bytes = int(peak_memory * (1024 ** 3))
+                
+                cfg.batch_size = estimate_batch_size_from_memory(
+                    peak_memory_per_sample=peak_memory_bytes,
+                    available_memory=memory_stats["free"],
+                    safety_margin=cfg.adaptive_batch_safety_margin,
+                    min_size=cfg.adaptive_batch_min_size,
+                    max_size=cfg.adaptive_batch_max_size,
+                    is_main_process=True,
+                )
+            
+            accelerator.wait_for_everyone()
+            cfg.batch_size = accelerator.broadcast_object_to_all(cfg.batch_size)
+            
+        except Exception as e:
+            if is_main_process:
+                logging.warning(f"Adaptive batch sizing failed: {e}. Falling back to batch_size={cfg.batch_size}")
+
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=cfg.num_workers,
