@@ -24,7 +24,7 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 
-from lerobot.configs import DepthEncoderConfig, VideoEncoderConfig
+from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
     add_features,
     convert_image_to_video_dataset,
@@ -1253,7 +1253,7 @@ def test_convert_image_to_video_dataset(tmp_path):
             dataset=source_dataset,
             output_dir=output_dir,
             repo_id="lerobot/pusht_video",
-            camera_encoder=VideoEncoderConfig(
+            rgb_encoder=RGBEncoderConfig(
                 vcodec="libsvtav1",
                 pix_fmt="yuv420p",
                 g=2,
@@ -1396,7 +1396,7 @@ def test_convert_image_to_video_dataset_depth(tmp_path, empty_lerobot_dataset_fa
             dataset=source_dataset,
             output_dir=output_dir,
             repo_id="dummy/depth_video",
-            camera_encoder=VideoEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30),
+            rgb_encoder=RGBEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30),
             depth_encoder=depth_encoder,
             num_workers=1,
         )
@@ -1466,12 +1466,12 @@ def test_reencode_dataset_multi_key_multiprocessing(
 ):
     """Re-encode a two-camera dataset with num_workers=2 and verify metadata refresh."""
     features = features_factory(use_videos=True)
-    initial_cfg = VideoEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
+    initial_cfg = RGBEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
     dataset = empty_lerobot_dataset_factory(
         root=tmp_path / "ds",
         features=features,
         use_videos=True,
-        camera_encoder=initial_cfg,
+        rgb_encoder=initial_cfg,
     )
 
     add_frames(dataset, num_frames=4)
@@ -1482,13 +1482,13 @@ def test_reencode_dataset_multi_key_multiprocessing(
 
     assert len(dataset.meta.video_keys) == 2
 
-    target_cfg = VideoEncoderConfig(vcodec="h264", g=6, crf=23, pix_fmt="yuv420p")
+    target_cfg = RGBEncoderConfig(vcodec="h264", g=6, crf=23, pix_fmt="yuv420p")
 
-    result = reencode_dataset(dataset, camera_encoder=target_cfg, num_workers=2)
+    result = reencode_dataset(dataset, rgb_encoder=target_cfg, num_workers=2)
 
     assert result is dataset
 
     persisted_info = load_info(dataset.root)
     for vk in dataset.meta.video_keys:
-        persisted_encoder = VideoEncoderConfig.from_video_info(persisted_info.features[vk].get("info", {}))
+        persisted_encoder = RGBEncoderConfig.from_video_info(persisted_info.features[vk].get("info", {}))
         assert persisted_encoder == target_cfg

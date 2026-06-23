@@ -84,9 +84,10 @@ class VideoEncoderConfig:
     # Extra codec options merged last, e.g. {"tune": "film"}.
     extra_options: dict[str, Any] = field(default_factory=dict)
 
-    # Source-data channel count this encoder is expected to handle (3 for RGB,
-    # 1 for depth, etc.)
-    _DEFAULT_CHANNELS: ClassVar[int] = 3
+    # Source-data channel count this encoder is expected to handle. ``None``
+    # disables the pix_fmt channel-count check; concrete subclasses set it
+    # (3 for RGB, 1 for depth, etc.).
+    _DEFAULT_CHANNELS: ClassVar[int | None] = None
 
     def __post_init__(self) -> None:
         self.resolve_vcodec()
@@ -246,9 +247,20 @@ class VideoEncoderConfig:
         return opts
 
 
-def camera_encoder_defaults() -> VideoEncoderConfig:
-    """Return a :class:`VideoEncoderConfig` with RGB-camera defaults."""
-    return VideoEncoderConfig()
+@dataclass
+class RGBEncoderConfig(VideoEncoderConfig):
+    """Encoder configuration for RGB camera streams.
+
+    Identical to :class:`VideoEncoderConfig` but declares the 3-channel
+    source-data layout so ``pix_fmt`` is validated against RGB inputs.
+    """
+
+    _DEFAULT_CHANNELS: ClassVar[int] = 3
+
+
+def rgb_encoder_defaults() -> RGBEncoderConfig:
+    """Return a :class:`RGBEncoderConfig` with RGB-camera defaults."""
+    return RGBEncoderConfig()
 
 
 @dataclass
@@ -295,7 +307,7 @@ def encoder_config_from_video_info(video_info: dict | None) -> VideoEncoderConfi
     """Build the appropriate encoder config from a feature's ``info`` block.
 
     Dispatches to :class:`DepthEncoderConfig` when the dict marks the feature
-    as a depth map and to :class:`VideoEncoderConfig`
+    as a depth map and to :class:`RGBEncoderConfig`
     otherwise.
 
     Args:
@@ -304,9 +316,9 @@ def encoder_config_from_video_info(video_info: dict | None) -> VideoEncoderConfi
 
     Returns:
         A :class:`DepthEncoderConfig` for depth features, otherwise a
-        :class:`VideoEncoderConfig`.
+        :class:`RGBEncoderConfig`.
     """
     video_info = video_info or {}
     is_depth = bool(video_info.get("is_depth_map") or video_info.get("video.is_depth_map"))
-    cls: type[VideoEncoderConfig] = DepthEncoderConfig if is_depth else VideoEncoderConfig
+    cls: type[VideoEncoderConfig] = DepthEncoderConfig if is_depth else RGBEncoderConfig
     return cls.from_video_info(video_info)

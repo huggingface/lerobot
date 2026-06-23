@@ -199,17 +199,17 @@ Re-encode all videos in a dataset (saves to lerobot/pusht_reencoded by default):
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type reencode_videos \
-        --operation.camera_encoder.vcodec h264 \
-        --operation.camera_encoder.pix_fmt yuv420p \
-        --operation.camera_encoder.crf 23
+        --operation.rgb_encoder.vcodec h264 \
+        --operation.rgb_encoder.pix_fmt yuv420p \
+        --operation.rgb_encoder.crf 23
 
 Re-encode videos into a new dataset using 4 parallel processes:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --new_repo_id lerobot/pusht_h264 \
         --operation.type reencode_videos \
-        --operation.camera_encoder.vcodec h264 \
-        --operation.camera_encoder.crf 23 \
+        --operation.rgb_encoder.vcodec h264 \
+        --operation.rgb_encoder.crf 23 \
         --operation.num_workers 4
 
 Re-encode videos in-place (overwrites original dataset):
@@ -217,14 +217,14 @@ Re-encode videos in-place (overwrites original dataset):
         --repo_id lerobot/pusht \
         --new_repo_id lerobot/pusht \
         --operation.type reencode_videos \
-        --operation.camera_encoder.vcodec h264 \
+        --operation.rgb_encoder.vcodec h264 \
         --operation.overwrite true
 
 Re-encode both RGB and depth videos in a dataset (depth quantization params are preserved):
     lerobot-edit-dataset \
         --repo_id lerobot/pusht_depth \
         --operation.type reencode_videos \
-        --operation.camera_encoder.vcodec libx264 \
+        --operation.rgb_encoder.vcodec libx264 \
         --operation.depth_encoder.vcodec ffv1
 
 Using JSON config file:
@@ -243,10 +243,10 @@ import draccus
 
 from lerobot.configs import (
     DepthEncoderConfig,
-    VideoEncoderConfig,
-    camera_encoder_defaults,
+    RGBEncoderConfig,
     depth_encoder_defaults,
     parser,
+    rgb_encoder_defaults,
 )
 from lerobot.datasets import (
     LeRobotDataset,
@@ -309,7 +309,7 @@ class ModifyTasksConfig(OperationConfig):
 @dataclass
 class ConvertImageToVideoConfig(OperationConfig):
     output_dir: str | None = None
-    camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
+    rgb_encoder: RGBEncoderConfig = field(default_factory=rgb_encoder_defaults)
     depth_encoder: DepthEncoderConfig = field(default_factory=depth_encoder_defaults)
     episode_indices: list[int] | None = None
     num_workers: int = 4
@@ -331,7 +331,7 @@ class RecomputeStatsConfig(OperationConfig):
 @OperationConfig.register_subclass("reencode_videos")
 @dataclass
 class ReencodeVideosConfig(OperationConfig):
-    camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
+    rgb_encoder: RGBEncoderConfig = field(default_factory=rgb_encoder_defaults)
     depth_encoder: DepthEncoderConfig = field(default_factory=depth_encoder_defaults)
     num_workers: int = 0
     encoder_threads: int | None = None
@@ -625,7 +625,7 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
         dataset=dataset,
         output_dir=output_dir,
         repo_id=output_repo_id,
-        camera_encoder=getattr(cfg.operation, "camera_encoder", None) or camera_encoder_defaults(),
+        rgb_encoder=getattr(cfg.operation, "rgb_encoder", None) or rgb_encoder_defaults(),
         depth_encoder=getattr(cfg.operation, "depth_encoder", None) or depth_encoder_defaults(),
         episode_indices=getattr(cfg.operation, "episode_indices", None),
         num_workers=getattr(cfg.operation, "num_workers", 4),
@@ -745,12 +745,12 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
         dataset = LeRobotDataset(output_repo_id, root=output_root)
 
     logging.info(
-        f"Re-encoding videos in {output_repo_id} with RGB encoder {cfg.operation.camera_encoder} "
+        f"Re-encoding videos in {output_repo_id} with RGB encoder {cfg.operation.rgb_encoder} "
         f"and depth encoder {cfg.operation.depth_encoder}"
     )
     reencode_dataset(
         dataset,
-        camera_encoder=cfg.operation.camera_encoder,
+        rgb_encoder=cfg.operation.rgb_encoder,
         depth_encoder=cfg.operation.depth_encoder,
         encoder_threads=cfg.operation.encoder_threads,
         num_workers=cfg.operation.num_workers,

@@ -595,7 +595,7 @@ class TestEncoderConfigPersistence:
     def test_first_episode_save_persists_encoder_config(self, tmp_path, empty_lerobot_dataset_factory):
         cfg = VideoEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
         dataset = empty_lerobot_dataset_factory(
-            root=tmp_path / "ds", features=DUMMY_VIDEO_FEATURES, use_videos=True, camera_encoder=cfg
+            root=tmp_path / "ds", features=DUMMY_VIDEO_FEATURES, use_videos=True, rgb_encoder=cfg
         )
 
         add_frames(dataset, num_frames=4)
@@ -618,7 +618,7 @@ class TestEncoderConfigPersistence:
     def test_second_episode_does_not_overwrite_encoder_fields(self, tmp_path, empty_lerobot_dataset_factory):
         cfg = VideoEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
         dataset = empty_lerobot_dataset_factory(
-            root=tmp_path / "ds", features=DUMMY_VIDEO_FEATURES, use_videos=True, camera_encoder=cfg
+            root=tmp_path / "ds", features=DUMMY_VIDEO_FEATURES, use_videos=True, rgb_encoder=cfg
         )
 
         add_frames(dataset, num_frames=4)

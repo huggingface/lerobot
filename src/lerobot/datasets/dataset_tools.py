@@ -40,9 +40,9 @@ from tqdm import tqdm
 from lerobot.configs import (
     DepthEncoderConfig,
     VideoEncoderConfig,
-    camera_encoder_defaults,
     depth_encoder_defaults,
     encoder_config_from_video_info,
+    rgb_encoder_defaults,
 )
 from lerobot.configs.video import DEPTH_ENCODER_INFO_FIELD_NAMES
 from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
@@ -1670,7 +1670,7 @@ def convert_image_to_video_dataset(
     dataset: LeRobotDataset,
     output_dir: Path | None = None,
     repo_id: str | None = None,
-    camera_encoder: VideoEncoderConfig | None = None,
+    rgb_encoder: VideoEncoderConfig | None = None,
     depth_encoder: DepthEncoderConfig | None = None,
     episode_indices: list[int] | None = None,
     num_workers: int = 4,
@@ -1689,8 +1689,8 @@ def convert_image_to_video_dataset(
             ``new_root`` in ``EditDatasetConfig``.
         repo_id: Converted dataset identifier. Equivalent to ``new_repo_id`` in
             ``EditDatasetConfig``.
-        camera_encoder: Video encoder settings applied to RGB cameras. When ``None``,
-            :func:`~lerobot.configs.video.camera_encoder_defaults` is used.
+        rgb_encoder: Video encoder settings applied to RGB cameras. When ``None``,
+            :func:`~lerobot.configs.video.rgb_encoder_defaults` is used.
         depth_encoder: Video encoder settings applied to depth-map cameras, including
             the quantization parameters persisted to the dataset metadata. When
             ``None``, :func:`~lerobot.configs.video.depth_encoder_defaults` is used.
@@ -1705,8 +1705,8 @@ def convert_image_to_video_dataset(
     Returns:
         A new :class:`LeRobotDataset` with images encoded as videos.
     """
-    if camera_encoder is None:
-        camera_encoder = camera_encoder_defaults()
+    if rgb_encoder is None:
+        rgb_encoder = rgb_encoder_defaults()
     if depth_encoder is None:
         depth_encoder = depth_encoder_defaults()
 
@@ -1733,7 +1733,7 @@ def convert_image_to_video_dataset(
     logging.info(
         f"Converting {len(episode_indices)} episodes with {len(img_keys)} cameras from {dataset.repo_id}"
     )
-    logging.info(f"RGB video encoder: {camera_encoder}, depth video encoder: {depth_encoder}")
+    logging.info(f"RGB video encoder: {rgb_encoder}, depth video encoder: {depth_encoder}")
 
     # Create new features dict, converting image features to video features
     new_features = {}
@@ -1795,7 +1795,7 @@ def convert_image_to_video_dataset(
         episode_lengths = {ep_idx: dataset.meta.episodes["length"][ep_idx] for ep_idx in episode_indices}
 
         for img_key in tqdm(img_keys, desc="Processing cameras"):
-            target_encoder = depth_encoder if img_key in dataset.meta.depth_keys else camera_encoder
+            target_encoder = depth_encoder if img_key in dataset.meta.depth_keys else rgb_encoder
 
             # Estimate size per frame by encoding a small calibration sample
             # This provides accurate compression ratio for the specific codec parameters
@@ -1889,7 +1889,7 @@ def convert_image_to_video_dataset(
         # Update video info for all image keys (now videos). They are registered as
         # video features above, so update_video_info populates their (still-empty) info.
         for img_key in img_keys:
-            target_encoder = depth_encoder if img_key in dataset.meta.depth_keys else camera_encoder
+            target_encoder = depth_encoder if img_key in dataset.meta.depth_keys else rgb_encoder
             new_meta.update_video_info(video_key=img_key, video_encoder=target_encoder)
 
         write_info(new_meta.info, new_meta.root)
@@ -1930,7 +1930,7 @@ def _reencode_video_worker(args: tuple) -> Path:
 
 def reencode_dataset(
     dataset: LeRobotDataset,
-    camera_encoder: VideoEncoderConfig | None = None,
+    rgb_encoder: VideoEncoderConfig | None = None,
     depth_encoder: DepthEncoderConfig | None = None,
     encoder_threads: int | None = None,
     num_workers: int | None = None,
@@ -1942,7 +1942,7 @@ def reencode_dataset(
     Args:
         dataset: An existing :class:`LeRobotDataset` whose videos will be
             re-encoded.
-        camera_encoder: Target encoder configuration applied to every RGB video
+        rgb_encoder: Target encoder configuration applied to every RGB video
             file. If ``None``, re-encoding is skipped for RGB videos.
         depth_encoder: Target encoder configuration applied to every depth video
             file. If ``None``, re-encoding is skipped for depth videos.
@@ -1961,14 +1961,14 @@ def reencode_dataset(
     video_keys_encoders_dict = {}
     video_keys_paths_dict = {}
 
-    if camera_encoder is None and depth_encoder is None:
-        raise ValueError("Either camera_encoder or depth_encoder must be provided")
+    if rgb_encoder is None and depth_encoder is None:
+        raise ValueError("Either rgb_encoder or depth_encoder must be provided")
 
     # Only re-encode if the videos are not already encoded with the given video encoding parameters
     for video_key in meta.video_keys:
         current_info = meta.info.features[video_key].get("info", {})
         current_encoder = encoder_config_from_video_info(current_info)
-        target_encoder = depth_encoder if video_key in meta.depth_keys else camera_encoder
+        target_encoder = depth_encoder if video_key in meta.depth_keys else rgb_encoder
         if target_encoder is None:
             logging.info(f"No encoder provided for {video_key} video. Skipping re-encoding.")
         elif current_encoder != target_encoder:

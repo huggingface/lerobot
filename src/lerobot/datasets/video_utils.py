@@ -41,8 +41,8 @@ from PIL import Image
 from lerobot.configs import (
     DepthEncoderConfig,
     VideoEncoderConfig,
-    camera_encoder_defaults,
     depth_encoder_defaults,
+    rgb_encoder_defaults,
 )
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
@@ -449,7 +449,7 @@ def encode_video_frames(
         video_path: Output path for the encoded ``.mp4`` file.
         fps: Frame rate of the output video.
         video_encoder: Encoder settings (codec, pixel format, quality, ...). When
-            ``None``, :func:`camera_encoder_defaults` is used. Pass a
+            ``None``, :func:`rgb_encoder_defaults` is used. Pass a
             :class:`~lerobot.configs.video.DepthEncoderConfig` to encode depth frames.
         encoder_threads: Per-encoder thread count forwarded to the codec. ``None``
             lets the codec decide.
@@ -459,7 +459,7 @@ def encode_video_frames(
             log a warning. When ``True``, re-encode and replace the existing file.
     """
     if video_encoder is None:
-        video_encoder = camera_encoder_defaults()
+        video_encoder = rgb_encoder_defaults()
     vcodec = video_encoder.vcodec
     pix_fmt = video_encoder.pix_fmt
 
@@ -547,7 +547,7 @@ def reencode_video(
     Args:
         input_video_path: Existing video file to read.
         output_video_path: Path for the re-encoded file.
-        video_encoder: Encoder configuration. Defaults to :func:`camera_encoder_defaults`.
+        video_encoder: Encoder configuration. Defaults to :func:`rgb_encoder_defaults`.
         encoder_threads: Optional thread count forwarded to :meth:`VideoEncoderConfig.get_codec_options`.
         log_level: libav log level while encoding, or ``None`` to leave logging unchanged. Defaults to WARNING.
         overwrite: When ``False`` and ``output_video_path`` already exists, skip and log a warning.
@@ -555,7 +555,7 @@ def reencode_video(
         end_time_s: When set, trim the output to end at this timestamp (seconds, exclusive).
     """
 
-    video_encoder = video_encoder or camera_encoder_defaults()
+    video_encoder = video_encoder or rgb_encoder_defaults()
 
     if (start_time_s is not None and start_time_s < 0) or (end_time_s is not None and end_time_s < 0):
         raise ValueError(f"Trim times must be non-negative, got start={start_time_s}, end={end_time_s}.")
@@ -886,7 +886,7 @@ class StreamingVideoEncoder:
     def __init__(
         self,
         fps: int,
-        camera_encoder: VideoEncoderConfig | None = None,
+        rgb_encoder: VideoEncoderConfig | None = None,
         depth_encoder: DepthEncoderConfig | None = None,
         queue_maxsize: int = 30,
         encoder_threads: int | None = None,
@@ -894,8 +894,8 @@ class StreamingVideoEncoder:
         """
         Args:
             fps: Frames per second for the output videos.
-            camera_encoder: Video encoder settings applied to all RGB cameras.
-                When ``None``, :func:`camera_encoder_defaults` is used.
+            rgb_encoder: Video encoder settings applied to all RGB cameras.
+                When ``None``, :func:`rgb_encoder_defaults` is used.
             depth_encoder: Video encoder settings applied to all depth cameras,
                 including the depth quantization parameters. When ``None``,
                 :func:`depth_encoder_defaults` is used.
@@ -905,7 +905,7 @@ class StreamingVideoEncoder:
                 ``None`` lets the codec decide.
         """
         self.fps = fps
-        self._camera_encoder = camera_encoder or camera_encoder_defaults()
+        self._rgb_encoder = rgb_encoder or rgb_encoder_defaults()
         self._depth_encoder = depth_encoder or depth_encoder_defaults()
         self._encoder_threads = encoder_threads
         self.queue_maxsize = queue_maxsize
@@ -946,7 +946,7 @@ class StreamingVideoEncoder:
             temp_video_dir = Path(tempfile.mkdtemp(dir=temp_dir))
             video_path = temp_video_dir / f"{video_key.replace('/', '_')}_streaming.mp4"
 
-            encoder = self._depth_encoder if video_key in depth_video_keys else self._camera_encoder
+            encoder = self._depth_encoder if video_key in depth_video_keys else self._rgb_encoder
             encoder_thread = _CameraEncoderThread(
                 video_path=video_path,
                 fps=self.fps,

@@ -118,10 +118,10 @@ lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
     --operation.type convert_image_to_video \
     --operation.output_dir outputs/pusht_video \
-    --operation.camera_encoder.vcodec libsvtav1 \
-    --operation.camera_encoder.pix_fmt yuv420p \
-    --operation.camera_encoder.g 2 \
-    --operation.camera_encoder.crf 30
+    --operation.rgb_encoder.vcodec libsvtav1 \
+    --operation.rgb_encoder.pix_fmt yuv420p \
+    --operation.rgb_encoder.g 2 \
+    --operation.rgb_encoder.crf 30
 
 # Convert a dataset that includes depth maps, customizing the depth encoder
 lerobot-edit-dataset \
@@ -157,37 +157,37 @@ lerobot-edit-dataset \
 **Parameters:**
 
 - `output_dir`: Custom output directory (optional - by default uses `new_repo_id` or `{repo_id}_video`)
-- `camera_encoder`: Video encoder settings applied to RGB cameras — all sub-fields accessible via `--operation.camera_encoder.<field>`. See [Video Encoding Parameters](./video_encoding_parameters) for more details.
+- `rgb_encoder`: Video encoder settings applied to RGB cameras — all sub-fields accessible via `--operation.rgb_encoder.<field>`. See [Video Encoding Parameters](./video_encoding_parameters) for more details.
 - `depth_encoder`: Video encoder settings applied to depth-map cameras (e.g. from an Intel RealSense). In addition to the standard encoder fields it exposes the depth quantization knobs (`depth_min`, `depth_max`, `shift`, `use_log`), accessible via `--operation.depth_encoder.<field>`. These quantization settings are persisted to the dataset metadata so depth can be dequantized back to physical units on load. See the [Depth streams](./video_encoding_parameters#depth-streams) section for details.
 - `episode_indices`: List of specific episodes to convert (default: all episodes)
 - `num_workers`: Number of parallel workers for processing (default: 4)
 
-**Note:** The resulting dataset will be a proper LeRobotDataset with all cameras encoded as videos in the `videos/` directory, with parquet files containing only metadata (no raw image data). Depth-map cameras are detected automatically and routed to the `depth_encoder`, while RGB cameras use the `camera_encoder`. All episodes, stats, and tasks are preserved.
+**Note:** The resulting dataset will be a proper LeRobotDataset with all cameras encoded as videos in the `videos/` directory, with parquet files containing only metadata (no raw image data). Depth-map cameras are detected automatically and routed to the `depth_encoder`, while RGB cameras use the `rgb_encoder`. All episodes, stats, and tasks are preserved.
 
 #### Re-encode Videos
 
-Re-encode the videos of an existing video dataset with different encoder settings, without going back to raw frames. RGB videos use the `camera_encoder` and depth videos use the `depth_encoder`. Provide only the encoder(s) you want to re-encode; the other stream type is left untouched.
+Re-encode the videos of an existing video dataset with different encoder settings, without going back to raw frames. RGB videos use the `rgb_encoder` and depth videos use the `depth_encoder`. Provide only the encoder(s) you want to re-encode; the other stream type is left untouched.
 
 ```bash
 # Re-encode all RGB videos with new settings (saves to lerobot/pusht_reencoded by default)
 lerobot-edit-dataset \
     --repo_id lerobot/pusht \
     --operation.type reencode_videos \
-    --operation.camera_encoder.vcodec h264 \
-    --operation.camera_encoder.pix_fmt yuv420p \
-    --operation.camera_encoder.crf 23
+    --operation.rgb_encoder.vcodec h264 \
+    --operation.rgb_encoder.pix_fmt yuv420p \
+    --operation.rgb_encoder.crf 23
 
 # Re-encode both RGB and depth videos in a dataset with depth maps
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_depth \
     --operation.type reencode_videos \
-    --operation.camera_encoder.vcodec libx264 \
+    --operation.rgb_encoder.vcodec libx264 \
     --operation.depth_encoder.vcodec ffv1
 ```
 
 **Parameters:**
 
-- `camera_encoder`: Encoder settings applied to every RGB video. Omit to skip re-encoding RGB videos.
+- `rgb_encoder`: Encoder settings applied to every RGB video. Omit to skip re-encoding RGB videos.
 - `depth_encoder`: Encoder settings applied to every depth video. Omit to skip re-encoding depth videos.
 - `num_workers`: Number of parallel workers for processing.
 

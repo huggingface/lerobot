@@ -34,8 +34,8 @@ import torch
 from lerobot.configs import (
     DepthEncoderConfig,
     VideoEncoderConfig,
-    camera_encoder_defaults,
     depth_encoder_defaults,
+    rgb_encoder_defaults,
 )
 
 from .compute_stats import compute_episode_stats
@@ -107,7 +107,7 @@ class DatasetWriter:
         self,
         meta: LeRobotDatasetMetadata,
         root: Path,
-        camera_encoder: VideoEncoderConfig | None,
+        rgb_encoder: VideoEncoderConfig | None,
         depth_encoder: DepthEncoderConfig | None,
         encoder_threads: int | None,
         batch_encoding_size: int,
@@ -120,8 +120,8 @@ class DatasetWriter:
             meta: Dataset metadata instance (used for feature schema, chunk
                 settings, and episode persistence).
             root: Local dataset root directory.
-            camera_encoder: Video encoder settings applied to RGB cameras. When
-                ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults` is used.
+            rgb_encoder: Video encoder settings applied to RGB cameras. When
+                ``None``, :func:`~lerobot.configs.video.rgb_encoder_defaults` is used.
             depth_encoder: Video encoder settings applied to depth cameras, including
                 the quantization parameters. When ``None``,
                 :func:`~lerobot.configs.video.depth_encoder_defaults` is used.
@@ -135,7 +135,7 @@ class DatasetWriter:
         """
         self._meta = meta
         self._root = root
-        self._camera_encoder = camera_encoder or camera_encoder_defaults()
+        self._rgb_encoder = rgb_encoder or rgb_encoder_defaults()
         self._depth_encoder = depth_encoder or depth_encoder_defaults()
         self._encoder_threads = encoder_threads
         self._batch_encoding_size = batch_encoding_size
@@ -321,9 +321,7 @@ class DatasetWriter:
                             episode_index,
                             self._root,
                             self._meta.fps,
-                            self._depth_encoder
-                            if video_key in self._meta.depth_keys
-                            else self._camera_encoder,
+                            self._depth_encoder if video_key in self._meta.depth_keys else self._rgb_encoder,
                             self._encoder_threads,
                         ): video_key
                         for video_key in self._meta.video_keys
@@ -538,7 +536,7 @@ class DatasetWriter:
                 video_key,
                 video_encoder=self._depth_encoder
                 if video_key in self._meta.depth_keys
-                else self._camera_encoder,
+                else self._rgb_encoder,
             )
             write_info(self._meta.info, self._meta.root)
 
@@ -613,7 +611,7 @@ class DatasetWriter:
             episode_index,
             self._root,
             self._meta.fps,
-            self._depth_encoder if is_depth else self._camera_encoder,
+            self._depth_encoder if is_depth else self._rgb_encoder,
             self._encoder_threads,
         )
 

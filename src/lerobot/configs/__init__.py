@@ -37,10 +37,11 @@ from .video import (
     VALID_VIDEO_CODECS,
     VIDEO_ENCODER_INFO_KEYS,
     DepthEncoderConfig,
+    RGBEncoderConfig,
     VideoEncoderConfig,
-    camera_encoder_defaults,
     depth_encoder_defaults,
     encoder_config_from_video_info,
+    rgb_encoder_defaults,
 )
 
 __all__ = [
@@ -61,9 +62,10 @@ __all__ = [
     "WandBConfig",
     "load_recipe",
     "VideoEncoderConfig",
+    "RGBEncoderConfig",
     "DepthEncoderConfig",
     # Defaults
-    "camera_encoder_defaults",
+    "rgb_encoder_defaults",
     "depth_encoder_defaults",
     # Factories
     "encoder_config_from_video_info",

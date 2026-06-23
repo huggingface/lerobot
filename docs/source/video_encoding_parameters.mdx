@@ -2,15 +2,15 @@
 
 When video storage is enabled, LeRobot stores each camera stream as an **MP4** file instead of saving one image file per timestep. Video encoding compresses across time, which usually cuts dataset size and I/O compared to a pile of PNG, while keeping MP4 — a format every player and loader understands.
 
-Encoding frames into an MP4 is a full FFmpeg pipeline: choice of encoder, pixel format, GOP/keyframes, quality vs. speed, and optional extra encoder flags. Most of these knobs are user-tunable through `camera_encoder`, a nested `VideoEncoderConfig` (`lerobot.configs.video.VideoEncoderConfig`) passed through PyAV.
+Encoding frames into an MP4 is a full FFmpeg pipeline: choice of encoder, pixel format, GOP/keyframes, quality vs. speed, and optional extra encoder flags. Most of these knobs are user-tunable through `rgb_encoder`, a nested `RGBEncoderConfig` (`lerobot.configs.video.RGBEncoderConfig`) passed through PyAV.
 
-You can set these parameters from the CLI with `--dataset.camera_encoder.<field>` (e.g. with `lerobot-record` or `lerobot-rollout`). The same block applies to every camera video stream in that run.
+You can set these parameters from the CLI with `--dataset.rgb_encoder.<field>` (e.g. with `lerobot-record` or `lerobot-rollout`). The same block applies to every camera video stream in that run.
 
 <Tip>
-  Video storage must be on for `camera_encoder` to have any effect —
+  Video storage must be on for `rgb_encoder` to have any effect —
   `use_videos=True` in Python APIs, or `--dataset.video=true` on the CLI (the
-  recording default). With video off, inputs stay as images and `camera_encoder`
-  is ignored.
+  recording default). With video off, inputs stay as images and `rgb_encoder` is
+  ignored.
 </Tip>
 
 For details on **when** frames are written vs. encoded (streaming vs. post-episode), queues, and other top-level `--dataset.*` switches, see [Streaming Video Encoding](./streaming_video_encoding). For an encoding-parameter comparison and experiments, see the [video-benchmark Space](https://huggingface.co/spaces/lerobot/video-benchmark).
@@ -33,9 +33,9 @@ lerobot-record \
     --dataset.single_task="Grab the cube" \
     --dataset.streaming_encoding=true \
     --dataset.encoder_threads=2 \
-    --dataset.camera_encoder.vcodec=h264 \
-    --dataset.camera_encoder.preset=fast \
-    --dataset.camera_encoder.extra_options={"tune": "film", "profile:v": "high", "bf": 2} \
+    --dataset.rgb_encoder.vcodec=h264 \
+    --dataset.rgb_encoder.preset=fast \
+    --dataset.rgb_encoder.extra_options={"tune": "film", "profile:v": "high", "bf": 2} \
     --display_data=true
 ```
 
@@ -50,7 +50,7 @@ Only override these parameters if you have a specific reason to, and measure the
 
 </Tip>
 
-All flags below are prefixed with `--dataset.camera_encoder.` on the CLI.
+All flags below are prefixed with `--dataset.rgb_encoder.` on the CLI.
 
 | Parameter       | Type             | Default       | Description                                                                                                                                                                            |
 | --------------- | ---------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -172,7 +172,7 @@ Two sources contribute to the `info` block:
 
 <Tip>
   This block is populated **once**, from the **first** episode. It assumes every
-  episode in the dataset was encoded with the same `camera_encoder`. Changing
+  episode in the dataset was encoded with the same `rgb_encoder`. Changing
   encoder settings partway through a recording is not supported — the
   `info.json` will only reflect the parameters used for the first episode.
 </Tip>
