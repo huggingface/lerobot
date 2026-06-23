@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PI052 runtime adapter and CLI helpers."""
+"""Generic runtime primitives for language-conditioned policies."""
 
-from lerobot.policies.language_conditioned import (
+from .runtime import (
+    LanguageConditionedPolicyAdapter,
     LanguageConditionedRuntime,
     RuntimeState,
     Tick,
@@ -23,22 +24,12 @@ from lerobot.policies.language_conditioned import (
     VQAResult,
 )
 
-from .pi052_adapter import PI052PolicyAdapter
-from .repl import StdinReader
-from .runtime import PI052Runtime
-from .ui import make_state_panel, print_robot_lines, print_user_line
-
 __all__ = [
+    "LanguageConditionedPolicyAdapter",
     "LanguageConditionedRuntime",
-    "PI052PolicyAdapter",
-    "PI052Runtime",
     "RuntimeState",
-    "StdinReader",
     "Tick",
     "TickClock",
     "ToolCall",
     "VQAResult",
-    "make_state_panel",
-    "print_robot_lines",
-    "print_user_line",
 ]

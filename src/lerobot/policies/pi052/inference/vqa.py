@@ -42,10 +42,9 @@ import subprocess
 import sys
 import time
 import webbrowser
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
-
-from .runtime_state import push_log
 
 logger = logging.getLogger(__name__)
 
@@ -162,8 +161,7 @@ def parse_loc_answer(answer: str) -> dict | None:
             boxes.append((x1, y1, x2, y2, label))
     if boxes:
         detections = [
-            {"label": lbl, "bbox_format": "xyxy", "bbox": [x1, y1, x2, y2]}
-            for (x1, y1, x2, y2, lbl) in boxes
+            {"label": lbl, "bbox_format": "xyxy", "bbox": [x1, y1, x2, y2]} for (x1, y1, x2, y2, lbl) in boxes
         ]
         return {"kind": "bbox", "payload": {"detections": detections}, "normalized": True}
     if len(points) == 1:
@@ -174,9 +172,7 @@ def parse_loc_answer(answer: str) -> dict | None:
             "normalized": True,
         }
     if points:  # several bare points → treat as detections-as-points
-        detections = [
-            {"label": lbl, "bbox_format": "xyxy", "bbox": [x, y, x, y]} for (x, y, lbl) in points
-        ]
+        detections = [{"label": lbl, "bbox_format": "xyxy", "bbox": [x, y, x, y]} for (x, y, lbl) in points]
         return {"kind": "bbox", "payload": {"detections": detections}, "normalized": True}
     return None
 
@@ -311,11 +307,11 @@ def _open_file(path: Path) -> None:
     """Best-effort open ``path`` in the OS default viewer."""
     try:
         if sys.platform == "darwin":
-            subprocess.run(["open", str(path)], check=False)
+            subprocess.run(["open", str(path)], check=False)  # nosec B607
         elif sys.platform.startswith("linux"):
-            subprocess.run(["xdg-open", str(path)], check=False)
+            subprocess.run(["xdg-open", str(path)], check=False)  # nosec B607
         elif os.name == "nt":
-            os.startfile(str(path))  # type: ignore[attr-defined]  # noqa: S606
+            os.startfile(str(path))  # type: ignore[attr-defined]  # noqa: S606  # nosec B606
         else:  # pragma: no cover - exotic platform
             webbrowser.open(path.resolve().as_uri())
     except Exception as exc:  # noqa: BLE001
@@ -339,10 +335,11 @@ def save_and_open_overlay(image: Any, out_dir: str | Path = "./vqa_overlays") ->
 
 def handle_vqa_query(
     *,
-    policy: Any,
+    policy_adapter: Any | None = None,
+    policy: Any | None = None,
     observation_provider: Any,
     question: str,
-    state: dict[str, Any],
+    state: Any,
     input_fn: Any = input,
     print_fn: Any = print,
 ) -> None:
@@ -351,22 +348,26 @@ def handle_vqa_query(
     Called synchronously from the input layer while the runtime is in
     ``/question`` mode (the action loop is gated off, so the policy is
     not in concurrent use). Progress is reported via both
-    :func:`push_log` (REPL panel scrollback) and ``print_fn`` (direct
-    stdout) — in autonomous question mode the panel redraw is suspended,
+    ``state.log`` (REPL panel scrollback) and ``print_fn`` (direct stdout)
+    — in autonomous question mode the panel redraw is suspended,
     so the direct print is what the operator actually sees.
     """
-    from .steps import _generate_with_policy, _msgs_for_vqa  # noqa: PLC0415
+    if policy_adapter is None and policy is not None:
+        from .pi052_adapter import PI052PolicyAdapter  # noqa: PLC0415
+
+        policy_adapter = PI052PolicyAdapter(policy)
 
     def report(line: str) -> None:
         """Surface a line both to the panel scrollback and to stdout."""
-        push_log(state, line)
-        try:
+        if hasattr(state, "log"):
+            state.log(line)
+        else:
+            state.setdefault("log_lines", []).append(line)
+        with suppress(Exception):
             print_fn(line)
-        except Exception:  # noqa: BLE001
-            pass
 
-    if policy is None or not hasattr(policy, "select_message"):
-        report("  [warn] vqa: policy has no select_message — skipping")
+    if policy_adapter is None:
+        report("  [warn] vqa: no policy adapter — skipping")
         return
 
     observation: dict | None = None
@@ -383,19 +384,14 @@ def handle_vqa_query(
     # consumes *all* ``config.image_features`` regardless of which
     # camera the sub-recipe was tagged for. So the model always sees
     # every camera; the operator never has to name one to ask.
-    answer = _generate_with_policy(
-        policy,
-        _msgs_for_vqa(question),
-        observation=observation,
-        state=state,
-        label="vqa gen",
-    )
+    result = policy_adapter.answer_vqa(question, None, observation, state)
+    answer = result.answer
     if not answer:
         report("  [info] vqa gen returned empty")
         return
     report(f"  vqa: {answer}")
 
-    parsed = parse_vqa_answer(answer)
+    parsed = result.parsed if result.parsed is not None else parse_vqa_answer(answer)
     if not answer_has_overlay(parsed):
         if parsed is None:
             report("  [info] vqa answer is not JSON — no overlay")

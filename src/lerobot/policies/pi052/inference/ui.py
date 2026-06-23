@@ -76,10 +76,7 @@ def make_state_panel(state: dict[str, Any]) -> Any:
     table.add_column(justify="left")
     for key, label in _STATE_KEYS:
         value = state.get(key)
-        if value is None:
-            rendered = Text("(not set)", style="dim italic")
-        else:
-            rendered = Text(str(value), style="bold")
+        rendered = Text("(not set)", style="dim italic") if value is None else Text(str(value), style="bold")
         table.add_row(label, rendered)
     queue = state.get("action_queue")
     queue_len = len(queue) if hasattr(queue, "__len__") else 0
@@ -92,9 +89,7 @@ def make_state_panel(state: dict[str, Any]) -> Any:
     )
     table.add_row("", footer)
     run_mode = state.get("mode", "action")
-    mode_tag = (
-        "[green]action[/]" if run_mode == "action" else "[yellow]paused[/]"
-    )
+    mode_tag = "[green]action[/]" if run_mode == "action" else "[yellow]paused[/]"
     return Panel(
         table,
         title=f"[bold]PI052 state[/] · mode: {mode_tag}",

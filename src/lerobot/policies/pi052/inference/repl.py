@@ -99,7 +99,14 @@ class StdinReader:
         # Question → VQA; statement → interjection.
         if lower.endswith("?"):
             state["recent_vqa_query"] = line
-            state.setdefault("events_this_tick", []).append("user_vqa_query")
+            _emit(state, "user_vqa_query")
         else:
             state["recent_interjection"] = line
-            state.setdefault("events_this_tick", []).append("user_interjection")
+            _emit(state, "user_interjection")
+
+
+def _emit(state: Any, event_name: str) -> None:
+    if hasattr(state, "emit"):
+        state.emit(event_name)
+    else:
+        state.setdefault("events_this_tick", []).append(event_name)
