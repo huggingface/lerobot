@@ -43,6 +43,7 @@ from typing import Any, TypedDict, TypeVar, cast
 
 import torch
 from huggingface_hub import hf_hub_download
+from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_file, save_file
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
