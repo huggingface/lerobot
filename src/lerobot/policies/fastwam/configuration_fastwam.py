@@ -28,7 +28,9 @@ from lerobot.optim import AdamWConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 WAN22_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B"
+WAN22_DIFFUSERS_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
 FASTWAM_BASE_MODEL_ID = "lerobot/fastwam_base"
+WAN_T5_TOKENIZER_ID = "google/umt5-xxl"
 
 
 _FASTWAM_VIDEO_BASE_COMPAT_KEYS = (
@@ -99,8 +101,11 @@ def _coerce_enum(enum_cls: type, value: Any) -> Any:
         return value
     try:
         return enum_cls(value)
-    except (TypeError, ValueError):
-        return getattr(enum_cls, str(value), value)
+    except (TypeError, ValueError) as exc:
+        member = getattr(enum_cls, str(value), None)
+        if member is None:
+            raise ValueError(f"Cannot coerce {value!r} into {enum_cls.__name__}.") from exc
+        return member
 
 
 def _coerce_policy_features(features: dict[str, Any] | None) -> dict[str, PolicyFeature] | None:
@@ -184,7 +189,8 @@ class FastWAMConfig(PreTrainedConfig):
     image_size: tuple[int, int] = (224, 448)
     context_len: int = 128
     model_id: str = WAN22_MODEL_ID
-    tokenizer_model_id: str = WAN22_MODEL_ID
+    tokenizer_model_id: str = WAN_T5_TOKENIZER_ID
+    text_encoder_model_id: str = WAN22_DIFFUSERS_MODEL_ID
     base_model_id: str | None = FASTWAM_BASE_MODEL_ID
     tokenizer_max_len: int = 128
     load_text_encoder: bool = True
@@ -229,7 +235,6 @@ class FastWAMConfig(PreTrainedConfig):
         super().__post_init__()
         self.image_size = tuple(self.image_size)
         self.model_id = _validate_wan_model_id(self.model_id, "model_id")
-        self.tokenizer_model_id = _validate_wan_model_id(self.tokenizer_model_id, "tokenizer_model_id")
         self.input_features = _coerce_policy_features(self.input_features)
         self.output_features = _coerce_policy_features(self.output_features)
         self.toggle_action_dimensions = [int(dim) for dim in self.toggle_action_dimensions]

@@ -36,10 +36,6 @@ if TYPE_CHECKING or _diffusers_available:
 else:
     AutoencoderKLWan = None
 
-if TYPE_CHECKING:
-    from .wan_adapters import WanVideoVAE38
-    from .wan_video_dit import WanVideoDiT
-
 from .wan_adapters import WanVideoVAE38
 from .wan_video_dit import WanVideoDiT
 
@@ -109,8 +105,8 @@ class WanTokenizer:
         return out.input_ids
 
 
-def build_wan_tokenizer(*, tokenizer_max_len: int) -> WanTokenizer:
-    return WanTokenizer(name=WAN_T5_TOKENIZER, seq_len=int(tokenizer_max_len))
+def build_wan_tokenizer(*, model_id: str = WAN_T5_TOKENIZER, tokenizer_max_len: int) -> WanTokenizer:
+    return WanTokenizer(name=model_id, seq_len=int(tokenizer_max_len))
 
 
 def load_pretrained_wan_vae(*, torch_dtype: torch.dtype, device: str) -> WanVideoVAE38:
@@ -120,12 +116,20 @@ def load_pretrained_wan_vae(*, torch_dtype: torch.dtype, device: str) -> WanVide
     return WanVideoVAE38(dtype=torch_dtype, device=device, pretrained=vae)
 
 
-def load_pretrained_wan_text_encoder(*, torch_dtype: torch.dtype, device: str) -> WanTextEncoder:
-    """Load real UMT5-XXL encoder weights from the diffusers repo (offline base creation)."""
+def load_pretrained_wan_text_encoder(
+    *,
+    model_id: str = WAN22_DIFFUSERS_MODEL_ID,
+    subfolder: str | None = "text_encoder",
+    torch_dtype: torch.dtype,
+    device: str,
+) -> WanTextEncoder:
+    """Load UMT5-XXL encoder weights (defaults to the Wan2.2 diffusers repo).
+
+    Must stay compatible with the tokenizer (see `build_wan_tokenizer`): the encoder's
+    embedding table is indexed by the tokenizer's vocabulary.
+    """
     require_package("transformers", extra="fastwam")
-    encoder = UMT5EncoderModel.from_pretrained(
-        WAN22_DIFFUSERS_MODEL_ID, subfolder="text_encoder", torch_dtype=torch_dtype
-    )
+    encoder = UMT5EncoderModel.from_pretrained(model_id, subfolder=subfolder, torch_dtype=torch_dtype)
     return WanTextEncoder(dtype=torch_dtype, device=device, pretrained=encoder)
 
 

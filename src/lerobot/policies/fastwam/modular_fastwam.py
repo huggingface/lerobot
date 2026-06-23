@@ -26,6 +26,8 @@ import torch.nn.functional as functional
 from PIL import Image
 
 from .wan_components import (
+    WAN22_DIFFUSERS_MODEL_ID,
+    WAN_T5_TOKENIZER,
     build_wan_tokenizer,
     load_pretrained_wan_text_encoder,
     load_pretrained_wan_vae,
@@ -938,7 +940,8 @@ class FastWAM(torch.nn.Module):
         device: str = "cuda",
         torch_dtype: torch.dtype = torch.bfloat16,
         model_id: str = "Wan-AI/Wan2.2-TI2V-5B",
-        tokenizer_model_id: str = "Wan-AI/Wan2.2-TI2V-5B",
+        tokenizer_model_id: str = WAN_T5_TOKENIZER,
+        text_encoder_model_id: str = WAN22_DIFFUSERS_MODEL_ID,
         tokenizer_max_len: int = 512,
         load_text_encoder: bool = True,
         proprio_dim: int | None = None,
@@ -958,7 +961,6 @@ class FastWAM(torch.nn.Module):
             raise ValueError("`video_dit_config` is required for FastWAM.from_wan22_pretrained().")
         if "text_dim" not in video_dit_config:
             raise ValueError("`video_dit_config['text_dim']` is required for FastWAM.")
-        del tokenizer_model_id  # tokenizer is the stock UMT5 one (google/umt5-xxl)
 
         # Custom MoT video DiT from the original Wan2.2 repo; frozen VAE / UMT5 from
         # the diffusers conversion. This is the offline base-creation path; the
@@ -984,11 +986,13 @@ class FastWAM(torch.nn.Module):
 
         vae = load_pretrained_wan_vae(torch_dtype=torch_dtype, device=device)
         text_encoder = (
-            load_pretrained_wan_text_encoder(torch_dtype=torch_dtype, device=device)
+            load_pretrained_wan_text_encoder(
+                model_id=text_encoder_model_id, torch_dtype=torch_dtype, device=device
+            )
             if load_text_encoder
             else None
         )
-        tokenizer = build_wan_tokenizer(tokenizer_max_len=tokenizer_max_len)
+        tokenizer = build_wan_tokenizer(model_id=tokenizer_model_id, tokenizer_max_len=tokenizer_max_len)
 
         return cls(
             video_expert=video_expert,

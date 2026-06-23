@@ -253,7 +253,9 @@ class FastWAMPolicy(PreTrainedPolicy):
             mot_checkpoint_mixed_attn=config.mot_checkpoint_mixed_attn,
         )
         text_encoder = (
-            load_pretrained_wan_text_encoder(torch_dtype=dtype, device=device)
+            load_pretrained_wan_text_encoder(
+                model_id=config.text_encoder_model_id, torch_dtype=dtype, device=device
+            )
             if config.load_text_encoder
             else None
         )
@@ -263,7 +265,9 @@ class FastWAMPolicy(PreTrainedPolicy):
             mot=mot,
             vae=load_pretrained_wan_vae(torch_dtype=dtype, device=device),
             text_encoder=text_encoder,
-            tokenizer=build_wan_tokenizer(tokenizer_max_len=config.tokenizer_max_len),
+            tokenizer=build_wan_tokenizer(
+                model_id=config.tokenizer_model_id, tokenizer_max_len=config.tokenizer_max_len
+            ),
             text_dim=int(config.video_dit_config["text_dim"]),
             proprio_dim=config.proprio_dim,
             device=device,
@@ -279,6 +283,11 @@ class FastWAMPolicy(PreTrainedPolicy):
         )
 
 
+def _scalar(value: Any) -> Any:
+    """Unwrap a 0-/1-element tensor (e.g. from DataLoader collation) to a Python scalar."""
+    return value.item() if isinstance(value, Tensor) else value
+
+
 def _batch_to_infer_kwargs(batch: dict[str, Tensor], config: FastWAMConfig) -> dict[str, Any]:
     return {
         "prompt": _prompt_from_batch(batch=batch, config=config),
@@ -288,8 +297,8 @@ def _batch_to_infer_kwargs(batch: dict[str, Tensor], config: FastWAMConfig) -> d
         "context": batch.get("context"),
         "context_mask": batch.get("context_mask"),
         "negative_prompt": batch.get("negative_prompt", config.negative_prompt),
-        "text_cfg_scale": float(batch.get("text_cfg_scale", config.text_cfg_scale)),
-        "num_inference_steps": int(batch.get("num_inference_steps", config.num_inference_steps)),
+        "text_cfg_scale": float(_scalar(batch.get("text_cfg_scale", config.text_cfg_scale))),
+        "num_inference_steps": int(_scalar(batch.get("num_inference_steps", config.num_inference_steps))),
         "sigma_shift": batch.get("sigma_shift", config.sigma_shift),
         "seed": batch.get("seed", config.inference_seed),
         "rand_device": batch.get("rand_device", config.rand_device),
