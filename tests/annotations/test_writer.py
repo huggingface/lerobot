@@ -28,6 +28,7 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 pytest.importorskip("pandas", reason="pandas is required (install lerobot[dataset])")
 
+import pandas as pd  # noqa: E402
 import pyarrow.parquet as pq  # noqa: E402
 
 from lerobot.annotations.steerable_pipeline.reader import iter_episodes  # noqa: E402
@@ -342,6 +343,78 @@ def test_annotation_metadata_sync_allows_non_streaming_load(
     assert LANGUAGE_PERSISTENT in dataset.column_names
     assert LANGUAGE_EVENTS in dataset.column_names
     assert len(dataset) == 24
+
+
+def _build_packed_dataset(root: Path, episode_lengths: list[int], *, fps: int = 10) -> Path:
+    """Pack several episodes into a single shard (vs build_annotation_dataset's one-per-file),
+    so the writer's rewrite must re-emit one row group per episode instead of collapsing them."""
+    from lerobot.datasets.io_utils import write_tasks
+    from lerobot.utils.io_utils import write_json
+
+    data_dir = root / "data" / "chunk-000"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    episode_index, frame_index, timestamp, task_index, subtask_index = [], [], [], [], []
+    for ep, length in enumerate(episode_lengths):
+        episode_index += [ep] * length
+        frame_index += list(range(length))
+        timestamp += [round(i / fps, 6) for i in range(length)]
+        task_index += [0] * length
+        subtask_index += [0] * length  # legacy column the writer must drop
+    pd.DataFrame(
+        {
+            "episode_index": episode_index,
+            "frame_index": frame_index,
+            "timestamp": timestamp,
+            "task_index": task_index,
+            "subtask_index": subtask_index,
+        }
+    ).to_parquet(data_dir / "file-000.parquet", index=False)
+
+    tasks_df = pd.DataFrame({"task_index": [0]}, index=pd.Index(["do the thing"], name="task"))
+    write_tasks(tasks_df, root)
+    write_json(
+        {"codebase_version": "v3.1", "fps": fps, "features": {}, "total_episodes": len(episode_lengths)},
+        root / "meta" / "info.json",
+    )
+    return root
+
+
+def test_writer_one_row_group_per_episode(tmp_path: Path) -> None:
+    """Rewriting a packed shard must keep one row group per episode, not collapse
+    every episode into a single giant row group."""
+    episode_lengths = [4, 6, 5]  # unequal lengths, all in one shard
+    root = _build_packed_dataset(tmp_path / "ds", episode_lengths)
+    shard = root / "data" / "chunk-000" / "file-000.parquet"
+    assert pq.ParquetFile(shard).metadata.num_row_groups == 1, "fixture should start collapsed"
+
+    staging_dir = tmp_path / "stage"
+    for ep in range(len(episode_lengths)):
+        _stage_episode(
+            staging_dir,
+            ep,
+            plan=[
+                {
+                    "role": "assistant",
+                    "content": f"subtask for ep {ep}",
+                    "style": "subtask",
+                    "timestamp": 0.0,
+                    "tool_calls": None,
+                }
+            ],
+        )
+
+    records = list(iter_episodes(root))
+    LanguageColumnsWriter().write_all(records, staging_dir, root)
+
+    # One row group per episode, with row counts matching the episode lengths.
+    md = pq.ParquetFile(shard).metadata
+    assert md.num_row_groups == len(episode_lengths)
+    assert [md.row_group(i).num_rows for i in range(md.num_row_groups)] == episode_lengths
+    # Language columns are still present after the per-episode rewrite.
+    table = pq.read_table(shard)
+    assert "language_persistent" in table.column_names
+    assert "language_events" in table.column_names
 
 
 def test_speech_atom_shape_matches_plan_spec() -> None:

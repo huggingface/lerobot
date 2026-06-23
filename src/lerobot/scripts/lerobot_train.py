@@ -35,8 +35,12 @@ from torch.optim import Optimizer
 from tqdm import tqdm
 
 from lerobot.common.train_utils import (
+    gather_fsdp_state_dicts,
     get_step_checkpoint_dir,
     get_step_identifier,
+    load_fsdp_optimizer_state,
+    load_training_batch_size,
+    load_training_num_processes,
     load_training_state,
     save_checkpoint,
     update_last_checkpoint,
@@ -44,7 +48,12 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import EpisodeAwareSampler, WeightedEpisodeAwareSampler, make_dataset
+from lerobot.datasets import (
+    EpisodeAwareSampler,
+    WeightedEpisodeAwareSampler,
+    compute_sampler_state,
+    make_dataset,
+)
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
@@ -99,6 +108,9 @@ def update_policy(
     """
     start_time = time.perf_counter()
     policy.train()
+
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
 
     # Compute sample weights if a weighter is provided
     sample_weights = None
@@ -159,12 +171,12 @@ def update_policy(
     train_metrics.grad_norm = grad_norm.item()
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
+    if torch.cuda.is_available():
+        train_metrics.gpu_mem_gb = torch.cuda.max_memory_allocated() / (1024**3)
     return train_metrics, output_dict
 
 
-def _print_debug_text_predictions(
-    policy: Any, batch: dict[str, Any], step: int, n_samples: int = 5
-) -> None:
+def _print_debug_text_predictions(policy: Any, batch: dict[str, Any], step: int, n_samples: int = 5) -> None:
     """Forward the current batch and print head-argmax vs label per supervised position.
 
     Opt-in via ``LEROBOT_DEBUG_PREDS_EVERY=<step_interval>``. Only the
@@ -198,8 +210,7 @@ def _print_debug_text_predictions(
         return
     if not debug:
         logging.warning(
-            "debug_text_predictions returned no supervised samples — "
-            "current batch has no text labels."
+            "debug_text_predictions returned no supervised samples — current batch has no text labels."
         )
         return
     policy = inner  # used below for select_message-style decoding parity
@@ -212,9 +223,7 @@ def _print_debug_text_predictions(
             register_paligemma_loc_tokens,
         )
 
-        tok_name = (
-            getattr(policy.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
-        )
+        tok_name = getattr(policy.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
         tokenizer = register_paligemma_loc_tokens(AutoTokenizer.from_pretrained(tok_name))
     except Exception as exc:  # noqa: BLE001
         logging.warning("debug preds: tokenizer load failed: %s", exc)
@@ -260,9 +269,7 @@ def _print_debug_text_predictions(
             teacher_chars.append(pred)
             if label == pred:
                 n_ok += 1
-        teacher_text = (
-            tokenizer.decode(teacher_chars, skip_special_tokens=False) if teacher_chars else ""
-        )
+        teacher_text = tokenizer.decode(teacher_chars, skip_special_tokens=False) if teacher_chars else ""
         acc = n_ok / max(n_sup, 1)
         print(
             f"  training argmax (teacher-fed) : {teacher_text!r}   acc={n_ok}/{n_sup}={acc:.1%}",
@@ -290,9 +297,7 @@ def _build_vqa_oversample_weights(dataset: Any, target_fraction: float) -> "torc
         return None
     hf = getattr(dataset, "hf_dataset", None)
     if hf is None or "language_events" not in getattr(hf, "column_names", []):
-        logging.warning(
-            "Dataset has no `language_events` column — VQA oversampling disabled."
-        )
+        logging.warning("Dataset has no `language_events` column — VQA oversampling disabled.")
         return None
 
     events_col = hf["language_events"]
@@ -347,6 +352,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     require_package("accelerate", extra="training")
     from accelerate import Accelerator
+    from accelerate.utils import DistributedDataParallelKwargs, DistributedType
 
     cfg.validate()
 
@@ -357,7 +363,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if accelerator is None:
         from datetime import timedelta
 
-        from accelerate.utils import DistributedDataParallelKwargs, InitProcessGroupKwargs
+        from accelerate.utils import InitProcessGroupKwargs
 
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
         # Bump the c10d store-get / barrier timeout so the rank-0-only
@@ -408,14 +414,16 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    # Dataset loading synchronization: main process downloads first to avoid race conditions
+    # Dataset loading synchronization: the global main process downloads once to the shared
+    # dataset root, then a barrier lets every other rank read the already-populated copy.
+    # LeRobotDataset skips its snapshot_download when try_load() succeeds, so no rank re-downloads.
     if is_main_process:
         logging.info("Creating dataset")
         dataset = make_dataset(cfg)
 
     accelerator.wait_for_everyone()
 
-    # Now all other processes can safely load the dataset
+    # Other ranks read from the shared copy populated by the main process.
     if not is_main_process:
         dataset = make_dataset(cfg)
 
@@ -541,6 +549,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         preprocessor, postprocessor = make_pre_post_processors(
             policy_cfg=cfg.policy,
             pretrained_path=processor_pretrained_path,
+            pretrained_revision=getattr(cfg.policy, "pretrained_revision", None),
             **processor_kwargs,
         )
 
@@ -566,7 +575,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     step = 0  # number of policy updates (forward + backward + optim)
 
     if cfg.resume:
-        step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
+        # Under FSDP the optimizer state is sharded and must be loaded after `accelerator.prepare()`
+        # (see load_fsdp_optimizer_state below), so skip the optimizer here and load it then.
+        is_fsdp = accelerator.distributed_type == DistributedType.FSDP
+        step, optimizer, lr_scheduler = load_training_state(
+            cfg.checkpoint_path, optimizer, lr_scheduler, load_optimizer=not is_fsdp
+        )
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
@@ -589,14 +603,20 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
-    if hasattr(active_cfg, "drop_n_last_frames"):
+    if not cfg.dataset.streaming:
+        # All non-streaming (map-style) datasets use EpisodeAwareSampler.
+        # The order is a pure function of (seed, epoch), so every rank independently produces the
+        # same permutation. accelerate then shards it disjointly across ranks via BatchSamplerShard
+        # without needing a `generator` attribute to synchronize an RNG, and resume is sample-exact.
         shuffle = False
         from_indices = dataset.meta.episodes["dataset_from_index"]
         to_indices = dataset.meta.episodes["dataset_to_index"]
+        seed = cfg.seed if cfg.seed is not None else 0
+
         # When `vqa_target_fraction` is set, oversample VQA-annotated
         # frames via a weighted sampler; otherwise plain episode-aware.
         vqa_weights = None
-        if cfg.vqa_target_fraction is not None and not cfg.dataset.streaming:
+        if cfg.vqa_target_fraction is not None:
             vqa_weights = _build_vqa_oversample_weights(dataset, cfg.vqa_target_fraction)
         if vqa_weights is not None:
             sampler = WeightedEpisodeAwareSampler(
@@ -604,16 +624,45 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 to_indices,
                 vqa_weights,
                 episode_indices_to_use=dataset.episodes,
-                drop_n_last_frames=active_cfg.drop_n_last_frames,
+                drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
+                seed=seed,
             )
         else:
             sampler = EpisodeAwareSampler(
                 from_indices,
                 to_indices,
                 episode_indices_to_use=dataset.episodes,
-                drop_n_last_frames=active_cfg.drop_n_last_frames,
+                drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
                 shuffle=True,
+                seed=seed,
             )
+        if cfg.resume and step > 0:
+            # The resume offset depends on the (num_processes, batch_size) that produced `step`, so
+            # use the values recorded in the checkpoint (falling back to the current ones for older
+            # ckpts that did not store them).
+            saved_num_processes = load_training_num_processes(cfg.checkpoint_path)
+            saved_batch_size = load_training_batch_size(cfg.checkpoint_path)
+            ckpt_num_processes = saved_num_processes or accelerator.num_processes
+            ckpt_batch_size = saved_batch_size or cfg.batch_size
+            if is_main_process and saved_num_processes not in (None, accelerator.num_processes):
+                logging.warning(
+                    f"Resuming with num_processes={accelerator.num_processes} but the checkpoint was "
+                    f"written with num_processes={saved_num_processes}. The data order resumes at the "
+                    "right epoch/offset, but per-rank sample-exactness requires the same world size."
+                )
+            if is_main_process and saved_batch_size not in (None, cfg.batch_size):
+                logging.warning(
+                    f"Resuming with batch_size={cfg.batch_size} but the checkpoint was written with "
+                    f"batch_size={saved_batch_size}. The data order resumes at the right epoch/offset, "
+                    "but per-rank sample-exactness requires the same batch size."
+                )
+            sampler_state = compute_sampler_state(step, len(sampler), ckpt_batch_size, ckpt_num_processes)
+            sampler.load_state_dict(sampler_state)
+            if is_main_process:
+                logging.info(
+                    f"Resuming data order at epoch {sampler_state['epoch']}, "
+                    f"sample {sampler_state['start_index']}"
+                )
     else:
         shuffle = True
         sampler = None
@@ -640,6 +689,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
         policy, optimizer, dataloader, lr_scheduler
     )
+
+    # FSDP optimizer state is sharded across ranks, so it can only be loaded once the optimizer and
+    # model are FSDP-wrapped (i.e. after `prepare`). Collective: every rank must participate.
+    if cfg.resume and accelerator.distributed_type == DistributedType.FSDP:
+        load_fsdp_optimizer_state(policy, optimizer, cfg.checkpoint_path)
+
     dl_iter = cycle(dataloader)
 
     policy.train()
@@ -684,21 +739,32 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             if ema_path.exists():
                 logging.info("Resuming EMA shadow from %s", ema_path)
                 try:
-                    ema.load_state_dict(torch.load(ema_path, map_location=accelerator.device))
+                    ema.load_state_dict(
+                        torch.load(ema_path, map_location=accelerator.device, weights_only=True)
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logging.warning(
-                        "Failed to load EMA shadow (%s) — restarting EMA from "
-                        "current live weights",
+                        "Failed to load EMA shadow (%s) — restarting EMA from current live weights",
                         exc,
                     )
 
     train_metrics = {
-        "loss": AverageMeter("loss", ":.3f"),
+        # Per-rank loss reflects only one shard of the global batch; mean recovers the loss DDP
+        # is actually optimizing. grad_norm and lr are already identical on every rank (post
+        # gradient sync / deterministic scheduler) so reducing them would be a no-op collective.
+        "loss": AverageMeter("loss", ":.3f", reduction="mean"),
         "grad_norm": AverageMeter("grdn", ":.3f"),
         "lr": AverageMeter("lr", ":0.1e"),
-        "update_s": AverageMeter("updt_s", ":.3f"),
-        "dataloading_s": AverageMeter("data_s", ":.3f"),
+        # Report the slowest rank for bottleneck-style timings so multi-GPU runs surface the
+        # true straggler instead of rank 0's view.
+        "update_s": AverageMeter("updt_s", ":.3f", reduction="max"),
+        "dataloading_s": AverageMeter("data_s", ":.3f", reduction="max"),
+        # Derived from the post-reduce max step time; set once per log window on the main rank.
+        "samples_per_s": AverageMeter("smp/s", ":.0f"),
     }
+    if torch.cuda.is_available():
+        # max() because headroom is gated by the worst-case rank.
+        train_metrics["gpu_mem_gb"] = AverageMeter("mem_gb", ":.2f", reduction="max")
 
     # Keep global batch size for logging; MetricsTracker handles world size internally.
     effective_batch_size = cfg.batch_size * accelerator.num_processes
@@ -758,7 +824,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         if is_main_process:
             progbar.update(1)
         train_tracker.step()
-        is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and is_main_process
+        is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
 
@@ -769,39 +835,43 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         # collapsing to a fixed token. Refilling the recipe-sample dump
         # budget at the same cadence also redumps the raw input shapes.
         _debug_preds_every = int(os.environ.get("LEROBOT_DEBUG_PREDS_EVERY", "0"))
-        if (
-            _debug_preds_every > 0
-            and step % _debug_preds_every == 0
-            and is_main_process
-        ):
+        if _debug_preds_every > 0 and step % _debug_preds_every == 0 and is_main_process:
             try:
                 from lerobot.policies.pi052 import text_processor_pi052 as _tp  # noqa: PLC0415
 
                 _tp._DUMPED_SO_FAR = 0
                 _tp._DUMP_BUDGET = max(_tp._DUMP_BUDGET, 5)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logging.debug("Could not reset PI052 debug dump budget: %s", exc, exc_info=True)
             _print_debug_text_predictions(policy, batch, step, n_samples=5)
 
         if is_log_step:
-            logging.info(train_tracker)
-            if wandb_logger:
-                wandb_log_dict = train_tracker.to_dict()
-                if output_dict:
-                    wandb_log_dict.update(output_dict)
-                # Log sample weighting statistics if enabled
-                if sample_weighter is not None:
-                    weighter_stats = sample_weighter.get_stats()
-                    wandb_log_dict.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
-                # EMA observability: ``ema.step`` is the count of
-                # ``ema.update()`` calls (= optimizer steps once EMA is
-                # enabled); ``ema.initted`` flips to True once we've
-                # crossed ``update_after_step``.
-                if ema is not None:
-                    wandb_log_dict["ema/step"] = int(ema.step.item())
-                    wandb_log_dict["ema/initted"] = float(ema.initted.item())
-                    wandb_log_dict["ema/beta"] = float(cfg.ema.decay)
-                wandb_logger.log_dict(wandb_log_dict, step)
+            # Collective reduce must run on every rank, before the main-process gate below.
+            train_tracker.reduce_across_ranks()
+            if is_main_process:
+                # Cluster-wide throughput, derived from the already-reduced (max) step time so it
+                # reflects the slowest rank — which is what actually gates the next iteration.
+                step_time = train_tracker.update_s.avg + train_tracker.dataloading_s.avg
+                if step_time > 0:
+                    train_tracker.samples_per_s = effective_batch_size / step_time
+                logging.info(train_tracker)
+                if wandb_logger:
+                    wandb_log_dict = train_tracker.to_dict()
+                    if output_dict:
+                        wandb_log_dict.update(output_dict)
+                    # Log sample weighting statistics if enabled
+                    if sample_weighter is not None:
+                        weighter_stats = sample_weighter.get_stats()
+                        wandb_log_dict.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
+                    # EMA observability: ``ema.step`` is the count of
+                    # ``ema.update()`` calls (= optimizer steps once EMA is
+                    # enabled); ``ema.initted`` flips to True once we've
+                    # crossed ``update_after_step``.
+                    if ema is not None:
+                        wandb_log_dict["ema/step"] = int(ema.step.item())
+                        wandb_log_dict["ema/initted"] = float(ema.initted.item())
+                        wandb_log_dict["ema/beta"] = float(cfg.ema.decay)
+                    wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
         # Periodic training-example dump to wandb (camera images + text
@@ -837,6 +907,14 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 logging.warning("wandb log_training_examples failed: %s", exc)
 
         if cfg.save_checkpoint and is_saving_step:
+            # Under FSDP, gathering the full model + optimizer state dicts is a cross-rank collective,
+            # so all ranks must participate; rank 0 then writes the materialized dicts. For DDP /
+            # single-GPU the state dicts are saved the normal way inside save_checkpoint.
+            is_fsdp = accelerator.distributed_type == DistributedType.FSDP
+            if is_fsdp:
+                model_state_dict, optim_state_dict = gather_fsdp_state_dicts(policy, optimizer)
+            else:
+                model_state_dict, optim_state_dict = None, None
             if is_main_process:
                 logging.info(f"Checkpoint policy after step {step}")
                 checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
@@ -849,6 +927,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     scheduler=lr_scheduler,
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
+                    num_processes=accelerator.num_processes,
+                    batch_size=cfg.batch_size,
+                    model_state_dict=model_state_dict,
+                    optim_state_dict=optim_state_dict,
                 )
                 update_last_checkpoint(checkpoint_dir)
                 # Save the EMA shadow alongside the training state so a
@@ -933,6 +1015,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if eval_env:
         close_envs(eval_env)
 
+    is_fsdp = accelerator.distributed_type == DistributedType.FSDP
+    model_state_dict = accelerator.get_state_dict(policy) if is_fsdp else None
     if is_main_process:
         logging.info("End of training")
 
@@ -942,7 +1026,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             if not cfg.is_reward_model_training and cfg.policy.use_peft:
                 unwrapped_model.push_model_to_hub(cfg, peft_model=unwrapped_model)
             else:
-                unwrapped_model.push_model_to_hub(cfg)
+                unwrapped_model.push_model_to_hub(cfg, state_dict=model_state_dict)
             preprocessor.push_to_hub(active_cfg.repo_id)
             postprocessor.push_to_hub(active_cfg.repo_id)
 

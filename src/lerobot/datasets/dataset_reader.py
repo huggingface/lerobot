@@ -74,6 +74,8 @@ class DatasetReader:
         self.episodes = episodes
         self._tolerance_s = tolerance_s
         self._video_backend = video_backend
+        if image_transforms is not None and not callable(image_transforms):
+            raise TypeError("image_transforms must be callable or None.")
         self._image_transforms = image_transforms
         self._return_uint8 = return_uint8
 
@@ -85,6 +87,16 @@ class DatasetReader:
         if delta_timestamps is not None:
             check_delta_timestamps(delta_timestamps, meta.fps, tolerance_s)
             self.delta_indices = get_delta_indices(delta_timestamps, meta.fps)
+
+    def set_image_transforms(self, image_transforms: Callable | None) -> None:
+        """Replace the transform applied to visual observations."""
+        if image_transforms is not None and not callable(image_transforms):
+            raise TypeError("image_transforms must be callable or None.")
+        self._image_transforms = image_transforms
+
+    def clear_image_transforms(self) -> None:
+        """Remove the transform applied to visual observations."""
+        self._image_transforms = None
 
     def try_load(self) -> bool:
         """Attempt to load from local cache. Returns True if data is sufficient."""
@@ -138,9 +150,7 @@ class DatasetReader:
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
-    def _extend_features_with_language_columns(
-        self, features: datasets.Features
-    ) -> datasets.Features:
+    def _extend_features_with_language_columns(self, features: datasets.Features) -> datasets.Features:
         """Add ``language_persistent`` / ``language_events`` to ``features``
         when the underlying parquet shards declare them but the metadata
         doesn't. No-op when neither column is present or both are

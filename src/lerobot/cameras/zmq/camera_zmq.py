@@ -246,11 +246,12 @@ class ZMQCamera(Camera):
         """
         Internal loop run by the background thread for asynchronous reading.
         """
-        if self.stop_event is None:
+        stop_event = self.stop_event
+        if stop_event is None:
             raise RuntimeError(f"{self}: stop_event is not initialized.")
 
         failure_count = 0
-        while not self.stop_event.is_set():
+        while not stop_event.is_set():
             try:
                 frame = self._read_from_hardware()
                 capture_time = time.perf_counter()

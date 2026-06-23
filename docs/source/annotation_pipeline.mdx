@@ -71,11 +71,21 @@ it uses a two-step **describe → segment** flow:
 2. **Segment** — that description is fed back in, and the VLM splits the
    episode into consecutive atomic subtasks.
 
+Both passes see the episode as **timestamped contact sheets** — frames
+sampled at `frames_per_second` (0.5s by default) and packed into JPEG
+grids with each frame's time burned into its corner, so the VLM cites
+exact boundary times directly. This is far cheaper in vision tokens than
+one image per frame, so the sampling can stay dense; episodes longer than
+`max_frames_per_prompt` are split into windows at the same density and
+merged. Both prompts also carry a causal **event-boundary** definition (a
+new event starts when an object becomes held / is released / reaches a new
+location / a lid changes state / contents move) to sharpen where cuts land.
+
 The resulting spans are then stitched into a gap-free, full-episode
 cover, so **every frame has exactly one active subtask**. See
 [`run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotations/run_hf_job.py)
-for the production settings (single camera, embedded frames, windowed
-subtask generation).
+for the production settings (single camera, timestamped contact sheets,
+auto-windowed subtask generation).
 
 ### Tools
 
@@ -162,15 +172,15 @@ Every module is on by default and can be toggled independently (set to
 
 | Flag                            | Default    | What it does                                                                                                              |
 | ------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `--plan.frames_per_second`      | `1.0`      | How densely the episode video is sampled.                                                                                 |
-| `--plan.max_video_frames`       | `32`       | Hard cap on frames per call (context-budget guard — don't exceed ~32 for a 32k context).                                  |
-| `--plan.subtask_window_seconds` | `0`        | Split long episodes into fixed windows for constant frame density (`0` = whole episode).                                  |
+| `--plan.frames_per_second`      | `2.0`      | Frame sampling rate for the contact sheets (`2.0` = one frame every 0.5s).                                                |
+| `--plan.max_frames_per_prompt`  | `60`       | Frame budget per VLM call. Episodes whose sampling exceeds this are auto-windowed at the same density, then stitched.     |
+| `--plan.contact_sheet_columns`  | `5`        | Columns per contact-sheet grid (`contact_sheet_frames_per_sheet` tiles, time row-major).                                  |
 | `--plan.plan_max_steps`         | `8`        | Upper bound on subtasks per episode.                                                                                      |
 | `--plan.subtask_describe_first` | `true`     | Run the describe→segment grounding pass (best subtask quality; +1 call/episode).                                          |
 | `--plan.emit_plan`              | `true`     | Emit the numbered `plan` rows (`false` = subtasks + memory only).                                                         |
+| `--plan.emit_memory`            | `true`     | Emit the `memory` rows (`false` = subtasks + plan only); symmetric to `emit_plan`.                                        |
 | `--plan.n_task_rephrasings`     | `10`       | How many `task_aug` rephrasings to emit (`0` disables).                                                                   |
 | `--plan.derive_task_from_video` | `if_short` | Use the dataset task as-is (`off`), only when it's missing/short (`if_short`), or always re-derive from video (`always`). |
-| `--plan.use_video_url`          | `false`    | Send a server-side video clip instead of embedded frames.                                                                 |
 
 ### Interjections + VQA
 
