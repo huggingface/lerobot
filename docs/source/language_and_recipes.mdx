@@ -144,7 +144,7 @@ The renderer does not apply a tokenizer chat template. Policy processors decide 
 ## Blends
 
 Blend recipes select one weighted sub-recipe deterministically from the sample index.
-`recipes/subtasks_vqa.yaml` trains the core blend — high-level subtask prediction, low-level execution, and VQA. `recipes/subtask_mem_vqa_speech.yaml` is the fuller variant that also adds memory updates and spoken interjection responses.
+`recipes/subtask_mem.yaml` trains the compact core blend — high-level subtask prediction, low-level execution, and memory. `recipes/subtask_mem_vqa_speech.yaml` is the fuller variant that also adds VQA and spoken interjection responses.
 
 ## Graceful absence
 

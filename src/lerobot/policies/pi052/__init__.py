@@ -24,8 +24,8 @@ Extends :class:`lerobot.policies.pi05.PI05Policy` with:
 * per-component prompt dropout (Pi 0.7 §V.E) for regularising the
   text head against missing context at inference.
 
-See ``src/lerobot/configs/recipes/subtasks_vqa.yaml`` for the
-canonical training recipe and
+See ``src/lerobot/configs/recipes/subtask_mem.yaml`` for the compact
+training recipe and
 ``examples/training/pi052_hirobot.slurm`` for the launcher.
 """
 

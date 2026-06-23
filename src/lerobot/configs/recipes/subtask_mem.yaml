@@ -1,29 +1,17 @@
-# subtask_mem_vqa_speech — Hi-Robot blend + memory + spoken responses.
+# subtask_mem — compact Hi-Robot blend with memory.
 #
-# Superset of subtasks_vqa.yaml. Keeps the core subtask + action + VQA
-# training, and adds two text-supervised tasks:
+# Trains the core subtask + action objectives and memory updates:
 #
 #   high_level_subtask         — predict the subtask from the task.
 #   low_level_execution        — flow loss with [images, subtask, state].
 #   memory_update              — compress progress into a memory note.
-#   user_interjection_response — reply to a user interjection with a
-#                                spoken `say` tool call (no plan, no
-#                                subtask text — just the spoken reply).
-#   ask_vqa_{top,wrist}        — camera-grounded VQA.
 #
 # Plan is intentionally left out — memory is the only persistent
 # high-level state here, keeping the prompt short.
 #
-# Requires the dataset to carry `memory`, `interjection` and `say`-tool
-# annotations (the annotation pipeline's memory + interjection modules)
-# in addition to `subtask` and `vqa`. Sub-recipes whose `if_present`
-# bindings are missing simply don't render for that sample, so a
-# dataset without interjections still trains the rest of the blend.
-#
-# Tool-call note: the `say` tool call on the interjection-response turn
-# is flattened to a `<say>...</say>` text marker by the tokenizer step
-# (`_flatten_say_tool_calls`) so the LM head learns to emit exactly the
-# marker the runtime parses back (`_split_plan_and_say`).
+# Requires the dataset to carry `subtask` and `memory` annotations.
+# Sub-recipes whose `if_present` bindings are missing simply don't
+# render for that sample.
 
 blend:
 

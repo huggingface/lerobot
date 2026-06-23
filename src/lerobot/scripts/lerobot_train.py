@@ -725,12 +725,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         )
         ema.to(accelerator.device)
         logging.info(
-            "EMA enabled (ema-pytorch): beta=%g, update_after_step=%d, "
-            "use_for_eval=%s, use_for_wandb_examples=%s",
+            "EMA enabled (ema-pytorch): beta=%g, update_after_step=%d, use_for_eval=%s",
             cfg.ema.decay,
             cfg.ema.warmup_steps,
             cfg.ema.use_for_eval,
-            cfg.ema.use_for_wandb_examples,
         )
 
         # Resume the EMA shadow if a previous run wrote one.
@@ -874,10 +872,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
-        # Periodic training-example dump to wandb (camera images + text
-        # fields + action endpoints). Opt-in via ``--wandb.log_examples_freq``;
-        # independent of ``--log_freq`` so you can keep scalar logs frequent
-        # and the heavier visual dump rare (e.g. every 5000 steps).
+        # Periodic W&B example table (camera images + text fields + action endpoints).
         if (
             wandb_logger is not None
             and cfg.wandb.log_examples_freq > 0
@@ -885,23 +880,11 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             and is_main_process
         ):
             try:
-                # Optionally use the EMA shadow model directly for the
-                # predicted-action columns (matches what eval / deployment
-                # would see). ``ema-pytorch`` exposes the shadow as a
-                # full ``nn.Module`` at ``ema.ema_model``, so we just
-                # pass that instead of swap-and-restore.
-                target_policy = (
-                    ema.ema_model
-                    if (ema is not None and cfg.ema.use_for_wandb_examples)
-                    else accelerator.unwrap_model(policy)
-                )
                 wandb_logger.log_training_examples(
                     batch=batch,
                     step=step,
                     camera_keys=list(dataset.meta.camera_keys),
                     n_samples=cfg.wandb.log_examples_n,
-                    policy=target_policy,
-                    predict_actions=cfg.wandb.log_examples_predict_actions,
                 )
             except Exception as exc:  # noqa: BLE001
                 logging.warning("wandb log_training_examples failed: %s", exc)

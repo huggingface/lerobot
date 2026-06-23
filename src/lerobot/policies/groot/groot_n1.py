@@ -26,14 +26,9 @@ from lerobot.utils.import_utils import _transformers_available
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
-    from huggingface_hub.dataclasses import strict
     from transformers import AutoConfig, AutoModel, PretrainedConfig, PreTrainedModel
     from transformers.feature_extraction_utils import BatchFeature
 else:
-
-    def strict(cls):
-        return cls
-
     AutoConfig = None
     AutoModel = None
     PretrainedConfig = object

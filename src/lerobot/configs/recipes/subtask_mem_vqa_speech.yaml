@@ -1,7 +1,6 @@
 # subtask_mem_vqa_speech — Hi-Robot blend + memory + spoken responses.
 #
-# Superset of subtasks_vqa.yaml. Keeps the core subtask + action + VQA
-# training, and adds two text-supervised tasks:
+# Extends the compact subtask_mem recipe with VQA and spoken interjection responses:
 #
 #   high_level_subtask         — predict the subtask from the task.
 #   low_level_execution        — flow loss with [images, subtask, state].
@@ -83,8 +82,7 @@ blend:
       - {role: assistant, stream: high_level, target: true, if_present: speech, tool_calls_from: speech}
 
   # VQA is view-dependent — each camera gets its own sub-recipe so the
-  # resolver disambiguates via `camera=...`. Camera keys match
-  # subtasks_vqa.yaml (`front` + `wrist`); adjust to your dataset.
+  # resolver disambiguates via `camera=...`. Adjust camera keys to your dataset.
   ask_vqa_top:
     weight: 0.075
     bindings:

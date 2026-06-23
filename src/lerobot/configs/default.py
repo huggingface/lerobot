@@ -62,72 +62,22 @@ class WandBConfig:
     run_id: str | None = None
     mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
     add_tags: bool = True  # If True, save configuration as tags in the WandB run.
-    # Periodic training-example dump (independent of ``log_freq``). When > 0,
-    # every ``log_examples_freq`` steps the trainer pushes a ``wandb.Table``
-    # with one row per sampled batch element containing each camera view
-    # (rendered as ``wandb.Image``), any text fields present in the batch
-    # (``task`` / ``subtask`` / ``memory`` / ``instruction``), and the
-    # ground-truth action chunk's first + last frames. Defaults to 5000 — set
-    # to 0 to disable. Only fires when ``enable=True``, so runs without wandb
-    # are unaffected.
+    # Periodic W&B table with sampled images/text and action endpoints. Set to 0 to disable.
     log_examples_freq: int = 5000
-    # Number of batch elements to include in each example dump.
     log_examples_n: int = 4
-    # If True (default), also run ``policy.predict_action_chunk`` on the logged
-    # samples (in eval mode, no_grad) and add predicted vs ground-truth action
-    # columns to the table. Costs one extra forward pass per dump — negligible
-    # at the 5k-step default cadence. Set to ``False`` if your policy doesn't
-    # implement ``predict_action_chunk`` or you want to skip the extra forward.
-    log_examples_predict_actions: bool = True
 
 
 @dataclass
 class EMAConfig:
-    """Exponential Moving Average of trainable policy parameters.
-
-    Diffusion / flow-matching policies (Diffusion Policy, π0/π0.5,
-    pi052) benefit substantially from averaging late-training
-    parameter oscillations — see Chi et al. 2023 §V.D. The official
-    JAX openpi trainer ships EMA with ``ema_decay=0.99`` (default) and
-    ``0.999`` for its pi05_libero config; the openpi PyTorch port
-    explicitly lists EMA as unsupported, and LeRobot main inherited
-    that gap. Enabling this flag plugs ema-pytorch
-    (https://github.com/lucidrains/ema-pytorch) into the LeRobot
-    training loop with a shadow ``nn.Module`` clone of the policy.
-
-    Cost: 1× model params in fp32 shadow (~13 GB for pi052's 3.3B
-    params) + one elementwise update per training step (~1% step time).
-
-    Off by default (opt-in): EMA is only beneficial for flow-matching /
-    diffusion policies (pi0/pi05/pi052), and the fp32 shadow copy is pure
-    overhead for other policies (e.g. VLA-JEPA). Set ``--ema.enable=true``
-    to turn it on (the pi05/pi052 training recipes do this). openpi (JAX)
-    ships EMA on for every config; enable it explicitly to match that.
-    """
+    """EMA shadow for flow/diffusion policies. Off by default because it doubles model memory."""
 
     enable: bool = False
-    # Target EMA decay β in θ_ema ← β·θ_ema + (1-β)·θ_live (passed to
-    # ema-pytorch as ``beta``).
-    #   0.999  — last ~1000 steps; pi05_libero default in openpi
-    #   0.99   — last ~100 steps; openpi top-level default
-    #   0.75   — very fast EMA (Diffusion Policy original setting)
-    #   0.9999 — very slow EMA (long classification runs)
+    # Target EMA decay beta in theta_ema <- beta * theta_ema + (1 - beta) * theta_live.
     decay: float = 0.99
-    # Skip the first N calls to ``ema.update()``; during this window
-    # the shadow is just a hard copy of the live weights (no averaging).
-    # Lets early-training rapid changes settle before averaging begins.
-    # Maps to ema-pytorch's ``update_after_step`` (NOT a smooth decay
-    # ramp like older lerobot EMA implementations).
+    # Initial update calls that keep the shadow as a hard copy before averaging starts.
     warmup_steps: int = 0
-    # When True, the periodic eval block uses the EMA shadow model
-    # directly (``ema.ema_model``) instead of the live policy. Standard
-    # practice for diffusion-style policies — eval scores are usually
-    # 1–3% higher than the live policy at the same step.
+    # Use the EMA model for periodic eval.
     use_for_eval: bool = True
-    # When True, the periodic wandb training-example dump uses the EMA
-    # shadow for the optional predicted-action columns (so what you see
-    # in W&B matches eval behavior).
-    use_for_wandb_examples: bool = True
 
 
 @dataclass

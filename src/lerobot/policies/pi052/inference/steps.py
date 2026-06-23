@@ -17,7 +17,7 @@ Each step is a tiny class with a ``trigger`` and an ``__call__(state)``;
 the runtime applies them in order each tick. When a step's trigger
 doesn't fire, the step is a no-op and the runtime moves on.
 
-Stream-to-step mapping mirrors the ``subtasks_vqa.yaml`` recipe:
+Stream-to-step mapping mirrors the PI052 training recipe:
 
 * ``LowLevelForward``        — calls ``policy.select_action`` for the
                                 action chunk; trained by
@@ -153,8 +153,7 @@ class LowLevelForward(InferenceStep):
             )
             push_log(
                 state,
-                f"  [warn] predict_action_chunk failed: "
-                f"{type(exc).__name__}: {exc}",
+                f"  [warn] predict_action_chunk failed: {type(exc).__name__}: {exc}",
             )
             return None
 
@@ -288,9 +287,7 @@ def _build_text_batch(
         register_paligemma_loc_tokens,
     )
 
-    tok_name = (
-        getattr(policy.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
-    )
+    tok_name = getattr(policy.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
     # Register PaliGemma's <locDDDD> tokens so inference encoding /
     # decoding sees them as single vocab ids — must match training.
     # The tokenizer is read-only after registration, so cache it: rebuilding it
@@ -482,9 +479,7 @@ class HighLevelSubtaskFwd(InferenceStep):
                 # despite the chunk having drained (visual scene may
                 # have changed but the LM is replaying training
                 # tokens).
-                state["subtask_repeat_count"] = (
-                    state.get("subtask_repeat_count", 0) + 1
-                )
+                state["subtask_repeat_count"] = state.get("subtask_repeat_count", 0) + 1
         # Silently skip empty completions — common when the model
         # warms up or generates only EOS; logging it every tick at
         # ctrl_hz is just noise.
@@ -729,9 +724,7 @@ def _looks_like_gibberish(text: str) -> bool:
     # Length-independent: many tokens but a tiny unique ratio. The
     # earlier ``< 80`` check missed these because the looped string
     # blows well past 80 chars.
-    if len(tokens) >= 8 and len(unique_alpha) <= max(3, len(tokens) // 10):
-        return True
-    return False
+    return len(tokens) >= 8 and len(unique_alpha) <= max(3, len(tokens) // 10)
 
 
 def _control_context_messages(
@@ -742,7 +735,7 @@ def _control_context_messages(
 ) -> list[dict[str, Any]]:
     """Build a chat-template-ready prompt from current runtime state.
 
-    Mirrors what ``subtasks_vqa.yaml`` renders into ``${task}\nPlan:
+    Mirrors what the recipe renders into ``${task}\nPlan:
     ${plan}\nMemory: ${memory}`` for the high-level branches.
     """
     # Always emit ``Plan: `` / ``Memory: `` labels — even with empty
@@ -762,7 +755,7 @@ def _control_context_messages(
 
 # ---------------------------------------------------------------------------
 # Per-recipe prompt builders. Each one mirrors a single sub-recipe's
-# message layout in ``subtasks_vqa.yaml`` so the chat-templated
+# message layout in the recipe so the chat-templated
 # prompt at inference matches what the model saw during training.
 # Generic ``_control_context_messages`` is kept around as a fallback
 # for ad-hoc callers but the four high-level steps now use these.
@@ -817,26 +810,18 @@ def _msgs_for_memory(state: dict[str, Any]) -> list[dict[str, Any]]:
     ]
     prior_memory = state.get("current_memory")
     if prior_memory:
-        msgs.append(
-            {"role": "assistant", "content": f"Previous memory: {prior_memory}"}
-        )
+        msgs.append({"role": "assistant", "content": f"Previous memory: {prior_memory}"})
     completed_subtask = state.get("prior_subtask")
     if completed_subtask:
-        msgs.append(
-            {"role": "user", "content": f"Completed subtask: {completed_subtask}"}
-        )
+        msgs.append({"role": "user", "content": f"Completed subtask: {completed_subtask}"})
     return msgs
 
 
 def _msgs_for_interjection(state: dict[str, Any]) -> list[dict[str, Any]]:
     """``user_interjection_response`` recipe layout."""
-    msgs: list[dict[str, Any]] = [
-        {"role": "user", "content": state.get("task") or ""}
-    ]
+    msgs: list[dict[str, Any]] = [{"role": "user", "content": state.get("task") or ""}]
     if state.get("current_plan"):
-        msgs.append(
-            {"role": "assistant", "content": f"Previous plan:\n{state['current_plan']}"}
-        )
+        msgs.append({"role": "assistant", "content": f"Previous plan:\n{state['current_plan']}"})
     interjection = state.get("recent_interjection")
     if interjection:
         msgs.append({"role": "user", "content": interjection})

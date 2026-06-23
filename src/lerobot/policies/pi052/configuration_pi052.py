@@ -55,10 +55,10 @@ class PI052Config(PI05Config):
     """
 
     # Recipe / language stack ---------------------------------------------
-    recipe_path: str | None = "recipes/subtasks_vqa.yaml"
+    recipe_path: str | None = "recipes/subtask_mem.yaml"
     """Path (absolute or relative to ``src/lerobot/configs/``) to a
-    ``TrainingRecipe`` YAML. Defaults to the canonical Hi-Robot blend
-    shipped alongside this policy. Set to ``None`` to disable recipe
+    ``TrainingRecipe`` YAML. Defaults to the compact Hi-Robot blend
+    shipped with this policy. Set to ``None`` to disable recipe
     rendering and fall back to π0.5's single-task ``Task: ... Action:``
     prompt path (unannotated datasets keep working that way)."""
 
