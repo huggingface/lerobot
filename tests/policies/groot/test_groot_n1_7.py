@@ -1324,6 +1324,55 @@ def test_groot_n1_7_action_decode_truncates_to_valid_horizon_for_relative_stats(
     torch.testing.assert_close(decoded[..., 5], torch.full((1, 16), 5.0))
 
 
+def test_groot_n1_7_action_decode_rejects_stepwise_native_relative_actions():
+    raw_stats = {
+        "state": {
+            "single_arm": _stats([0.0] * 5),
+            "gripper": _stats([0.0]),
+        },
+        "action": {
+            "single_arm": _stats([0.0] * 5),
+            "gripper": _stats([0.0]),
+        },
+        "relative_action": {
+            "single_arm": _stats([0.0] * 5),
+        },
+    }
+    modality_config = {
+        "state": {
+            "modality_keys": ["single_arm", "gripper"],
+        },
+        "action": {
+            "modality_keys": ["single_arm", "gripper"],
+            "action_configs": [
+                {"rep": "RELATIVE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None},
+                {"rep": "ABSOLUTE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None},
+            ],
+        },
+    }
+    pack_step = GrootN17PackInputsStep(
+        raw_stats=raw_stats,
+        modality_config=modality_config,
+        normalize_min_max=False,
+    )
+    pack_step(
+        {
+            TransitionKey.OBSERVATION: {OBS_STATE: torch.zeros(1, 6)},
+            TransitionKey.COMPLEMENTARY_DATA: {},
+        }
+    )
+    decode_step = GrootN17ActionDecodeStep(
+        env_action_dim=6,
+        raw_stats=raw_stats,
+        modality_config=modality_config,
+        use_relative_action=True,
+        pack_step=pack_step,
+    )
+
+    with pytest.raises(NotImplementedError, match="cannot decode native relative actions one step at a time"):
+        decode_step({TransitionKey.ACTION: torch.zeros(1, 6)})
+
+
 def test_groot_n1_7_action_decode_requires_gripper_key_for_libero_transform():
     step = GrootN17ActionDecodeStep(
         env_action_dim=1,
@@ -2322,6 +2371,14 @@ def test_groot_n1_7_libero_execution_horizon_uses_core_eight_action_cadence(tmp_
 
     assert infer_groot_n1_7_action_horizon(model_path, "libero_sim") == 16
     assert infer_groot_n1_7_action_execution_horizon(model_path, "libero_sim") == 8
+
+
+def test_groot_select_action_rejects_relative_action_policies():
+    policy = object.__new__(GrootPolicy)
+    object.__setattr__(policy, "config", SimpleNamespace(use_relative_actions=True))
+
+    with pytest.raises(NotImplementedError, match="select_action does not support relative-action policies"):
+        policy.select_action({})
 
 
 def test_groot_n1_7_select_action_uses_checkpoint_valid_horizon(tmp_path, monkeypatch):

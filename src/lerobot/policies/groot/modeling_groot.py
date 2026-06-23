@@ -468,6 +468,14 @@ class GrootPolicy(PreTrainedPolicy):
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select single action from action queue."""
+        if getattr(self.config, "use_relative_actions", False):
+            raise NotImplementedError(
+                "GrootPolicy.select_action does not support relative-action policies because cached "
+                "relative chunk actions can be decoded against newer observation states. Use "
+                "predict_action_chunk and postprocess the full chunk before queuing actions, or use "
+                "the RTC/chunked rollout inference path."
+            )
+
         self.eval()
 
         if len(self._action_queue) == 0:

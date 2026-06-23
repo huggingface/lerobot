@@ -2158,6 +2158,12 @@ class GrootN17ActionDecodeStep(ProcessorStep):
             return transition
 
         action_np = action.detach().cpu().float().numpy()
+        if self.use_relative_action and action_np.ndim != 3:
+            raise NotImplementedError(
+                "GrootN17ActionDecodeStep cannot decode native relative actions one step at a time. "
+                "Decode the full action chunk returned by predict_action_chunk while the matching "
+                "GrootN17PackInputsStep state is still cached, then queue the decoded absolute actions."
+            )
         # The sync action queue postprocesses popped actions as (B, D); decode
         # them as single-step (B, 1, D) chunks and squeeze the horizon back at
         # the end so both ranks share the chunk decode logic below.
