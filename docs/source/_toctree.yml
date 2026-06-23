@@ -9,6 +9,8 @@
 - sections:
   - local: il_robots
     title: Imitation Learning for Robots
+  - local: lelab
+    title: LeLab - Lerobot GUI
   - local: bring_your_own_policies
     title: Adding a Policy
   - local: integrate_hardware
@@ -43,6 +45,8 @@
     title: Language Columns and Recipes
   - local: tools
     title: Tools
+  - local: annotation_pipeline
+    title: Annotation Pipeline
   - local: video_encoding_parameters
     title: Video encoding parameters
   - local: streaming_video_encoding
@@ -61,6 +65,8 @@
     title: π₀.₅ (Pi05)
   - local: molmoact2
     title: MolmoAct2
+  - local: vla_jepa
+    title: VLA-JEPA
   - local: eo1
     title: EO-1
   - local: groot

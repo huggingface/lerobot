@@ -57,6 +57,7 @@ from .pretrained import PreTrainedPolicy
 from .smolvla.configuration_smolvla import SmolVLAConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig
 from .utils import validate_visual_features_consistency
+from .vla_jepa.configuration_vla_jepa import VLAJEPAConfig
 from .vqbet.configuration_vqbet import VQBeTConfig
 from .wall_x.configuration_wall_x import WallXConfig
 from .xvla.configuration_xvla import XVLAConfig
@@ -157,6 +158,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .molmoact2.modeling_molmoact2 import MolmoAct2Policy
 
         return MolmoAct2Policy
+    elif name == "vla_jepa":
+        from .vla_jepa.modeling_vla_jepa import VLAJEPAPolicy
+
+        return VLAJEPAPolicy
     else:
         try:
             return _get_policy_cls_from_policy_name(name=name)
@@ -211,6 +216,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return EO1Config(**kwargs)
     elif policy_type == "molmoact2":
         return MolmoAct2Config(**kwargs)
+    elif policy_type == "vla_jepa":
+        return VLAJEPAConfig(**kwargs)
     else:
         try:
             config_cls = PreTrainedConfig.get_choice_class(policy_type)
@@ -245,6 +252,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
 def make_pre_post_processors(
     policy_cfg: PreTrainedConfig,
     pretrained_path: str | None = None,
+    pretrained_revision: str | None = None,
     **kwargs: Unpack[ProcessorConfigKwargs],
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
@@ -302,6 +310,7 @@ def make_pre_post_processors(
             overrides=kwargs.get("preprocessor_overrides", {}),
             to_transition=batch_to_transition,
             to_output=transition_to_batch,
+            revision=pretrained_revision,
         )
         postprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
@@ -311,6 +320,7 @@ def make_pre_post_processors(
             overrides=kwargs.get("postprocessor_overrides", {}),
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
+            revision=pretrained_revision,
         )
         _reconnect_relative_absolute_steps(preprocessor, postprocessor)
         return preprocessor, postprocessor
@@ -415,6 +425,7 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
+
     elif isinstance(policy_cfg, EO1Config):
         from .eo1.processor_eo1 import make_eo1_pre_post_processors
 
@@ -430,6 +441,14 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
             dataset_meta=kwargs.get("dataset_meta"),
+        )
+
+    elif isinstance(policy_cfg, VLAJEPAConfig):
+        from .vla_jepa.processor_vla_jepa import make_vla_jepa_pre_post_processors
+
+        processors = make_vla_jepa_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
         )
 
     else:
@@ -541,6 +560,7 @@ def make_policy(
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
         kwargs["pretrained_name_or_path"] = cfg.pretrained_path
+        kwargs["revision"] = cfg.pretrained_revision
         policy = policy_cls.from_pretrained(**kwargs)
     elif cfg.pretrained_path and cfg.use_peft:
         # Load a pretrained PEFT model on top of the policy. The pretrained path points to the folder/repo
