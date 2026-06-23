@@ -17,10 +17,13 @@ from __future__ import annotations
 ########################################################################################
 # Utilities
 ########################################################################################
+import atexit
 import logging
+import sys
+import threading
 import time
 import traceback
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from copy import copy
 from functools import cache
 from typing import TYPE_CHECKING, Any
@@ -122,6 +125,101 @@ def predict_action(
     return action
 
 
+class StdinKeyboardListener:
+    """
+    Non-blocking keyboard listener using standard input (stdin) raw/cbreak mode.
+    Does not require system-wide accessibility or input monitoring permissions on macOS.
+    """
+
+    def __init__(self, events):
+        self.events = events
+        self.thread = None
+        self._stop_event = threading.Event()
+        self.old_settings = None
+        self.fd = None
+
+    def start(self):
+        try:
+            import termios
+            import tty
+
+            self.fd = sys.stdin.fileno()
+            self.old_settings = termios.tcgetattr(self.fd)
+            # Use cbreak mode (input characters are read immediately, but standard signal
+            # generation like Ctrl+C is still active and normal output mapping is preserved).
+            tty.setcbreak(self.fd)
+            # Disable echo so that escape characters (like ^[[C) don't clutter the console.
+            new_settings = termios.tcgetattr(self.fd)
+            new_settings[3] &= ~termios.ECHO
+            termios.tcsetattr(self.fd, termios.TCSADRAIN, new_settings)
+            atexit.register(self.restore)
+        except Exception as e:
+            logging.debug(f"Failed to initialize raw terminal input mode: {e}")
+            return
+
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def restore(self):
+        if self.old_settings is not None and self.fd is not None:
+            with suppress(Exception):
+                import termios
+
+                termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old_settings)
+            self.old_settings = None
+            with suppress(Exception):
+                atexit.unregister(self.restore)
+
+    def stop(self):
+        self._stop_event.set()
+        self.restore()
+
+    def _run(self):
+        import os
+        import select
+
+        while not self._stop_event.is_set():
+            try:
+                rlist, _, _ = select.select([self.fd], [], [], 0.1)
+                if rlist:
+                    # Read directly from OS file descriptor to bypass python's internal TextIOWrapper buffering
+                    data = os.read(self.fd, 10)
+                    if not data:
+                        break
+                    key = data.decode("utf-8", errors="ignore")
+                    if key in ("\x1b[C", "\x1bOC"):  # Right Arrow
+                        print("Right arrow key pressed. Exiting loop...")
+                        self.events["exit_early"] = True
+                    elif key in ("\x1b[D", "\x1bOD"):  # Left Arrow
+                        print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
+                        self.events["rerecord_episode"] = True
+                        self.events["exit_early"] = True
+                    elif key in ("\x1b", "q"):  # Escape or q
+                        print("Escape or Q key pressed. Stopping data recording...")
+                        self.events["stop_recording"] = True
+                        self.events["exit_early"] = True
+            except Exception:
+                break
+
+
+class FallbackKeyboardListener:
+    """
+    Wraps both pynput listener and fallback stdin listener, offering a unified stop interface.
+    """
+
+    def __init__(self, pynput_listener, stdin_listener):
+        self.pynput_listener = pynput_listener
+        self.stdin_listener = stdin_listener
+
+    def stop(self):
+        if self.pynput_listener is not None:
+            with suppress(Exception):
+                self.pynput_listener.stop()
+        if self.stdin_listener is not None:
+            with suppress(Exception):
+                self.stdin_listener.stop()
+
+
 def init_keyboard_listener():
     """
     Initializes a non-blocking keyboard listener for real-time user interaction.
@@ -132,7 +230,7 @@ def init_keyboard_listener():
 
     Returns:
         A tuple containing:
-        - The `pynput.keyboard.Listener` instance, or `None` if in a headless environment.
+        - The keyboard listener instance (supporting `.stop()`), or `None` if in a headless environment.
         - A dictionary of event flags (e.g., `exit_early`) that are set by key presses.
     """
     # Allow to exit early while recording an episode or resetting the environment,
@@ -169,9 +267,23 @@ def init_keyboard_listener():
         except Exception as e:
             print(f"Error handling key press: {e}")
 
-    listener = keyboard.Listener(on_press=on_press)
-    listener.start()
+    pynput_listener = None
+    try:
+        pynput_listener = keyboard.Listener(on_press=on_press)
+        pynput_listener.start()
+    except Exception as e:
+        logging.warning(f"Failed to start pynput keyboard listener: {e}")
 
+    stdin_listener = None
+    if pynput_listener is None or not getattr(pynput_listener, "IS_TRUSTED", True):
+        logging.warning(
+            "pynput keyboard listener is not trusted (lacks macOS accessibility permissions). "
+            "Falling back to stdin/terminal keyboard listener (no macOS system permissions required)."
+        )
+        stdin_listener = StdinKeyboardListener(events)
+        stdin_listener.start()
+
+    listener = FallbackKeyboardListener(pynput_listener, stdin_listener)
     return listener, events
 
 
