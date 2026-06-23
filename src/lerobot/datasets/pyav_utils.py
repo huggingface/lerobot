@@ -33,7 +33,19 @@ FFMPEG_INTEGER_OPTION_TYPES = ("INT", "INT64", "UINT64")
 
 
 def write_u16_plane(plane: av.video.plane.VideoPlane, src: np.ndarray, fill_value: int | None = None) -> None:
-    """Copy ``src`` into a uint16 plane respecting FFmpeg line padding."""
+    """Copy a 2D ``uint16`` image into the plane's memory buffer, row by row.
+
+    For speed, each row is padded to a wider size than ``width``, so the true row width in
+    memory is ``plane.line_size`` (bytes), not ``width``. Copying as one straight stream
+    would skew the image, so we write only the first ``width`` columns of each row and
+    leave the padding untouched.
+
+    Args:
+        plane: Destination 16-bit plane.
+        src: Source image, shape ``(height, width)``, dtype ``uint16``.
+        fill_value: If given, every pixel (padding included) is set to this first, so the
+            padding holds clean data instead of garbage.
+    """
     height, width = src.shape
     stride_u16 = plane.line_size // np.dtype(np.uint16).itemsize
     dst = np.frombuffer(plane, dtype=np.uint16).reshape(height, stride_u16)
