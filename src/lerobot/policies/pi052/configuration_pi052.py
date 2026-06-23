@@ -129,6 +129,14 @@ class PI052Config(PI05Config):
     fast_action_loss_weight: float = 1.0
     """Weight on the FAST-action-token CE loss. Paper §III.C uses 1.0."""
 
+    subtask_replan_steps: int = 0
+    """Eval-only: regenerate the low-level subtask every this many env steps.
+    ``<=0`` (default) regenerates on every action chunk (i.e. every
+    ``n_action_steps`` steps). Set e.g. to 20 (≈1s at 20 fps) to hold the
+    subtask across several action chunks, closer to training's subtask
+    intervals; the action prompt is still rebuilt with the current state each
+    chunk."""
+
     auto_fit_fast_tokenizer: bool = False
     """If True, the processor factory checks ``fast_tokenizer_cache_dir``
     for a previously-fitted tokenizer keyed on ``(dataset_repo_id,

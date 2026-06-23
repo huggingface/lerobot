@@ -1059,6 +1059,9 @@ class PI052Policy(PreTrainedPolicy):
         self.last_subtask_raw = None
         self.last_subtask_source = "unset"
         self.last_subtask_debug = ""
+        # Counts action chunks since the last subtask (re)generation, so the
+        # subtask can be held across several chunks (see subtask_replan_steps).
+        self._subtask_chunk_counter = 0
 
     # ------------------------------------------------------------------
     # Head unfreeze helper
@@ -1785,6 +1788,17 @@ class PI052Policy(PreTrainedPolicy):
         # normalized by the eval preprocessor's NormalizerProcessorStep.
         state_all = batch.get(OBS_STATE)
 
+        # Decide whether to (re)generate subtasks this chunk or hold the last
+        # ones. Training conditions the action expert on the subtask active over
+        # an interval (seconds), not a fresh subtask every 0.25s; regenerating
+        # every chunk also makes the subtask thrash. With subtask_replan_steps>0
+        # we regenerate only every ~that many env steps and reuse the held
+        # subtask in between (state is still refreshed each chunk).
+        replan = int(getattr(self.config, "subtask_replan_steps", 0) or 0)
+        hold_chunks = max(1, round(replan / self.config.n_action_steps)) if replan > 0 else 1
+        regenerate = self._subtask_chunk_counter % hold_chunks == 0 or not any(self.last_subtasks or [])
+        self._subtask_chunk_counter += 1
+
         # Generate one subtask per parallel env, each conditioned on that env's
         # own task + observation, then stack the per-env prompts into a single
         # (n, L) batch for the action expert. This keeps batch_size > 1 correct
@@ -1792,8 +1806,13 @@ class PI052Policy(PreTrainedPolicy):
         rows: list[tuple[Tensor, Tensor | None]] = []
         tokenizer = None
         for i in range(n):
-            obs_i = self._slice_observation(batch, i)
-            subtask = self._generate_low_level_subtask(obs_i, tasks[i], i)
+            if regenerate or not self.last_subtasks[i]:
+                obs_i = self._slice_observation(batch, i)
+                subtask = self._generate_low_level_subtask(obs_i, tasks[i], i)
+            else:
+                # Hold the previously generated subtask; only the state in the
+                # prompt below is refreshed to the current observation.
+                subtask = self.last_subtasks[i]
             content = subtask
             if torch.is_tensor(state_all):
                 content = f"{subtask}, State: {discretize_state_str(state_all[i])};"
