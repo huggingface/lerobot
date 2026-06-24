@@ -15,7 +15,7 @@
 import draccus
 import pytest
 
-from lerobot.configs.default import JobConfig
+from lerobot.configs import JobConfig
 from lerobot.configs.train import TrainPipelineConfig
 
 

@@ -751,7 +751,7 @@ def _remote_target_in_argv() -> bool:
     """True when the CLI requests a remote HF Jobs run (--job.target=<non-local>)."""
     import sys
 
-    from lerobot.configs.default import JobConfig
+    from lerobot.configs import JobConfig
 
     target = None
     args = sys.argv[1:]
