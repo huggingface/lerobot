@@ -155,12 +155,10 @@ def test_load_training_state_skip_optimizer(tmp_path, optimizer, scheduler):
 
 
 def test_push_checkpoint_to_hub_creates_repo_and_uploads(tmp_path, monkeypatch):
-    import huggingface_hub
-
     ckpt = tmp_path / "010000"
     (ckpt / "pretrained_model").mkdir(parents=True)
     api = MagicMock()
-    monkeypatch.setattr(huggingface_hub, "HfApi", lambda *a, **k: api)
+    monkeypatch.setattr("lerobot.common.train_utils.HfApi", lambda *a, **k: api)
     push_checkpoint_to_hub(ckpt, "user/run", private=True)
     api.create_repo.assert_called_once()
     assert api.create_repo.call_args.kwargs["private"] is True
@@ -175,12 +173,10 @@ def test_push_checkpoint_to_hub_creates_repo_and_uploads(tmp_path, monkeypatch):
 
 
 def test_push_checkpoint_to_hub_defaults_to_hub_default_visibility(tmp_path, monkeypatch):
-    import huggingface_hub
-
     ckpt = tmp_path / "010000"
     (ckpt / "pretrained_model").mkdir(parents=True)
     api = MagicMock()
-    monkeypatch.setattr(huggingface_hub, "HfApi", lambda *a, **k: api)
+    monkeypatch.setattr("lerobot.common.train_utils.HfApi", lambda *a, **k: api)
     push_checkpoint_to_hub(ckpt, "user/run")
     api.create_repo.assert_called_once()
     assert api.create_repo.call_args.kwargs["private"] is None

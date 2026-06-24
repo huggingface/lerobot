@@ -15,6 +15,7 @@
 # limitations under the License.
 from pathlib import Path
 
+from huggingface_hub import HfApi
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
@@ -297,8 +298,6 @@ def push_checkpoint_to_hub(
     timed-out or crashed run still leaves recoverable checkpoints on the Hub.
     The model repo is created idempotently.
     """
-    from huggingface_hub import HfApi
-
     api = HfApi()
     api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
     api.upload_folder(
