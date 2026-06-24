@@ -152,7 +152,13 @@ def decode_video_frames_pyav(
     # https://pyav.basswood-io.com/docs/stable/api/container.html#av.container.InputContainer.seek
     with av.open(video_path) as container:
         stream = container.streams.video[0]
-        container.seek(int(first_ts * av.time_base), backward=True)
+        # Seek to the nearest keyframe at or before `first_ts` with a 1 frame margin
+        container.seek(
+            round(first_ts / stream.time_base) - 1,
+            backward=True,
+            any_frame=False,
+            stream=stream,
+        )
 
         for frame in container.decode(stream):
             if frame.pts is None:
