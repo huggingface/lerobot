@@ -29,6 +29,9 @@ class SOLeaderConfig:
     # Whether to use degrees for angles
     use_degrees: bool = True
 
+    # Motor model: "sts3215" (Feetech) or "hx30hm" (Hiwonder)
+    motor_model: str = "sts3215"
+
 
 @TeleoperatorConfig.register_subclass("so101_leader")
 @TeleoperatorConfig.register_subclass("so100_leader")

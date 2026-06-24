@@ -160,6 +160,7 @@ motorbridge-smart-servo-dep = ["motorbridge-smart-servo>=0.0.4,<0.1.0"]
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0", "lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
 dynamixel = ["dynamixel-sdk>=3.7.31,<3.9.0", "lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
+hiwonder = ["lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
 damiao = ["lerobot[can-dep]"]
 robstride = ["lerobot[can-dep]"]
 

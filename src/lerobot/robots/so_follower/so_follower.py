@@ -18,12 +18,9 @@ import logging
 import time
 from functools import cached_property
 
-from lerobot.cameras import make_cameras_from_configs
+from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-    OperatingMode,
-)
+from lerobot.motors.feetech import OperatingMode
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
@@ -46,20 +43,22 @@ class SOFollower(Robot):
     def __init__(self, config: SOFollowerRobotConfig):
         super().__init__(config)
         self.config = config
-        # choose normalization mode depending on config if available
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        self.bus = FeetechMotorsBus(
-            port=self.config.port,
-            motors={
-                "shoulder_pan": Motor(1, "sts3215", norm_mode_body),
-                "shoulder_lift": Motor(2, "sts3215", norm_mode_body),
-                "elbow_flex": Motor(3, "sts3215", norm_mode_body),
-                "wrist_flex": Motor(4, "sts3215", norm_mode_body),
-                "wrist_roll": Motor(5, "sts3215", norm_mode_body),
-                "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
-            },
-            calibration=self.calibration,
-        )
+        motor_model = getattr(config, "motor_model", "sts3215")
+        motors = {
+            "shoulder_pan": Motor(1, motor_model, norm_mode_body),
+            "shoulder_lift": Motor(2, motor_model, norm_mode_body),
+            "elbow_flex": Motor(3, motor_model, norm_mode_body),
+            "wrist_flex": Motor(4, motor_model, norm_mode_body),
+            "wrist_roll": Motor(5, motor_model, norm_mode_body),
+            "gripper": Motor(6, motor_model, MotorNormMode.RANGE_0_100),
+        }
+        if motor_model == "hx30hm":
+            from lerobot.motors.hiwonder import HiwonderMotorsBus
+            self.bus = HiwonderMotorsBus(port=self.config.port, motors=motors, calibration=self.calibration)
+        else:
+            from lerobot.motors.feetech import FeetechMotorsBus
+            self.bus = FeetechMotorsBus(port=self.config.port, motors=motors, calibration=self.calibration)
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
