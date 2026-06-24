@@ -44,7 +44,7 @@ def _fake_inspect(stage_value):
 
 
 def test_poll_until_done_returns_terminal_stage(monkeypatch):
-    monkeypatch.setattr("huggingface_hub.inspect_job", _fake_inspect("COMPLETED"))
+    monkeypatch.setattr("lerobot.jobs.hf.inspect_job", _fake_inspect("COMPLETED"))
     done = threading.Event()
     assert _poll_until_done("j", done, poll_interval=0.01) == "COMPLETED"
     assert done.is_set()
@@ -52,7 +52,7 @@ def test_poll_until_done_returns_terminal_stage(monkeypatch):
 
 def test_poll_until_done_exits_when_done_already_set(monkeypatch):
     # Non-terminal forever; with done pre-set the loop must not block and returns None.
-    monkeypatch.setattr("huggingface_hub.inspect_job", _fake_inspect("RUNNING"))
+    monkeypatch.setattr("lerobot.jobs.hf.inspect_job", _fake_inspect("RUNNING"))
     done = threading.Event()
     done.set()
     assert _poll_until_done("j", done, poll_interval=0.01) is None
@@ -60,7 +60,7 @@ def test_poll_until_done_exits_when_done_already_set(monkeypatch):
 
 def test_poll_until_done_gives_up_after_repeated_failures(monkeypatch):
     monkeypatch.setattr(
-        "huggingface_hub.inspect_job", lambda job_id: (_ for _ in ()).throw(RuntimeError("boom"))
+        "lerobot.jobs.hf.inspect_job", lambda job_id: (_ for _ in ()).throw(RuntimeError("boom"))
     )
     done = threading.Event()
     result = _poll_until_done("j", done, poll_interval=0.001, max_failures=3)
@@ -195,8 +195,6 @@ def test_submit_passes_validation_and_submits(monkeypatch):
     """Regression: repo_id must be set BEFORE cfg.validate() or validation raises."""
     from unittest.mock import MagicMock
 
-    import huggingface_hub
-
     # Patch get_token
     monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
 
@@ -208,7 +206,7 @@ def test_submit_passes_validation_and_submits(monkeypatch):
         def whoami(self, token=None):
             return {"name": "alice"}
 
-    monkeypatch.setattr(huggingface_hub, "HfApi", FakeHfApi)
+    monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
 
     # ensure_dataset_available returns None; patch it out so no Hub access happens
     # (imported inside submit_to_hf via `from lerobot.jobs.dataset import ensure_dataset_available`).
@@ -229,7 +227,7 @@ def test_submit_passes_validation_and_submits(monkeypatch):
         run_job_calls.append(kwargs)
         return fake_job
 
-    monkeypatch.setattr(huggingface_hub, "run_job", fake_run_job)
+    monkeypatch.setattr("lerobot.jobs.hf.run_job", fake_run_job)
 
     cfg = draccus.parse(
         TrainPipelineConfig,
@@ -268,8 +266,6 @@ def test_submit_returns_when_job_completes(monkeypatch):
     """Non-detach path must RETURN (not hang) once the job reaches a terminal stage."""
     from types import SimpleNamespace
 
-    import huggingface_hub
-
     monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
 
     class FakeHfApi:
@@ -279,21 +275,21 @@ def test_submit_returns_when_job_completes(monkeypatch):
         def whoami(self, token=None):
             return {"name": "alice"}
 
-    monkeypatch.setattr(huggingface_hub, "HfApi", FakeHfApi)
+    monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
     monkeypatch.setattr("lerobot.jobs.dataset.ensure_dataset_available", lambda *a, **kw: None)
     monkeypatch.setattr(
         "lerobot.jobs.hf._stage_config_on_hub", lambda cfg, repo_id, token, tags=None: repo_id
     )
-    monkeypatch.setattr(huggingface_hub, "run_job", lambda **kw: SimpleNamespace(id="job-1", url="http://x"))
+    monkeypatch.setattr("lerobot.jobs.hf.run_job", lambda **kw: SimpleNamespace(id="job-1", url="http://x"))
     # Job is already COMPLETED on the first poll.
     monkeypatch.setattr(
-        "huggingface_hub.inspect_job",
+        "lerobot.jobs.hf.inspect_job",
         lambda job_id: SimpleNamespace(
             status=SimpleNamespace(stage=SimpleNamespace(value="COMPLETED"), message=None)
         ),
     )
     # Log stream ends immediately.
-    monkeypatch.setattr("huggingface_hub.fetch_job_logs", lambda job_id, follow=True: iter(()))
+    monkeypatch.setattr("lerobot.jobs.hf.fetch_job_logs", lambda job_id, follow=True: iter(()))
 
     cfg = draccus.parse(
         TrainPipelineConfig,
@@ -309,8 +305,6 @@ def test_submit_returns_on_model_pushed_marker(monkeypatch):
     """Finish when the model-pushed log appears, even if the job stage never flips."""
     from types import SimpleNamespace
 
-    import huggingface_hub
-
     monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
 
     class FakeHfApi:
@@ -320,21 +314,21 @@ def test_submit_returns_on_model_pushed_marker(monkeypatch):
         def whoami(self, token=None):
             return {"name": "alice"}
 
-    monkeypatch.setattr(huggingface_hub, "HfApi", FakeHfApi)
+    monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
     monkeypatch.setattr("lerobot.jobs.dataset.ensure_dataset_available", lambda *a, **kw: None)
     monkeypatch.setattr(
         "lerobot.jobs.hf._stage_config_on_hub", lambda cfg, repo_id, token, tags=None: repo_id
     )
-    monkeypatch.setattr(huggingface_hub, "run_job", lambda **kw: SimpleNamespace(id="job-1", url="http://x"))
+    monkeypatch.setattr("lerobot.jobs.hf.run_job", lambda **kw: SimpleNamespace(id="job-1", url="http://x"))
     # Job stays RUNNING forever — only the log marker can end the command.
     monkeypatch.setattr(
-        "huggingface_hub.inspect_job",
+        "lerobot.jobs.hf.inspect_job",
         lambda job_id: SimpleNamespace(
             status=SimpleNamespace(stage=SimpleNamespace(value="RUNNING"), message=None)
         ),
     )
     pushed_line = "INFO Model pushed to https://huggingface.co/alice/myrun"
-    monkeypatch.setattr("huggingface_hub.fetch_job_logs", lambda job_id, follow=True: iter([pushed_line]))
+    monkeypatch.setattr("lerobot.jobs.hf.fetch_job_logs", lambda job_id, follow=True: iter([pushed_line]))
 
     cfg = draccus.parse(
         TrainPipelineConfig,
@@ -355,7 +349,6 @@ def test_submit_returns_on_model_pushed_marker(monkeypatch):
 
 def test_submit_raises_when_wandb_enabled_without_key(monkeypatch):
     """wandb.enable with no key reachable anywhere fails fast, before submitting."""
-    import huggingface_hub
 
     monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
 
@@ -366,7 +359,7 @@ def test_submit_raises_when_wandb_enabled_without_key(monkeypatch):
         def whoami(self, token=None):
             return {"name": "alice"}
 
-    monkeypatch.setattr(huggingface_hub, "HfApi", FakeHfApi)
+    monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
     monkeypatch.setattr("lerobot.jobs.hf.resolve_wandb_api_key", lambda: None)
 
     cfg = draccus.parse(
@@ -391,8 +384,6 @@ def test_submit_raises_when_job_ends_in_error(monkeypatch):
     """A terminal non-COMPLETED stage with no model-pushed marker must raise with the status."""
     from types import SimpleNamespace
 
-    import huggingface_hub
-
     monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
 
     class FakeHfApi:
@@ -402,21 +393,21 @@ def test_submit_raises_when_job_ends_in_error(monkeypatch):
         def whoami(self, token=None):
             return {"name": "alice"}
 
-    monkeypatch.setattr(huggingface_hub, "HfApi", FakeHfApi)
+    monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
     monkeypatch.setattr("lerobot.jobs.dataset.ensure_dataset_available", lambda *a, **kw: None)
     monkeypatch.setattr(
         "lerobot.jobs.hf._stage_config_on_hub", lambda cfg, repo_id, token, tags=None: repo_id
     )
-    monkeypatch.setattr(huggingface_hub, "run_job", lambda **kw: SimpleNamespace(id="job-1", url="http://x"))
+    monkeypatch.setattr("lerobot.jobs.hf.run_job", lambda **kw: SimpleNamespace(id="job-1", url="http://x"))
     # Job fails: a terminal ERROR stage carrying the platform's status message.
     monkeypatch.setattr(
-        "huggingface_hub.inspect_job",
+        "lerobot.jobs.hf.inspect_job",
         lambda job_id: SimpleNamespace(
             status=SimpleNamespace(stage=SimpleNamespace(value="ERROR"), message="Job timeout")
         ),
     )
     # Logs end without the model-pushed marker.
-    monkeypatch.setattr("huggingface_hub.fetch_job_logs", lambda job_id, follow=True: iter(()))
+    monkeypatch.setattr("lerobot.jobs.hf.fetch_job_logs", lambda job_id, follow=True: iter(()))
 
     cfg = draccus.parse(
         TrainPipelineConfig,

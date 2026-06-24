@@ -33,7 +33,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import draccus
-from huggingface_hub import get_token
+from huggingface_hub import (
+    HfApi,
+    create_repo,
+    fetch_job_logs,
+    get_token,
+    inspect_job,
+    run_job,
+    upload_file,
+)
 
 if TYPE_CHECKING:
     from lerobot.configs.train import TrainPipelineConfig
@@ -116,8 +124,6 @@ def build_remote_config_file(cfg, repo_id: str, dest: Path, tags: list[str] | No
 
 def _stage_config_on_hub(cfg, repo_id: str, token: str, tags: list[str] | None = None) -> str:
     """Upload train_config.json to the model repo and return the repo_id for --config_path."""
-    from huggingface_hub import create_repo, upload_file
-
     create_repo(repo_id, repo_type="model", private=True, exist_ok=True, token=token)
     with tempfile.TemporaryDirectory() as tmp:
         config_path = build_remote_config_file(cfg, repo_id, Path(tmp) / "train_config.json", tags=tags)
@@ -147,8 +153,6 @@ def _tail_logs(
     caller can finish as soon as the trained model lands on the Hub, rather than
     waiting out the platform's post-run finalization (which can add ~30s).
     """
-    from huggingface_hub import fetch_job_logs
-
     printed = 0
     while not done.is_set():
         try:
@@ -190,8 +194,6 @@ def _poll_until_done(
     is reached and `status_holder` is given, records `status_holder["message"]`
     (the platform's status message, e.g. "Job timeout").
     """
-    from huggingface_hub import inspect_job
-
     failures = 0
     while not done.is_set():
         try:
@@ -219,8 +221,6 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
     the job, then either tails logs until completion or detaches immediately.
     Ctrl-C detaches without cancelling the remote job.
     """
-    from huggingface_hub import HfApi, run_job
-
     from lerobot.jobs.dataset import ensure_dataset_available
 
     token = get_token()
