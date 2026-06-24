@@ -123,15 +123,15 @@ class TestDepthEncoderParsing:
                 "test/repo",
                 "--operation.type",
                 "reencode_videos",
-                "--operation.depth_encoder.vcodec",
-                "ffv1",
+                "--operation.depth_encoder.extra_options",
+                '{"x265-params": "lossless=1"}',
                 "--operation.depth_encoder.depth_max",
                 "12.0",
                 "--operation.depth_encoder.use_log",
                 "false",
             ]
         )
-        assert cfg.operation.depth_encoder.vcodec == "ffv1"
+        assert cfg.operation.depth_encoder.extra_options == {"x265-params": "lossless=1"}
         assert cfg.operation.depth_encoder.depth_max == 12.0
         assert cfg.operation.depth_encoder.use_log is False
 

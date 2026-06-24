@@ -224,8 +224,8 @@ Re-encode both RGB and depth videos in a dataset (depth quantization params are 
     lerobot-edit-dataset \
         --repo_id lerobot/pusht_depth \
         --operation.type reencode_videos \
-        --operation.rgb_encoder.vcodec libx264 \
-        --operation.depth_encoder.vcodec ffv1
+        --operation.rgb_encoder.vcodec h264 \
+        --operation.depth_encoder.extra_options '{"x265-params": "lossless=1"}'
 
 Using JSON config file:
     lerobot-edit-dataset \

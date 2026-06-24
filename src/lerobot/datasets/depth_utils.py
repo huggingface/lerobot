@@ -79,7 +79,7 @@ def quantize_depth(
 
     Depth maps are packed into 12-bit integer frames so they fit in standard
     high-bit-depth pixel formats (e.g. ``yuv420p12le`` / ``gray12le``)
-    and can be encoded by widely supported video codecs (HEVC Main 12, ffv1).
+    and can be encoded by widely supported video codecs (e.g. HEVC Main 12).
     Logarithmic quantization is the default because it allocates more quanta
     to near-range depth, which matches the (1/depth) error profile of typical
     depth sensors. Math is ported from BEHAVIOR-1K's ``obs_utils.py``.

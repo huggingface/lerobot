@@ -102,7 +102,7 @@ lerobot-record \
 
 | Parameter   | Type    | Default      | Description                                                                                                                       |
 | ----------- | ------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| `vcodec`    | `str`   | `"hevc"`     | Defaults to HEVC Main 12 (a 12-bit-capable codec). `ffv1` is a lossless alternative.                                              |
+| `vcodec`    | `str`   | `"hevc"`     | Defaults to HEVC Main 12 (a 12-bit-capable codec). For a lossless depth stream, keep HEVC and pass `extra_options={"x265-params": "lossless=1"}` (stays MP4-compatible). |
 | `pix_fmt`   | `str`   | `"gray12le"` | Single-channel 12-bit pixel format used to carry the quantized codes.                                                             |
 | `depth_min` | `float` | `0.01`       | Depth in metres mapped to quantum `0`. Values below are clipped on decode.                                                        |
 | `depth_max` | `float` | `10.0`       | Depth in metres mapped to quantum `4095`. Values above are clipped on decode.                                                     |
