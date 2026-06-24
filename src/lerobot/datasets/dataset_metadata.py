@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
+import logging
 from collections.abc import Callable, Iterable
 from copy import deepcopy
 from pathlib import Path
@@ -634,7 +635,14 @@ class LeRobotDatasetMetadata:
             new_info = get_video_info(video_path, video_encoder=video_encoder)
             # Drop preserved keys so the existing values win on merge.
             new_info = {k: v for k, v in new_info.items() if k not in preserve_set}
-            self.info.features[key]["info"] = {**existing, **new_info}
+            merged = {**existing, **new_info}
+            # Migrate the legacy depth marker to the canonical key.
+            if "video.is_depth_map" in merged:
+                logging.warning(
+                    f"Migrating legacy 'video.is_depth_map' to 'is_depth_map' for feature {key!r}."
+                )
+                merged.setdefault("is_depth_map", merged.pop("video.is_depth_map"))
+            self.info.features[key]["info"] = merged
 
     def update_chunk_settings(
         self,
