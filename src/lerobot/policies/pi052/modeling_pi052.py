@@ -38,7 +38,6 @@ for the LM head.
 from __future__ import annotations
 
 import builtins
-import copy
 import logging
 import math
 import types
@@ -416,8 +415,13 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+        # The suffix mask is the constant [1, 0, ..., 0]; build it on-device
+        # rather than via torch.tensor(python_list, device=cuda), which is a
+        # host->device sync on every denoise step.
+        n = len(att_masks)
+        att_masks = torch.zeros(n, dtype=embs.dtype, device=embs.device)
+        att_masks[0] = 1
+        att_masks = att_masks[None, :].expand(bsize, n)
 
         return embs, pad_masks, att_masks, adarms_cond
 
@@ -517,10 +521,17 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         dt = -1.0 / num_steps
 
+        # Precompute the whole timestep schedule on-device once, instead of
+        # rebuilding a tensor from a Python float every step
+        # (``torch.tensor(time, device=cuda)`` is a host->device sync ×num_steps).
+        times = torch.tensor(
+            [1.0 + s * dt for s in range(num_steps)], dtype=torch.float32, device=device
+        )
+
         x_t = noise
         for step in range(num_steps):
-            time = 1.0 + step * dt
-            time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
+            time = 1.0 + step * dt  # Python float kept for the RTC branch below
+            time_tensor = times[step].expand(bsize)
 
             def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
                 return self.denoise_step(
@@ -579,7 +590,12 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         )
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
 
-        past_key_values = copy.deepcopy(past_key_values)
+        # The expert forward appends the suffix K/V to the prefix cache in-place
+        # (GemmaAttention.update runs even with use_cache=False), so each step
+        # must start from a prefix-only cache. Instead of deep-copying the whole
+        # cache every step, let it append and crop back to the prefix length
+        # afterwards (the prefix K/V are read-only, so this is exact and keeps
+        # the loop a single graph).
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks_4d,
             position_ids=position_ids,
@@ -588,6 +604,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             use_cache=False,
             adarms_cond=[None, adarms_cond],
         )
+        past_key_values.crop(prefix_len)
 
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]
@@ -1062,6 +1079,18 @@ class PI052Policy(PreTrainedPolicy):
         # Counts action chunks since the last subtask (re)generation, so the
         # subtask can be held across several chunks (see subtask_replan_steps).
         self._subtask_chunk_counter = 0
+
+    def apply_flashrt_fp8_mlp(self, batch: dict[str, Tensor], *, safety: float = 1.05) -> bool:
+        """Opt-in: swap every Gemma + SigLIP MLP to FlashRT fused FP8 kernels.
+
+        Calibrates static activation scales once on ``batch`` (one representative
+        observation, already through the preprocessor) and swaps the MLP modules
+        in place. Returns False (no-op, BF16 kept) if the kernels are missing.
+        Gated by ``config.use_flashrt_fp8_mlp`` — see flashrt_fp8.py.
+        """
+        from .flashrt_fp8 import apply_fp8_mlp  # noqa: PLC0415
+
+        return apply_fp8_mlp(self, batch, safety=safety)
 
     # ------------------------------------------------------------------
     # Head unfreeze helper
@@ -2359,6 +2388,13 @@ class PI052Policy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         self.eval()
+
+        # Opt-in FlashRT FP8: calibrate static scales on the first real observation
+        # and swap the MLPs in place. Guard set before the call so the calibration
+        # forward (which re-enters predict_action_chunk) does not recurse.
+        if self.config.use_flashrt_fp8_mlp and not getattr(self, "_fp8_applied", False):
+            self._fp8_applied = True
+            self.apply_flashrt_fp8_mlp(batch)
 
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
