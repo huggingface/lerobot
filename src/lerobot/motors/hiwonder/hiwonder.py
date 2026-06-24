@@ -193,12 +193,9 @@ class HiwonderMotorsBus(FeetechMotorsBus):
         id_ = self._get_motor_id(motor)
         comm = hw.COMM_TX_FAIL
         error = 0
-        model_number = 0
         for n_try in range(1 + num_retry):
             rxpacket, comm, error = self.packet_handler.ping(id_)
             if self._is_comm_success(comm):
-                # hiwonder ping returns (rxpacket, comm, error) — model number not in response
-                model_number = self.model_number_table.get(self.motors[self._id_to_name(id_)].model, 0)
                 break
             logger.debug(f"ping failed for {id_=}: {n_try=} got {comm=} {error=}")
 
@@ -209,6 +206,12 @@ class HiwonderMotorsBus(FeetechMotorsBus):
         if self._is_error(error):
             if raise_on_error:
                 raise RuntimeError(self.packet_handler.getRxPacketError(error))
+            return None
+
+        # hiwonder ping response does not carry the model number, so read it from
+        # the hardware register directly (addr=3, length=2), same as broadcast_ping.
+        model_number, comm, error = self._read(3, 2, id_, raise_on_error=raise_on_error)
+        if not self._is_comm_success(comm) or self._is_error(error):
             return None
         return model_number
 
