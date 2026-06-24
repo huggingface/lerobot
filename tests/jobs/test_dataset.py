@@ -42,7 +42,7 @@ def test_dataset_already_on_hub_is_noop():
 
 # Branch 2: not on Hub but present locally → always push privately.
 def test_dataset_local_only_uploads_privately(tmp_path, monkeypatch):
-    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path))
+    monkeypatch.setattr("lerobot.jobs.dataset.HF_LEROBOT_HOME", tmp_path)
     _make_local_cache(tmp_path, "user/ds")
 
     api = _api_with_dataset(False)
@@ -57,11 +57,11 @@ def test_dataset_local_only_uploads_privately(tmp_path, monkeypatch):
     mock_ds_cls.return_value.push_to_hub.assert_called_once_with(private=True, tags=["lerobot", "lelab"])
 
 
-# Branch 3: not on Hub, NOT in local cache → RuntimeError "neither".
+# Branch 3: not on Hub, NOT in local cache → RuntimeError.
 def test_dataset_neither_on_hub_nor_local_raises(tmp_path, monkeypatch):
-    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path))
+    monkeypatch.setattr("lerobot.jobs.dataset.HF_LEROBOT_HOME", tmp_path)
     # tmp_path is empty — no local cache.
 
     api = _api_with_dataset(False)
-    with pytest.raises(RuntimeError, match="neither"):
+    with pytest.raises(RuntimeError, match="not in the local cache"):
         ensure_dataset_available("user/ds", api=api)

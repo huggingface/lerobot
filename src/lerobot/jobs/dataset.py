@@ -21,9 +21,9 @@ local-only dataset is pushed to a PRIVATE repo first (never public).
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import TYPE_CHECKING
+
+from lerobot.utils.constants import HF_LEROBOT_HOME
 
 if TYPE_CHECKING:
     from huggingface_hub import HfApi
@@ -39,12 +39,12 @@ def ensure_dataset_available(repo_id: str, *, api: HfApi, tags: list[str] | None
     if api.repo_exists(repo_id, repo_type="dataset"):
         return
 
-    cache_root = Path(os.environ.get("HF_LEROBOT_HOME", "~/.cache/huggingface/lerobot")).expanduser()
-    local_present = (cache_root / repo_id / "meta" / "info.json").is_file()
+    local_present = (HF_LEROBOT_HOME / repo_id / "meta" / "info.json").is_file()
     if not local_present:
         raise RuntimeError(
-            f"Dataset '{repo_id}' is neither on the Hub nor in the local cache "
-            f"({cache_root}). Record or download it first."
+            f"Dataset '{repo_id}' is not in the local cache ({HF_LEROBOT_HOME}) and could not be "
+            f"reached on the Hub — it may not exist, or be private and inaccessible with your "
+            f"token. Record or download it first, or run `hf auth login`."
         )
 
     print(f"[dataset] '{repo_id}' is local-only; pushing to a PRIVATE Hub repo...")
