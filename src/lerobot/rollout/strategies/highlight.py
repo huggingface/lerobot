@@ -25,7 +25,6 @@ from threading import Event as ThreadingEvent, Lock
 from lerobot.datasets import VideoEncodingManager
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
-from lerobot.utils.import_utils import require_package
 from lerobot.utils.keyboard_input import create_key_listener
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
@@ -57,7 +56,6 @@ class HighlightStrategy(RolloutStrategy):
 
     def __init__(self, config: HighlightStrategyConfig):
         super().__init__(config)
-        require_package("pynput", extra="pynput-dep")
         self._ring: RolloutRingBuffer | None = None
         self._listener = None
         self._save_requested = ThreadingEvent()
