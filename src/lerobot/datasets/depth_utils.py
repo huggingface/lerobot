@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Depth encoding/decoding helpers for :class:`VideoEncoderConfig`.
+Depth encoding/decoding helpers for :class:`DepthEncoderConfig`.
 """
 
 import math

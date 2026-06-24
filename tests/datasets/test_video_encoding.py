@@ -26,7 +26,7 @@ pytest.importorskip("av", reason="av is required (install lerobot[dataset])")
 
 import av  # noqa: E402
 
-from lerobot.configs import VALID_VIDEO_CODECS, DepthEncoderConfig, VideoEncoderConfig
+from lerobot.configs import VALID_VIDEO_CODECS, DepthEncoderConfig, RGBEncoderConfig, VideoEncoderConfig
 from lerobot.datasets.image_writer import write_image
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pyav_utils import get_codec
@@ -117,13 +117,13 @@ def _read_feature_info(dataset: LeRobotDataset, key: str = DUMMY_VIDEO_KEY) -> d
     return info["features"][key]["info"]
 
 
-# ─── VideoEncoderConfig / codec options ──────────────────────────────
+# ─── RGBEncoderConfig / codec options ──────────────────────────────
 
 
 class TestCodecOptions:
     @require_libsvtav1
     def test_libsvtav1_defaults(self):
-        cfg = VideoEncoderConfig()
+        cfg = RGBEncoderConfig()
         opts = cfg.get_codec_options()
         assert opts["g"] == 2
         assert opts["crf"] == 30
@@ -131,12 +131,12 @@ class TestCodecOptions:
 
     @require_libsvtav1
     def test_libsvtav1_custom_preset(self):
-        cfg = VideoEncoderConfig(preset=8)
+        cfg = RGBEncoderConfig(preset=8)
         assert cfg.get_codec_options()["preset"] == 8
 
     @require_h264
     def test_h264_options(self):
-        cfg = VideoEncoderConfig(vcodec="h264", g=10, crf=23, preset=None)
+        cfg = RGBEncoderConfig(vcodec="h264", g=10, crf=23, preset=None)
         opts = cfg.get_codec_options()
         assert opts["g"] == 10
         assert opts["crf"] == 23
@@ -144,7 +144,7 @@ class TestCodecOptions:
 
     @require_videotoolbox
     def test_videotoolbox_options(self):
-        cfg = VideoEncoderConfig(vcodec="h264_videotoolbox", g=2, crf=30, preset=None)
+        cfg = RGBEncoderConfig(vcodec="h264_videotoolbox", g=2, crf=30, preset=None)
         opts = cfg.get_codec_options()
         assert opts["g"] == 2
         assert opts["q:v"] == 40
@@ -152,7 +152,7 @@ class TestCodecOptions:
 
     @require_nvenc
     def test_nvenc_options(self):
-        cfg = VideoEncoderConfig(vcodec="h264_nvenc", g=2, crf=25, preset=None)
+        cfg = RGBEncoderConfig(vcodec="h264_nvenc", g=2, crf=25, preset=None)
         opts = cfg.get_codec_options()
         assert opts["rc"] == 0
         assert opts["qp"] == 25
@@ -161,103 +161,103 @@ class TestCodecOptions:
 
     @require_vaapi
     def test_vaapi_options(self):
-        cfg = VideoEncoderConfig(vcodec="h264_vaapi", crf=28, preset=None)
+        cfg = RGBEncoderConfig(vcodec="h264_vaapi", crf=28, preset=None)
         assert cfg.get_codec_options()["qp"] == 28
 
     @require_qsv
     def test_qsv_options(self):
-        cfg = VideoEncoderConfig(vcodec="h264_qsv", crf=25, preset=None)
+        cfg = RGBEncoderConfig(vcodec="h264_qsv", crf=25, preset=None)
         assert cfg.get_codec_options()["global_quality"] == 25
 
     @require_h264
     def test_no_g_no_crf(self):
-        cfg = VideoEncoderConfig(vcodec="h264", g=None, crf=None, preset=None)
+        cfg = RGBEncoderConfig(vcodec="h264", g=None, crf=None, preset=None)
         opts = cfg.get_codec_options()
         assert "g" not in opts
         assert "crf" not in opts
 
     @require_libsvtav1
     def test_encoder_threads_libsvtav1(self):
-        cfg = VideoEncoderConfig(fast_decode=0)
+        cfg = RGBEncoderConfig(fast_decode=0)
         opts = cfg.get_codec_options(encoder_threads=4)
         assert "lp=4" in opts.get("svtav1-params", "")
 
     @require_h264
     def test_encoder_threads_h264(self):
-        cfg = VideoEncoderConfig(vcodec="h264", preset=None)
+        cfg = RGBEncoderConfig(vcodec="h264", preset=None)
         assert cfg.get_codec_options(encoder_threads=2)["threads"] == 2
 
     @require_libsvtav1
     def test_fast_decode_libsvtav1(self):
-        cfg = VideoEncoderConfig(fast_decode=1)
+        cfg = RGBEncoderConfig(fast_decode=1)
         opts = cfg.get_codec_options()
         assert "fast-decode=1" in opts.get("svtav1-params", "")
 
     @require_libsvtav1
     def test_libsvtav1_fast_decode_clamped_to_svt_range(self):
         """Out-of-range fast_decode is clamped to [0, 2] in svtav1-params (SVT-AV1 FastDecode)."""
-        cfg = VideoEncoderConfig(fast_decode=100)
+        cfg = RGBEncoderConfig(fast_decode=100)
         assert "fast-decode=2" in cfg.get_codec_options().get("svtav1-params", "")
-        cfg_neg = VideoEncoderConfig(fast_decode=-5)
+        cfg_neg = RGBEncoderConfig(fast_decode=-5)
         assert "fast-decode=0" in cfg_neg.get_codec_options().get("svtav1-params", "")
 
     @require_h264
     def test_fast_decode_h264(self):
-        cfg = VideoEncoderConfig(vcodec="h264", fast_decode=1, preset=None)
+        cfg = RGBEncoderConfig(vcodec="h264", fast_decode=1, preset=None)
         assert cfg.get_codec_options()["tune"] == "fastdecode"
 
     @require_libsvtav1
     def test_pix_fmt_unsupported_raises(self):
         """Passing an unsupported pix_fmt is a hard error."""
         with pytest.raises(ValueError, match="pix_fmt"):
-            VideoEncoderConfig(pix_fmt="yuv444p")  # libsvtav1 only supports yuv420p variants
+            RGBEncoderConfig(pix_fmt="yuv444p")  # libsvtav1 only supports yuv420p variants
 
     @require_libsvtav1
     @require_h264
     def test_preset_default_behaviour(self):
         """Empty constructor picks preset=12 (libsvtav1 path); other codecs stay None."""
-        assert VideoEncoderConfig().preset == 12
-        assert VideoEncoderConfig(vcodec="libsvtav1").preset == 12
-        assert VideoEncoderConfig(vcodec="h264").preset is None
-        assert VideoEncoderConfig(vcodec="h264", preset=None).preset is None
+        assert RGBEncoderConfig().preset == 12
+        assert RGBEncoderConfig(vcodec="libsvtav1").preset == 12
+        assert RGBEncoderConfig(vcodec="h264").preset is None
+        assert RGBEncoderConfig(vcodec="h264", preset=None).preset is None
 
     @require_h264
     def test_preset_string_on_h264(self):
         """h264 accepts string presets and forwards them to FFmpeg."""
-        cfg = VideoEncoderConfig(vcodec="h264", preset="slow")
+        cfg = RGBEncoderConfig(vcodec="h264", preset="slow")
         assert cfg.get_codec_options()["preset"] == "slow"
 
     @require_videotoolbox
     def test_preset_on_videotoolbox_not_set(self):
         """videotoolbox has no preset option at all."""
-        cfg = VideoEncoderConfig(vcodec="h264_videotoolbox", preset="slow")
+        cfg = RGBEncoderConfig(vcodec="h264_videotoolbox", preset="slow")
         assert "preset" not in cfg.get_codec_options()
 
     @require_libsvtav1
     def test_libsvtav1_preset_out_of_range_raises(self):
         """libsvtav1 preset must sit in [-2, 13] as exposed by PyAV."""
         with pytest.raises(ValueError, match="out of range"):
-            VideoEncoderConfig(vcodec="libsvtav1", preset=100)
+            RGBEncoderConfig(vcodec="libsvtav1", preset=100)
         with pytest.raises(ValueError, match="out of range"):
-            VideoEncoderConfig(vcodec="libsvtav1", preset=-3)
+            RGBEncoderConfig(vcodec="libsvtav1", preset=-3)
 
     @require_libsvtav1
     def test_libsvtav1_crf_out_of_range_raises(self):
         """libsvtav1 crf must sit in [0, 63]."""
         with pytest.raises(ValueError, match="crf.*out of range"):
-            VideoEncoderConfig(vcodec="libsvtav1", crf=64)
+            RGBEncoderConfig(vcodec="libsvtav1", crf=64)
 
     @require_libsvtav1
     def test_libsvtav1_crf_rejects_python_float(self):
         """libsvtav1 exposes ``crf`` as an INT AVOption; Python float must not pass validation."""
         with pytest.raises(ValueError, match="float values are not allowed"):
-            VideoEncoderConfig(vcodec="libsvtav1", crf=2.5)
+            RGBEncoderConfig(vcodec="libsvtav1", crf=2.5)
 
     @require_libsvtav1
     def test_libsvtav1_extra_crf_rejects_fractional_string(self):
         """INT options reject fractional values even when supplied only via ``extra_options``."""
         with pytest.raises(ValueError, match="float values are not allowed"):
-            VideoEncoderConfig(
+            RGBEncoderConfig(
                 vcodec="libsvtav1",
                 crf=None,
                 extra_options={"crf": "2.5"},
@@ -266,7 +266,7 @@ class TestCodecOptions:
     @require_libsvtav1
     def test_libsvtav1_extra_crf_rejects_float(self):
         with pytest.raises(ValueError, match="float values are not allowed"):
-            VideoEncoderConfig(
+            RGBEncoderConfig(
                 vcodec="libsvtav1",
                 crf=None,
                 extra_options={"crf": 2.5},
@@ -275,13 +275,13 @@ class TestCodecOptions:
     @require_h264
     def test_h264_crf_accepts_float_and_int(self):
         """x264 exposes crf as a FLOAT option, so both int and float are accepted."""
-        assert VideoEncoderConfig(vcodec="h264", crf=23).get_codec_options()["crf"] == 23
-        assert VideoEncoderConfig(vcodec="h264", crf=23.5).get_codec_options()["crf"] == 23.5
+        assert RGBEncoderConfig(vcodec="h264", crf=23).get_codec_options()["crf"] == 23
+        assert RGBEncoderConfig(vcodec="h264", crf=23.5).get_codec_options()["crf"] == 23.5
 
     @require_libsvtav1
     def test_validate_is_rerunnable(self):
         """After mutating a field, validate() re-checks and surfaces new issues."""
-        cfg = VideoEncoderConfig(vcodec="libsvtav1")
+        cfg = RGBEncoderConfig(vcodec="libsvtav1")
         cfg.preset = 100  # now out of range
         with pytest.raises(ValueError, match="out of range"):
             cfg.validate()
@@ -290,58 +290,58 @@ class TestCodecOptions:
 class TestExtraOptions:
     @require_libsvtav1
     def test_default_is_empty_dict(self):
-        cfg = VideoEncoderConfig()
+        cfg = RGBEncoderConfig()
         assert cfg.extra_options == {}
 
     @require_libsvtav1
     def test_unknown_key_passes_through(self):
         """Keys not published as AVOptions are forwarded to FFmpeg."""
-        cfg = VideoEncoderConfig(extra_options={"totally_made_up_option": "value"})
+        cfg = RGBEncoderConfig(extra_options={"totally_made_up_option": "value"})
         assert cfg.extra_options == {"totally_made_up_option": "value"}
 
     @require_libsvtav1
     def test_numeric_value_in_range_ok(self):
         """libsvtav1 exposes ``qp`` as INT in [0, 63]."""
-        cfg = VideoEncoderConfig(extra_options={"qp": 30})
+        cfg = RGBEncoderConfig(extra_options={"qp": 30})
         assert cfg.extra_options == {"qp": 30}
 
     @require_libsvtav1
     def test_numeric_out_of_range_raises(self):
         with pytest.raises(ValueError, match=r"qp=.*out of range"):
-            VideoEncoderConfig(extra_options={"qp": 999})
+            RGBEncoderConfig(extra_options={"qp": 999})
 
     @require_libsvtav1
     def test_numeric_string_accepted_in_range(self):
         """Numeric strings are accepted for numeric options (mirrors FFmpeg)."""
-        cfg = VideoEncoderConfig(extra_options={"qp": "18"})
+        cfg = RGBEncoderConfig(extra_options={"qp": "18"})
         assert cfg.extra_options == {"qp": "18"}
 
     @require_libsvtav1
     def test_numeric_string_out_of_range_raises(self):
         with pytest.raises(ValueError, match=r"qp=.*out of range"):
-            VideoEncoderConfig(extra_options={"qp": "999"})
+            RGBEncoderConfig(extra_options={"qp": "999"})
 
     @require_libsvtav1
     def test_non_numeric_string_on_numeric_option_raises(self):
         with pytest.raises(ValueError, match=r"qp=.*not numeric"):
-            VideoEncoderConfig(extra_options={"qp": "medium"})
+            RGBEncoderConfig(extra_options={"qp": "medium"})
 
     @require_libsvtav1
     def test_bool_on_numeric_option_raises(self):
         """``bool`` is explicitly rejected for numeric options."""
         with pytest.raises(ValueError, match=r"qp=.*not numeric"):
-            VideoEncoderConfig(extra_options={"qp": True})
+            RGBEncoderConfig(extra_options={"qp": True})
 
     @require_h264
     def test_string_option_passes_through_unchecked(self):
         """String-typed AVOptions are NOT enum-checked (too many accept freeform)."""
-        cfg = VideoEncoderConfig(vcodec="h264", preset=None, extra_options={"tune": "some-future-tune"})
+        cfg = RGBEncoderConfig(vcodec="h264", preset=None, extra_options={"tune": "some-future-tune"})
         assert cfg.extra_options == {"tune": "some-future-tune"}
 
     @require_libsvtav1
     def test_merged_into_codec_options_and_stringified(self):
         """Typed merge by default; ``as_strings=True`` matches FFmpeg option dict."""
-        cfg = VideoEncoderConfig(extra_options={"qp": 20})
+        cfg = RGBEncoderConfig(extra_options={"qp": 20})
         opts = cfg.get_codec_options()
         assert opts["qp"] == 20
         assert isinstance(opts["qp"], int)
@@ -350,25 +350,25 @@ class TestExtraOptions:
     @require_libsvtav1
     def test_structured_fields_win_on_collision(self):
         """A colliding extra_options key is discarded; the structured field wins."""
-        cfg = VideoEncoderConfig(crf=30, extra_options={"crf": 18})
+        cfg = RGBEncoderConfig(crf=30, extra_options={"crf": 18})
         assert cfg.get_codec_options()["crf"] == 30
 
 
 class TestEncoderDetection:
     @require_h264
     def test_explicit_codec_kept_when_available(self):
-        cfg = VideoEncoderConfig(vcodec="h264")
+        cfg = RGBEncoderConfig(vcodec="h264")
         assert cfg.vcodec == "h264"
 
     @require_videotoolbox
     def test_auto_picks_videotoolbox_when_available(self):
         """``h264_videotoolbox`` sits at the top of ``HW_VIDEO_CODECS`` so it wins when present."""
-        cfg = VideoEncoderConfig(vcodec="auto")
+        cfg = RGBEncoderConfig(vcodec="auto")
         assert cfg.vcodec == "h264_videotoolbox"
 
     def test_invalid_codec_raises(self):
         with pytest.raises(ValueError, match="Invalid vcodec"):
-            VideoEncoderConfig(vcodec="not_a_real_codec")
+            RGBEncoderConfig(vcodec="not_a_real_codec")
 
     def test_hw_encoder_names_listed_as_valid(self):
         assert "auto" in VALID_VIDEO_CODECS
@@ -393,7 +393,7 @@ class TestGetVideoInfo:
 
     @require_libsvtav1
     def test_merges_encoder_config_as_video_prefixed_entries(self):
-        cfg = VideoEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
+        cfg = RGBEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
 
         info = get_video_info(TEST_ARTIFACTS_DIR / "clip_4frames.mp4", video_encoder=cfg)
 
@@ -406,7 +406,7 @@ class TestGetVideoInfo:
 
     @require_libsvtav1
     def test_stream_derived_keys_take_precedence_over_config(self):
-        cfg = VideoEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p")
+        cfg = RGBEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p")
 
         info = get_video_info(TEST_ARTIFACTS_DIR / "clip_4frames.mp4", video_encoder=cfg)
 
@@ -473,7 +473,7 @@ class TestEncodeVideoFrames:
     @require_libsvtav1
     def test_custom_encoder_config_fields_stored_in_info(self, tmp_path):
         """All stream-derived and encoder config fields are present after encoding."""
-        cfg = VideoEncoderConfig(vcodec="libsvtav1", g=4, crf=25, preset=10)
+        cfg = RGBEncoderConfig(vcodec="libsvtav1", g=4, crf=25, preset=10)
         video_path = _encode_video(tmp_path / "out.mp4", num_frames=4, fps=30, cfg=cfg)
 
         info = get_video_info(video_path, video_encoder=cfg)
@@ -502,7 +502,7 @@ class TestReencodeVideo:
     def test_reencode_video(self, tmp_path):
         src = TEST_ARTIFACTS_DIR / "clip_4frames.mp4"
         out = tmp_path / "reencoded.mp4"
-        cfg = VideoEncoderConfig(vcodec="h264", g=6, crf=23, pix_fmt="yuv444p")
+        cfg = RGBEncoderConfig(vcodec="h264", g=6, crf=23, pix_fmt="yuv444p")
         reencode_video(src, out, video_encoder=cfg, overwrite=True)
 
         assert out.exists()
@@ -523,7 +523,7 @@ class TestReencodeVideo:
     def test_reencode_video_trim_window(self, tmp_path):
         src = TEST_ARTIFACTS_DIR / "clip_6frames.mp4"
         out = tmp_path / "trim_window.mp4"
-        cfg = VideoEncoderConfig(vcodec="h264")
+        cfg = RGBEncoderConfig(vcodec="h264")
         reencode_video(src, out, video_encoder=cfg, start_time_s=0.05, end_time_s=0.12, overwrite=True)
 
         with av.open(str(out)) as container:
@@ -593,7 +593,7 @@ class TestEncoderConfigPersistence:
 
     @require_libsvtav1
     def test_first_episode_save_persists_encoder_config(self, tmp_path, empty_lerobot_dataset_factory):
-        cfg = VideoEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
+        cfg = RGBEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
         dataset = empty_lerobot_dataset_factory(
             root=tmp_path / "ds", features=DUMMY_VIDEO_FEATURES, use_videos=True, rgb_encoder=cfg
         )
@@ -616,7 +616,7 @@ class TestEncoderConfigPersistence:
 
     @require_libsvtav1
     def test_second_episode_does_not_overwrite_encoder_fields(self, tmp_path, empty_lerobot_dataset_factory):
-        cfg = VideoEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
+        cfg = RGBEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
         dataset = empty_lerobot_dataset_factory(
             root=tmp_path / "ds", features=DUMMY_VIDEO_FEATURES, use_videos=True, rgb_encoder=cfg
         )
@@ -633,13 +633,13 @@ class TestEncoderConfigPersistence:
 
 
 class TestFromVideoInfo:
-    """``VideoEncoderConfig.from_video_info`` reconstructs an encoder config
+    """``RGBEncoderConfig.from_video_info`` reconstructs an encoder config
     from the ``video.*`` keys persisted in a dataset's ``info.json``.
     """
 
     @require_libsvtav1
     def test_reconstructs_from_dummy_video_info(self):
-        cfg = VideoEncoderConfig.from_video_info(DUMMY_VIDEO_INFO)
+        cfg = RGBEncoderConfig.from_video_info(DUMMY_VIDEO_INFO)
 
         # Canonical stream codec ``"av1"`` is aliased to the encoder name.
         assert cfg.vcodec == "libsvtav1"
@@ -651,7 +651,7 @@ class TestFromVideoInfo:
         assert cfg.video_backend == DUMMY_VIDEO_INFO["video.video_backend"]
         # ``{}`` placeholder (typical after a merge with disagreeing sources)
         # must not leak into the reconstructed config.
-        assert cfg.extra_options == VideoEncoderConfig().extra_options
+        assert cfg.extra_options == RGBEncoderConfig().extra_options
 
 
 # ─── Depth-specific encoding tests ────────────────────────────────────

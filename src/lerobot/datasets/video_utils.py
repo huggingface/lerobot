@@ -40,6 +40,7 @@ from PIL import Image
 
 from lerobot.configs import (
     DepthEncoderConfig,
+    RGBEncoderConfig,
     VideoEncoderConfig,
     depth_encoder_defaults,
     rgb_encoder_defaults,
@@ -892,7 +893,7 @@ class StreamingVideoEncoder:
     def __init__(
         self,
         fps: int,
-        rgb_encoder: VideoEncoderConfig | None = None,
+        rgb_encoder: RGBEncoderConfig | None = None,
         depth_encoder: DepthEncoderConfig | None = None,
         queue_maxsize: int = 30,
         encoder_threads: int | None = None,

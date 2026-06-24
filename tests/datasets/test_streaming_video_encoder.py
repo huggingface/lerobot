@@ -26,7 +26,7 @@ pytest.importorskip("av", reason="av is required (install lerobot[dataset])")
 
 import av  # noqa: E402
 
-from lerobot.configs import VideoEncoderConfig
+from lerobot.configs import RGBEncoderConfig
 from lerobot.datasets.pyav_utils import get_codec
 from lerobot.datasets.video_utils import (
     StreamingVideoEncoder,
@@ -57,7 +57,7 @@ class TestCameraEncoderThread:
         result_queue: queue.Queue = queue.Queue(maxsize=1)
         stop_event = threading.Event()
 
-        enc_cfg = VideoEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
+        enc_cfg = RGBEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
         encoder_thread = _CameraEncoderThread(
             video_path=video_path,
             fps=fps,
@@ -106,7 +106,7 @@ class TestCameraEncoderThread:
         result_queue: queue.Queue = queue.Queue(maxsize=1)
         stop_event = threading.Event()
 
-        enc_cfg = VideoEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
+        enc_cfg = RGBEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
         encoder_thread = _CameraEncoderThread(
             video_path=video_path,
             fps=fps,
@@ -138,7 +138,7 @@ class TestCameraEncoderThread:
         result_queue: queue.Queue = queue.Queue(maxsize=1)
         stop_event = threading.Event()
 
-        enc_cfg = VideoEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
+        enc_cfg = RGBEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
         encoder_thread = _CameraEncoderThread(
             video_path=video_path,
             fps=fps,
@@ -165,8 +165,8 @@ class TestCameraEncoderThread:
 
 class TestStreamingVideoEncoder:
     def _make_encoder_config(self, **kwargs):
-        """Helper to build a VideoEncoderConfig."""
-        return VideoEncoderConfig(**kwargs)
+        """Helper to build an RGBEncoderConfig."""
+        return RGBEncoderConfig(**kwargs)
 
     def test_single_camera_episode(self, tmp_path):
         """Test encoding a single camera episode."""
@@ -369,7 +369,7 @@ class TestStreamingVideoEncoder:
     def test_encoder_threads_passed_to_thread(self, tmp_path):
         """Test that encoder_threads is stored and passed through to encoder threads."""
         video_keys = [f"{OBS_IMAGES}.cam"]
-        cfg = VideoEncoderConfig(
+        cfg = RGBEncoderConfig(
             vcodec="libsvtav1",
             pix_fmt="yuv420p",
             g=2,

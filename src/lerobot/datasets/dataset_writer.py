@@ -33,6 +33,7 @@ import torch
 
 from lerobot.configs import (
     DepthEncoderConfig,
+    RGBEncoderConfig,
     VideoEncoderConfig,
     depth_encoder_defaults,
     rgb_encoder_defaults,
@@ -107,7 +108,7 @@ class DatasetWriter:
         self,
         meta: LeRobotDatasetMetadata,
         root: Path,
-        rgb_encoder: VideoEncoderConfig | None,
+        rgb_encoder: RGBEncoderConfig | None,
         depth_encoder: DepthEncoderConfig | None,
         encoder_threads: int | None,
         batch_encoding_size: int,

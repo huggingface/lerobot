@@ -24,7 +24,7 @@ import torch.utils
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig, VideoEncoderConfig
+from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig, RGBEncoderConfig
 from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
@@ -60,7 +60,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
         batch_encoding_size: int = 1,
-        rgb_encoder: VideoEncoderConfig | None = None,
+        rgb_encoder: RGBEncoderConfig | None = None,
         depth_encoder: DepthEncoderConfig | None = None,
         encoder_threads: int | None = None,
         streaming_encoding: bool = False,
@@ -185,7 +185,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
-            rgb_encoder (VideoEncoderConfig | None, optional): Video encoder settings for cameras
+            rgb_encoder (RGBEncoderConfig | None, optional): Video encoder settings for cameras
                 (codec, quality, etc.). When ``None``, :func:`~lerobot.configs.video.rgb_encoder_defaults`
                 is used by the writer.
             depth_encoder (DepthEncoderConfig | None, optional): Video encoder settings for depth cameras
@@ -330,7 +330,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     @staticmethod
     def _build_streaming_encoder(
         fps: int,
-        rgb_encoder: VideoEncoderConfig | None,
+        rgb_encoder: RGBEncoderConfig | None,
         depth_encoder: DepthEncoderConfig | None,
         encoder_queue_maxsize: int,
         encoder_threads: int | None,
@@ -655,7 +655,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_threads: int = 0,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
-        rgb_encoder: VideoEncoderConfig | None = None,
+        rgb_encoder: RGBEncoderConfig | None = None,
         depth_encoder: DepthEncoderConfig | None = None,
         metadata_buffer_size: int = 10,
         streaming_encoding: bool = False,
@@ -764,7 +764,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         force_cache_sync: bool = False,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
-        rgb_encoder: VideoEncoderConfig | None = None,
+        rgb_encoder: RGBEncoderConfig | None = None,
         depth_encoder: DepthEncoderConfig | None = None,
         encoder_threads: int | None = None,
         image_writer_processes: int = 0,

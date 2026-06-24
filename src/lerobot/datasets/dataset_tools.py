@@ -39,6 +39,7 @@ from tqdm import tqdm
 
 from lerobot.configs import (
     DepthEncoderConfig,
+    RGBEncoderConfig,
     VideoEncoderConfig,
     depth_encoder_defaults,
     encoder_config_from_video_info,
@@ -1671,7 +1672,7 @@ def convert_image_to_video_dataset(
     dataset: LeRobotDataset,
     output_dir: Path | None = None,
     repo_id: str | None = None,
-    rgb_encoder: VideoEncoderConfig | None = None,
+    rgb_encoder: RGBEncoderConfig | None = None,
     depth_encoder: DepthEncoderConfig | None = None,
     episode_indices: list[int] | None = None,
     num_workers: int = 4,
@@ -1931,7 +1932,7 @@ def _reencode_video_worker(args: tuple) -> Path:
 
 def reencode_dataset(
     dataset: LeRobotDataset,
-    rgb_encoder: VideoEncoderConfig | None = None,
+    rgb_encoder: RGBEncoderConfig | None = None,
     depth_encoder: DepthEncoderConfig | None = None,
     encoder_threads: int | None = None,
     num_workers: int | None = None,
