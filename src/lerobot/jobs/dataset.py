@@ -23,9 +23,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from huggingface_hub import HfApi
 
 
-def ensure_dataset_available(repo_id: str, *, api, tags: list[str] | None = None) -> None:
+def ensure_dataset_available(repo_id: str, *, api: HfApi, tags: list[str] | None = None) -> None:
     """Ensure repo_id resolves on the Hub, pushing a local-only dataset privately first.
 
     `tags` are attached to the dataset only when we push it (an already-on-Hub
