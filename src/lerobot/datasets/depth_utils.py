@@ -36,6 +36,7 @@ from lerobot.configs.video import (
     DEPTH_QMAX,
 )
 
+from .image_writer import squeeze_single_channel
 from .pyav_utils import write_u16_plane
 
 _MM_PER_METRE = 1000.0
@@ -119,8 +120,7 @@ def quantize_depth(
         depth = depth.detach().cpu().numpy()
 
     # Squeeze single-channel dim: (H, W, 1) or (1, H, W) → (H, W)
-    if depth.ndim == 3 and (depth.shape[-1] == 1 or depth.shape[0] == 1):
-        depth = depth.squeeze()
+    depth = squeeze_single_channel(depth)
 
     depth_f, resolved_unit = _depth_input_to_float32_and_unit(depth, input_unit=input_unit)
 
