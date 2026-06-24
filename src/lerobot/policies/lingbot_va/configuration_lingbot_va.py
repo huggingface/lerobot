@@ -156,8 +156,10 @@ class LingBotVAConfig(PreTrainedConfig):
         return ConstantWithWarmupSchedulerConfig(num_warmup_steps=self.scheduler_warmup_steps)
 
     @property
-    def observation_delta_indices(self) -> None:
-        return None
+    def observation_delta_indices(self) -> list[int]:
+        temporal_downsample = 4
+        stride = max(1, self.action_per_frame // temporal_downsample)
+        return list(range(0, self.frame_chunk_size * temporal_downsample * stride, stride))
 
     @property
     def action_delta_indices(self) -> list[int]:

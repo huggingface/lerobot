@@ -1395,7 +1395,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         pred = self.transformer(input_dict, train_mode=True)
         latent_loss, action_loss = self._flow_matching_loss(input_dict, pred)
         loss = latent_loss + action_loss
-        return loss, {"latent_loss": latent_loss.detach(), "action_loss": action_loss.detach()}
+        return loss, {"latent_loss": latent_loss.item(), "action_loss": action_loss.item()}
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
         """Training forward: dual-stream flow-matching loss.
