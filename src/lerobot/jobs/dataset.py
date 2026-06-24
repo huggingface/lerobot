@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.import_utils import require_package
 
 if TYPE_CHECKING:
     from huggingface_hub import HfApi
@@ -49,6 +50,7 @@ def ensure_dataset_available(repo_id: str, *, api: HfApi, tags: list[str] | None
 
     print(f"[dataset] '{repo_id}' is local-only; pushing to a PRIVATE Hub repo...")
     # Lazy import: LeRobotDataset pulls in heavy dataset deps; defer until actually needed.
+    require_package("datasets", extra="dataset")
     from lerobot.datasets import LeRobotDataset
 
     LeRobotDataset(repo_id).push_to_hub(private=True, tags=tags)
