@@ -47,7 +47,6 @@ from __future__ import annotations
 import contextlib
 import enum
 import logging
-import sys
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event, Lock
@@ -64,8 +63,7 @@ from lerobot.datasets import VideoEncodingManager
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
-from lerobot.utils.import_utils import _pynput_available
-from lerobot.utils.keyboard_input import TerminalKeyListener, pynput_can_capture
+from lerobot.utils.keyboard_input import create_key_listener
 from lerobot.utils.pedal import start_pedal_listener
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
@@ -73,15 +71,6 @@ from lerobot.utils.utils import log_say
 from ..configs import DAggerKeyboardConfig, DAggerPedalConfig, DAggerStrategyConfig
 from ..context import RolloutContext
 from .core import RolloutStrategy, estimate_max_episode_seconds, safe_push_to_hub, send_next_action
-
-keyboard = None
-PYNPUT_AVAILABLE = _pynput_available
-if PYNPUT_AVAILABLE:
-    try:
-        from pynput import keyboard
-    except Exception as e:
-        PYNPUT_AVAILABLE = False
-        logging.info("Could not import pynput keyboard backend: %s", e)
 
 logger = logging.getLogger(__name__)
 
@@ -177,12 +166,11 @@ class DAggerEvents:
 def _init_dagger_keyboard(events: DAggerEvents, cfg: DAggerKeyboardConfig):
     """Initialise a keyboard listener for DAgger's 3 controls.
 
-    Uses the pynput global listener on X11 / trusted-macOS / Windows, and falls
-    back to a display-independent terminal reader on Wayland / headless sessions
-    (as long as stdin is an interactive TTY). Returns the listener (exposing
-    ``stop()``) or ``None`` when no keyboard backend is usable.
+    Backend selection (pynput on X11 / trusted-macOS / Windows, a terminal reader on
+    Wayland / headless TTY) is delegated to :func:`create_key_listener`. Returns the
+    listener (exposing ``stop()``) or ``None`` when no keyboard backend is usable.
     """
-    # Map config key names to DAgger event names (shared by both backends).
+    # Map config key names to DAgger event names.
     key_to_event = {
         cfg.pause_resume: "pause_resume",
         cfg.correction: "correction",
@@ -199,62 +187,13 @@ def _init_dagger_keyboard(events: DAggerEvents, cfg: DAggerKeyboardConfig):
         if name == cfg.upload:
             events.upload_requested.set()
 
-    if pynput_can_capture() and keyboard is not None:
-        # Map pynput special keys to the same names the terminal backend emits.
-        special_keys = {
-            "space": keyboard.Key.space,
-            "tab": keyboard.Key.tab,
-            "enter": keyboard.Key.enter,
-        }
-
-        def _resolve_key(key) -> str | None:
-            """Resolve a pynput key event to a config-comparable string."""
-            if key == keyboard.Key.esc:
-                return "esc"
-            for name, pynput_key in special_keys.items():
-                if key == pynput_key:
-                    return name
-            if hasattr(key, "char") and key.char:
-                return key.char
-            return None
-
-        def on_press(key):
-            try:
-                resolved = _resolve_key(key)
-                if resolved is not None:
-                    dispatch(resolved)
-            except Exception as e:
-                logger.debug("Key error: %s", e)
-
-        listener = keyboard.Listener(on_press=on_press)
-        listener.start()
-        logger.info(
-            "DAgger keyboard listener started (pause_resume='%s', correction='%s', upload='%s', ESC=stop)",
-            cfg.pause_resume,
-            cfg.correction,
-            cfg.upload,
-        )
-        return listener
-
-    if sys.stdin.isatty():
-        listener = TerminalKeyListener(dispatch)
-        listener.start()
-        logger.info(
-            "DAgger terminal keyboard listener started — no global capture available "
-            "(Wayland/headless); keep this terminal focused "
-            "(pause_resume='%s', correction='%s', upload='%s', ESC=stop)",
-            cfg.pause_resume,
-            cfg.correction,
-            cfg.upload,
-        )
-        return listener
-
-    logger.warning(
-        "DAgger keyboard controls disabled: no usable display (Wayland/headless) and stdin is not "
-        "an interactive terminal. Run from an interactive terminal, or set the DAgger "
-        "input_device to 'pedal'."
+    return create_key_listener(
+        dispatch,
+        controls_help=(
+            f"pause_resume='{cfg.pause_resume}', correction='{cfg.correction}', "
+            f"upload='{cfg.upload}', ESC=stop"
+        ),
     )
-    return None
 
 
 def _init_dagger_pedal(events: DAggerEvents, cfg: DAggerPedalConfig):

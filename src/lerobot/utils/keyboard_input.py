@@ -307,6 +307,92 @@ class TerminalKeyListener:
             atexit.unregister(self.stop)
 
 
+# Map pynput key objects to the same canonical names TerminalKeyListener emits, so a
+# single dispatch works across both backends. Empty when pynput is unavailable.
+if keyboard is not None:
+    _PYNPUT_KEY_NAMES = {
+        keyboard.Key.right: "right",
+        keyboard.Key.left: "left",
+        keyboard.Key.up: "up",
+        keyboard.Key.down: "down",
+        keyboard.Key.esc: "esc",
+        keyboard.Key.enter: "enter",
+        keyboard.Key.tab: "tab",
+        keyboard.Key.space: "space",
+        keyboard.Key.backspace: "backspace",
+    }
+else:
+    _PYNPUT_KEY_NAMES = {}
+
+
+def _resolve_pynput_key(key) -> str | None:
+    """Resolve a pynput key event to the canonical name TerminalKeyListener also emits.
+
+    Special keys map through :data:`_PYNPUT_KEY_NAMES`; character keys fall back to their
+    ``.char`` (e.g. ``"n"``). Returns ``None`` for keys with no mapping and no character.
+    """
+    name = _PYNPUT_KEY_NAMES.get(key)
+    if name is not None:
+        return name
+    # ``or None`` keeps the historical truthy-char semantics: an empty/None char is "no key".
+    return getattr(key, "char", None) or None
+
+
+def create_key_listener(dispatch: Callable[[str], None], *, controls_help: str = ""):
+    """Start a keyboard listener that routes resolved key names to ``dispatch``.
+
+    Shared backend selection used by recording and the rollout strategies:
+
+    * the ``pynput`` global listener on X11 / trusted-macOS / Windows (on macOS the
+      listener's ``IS_TRUSTED`` flag is checked after start, and an untrusted listener is
+      stopped so the terminal backend is used instead);
+    * the stdlib :class:`TerminalKeyListener` on Wayland / headless sessions with a TTY;
+    * ``None`` when no backend is usable (non-interactive / piped runs).
+
+    Both backends pass ``dispatch`` the same canonical key names ("right" / "left" / "up" /
+    "down" / "esc" / "enter" / "tab" / "space" / "backspace", or a character), so one
+    ``dispatch`` works regardless of backend. ``controls_help`` is an optional hint
+    appended to the log messages.
+
+    Returns the listener (exposing ``.stop()``) or ``None``.
+    """
+    suffix = f" ({controls_help})" if controls_help else ""
+
+    if pynput_can_capture() and keyboard is not None:
+
+        def on_press(key):
+            with contextlib.suppress(Exception):
+                name = _resolve_pynput_key(key)
+                if name is not None:
+                    dispatch(name)
+
+        listener = keyboard.Listener(on_press=on_press)
+        listener.start()
+        if pynput_listener_is_trusted(listener):
+            logger.info("Keyboard listener started%s.", suffix)
+            return listener
+        # macOS without Accessibility / Input-Monitoring permission: the listener never
+        # fires. Stop it and fall through to the terminal backend.
+        logger.warning(
+            "pynput keyboard listener is not trusted (missing macOS Accessibility / "
+            "Input Monitoring permission); falling back to terminal keyboard input."
+        )
+        listener.stop()
+
+    if sys.stdin.isatty():
+        listener = TerminalKeyListener(dispatch)
+        listener.start()
+        logger.info("Using terminal keyboard input — keep this terminal focused%s.", suffix)
+        return listener
+
+    logger.warning(
+        "Keyboard controls unavailable: no usable display (Wayland/headless) and stdin is "
+        "not an interactive terminal%s.",
+        suffix,
+    )
+    return None
+
+
 def init_keyboard_listener():
     """Initialize a non-blocking keyboard listener for interactive recording controls.
 
@@ -337,6 +423,9 @@ def init_keyboard_listener():
         "stop_recording": False,
     }
 
+    # Accept the single-byte letter equivalents n/r/q alongside the arrow/Esc keys: the
+    # letters are immune to the escape-sequence split/delay/interception that affects arrows
+    # over laggy SSH/VNC links. Case-insensitive so Shift+letter still works.
     def on_key(name: str) -> None:
         key = name.lower()
         if key in ("right", "n"):
@@ -347,50 +436,5 @@ def init_keyboard_listener():
             apply_recording_control("esc", events)
         # other keys (incl. up/down) are intentionally ignored
 
-    if pynput_can_capture() and keyboard is not None:
-
-        def on_press(key):
-            try:
-                if key == keyboard.Key.right:
-                    on_key("right")
-                elif key == keyboard.Key.left:
-                    on_key("left")
-                elif key == keyboard.Key.esc:
-                    on_key("esc")
-                else:
-                    # Character keys (e.g. n/r/q) expose a ``.char``; special keys do not.
-                    char = getattr(key, "char", None)
-                    if char is not None:
-                        on_key(char)
-            except Exception as e:
-                print(f"Error handling key press: {e}")
-
-        listener = keyboard.Listener(on_press=on_press)
-        listener.start()
-        if pynput_listener_is_trusted(listener):
-            return listener, events
-        # macOS without Accessibility / Input-Monitoring permission: the listener
-        # never fires. Stop it and fall through to the terminal backend.
-        logger.warning(
-            "pynput keyboard listener is not trusted (missing macOS Accessibility / "
-            "Input Monitoring permission); falling back to terminal keyboard input. "
-            "Grant permission to your Python binary to restore global hotkeys."
-        )
-        listener.stop()
-
-    # Display-independent fallback (Wayland / headless-with-TTY / macOS-untrusted).
-    if not sys.stdin.isatty():
-        logger.warning(
-            "Keyboard controls unavailable: no usable display (Wayland/headless) and "
-            "stdin is not an interactive terminal. Recording will rely on the "
-            "episode/reset timers (or Ctrl+C)."
-        )
-        return None, events
-
-    listener = TerminalKeyListener(on_key)
-    listener.start()
-    logger.info(
-        "Using terminal keyboard input (no global capture available here). "
-        "Controls: Right/Left/Esc, or n=next, r=re-record, q=quit. Keep this terminal focused."
-    )
+    listener = create_key_listener(on_key, controls_help="Right/Left/Esc, or n=next, r=re-record, q=quit")
     return listener, events

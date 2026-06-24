@@ -32,6 +32,7 @@ import lerobot.utils.keyboard_input as ki
 from lerobot.utils.keyboard_input import (
     TerminalKeyListener,
     apply_recording_control,
+    create_key_listener,
     init_keyboard_listener,
     is_headless,
     is_wayland,
@@ -199,3 +200,29 @@ def test_init_terminal_key_routing(monkeypatch, key, flag):
     listener, events = init_keyboard_listener()
     listener._on_key(key)
     assert events[flag] is True
+
+
+# --- Shared factory + pynput key resolver -----------------------------------
+def test_resolve_pynput_key_char_fallback():
+    """Unmapped keys fall back to ``.char`` (and yield None when there is none)."""
+    assert ki._resolve_pynput_key(type("K", (), {"char": "s"})()) == "s"
+    assert ki._resolve_pynput_key(type("K", (), {"char": None})()) is None
+    assert ki._resolve_pynput_key(type("K", (), {"char": ""})()) is None  # empty char -> no key
+
+
+def test_create_key_listener_routes_to_dispatch(monkeypatch):
+    """The terminal backend forwards canonical key names straight to ``dispatch``."""
+    monkeypatch.setattr(ki, "pynput_can_capture", lambda: False)
+    _set_tty(monkeypatch, is_tty=True)
+    monkeypatch.setattr(TerminalKeyListener, "start", lambda self: None)
+    seen = []
+    listener = create_key_listener(seen.append, controls_help="save='s'")
+    assert isinstance(listener, TerminalKeyListener)
+    listener._on_key("space")
+    assert seen == ["space"]
+
+
+def test_create_key_listener_none_without_tty(monkeypatch):
+    monkeypatch.setattr(ki, "pynput_can_capture", lambda: False)
+    _set_tty(monkeypatch, is_tty=False)
+    assert create_key_listener(lambda name: None) is None

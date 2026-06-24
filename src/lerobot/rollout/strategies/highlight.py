@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import sys
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event as ThreadingEvent, Lock
@@ -26,8 +25,8 @@ from threading import Event as ThreadingEvent, Lock
 from lerobot.datasets import VideoEncodingManager
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
-from lerobot.utils.import_utils import _pynput_available, require_package
-from lerobot.utils.keyboard_input import TerminalKeyListener, pynput_can_capture
+from lerobot.utils.import_utils import require_package
+from lerobot.utils.keyboard_input import create_key_listener
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
@@ -35,15 +34,6 @@ from ..configs import HighlightStrategyConfig
 from ..context import RolloutContext
 from ..ring_buffer import RolloutRingBuffer
 from .core import RolloutStrategy, safe_push_to_hub, send_next_action
-
-PYNPUT_AVAILABLE = _pynput_available
-keyboard = None
-if PYNPUT_AVAILABLE:
-    try:
-        from pynput import keyboard
-    except Exception as e:
-        PYNPUT_AVAILABLE = False
-        logging.info("Could not import pynput keyboard backend: %s", e)
 
 logger = logging.getLogger(__name__)
 
@@ -231,9 +221,8 @@ class HighlightStrategy(RolloutStrategy):
     def _setup_keyboard(self, shutdown_event: ThreadingEvent) -> None:
         """Set up a keyboard listener for the save and push keys.
 
-        Uses the pynput global listener on X11 / trusted-macOS / Windows and falls
-        back to a display-independent terminal reader on Wayland / headless
-        sessions (when stdin is an interactive TTY).
+        Backend selection (pynput on X11 / trusted-macOS / Windows, a terminal reader on
+        Wayland / headless TTY) is delegated to :func:`create_key_listener`.
         """
         save_key = self.config.save_key
         push_key = self.config.push_key
@@ -248,34 +237,8 @@ class HighlightStrategy(RolloutStrategy):
                 self._save_requested.clear()
                 shutdown_event.set()
 
-        if pynput_can_capture() and keyboard is not None:
-
-            def on_press(key):
-                with contextlib.suppress(Exception):
-                    if hasattr(key, "char") and key.char:
-                        dispatch(key.char)
-                    elif key == keyboard.Key.esc:
-                        dispatch("esc")
-
-            self._listener = keyboard.Listener(on_press=on_press)
-            self._listener.start()
-            logger.info("Keyboard listener started (save='%s', push='%s', ESC=stop)", save_key, push_key)
-            return
-
-        if sys.stdin.isatty():
-            self._listener = TerminalKeyListener(dispatch)
-            self._listener.start()
-            logger.info(
-                "Terminal keyboard listener started — no global capture available "
-                "(Wayland/headless); keep this terminal focused (save='%s', push='%s', ESC=stop)",
-                save_key,
-                push_key,
-            )
-            return
-
-        logger.warning(
-            "Highlight keyboard controls disabled: no usable display (Wayland/headless) and stdin "
-            "is not an interactive terminal."
+        self._listener = create_key_listener(
+            dispatch, controls_help=f"save='{save_key}', push='{push_key}', ESC=stop"
         )
 
     def _background_push(self, dataset, cfg) -> None:
