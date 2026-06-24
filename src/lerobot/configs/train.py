@@ -26,7 +26,8 @@ from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot import envs
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
-from lerobot.utils.hub import HubMixin
+from lerobot.utils.constants import PRETRAINED_MODEL_DIR
+from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
@@ -83,10 +84,11 @@ class TrainPipelineConfig(HubMixin):
     # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
     output_dir: Path | None = None
     job_name: str | None = None
-    # Set `resume` to true to resume a previous run. In order for this to work, you will need to make sure
-    # `dir` is the directory of an existing run with at least one checkpoint in it.
-    # Note that when resuming a run, the default behavior is to use the configuration from the checkpoint,
-    # regardless of what's provided with the training command at the time of resumption.
+    # Set `resume` to true to resume a previous run. Pass `--config_path` pointing at either a local
+    # checkpoint's train_config.json or a Hub repo id holding `checkpoints/<step>/` subtrees (the
+    # latest checkpoint is downloaded and resumed from). Note that when resuming, the default behavior
+    # is to use the configuration from the checkpoint, regardless of what's provided with the training
+    # command at the time of resumption (CLI `--*` flags still override).
     resume: bool = False
     # `seed` is used for training (eg: model initialization, dataset shuffling)
     # AND for the evaluation environments.
@@ -170,25 +172,44 @@ class TrainPipelineConfig(HubMixin):
             self._resolve_resume_checkpoint()
 
     def _resolve_resume_checkpoint(self) -> None:
-        """Point the trainable config at the checkpoint named by `--config_path`."""
+        """Point the trainable config at the checkpoint named by `--config_path`.
+
+        `config_path` is either a local path (to a checkpoint's train_config.json or its
+        pretrained_model/ dir) or a Hub repo id. For a Hub repo, the latest checkpoint is downloaded
+        into a fresh local run dir and resumed from there. The download is skipped when dispatching to
+        an HF Job (`job.is_remote`): the pod performs it when it runs the resume locally, and
+        `submit_to_hf` resolves the source repo for the remote command.
+        """
         config_path = parser.parse_arg("config_path")
         if not config_path:
             raise ValueError(
                 f"A config_path is expected when resuming a run. Please specify path to {TRAIN_CONFIG_NAME}"
             )
 
-        if not Path(config_path).resolve().exists():
-            raise NotADirectoryError(
-                f"{config_path=} is expected to be a local path. "
-                "Resuming from the hub is not supported for now."
-            )
+        if Path(config_path).resolve().exists():
+            policy_dir = Path(config_path).parent
+            self.checkpoint_path = policy_dir.parent
+        elif self.job.is_remote:
+            return
+        else:
+            from lerobot.common.train_utils import resolve_resume_checkpoint
 
-        policy_dir = Path(config_path).parent
+            # `self.output_dir` was loaded from the checkpoint's config and points at the original
+            # run's (now-absent) local dir. Resume into a fresh local dir instead, unless the user
+            # passed --output_dir explicitly.
+            cli_output_dir = parser.parse_arg("output_dir")
+            if cli_output_dir:
+                self.output_dir = Path(cli_output_dir)
+            else:
+                now = dt.datetime.now()
+                self.output_dir = Path("outputs/train") / f"{now:%Y-%m-%d}/{now:%H-%M-%S}_resume"
+            self.checkpoint_path = resolve_resume_checkpoint(config_path, self.output_dir)
+            policy_dir = self.checkpoint_path / PRETRAINED_MODEL_DIR
+
         if self.policy is not None:
             self.policy.pretrained_path = policy_dir
         if self.reward_model is not None:
             self.reward_model.pretrained_path = str(policy_dir)
-        self.checkpoint_path = policy_dir.parent
 
     def validate(self) -> None:
         self._resolve_pretrained_from_cli()
@@ -283,22 +304,30 @@ class TrainPipelineConfig(HubMixin):
         elif Path(model_id).is_file():
             config_file = model_id
         else:
+            dl_kwargs = {
+                "repo_id": model_id,
+                "revision": revision,
+                "cache_dir": cache_dir,
+                "force_download": force_download,
+                "proxies": proxies,
+                "resume_download": resume_download,
+                "token": token,
+                "local_files_only": local_files_only,
+            }
             try:
-                config_file = hf_hub_download(
-                    repo_id=model_id,
-                    filename=TRAIN_CONFIG_NAME,
-                    revision=revision,
-                    cache_dir=cache_dir,
-                    force_download=force_download,
-                    proxies=proxies,
-                    resume_download=resume_download,
-                    token=token,
-                    local_files_only=local_files_only,
-                )
+                config_file = hf_hub_download(filename=TRAIN_CONFIG_NAME, **dl_kwargs)
             except HfHubHTTPError as e:
-                raise FileNotFoundError(
-                    f"{TRAIN_CONFIG_NAME} not found on the HuggingFace Hub in {model_id}"
-                ) from e
+                # No root train_config.json: this is a repo of periodic checkpoints from an
+                # interrupted run. Fall back to the latest checkpoint's config so the run can be
+                # resumed straight from the repo with `--config_path=<repo>`.
+                latest = find_latest_hub_checkpoint(model_id, token=token, revision=revision)
+                if latest is None:
+                    raise FileNotFoundError(
+                        f"{TRAIN_CONFIG_NAME} not found on the HuggingFace Hub in {model_id}"
+                    ) from e
+                config_file = hf_hub_download(
+                    filename=f"{latest}/{PRETRAINED_MODEL_DIR}/{TRAIN_CONFIG_NAME}", **dl_kwargs
+                )
 
         cli_args = kwargs.pop("cli_args", [])
         # Legacy RA-BC migration only applies to framework-saved checkpoints (always JSON).

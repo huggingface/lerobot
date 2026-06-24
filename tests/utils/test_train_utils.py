@@ -17,6 +17,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
+import pytest
+
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
@@ -188,3 +190,36 @@ def test_push_checkpoint_to_hub_defaults_to_hub_default_visibility(tmp_path, mon
     push_checkpoint_to_hub(ckpt, "user/run")
     api.create_repo.assert_called_once()
     assert api.create_repo.call_args.kwargs["private"] is None
+
+
+def test_resolve_resume_checkpoint_downloads_latest_and_links(tmp_path, monkeypatch):
+    from lerobot.common import train_utils
+
+    out = tmp_path / "run"
+
+    def fake_snapshot_download(repo_id, repo_type, allow_patterns, local_dir):
+        # Mimic the Hub layout the real download materializes locally.
+        assert allow_patterns == "checkpoints/020000/*"
+        (Path(local_dir) / "checkpoints" / "020000" / "pretrained_model").mkdir(parents=True)
+        return local_dir
+
+    monkeypatch.setattr("lerobot.common.train_utils.snapshot_download", fake_snapshot_download)
+    monkeypatch.setattr(
+        "lerobot.common.train_utils.find_latest_hub_checkpoint", lambda repo_id: "checkpoints/020000"
+    )
+
+    checkpoint_dir = train_utils.resolve_resume_checkpoint("u/run", out)
+
+    assert checkpoint_dir == out / CHECKPOINTS_DIR / "020000"
+    last = out / CHECKPOINTS_DIR / LAST_CHECKPOINT_LINK
+    assert last.is_symlink()
+    # `last` points at the downloaded step dir.
+    assert (last.parent / last.readlink()).resolve() == checkpoint_dir.resolve()
+
+
+def test_resolve_resume_checkpoint_raises_without_checkpoints(tmp_path, monkeypatch):
+    from lerobot.common import train_utils
+
+    monkeypatch.setattr("lerobot.common.train_utils.find_latest_hub_checkpoint", lambda repo_id: None)
+    with pytest.raises(FileNotFoundError, match="No checkpoint"):
+        train_utils.resolve_resume_checkpoint("u/run", tmp_path / "run")
