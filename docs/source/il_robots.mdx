@@ -649,6 +649,8 @@ hf upload ${HF_USER}/act_so101_test${CKPT} \
 
 Use `lerobot-rollout` to deploy a trained policy on your robot. You can choose different strategies depending on your needs:
 
+The examples below load the model from `--policy.path`. To pin a specific pushed version — useful once `--save_checkpoint_to_hub=true` has committed several checkpoints — add `--policy.pretrained_revision` with a commit hash, branch, or tag.
+
 <hfoptions id="eval">
 <hfoption id="Base mode (no recording)">
 ```bash
