@@ -164,6 +164,9 @@ class JobConfig:
     # Hub. A "lerobot" tag is always added; e.g. --job.tags '["lelab"]' adds more.
     tags: list[str] = field(default_factory=list)
 
+    # Two entry points to the same predicate: the staticmethod tests a raw target string
+    # straight from argv (before any JobConfig exists, to decide dispatch early), while the
+    # property is the ergonomic accessor for code that already holds a config instance.
     @staticmethod
     def is_remote_target(target: str | None) -> bool:
         """True when `target` names an HF Jobs flavor rather than a local run."""
