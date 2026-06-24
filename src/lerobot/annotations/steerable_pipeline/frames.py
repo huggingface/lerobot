@@ -36,7 +36,7 @@ from typing import Any, Protocol
 import PIL.Image
 import torch
 
-from lerobot.configs import VideoEncoderConfig
+from lerobot.configs import RGBEncoderConfig
 from lerobot.datasets.video_utils import decode_video_frames, reencode_video
 
 from .reader import EpisodeRecord, snap_to_frame
@@ -164,7 +164,9 @@ class VideoFrameProvider:
         # only for video-stored cameras. Image-stored cameras (also in
         # ``camera_keys``) would KeyError, so restrict the list — and the
         # default — to video keys.
-        keys = list(self._meta.video_keys)
+        # Depth cameras are excluded from the annotation pipeline for now.
+        depth_keys = set(self._meta.depth_keys)
+        keys = [key for key in self._meta.video_keys if key not in depth_keys]
         # Last-resort fallback: if metadata didn't surface any video keys but
         # the caller explicitly named a camera (``--vlm.camera_key=...``),
         # trust them — the key is by definition known to exist on the dataset.
@@ -276,7 +278,7 @@ class VideoFrameProvider:
         from_timestamp = float(ep[f"videos/{self.camera_key}/from_timestamp"])
         to_timestamp = float(ep[f"videos/{self.camera_key}/to_timestamp"])
         src = self.root / self._meta.get_video_file_path(record.episode_index, self.camera_key)
-        encoder = VideoEncoderConfig(vcodec="h264", pix_fmt="yuv420p", g=None, crf=23, preset="ultrafast")
+        encoder = RGBEncoderConfig(vcodec="h264", pix_fmt="yuv420p", g=None, crf=23, preset="ultrafast")
         try:
             reencode_video(
                 src,
