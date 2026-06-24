@@ -15,25 +15,14 @@
 import sys
 from unittest.mock import MagicMock
 
-import httpx
 import pytest
-from huggingface_hub.errors import RepositoryNotFoundError
 
 from lerobot.jobs.dataset import ensure_dataset_available
 
 
-def _repo_not_found() -> RepositoryNotFoundError:
-    req = httpx.Request("GET", "https://huggingface.co/datasets/test")
-    resp = httpx.Response(404, request=req)
-    return RepositoryNotFoundError("nope", response=resp)
-
-
 def _api_with_dataset(exists: bool):
     api = MagicMock()
-    if exists:
-        api.dataset_info.return_value = object()
-    else:
-        api.dataset_info.side_effect = _repo_not_found()
+    api.repo_exists.return_value = exists
     return api
 
 
@@ -48,7 +37,7 @@ def _make_local_cache(tmp_path, repo_id: str) -> None:
 def test_dataset_already_on_hub_is_noop():
     api = _api_with_dataset(True)
     assert ensure_dataset_available("user/ds", api=api) is None
-    api.dataset_info.assert_called_once_with("user/ds")
+    api.repo_exists.assert_called_once_with("user/ds", repo_type="dataset")
 
 
 # Branch 2: not on Hub but present locally → always push privately.

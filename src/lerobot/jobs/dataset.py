@@ -24,8 +24,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from huggingface_hub.errors import RepositoryNotFoundError
-
 
 def ensure_dataset_available(repo_id: str, *, api, tags: list[str] | None = None) -> None:
     """Ensure repo_id resolves on the Hub, pushing a local-only dataset privately first.
@@ -34,11 +32,8 @@ def ensure_dataset_available(repo_id: str, *, api, tags: list[str] | None = None
     dataset is left untouched). Raises RuntimeError if the dataset is neither on
     the Hub nor in the local cache.
     """
-    try:
-        api.dataset_info(repo_id)
+    if api.repo_exists(repo_id, repo_type="dataset"):
         return
-    except RepositoryNotFoundError:
-        pass
 
     cache_root = Path(os.environ.get("HF_LEROBOT_HOME", "~/.cache/huggingface/lerobot")).expanduser()
     local_present = (cache_root / repo_id / "meta" / "info.json").is_file()
