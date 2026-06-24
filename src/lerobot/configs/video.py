@@ -36,9 +36,7 @@ HW_VIDEO_CODECS = [
     "h264_vaapi",  # Linux Intel/AMD
     "h264_qsv",  # Intel Quick Sync
 ]
-VALID_VIDEO_CODECS: frozenset[str] = frozenset(
-    {"h264", "hevc", "libsvtav1", "auto", *HW_VIDEO_CODECS}
-)
+VALID_VIDEO_CODECS: frozenset[str] = frozenset({"h264", "hevc", "libsvtav1", "auto", *HW_VIDEO_CODECS})
 # Aliases for legacy video codec names.
 VIDEO_CODECS_ALIASES: dict[str, str] = {"av1": "libsvtav1"}
 
@@ -272,8 +270,9 @@ class DepthEncoderConfig(VideoEncoderConfig):
     ``"gray12le"``.
     """
 
-    vcodec: str = "hevc"
-    pix_fmt: str = "gray12le"
+    vcodec: str = "hevc"  # Video codec name. Defaults to HEVC Main 12 (a 12-bit-capable codec).
+    pix_fmt: str = "gray12le"  # Pixel format. Defaults to 12-bit grayscale.
+    extra_options: dict[str, Any] = field(default_factory=lambda: {"x265-params": "lossless=1"})
 
     depth_min: float = DEFAULT_DEPTH_MIN  # Minimum depth in meters, mapped to the lowest quantum.
     depth_max: float = DEFAULT_DEPTH_MAX  # Maximum depth in meters, mapped to the highest quantum.

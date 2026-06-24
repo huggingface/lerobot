@@ -100,14 +100,15 @@ lerobot-record \
     --dataset.depth_encoder.use_log=true
 ```
 
-| Parameter   | Type    | Default      | Description                                                                                                                       |
-| ----------- | ------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| `vcodec`    | `str`   | `"hevc"`     | Defaults to HEVC Main 12 (a 12-bit-capable codec). For a lossless depth stream, keep HEVC and pass `extra_options={"x265-params": "lossless=1"}` (stays MP4-compatible). |
-| `pix_fmt`   | `str`   | `"gray12le"` | Single-channel 12-bit pixel format used to carry the quantized codes.                                                             |
-| `depth_min` | `float` | `0.01`       | Depth in metres mapped to quantum `0`. Values below are clipped on decode.                                                        |
-| `depth_max` | `float` | `10.0`       | Depth in metres mapped to quantum `4095`. Values above are clipped on decode.                                                     |
-| `shift`     | `float` | `3.5`        | Pre-log offset (metres) used in logarithmic quantization for numerical stability near zero. Must satisfy `depth_min + shift > 0`. |
-| `use_log`   | `bool`  | `True`       | If `true`, quantize in log-space (recommended for typical depth sensors). Set to `false` for uniform/linear quantization.         |
+| Parameter       | Type    | Default                         | Description                                                                                                                            |
+| --------------- | ------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `vcodec`        | `str`   | `"hevc"`                        | HEVC Main 12 (a 12-bit-capable codec, MP4-compatible).                                                                                 |
+| `extra_options` | `dict`  | `{"x265-params": "lossless=1"}` | **Depth defaults to lossless** (exact round-trip); `crf` is ignored. Pass `extra_options={}` and set `crf` for a smaller lossy stream. |
+| `pix_fmt`       | `str`   | `"gray12le"`                    | Single-channel 12-bit pixel format used to carry the quantized codes.                                                                  |
+| `depth_min`     | `float` | `0.01`                          | Depth in metres mapped to quantum `0`. Values below are clipped on decode.                                                             |
+| `depth_max`     | `float` | `10.0`                          | Depth in metres mapped to quantum `4095`. Values above are clipped on decode.                                                          |
+| `shift`         | `float` | `3.5`                           | Pre-log offset (metres) used in logarithmic quantization for numerical stability near zero. Must satisfy `depth_min + shift > 0`.      |
+| `use_log`       | `bool`  | `True`                          | If `true`, quantize in log-space (recommended for typical depth sensors). Set to `false` for uniform/linear quantization.              |
 
 > [!TIP]
 > `depth_min`, `depth_max`, and `shift` are always interpreted in **metres**, regardless of the input depth's unit. Inputs are auto-detected: integer arrays (e.g. `uint16` millimetres straight from a RealSense) are treated as millimetres, floating arrays as metres.
