@@ -70,7 +70,8 @@ class SOFollower(Robot):
     def _cameras_ft(self) -> dict[str, tuple]:
         features: dict[str, tuple] = {}
         for cam in self.cameras:
-            features[cam] = (self.cameras[cam].height, self.cameras[cam].width, 3)
+            if getattr(self.cameras[cam], "use_rgb", True):
+                features[cam] = (self.cameras[cam].height, self.cameras[cam].width, 3)
             if getattr(self.cameras[cam], "use_depth", False):
                 features[f"{cam}_depth"] = (self.cameras[cam].height, self.cameras[cam].width, 1)
         return features
@@ -188,10 +189,11 @@ class SOFollower(Robot):
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
-            start = time.perf_counter()
-            obs_dict[cam_key] = cam.read_latest()
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+            if getattr(cam, "use_rgb", True):
+                start = time.perf_counter()
+                obs_dict[cam_key] = cam.read_latest()
+                dt_ms = (time.perf_counter() - start) * 1e3
+                logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
             if getattr(cam, "use_depth", False):
                 start = time.perf_counter()
