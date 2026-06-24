@@ -89,7 +89,7 @@ flowchart LR
     class G load;
 ```
 
-Configure the depth pipeline through a parallel **`depth_encoder`** block (`DepthEncoderConfig`). It inherits every `VideoEncoderConfig` field (`vcodec`, `pix_fmt`, `crf`, …) and adds four quantizer knobs, set via `--dataset.depth_encoder.<field>`:
+Configure the depth pipeline through a parallel **`depth_encoder`** block (`DepthEncoderConfig`). It shares every `RGBEncoderConfig` field (`vcodec`, `pix_fmt`, `crf`, …) and adds four quantizer knobs, set via `--dataset.depth_encoder.<field>`:
 
 ```bash
 lerobot-record \
@@ -168,7 +168,7 @@ After the first episode of a video stream is encoded, the encoder configuration 
 Two sources contribute to the `info` block:
 
 - **Stream-derived** (read back from the encoded MP4 with PyAV): `video.height`, `video.width`, `video.codec`, `video.pix_fmt`, `video.fps`, `video.channels`, `is_depth_map`, plus `audio.*` if an audio stream is present.
-- **Encoder-derived** (taken from `VideoEncoderConfig`): `video.g`, `video.crf`, `video.preset`, `video.fast_decode`, `video.video_backend`, `video.extra_options`.
+- **Encoder-derived** (taken from `RGBEncoderConfig` or `DepthEncoderConfig`): `video.g`, `video.crf`, `video.preset`, `video.fast_decode`, `video.video_backend`, `video.extra_options`.
 
 <Tip>
   This block is populated **once**, from the **first** episode. It assumes every
