@@ -86,6 +86,7 @@ def check_chw_float32(frame: torch.Tensor) -> None:
     c, h, w = frame.shape
     assert c < h and c < w, f"expect channel first images, but instead {frame.shape}"
 
+
 def to_hwc_uint8_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
     check_chw_float32(chw_float32_torch)
     hwc_uint8_numpy = (chw_float32_torch * 255).type(torch.uint8).permute(1, 2, 0).numpy()

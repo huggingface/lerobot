@@ -108,9 +108,7 @@ def log_rerun_data(
                         rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
                 else:
                     if arr.shape[-1] == 1:
-                        img_entity = (
-                            rr.DepthImage(arr, colormap=rr.components.Colormap.Viridis)
-                        )
+                        img_entity = rr.DepthImage(arr, colormap=rr.components.Colormap.Viridis)
                     else:
                         img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
                     rr.log(key, entity=img_entity, static=True)
