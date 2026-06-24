@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
-import io
 import json
 import netrc
 import os
@@ -32,7 +31,6 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import draccus
 from huggingface_hub import (
     HfApi,
     create_repo,
@@ -107,12 +105,9 @@ def build_remote_config_file(cfg, repo_id: str, dest: Path, tags: list[str] | No
         existing = list(remote.policy.tags or [])
         remote.policy.tags = existing + [t for t in tags if t not in existing]
 
-    # Round-trip through draccus to get the canonical, pod-parseable layout, then
-    # drop the keys the released trainer image doesn't know about.
-    buf = io.StringIO()
-    with draccus.config_type("json"):
-        draccus.dump(remote, buf, indent=4)
-    data = json.loads(buf.getvalue())
+    # Encode to the canonical, pod-parseable dict, then drop the keys the released
+    # trainer image doesn't know about.
+    data = remote.to_dict()
     data.pop("job", None)
     if not remote.save_checkpoint_to_hub:
         data.pop("save_checkpoint_to_hub", None)
