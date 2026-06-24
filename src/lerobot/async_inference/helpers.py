@@ -225,6 +225,7 @@ class TimedData:
 @dataclass
 class TimedAction(TimedData):
     action: Action
+    server_send_timestamp: float | None = None
 
     def get_action(self):
         return self.action
@@ -234,6 +235,7 @@ class TimedAction(TimedData):
 class TimedObservation(TimedData):
     observation: RawObservation
     must_go: bool = False
+    client_send_timestamp: float | None = None
 
     def get_observation(self):
         return self.observation
@@ -269,11 +271,11 @@ class FPSTracker:
 
 @dataclass
 class RemotePolicyConfig:
-    policy_type: str
-    pretrained_name_or_path: str
+    policy_type: str | None
+    pretrained_name_or_path: str | None
     lerobot_features: dict[str, PolicyFeature]
-    actions_per_chunk: int
-    device: str = "cpu"
+    actions_per_chunk: int | None
+    device: str | None = "cpu"
     rename_map: dict[str, str] = field(default_factory=dict)
 
 

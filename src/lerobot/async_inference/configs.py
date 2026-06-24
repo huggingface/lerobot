@@ -64,6 +64,17 @@ class PolicyServerConfig:
         default=DEFAULT_OBS_QUEUE_TIMEOUT, metadata={"help": "Timeout for observation queue in seconds"}
     )
 
+    # Policy configuration. When set, these values take precedence over policy
+    # settings sent by the robot client.
+    policy_type: str | None = field(default=None, metadata={"help": "Type of policy to serve"})
+    pretrained_name_or_path: str | None = field(
+        default=None, metadata={"help": "Pretrained model name or path"}
+    )
+    actions_per_chunk: int | None = field(
+        default=None, metadata={"help": "Number of actions returned per chunk"}
+    )
+    policy_device: str | None = field(default=None, metadata={"help": "Device for policy inference"})
+
     def __post_init__(self):
         """Validate configuration after initialization."""
         if self.port < 1 or self.port > 65535:
@@ -77,6 +88,18 @@ class PolicyServerConfig:
 
         if self.obs_queue_timeout < 0:
             raise ValueError(f"obs_queue_timeout must be non-negative, got {self.obs_queue_timeout}")
+
+        if self.actions_per_chunk is not None and self.actions_per_chunk <= 0:
+            raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
+
+        if self.policy_type == "":
+            raise ValueError("policy_type cannot be empty")
+
+        if self.pretrained_name_or_path == "":
+            raise ValueError("pretrained_name_or_path cannot be empty")
+
+        if self.policy_device == "":
+            raise ValueError("policy_device cannot be empty")
 
     @classmethod
     def from_dict(cls, config_dict: dict) -> "PolicyServerConfig":
@@ -96,6 +119,10 @@ class PolicyServerConfig:
             "fps": self.fps,
             "environment_dt": self.environment_dt,
             "inference_latency": self.inference_latency,
+            "policy_type": self.policy_type,
+            "pretrained_name_or_path": self.pretrained_name_or_path,
+            "actions_per_chunk": self.actions_per_chunk,
+            "policy_device": self.policy_device,
         }
 
 
@@ -107,16 +134,18 @@ class RobotClientConfig:
     including network connection, policy settings, and control behavior.
     """
 
-    # Policy configuration
-    policy_type: str = field(metadata={"help": "Type of policy to use"})
-    pretrained_name_or_path: str = field(metadata={"help": "Pretrained model name or path"})
-
     # Robot configuration (for CLI usage - robot instance will be created from this)
     robot: RobotConfig = field(metadata={"help": "Robot configuration"})
 
+    # Policy configuration. These are optional when configured on the policy server.
+    policy_type: str | None = field(default=None, metadata={"help": "Type of policy to use"})
+    pretrained_name_or_path: str | None = field(
+        default=None, metadata={"help": "Pretrained model name or path"}
+    )
+
     # Policies typically output K actions at max, but we can use less to avoid wasting bandwidth (as actions
     # would be aggregated on the client side anyway, depending on the value of `chunk_size_threshold`)
-    actions_per_chunk: int = field(metadata={"help": "Number of actions per chunk"})
+    actions_per_chunk: int | None = field(default=None, metadata={"help": "Number of actions per chunk"})
 
     # Task instruction for the robot to execute (e.g., 'fold my tshirt')
     task: str = field(default="", metadata={"help": "Task instruction for the robot to execute"})
@@ -125,7 +154,10 @@ class RobotClientConfig:
     server_address: str = field(default="localhost:8080", metadata={"help": "Server address to connect to"})
 
     # Device configuration
-    policy_device: str = field(default="cpu", metadata={"help": "Device for policy inference"})
+    policy_device: str = field(
+        default="cpu",
+        metadata={"help": "Device for policy inference; overridden by server configuration when set"},
+    )
     client_device: str = field(
         default="cpu",
         metadata={
@@ -162,13 +194,13 @@ class RobotClientConfig:
         if not self.server_address:
             raise ValueError("server_address cannot be empty")
 
-        if not self.policy_type:
+        if self.policy_type == "":
             raise ValueError("policy_type cannot be empty")
 
-        if not self.pretrained_name_or_path:
+        if self.pretrained_name_or_path == "":
             raise ValueError("pretrained_name_or_path cannot be empty")
 
-        if not self.policy_device:
+        if self.policy_device == "":
             raise ValueError("policy_device cannot be empty")
 
         if not self.client_device:
@@ -180,7 +212,7 @@ class RobotClientConfig:
         if self.fps <= 0:
             raise ValueError(f"fps must be positive, got {self.fps}")
 
-        if self.actions_per_chunk <= 0:
+        if self.actions_per_chunk is not None and self.actions_per_chunk <= 0:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
 
         self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)

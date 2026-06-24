@@ -18,6 +18,10 @@ Example:
 python -m lerobot.async_inference.policy_server \
      --host=127.0.0.1 \
      --port=8080 \
+     --policy_type=pi0 \
+     --pretrained_name_or_path=/path/to/pretrained_model \
+     --policy_device=cuda \
+     --actions_per_chunk=50 \
      --fps=30 \
      --inference_latency=0.033 \
      --obs_queue_timeout=1
@@ -142,6 +146,36 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             pformat(asdict(policy_specs)["lerobot_features"], sort_dicts=True),
         )
 
+    def _resolve_policy_specs(self, client_specs: RemotePolicyConfig) -> RemotePolicyConfig:
+        """Merge client-provided robot features with server-owned policy settings."""
+        policy_specs = RemotePolicyConfig(
+            policy_type=self.config.policy_type or client_specs.policy_type,
+            pretrained_name_or_path=self.config.pretrained_name_or_path
+            or client_specs.pretrained_name_or_path,
+            lerobot_features=client_specs.lerobot_features,
+            actions_per_chunk=self.config.actions_per_chunk or client_specs.actions_per_chunk,
+            device=self.config.policy_device or client_specs.device,
+            rename_map=client_specs.rename_map,
+        )
+
+        missing = [
+            name
+            for name, value in (
+                ("policy_type", policy_specs.policy_type),
+                ("pretrained_name_or_path", policy_specs.pretrained_name_or_path),
+                ("actions_per_chunk", policy_specs.actions_per_chunk),
+                ("policy_device", policy_specs.device),
+            )
+            if value is None
+        ]
+        if missing:
+            raise ValueError(
+                "Missing policy configuration: "
+                f"{', '.join(missing)}. Set these options on the policy server or robot client."
+            )
+
+        return policy_specs
+
     def _reset_server(self) -> None:
         """Flushes server state when new client connects."""
         # only running inference on the latest observation received by the server
@@ -168,10 +202,12 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         client_id = context.peer()
 
-        policy_specs = pickle.loads(request.data)  # nosec
+        client_specs = pickle.loads(request.data)  # nosec
 
-        if not isinstance(policy_specs, RemotePolicyConfig):
-            raise TypeError(f"Policy specs must be a RemotePolicyConfig. Got {type(policy_specs)}")
+        if not isinstance(client_specs, RemotePolicyConfig):
+            raise TypeError(f"Policy specs must be a RemotePolicyConfig. Got {type(client_specs)}")
+
+        policy_specs = self._resolve_policy_specs(client_specs)
 
         if policy_specs.policy_type not in SUPPORTED_POLICIES:
             raise ValueError(
@@ -232,11 +268,11 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         client_id = context.peer()
         self.logger.debug(f"Receiving observations from {client_id}")
 
-        receive_time = time.time()  # comparing timestamps so need time.time()
         start_deserialize = time.perf_counter()
         received_bytes = receive_bytes_in_chunks(
             request_iterator, None, self.shutdown_event, self.logger
         )  # blocking call while looping over request_iterator
+        receive_time = time.time()  # payload has been fully received
         timed_observation = pickle.loads(received_bytes)  # nosec
         deserialize_time = time.perf_counter() - start_deserialize
 
@@ -244,6 +280,15 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         obs_timestep = timed_observation.get_timestep()
         obs_timestamp = timed_observation.get_timestamp()
+        client_send_timestamp = getattr(timed_observation, "client_send_timestamp", None)
+        if client_send_timestamp is not None:
+            client_to_server_ms = (
+                receive_time - client_send_timestamp
+            ) * 1000
+            self.logger.info(
+                f"[LATENCY] client_to_server={client_to_server_ms:.2f}ms | "
+                f"observation_timestep={obs_timestep}"
+            )
 
         # Calculate FPS metrics
         fps_metrics = self.fps_tracker.calculate_fps_metrics(obs_timestamp)
@@ -290,6 +335,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             inference_time = time.perf_counter() - start_time
 
             start_time = time.perf_counter()
+            server_send_timestamp = time.time()
+            for timed_action in action_chunk:
+                timed_action.server_send_timestamp = server_send_timestamp
             actions_bytes = pickle.dumps(action_chunk)  # nosec
             serialize_time = time.perf_counter() - start_time
 
