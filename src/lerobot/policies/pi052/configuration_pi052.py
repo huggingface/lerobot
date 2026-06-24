@@ -168,7 +168,7 @@ class PI052Config(PI05Config):
     # a per-instance monkey-patch on ``paligemma_with_expert.forward``
     # that splits queries into VLM and action halves and ``.detach()``-s
     # the VLM K/V tensors used in the action-half's attention.
-    knowledge_insulation: bool = False
+    knowledge_insulation: bool = True
     """If True, route every transformer layer through the KI
     attention path that blocks action→VLM gradient flow on K/V."""
 
@@ -188,6 +188,30 @@ class PI052Config(PI05Config):
     # + tied ``embed_tokens`` into their own param group while sharing
     # the same cosine lambda, so the 5x ratio is preserved across decay.
     lm_head_lr_scale: float = 5.0
+
+    # Separate LRs for the VLM backbone vs the action expert (paper §III.B).
+    # The backbone is a pretrained PaliGemma; the action expert is trained
+    # from scratch, so their initialisation scales differ and a single global
+    # LR under-trains one of them. These multipliers scale the base
+    # ``optimizer_lr`` for each group; the cosine scheduler applies the same
+    # lambda to every group so the ratios hold across decay. ``backbone_lr_scale``
+    # covers the PaliGemma tower (except the LM head / tied embeddings, which keep
+    # their own ``lm_head_lr_scale``); ``action_expert_lr_scale`` covers the Gemma
+    # expert plus the action/time projection heads. Defaults of 1.0 reproduce the
+    # single-LR behaviour (back-compat with existing checkpoints/configs).
+    backbone_lr_scale: float = 1.0
+    action_expert_lr_scale: float = 1.0
+
+    # Amortized flow training (paper §III.B, K_repeat). The VLM/backbone forward
+    # dominates step cost; to extract more learning signal per VLM pass the action
+    # expert runs ``flow_num_repeats`` denoising targets per sample, each with an
+    # independent noise + timestep draw, all attending to the single shared VLM
+    # prefix. The per-repeat flow losses are averaged, so the backbone gradient
+    # stays well-scaled. Pairs naturally with ``knowledge_insulation`` (which
+    # additionally detaches the prefix K/V on the action path), the paper's
+    # setting — but the amortized path is also correct without it. Set to 1 to
+    # recover the original single-draw combined forward.
+    flow_num_repeats: int = 5
 
     # PaLM-style z-loss on text CE. Penalises the log-partition function
     # ``z = log Σ exp(logits)`` drifting away from zero — without it, large-
@@ -250,3 +274,5 @@ class PI052Config(PI05Config):
         # out of text training via ``text_loss_weight=0``.
         if self.text_loss_weight > 0 and self.unfreeze_lm_head:
             self.train_expert_only = False
+        if self.flow_num_repeats < 1:
+            raise ValueError(f"flow_num_repeats must be >= 1, got {self.flow_num_repeats}")

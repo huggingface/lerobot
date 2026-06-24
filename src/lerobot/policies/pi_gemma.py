@@ -133,7 +133,10 @@ class PiGemmaRMSNorm(nn.Module):
         if cond.shape[-1] != self.cond_dim:
             raise ValueError(f"Expected cond dim {self.cond_dim}, got {cond.shape[-1]}")
         modulation = self.dense(cond)
-        if len(x.shape) == 3:
+        # Per-sample cond (B, cond_dim) → broadcast over the sequence. A
+        # per-token cond (B, T, cond_dim) is already aligned with x and must
+        # not be unsqueezed (used by pi052's amortized K_repeat path).
+        if len(x.shape) == 3 and modulation.dim() == 2:
             modulation = modulation.unsqueeze(1)
         scale, shift, gate = modulation.chunk(3, dim=-1)
         normed = normed * (1 + scale.float()) + shift.float()
