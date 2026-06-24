@@ -514,6 +514,12 @@ lerobot-train \
   --resume=true
 ```
 
+`--config_path` also accepts a **Hub repo id**: if a run pushed its checkpoints to the Hub (with `--save_checkpoint_to_hub=true`), you can resume straight from the repo — its latest checkpoint is downloaded and training continues, restoring the optimizer, scheduler, step counter and data order:
+
+```bash
+lerobot-train --config_path=${HF_USER}/my_policy --resume=true
+```
+
 If you do not want to push your model to the hub after training use `--policy.push_to_hub=false`.
 
 Additionally you can provide extra `tags` or specify a `license` for your model or make the model repo `private` by adding this: `--policy.private=true --policy.tags=\[ppo,rl\] --policy.license=mit`
@@ -629,6 +635,22 @@ By default the job runs until training finishes, with no time limit. Cap it with
 > **Note:** the model repo is created up front (it holds the staged training config the job runs from). If a run fails before the model is pushed, that repo is left on the Hub so you can inspect it — it is not deleted automatically, so repeated failures can leave empty repos behind. Remove one with `hf repo delete <repo-id>`.
 
 **Prerequisites:** run `hf auth login` before submitting. For Weights & Biases integration, run `wandb login` or set `WANDB_API_KEY` on your machine — the key is forwarded to the job automatically.
+
+**Resuming on a job.** Adding `--job.target` to a resume command runs the resume in the cloud — the same command works locally or remotely. The checkpoint repo is the source of truth, and new checkpoints continue the lineage in the same repo:
+
+```bash
+# resume a Hub run on a job (its checkpoints are already on the Hub)
+lerobot-train --config_path=${HF_USER}/my_policy --resume=true --job.target=a10g-small
+
+# resume a LOCAL run on a job — the checkpoint is uploaded to a private Hub repo first,
+# then the job resumes from it (a local-only dataset is uploaded the same way)
+lerobot-train \
+  --config_path=outputs/train/act_so101_test/checkpoints/last/pretrained_model/train_config.json \
+  --resume=true \
+  --job.target=a10g-small
+```
+
+Job settings come from the current command, so override `--job.target`, `--job.timeout`, etc. as needed; for the resumed run to itself be resumable later, keep `--save_checkpoint_to_hub=true`.
 
 #### Upload policy checkpoints
 
