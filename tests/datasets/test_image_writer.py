@@ -344,7 +344,7 @@ def test_with_different_image_formats(tmp_path, img_array_factory):
     writer = AsyncImageWriter()
     try:
         image_array = img_array_factory()
-        formats = ["png", "jpeg", "bmp"]
+        formats = ["png", "tiff", "tif"]
         for fmt in formats:
             fpath = tmp_path / f"test_image.{fmt}"
             write_image(image_array, fpath)

@@ -47,6 +47,7 @@ class _FakeMeta:
     def __init__(self, video_keys: list[str], image_keys: list[str], video_path: Path | None = None) -> None:
         self.video_keys = video_keys
         self.camera_keys = [*video_keys, *image_keys]
+        self.depth_keys = []
         self._video_path = video_path
         self.episodes = {0: {f"videos/{key}/from_timestamp": 0.0 for key in video_keys}}
 
