@@ -14,5 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .hiwonder import HiwonderMotorsBus
-from .tables import *
+from .hiwonder import DriveMode, HiwonderMotorsBus, OperatingMode, TorqueMode
+from .tables import (
+    MODEL_BAUDRATE_TABLE,
+    MODEL_CONTROL_TABLE,
+    MODEL_ENCODING_TABLE,
+    MODEL_NUMBER_TABLE,
+    MODEL_PROTOCOL,
+    MODEL_RESOLUTION,
+)
