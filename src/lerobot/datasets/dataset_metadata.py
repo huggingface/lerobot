@@ -15,6 +15,7 @@
 # limitations under the License.
 import contextlib
 from collections.abc import Callable
+from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
@@ -709,7 +710,7 @@ class LeRobotDatasetMetadata:
 
         obj.root.mkdir(parents=True, exist_ok=False)
 
-        features = {**features, **DEFAULT_FEATURES}
+        features = {**deepcopy(features), **DEFAULT_FEATURES}
         _validate_feature_names(features)
 
         obj.tasks = None

@@ -27,6 +27,7 @@ import logging
 import shutil
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from copy import deepcopy
 from pathlib import Path
 
 import datasets
@@ -1101,7 +1102,9 @@ def _copy_episodes_metadata_and_stats(
     if dst_meta.video_keys and src_dataset.meta.video_keys:
         for key in dst_meta.video_keys:
             if key in src_dataset.meta.features:
-                dst_meta.info.features[key]["info"] = src_dataset.meta.info.features[key].get("info", {})
+                dst_meta.info.features[key]["info"] = deepcopy(
+                    src_dataset.meta.info.features[key].get("info", {})
+                )
 
     write_info(dst_meta.info, dst_meta.root)
 
