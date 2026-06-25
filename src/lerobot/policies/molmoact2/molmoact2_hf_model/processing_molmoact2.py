@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The Allen Institute for Artificial Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,45 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa
 
 """
 Processor class for MolmoAct2.
 """
 
-from typing import Optional, Union
-import dataclasses
-
 import numpy as np
-
+from transformers import AutoTokenizer
+from transformers.feature_extraction_utils import BatchFeature
 from transformers.image_utils import ImageInput
-from transformers.video_utils import VideoInput
 from transformers.processing_utils import (
-    Unpack,
     ProcessingKwargs,
     ProcessorMixin,
+    Unpack,
 )
-from transformers.feature_extraction_utils import BatchFeature
-from transformers.tokenization_utils_base import TextInput, PreTokenizedInput
+from transformers.tokenization_utils_base import PreTokenizedInput, TextInput
 from transformers.utils import logging
+from transformers.video_utils import VideoInput
 
-from transformers import AutoTokenizer
-from .image_processing_molmoact2 import MolmoAct2ImagesKwargs, MolmoAct2ImageProcessor
-from .video_processing_molmoact2 import MolmoAct2VideoProcessorKwargs, MolmoAct2VideoProcessor
-
+from .image_processing_molmoact2 import MolmoAct2ImageProcessor, MolmoAct2ImagesKwargs
+from .video_processing_molmoact2 import MolmoAct2VideoProcessor, MolmoAct2VideoProcessorKwargs
 
 logger = logging.get_logger(__name__)
 
 
 # Special tokens, these should be present in any tokenizer we use since the preprocessor uses them
-IMAGE_PATCH_TOKEN = f"<im_patch>"  # Where to insert high-res tokens
-IMAGE_LOW_RES_TOKEN = f"<im_low>"  # Where to insert low-res tokens
-IM_START_TOKEN = f"<im_start>"
-LOW_RES_IMAGE_START_TOKEN = f"<low_res_im_start>"
-FRAME_START_TOKEN = f"<frame_start>"
-IM_END_TOKEN = f"<im_end>"
-FRAME_END_TOKEN = f"<frame_end>"
-IM_COL_TOKEN = f"<im_col>"
+IMAGE_PATCH_TOKEN = "<im_patch>"  # nosec B105  # Where to insert high-res tokens
+IMAGE_LOW_RES_TOKEN = "<im_low>"  # nosec B105  # Where to insert low-res tokens
+IM_START_TOKEN = "<im_start>"  # nosec B105
+LOW_RES_IMAGE_START_TOKEN = "<low_res_im_start>"  # nosec B105
+FRAME_START_TOKEN = "<frame_start>"  # nosec B105
+IM_END_TOKEN = "<im_end>"  # nosec B105
+FRAME_END_TOKEN = "<frame_end>"  # nosec B105
+IM_COL_TOKEN = "<im_col>"  # nosec B105
 IMAGE_PROMPT = "<|image|>"
 VIDEO_PROMPT = "<|video|>"
 
@@ -224,7 +216,7 @@ class MolmoAct2Processor(ProcessorMixin):
             input_ids = input_ids[None, :]
             attention_mask = attention_mask[None, :]
 
-        B, S = input_ids.shape
+        B, S = input_ids.shape  # noqa: N806
 
         # Handle zero-length sequence
         if S == 0:
@@ -364,7 +356,7 @@ class MolmoAct2Processor(ProcessorMixin):
                 assert num_videos in {0, 1}, "At most one video is supported for now"
                 video_grids_i = video_grids[index : index + num_videos]
                 metadata_i = video_metadata[index : index + num_videos]
-                for video_grid, metadata in zip(video_grids_i, metadata_i):
+                for video_grid, metadata in zip(video_grids_i, metadata_i, strict=False):
                     video_string = self.get_video_string(
                         video_grid,
                         metadata.timestamps,
