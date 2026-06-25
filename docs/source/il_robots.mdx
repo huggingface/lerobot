@@ -626,6 +626,8 @@ Every job (and any dataset pushed by the run) is tagged `lerobot` so it's easy t
 
 By default the job runs until training finishes, with no time limit. Cap it with an HF Jobs duration string if you want a hard ceiling, e.g. `--job.timeout=4h`.
 
+> **Note:** the model repo is created up front (it holds the staged training config the job runs from). If a run fails before the model is pushed, that repo is left on the Hub so you can inspect it — it is not deleted automatically, so repeated failures can leave empty repos behind. Remove one with `hf repo delete <repo-id>`.
+
 **Prerequisites:** run `hf auth login` before submitting. For Weights & Biases integration, run `wandb login` or set `WANDB_API_KEY` on your machine — the key is forwarded to the job automatically.
 
 #### Upload policy checkpoints

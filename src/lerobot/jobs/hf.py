@@ -300,7 +300,10 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
     poll_thread = threading.Thread(target=_poll, daemon=True)
     poll_thread.start()
     # Finish as soon as the model is pushed, rather than waiting out the platform's
-    # post-run finalization before the job stage flips to COMPLETED.
+    # post-run finalization before the job stage flips to COMPLETED. This matches the
+    # exact log line emitted by PreTrainedPolicy.push_model_to_hub — the two must stay
+    # in sync. If it ever stops matching we just fall back to stage-based completion
+    # (~30s slower), so the contract is an optimization, not a correctness requirement.
     success_marker = f"Model pushed to https://huggingface.co/{repo_id}"
     log_thread = threading.Thread(
         target=_tail_logs, args=(job_id, done, success_marker, pushed_ok), daemon=True
