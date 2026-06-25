@@ -235,6 +235,31 @@ def test_ready_to_send_observation_with_varying_threshold(robot_client, g_thresh
     assert robot_client._ready_to_send_observation() is expected
 
 
+def test_ready_to_send_observation_blocks_while_observation_pending(robot_client):
+    """A sent observation should block new observations until an action chunk arrives."""
+
+    robot_client.action_chunk_size = 10
+    robot_client.action_queue = Queue()
+    robot_client._pending_observation = True
+    robot_client._pending_observation_sent_at = time.perf_counter()
+
+    assert robot_client._ready_to_send_observation() is False
+
+
+def test_ready_to_send_observation_allows_retry_after_pending_timeout(robot_client):
+    """Pending observations should not permanently stop streaming if no action chunk arrives."""
+
+    robot_client.config.pending_observation_timeout_s = 0.01
+    robot_client.action_chunk_size = 10
+    robot_client.action_queue = Queue()
+    robot_client._pending_observation = True
+    robot_client._pending_observation_sent_at = time.perf_counter() - 1.0
+
+    assert robot_client._ready_to_send_observation() is True
+    assert robot_client._pending_observation is False
+    assert robot_client._pending_observation_sent_at is None
+
+
 # -----------------------------------------------------------------------------
 # Regression test: robot type registry populated by robot_client imports
 # -----------------------------------------------------------------------------

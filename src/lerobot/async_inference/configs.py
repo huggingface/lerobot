@@ -167,6 +167,13 @@ class RobotClientConfig:
 
     # Control behavior configuration
     chunk_size_threshold: float = field(default=0.5, metadata={"help": "Threshold for chunk size control"})
+    pending_observation_timeout_s: float = field(
+        default=2.0,
+        metadata={
+            "help": "Maximum time to wait for an action chunk after sending an observation before sending "
+            "another observation."
+        },
+    )
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
 
     # Aggregate function configuration (CLI-compatible)
@@ -209,6 +216,11 @@ class RobotClientConfig:
         if self.chunk_size_threshold < 0 or self.chunk_size_threshold > 1:
             raise ValueError(f"chunk_size_threshold must be between 0 and 1, got {self.chunk_size_threshold}")
 
+        if self.pending_observation_timeout_s <= 0:
+            raise ValueError(
+                f"pending_observation_timeout_s must be positive, got {self.pending_observation_timeout_s}"
+            )
+
         if self.fps <= 0:
             raise ValueError(f"fps must be positive, got {self.fps}")
 
@@ -231,6 +243,7 @@ class RobotClientConfig:
             "policy_device": self.policy_device,
             "client_device": self.client_device,
             "chunk_size_threshold": self.chunk_size_threshold,
+            "pending_observation_timeout_s": self.pending_observation_timeout_s,
             "fps": self.fps,
             "actions_per_chunk": self.actions_per_chunk,
             "task": self.task,
