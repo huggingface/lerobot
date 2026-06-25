@@ -326,6 +326,8 @@ class DatasetReader:
         if self._image_transforms is not None:
             image_keys = self._meta.camera_keys
             for cam in image_keys:
+                if cam not in self._meta.depth_keys:
+                    continue
                 item[cam] = self._image_transforms(item[cam])
 
         # Add task as a string
