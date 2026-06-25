@@ -66,12 +66,12 @@ def canonicalize_smpl_joints(smpl_joints: np.ndarray, root_aa: np.ndarray) -> np
     Returns:
         (T, 24, 3) per-frame root-orientation-removed joints.
     """
-    from scipy.spatial.transform import Rotation as R
+    from scipy.spatial.transform import Rotation
 
-    rx90 = R.from_euler("x", 90, degrees=True)        # smpl_root_ytoz_up
-    base120 = R.from_quat([0.5, 0.5, 0.5, 0.5])       # remove_smpl_base_rot
-    a = rx90 * R.from_rotvec(root_aa)                 # z-up root quat (left-mult)
-    b_inv = base120 * a.inv()                         # inv(remove_smpl_base_rot(a))
+    rx90 = Rotation.from_euler("x", 90, degrees=True)  # smpl_root_ytoz_up
+    base120 = Rotation.from_quat([0.5, 0.5, 0.5, 0.5])  # remove_smpl_base_rot
+    a = rx90 * Rotation.from_rotvec(root_aa)  # z-up root quat (left-mult)
+    b_inv = base120 * a.inv()  # inv(remove_smpl_base_rot(a))
     return np.einsum("tij,tkj->tki", b_inv.as_matrix(), smpl_joints).astype(np.float32)
 
 
@@ -87,9 +87,7 @@ class SmplMotion:
         self.loop = loop
 
         if smpl_joints.ndim != 3 or smpl_joints.shape[1:] != (N_JOINTS, JOINT_DIM):
-            raise ValueError(
-                f"Expected smpl_joints (T, {N_JOINTS}, {JOINT_DIM}), got {smpl_joints.shape}"
-            )
+            raise ValueError(f"Expected smpl_joints (T, {N_JOINTS}, {JOINT_DIM}), got {smpl_joints.shape}")
 
         # Reference clips store world-frame joints; the encoder wants per-frame
         # root-orientation-removed joints. Canonicalize when we have the root pose.
@@ -109,10 +107,7 @@ class SmplMotion:
         [f0_j0_xyz, f0_j1_xyz, ..., f9_j23_xyz].
         """
         idx = np.arange(start, start + WINDOW)
-        if self.loop:
-            idx = np.mod(idx, self.num_frames)
-        else:
-            idx = np.clip(idx, 0, self.num_frames - 1)
+        idx = np.mod(idx, self.num_frames) if self.loop else np.clip(idx, 0, self.num_frames - 1)
         return self.smpl_joints[idx].reshape(-1).astype(np.float32)
 
     def reset(self):
@@ -135,30 +130,31 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--motion", required=True, help="Path to motion .npz")
     parser.add_argument("--no-loop", action="store_true")
-    parser.add_argument("--no-canon", action="store_true",
-                        help="Skip canonicalization (feed raw stored joints)")
+    parser.add_argument(
+        "--no-canon", action="store_true", help="Skip canonicalization (feed raw stored joints)"
+    )
     args = parser.parse_args()
 
     m = SmplMotion(args.motion, loop=not args.no_loop, canonicalize=not args.no_canon)
     duration = m.num_frames / m.fps
     print(f"Loaded '{args.motion}'")
     print(f"  frames={m.num_frames} fps={m.fps:.1f} duration={duration:.1f}s")
-    print(f"  smpl_joints={m.smpl_joints.shape} canonicalized={m.canonicalized} "
-          f"pose_aa={None if m.pose_aa is None else m.pose_aa.shape} "
-          f"transl={None if m.transl is None else m.transl.shape}")
+    print(
+        f"  smpl_joints={m.smpl_joints.shape} canonicalized={m.canonicalized} "
+        f"pose_aa={None if m.pose_aa is None else m.pose_aa.shape} "
+        f"transl={None if m.transl is None else m.transl.shape}"
+    )
 
     # Sanity: after canonicalization the per-frame body heading should be fixed.
     j = m.smpl_joints
-    v = (j[:, 2, :2] - j[:, 1, :2])  # R_hip - L_hip, horizontal
+    v = j[:, 2, :2] - j[:, 1, :2]  # R_hip - L_hip, horizontal
     a = np.arctan2(v[:, 1], v[:, 0])
     rlen = np.clip(np.hypot(np.cos(a).mean(), np.sin(a).mean()), 1e-9, 1.0)
     circ_std = np.degrees(np.sqrt(-2 * np.log(rlen)))
-    print(f"  hip-heading circ-std={circ_std:.1f} deg "
-          f"(~0 => orientation removed; large => world-frame)")
+    print(f"  hip-heading circ-std={circ_std:.1f} deg (~0 => orientation removed; large => world-frame)")
 
     w0 = m.window(0)
-    print(f"  window(0): shape={w0.shape} (expected {SMPL_OBS_DIM}) "
-          f"min={w0.min():.3f} max={w0.max():.3f}")
+    print(f"  window(0): shape={w0.shape} (expected {SMPL_OBS_DIM}) min={w0.min():.3f} max={w0.max():.3f}")
     assert w0.shape == (SMPL_OBS_DIM,), "window must be 720-dim for obs[922:1642]"
 
     # Simulate a few control ticks.
