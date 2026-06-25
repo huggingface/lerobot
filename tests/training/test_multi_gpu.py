@@ -267,7 +267,7 @@ class TestMultiGPUTraining:
                 f"--output_dir={output_dir}",
                 "--batch_size=4",
                 "--steps=10",
-                "--eval_freq=-1",
+                "--env_eval_freq=-1",
                 "--log_freq=5",
                 "--save_freq=10",
                 "--seed=42",
