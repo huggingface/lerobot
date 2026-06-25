@@ -42,6 +42,8 @@ from huggingface_hub import (
     upload_file,
 )
 
+from lerobot.jobs.dataset import ensure_dataset_available
+
 if TYPE_CHECKING:
     from lerobot.configs.train import TrainPipelineConfig
 
@@ -223,8 +225,6 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
     the job, then either tails logs until completion or detaches immediately.
     Ctrl-C detaches without cancelling the remote job.
     """
-    from lerobot.jobs.dataset import ensure_dataset_available
-
     token = get_token()
     if not token:
         raise RuntimeError("Not logged in to Hugging Face. Run `hf auth login` first.")

@@ -235,8 +235,8 @@ def test_submit_passes_validation_and_submits(monkeypatch):
     monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
 
     # ensure_dataset_available returns None; patch it out so no Hub access happens
-    # (imported inside submit_to_hf via `from lerobot.jobs.dataset import ensure_dataset_available`).
-    monkeypatch.setattr("lerobot.jobs.dataset.ensure_dataset_available", lambda *a, **kw: None)
+    # (hf.py imports it at module level, so patch it on lerobot.jobs.hf).
+    monkeypatch.setattr("lerobot.jobs.hf.ensure_dataset_available", lambda *a, **kw: None)
 
     # Patch _stage_config_on_hub to skip network
     monkeypatch.setattr(
@@ -323,7 +323,7 @@ def test_submit_returns_when_job_completes(monkeypatch):
             return {"name": "alice"}
 
     monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
-    monkeypatch.setattr("lerobot.jobs.dataset.ensure_dataset_available", lambda *a, **kw: None)
+    monkeypatch.setattr("lerobot.jobs.hf.ensure_dataset_available", lambda *a, **kw: None)
     monkeypatch.setattr(
         "lerobot.jobs.hf._stage_config_on_hub", lambda cfg, repo_id, token, tags=None: repo_id
     )
@@ -362,7 +362,7 @@ def test_submit_returns_on_model_pushed_marker(monkeypatch):
             return {"name": "alice"}
 
     monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
-    monkeypatch.setattr("lerobot.jobs.dataset.ensure_dataset_available", lambda *a, **kw: None)
+    monkeypatch.setattr("lerobot.jobs.hf.ensure_dataset_available", lambda *a, **kw: None)
     monkeypatch.setattr(
         "lerobot.jobs.hf._stage_config_on_hub", lambda cfg, repo_id, token, tags=None: repo_id
     )
@@ -441,7 +441,7 @@ def test_submit_raises_when_job_ends_in_error(monkeypatch):
             return {"name": "alice"}
 
     monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
-    monkeypatch.setattr("lerobot.jobs.dataset.ensure_dataset_available", lambda *a, **kw: None)
+    monkeypatch.setattr("lerobot.jobs.hf.ensure_dataset_available", lambda *a, **kw: None)
     monkeypatch.setattr(
         "lerobot.jobs.hf._stage_config_on_hub", lambda cfg, repo_id, token, tags=None: repo_id
     )
