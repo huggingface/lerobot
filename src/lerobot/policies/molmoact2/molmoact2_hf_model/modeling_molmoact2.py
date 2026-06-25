@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The Allen Institute for Artificial Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,24 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa
 
 """Modeling code for MolmoAct2"""
+
+# ruff: noqa: N806
 
 import json
 import math
 import os
 import re
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
-from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Optional
 
 import numpy as np
 import torch
 import torch.utils.checkpoint
 from torch import nn
-from torch.nn import functional as F
+from torch.nn import functional as F  # noqa: N812
 from torch.nn.attention import SDPBackend, sdpa_kernel
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, DynamicCache
@@ -647,7 +646,7 @@ class ActionExpert(nn.Module):
                 f"got {len(encoder_kv_states)}."
             )
         kv_contexts = []
-        for block, (k_in, v_in) in zip(self.blocks, encoder_kv_states):
+        for block, (k_in, v_in) in zip(self.blocks, encoder_kv_states, strict=False):
             k_ctx = self._project_kv_tensor(k_in, self.context_k_proj)
             v_ctx = self._project_kv_tensor(v_in, self.context_v_proj)
             k_norm = block.cross_attn.k_norm
@@ -732,7 +731,7 @@ class ActionExpert(nn.Module):
         timesteps: Sequence[torch.Tensor],
     ) -> Sequence[ActionExpertStepModulation]:
         cache = []
-        for idx, step_t in enumerate(timesteps):
+        for _idx, step_t in enumerate(timesteps):
             conditioning = self._time_conditioning(step_t)
             block_modulations = []
             for block in self.blocks:
@@ -786,8 +785,8 @@ class ActionExpert(nn.Module):
         x = self.action_embed(actions)
         if context.valid_action is not None:
             x = x * context.valid_action
-        for idx, (block, kv_context, block_modulation) in enumerate(
-            zip(self.blocks, context.kv_contexts, block_modulations)
+        for _idx, (block, kv_context, block_modulation) in enumerate(
+            zip(self.blocks, context.kv_contexts, block_modulations, strict=False)
         ):
             x = block(
                 x,
@@ -2874,7 +2873,7 @@ class MolmoAct2Model(MolmoAct2PreTrainedModel):
                     depth_mask=depth_mask,
                     encoder_attention_mask=encoder_attention_mask,
                 )
-                for gate, source in zip(gate_head, sources)
+                for gate, source in zip(gate_head, sources, strict=False)
             ]
             return gates, depth_mask
         gate = self._depth_gate_from_source(
@@ -4458,7 +4457,7 @@ class MolmoAct2ForConditionalGeneration(MolmoAct2PreTrainedModel, GenerationMixi
         ```python
         >>> from PIL import Image
         >>> import requests
-        >>> from lerobot.policies.molmoact2.hf_model.modeling_molmoact2 import MolmoAct2ForConditionalGeneration
+        >>> from lerobot.policies.molmoact2.molmoact2_hf_model.modeling_molmoact2 import MolmoAct2ForConditionalGeneration
         >>> from lerobot.policies.molmoact2.processor_molmoact2 import _load_local_molmoact2_processor
 
         >>> model = MolmoAct2ForConditionalGeneration.from_pretrained("...")

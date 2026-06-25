@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The Allen Institute for Artificial Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,16 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa
 
 """Inference utilities for MolmoAct2"""
 
-from dataclasses import dataclass
-from typing import Any, Optional, Tuple
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from typing import Any
 
 import torch
-from torch.nn import functional as F
+from torch.nn import functional as F  # noqa: N812
 from transformers.cache_utils import Cache
 from transformers.configuration_utils import PretrainedConfig
 
@@ -679,7 +676,7 @@ def _clone_static_inputs(inputs: _ActionFlowInputs) -> _ActionFlowInputs:
 
 
 def _copy_context_(dst: Any, src: Any) -> None:
-    for (dst_k, dst_v), (src_k, src_v) in zip(dst.kv_contexts, src.kv_contexts):
+    for (dst_k, dst_v), (src_k, src_v) in zip(dst.kv_contexts, src.kv_contexts, strict=False):
         dst_k.copy_(src_k)
         dst_v.copy_(src_v)
     if src.cross_mask is not None:
@@ -689,7 +686,7 @@ def _copy_context_(dst: Any, src: Any) -> None:
     if src.valid_action is not None:
         dst.valid_action.copy_(src.valid_action)
     if src.rope_cache is not None:
-        for dst_tensor, src_tensor in zip(dst.rope_cache, src.rope_cache):
+        for dst_tensor, src_tensor in zip(dst.rope_cache, src.rope_cache, strict=False):
             dst_tensor.copy_(src_tensor)
 
 

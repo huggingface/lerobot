@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The Allen Institute for Artificial Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,25 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa
 
 """Video processor class for MolmoAct2"""
 
-from functools import partial
 import os
 import warnings
+from collections.abc import Callable
 from contextlib import redirect_stdout
+from functools import partial
 from io import BytesIO
 from urllib.parse import urlparse
-from typing import Optional, Union
-from collections.abc import Callable
 
+import einops
 import numpy as np
 import requests
-import einops
 import torch
 import torchvision.transforms
-
+from transformers.feature_extraction_utils import BatchFeature
 from transformers.image_utils import (
     IMAGENET_STANDARD_MEAN,
     IMAGENET_STANDARD_STD,
@@ -41,27 +37,24 @@ from transformers.image_utils import (
     SizeDict,
     validate_kwargs,
 )
-from transformers.video_utils import (
-    VideoInput,
-    is_valid_video,
-    make_batched_videos,
-    make_batched_metadata,
-    VideoMetadata,
-)
 from transformers.processing_utils import Unpack, VideosKwargs
-from transformers.video_processing_utils import BaseVideoProcessor
-from transformers.utils import logging
-from transformers.feature_extraction_utils import BatchFeature
 from transformers.utils import (
+    TensorType,
     is_av_available,
     is_decord_available,
     is_torchcodec_available,
     is_yt_dlp_available,
-    TensorType,
     logging,
     to_numpy,
 )
-
+from transformers.video_processing_utils import BaseVideoProcessor
+from transformers.video_utils import (
+    VideoInput,
+    VideoMetadata,
+    is_valid_video,
+    make_batched_metadata,
+    make_batched_videos,
+)
 
 logger = logging.get_logger(__name__)
 
@@ -102,8 +95,8 @@ def resize_image(
         )(image)
         resized = torch.clip(resized, 0.0, 1.0).to(dtype)
     else:
-        assert image.dtype == torch.uint8, "SigLIP expects float images or uint8 images, but got {}".format(
-            image.dtype
+        assert image.dtype == torch.uint8, (
+            f"SigLIP expects float images or uint8 images, but got {image.dtype}"
         )
         in_min = 0.0
         in_max = 255.0
@@ -548,9 +541,8 @@ def get_target_fps(
         step_size = max(int(video_fps / target_fps), 1)
         num_frames_sampled_at_fps = int(total_frames / step_size)
         if num_frames_sampled == 0:
-            if "uniform" in frame_sample_mode:
-                if num_frames_sampled_at_fps > max_frames:
-                    break
+            if "uniform" in frame_sample_mode and num_frames_sampled_at_fps > max_frames:
+                break
             selected_target_fps = target_fps
             num_frames_sampled = num_frames_sampled_at_fps
 
@@ -779,13 +771,15 @@ class MolmoAct2VideoProcessor(BaseVideoProcessor):
         elif is_torchcodec_available():
             warnings.warn(
                 "`decord` is not installed and cannot be used to decode the video by default. "
-                "Falling back to `torchcodec`."
+                "Falling back to `torchcodec`.",
+                stacklevel=2,
             )
             backend = "torchcodec"
         else:
             warnings.warn(
                 "`decord` is not installed and cannot be used to decode the video by default. "
-                "Falling back to `PyAV`."
+                "Falling back to `PyAV`.",
+                stacklevel=2,
             )
             backend = "pyav"
 
@@ -795,7 +789,8 @@ class MolmoAct2VideoProcessor(BaseVideoProcessor):
                     *[
                         self.fetch_videos(x, sample_timestamps_fn=sample_timestamps_fn)
                         for x in video_url_or_urls
-                    ]
+                    ],
+                    strict=False,
                 )
             )
         else:
@@ -821,7 +816,7 @@ class MolmoAct2VideoProcessor(BaseVideoProcessor):
             assert video_metadata[0].fps is not None, "FPS must be provided for video input"
             sampled_videos = []
             sampled_metadata = []
-            for video, metadata in zip(videos, video_metadata):
+            for video, metadata in zip(videos, video_metadata, strict=False):
                 indices = sample_indices_fn(metadata=metadata)
                 metadata.frames_indices = indices
                 sampled_videos.append(video[indices])
@@ -985,11 +980,11 @@ class MolmoAct2VideoProcessor(BaseVideoProcessor):
         pixel_values_videos = np.concatenate(batch_crops, 0)
         video_token_pooling = np.concatenate(batch_pooled_patches_idx, 0)
 
-        data = dict(
-            pixel_values_videos=pixel_values_videos,
-            video_token_pooling=video_token_pooling,
-            video_grids=video_grids,
-        )
+        data = {
+            "pixel_values_videos": pixel_values_videos,
+            "video_token_pooling": video_token_pooling,
+            "video_grids": video_grids,
+        }
 
         return BatchFeature(data, tensor_type=return_tensors)
 

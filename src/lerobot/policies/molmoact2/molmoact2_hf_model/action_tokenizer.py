@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The Allen Institute for Artificial Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,23 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa
-
 import logging
-import os
 from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
 from tokenizers import ByteLevelBPETokenizer
 from tokenizers.trainers import BpeTrainer
-from huggingface_hub import snapshot_download
 from transformers import PreTrainedTokenizerFast
 from transformers.processing_utils import ProcessorMixin
 
+from ..modeling_molmoact2 import _hf_token
 
-def _hf_token() -> str | None:
-    return os.environ.get("HF_TOKEN") or os.environ.get("HF_ACCESS_TOKEN")
+logger = logging.getLogger(__name__)
 
 
 def _resolve_tokenizer_location(
@@ -42,6 +36,8 @@ def _resolve_tokenizer_location(
     local_path = Path(str(tokenizer_path)).expanduser()
     if local_path.exists():
         return str(local_path)
+    from huggingface_hub import snapshot_download
+
     return snapshot_download(
         repo_id=str(tokenizer_path),
         repo_type="model",
@@ -134,9 +130,8 @@ class UniversalActionProcessor(ProcessorMixin):
                 ), (
                     f"Decoded DCT coefficients have shape {decoded_dct_coeff.shape}, expected ({self.time_horizon}, {self.action_dim})"
                 )
-            except Exception as e:
-                print(f"Error decoding tokens: {e}")
-                print(f"Tokens: {token}")
+            except Exception:
+                logger.warning("Error decoding tokens: %s", token, exc_info=True)
                 decoded_dct_coeff = np.zeros((self.time_horizon, self.action_dim))
             decoded_actions.append(idct(decoded_dct_coeff / self.scale, axis=0, norm="ortho"))
         return np.stack(decoded_actions)
