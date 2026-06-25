@@ -225,7 +225,10 @@ class UnitreeG1(Robot):
         features: dict[str, tuple] = {}
         for cam in self.cameras:
             cfg = self.config.cameras[cam]
-            features[cam] = (cfg.height, cfg.width, 3)
+            if getattr(cfg, "use_rgb", True):
+                features[cam] = (cfg.height, cfg.width, 3)
+            if getattr(cfg, "use_depth", False):
+                features[f"{cam}_depth"] = (cfg.height, cfg.width, 1)
         return features
 
     @cached_property
@@ -460,7 +463,10 @@ class UnitreeG1(Robot):
 
         # Cameras - read images from ZMQ cameras
         for cam_name, cam in self._cameras.items():
-            obs[cam_name] = cam.read_latest()
+            if getattr(cam, "use_rgb", True):
+                obs[cam_name] = cam.read_latest()
+            if getattr(cam, "use_depth", False):
+                obs[f"{cam_name}_depth"] = cam.read_latest_depth()
 
         return obs
 
