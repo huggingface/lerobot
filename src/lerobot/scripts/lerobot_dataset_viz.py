@@ -157,7 +157,7 @@ def visualize_dataset(
         stats = dataset.meta.stats[key]
         lo = stats["q01"] if "q01" in stats else stats["min"]
         hi = stats["q99"] if "q99" in stats else stats["max"]
-        depth_ranges[key] = (float(lo), float(hi))
+        depth_ranges[key] = (float(np.asarray(lo).item()), float(np.asarray(hi).item()))
 
     first_index = None
     for batch in tqdm.tqdm(dataloader, total=len(dataloader)):

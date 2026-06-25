@@ -242,7 +242,7 @@ def sample_images(image_paths: list[str]) -> np.ndarray:
     images = None
     for i, idx in enumerate(sampled_indices):
         path = image_paths[idx]
-        # we load as uint8 to reduce memory usage
+        # we load RGB images as uint8 to reduce memory usage
         img = load_image_as_numpy(path, dtype=np.uint8, channel_first=True)
         img = auto_downsample_height_width(img)
 
