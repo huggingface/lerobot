@@ -226,19 +226,25 @@ def load_image_as_numpy(
     Args:
         fpath (str | Path): Path to the image file.
         dtype (np.dtype): The desired data type of the output array. If floating,
-            pixels are scaled to [0, 1].
+            pixels are scaled to [0, 1]. Only used for RGB images.
         channel_first (bool): If True, converts the image to (C, H, W) format.
             Otherwise, it remains in (H, W, C) format.
 
     Returns:
         np.ndarray: The image as a numpy array.
     """
-    img = PILImage.open(fpath).convert("RGB")
-    img_array = np.array(img, dtype=dtype)
+    is_depth = fpath.endswith(".tiff") or fpath.endswith(".tif")
+    if is_depth:
+        # Preserve the native depth dtype (uint16 -> "I;16", float32 -> "F").
+        img = PILImage.open(fpath)
+        img_array = np.array(img)
+    else:
+        img = PILImage.open(fpath).convert("RGB")
+        img_array = np.array(img, dtype=dtype)
+        if np.issubdtype(dtype, np.floating):
+            img_array /= 255.0
     if channel_first:  # (H, W, C) -> (C, H, W)
-        img_array = np.transpose(img_array, (2, 0, 1))
-    if np.issubdtype(dtype, np.floating):
-        img_array /= 255.0
+        img_array = img_array[np.newaxis, ...] if img_array.ndim == 2 else np.transpose(img_array, (2, 0, 1))
     return img_array
 
 
