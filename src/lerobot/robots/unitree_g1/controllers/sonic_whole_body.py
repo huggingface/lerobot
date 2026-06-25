@@ -18,7 +18,6 @@
 
 import logging
 
-import numpy as np
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
@@ -32,13 +31,13 @@ from lerobot.robots.unitree_g1.controllers.sonic_pipeline import (
     MovementState,
     PlannerController,
     SonicPlanner,
+    _ort_providers,
+    _snapshot_ms,
     clamp_mode_params,
     compute_kp_kd,
     lowstate_to_obs,
     process_joystick,
     should_replan_request,
-    _ort_providers,
-    _snapshot_ms,
 )
 
 logger = logging.getLogger(__name__)

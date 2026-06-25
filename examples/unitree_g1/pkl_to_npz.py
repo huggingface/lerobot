@@ -42,15 +42,14 @@ def load_pkl(path: str) -> dict:
         return joblib.load(path)
     except Exception:
         # joblib clips are zlib-compressed pickles; fall back to manual inflate.
+        import contextlib
         import pickle
         import zlib
 
         with open(path, "rb") as f:
             raw = f.read()
-        try:
+        with contextlib.suppress(zlib.error):
             raw = zlib.decompress(raw)
-        except zlib.error:
-            pass
         return pickle.loads(raw)
 
 
@@ -80,8 +79,9 @@ def main():
     np.savez_compressed(args.out, **out)
     dur = smpl_joints.shape[0] / float(out["fps"])
     print(f"Wrote {args.out}")
-    print(f"  frames={smpl_joints.shape[0]} fps={float(out['fps']):.1f} duration={dur:.1f}s "
-          f"keys={sorted(out)}")
+    print(
+        f"  frames={smpl_joints.shape[0]} fps={float(out['fps']):.1f} duration={dur:.1f}s keys={sorted(out)}"
+    )
 
 
 if __name__ == "__main__":
