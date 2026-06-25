@@ -110,8 +110,12 @@ def worker_thread_loop(queue: queue.Queue):
         if item is None:
             queue.task_done()
             break
-        image_array, fpath = item
-        write_image(image_array, fpath)
+        if len(item) == 3 and item[2] == "bytes":
+            data, fpath, _ = item
+            fpath.write_bytes(data)
+        else:
+            image_array, fpath = item
+            write_image(image_array, fpath)
         queue.task_done()
 
 
@@ -174,6 +178,9 @@ class AsyncImageWriter:
             # Convert tensor to numpy array to minimize main process time
             image = image.cpu().numpy()
         self.queue.put((image, fpath))
+
+    def save_bytes(self, data: bytes | bytearray, fpath: Path):
+        self.queue.put((bytes(data), fpath, "bytes"))
 
     def wait_until_done(self):
         self.queue.join()

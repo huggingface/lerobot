@@ -33,6 +33,9 @@ from datasets.features.features import register_feature
 from PIL import Image
 
 
+SUPPORTED_FRAME_EXTENSIONS = ("jpg", "jpeg", "png", "webp", "avif")
+
+
 def get_safe_default_codec():
     if importlib.util.find_spec("torchcodec"):
         return "torchcodec"
@@ -41,6 +44,22 @@ def get_safe_default_codec():
             "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
         )
         return "pyav"
+
+
+def _pyav_codec_display_name(codec: Any) -> str:
+    """Return a stable codec id string across PyAV versions.
+
+    PyAV 10 exposes ``Codec.name``; newer releases add ``Codec.canonical_name``.
+    """
+    if codec is None:
+        return "unknown"
+    canonical = getattr(codec, "canonical_name", None)
+    if canonical:
+        return str(canonical)
+    name = getattr(codec, "name", None)
+    if name:
+        return str(name)
+    return "unknown"
 
 
 def decode_video_frames(
@@ -311,11 +330,20 @@ def encode_video_frames(
     fast_decode: int = 0,
     log_level: int | None = av.logging.ERROR,
     overwrite: bool = False,
+    bitrate: str = "8M",
+    preset: str | None = None,
+    target_size: tuple[int, int] | None = None,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
     # Check encoder availability
-    if vcodec not in ["h264", "hevc", "libsvtav1"]:
-        raise ValueError(f"Unsupported video codec: {vcodec}. Supported codecs are: h264, hevc, libsvtav1.")
+    # Hardware encoders: h264_nvmpi (Jetson), h264_nvenc (NVIDIA desktop), h264_v4l2m2m, h264_omx
+    supported_codecs = [
+        "h264", "hevc", "libsvtav1", "libx264",
+        "h264_nvmpi", "hevc_nvmpi",  # Jetson hardware (jetson-ffmpeg)
+        "h264_nvenc", "h264_v4l2m2m", "h264_omx",
+    ]
+    if vcodec not in supported_codecs:
+        raise ValueError(f"Unsupported video codec: {vcodec}. Supported codecs are: {supported_codecs}.")
 
     video_path = Path(video_path)
     imgs_dir = Path(imgs_dir)
@@ -333,28 +361,55 @@ def encode_video_frames(
         )
         pix_fmt = "yuv420p"
 
-    # Get input frames
-    template = "frame-" + ("[0-9]" * 6) + ".png"
-    input_list = sorted(
-        glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("-")[-1].split(".")[0])
-    )
-
+    # Get input frames. Search in priority order: jpg first (byte passthrough path), then others.
+    input_list = []
+    for suffix in SUPPORTED_FRAME_EXTENSIONS:
+        template = "frame-" + ("[0-9]" * 6) + f".{suffix}"
+        input_list = sorted(
+            glob.glob(str(imgs_dir / template)),
+            key=lambda x: int(Path(x).stem.split("-")[-1]),
+        )
+        if input_list:
+            break
+    
     # Define video output frame size (assuming all input frames are the same size)
     if len(input_list) == 0:
         raise FileNotFoundError(f"No images found in {imgs_dir}.")
-    with Image.open(input_list[0]) as dummy_image:
-        width, height = dummy_image.size
+    if target_size is not None:
+        height, width = int(target_size[0]), int(target_size[1])
+    else:
+        with Image.open(input_list[0]) as dummy_image:
+            width, height = dummy_image.size
 
     # Define video codec options
     video_options = {}
+    is_hw_encoder = vcodec in ["h264_nvenc", "h264_v4l2m2m", "h264_omx", "h264_nvmpi", "hevc_nvmpi"]
 
     if g is not None:
         video_options["g"] = str(g)
 
-    if crf is not None:
-        video_options["crf"] = str(crf)
+    if is_hw_encoder:
+        # Hardware encoders use bitrate instead of CRF
+        if vcodec == "h264_nvenc":
+            # NVENC: use constant quality mode (cq) or variable bitrate
+            video_options["preset"] = "p4"  # balanced speed/quality
+            video_options["rc"] = "vbr"  # variable bitrate
+            video_options["cq"] = str(crf if crf is not None else 23)
+        elif vcodec in ["h264_nvmpi", "hevc_nvmpi"]:
+            # Jetson nvmpi: use bitrate (no CRF support); controllable via `bitrate` kwarg.
+            video_options["b"] = bitrate
+        else:
+            # V4L2/OMX: use bitrate
+            video_options["b"] = bitrate
+    else:
+        # Software encoders
+        if crf is not None:
+            video_options["crf"] = str(crf)
+        # libx264: use faster preset for quicker encoding
+        if vcodec == "libx264":
+            video_options["preset"] = "fast" if preset is None else preset
 
-    if fast_decode:
+    if fast_decode and not is_hw_encoder:
         key = "svtav1-params" if vcodec == "libsvtav1" else "tune"
         value = f"fast-decode={fast_decode}" if vcodec == "libsvtav1" else "fastdecode"
         video_options[key] = value
@@ -372,9 +427,11 @@ def encode_video_frames(
         output_stream.height = height
 
         # Loop through input frames and encode them
-        for input_data in input_list:
+        for frame_idx, input_data in enumerate(input_list):
             with Image.open(input_data) as input_image:
                 input_image = input_image.convert("RGB")
+                if target_size is not None:
+                    input_image = input_image.resize((width, height), Image.NEAREST)
                 input_frame = av.VideoFrame.from_image(input_image)
                 packet = output_stream.encode(input_frame)
                 if packet:
@@ -523,7 +580,7 @@ def get_audio_info(video_path: Path | str) -> dict:
             return {"has_audio": False}
 
         audio_info["audio.channels"] = audio_stream.channels
-        audio_info["audio.codec"] = audio_stream.codec.canonical_name
+        audio_info["audio.codec"] = _pyav_codec_display_name(audio_stream.codec)
         # In an ideal loseless case : bit depth x sample rate x channels = bit rate.
         # In an actual compressed case, the bit rate is set according to the compression level : the lower the bit rate, the more compression is applied.
         audio_info["audio.bit_rate"] = audio_stream.bit_rate
@@ -556,7 +613,7 @@ def get_video_info(video_path: Path | str) -> dict:
 
         video_info["video.height"] = video_stream.height
         video_info["video.width"] = video_stream.width
-        video_info["video.codec"] = video_stream.codec.canonical_name
+        video_info["video.codec"] = _pyav_codec_display_name(video_stream.codec)
         video_info["video.pix_fmt"] = video_stream.pix_fmt
         video_info["video.is_depth_map"] = False
 
@@ -660,7 +717,7 @@ class VideoEncodingManager:
                 # encode_on_exit is False, skip encoding but warn user
                 logging.info(
                     f"Skipping video encoding on exit (encode_on_exit=False). "
-                    f"{self.dataset.episodes_since_last_encoding} episodes with PNGs remain on disk. "
+                    f"{self.dataset.episodes_since_last_encoding} episodes with image frames remain on disk. "
                     f"Use dataset.encode_pending_videos() to encode them later."
                 )
 
@@ -682,14 +739,14 @@ class VideoEncodingManager:
 
         # Clean up any remaining images directory if it's empty
         img_dir = self.dataset.root / "images"
-        # Check for any remaining PNG files
-        png_files = list(img_dir.rglob("*.png"))
-        if len(png_files) == 0:
-            # Only remove the images directory if no PNG files remain
+        # Check for any remaining frame files
+        frame_files = [f for ext in SUPPORTED_FRAME_EXTENSIONS for f in img_dir.rglob(f"*.{ext}")]
+        if len(frame_files) == 0:
+            # Only remove the images directory if no frame files remain
             if img_dir.exists():
                 shutil.rmtree(img_dir)
                 logging.debug("Cleaned up empty images directory")
         else:
-            logging.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
+            logging.debug(f"Images directory is not empty, containing {len(frame_files)} frame files")
 
         return False  # Don't suppress the original exception
