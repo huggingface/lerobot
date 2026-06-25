@@ -223,7 +223,14 @@ class TrainPipelineConfig(HubMixin):
         if self.eval_steps > 0 and self.dataset.eval_split == 0.0:
             raise ValueError("eval_steps > 0 requires dataset.eval_split > 0.0 to hold out eval data.")
 
-        if hasattr(active_cfg, "push_to_hub") and active_cfg.push_to_hub and not active_cfg.repo_id:
+        # Remote runs auto-generate the repo_id in submit_to_hf (the policy may only be
+        # resolved here, from --policy.path), so don't demand it up front for them.
+        if (
+            hasattr(active_cfg, "push_to_hub")
+            and active_cfg.push_to_hub
+            and not active_cfg.repo_id
+            and not self.job.is_remote
+        ):
             raise ValueError("'repo_id' argument missing. Please specify it to push the model to the hub.")
 
         if self.save_checkpoint_to_hub and not (self.policy is not None and self.policy.repo_id):

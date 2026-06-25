@@ -18,6 +18,7 @@ import threading
 from types import SimpleNamespace
 
 import draccus
+import httpx
 import pytest
 
 from lerobot.configs.train import TrainPipelineConfig
@@ -58,14 +59,22 @@ def test_poll_until_done_exits_when_done_already_set(monkeypatch):
     assert _poll_until_done("j", done, poll_interval=0.01) is None
 
 
-def test_poll_until_done_gives_up_after_repeated_failures(monkeypatch):
+def test_poll_until_done_gives_up_after_repeated_network_failures(monkeypatch):
     monkeypatch.setattr(
-        "lerobot.jobs.hf.inspect_job", lambda job_id: (_ for _ in ()).throw(RuntimeError("boom"))
+        "lerobot.jobs.hf.inspect_job", lambda job_id: (_ for _ in ()).throw(httpx.ConnectError("boom"))
     )
     done = threading.Event()
     result = _poll_until_done("j", done, poll_interval=0.001, max_failures=3)
     assert result is None
     assert done.is_set()
+
+
+def test_poll_until_done_propagates_programming_errors(monkeypatch):
+    """A bug (e.g. TypeError) must surface, not be silently retried as a transient failure."""
+    monkeypatch.setattr("lerobot.jobs.hf.inspect_job", lambda job_id: (_ for _ in ()).throw(TypeError("bug")))
+    done = threading.Event()
+    with pytest.raises(TypeError):
+        _poll_until_done("j", done, poll_interval=0.001, max_failures=3)
 
 
 def test_resolve_wandb_key_from_env(monkeypatch):
@@ -119,6 +128,23 @@ def _minimal_cfg():
         TrainPipelineConfig,
         args=["--dataset.repo_id", "u/d", "--policy.type", "act", "--job.target", "a10g-small"],
     )
+
+
+def test_validate_skips_repo_id_check_for_remote():
+    """Remote runs auto-assign repo_id in submit_to_hf, so validate() must not demand it up front."""
+    cfg = _minimal_cfg()  # remote target, push_to_hub default True, no explicit repo_id
+    assert cfg.policy.repo_id is None
+    cfg.validate()  # must not raise
+
+
+def test_validate_requires_repo_id_for_local_push():
+    """Local runs that push to the Hub still need an explicit repo_id."""
+    cfg = draccus.parse(
+        TrainPipelineConfig,
+        args=["--dataset.repo_id", "u/d", "--policy.type", "act"],
+    )
+    with pytest.raises(ValueError, match="repo_id"):
+        cfg.validate()
 
 
 def test_build_remote_config_applies_overrides(tmp_path):
@@ -192,7 +218,7 @@ def test_submit_requires_login(monkeypatch):
 
 
 def test_submit_passes_validation_and_submits(monkeypatch):
-    """Regression: repo_id must be set BEFORE cfg.validate() or validation raises."""
+    """A type-based policy with no explicit repo_id is auto-assigned one and submitted."""
     from unittest.mock import MagicMock
 
     # Patch get_token
@@ -259,6 +285,27 @@ def test_submit_passes_validation_and_submits(monkeypatch):
     assert call["secrets"]["HF_TOKEN"] == "tok"
     # Every job carries the lerobot tag as a queryable label.
     assert call["labels"].get("lerobot") == "true"
+
+
+def test_submit_rejects_reward_model_training(monkeypatch):
+    """Remote training only supports policies; reward-model runs fail fast with a clear error."""
+    monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
+
+    class FakeHfApi:
+        def __init__(self, token=None):
+            pass
+
+        def whoami(self, token=None):
+            return {"name": "alice"}
+
+    monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
+
+    cfg = _minimal_cfg()
+    cfg.reward_model = SimpleNamespace(type="reward")  # marks this as reward-model training
+    monkeypatch.setattr(cfg, "validate", lambda: None)  # skip pretrained-path resolution
+
+    with pytest.raises(ValueError, match="reward model"):
+        submit_to_hf(cfg)
 
 
 @pytest.mark.timeout(15)

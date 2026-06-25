@@ -31,6 +31,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import httpx
 from huggingface_hub import (
     HfApi,
     create_repo,
@@ -47,6 +48,12 @@ if TYPE_CHECKING:
 _SLUG_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 _TERMINAL_STAGES = {"COMPLETED", "CANCELED", "ERROR", "DELETED"}
+
+# huggingface_hub 1.x runs on httpx: transient HTTP/transport failures surface as
+# httpx.HTTPError and socket-level errors as OSError. Catching only these keeps real
+# bugs (TypeError, AttributeError, ...) from being silently retried or counted as
+# job failures.
+_TRANSIENT_NET_ERRORS = (OSError, httpx.HTTPError)
 
 # Always attached to remote jobs and pushed datasets so LeRobot-originated work
 # is identifiable on the Hub; callers (e.g. LeLab) add their own via --job.tags.
@@ -170,7 +177,7 @@ def _tail_logs(
             # the job terminal before we reconnect (avoids re-tailing the buffer).
             if done.wait(3):
                 return
-        except Exception:
+        except _TRANSIENT_NET_ERRORS:
             if done.wait(2):
                 return
 
@@ -200,7 +207,7 @@ def _poll_until_done(
                     status_holder["message"] = getattr(info.status, "message", None)
                 done.set()
                 return stage
-        except Exception:
+        except _TRANSIENT_NET_ERRORS:
             failures += 1
             if failures >= max_failures:
                 done.set()
@@ -226,17 +233,23 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
     user_info = api.whoami(token=token)
     username = user_info["name"]
 
-    now = dt.datetime.now()
-    if cfg.policy is not None:
-        base_name = cfg.job_name or cfg.policy.type
-        repo_id = cfg.policy.repo_id or build_repo_id(username, base_name, now)
-        cfg.policy.repo_id = repo_id
-        cfg.policy.push_to_hub = True
-    else:
-        # Path-based policy is resolved inside validate(); fall back to a generic slug.
-        repo_id = build_repo_id(username, cfg.job_name or "train", now)
-
+    # validate() resolves a `--policy.path=...` policy into cfg.policy and skips its
+    # repo_id requirement for remote runs (we assign one below), so it's safe to run first.
     cfg.validate()
+
+    if cfg.is_reward_model_training:
+        raise ValueError(
+            "Remote training via --job.target only supports policy training, not reward models. "
+            "Run reward-model training locally."
+        )
+
+    # Auto-generate the model repo unless the user pinned one. cfg.policy is guaranteed
+    # set here (validate() raises if neither policy nor reward_model is configured, and
+    # reward-model runs are rejected above).
+    now = dt.datetime.now(dt.UTC)
+    repo_id = cfg.policy.repo_id or build_repo_id(username, cfg.job_name or cfg.policy.type, now)
+    cfg.policy.repo_id = repo_id
+    cfg.policy.push_to_hub = True
 
     secrets: dict[str, str] = {"HF_TOKEN": token}
     if cfg.wandb.enable:
@@ -301,15 +314,21 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
         print(f"  Monitor: hf jobs logs {job_id}")
         print(f"  Cancel:  hf jobs cancel {job_id}")
 
-    original_sigint = signal.getsignal(signal.SIGINT)
-    signal.signal(signal.SIGINT, _detach)
+    # signal.signal only works on the main thread; when called from a worker thread
+    # (e.g. an orchestration framework) skip the Ctrl-C-detaches-instead-of-cancels
+    # handler rather than crashing with ValueError.
+    install_sigint = threading.current_thread() is threading.main_thread()
+    original_sigint = signal.getsignal(signal.SIGINT) if install_sigint else None
+    if install_sigint:
+        signal.signal(signal.SIGINT, _detach)
     try:
         # Timeout-based join so SIGINT is delivered to the main thread promptly.
         while poll_thread.is_alive():
             poll_thread.join(timeout=0.5)
         log_thread.join(timeout=5)
     finally:
-        signal.signal(signal.SIGINT, original_sigint)
+        if install_sigint:
+            signal.signal(signal.SIGINT, original_sigint)
 
     if detached.is_set():
         return
