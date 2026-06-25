@@ -1925,9 +1925,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         z_dim = vae.config.z_dim
         vae_device = next(vae.parameters()).device
         latents = latents.to(device=vae_device, dtype=vae.dtype)
-        latents = denormalize_latents(
-            latents, vae.config.latents_mean, vae.config.latents_std, z_dim
-        )
+        latents = denormalize_latents(latents, vae.config.latents_mean, vae.config.latents_std, z_dim)
         video = vae.decode(latents, return_dict=False)[0]  # [B, C, F, H, W] in [-1, 1]
         video = (video.float().clamp(-1, 1) + 1.0) / 2.0
         video = (video[0].permute(1, 2, 3, 0) * 255.0).round().to(torch.uint8)  # [F, H, W, C]

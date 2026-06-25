@@ -120,13 +120,17 @@ def _generate_robotwin_official_instruction(task_name: str, env: Any) -> str:
     fallback = task_name.replace("_", " ")
     episode_info = _robotwin_blocks_episode_info(task_name, env)
     if episode_info is None:
-        logger.warning("Official RoboTwin instruction is not implemented for task=%s; using %r.", task_name, fallback)
+        logger.warning(
+            "Official RoboTwin instruction is not implemented for task=%s; using %r.", task_name, fallback
+        )
         return fallback
 
     try:
         from description.utils.generate_episode_instructions import generate_episode_descriptions
     except Exception:
-        logger.warning("Failed to import RoboTwin official instruction generator; using %r.", fallback, exc_info=True)
+        logger.warning(
+            "Failed to import RoboTwin official instruction generator; using %r.", fallback, exc_info=True
+        )
         return fallback
 
     instruction_type = os.environ.get(OFFICIAL_INSTRUCTION_TYPE_ENV, "seen")
@@ -137,7 +141,9 @@ def _generate_robotwin_official_instruction(task_name: str, env: Any) -> str:
 
     results = generate_episode_descriptions(task_name, [episode_info], max_descriptions=max_descriptions)
     if not results:
-        logger.warning("RoboTwin generated no official instructions for task=%s; using %r.", task_name, fallback)
+        logger.warning(
+            "RoboTwin generated no official instructions for task=%s; using %r.", task_name, fallback
+        )
         return fallback
 
     options = results[0].get(instruction_type) or results[0].get("seen") or results[0].get("unseen")

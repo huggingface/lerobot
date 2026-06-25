@@ -320,7 +320,9 @@ def rollout(
             elif "is_success" in info:
                 is_success = info["is_success"]
                 successes = (
-                    is_success.tolist() if hasattr(is_success, "tolist") else [bool(is_success)] * env.num_envs
+                    is_success.tolist()
+                    if hasattr(is_success, "tolist")
+                    else [bool(is_success)] * env.num_envs
                 )
             else:
                 successes = [False] * env.num_envs
