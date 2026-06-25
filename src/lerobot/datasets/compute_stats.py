@@ -242,12 +242,12 @@ def sample_images(image_paths: list[str]) -> np.ndarray:
     images = None
     for i, idx in enumerate(sampled_indices):
         path = image_paths[idx]
-        # we load RGB images as uint8 to reduce memory usage
+        # we load RGB images as uint8 to reduce memory usage; depth keeps its native dtype
         img = load_image_as_numpy(path, dtype=np.uint8, channel_first=True)
         img = auto_downsample_height_width(img)
 
         if images is None:
-            images = np.empty((len(sampled_indices), *img.shape), dtype=np.uint8)
+            images = np.empty((len(sampled_indices), *img.shape), dtype=img.dtype)
 
         images[i] = img
 
