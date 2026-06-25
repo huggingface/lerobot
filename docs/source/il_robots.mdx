@@ -630,7 +630,7 @@ If your dataset exists only locally (not yet on the Hub), it is automatically pu
 
 Every job (and any dataset pushed by the run) is tagged `lerobot` so it's easy to find on the Hub. Add your own with `--job.tags '["my-tag"]'`.
 
-By default the job runs until training finishes, with no time limit. Cap it with an HF Jobs duration string if you want a hard ceiling, e.g. `--job.timeout=4h`.
+By default the job is capped at `2d` (48h) of wall-clock. Override it with an HF Jobs duration string, e.g. `--job.timeout=4h` to fail faster or `--job.timeout=7d` for a longer run.
 
 > **Note:** the model repo is created up front (it holds the staged training config the job runs from). If a run fails before the model is pushed, that repo is left on the Hub so you can inspect it — it is not deleted automatically, so repeated failures can leave empty repos behind. Remove one with `hf repo delete <repo-id>`.
 

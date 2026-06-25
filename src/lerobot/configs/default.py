@@ -156,8 +156,9 @@ class JobConfig:
     # Runtime image for the remote job (ignored for local runs).
     image: str = "huggingface/lerobot-gpu:latest"
     # Max wall-clock for the remote job as an HF Jobs duration string (e.g. "2h").
-    # None (default) imposes no timeout — the job runs until the command finishes.
-    timeout: str | None = None
+    # Defaults to "2d": We pass an explicit, generous cap instead. Set a smaller
+    # value to fail fast, or a larger one for long runs.
+    timeout: str | None = "2d"
     # Submit and exit instead of streaming the job logs in the foreground.
     detach: bool = False
     # Extra tags attached to the HF job and to any dataset this run pushes to the

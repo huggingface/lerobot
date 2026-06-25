@@ -24,7 +24,7 @@ def test_jobconfig_defaults_are_local():
     assert cfg.target is None
     assert cfg.is_remote is False
     assert cfg.image == "huggingface/lerobot-gpu:latest"
-    assert cfg.timeout is None
+    assert cfg.timeout == "2d"
     assert cfg.detach is False
 
 
