@@ -136,3 +136,18 @@ def test_save_load_training_state(tmp_path, optimizer, scheduler):
     assert loaded_step == 10
     assert loaded_optimizer is optimizer
     assert loaded_scheduler is scheduler
+
+
+def test_load_training_state_skip_optimizer(tmp_path, optimizer, scheduler):
+    # FSDP loads optimizer separately (after accelerator.prepare)
+    # load_training_state(load_optimizer=False) must restore step + scheduler but leave the
+    # optimizer untouched and never touch the on-disk optimizer state.
+    save_training_state(tmp_path, 10, optimizer, scheduler)
+    with patch("lerobot.common.train_utils.load_optimizer_state") as mock_load_optimizer_state:
+        loaded_step, loaded_optimizer, loaded_scheduler = load_training_state(
+            tmp_path, optimizer, scheduler, load_optimizer=False
+        )
+    mock_load_optimizer_state.assert_not_called()
+    assert loaded_step == 10
+    assert loaded_optimizer is optimizer
+    assert loaded_scheduler is scheduler
