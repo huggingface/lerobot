@@ -44,7 +44,7 @@ def test_chunk_size_and_action_steps() -> None:
     assert cfg.chunk_size == 16
     assert cfg.n_action_steps == 16
     assert cfg.action_delta_indices == list(range(16))
-    assert cfg.observation_delta_indices is None
+    assert cfg.observation_delta_indices == list(range(16))
     assert cfg.reward_delta_indices is None
 
 
