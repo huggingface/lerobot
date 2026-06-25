@@ -24,6 +24,7 @@ python src/lerobot/async_inference/robot_client.py \
     --server_address=127.0.0.1:8080 \
     --client_device=cpu \
     --chunk_size_threshold=0.5 \
+    --enable_pending_observation=True \
     --pending_observation_timeout_s=2.0 \
     --aggregate_fn_name=weighted_average \
     --debug_visualize_queue_size=True
@@ -210,9 +211,10 @@ class RobotClient:
                 silent=True,
             )
             _ = self.stub.SendObservations(observation_iterator)
-            with self._pending_observation_lock:
-                self._pending_observation = True
-                self._pending_observation_sent_at = time.perf_counter()
+            if self.config.enable_pending_observation:
+                with self._pending_observation_lock:
+                    self._pending_observation = True
+                    self._pending_observation_sent_at = time.perf_counter()
             obs_timestep = obs.get_timestep()
             self.logger.debug(f"Sent observation #{obs_timestep} | ")
 
@@ -308,9 +310,10 @@ class RobotClient:
 
                 # Log device type of received actions
                 if len(timed_actions) > 0:
-                    with self._pending_observation_lock:
-                        self._pending_observation = False
-                        self._pending_observation_sent_at = None
+                    if self.config.enable_pending_observation:
+                        with self._pending_observation_lock:
+                            self._pending_observation = False
+                            self._pending_observation_sent_at = None
 
                     received_device = timed_actions[0].get_action().device.type
                     self.logger.debug(f"Received actions on device: {received_device}")
@@ -426,17 +429,18 @@ class RobotClient:
 
     def _ready_to_send_observation(self):
         """Flags when the client is ready to send an observation"""
-        with self._pending_observation_lock:
-            if self._pending_observation:
-                elapsed = time.perf_counter() - self._pending_observation_sent_at
-                if elapsed <= self.config.pending_observation_timeout_s:
-                    return False
+        if self.config.enable_pending_observation:
+            with self._pending_observation_lock:
+                if self._pending_observation:
+                    elapsed = time.perf_counter() - self._pending_observation_sent_at
+                    if elapsed <= self.config.pending_observation_timeout_s:
+                        return False
 
-                self.logger.warning(
-                    f"Pending observation timed out after {elapsed:.2f}s; sending a new observation."
-                )
-                self._pending_observation = False
-                self._pending_observation_sent_at = None
+                    self.logger.warning(
+                        f"Pending observation timed out after {elapsed:.2f}s; sending a new observation."
+                    )
+                    self._pending_observation = False
+                    self._pending_observation_sent_at = None
 
         with self.action_queue_lock:
             return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold

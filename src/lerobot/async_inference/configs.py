@@ -167,6 +167,13 @@ class RobotClientConfig:
 
     # Control behavior configuration
     chunk_size_threshold: float = field(default=0.5, metadata={"help": "Threshold for chunk size control"})
+    enable_pending_observation: bool = field(
+        default=True,
+        metadata={
+            "help": "If true, send at most one in-flight observation until an action chunk is received or "
+            "pending_observation_timeout_s expires."
+        },
+    )
     pending_observation_timeout_s: float = field(
         default=2.0,
         metadata={
@@ -216,7 +223,7 @@ class RobotClientConfig:
         if self.chunk_size_threshold < 0 or self.chunk_size_threshold > 1:
             raise ValueError(f"chunk_size_threshold must be between 0 and 1, got {self.chunk_size_threshold}")
 
-        if self.pending_observation_timeout_s <= 0:
+        if self.enable_pending_observation and self.pending_observation_timeout_s <= 0:
             raise ValueError(
                 f"pending_observation_timeout_s must be positive, got {self.pending_observation_timeout_s}"
             )
@@ -243,6 +250,7 @@ class RobotClientConfig:
             "policy_device": self.policy_device,
             "client_device": self.client_device,
             "chunk_size_threshold": self.chunk_size_threshold,
+            "enable_pending_observation": self.enable_pending_observation,
             "pending_observation_timeout_s": self.pending_observation_timeout_s,
             "fps": self.fps,
             "actions_per_chunk": self.actions_per_chunk,

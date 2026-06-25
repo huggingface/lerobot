@@ -260,6 +260,19 @@ def test_ready_to_send_observation_allows_retry_after_pending_timeout(robot_clie
     assert robot_client._pending_observation_sent_at is None
 
 
+def test_ready_to_send_observation_ignores_pending_when_disabled(robot_client):
+    """The pending-observation gate can be disabled to restore continuous observation streaming."""
+
+    robot_client.config.enable_pending_observation = False
+    robot_client.action_chunk_size = 10
+    robot_client.action_queue = Queue()
+    robot_client._pending_observation = True
+    robot_client._pending_observation_sent_at = time.perf_counter()
+
+    assert robot_client._ready_to_send_observation() is True
+    assert robot_client._pending_observation is True
+
+
 # -----------------------------------------------------------------------------
 # Regression test: robot type registry populated by robot_client imports
 # -----------------------------------------------------------------------------
