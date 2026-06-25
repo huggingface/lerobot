@@ -50,6 +50,8 @@ def test_dataset_local_only_uploads_privately(tmp_path, monkeypatch):
     fake_datasets_module = MagicMock()
     fake_datasets_module.LeRobotDataset = mock_ds_cls
     monkeypatch.setitem(sys.modules, "lerobot.datasets", fake_datasets_module)
+    # The `datasets` extra isn't installed in the base test env; skip the import guard.
+    monkeypatch.setattr("lerobot.jobs.dataset.require_package", lambda *a, **k: None)
 
     assert ensure_dataset_available("user/ds", api=api, tags=["lerobot", "lelab"]) is None
 
