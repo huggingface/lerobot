@@ -170,6 +170,14 @@ def test_push_checkpoint_to_hub_creates_repo_and_uploads(tmp_path, monkeypatch):
     assert kwargs["path_in_repo"] == "checkpoints/010000"
     assert kwargs["folder_path"] == str(ckpt)
     assert kwargs["commit_message"] == "checkpoint 010000"
+    # A tag named after the checkpoint step is created so the checkpoint can be
+    # recovered with --policy.pretrained_revision instead of a commit sha.
+    api.create_tag.assert_called_once()
+    tag_kwargs = api.create_tag.call_args.kwargs
+    assert tag_kwargs["tag"] == "010000"
+    assert tag_kwargs["revision"] == api.upload_folder.return_value.oid
+    assert tag_kwargs["repo_type"] == "model"
+    assert tag_kwargs["exist_ok"] is True
 
 
 def test_push_checkpoint_to_hub_defaults_to_hub_default_visibility(tmp_path, monkeypatch):

@@ -296,14 +296,23 @@ def push_checkpoint_to_hub(
 
     Called once per save step when save_checkpoint_to_hub is enabled, so a
     timed-out or crashed run still leaves recoverable checkpoints on the Hub.
-    The model repo is created idempotently.
+    The model repo is created idempotently, and the commit is tagged with the
+    checkpoint step so a checkpoint can be recovered with
+    --policy.pretrained_revision=<step> instead of a commit sha.
     """
     api = HfApi()
     api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
-    api.upload_folder(
+    commit = api.upload_folder(
         folder_path=str(checkpoint_dir),
         repo_id=repo_id,
         repo_type="model",
         path_in_repo=f"checkpoints/{checkpoint_dir.name}",
         commit_message=f"checkpoint {checkpoint_dir.name}",
+    )
+    api.create_tag(
+        repo_id=repo_id,
+        tag=checkpoint_dir.name,
+        revision=commit.oid,
+        repo_type="model",
+        exist_ok=True,
     )
