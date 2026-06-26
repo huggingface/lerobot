@@ -1,0 +1,17 @@
+The video above shows a robot manipulation episode in full. Look at
+the entire video and describe in ONE concise sentence what the robot
+is doing.
+
+Rules:
+- One sentence, in natural English, like a user instruction.
+- Capture the goal of the demonstration, not low-level motions.
+  Example: "place the yellow cube into the red bin" — not "move the
+  end-effector down 5cm and close the gripper".
+- 4 to 15 words. Plain prose, no markdown, no bullets, no quotes.
+- Do not invent objects or actions that aren't visible.
+- Do not output anything other than the JSON object below.
+
+Output strictly valid JSON:
+  {{
+    "task": "<single concise sentence describing what the robot does in this video>"
+  }}

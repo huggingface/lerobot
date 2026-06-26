@@ -201,8 +201,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         super().__init__()
         self.repo_id = repo_id
         self._requested_root = Path(root) if root else None
-        self.reader = None
-        self.set_image_transforms(image_transforms)
         self.delta_timestamps = delta_timestamps
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
@@ -249,6 +247,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             image_transforms=image_transforms,
             return_uint8=self._return_uint8,
         )
+        self.image_transforms = image_transforms
 
         # Load actual data
         if force_cache_sync or not self.reader.try_load():
@@ -369,6 +368,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.reader.hf_dataset is None:
             self.reader.load_and_activate()
         return self.reader.hf_dataset
+
+    @property
+    def absolute_to_relative_idx(self) -> dict[int, int] | None:
+        """Mapping from absolute frame indices to HF dataset row positions.
+
+        Non-None only for episode-filtered datasets where absolute indices
+        (from metadata) differ from row positions in the loaded HF dataset.
+        """
+        reader = self._ensure_reader()
+        if reader.hf_dataset is None:
+            reader.load_and_activate()
+        return reader._absolute_to_relative_idx
 
     # ── Writer-delegated methods ──────────────────────────────────────
 
@@ -505,15 +516,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def set_image_transforms(self, image_transforms: Callable | None) -> None:
         """Replace the transform applied to visual observations."""
-        if image_transforms is not None and not callable(image_transforms):
-            raise TypeError("image_transforms must be callable or None.")
+        self._ensure_reader().set_image_transforms(image_transforms)
         self.image_transforms = image_transforms
-        if self.reader is not None:
-            self.reader._image_transforms = image_transforms
 
     def clear_image_transforms(self) -> None:
         """Remove the transform applied to visual observations."""
-        self.set_image_transforms(None)
+        if self.reader is not None:
+            self.reader.set_image_transforms(None)
+        self.image_transforms = None
 
     # ── Hub methods (stay on facade) ──────────────────────────────────
 

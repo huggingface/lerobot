@@ -39,8 +39,12 @@ class DatasetConfig:
     # This reduces memory and speeds up DataLoader IPC. The training pipeline handles the conversion.
     return_uint8: bool = False
     streaming: bool = False
+    # Fraction of episodes held out per task for offline evaluation (0.0 = disabled).
+    eval_split: float = 0.0
 
     def __post_init__(self) -> None:
+        if not (0.0 <= self.eval_split < 1.0):
+            raise ValueError(f"eval_split must be in [0.0, 1.0), got {self.eval_split}")
         if self.episodes is not None:
             if any(ep < 0 for ep in self.episodes):
                 raise ValueError(
@@ -73,8 +77,17 @@ class EvalConfig:
     # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
     # Defaults to True; automatically downgraded to SyncVectorEnv when batch_size=1.
     use_async_envs: bool = True
+    # Whether to record eval rollouts as a LeRobot dataset on disk.
+    recording: bool = False
+    # If set, push recorded eval datasets to the Hub under this repo id (one repo per task,
+    # suffixed by task and env index). Requires recording=true.
+    recording_repo_id: str | None = None
+    # Whether the pushed recording repositories should be private.
+    recording_private: bool = False
 
     def __post_init__(self) -> None:
+        if self.recording_repo_id is not None and not self.recording:
+            raise ValueError("eval.recording_repo_id requires eval.recording=true.")
         if self.batch_size == 0:
             self.batch_size = self._auto_batch_size()
         if self.batch_size > self.n_episodes:
