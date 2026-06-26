@@ -256,7 +256,7 @@ def _build_resume_job(cfg: TrainPipelineConfig, username: str) -> tuple[str, lis
     config_path = parser.parse_arg("config_path")
     forwarded = _pod_forwarded_args(
         sys.argv[1:],
-        drop_names=("--config_path", "--policy.repo_id", "--policy.push_to_hub"),
+        drop_names=("--config_path", "--policy.repo_id", "--policy.push_to_hub", "--dataset.root"),
         drop_prefixes=("--job.",),
     )
 

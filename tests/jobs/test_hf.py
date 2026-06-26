@@ -23,6 +23,7 @@ import pytest
 
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.jobs.hf import (
+    _pod_forwarded_args,
     _poll_until_done,
     build_remote_config_file,
     build_repo_id,
@@ -121,6 +122,29 @@ def test_build_repo_id_sanitizes_and_timestamps():
     assert build_repo_id("alice", "my cool/run!!", now) == "alice/my-cool-run_2026-06-19_10-22-03"
     # A name with nothing usable falls back to "train".
     assert build_repo_id("alice", "///", now) == "alice/train_2026-06-19_10-22-03"
+
+
+def test_pod_forwarded_args_drops_host_only_flags():
+    """User overrides are replayed on the pod, minus flags that only make sense on the submitter.
+
+    `--dataset.root` is a host-local path the pod can't read, so it must be dropped in both the
+    `--name=value` and `--name value` forms; unrelated overrides are forwarded untouched.
+    """
+    argv = [
+        "--config_path=u/d",
+        "--dataset.root=/local/data",
+        "--dataset.root",
+        "/other/local/data",
+        "--policy.repo_id=u/keep",
+        "--steps=10",
+        "--job.target=a10g-small",
+    ]
+    forwarded = _pod_forwarded_args(
+        argv,
+        drop_names=("--config_path", "--policy.repo_id", "--policy.push_to_hub", "--dataset.root"),
+        drop_prefixes=("--job.",),
+    )
+    assert forwarded == ["--steps=10"]
 
 
 def _minimal_cfg():
