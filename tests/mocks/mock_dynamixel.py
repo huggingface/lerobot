@@ -21,9 +21,24 @@ import dynamixel_sdk as dxl
 import serial
 from mock_serial.mock_serial import MockSerial
 
-from lerobot.motors.dynamixel.dynamixel import _split_into_byte_chunks
-
 from .mock_serial_patch import WaitableStub
+
+
+def _split_into_byte_chunks(value: int, length: int) -> list[int]:
+    """Split an integer into a list of byte-sized integers (little-endian)."""
+    if length == 1:
+        data = [value]
+    elif length == 2:
+        data = [dxl.DXL_LOBYTE(value), dxl.DXL_HIBYTE(value)]
+    elif length == 4:
+        data = [
+            dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
+            dxl.DXL_HIBYTE(dxl.DXL_LOWORD(value)),
+            dxl.DXL_LOBYTE(dxl.DXL_HIWORD(value)),
+            dxl.DXL_HIBYTE(dxl.DXL_HIWORD(value)),
+        ]
+    return data
+
 
 # https://emanual.robotis.com/docs/en/dxl/crc/
 DXL_CRC_TABLE = [

@@ -4,7 +4,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -18,17 +17,20 @@
 import math
 import time
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
 import numpy as np
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.teleoperators.teleoperator import Teleoperator
+from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.teleoperators.utils import TeleopEvents
 
-from .core import EnvTransition, PolicyAction, TransitionKey
+if TYPE_CHECKING:
+    from lerobot.teleoperators.teleoperator import Teleoperator
+
+from lerobot.types import EnvTransition, PolicyAction, TransitionKey
+
 from .pipeline import (
     ComplementaryDataProcessorStep,
     InfoProcessorStep,
@@ -69,10 +71,10 @@ class HasTeleopEvents(Protocol):
 
 
 # Type variable constrained to Teleoperator subclasses that also implement events
-TeleopWithEvents = TypeVar("TeleopWithEvents", bound=Teleoperator)
+TeleopWithEvents = TypeVar("TeleopWithEvents", bound="Teleoperator")
 
 
-def _check_teleop_with_events(teleop: Teleoperator) -> None:
+def _check_teleop_with_events(teleop: "Teleoperator") -> None:
     """
     Runtime check that a teleoperator implements the `HasTeleopEvents` protocol.
 
@@ -103,7 +105,7 @@ class AddTeleopActionAsComplimentaryDataStep(ComplementaryDataProcessorStep):
         teleop_device: The teleoperator instance to get the action from.
     """
 
-    teleop_device: Teleoperator
+    teleop_device: "Teleoperator"
 
     def complementary_data(self, complementary_data: dict) -> dict:
         """
@@ -310,45 +312,91 @@ class TimeLimitProcessorStep(TruncatedProcessorStep):
         return features
 
 
+@ProcessorStepRegistry.register("gym_hil_adapter_processor")
+class GymHILAdapterProcessorStep(ProcessorStep):
+    """
+    Adapts the output of the `gym-hil` environment to the format expected by `lerobot` processors.
+
+    This step normalizes the `transition` object by:
+    1. Copying `teleop_action` from `info` to `complementary_data`.
+    2. Copying `is_intervention` from `info` (using the string key) to `info` (using the enum key).
+    3. Copying `discrete_penalty` from `info` to `complementary_data`.
+    """
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        info = transition.get(TransitionKey.INFO, {})
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+
+        if TELEOP_ACTION_KEY in info:
+            complementary_data[TELEOP_ACTION_KEY] = info[TELEOP_ACTION_KEY]
+
+        if DISCRETE_PENALTY_KEY in info:
+            complementary_data[DISCRETE_PENALTY_KEY] = info[DISCRETE_PENALTY_KEY]
+
+        if "is_intervention" in info:
+            info[TeleopEvents.IS_INTERVENTION] = info["is_intervention"]
+
+        transition[TransitionKey.INFO] = info
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
+
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
 @dataclass
 @ProcessorStepRegistry.register("gripper_penalty_processor")
-class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
+class GripperPenaltyProcessorStep(ProcessorStep):
     """
-    Applies a penalty for inefficient gripper usage.
+    Applies a small per-transition cost on the discrete gripper action.
 
-    This step penalizes actions that attempt to close an already closed gripper or
-    open an already open one, based on position thresholds.
+    Fires only when the commanded action would actually transition the gripper
+    from one extreme to the other (close-while-open or open-while-closed).
+    This discourages gripper oscillation while leaving "stay" and saturating-further
+    commands unpenalized.
 
     Attributes:
         penalty: The negative reward value to apply.
         max_gripper_pos: The maximum position value for the gripper, used for normalization.
+        open_threshold: Normalized state below which the gripper is considered "open".
+        closed_threshold: Normalized state above which the gripper is considered "closed".
     """
 
-    penalty: float = -0.01
+    penalty: float = -0.02
     max_gripper_pos: float = 30.0
+    open_threshold: float = 0.1
+    closed_threshold: float = 0.9
 
-    def complementary_data(self, complementary_data: dict) -> dict:
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
         Calculates the gripper penalty and adds it to the complementary data.
 
         Args:
-            complementary_data: The incoming complementary data, which should contain
-                                raw joint positions.
+            transition: The incoming environment transition.
 
         Returns:
-            A new complementary data dictionary with the `discrete_penalty` key added.
+            The modified transition with the penalty added to complementary data.
         """
-        action = self.transition.get(TransitionKey.ACTION)
+        new_transition = transition.copy()
+        action = new_transition.get(TransitionKey.ACTION)
+        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
 
         raw_joint_positions = complementary_data.get("raw_joint_positions")
         if raw_joint_positions is None:
-            return complementary_data
+            return new_transition
 
-        current_gripper_pos = raw_joint_positions.get(GRIPPER_KEY, None)
+        current_gripper_pos = raw_joint_positions.get(f"{GRIPPER_KEY}.pos", None)
         if current_gripper_pos is None:
-            return complementary_data
+            return new_transition
 
-        # Gripper action is a PolicyAction at this stage
+        # During reset, the transition may not carry any action yet.
+        if action is None:
+            return new_transition
+
+        # Gripper action is expected as the last action dimension.
         gripper_action = action[-1].item()
         gripper_action_normalized = gripper_action / self.max_gripper_pos
 
@@ -356,28 +404,36 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
         gripper_state_normalized = current_gripper_pos / self.max_gripper_pos
 
         # Calculate penalty boolean as in original
-        gripper_penalty_bool = (gripper_state_normalized < 0.5 and gripper_action_normalized > 0.5) or (
-            gripper_state_normalized > 0.75 and gripper_action_normalized < 0.5
-        )
+        #   - currently open  AND target is closed  -> close transition
+        #   - currently closed AND target is open   -> open transition
+        is_open = gripper_state_normalized < self.open_threshold
+        is_closed = gripper_state_normalized > self.closed_threshold
+        cmd_close = gripper_action_normalized > self.closed_threshold
+        cmd_open = gripper_action_normalized < self.open_threshold
+        gripper_penalty_bool = (is_open and cmd_close) or (is_closed and cmd_open)
 
         gripper_penalty = self.penalty * int(gripper_penalty_bool)
 
-        # Create new complementary data with penalty info
+        # Update complementary data with penalty info
         new_complementary_data = dict(complementary_data)
         new_complementary_data[DISCRETE_PENALTY_KEY] = gripper_penalty
+        new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
 
-        return new_complementary_data
+        return new_transition
 
     def get_config(self) -> dict[str, Any]:
         """
         Returns the configuration of the step for serialization.
 
         Returns:
-            A dictionary containing the penalty value and max gripper position.
+            A dictionary containing the penalty value, max gripper position,
+            and the open/closed thresholds.
         """
         return {
             "penalty": self.penalty,
             "max_gripper_pos": self.max_gripper_pos,
+            "open_threshold": self.open_threshold,
+            "closed_threshold": self.closed_threshold,
         }
 
     def reset(self) -> None:
@@ -521,7 +577,7 @@ class RewardClassifierProcessorStep(ProcessorStep):
     def __post_init__(self):
         """Initializes the reward classifier model after the dataclass is created."""
         if self.pretrained_path is not None:
-            from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
+            from lerobot.rewards.classifier.modeling_classifier import Classifier
 
             self.reward_classifier = Classifier.from_pretrained(self.pretrained_path)
             self.reward_classifier.to(self.device)

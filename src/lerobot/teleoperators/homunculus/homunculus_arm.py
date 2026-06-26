@@ -18,11 +18,16 @@ import logging
 import threading
 from collections import deque
 from pprint import pformat
-
-import serial
+from typing import TYPE_CHECKING
 
 from lerobot.motors.motors_bus import MotorCalibration, MotorNormMode
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.import_utils import _serial_available, require_package
+
+if TYPE_CHECKING or _serial_available:
+    import serial
+else:
+    serial = None  # type: ignore[assignment]
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 from ..teleoperator import Teleoperator
@@ -40,6 +45,7 @@ class HomunculusArm(Teleoperator):
     name = "homunculus_arm"
 
     def __init__(self, config: HomunculusArmConfig):
+        require_package("pyserial", extra="pyserial-dep", import_name="serial")
         super().__init__(config)
         self.config = config
         self.serial = serial.Serial(config.port, config.baud_rate, timeout=1)
@@ -93,10 +99,8 @@ class HomunculusArm(Teleoperator):
         with self.serial_lock:
             return self.serial.is_open and self.thread.is_alive()
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
-
         if not self.serial.is_open:
             self.serial.open()
         self.thread.start()
@@ -299,6 +303,7 @@ class HomunculusArm(Teleoperator):
             except Exception as e:
                 logger.debug(f"Error reading frame in background thread for {self}: {e}")
 
+    @check_if_not_connected
     def get_action(self) -> dict[str, float]:
         joint_positions = self._read()
         return {f"{joint}.pos": pos for joint, pos in joint_positions.items()}
@@ -306,10 +311,8 @@ class HomunculusArm(Teleoperator):
     def send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError
 
+    @check_if_not_connected
     def disconnect(self) -> None:
-        if not self.is_connected:
-            DeviceNotConnectedError(f"{self} is not connected.")
-
         self.stop_event.set()
         self.thread.join(timeout=1)
         self.serial.close()

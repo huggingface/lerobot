@@ -15,6 +15,9 @@
 # limitations under the License.
 """Evaluate a policy on an environment by running rollouts and computing metrics.
 
+Requires: pip install 'lerobot[evaluation]' plus the policy extra (e.g. lerobot[pi])
+          and the environment extra (e.g. lerobot[pusht]) if evaluating in simulation.
+
 Usage examples:
 
 You want to evaluate a model from the hub (eg: https://huggingface.co/lerobot/diffusion_pusht)
@@ -69,36 +72,103 @@ from termcolor import colored
 from torch import Tensor, nn
 from tqdm import trange
 
-from lerobot.configs import parser
+from lerobot.configs import FeatureType, parser
 from lerobot.configs.eval import EvalPipelineConfig
-from lerobot.envs.factory import make_env
-from lerobot.envs.utils import (
-    add_envs_task,
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.envs import (
     check_env_attributes_and_types,
     close_envs,
+    make_env,
+    make_env_pre_post_processors,
     preprocess_observation,
 )
-from lerobot.policies.factory import make_policy, make_pre_post_processors
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import PolicyAction, PolicyProcessorPipeline
-from lerobot.utils.constants import ACTION, DONE, OBS_STR, REWARD
+from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
+from lerobot.processor import PolicyProcessorPipeline
+from lerobot.types import PolicyAction
+from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
+from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
-    get_safe_torch_device,
     init_logging,
     inside_slurm,
 )
 
 
+def _env_features_to_dataset_features(env_features: dict) -> dict:
+    """Convert EnvConfig.features to the dict format expected by LeRobotDataset.create()."""
+    features = {}
+    for key, ft in env_features.items():
+        shape = tuple(ft.shape)
+        if ft.type is FeatureType.VISUAL:
+            features[key] = {"dtype": "video", "shape": shape, "names": ["height", "width", "channel"]}
+        else:
+            features[key] = {"dtype": "float32", "shape": shape, "names": None}
+    features["next.reward"] = {"dtype": "float32", "shape": (1,), "names": None}
+    features["next.success"] = {"dtype": "bool", "shape": (1,), "names": None}
+    features["next.done"] = {"dtype": "bool", "shape": (1,), "names": None}
+    return features
+
+
+def _build_raw_frame(
+    raw_obs: dict,
+    env_idx: int,
+    action: np.ndarray,
+    reward: float,
+    success: bool,
+    done: bool,
+    task: str,
+    env_features: dict,
+) -> dict:
+    """Build a dataset frame from raw env observations for one env index.
+
+    Keys in the frame match the keys in env_features so they align with the
+    dataset schema created by _env_features_to_dataset_features().
+    """
+    frame: dict[str, Any] = {}
+    for key in env_features:
+        if key == ACTION:
+            continue
+        if key.startswith("next."):
+            continue
+        if "pixels" in raw_obs and isinstance(raw_obs["pixels"], dict):
+            for cam_name, img in raw_obs["pixels"].items():
+                candidate = f"{OBS_IMAGES}.{cam_name}"
+                if candidate == key:
+                    frame[key] = img[env_idx]
+            if key in frame:
+                continue
+        if "pixels" in raw_obs and not isinstance(raw_obs["pixels"], dict) and key in ("pixels", OBS_IMAGE):
+            frame[key] = raw_obs["pixels"][env_idx]
+            continue
+        if key in raw_obs and isinstance(raw_obs[key], np.ndarray):
+            val = raw_obs[key][env_idx]
+            if val.dtype == np.float64:
+                val = val.astype(np.float32)
+            frame[key] = val
+    frame[ACTION] = action
+    frame["next.reward"] = np.atleast_1d(np.float32(reward))
+    frame["next.success"] = np.atleast_1d(np.bool_(success))
+    frame["next.done"] = np.atleast_1d(np.bool_(done))
+    frame["task"] = task
+    return frame
+
+
 def rollout(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
+    env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     seeds: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
+    recording_dir: Path | None = None,
+    env_features: dict | None = None,
+    recording_repo_id: str | None = None,
+    recording_private: bool = False,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -139,6 +209,33 @@ def rollout(
     if render_callback is not None:
         render_callback(env)
 
+    recording_datasets: list[LeRobotDataset] | None = None
+    raw_observation = None
+    task_desc = ""
+    if recording_dir is not None and env_features is not None:
+        features = _env_features_to_dataset_features(env_features)
+        fps = env.unwrapped.metadata.get("render_fps", 30)
+        recording_datasets = []
+        multi_env = env.num_envs > 1
+        base_repo_id = recording_repo_id or "eval_recording"
+        for i in range(env.num_envs):
+            root = str(recording_dir / f"env_{i}") if multi_env else str(recording_dir)
+            repo_id = f"{base_repo_id}_env_{i}" if multi_env else base_repo_id
+            recording_datasets.append(
+                LeRobotDataset.create(
+                    repo_id=repo_id,
+                    fps=fps,
+                    features=features,
+                    root=root,
+                    use_videos=True,
+                )
+            )
+        raw_observation = deepcopy(observation)
+        try:
+            task_desc = list(env.call("task_description"))[0]
+        except (AttributeError, NotImplementedError):
+            task_desc = ""
+
     all_observations = []
     all_actions = []
     all_rewards = []
@@ -156,61 +253,112 @@ def rollout(
         leave=False,
     )
     check_env_attributes_and_types(env)
-    while not np.all(done) and step < max_steps:
-        # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-        observation = preprocess_observation(observation)
-        if return_observations:
-            all_observations.append(deepcopy(observation))
+    try:
+        while not np.all(done) and step < max_steps:
+            # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
+            observation = preprocess_observation(observation)
+            if return_observations:
+                all_observations.append(deepcopy(observation))
 
-        # Infer "task" from attributes of environments.
-        # TODO: works with SyncVectorEnv but not AsyncVectorEnv
-        observation = add_envs_task(env, observation)
-        observation = preprocessor(observation)
-        with torch.inference_mode():
-            action = policy.select_action(observation)
-        action = postprocessor(action)
+            # Infer "task" from sub-environments (prefer natural language description).
+            # env.call() works with both SyncVectorEnv and AsyncVectorEnv.
+            try:
+                observation["task"] = list(env.call("task_description"))
+            except (AttributeError, NotImplementedError):
+                try:
+                    observation["task"] = list(env.call("task"))
+                except (AttributeError, NotImplementedError):
+                    observation["task"] = [""] * env.num_envs
 
-        # Convert to CPU / numpy.
-        action_numpy: np.ndarray = action.to("cpu").numpy()
-        assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
+            # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
+            observation = env_preprocessor(observation)
 
-        # Apply the next action.
-        observation, reward, terminated, truncated, info = env.step(action_numpy)
-        if render_callback is not None:
-            render_callback(env)
+            observation = preprocessor(observation)
+            with torch.inference_mode():
+                action = policy.select_action(observation)
+            action = postprocessor(action)
 
-        # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
-        # available if none of the envs finished.
-        if "final_info" in info:
-            final_info = info["final_info"]
-            if not isinstance(final_info, dict):
-                raise RuntimeError(
-                    "Unsupported `final_info` format: expected dict (Gymnasium >= 1.0). "
-                    "You're likely using an older version of gymnasium (< 1.0). Please upgrade."
+            action_transition = {ACTION: action}
+            action_transition = env_postprocessor(action_transition)
+            action = action_transition[ACTION]
+
+            # Convert to CPU / numpy.
+            action_numpy: np.ndarray = action.to("cpu").numpy()
+            assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
+
+            # Apply the next action.
+            observation, reward, terminated, truncated, info = env.step(action_numpy)
+            if render_callback is not None:
+                render_callback(env)
+
+            # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
+            # available if none of the envs finished.
+            if "final_info" in info:
+                final_info = info["final_info"]
+                if not isinstance(final_info, dict):
+                    raise RuntimeError(
+                        "Unsupported `final_info` format: expected dict (Gymnasium >= 1.0). "
+                        "You're likely using an older version of gymnasium (< 1.0). Please upgrade."
+                    )
+                successes = final_info["is_success"].tolist()
+            elif "is_success" in info:
+                is_success = info["is_success"]
+                successes = (
+                    is_success.tolist()
+                    if hasattr(is_success, "tolist")
+                    else [bool(is_success)] * env.num_envs
                 )
-            successes = final_info["is_success"].tolist()
-        else:
-            successes = [False] * env.num_envs
+            else:
+                successes = [False] * env.num_envs
 
-        # Keep track of which environments are done so far.
-        # Mark the episode as done if we reach the maximum step limit.
-        # This ensures that the rollout always terminates cleanly at `max_steps`,
-        # and allows logging/saving (e.g., videos) to be triggered consistently.
-        done = terminated | truncated | done
-        if step + 1 == max_steps:
-            done = np.ones_like(done, dtype=bool)
+            if recording_datasets is not None and raw_observation is not None:
+                prev_done = done.copy()
+                for env_idx in range(env.num_envs):
+                    if prev_done[env_idx]:
+                        continue
+                    frame = _build_raw_frame(
+                        raw_observation,
+                        env_idx,
+                        action_numpy[env_idx],
+                        reward[env_idx],
+                        successes[env_idx],
+                        bool(terminated[env_idx] | truncated[env_idx]),
+                        task_desc,
+                        recording_datasets[env_idx].features,
+                    )
+                    recording_datasets[env_idx].add_frame(frame)
+                    if terminated[env_idx] or truncated[env_idx]:
+                        recording_datasets[env_idx].save_episode()
+                raw_observation = deepcopy(observation)
 
-        all_actions.append(torch.from_numpy(action_numpy))
-        all_rewards.append(torch.from_numpy(reward))
-        all_dones.append(torch.from_numpy(done))
-        all_successes.append(torch.tensor(successes))
+            # Keep track of which environments are done so far.
+            # Mark the episode as done if we reach the maximum step limit.
+            # This ensures that the rollout always terminates cleanly at `max_steps`,
+            # and allows logging/saving (e.g., videos) to be triggered consistently.
+            done = terminated | truncated | done
+            if step + 1 == max_steps:
+                done = np.ones_like(done, dtype=bool)
 
-        step += 1
-        running_success_rate = (
-            einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
-        )
-        progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
-        progbar.update()
+            all_actions.append(torch.from_numpy(action_numpy))
+            all_rewards.append(torch.from_numpy(reward))
+            all_dones.append(torch.from_numpy(done))
+            all_successes.append(torch.tensor(successes))
+
+            step += 1
+            running_success_rate = (
+                einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
+            )
+            progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
+            progbar.update()
+    finally:
+        if recording_datasets is not None:
+            for ds in recording_datasets:
+                ds.finalize()
+                if recording_repo_id is not None:
+                    if ds.num_episodes > 0:
+                        ds.push_to_hub(private=recording_private)
+                    else:
+                        logging.warning("No episodes recorded for %s — skipping push to hub.", ds.repo_id)
 
     # Track the final observation.
     if return_observations:
@@ -239,6 +387,8 @@ def rollout(
 def eval_policy(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
+    env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     n_episodes: int,
@@ -246,6 +396,10 @@ def eval_policy(
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
+    recording_dir: Path | None = None,
+    env_features: dict | None = None,
+    recording_repo_id: str | None = None,
+    recording_private: bool = False,
 ) -> dict:
     """
     Args:
@@ -265,9 +419,16 @@ def eval_policy(
         raise ValueError("If max_episodes_rendered > 0, videos_dir must be provided.")
 
     if not isinstance(policy, PreTrainedPolicy):
-        raise ValueError(
+        exc = ValueError(
             f"Policy of type 'PreTrainedPolicy' is expected, but type '{type(policy)}' was provided."
         )
+        try:
+            from peft import PeftModel
+
+            if not isinstance(policy, PeftModel):
+                raise exc
+        except ImportError:
+            raise exc from None
 
     start = time.time()
     policy.eval()
@@ -292,8 +453,9 @@ def eval_policy(
         n_to_render_now = min(max_episodes_rendered - n_episodes_rendered, env.num_envs)
         if isinstance(env, gym.vector.SyncVectorEnv):
             ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
-        elif isinstance(env, gym.vector.AsyncVectorEnv):
+        elif hasattr(env, "call"):
             # Here we must render all frames and discard any we don't need.
+            # Covers AsyncVectorEnv and _LazyAsyncVectorEnv (which wraps one).
             ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
 
     if max_episodes_rendered > 0:
@@ -319,11 +481,17 @@ def eval_policy(
         rollout_data = rollout(
             env=env,
             policy=policy,
+            env_preprocessor=env_preprocessor,
+            env_postprocessor=env_postprocessor,
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             seeds=list(seeds) if seeds else None,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
+            recording_dir=recording_dir,
+            env_features=env_features,
+            recording_repo_id=recording_repo_id,
+            recording_private=recording_private,
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -493,37 +661,61 @@ def eval_main(cfg: EvalPipelineConfig):
 
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
 
-    logging.info("Making environment.")
-    envs = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
+    logging.info(f"Making environment (batch_size={cfg.eval.batch_size}, async={cfg.eval.use_async_envs}).")
+    envs = make_env(
+        cfg.env,
+        n_envs=cfg.eval.batch_size,
+        use_async_envs=cfg.eval.use_async_envs,
+        trust_remote_code=cfg.trust_remote_code,
+    )
 
     logging.info("Making policy.")
 
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
+        rename_map=cfg.rename_map,
     )
 
     policy.eval()
+
+    # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
+    preprocessor_overrides = {
+        "device_processor": {"device": str(policy.config.device)},
+        "rename_observations_processor": {"rename_map": cfg.rename_map},
+    }
+
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pretrained_path,
-        # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
-        preprocessor_overrides={
-            "device_processor": {"device": str(policy.config.device)},
-            "rename_observations_processor": {"rename_map": cfg.rename_map},
-        },
+        preprocessor_overrides=preprocessor_overrides,
     )
+
+    # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)
+    env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env, policy_cfg=cfg.policy)
+
+    recording_dir = Path(cfg.output_dir) / "recordings" if cfg.eval.recording else None
+    max_episodes_rendered = 0 if cfg.eval.recording else 10
+    videos_dir = None if cfg.eval.recording else Path(cfg.output_dir) / "videos"
+
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy_all(
             envs=envs,
             policy=policy,
+            env_preprocessor=env_preprocessor,
+            env_postprocessor=env_postprocessor,
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             n_episodes=cfg.eval.n_episodes,
-            max_episodes_rendered=10,
-            videos_dir=Path(cfg.output_dir) / "videos",
+            max_episodes_rendered=max_episodes_rendered,
+            videos_dir=videos_dir,
+            return_episode_data=False,
             start_seed=cfg.seed,
             max_parallel_tasks=cfg.env.max_parallel_tasks,
+            recording_dir=recording_dir,
+            env_features=cfg.env.features if cfg.eval.recording else None,
+            recording_repo_id=cfg.eval.recording_repo_id,
+            recording_private=cfg.eval.recording_private,
         )
         print("Overall Aggregated Metrics:")
         print(info["overall"])
@@ -557,6 +749,8 @@ def eval_one(
     env: gym.vector.VectorEnv,
     *,
     policy: PreTrainedPolicy,
+    env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     n_episodes: int,
@@ -564,6 +758,10 @@ def eval_one(
     videos_dir: Path | None,
     return_episode_data: bool,
     start_seed: int | None,
+    recording_dir: Path | None = None,
+    env_features: dict | None = None,
+    recording_repo_id: str | None = None,
+    recording_private: bool = False,
 ) -> TaskMetrics:
     """Evaluates one task_id of one suite using the provided vec env."""
 
@@ -572,6 +770,8 @@ def eval_one(
     task_result = eval_policy(
         env=env,
         policy=policy,
+        env_preprocessor=env_preprocessor,
+        env_postprocessor=env_postprocessor,
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         n_episodes=n_episodes,
@@ -579,6 +779,10 @@ def eval_one(
         videos_dir=task_videos_dir,
         return_episode_data=return_episode_data,
         start_seed=start_seed,
+        recording_dir=recording_dir,
+        env_features=env_features,
+        recording_repo_id=recording_repo_id,
+        recording_private=recording_private,
     )
 
     per_episode = task_result["per_episode"]
@@ -596,6 +800,8 @@ def run_one(
     env,
     *,
     policy,
+    env_preprocessor,
+    env_postprocessor,
     preprocessor,
     postprocessor,
     n_episodes: int,
@@ -603,6 +809,10 @@ def run_one(
     videos_dir: Path | None,
     return_episode_data: bool,
     start_seed: int | None,
+    recording_dir: Path | None = None,
+    env_features: dict | None = None,
+    recording_repo_id: str | None = None,
+    recording_private: bool = False,
 ):
     """
     Run eval_one for a single (task_group, task_id, env).
@@ -614,10 +824,18 @@ def run_one(
         task_videos_dir = videos_dir / f"{task_group}_{task_id}"
         task_videos_dir.mkdir(parents=True, exist_ok=True)
 
-    # Call the existing eval_one (assumed to return TaskMetrics-like dict)
+    task_recording_dir = None
+    task_repo_id = None
+    if recording_dir is not None and env_features is not None:
+        task_recording_dir = recording_dir / f"{task_group}_{task_id}"
+        if recording_repo_id is not None:
+            task_repo_id = f"{recording_repo_id}_{task_group}_{task_id}"
+
     metrics = eval_one(
         env,
         policy=policy,
+        env_preprocessor=env_preprocessor,
+        env_postprocessor=env_postprocessor,
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         n_episodes=n_episodes,
@@ -625,8 +843,12 @@ def run_one(
         videos_dir=task_videos_dir,
         return_episode_data=return_episode_data,
         start_seed=start_seed,
+        recording_dir=task_recording_dir,
+        env_features=env_features,
+        recording_repo_id=task_repo_id,
+        recording_private=recording_private,
     )
-    # ensure we always provide video_paths key to simplify accumulation
+
     if max_episodes_rendered > 0:
         metrics.setdefault("video_paths", [])
     return task_group, task_id, metrics
@@ -635,11 +857,17 @@ def run_one(
 def eval_policy_all(
     envs: dict[str, dict[int, gym.vector.VectorEnv]],
     policy,
+    env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     n_episodes: int,
     *,
     max_episodes_rendered: int = 0,
+    recording_dir: Path | None = None,
+    env_features: dict | None = None,
+    recording_repo_id: str | None = None,
+    recording_private: bool = False,
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
@@ -690,6 +918,8 @@ def eval_policy_all(
     task_runner = partial(
         run_one,
         policy=policy,
+        env_preprocessor=env_preprocessor,
+        env_postprocessor=env_postprocessor,
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         n_episodes=n_episodes,
@@ -697,26 +927,46 @@ def eval_policy_all(
         videos_dir=videos_dir,
         return_episode_data=return_episode_data,
         start_seed=start_seed,
+        recording_dir=recording_dir,
+        env_features=env_features,
+        recording_repo_id=recording_repo_id,
+        recording_private=recording_private,
     )
 
     if max_parallel_tasks <= 1:
-        # sequential path (single accumulator path on the main thread)
-        # NOTE: keeping a single-threaded accumulator avoids concurrent list appends or locks
-        for task_group, task_id, env in tasks:
-            tg, tid, metrics = task_runner(task_group, task_id, env)
-            _accumulate_to(tg, metrics)
-            per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+        prefetch_thread: threading.Thread | None = None
+        for i, (task_group, task_id, env) in enumerate(tasks):
+            if prefetch_thread is not None:
+                prefetch_thread.join()
+                prefetch_thread = None
+
+            try:
+                tg, tid, metrics = task_runner(task_group, task_id, env)
+                _accumulate_to(tg, metrics)
+                per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+            finally:
+                env.close()
+                # Prefetch next task's workers *after* closing current env to prevent
+                # GPU memory overlap between consecutive tasks.
+                if i + 1 < len(tasks):
+                    next_env = tasks[i + 1][2]
+                    if hasattr(next_env, "_ensure"):
+                        prefetch_thread = threading.Thread(target=next_env._ensure, daemon=True)
+                        prefetch_thread.start()
     else:
-        # threaded path: submit all tasks, consume completions on main thread and accumulate there
         with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
             fut2meta = {}
             for task_group, task_id, env in tasks:
                 fut = executor.submit(task_runner, task_group, task_id, env)
-                fut2meta[fut] = (task_group, task_id)
+                fut2meta[fut] = (task_group, task_id, env)
             for fut in cf.as_completed(fut2meta):
-                tg, tid, metrics = fut.result()
-                _accumulate_to(tg, metrics)
-                per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                tg, tid, env = fut2meta[fut]
+                try:
+                    tg, tid, metrics = fut.result()
+                    _accumulate_to(tg, metrics)
+                    per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                finally:
+                    env.close()
 
     # compute aggregated metrics helper (robust to lists/scalars)
     def _agg_from_list(xs):
@@ -756,6 +1006,7 @@ def eval_policy_all(
 
 def main():
     init_logging()
+    register_third_party_plugins()
     eval_main()
 
 

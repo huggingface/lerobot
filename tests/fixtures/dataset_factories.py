@@ -26,26 +26,26 @@ import pytest
 import torch
 from datasets import Dataset
 
-from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
+from lerobot.datasets.feature_utils import get_hf_features_from_features
+from lerobot.datasets.io_utils import flatten_dict, hf_transform_to_torch
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
-    DEFAULT_FEATURES,
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
-    flatten_dict,
-    get_hf_features_from_features,
-    hf_transform_to_torch,
+    DatasetInfo,
 )
 from lerobot.datasets.video_utils import encode_video_frames
+from lerobot.utils.constants import DEFAULT_FEATURES
 from tests.fixtures.constants import (
     DEFAULT_FPS,
     DUMMY_CAMERA_FEATURES,
     DUMMY_MOTOR_FEATURES,
     DUMMY_REPO_ID,
     DUMMY_ROBOT_TYPE,
-    DUMMY_VIDEO_INFO,
 )
 
 
@@ -133,9 +133,7 @@ def features_factory():
         use_videos: bool = True,
     ) -> dict:
         if use_videos:
-            camera_ft = {
-                key: {"dtype": "video", **ft, **DUMMY_VIDEO_INFO} for key, ft in camera_features.items()
-            }
+            camera_ft = {key: {"dtype": "video", **ft} for key, ft in camera_features.items()}
         else:
             camera_ft = {key: {"dtype": "image", **ft} for key, ft in camera_features.items()}
         return {
@@ -156,33 +154,31 @@ def info_factory(features_factory):
         total_episodes: int = 0,
         total_frames: int = 0,
         total_tasks: int = 0,
-        total_videos: int = 0,
         chunks_size: int = DEFAULT_CHUNK_SIZE,
-        data_files_size_in_mb: float = DEFAULT_DATA_FILE_SIZE_IN_MB,
-        video_files_size_in_mb: float = DEFAULT_VIDEO_FILE_SIZE_IN_MB,
+        data_files_size_in_mb: int = DEFAULT_DATA_FILE_SIZE_IN_MB,
+        video_files_size_in_mb: int = DEFAULT_VIDEO_FILE_SIZE_IN_MB,
         data_path: str = DEFAULT_DATA_PATH,
         video_path: str = DEFAULT_VIDEO_PATH,
         motor_features: dict = DUMMY_MOTOR_FEATURES,
         camera_features: dict = DUMMY_CAMERA_FEATURES,
         use_videos: bool = True,
-    ) -> dict:
+    ) -> DatasetInfo:
         features = features_factory(motor_features, camera_features, use_videos)
-        return {
-            "codebase_version": codebase_version,
-            "robot_type": robot_type,
-            "total_episodes": total_episodes,
-            "total_frames": total_frames,
-            "total_tasks": total_tasks,
-            "total_videos": total_videos,
-            "chunks_size": chunks_size,
-            "data_files_size_in_mb": data_files_size_in_mb,
-            "video_files_size_in_mb": video_files_size_in_mb,
-            "fps": fps,
-            "splits": {},
-            "data_path": data_path,
-            "video_path": video_path if use_videos else None,
-            "features": features,
-        }
+        return DatasetInfo(
+            codebase_version=codebase_version,
+            robot_type=robot_type,
+            total_episodes=total_episodes,
+            total_frames=total_frames,
+            total_tasks=total_tasks,
+            chunks_size=chunks_size,
+            data_files_size_in_mb=data_files_size_in_mb,
+            video_files_size_in_mb=video_files_size_in_mb,
+            fps=fps,
+            splits={},
+            data_path=data_path,
+            video_path=video_path if use_videos else None,
+            features=features,
+        )
 
     return _create_info
 
@@ -222,7 +218,7 @@ def tasks_factory():
     def _create_tasks(total_tasks: int = 3) -> pd.DataFrame:
         ids = list(range(total_tasks))
         tasks = [f"Perform action {i}." for i in ids]
-        df = pd.DataFrame({"task_index": ids}, index=tasks)
+        df = pd.DataFrame({"task_index": ids}, index=pd.Index(tasks, name="task"))
         return df
 
     return _create_tasks
@@ -332,12 +328,12 @@ def create_videos(info_factory, img_array_factory):
                 total_episodes=total_episodes, total_frames=total_frames, total_tasks=total_tasks
             )
 
-        video_feats = {key: feats for key, feats in info["features"].items() if feats["dtype"] == "video"}
+        video_feats = {key: feats for key, feats in info.features.items() if feats["dtype"] == "video"}
         for key, ft in video_feats.items():
             # create and save images with identifiable content
             tmp_dir = root / "tmp_images"
             tmp_dir.mkdir(parents=True, exist_ok=True)
-            for frame_index in range(info["total_frames"]):
+            for frame_index in range(info.total_frames):
                 content = f"{key}-{frame_index}"
                 img = img_array_factory(height=ft["shape"][0], width=ft["shape"][1], content=content)
                 pil_img = PIL.Image.fromarray(img)
@@ -347,7 +343,7 @@ def create_videos(info_factory, img_array_factory):
             video_path = root / DEFAULT_VIDEO_PATH.format(video_key=key, chunk_index=0, file_index=0)
             video_path.parent.mkdir(parents=True, exist_ok=True)
             # Use the global fps from info, not video-specific fps which might not exist
-            encode_video_frames(tmp_dir, video_path, fps=info["fps"])
+            encode_video_frames(tmp_dir, video_path, fps=info.fps)
             shutil.rmtree(tmp_dir)
 
     return _create_video_directory
@@ -432,16 +428,16 @@ def lerobot_dataset_metadata_factory(
         if info is None:
             info = info_factory()
         if stats is None:
-            stats = stats_factory(features=info["features"])
+            stats = stats_factory(features=info.features)
         if tasks is None:
-            tasks = tasks_factory(total_tasks=info["total_tasks"])
+            tasks = tasks_factory(total_tasks=info.total_tasks)
         if episodes is None:
-            video_keys = [key for key, ft in info["features"].items() if ft["dtype"] == "video"]
+            video_keys = [key for key, ft in info.features.items() if ft["dtype"] == "video"]
             episodes = episodes_factory(
-                features=info["features"],
-                fps=info["fps"],
-                total_episodes=info["total_episodes"],
-                total_frames=info["total_frames"],
+                features=info.features,
+                fps=info.fps,
+                total_episodes=info.total_episodes,
+                total_frames=info.total_frames,
                 video_keys=video_keys,
                 tasks=tasks,
             )
@@ -453,8 +449,8 @@ def lerobot_dataset_metadata_factory(
             episodes=episodes,
         )
         with (
-            patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version_patch,
-            patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download_patch,
+            patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version_patch,
+            patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download_patch,
         ):
             mock_get_safe_version_patch.side_effect = lambda repo_id, version: version
             mock_snapshot_download_patch.side_effect = mock_snapshot_download
@@ -502,23 +498,23 @@ def lerobot_dataset_factory(
                 chunks_size=chunks_size,
             )
         if stats is None:
-            stats = stats_factory(features=info["features"])
+            stats = stats_factory(features=info.features)
         if tasks is None:
-            tasks = tasks_factory(total_tasks=info["total_tasks"])
+            tasks = tasks_factory(total_tasks=info.total_tasks)
         if episodes_metadata is None:
-            video_keys = [key for key, ft in info["features"].items() if ft["dtype"] == "video"]
+            video_keys = [key for key, ft in info.features.items() if ft["dtype"] == "video"]
             episodes_metadata = episodes_factory(
-                features=info["features"],
-                fps=info["fps"],
-                total_episodes=info["total_episodes"],
-                total_frames=info["total_frames"],
+                features=info.features,
+                fps=info.fps,
+                total_episodes=info.total_episodes,
+                total_frames=info.total_frames,
                 video_keys=video_keys,
                 tasks=tasks,
                 multi_task=multi_task,
             )
         if hf_dataset is None:
             hf_dataset = hf_dataset_factory(
-                features=info["features"], tasks=tasks, episodes=episodes_metadata, fps=info["fps"]
+                features=info.features, tasks=tasks, episodes=episodes_metadata, fps=info.fps
             )
 
         # Write data on disk
@@ -556,3 +552,64 @@ def lerobot_dataset_factory(
 @pytest.fixture(scope="session")
 def empty_lerobot_dataset_factory() -> LeRobotDatasetFactory:
     return partial(LeRobotDataset.create, repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS)
+
+
+def build_annotation_dataset(
+    root: Path,
+    episode_specs: list[tuple[int, int, str]],
+    *,
+    fps: int = 10,
+) -> Path:
+    """Build a minimal LeRobot-shaped dataset on disk for annotation tests.
+
+    ``episode_specs`` is a list of ``(episode_index, num_frames, task_text)``.
+    Each episode is written to its own
+    ``data/chunk-000/file-{ep:03d}.parquet`` so the writer's per-shard
+    rewrite path is exercised. The dataset carries the minimum
+    ``meta/tasks.parquet`` + ``meta/info.json`` the reader / executor need;
+    it has no videos, so the modules fall back to text-only prompts.
+
+    Shared by the annotation-pipeline pytest fixtures (``tests/annotations/
+    conftest.py``) and the opt-in E2E smoke run so the fixture shape lives
+    in exactly one place.
+    """
+    from lerobot.datasets.io_utils import write_tasks
+    from lerobot.utils.io_utils import write_json
+
+    data_dir = root / "data" / "chunk-000"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    tasks: dict[int, str] = {}
+    for episode_index, num_frames, task_text in episode_specs:
+        if task_text not in tasks.values():
+            tasks[len(tasks)] = task_text
+        task_index = next(k for k, v in tasks.items() if v == task_text)
+        frame = pd.DataFrame(
+            {
+                "episode_index": [episode_index] * num_frames,
+                "frame_index": list(range(num_frames)),
+                "timestamp": [round(i / fps, 6) for i in range(num_frames)],
+                "task_index": [task_index] * num_frames,
+                "subtask_index": [0] * num_frames,  # legacy column the writer must drop
+            }
+        )
+        frame.to_parquet(data_dir / f"file-{episode_index:03d}.parquet", index=False)
+
+    # Canonical tasks frame: indexed by task string with a ``task_index``
+    # column, matching what ``lerobot.datasets.io_utils.load_tasks`` expects.
+    tasks_df = pd.DataFrame(
+        {"task_index": list(tasks.keys())},
+        index=pd.Index(list(tasks.values()), name="task"),
+    )
+    write_tasks(tasks_df, root)
+
+    write_json(
+        {
+            "codebase_version": "v3.1",
+            "fps": fps,
+            "features": {},
+            "total_episodes": len(episode_specs),
+        },
+        root / "meta" / "info.json",
+    )
+    return root

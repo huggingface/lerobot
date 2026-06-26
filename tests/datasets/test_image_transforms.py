@@ -21,17 +21,19 @@ from safetensors.torch import load_file
 from torchvision.transforms import v2
 from torchvision.transforms.v2 import functional as F  # noqa: N812
 
-from lerobot.datasets.transforms import (
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+from lerobot.scripts.lerobot_imgtransform_viz import (
+    save_all_transforms,
+    save_each_transform,
+)
+from lerobot.transforms import (
     ImageTransformConfig,
     ImageTransforms,
     ImageTransformsConfig,
     RandomSubsetApply,
     SharpnessJitter,
     make_transform_from_config,
-)
-from lerobot.scripts.lerobot_imgtransform_viz import (
-    save_all_transforms,
-    save_each_transform,
 )
 from lerobot.utils.random_utils import seeded_context
 from tests.artifacts.image_transforms.save_image_transforms_to_safetensors import ARTIFACT_DIR
@@ -388,6 +390,30 @@ def test_sharpness_jitter_invalid_range_min_negative():
 def test_sharpness_jitter_invalid_range_max_smaller():
     with pytest.raises(ValueError):
         SharpnessJitter((2.0, 0.1))
+
+
+def test_make_transform_from_config_with_v2_resize(img_tensor_factory):
+    img_tensor = img_tensor_factory()
+    tf_cfg = ImageTransformConfig(type="Resize", kwargs={"size": (32, 32)})
+    tf = make_transform_from_config(tf_cfg)
+    assert isinstance(tf, v2.Resize)
+    output = tf(img_tensor)
+    assert output.shape[-2:] == (32, 32)
+
+
+def test_make_transform_from_config_with_v2_identity(img_tensor_factory):
+    img_tensor = img_tensor_factory()
+    tf_cfg = ImageTransformConfig(type="Identity", kwargs={})
+    tf = make_transform_from_config(tf_cfg)
+    assert isinstance(tf, v2.Identity)
+    output = tf(img_tensor)
+    assert output.shape == img_tensor.shape
+
+
+def test_make_transform_from_config_invalid_type():
+    tf_cfg = ImageTransformConfig(type="NotARealTransform", kwargs={})
+    with pytest.raises(ValueError, match="not valid"):
+        make_transform_from_config(tf_cfg)
 
 
 def test_save_all_transforms(img_tensor_factory, tmp_path):

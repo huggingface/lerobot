@@ -11,6 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import pytest
+import torch
+from packaging.version import Version
 from torch.optim.lr_scheduler import LambdaLR
 
 from lerobot.optim.schedulers import (
@@ -21,8 +24,10 @@ from lerobot.optim.schedulers import (
     save_scheduler_state,
 )
 from lerobot.utils.constants import SCHEDULER_STATE
+from lerobot.utils.import_utils import is_package_available
 
 
+@pytest.mark.skipif(not is_package_available("diffusers"), reason="diffusers not installed")
 def test_diffuser_scheduler(optimizer):
     config = DiffuserSchedulerConfig(name="cosine", num_warmup_steps=5)
     scheduler = config.build(optimizer, num_training_steps=100)
@@ -38,6 +43,10 @@ def test_diffuser_scheduler(optimizer):
         "last_epoch": 1,
         "lr_lambdas": [None],
     }
+
+    if Version(torch.__version__) >= Version("2.8"):
+        expected_state_dict["_is_initial"] = False
+
     assert scheduler.state_dict() == expected_state_dict
 
 
@@ -56,6 +65,10 @@ def test_vqbet_scheduler(optimizer):
         "last_epoch": 1,
         "lr_lambdas": [None],
     }
+
+    if Version(torch.__version__) >= Version("2.8"):
+        expected_state_dict["_is_initial"] = False
+
     assert scheduler.state_dict() == expected_state_dict
 
 
@@ -76,6 +89,10 @@ def test_cosine_decay_with_warmup_scheduler(optimizer):
         "last_epoch": 1,
         "lr_lambdas": [None],
     }
+
+    if Version(torch.__version__) >= Version("2.8"):
+        expected_state_dict["_is_initial"] = False
+
     assert scheduler.state_dict() == expected_state_dict
 
 

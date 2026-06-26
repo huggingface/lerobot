@@ -16,15 +16,15 @@
 
 import logging
 from collections import deque
-from typing import Any
 
 import numpy as np
 import torch
 from torch import nn
 
-from lerobot.datasets.utils import build_dataset_frame
-from lerobot.processor import PolicyAction, RobotAction, RobotObservation
+from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
+from lerobot.types import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.feature_utils import build_dataset_frame
 
 
 def populate_queues(
@@ -138,7 +138,7 @@ def prepare_observation_for_inference(
 
 
 def build_inference_frame(
-    observation: dict[str, Any],
+    observation: RobotObservation,
     device: torch.device,
     ds_features: dict[str, dict],
     task: str | None = None,
@@ -198,3 +198,51 @@ def make_robot_action(action_tensor: PolicyAction, ds_features: dict[str, dict])
         f"{name}": float(action_tensor[i]) for i, name in enumerate(action_names)
     }
     return act_processed_policy
+
+
+def raise_feature_mismatch_error(
+    provided_features: set[str],
+    expected_features: set[str],
+) -> None:
+    """
+    Raises a standardized ValueError for feature mismatches between dataset/environment and policy config.
+    """
+    missing = expected_features - provided_features
+    extra = provided_features - expected_features
+    # TODO (jadechoghari): provide a dynamic rename map suggestion to the user.
+    raise ValueError(
+        f"Feature mismatch between dataset/environment and policy config.\n"
+        f"- Missing features: {sorted(missing) if missing else 'None'}\n"
+        f"- Extra features: {sorted(extra) if extra else 'None'}\n\n"
+        f"Please ensure your dataset and policy use consistent feature names.\n"
+        f"If your dataset uses different observation keys (e.g., cameras named differently), "
+        f"use the `--rename_map` argument, for example:\n"
+        f'  --rename_map=\'{{"observation.images.left": "observation.images.camera1", '
+        f'"observation.images.top": "observation.images.camera2"}}\''
+    )
+
+
+def validate_visual_features_consistency(
+    cfg: PreTrainedConfig,
+    features: dict[str, PolicyFeature],
+) -> None:
+    """
+    Validates visual feature consistency between a policy config and provided dataset/environment features.
+
+    Validation passes if EITHER:
+    - Policy's expected visuals are a subset of dataset (policy uses some cameras, dataset has more)
+    - Dataset's provided visuals are a subset of policy (policy declares extras for flexibility)
+
+    Args:
+        cfg (PreTrainedConfig): The model or policy configuration containing input_features and type.
+        features (Dict[str, PolicyFeature]): A mapping of feature names to PolicyFeature objects.
+    """
+    expected_visuals = {k for k, v in cfg.input_features.items() if v.type == FeatureType.VISUAL}
+    provided_visuals = {k for k, v in features.items() if v.type == FeatureType.VISUAL}
+
+    # Accept if either direction is a subset
+    policy_subset_of_dataset = expected_visuals.issubset(provided_visuals)
+    dataset_subset_of_policy = provided_visuals.issubset(expected_visuals)
+
+    if not (policy_subset_of_dataset or dataset_subset_of_policy):
+        raise_feature_mismatch_error(provided_visuals, expected_visuals)

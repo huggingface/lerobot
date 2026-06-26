@@ -21,7 +21,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from lerobot.processor import TransitionKey
+pytest.importorskip("rerun", reason="rerun-sdk is required (install lerobot[viz])")
+
+from lerobot.types import TransitionKey
 from lerobot.utils.constants import OBS_STATE
 
 
@@ -41,10 +43,16 @@ def mock_rerun(monkeypatch):
         def __init__(self, arr):
             self.arr = arr
 
-    def dummy_log(key, obj, **kwargs):
+    def dummy_log(key, obj=None, **kwargs):
+        # Accept either positional `obj` or keyword `entity` and record remaining kwargs.
+        if obj is None and "entity" in kwargs:
+            obj = kwargs.pop("entity")
         calls.append((key, obj, kwargs))
 
     dummy_rr = SimpleNamespace(
+        __name__="rerun",
+        __package__="rerun",
+        __spec__=SimpleNamespace(name="rerun", submodule_search_locations=None),
         Scalars=DummyScalar,
         Image=DummyImage,
         log=dummy_log,

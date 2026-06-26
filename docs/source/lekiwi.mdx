@@ -1,5 +1,11 @@
 # LeKiwi
 
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/1740517739083.jpeg"
+  alt="LeKiwi"
+  width="70%"
+/>
+
 In the steps below, we explain how to assemble the LeKiwi mobile robot.
 
 ## Source the parts
@@ -204,7 +210,7 @@ lerobot-calibrate \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.teleoperators.so100_leader import SO100LeaderConfig, SO100Leader
+from lerobot.teleoperators.so_leader import SO100LeaderConfig, SO100Leader
 
 config = SO100LeaderConfig(
     port="/dev/tty.usbmodem58760431551",
@@ -273,13 +279,13 @@ We use the Hugging Face hub features for uploading your dataset. If you haven't 
 Add your token to the CLI by running this command:
 
 ```bash
-huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
+hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
 Then store your Hugging Face repository name in a variable:
 
 ```bash
-HF_USER=$(huggingface-cli whoami | head -n 1)
+HF_USER=$(hf auth whoami | awk -F': *' 'NR==1 {print $2}')
 echo $HF_USER
 ```
 
@@ -313,7 +319,7 @@ If you want to dive deeper into this important topic, you can check out the [blo
 
 #### Troubleshooting:
 
-- On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
+- On Linux, the recording control-flow keys (arrow keys, Escape) work on X11, Wayland, and headless/SSH sessions as long as you run the recording from an interactive terminal (keep it focused) — no `$DISPLAY` setup is needed; the letter equivalents `n` / `r` / `q` also work. Note that **keyboard teleoperation of the LeKiwi base** is different: it relies on a global key backend and therefore works only on an X11 session, a Windows desktop, or macOS with Accessibility/Input Monitoring granted — not on Wayland or headless machines. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
 
 ## Replay an episode
 

@@ -43,3 +43,10 @@ class NormalizationMode(str, Enum):
 class PolicyFeature:
     type: FeatureType
     shape: tuple[int, ...]
+
+
+class RTCAttentionSchedule(str, Enum):
+    ZEROS = "ZEROS"
+    ONES = "ONES"
+    LINEAR = "LINEAR"
+    EXP = "EXP"

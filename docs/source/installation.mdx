@@ -1,44 +1,122 @@
 # Installation
 
-## Install [`miniforge`](https://conda-forge.org/download/)
+This guide uses `conda` (via miniforge) to manage environments (recommended). If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.12 and support PyTorch >= 2.10, then skip ahead to [Environment Setup](#step-2-environment-setup).
+
+## Step 1 (`conda` only): Install [`miniforge`](https://conda-forge.org/download/)
 
 ```bash
 wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
 bash Miniforge3-$(uname)-$(uname -m).sh
 ```
 
-## Environment Setup
+## Step 2: Environment Setup
 
-Create a virtual environment with Python 3.10, using conda:
+Create a virtual environment with Python 3.12:
 
+<!-- prettier-ignore-start -->
+<hfoptions id="create_venv">
+<hfoption id="conda">
 ```bash
-conda create -y -n lerobot python=3.10
+conda create -y -n lerobot python=3.12
 ```
+</hfoption>
+<hfoption id="uv (PyTorch >= 2.10 only)">
+```bash
+uv python install 3.12
+uv venv --python 3.12
+```
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
 
-Then activate your conda environment, you have to do this each time you open a shell to use lerobot:
+Then activate your virtual environment, you have to do this each time you open a shell to use lerobot:
 
+<!-- prettier-ignore-start -->
+
+<hfoptions id="activate_venv">
+<hfoption id="conda">
 ```bash
 conda activate lerobot
 ```
 
-When using `conda`, install `ffmpeg` in your environment:
+> [!NOTE]
+> When installing LeRobot inside WSL (Windows Subsystem for Linux), make sure to also install `evdev`:
+>
+> ```bash
+> conda install evdev -c conda-forge
+> ```
+
+</hfoption>
+<hfoption id="uv (PyTorch >= 2.10 only)">
+```bash
+# Linux/macOS
+source .venv/bin/activate
+# Windows PowerShell
+.venv\Scripts\activate
+```
+
+> [!NOTE]
+> When installing LeRobot inside WSL (Windows Subsystem for Linux), make sure to also install `evdev`:
+>
+> ```bash
+> sudo apt install libevdev-dev
+> uv pip install evdev
+> ```
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+### Install `ffmpeg` (for video decoding)
+
+LeRobot uses [TorchCodec](https://github.com/meta-pytorch/torchcodec) for video decoding by default, which requires `ffmpeg`.
+
+> [!NOTE]
+> **Platform support:** TorchCodec is **not available** on macOS Intel (x86_64), Linux ARM (aarch64, arm64, armv7l), or Windows with PyTorch < 2.8. On these platforms, LeRobot automatically falls back to `pyav` — so you do not need to install `ffmpeg` and can skip to Step 3.
+
+If your platform supports TorchCodec, install `ffmpeg` using one of the methods below:
+
+<!-- prettier-ignore-start -->
+
+<hfoptions id="install_ffmpeg">
+<hfoption id="conda (any PyTorch version)">
+
+Install `ffmpeg` in your conda environment. This works with **all PyTorch versions** and is **required for PyTorch < 2.10**:
 
 ```bash
 conda install ffmpeg -c conda-forge
 ```
 
 > [!TIP]
-> This usually installs `ffmpeg 7.X` for your platform compiled with the `libsvtav1` encoder. If `libsvtav1` is not supported (check supported encoders with `ffmpeg -encoders`), you can:
->
-> - _[On any platform]_ Explicitly install `ffmpeg 7.X` using:
+> This usually installs `ffmpeg 8.X` with the `libsvtav1` encoder. If you run into issues (e.g. `libsvtav1` missing — check with `ffmpeg -encoders` — or a version mismatch with `torchcodec`), you can explicitly install `ffmpeg 7.1.1` using:
 >
 > ```bash
 > conda install ffmpeg=7.1.1 -c conda-forge
 > ```
->
-> - _[On Linux only]_ If you want to bring your own ffmpeg: Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
 
-## Install LeRobot 🤗
+</hfoption>
+<hfoption id="uv (PyTorch >= 2.10 only)">
+
+Starting with **PyTorch >= 2.10** (TorchCodec ≥ 0.10), TorchCodec can dynamically link to a system-wide `ffmpeg` installation. This is useful when using `uv` or other non-`conda` environment managers:
+
+```bash
+# Ubuntu/Debian
+sudo apt install ffmpeg
+
+# macOS (Apple Silicon)
+brew install ffmpeg
+```
+
+> [!IMPORTANT]
+> System-wide `ffmpeg` is **only supported with PyTorch >= 2.10** (TorchCodec ≥ 0.10). For older PyTorch versions, you **must** use `conda install ffmpeg -c conda-forge` instead.
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+## Step 3: Install LeRobot 🤗
+
+The base `lerobot` install is intentionally **lightweight** — it includes only core ML dependencies (PyTorch, torchvision, numpy, opencv, einops, draccus, huggingface-hub, gymnasium, safetensors). Heavier dependencies are gated behind optional extras so you only install what you need.
 
 ### From Source
 
@@ -51,55 +129,153 @@ cd lerobot
 
 Then, install the library in editable mode. This is useful if you plan to contribute to the code.
 
+<!-- prettier-ignore-start -->
+<hfoptions id="install_lerobot_src">
+<hfoption id="conda">
 ```bash
-pip install -e .
+pip install -e ".[core_scripts]"  # For robot workflows (recording, replaying, calibrate)
+pip install -e ".[training]"      # For training policies
+pip install -e ".[all]"           # Everything (all policies, envs, hardware, dev tools)
 ```
+</hfoption>
+<hfoption id="uv">
+```bash
+uv pip install -e ".[core_scripts]"  # For robot workflows (recording, replaying, calibrate)
+uv pip install -e ".[training]"      # For training policies
+uv pip install -e ".[all]"           # Everything (all policies, envs, hardware, dev tools)
+```
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
 
 ### Installation from PyPI
 
 **Core Library:**
 Install the base package with:
 
+<!-- prettier-ignore-start -->
+<hfoptions id="install_lerobot_pypi">
+<hfoption id="conda">
 ```bash
 pip install lerobot
 ```
+</hfoption>
+<hfoption id="uv">
+```bash
+uv pip install lerobot
+```
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
 
-_This installs only the default dependencies._
+_This installs only the core ML dependencies. You will need to add extras for most workflows._
 
-**Extra Features:**
-To install additional functionality, use one of the following:
+**Feature Extras:**
+LeRobot provides **feature-scoped extras** that map to common workflows. If you are using `uv`, replace `pip install` with `uv pip install` in the commands below.
+
+| Extra      | What it adds                                | Typical use case                    |
+| ---------- | ------------------------------------------- | ----------------------------------- |
+| `dataset`  | `datasets`, `av`, `torchcodec`, `jsonlines` | Loading & creating datasets         |
+| `training` | `dataset` + `accelerate`, `wandb`           | Training policies                   |
+| `hardware` | `pynput`, `pyserial`, `deepdiff`            | Connecting to real robots           |
+| `viz`      | `rerun-sdk`                                 | Visualization during recording/eval |
+
+**Composite Extras** combine feature extras for common CLI scripts:
+
+| Extra          | Includes                       | Typical use case                                        |
+| -------------- | ------------------------------ | ------------------------------------------------------- |
+| `core_scripts` | `dataset` + `hardware` + `viz` | `lerobot-record`, `lerobot-replay`, `lerobot-calibrate` |
+| `evaluation`   | `av`                           | `lerobot-eval` (add policy + env extras as needed)      |
+| `dataset_viz`  | `dataset` + `viz`              | `lerobot-dataset-viz`, `lerobot-imgtransform-viz`       |
 
 ```bash
-pip install 'lerobot[all]'          # All available features
-pip install 'lerobot[aloha,pusht]'  # Specific features (Aloha & Pusht)
-pip install 'lerobot[feetech]'      # Feetech motor support
+pip install 'lerobot[core_scripts]'          # Record, replay, calibrate
+pip install 'lerobot[training]'              # Train policies
+pip install 'lerobot[core_scripts,training]' # Record + train
+pip install 'lerobot[all]'                   # Everything
 ```
 
-_Replace `[...]` with your desired features._
+**Policy, environment, and hardware extras** are still available for specific dependencies:
 
-**Available Tags:**
-For a full list of optional dependencies, see:
-https://pypi.org/project/lerobot/
+```bash
+pip install 'lerobot[pi]'             # Pi0/Pi0.5/Pi0-FAST policy deps
+pip install 'lerobot[smolvla]'        # SmolVLA policy deps
+pip install 'lerobot[diffusion]'      # Diffusion policy deps (diffusers)
+pip install 'lerobot[aloha,pusht]'    # Simulation environments
+pip install 'lerobot[feetech]'        # Feetech motor support
+```
+
+_Multiple extras can be combined (e.g., `.[core_scripts,pi,pusht]`). For a full list of available extras, refer to `pyproject.toml`._
+
+### PyTorch CUDA variant (Linux only)
+
+On Linux, the install path determines which CUDA wheel you get. macOS and Windows installs use the PyPI default (MPS / CPU / CUDA-Windows wheel respectively) and can skip this section.
+
+<!-- prettier-ignore-start -->
+
+<hfoptions id="cuda_variant">
+<hfoption id="uv-source">
+
+**Source install via `uv` (`uv sync` or `uv pip install -e .`)**
+
+`torch` and `torchvision` are pinned by the project to the **CUDA 12.8** PyTorch index (`https://download.pytorch.org/whl/cu128`, driver floor **570.86**) — covers Ampere/Ada/Hopper/Blackwell GPUs. No action needed for typical NVIDIA setups.
+
+To override for a different CUDA variant:
+
+```bash
+uv pip install --force-reinstall torch torchvision \
+    --index-url https://download.pytorch.org/whl/cu126   # older drivers; or cu130 for Blackwell on driver ≥ 580
+```
+
+</hfoption>
+<hfoption id="pip-conda">
+
+**Source install via `pip`/`conda`, or `pip install lerobot` from PyPI**
+
+PyPI default torch wheel is currently a cu130-bundled Linux wheel, driver floor **580.65**.
+
+To pick a specific CUDA variant:
+
+**Using `pip` or `conda`** — install torch first with an explicit index, then lerobot:
+
+```bash
+pip install --index-url https://download.pytorch.org/whl/cu128 torch torchvision
+pip install -e ".[all]"          # source
+# — or —
+pip install lerobot              # from PyPI
+```
+
+**Using `uv` to install from PyPI** — one-liner via `--torch-backend` (uv ≥ 0.6):
+
+```bash
+uv pip install --torch-backend cu128 lerobot
+```
+
+Supported values include `auto`, `cpu`, `cu126`, `cu128`, `cu129`, `cu130`, plus various `rocm*` and `xpu`. Swap as needed for your driver.
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
 
 ### Troubleshooting
 
-If you encounter build errors, you may need to install additional dependencies: `cmake`, `build-essential`, and `ffmpeg libs`.
-To install these for linux run:
+If you encounter build errors, you may need to install additional system dependencies: `cmake`, `build-essential`, and `ffmpeg libs`.
+To install these for Linux run:
 
 ```bash
-sudo apt-get install cmake build-essential python-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev pkg-config
+sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev
 ```
 
 For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
 ## Optional dependencies
 
-LeRobot provides optional extras for specific functionalities. Multiple extras can be combined (e.g., `.[aloha,feetech]`). For all available extras, refer to `pyproject.toml`.
+LeRobot provides optional extras for specific functionalities. Multiple extras can be combined (e.g., `.[aloha,feetech]`). For all available extras, refer to `pyproject.toml`. If you are using `uv`, replace `pip install` with `uv pip install` in the commands below.
 
 ### Simulations
 
-Install environment packages: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), or `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht))
-Example:
+Install environment packages: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), or `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht)).
+These automatically include the `dataset` extra.
 
 ```bash
 pip install -e ".[aloha]" # or "[pusht]" for example
@@ -115,7 +291,7 @@ pip install -e ".[feetech]" # or "[dynamixel]" for example
 
 ### Experiment Tracking
 
-To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
+Weights and Biases is included in the `training` extra. To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with:
 
 ```bash
 wandb login

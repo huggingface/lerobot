@@ -38,16 +38,14 @@ import draccus
 import grpc
 import torch
 
-from lerobot.policies.factory import get_policy_class, make_pre_post_processors
-from lerobot.processor import (
-    PolicyAction,
-    PolicyProcessorPipeline,
-)
+from lerobot.policies import get_policy_class, make_pre_post_processors
+from lerobot.processor import PolicyProcessorPipeline
 from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
 )
 from lerobot.transport.utils import receive_bytes_in_chunks
+from lerobot.types import PolicyAction
 
 from .configs import PolicyServerConfig
 from .constants import SUPPORTED_POLICIES
@@ -380,6 +378,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         # Stack back to (B, chunk_size, action_dim), then remove batch dim
         action_tensor = torch.stack(processed_actions, dim=1).squeeze(0)
         self.logger.debug(f"Postprocessed action shape: {action_tensor.shape}")
+
+        action_tensor = action_tensor.detach().cpu()
 
         """5. Convert to TimedAction list"""
         action_chunk = self._time_action_chunk(

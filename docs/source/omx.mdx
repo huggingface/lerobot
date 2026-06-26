@@ -1,0 +1,197 @@
+## Order and Assemble the parts
+
+First, assemble the OMX hardware following the official assembly guide.
+
+OMX Assembly Guide: https://ai.robotis.com/omx/assembly_guide_omx.html
+
+OMX robots are shipped preconfigured from the factory. Motor IDs, communication parameters, and joint offsets are already set, so no additional motor setup or calibration is required before using LeRobot.
+
+## Install LeRobot 🤗
+
+To install LeRobot, follow our [Installation Guide](./installation)
+
+In addition to these instructions, you need to install the Dynamixel SDK:
+
+```bash
+pip install -e ".[dynamixel]"
+```
+
+## Connect the robot
+
+To find the port for each bus servo adapter, run this script:
+
+```bash
+lerobot-find-port
+```
+
+This command runs and when prompted, disconnect the USB cable from either the leader or follower arm and press Enter. The output will show 'The port of this MotorsBus is [port]'. This identifies the port for the disconnected arm. Repeat for the other arm to identify both ports.
+
+<hfoptions id="find_port">
+<hfoption id="Mac">
+
+Example output on macOS:
+
+```
+Finding all available ports for the MotorBus.
+['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
+Remove the USB cable from your MotorsBus and press Enter when done.
+
+[...Disconnect corresponding leader or follower arm and press Enter...]
+
+The port of this MotorsBus is /dev/tty.usbmodem575E0032081
+Reconnect the USB cable.
+```
+
+Where the found port is: `/dev/tty.usbmodem575E0032081` corresponding to your leader or follower arm.
+
+</hfoption>
+<hfoption id="Linux">
+
+On Linux, we strongly recommend using udev rules to assign persistent and human-readable device names to the OMX leader and follower arms. This avoids issues where device names such as ttyACM0 and ttyACM1 change when the robot is unplugged, replugged, or when the system is rebooted.
+
+#### 1. Find your device serial numbers
+
+You should have obtained the port numbers like ../../ttyACM? for the leader and follower using `lerobot-find-port`. You can match those results with the serial numbers using the `ls -l /dev/serial/by-id/` command.
+To create udev rules, you need the unique serial number for each OMX device. The easiest way is to list devices under:
+
+```bash
+ls -l /dev/serial/by-id/
+```
+
+You will see output similar to:
+
+```bash
+usb-ROBOTIS_OpenRB-150_228BDD7B503059384C2E3120FF0A2B19-if00 -> ../../ttyACM0
+usb-ROBOTIS_OpenRB-150_67E1ED68503059384C2E3120FF092234-if00 -> ../../ttyACM1
+```
+
+In each line, the serial number is the long string after `usb-ROBOTIS_OpenRB-150_` and before `-if00`.
+
+Follower serial: `228BDD7B503059384C2E3120FF0A2B19`
+
+Leader serial: `67E1ED68503059384C2E3120FF092234`
+
+#### 2. Create the udev rule
+
+Create a new udev rule file:
+
+```bash
+sudo nano /etc/udev/rules.d/99-omx.rules
+```
+
+Paste the following lines, replacing the serial numbers with the values you found above:
+
+```bash
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{serial}=="228BDD7B503059384C2E3120FF0A2B19", SYMLINK+="omx_follower"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{serial}=="67E1ED68503059384C2E3120FF092234", SYMLINK+="omx_leader"
+```
+
+Save the file and reload udev rules:
+
+```bash
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+Now unplug and replug both devices once.
+
+#### 3. Verify the symlinks
+
+Check that the persistent device names exist:
+
+```bash
+ls -l /dev/omx_follower /dev/omx_leader
+```
+
+You should see them pointing to ttyACM\* devices:
+
+```bash
+/dev/omx_follower -> ttyACM*
+/dev/omx_leader   -> ttyACM*
+```
+
+These names remain stable across reboots and reconnections.
+
+</hfoption>
+</hfoptions>
+
+## Teleoperate
+
+After identifying the correct ports, you can directly teleoperate the follower arm using the leader arm.
+
+<hfoptions id="teleoperate">
+<hfoption id="Mac">
+
+### Teleoperate without camera
+
+```bash
+lerobot-teleoperate \
+  --robot.type=omx_follower \
+  --robot.port=<your_follower_port> \
+  --robot.id=omx_follower_arm \
+  --teleop.type=omx_leader \
+  --teleop.port=<your_leader_port> \
+  --teleop.id=omx_leader_arm
+```
+
+During teleoperation, motions of the leader arm are mirrored in real time by the follower arm. OMX is already preconfigured, teleoperation can begin immediately without any calibration steps.
+
+### Teleoperate with camera
+
+You can also enable camera input during teleoperation by providing a camera configuration for the follower arm.
+
+```bash
+lerobot-teleoperate \
+  --robot.type=omx_follower \
+  --robot.port=<your_follower_port> \
+  --robot.id=omx_follower_arm \
+  --robot.cameras="{front: {type: opencv, index_or_path: '/dev/video0', width: 640, height: 480, fps: 30}}" \
+  --teleop.type=omx_leader \
+  --teleop.port=<your_leader_port> \
+  --teleop.id=omx_leader_arm \
+  --display_data=true
+```
+
+When the camera is enabled, the camera stream is displayed in real time and synchronized with the robot state. This setup is useful for visual monitoring and can be reused later for demonstration recording and imitation learning.
+
+</hfoption>
+<hfoption id="Linux">
+
+### Teleoperate without camera
+
+```bash
+lerobot-teleoperate \
+  --robot.type=omx_follower \
+  --robot.port=/dev/omx_follower \
+  --robot.id=omx_follower_arm \
+  --teleop.type=omx_leader \
+  --teleop.port=/dev/omx_leader \
+  --teleop.id=omx_leader_arm
+```
+
+During teleoperation, motions of the leader arm are mirrored in real time by the follower arm. OMX is already preconfigured, teleoperation can begin immediately without any calibration steps.
+
+### Teleoperate with camera
+
+You can also enable camera input during teleoperation by providing a camera configuration for the follower arm.
+
+```bash
+lerobot-teleoperate \
+  --robot.type=omx_follower \
+  --robot.port=/dev/omx_follower \
+  --robot.id=omx_follower_arm \
+  --robot.cameras="{front: {type: opencv, index_or_path: '/dev/video0', width: 640, height: 480, fps: 30}}" \
+  --teleop.type=omx_leader \
+  --teleop.port=/dev/omx_leader \
+  --teleop.id=omx_leader_arm \
+  --display_data=true
+```
+
+When the camera is enabled, the camera stream is displayed in real time and synchronized with the robot state. This setup is useful for visual monitoring and can be reused later for demonstration recording and imitation learning.
+
+</hfoption>
+</hfoptions>
+
+Congrats 🎉, your robot is all set to learn a task on its own.
+
+> If you have any questions or need help, please reach out on [Discord](https://discord.com/invite/robotis).

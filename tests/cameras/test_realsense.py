@@ -62,19 +62,15 @@ def test_abc_implementation():
 
 
 def test_connect():
-    config = RealSenseCameraConfig(serial_number_or_name="042")
-    camera = RealSenseCamera(config)
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
 
-    camera.connect(warmup=False)
-    assert camera.is_connected
+    with RealSenseCamera(config) as camera:
+        assert camera.is_connected
 
 
 def test_connect_already_connected():
-    config = RealSenseCameraConfig(serial_number_or_name="042")
-    camera = RealSenseCamera(config)
-    camera.connect(warmup=False)
-
-    with pytest.raises(DeviceAlreadyConnectedError):
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    with RealSenseCamera(config) as camera, pytest.raises(DeviceAlreadyConnectedError):
         camera.connect(warmup=False)
 
 
@@ -96,12 +92,10 @@ def test_invalid_width_connect():
 
 
 def test_read():
-    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30)
-    camera = RealSenseCamera(config)
-    camera.connect(warmup=False)
-
-    img = camera.read()
-    assert isinstance(img, np.ndarray)
+    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30, warmup_s=0)
+    with RealSenseCamera(config) as camera:
+        img = camera.read()
+        assert isinstance(img, np.ndarray)
 
 
 # TODO(Steven): Fix this test for the latest version of pyrealsense2.
@@ -142,32 +136,21 @@ def test_disconnect_before_connect():
 
 
 def test_async_read():
-    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30)
-    camera = RealSenseCamera(config)
-    camera.connect(warmup=False)
+    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30, warmup_s=0)
 
-    try:
+    with RealSenseCamera(config) as camera:
         img = camera.async_read()
 
         assert camera.thread is not None
         assert camera.thread.is_alive()
         assert isinstance(img, np.ndarray)
-    finally:
-        if camera.is_connected:
-            camera.disconnect()  # To stop/join the thread. Otherwise get warnings when the test ends
 
 
 def test_async_read_timeout():
-    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30)
-    camera = RealSenseCamera(config)
-    camera.connect(warmup=False)
-
-    try:
-        with pytest.raises(TimeoutError):
-            camera.async_read(timeout_ms=0)
-    finally:
-        if camera.is_connected:
-            camera.disconnect()
+    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30, warmup_s=0)
+    with RealSenseCamera(config) as camera, pytest.raises(TimeoutError):
+        camera.async_read(timeout_ms=0)  # consumes any available frame by then
+        camera.async_read(timeout_ms=0)  # request immediately another one
 
 
 def test_async_read_before_connect():
@@ -176,6 +159,47 @@ def test_async_read_before_connect():
 
     with pytest.raises(DeviceNotConnectedError):
         _ = camera.async_read()
+
+
+def test_read_latest():
+    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30, warmup_s=0)
+    with RealSenseCamera(config) as camera:
+        img = camera.read()
+        latest = camera.read_latest()
+
+        assert isinstance(latest, np.ndarray)
+        assert latest.shape == img.shape
+
+
+def test_read_latest_high_frequency():
+    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30, warmup_s=0)
+    with RealSenseCamera(config) as camera:
+        # prime with one read to ensure frames are available
+        ref = camera.read()
+
+        for _ in range(20):
+            latest = camera.read_latest()
+            assert isinstance(latest, np.ndarray)
+            assert latest.shape == ref.shape
+
+
+def test_read_latest_before_connect():
+    config = RealSenseCameraConfig(serial_number_or_name="042")
+    camera = RealSenseCamera(config)
+
+    with pytest.raises(DeviceNotConnectedError):
+        _ = camera.read_latest()
+
+
+def test_read_latest_too_old():
+    config = RealSenseCameraConfig(serial_number_or_name="042")
+
+    with RealSenseCamera(config) as camera:
+        # prime to ensure frames are available
+        _ = camera.read()
+
+        with pytest.raises(TimeoutError):
+            _ = camera.read_latest(max_age_ms=0)  # immediately too old
 
 
 @pytest.mark.parametrize(
@@ -189,18 +213,16 @@ def test_async_read_before_connect():
     ids=["no_rot", "rot90", "rot180", "rot270"],
 )
 def test_rotation(rotation):
-    config = RealSenseCameraConfig(serial_number_or_name="042", rotation=rotation)
-    camera = RealSenseCamera(config)
-    camera.connect(warmup=False)
+    config = RealSenseCameraConfig(serial_number_or_name="042", rotation=rotation, warmup_s=0)
+    with RealSenseCamera(config) as camera:
+        img = camera.read()
+        assert isinstance(img, np.ndarray)
 
-    img = camera.read()
-    assert isinstance(img, np.ndarray)
-
-    if rotation in (Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_270):
-        assert camera.width == 480
-        assert camera.height == 640
-        assert img.shape[:2] == (640, 480)
-    else:
-        assert camera.width == 640
-        assert camera.height == 480
-        assert img.shape[:2] == (480, 640)
+        if rotation in (Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_270):
+            assert camera.width == 480
+            assert camera.height == 640
+            assert img.shape[:2] == (640, 480)
+        else:
+            assert camera.width == 640
+            assert camera.height == 480
+            assert img.shape[:2] == (480, 640)

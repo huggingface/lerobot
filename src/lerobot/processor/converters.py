@@ -23,9 +23,8 @@ from typing import Any
 import numpy as np
 import torch
 
-from lerobot.utils.constants import ACTION, DONE, OBS_PREFIX, REWARD, TRUNCATED
-
-from .core import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
+from lerobot.types import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
+from lerobot.utils.constants import ACTION, DONE, INFO, OBS_PREFIX, REWARD, TRUNCATED
 
 
 @singledispatch
@@ -154,28 +153,34 @@ def from_tensor_to_numpy(x: torch.Tensor | Any) -> np.ndarray | float | int | An
     return x
 
 
+_COMPLEMENTARY_KEYS = (
+    "task",
+    "index",
+    "task_index",
+    "episode_index",
+    "timestamp",
+    "language_persistent",
+    "language_events",
+    "messages",
+    "message_streams",
+    "target_message_indices",
+)
+
+
 def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
-    """
-    Extract complementary data from a batch dictionary.
+    """Extract complementary data from a batch dictionary.
 
-    This includes padding flags, task description, and indices.
-
-    Args:
-        batch: The batch dictionary.
-
-    Returns:
-        A dictionary with the extracted complementary data.
+    Includes padding flags (any key containing ``_is_pad``) plus the fixed
+    set of metadata / language keys defined in ``_COMPLEMENTARY_KEYS`` —
+    each only when present in ``batch``.
     """
     pad_keys = {k: v for k, v in batch.items() if "_is_pad" in k}
-    task_key = {"task": batch["task"]} if "task" in batch else {}
-    index_key = {"index": batch["index"]} if "index" in batch else {}
-    task_index_key = {"task_index": batch["task_index"]} if "task_index" in batch else {}
-
-    return {**pad_keys, **task_key, **index_key, **task_index_key}
+    extras = {k: batch[k] for k in _COMPLEMENTARY_KEYS if k in batch}
+    return {**pad_keys, **extras}
 
 
 def create_transition(
-    observation: dict[str, Any] | None = None,
+    observation: RobotObservation | None = None,
     action: PolicyAction | RobotAction | None = None,
     reward: float = 0.0,
     done: bool = False,
@@ -383,7 +388,7 @@ def transition_to_batch(transition: EnvTransition) -> dict[str, Any]:
         REWARD: transition.get(TransitionKey.REWARD, 0.0),
         DONE: transition.get(TransitionKey.DONE, False),
         TRUNCATED: transition.get(TransitionKey.TRUNCATED, False),
-        "info": transition.get(TransitionKey.INFO, {}),
+        INFO: transition.get(TransitionKey.INFO, {}),
     }
 
     # Add complementary data.

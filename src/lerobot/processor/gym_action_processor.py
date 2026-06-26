@@ -16,10 +16,11 @@
 
 from dataclasses import dataclass
 
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
+from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.types import EnvAction, EnvTransition, PolicyAction, TransitionKey
 
 from .converters import to_tensor
-from .core import EnvAction, EnvTransition, PolicyAction
+from .hil_processor import TELEOP_ACTION_KEY
 from .pipeline import ActionProcessorStep, ProcessorStep, ProcessorStepRegistry
 
 
@@ -74,8 +75,6 @@ class Numpy2TorchActionProcessorStep(ProcessorStep):
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Converts numpy action to torch tensor if action exists, otherwise passes through."""
-        from .core import TransitionKey
-
         self._current_transition = transition.copy()
         new_transition = self._current_transition
 
@@ -88,6 +87,13 @@ class Numpy2TorchActionProcessorStep(ProcessorStep):
                 )
             torch_action = to_tensor(action, dtype=None)  # Preserve original dtype
             new_transition[TransitionKey.ACTION] = torch_action
+
+        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        if TELEOP_ACTION_KEY in complementary_data:
+            teleop_action = complementary_data[TELEOP_ACTION_KEY]
+            if isinstance(teleop_action, EnvAction):
+                complementary_data[TELEOP_ACTION_KEY] = to_tensor(teleop_action)
+            new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
 
         return new_transition
 

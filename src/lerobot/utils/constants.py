@@ -26,11 +26,18 @@ OBS_IMAGES = OBS_IMAGE + "s"
 OBS_LANGUAGE = OBS_STR + ".language"
 OBS_LANGUAGE_TOKENS = OBS_LANGUAGE + ".tokens"
 OBS_LANGUAGE_ATTENTION_MASK = OBS_LANGUAGE + ".attention_mask"
+OBS_LANGUAGE_SUBTASK = OBS_STR + ".subtask"
+OBS_LANGUAGE_SUBTASK_TOKENS = OBS_LANGUAGE_SUBTASK + ".tokens"
+OBS_LANGUAGE_SUBTASK_ATTENTION_MASK = OBS_LANGUAGE_SUBTASK + ".attention_mask"
 
 ACTION = "action"
+ACTION_PREFIX = ACTION + "."
+ACTION_TOKENS = ACTION + ".tokens"
+ACTION_TOKEN_MASK = ACTION + ".token_mask"
 REWARD = "next.reward"
 TRUNCATED = "next.truncated"
 DONE = "next.done"
+INFO = "info"
 
 ROBOTS = "robots"
 TELEOPERATORS = "teleoperators"
@@ -40,6 +47,7 @@ CHECKPOINTS_DIR = "checkpoints"
 LAST_CHECKPOINT_LINK = "last"
 PRETRAINED_MODEL_DIR = "pretrained_model"
 TRAINING_STATE_DIR = "training_state"
+ALGORITHM_DIR = "algorithm"
 RNG_STATE = "rng_state.safetensors"
 TRAINING_STEP = "training_step.json"
 OPTIMIZER_STATE = "optimizer_state.safetensors"
@@ -58,11 +66,30 @@ if "LEROBOT_HOME" in os.environ:
 # cache dir
 default_cache_path = Path(HF_HOME) / "lerobot"
 HF_LEROBOT_HOME = Path(os.getenv("HF_LEROBOT_HOME", default_cache_path)).expanduser()
+# LeRobot's own revision-safe Hub cache (NOT the system-wide ~/.cache/huggingface/hub/).
+# Used as the ``cache_dir`` argument to ``snapshot_download`` so that different
+# dataset revisions are stored in isolated snapshot directories.
+HF_LEROBOT_HUB_CACHE = HF_LEROBOT_HOME / "hub"
 
 # calibration dir
 default_calibration_path = HF_LEROBOT_HOME / "calibration"
 HF_LEROBOT_CALIBRATION = Path(os.getenv("HF_LEROBOT_CALIBRATION", default_calibration_path)).expanduser()
 
+
+# Dataset meta-features (auto-populated by the recording pipeline)
+DEFAULT_FEATURES = {
+    "timestamp": {"dtype": "float32", "shape": (1,), "names": None},
+    "frame_index": {"dtype": "int64", "shape": (1,), "names": None},
+    "episode_index": {"dtype": "int64", "shape": (1,), "names": None},
+    "index": {"dtype": "int64", "shape": (1,), "names": None},
+    "task_index": {"dtype": "int64", "shape": (1,), "names": None},
+}
+
+# ImageNet normalization constants
+IMAGENET_STATS = {
+    "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
+    "std": [[[0.229]], [[0.224]], [[0.225]]],  # (c,1,1)
+}
 
 # streaming datasets
 LOOKBACK_BACKTRACKTABLE = 100
@@ -70,3 +97,15 @@ LOOKAHEAD_BACKTRACKTABLE = 100
 
 # openpi
 OPENPI_ATTENTION_MASK_VALUE = -2.3819763e38  # TODO(pepijn): Modify this when extending support to fp8 models
+
+# Constants for LIBERO observation keys
+LIBERO_KEY_EEF_POS = "robot_state/eef/pos"
+LIBERO_KEY_EEF_QUAT = "robot_state/eef/quat"
+LIBERO_KEY_EEF_MAT = "robot_state/eef/mat"
+LIBERO_KEY_EEF_AXISANGLE = "robot_state/eef/axisangle"
+LIBERO_KEY_GRIPPER_QPOS = "robot_state/gripper/qpos"
+LIBERO_KEY_GRIPPER_QVEL = "robot_state/gripper/qvel"
+LIBERO_KEY_JOINTS_POS = "robot_state/joints/pos"
+LIBERO_KEY_JOINTS_VEL = "robot_state/joints/vel"
+LIBERO_KEY_PIXELS_AGENTVIEW = "pixels/agentview_image"
+LIBERO_KEY_PIXELS_EYE_IN_HAND = "pixels/robot0_eye_in_hand_image"

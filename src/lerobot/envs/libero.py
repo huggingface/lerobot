@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import partial
@@ -28,20 +29,10 @@ import torch
 from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
-from robosuite.utils.transform_utils import quat2axisangle
 
+from lerobot.types import RobotObservation
 
-def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
-    """Normalize camera_name into a non-empty list of strings."""
-    if isinstance(camera_name, str):
-        cams = [c.strip() for c in camera_name.split(",") if c.strip()]
-    elif isinstance(camera_name, (list | tuple)):
-        cams = [str(c).strip() for c in camera_name if str(c).strip()]
-    else:
-        raise TypeError(f"camera_name must be str or sequence[str], got {type(camera_name).__name__}")
-    if not cams:
-        raise ValueError("camera_name resolved to an empty list.")
-    return cams
+from .utils import _LazyAsyncVectorEnv, parse_camera_names
 
 
 def _get_suite(name: str) -> benchmark.Benchmark:
@@ -66,14 +57,34 @@ def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[i
     return ids
 
 
-def get_task_init_states(task_suite: Any, i: int) -> np.ndarray:
-    init_states_path = (
-        Path(get_libero_path("init_states"))
-        / task_suite.tasks[i].problem_folder
-        / task_suite.tasks[i].init_states_file
-    )
-    init_states = torch.load(init_states_path, weights_only=False)  # nosec B614
-    return init_states
+# LIBERO-plus perturbation variants encode the perturbation in the filename
+# but on disk only the base `.pruned_init` exists — strip the suffix to match
+# LIBERO-plus's own suite.get_task_init_states() (we reimplement it here so we
+# can pass weights_only=False for PyTorch 2.6+ numpy pickles).
+_LIBERO_PERTURBATION_SUFFIX_RE = re.compile(r"_(?:language|view|light)_[^.]*|_(?:table|tb)_\d+")
+
+
+def get_task_init_states(task_suite: Any, i: int, is_libero_plus: bool = False) -> np.ndarray:
+    task = task_suite.tasks[i]
+    filename = Path(task.init_states_file)
+    root = Path(get_libero_path("init_states"))
+
+    if not is_libero_plus:
+        init_states_path = root / task.problem_folder / filename.name
+        return torch.load(init_states_path, weights_only=False)  # nosec B614
+
+    # LIBERO-plus: `_add_` / `_level` variants store extra-object layouts under
+    # libero_newobj/ as a flat array that must be reshaped to (1, -1).
+    if "_add_" in filename.name or "_level" in filename.name:
+        init_states_path = root / "libero_newobj" / task.problem_folder / filename.name
+        init_states = torch.load(init_states_path, weights_only=False)  # nosec B614
+        return init_states.reshape(1, -1)
+
+    # LIBERO-plus perturbation variants encode the perturbation in the filename
+    # but on disk only the base `.pruned_init` exists — strip the suffix to match.
+    stripped = _LIBERO_PERTURBATION_SUFFIX_RE.sub("", filename.stem) + filename.suffix
+    init_states_path = root / task.problem_folder / stripped
+    return torch.load(init_states_path, weights_only=False)  # nosec B614
 
 
 def get_libero_dummy_action():
@@ -81,10 +92,7 @@ def get_libero_dummy_action():
     return [0, 0, 0, 0, 0, 0, -1]
 
 
-OBS_STATE_DIM = 8
 ACTION_DIM = 7
-AGENT_POS_LOW = -1000.0
-AGENT_POS_HIGH = 1000.0
 ACTION_LOW = -1.0
 ACTION_HIGH = 1.0
 TASK_SUITE_MAX_STEPS: dict[str, int] = {
@@ -104,6 +112,7 @@ class LiberoEnv(gym.Env):
         task_suite: Any,
         task_id: int,
         task_suite_name: str,
+        episode_length: int | None = None,
         camera_name: str | Sequence[str] = "agentview_image,robot0_eye_in_hand_image",
         obs_type: str = "pixels",
         render_mode: str = "rgb_array",
@@ -113,11 +122,15 @@ class LiberoEnv(gym.Env):
         visualization_height: int = 480,
         init_states: bool = True,
         episode_index: int = 0,
+        n_envs: int = 1,
         camera_name_mapping: dict[str, str] | None = None,
         num_steps_wait: int = 10,
+        control_mode: str = "relative",
+        is_libero_plus: bool = False,
     ):
         super().__init__()
         self.task_id = task_id
+        self.is_libero_plus = is_libero_plus
         self.obs_type = obs_type
         self.render_mode = render_mode
         self.observation_width = observation_width
@@ -125,7 +138,7 @@ class LiberoEnv(gym.Env):
         self.visualization_width = visualization_width
         self.visualization_height = visualization_height
         self.init_states = init_states
-        self.camera_name = _parse_camera_names(
+        self.camera_name = parse_camera_names(
             camera_name
         )  # agentview_image (main) or robot0_eye_in_hand_image (wrist)
 
@@ -142,14 +155,35 @@ class LiberoEnv(gym.Env):
         self.camera_name_mapping = camera_name_mapping
         self.num_steps_wait = num_steps_wait
         self.episode_index = episode_index
+        self.episode_length = episode_length
         # Load once and keep
-        self._init_states = get_task_init_states(task_suite, self.task_id) if self.init_states else None
-        self._init_state_id = self.episode_index  # tie each sub-env to a fixed init state
+        self._init_states = (
+            get_task_init_states(task_suite, self.task_id, is_libero_plus=self.is_libero_plus)
+            if self.init_states
+            else None
+        )
+        self._reset_stride = n_envs  # when performing a reset, append `_reset_stride` to `init_state_id`.
 
-        self._env = self._make_envs_task(task_suite, self.task_id)
+        self.init_state_id = self.episode_index  # tie each sub-env to a fixed init state
+
+        # Extract task metadata without allocating GPU resources (safe before fork).
+        task = task_suite.get_task(task_id)
+        self.task = task.name
+        self.task_description = task.language
+        self._task_bddl_file = os.path.join(
+            get_libero_path("bddl_files"), task.problem_folder, task.bddl_file
+        )
+        self._env: OffScreenRenderEnv | None = (
+            None  # deferred — created on first reset() inside the worker subprocess
+        )
+
         default_steps = 500
-        self._max_episode_steps = TASK_SUITE_MAX_STEPS.get(task_suite_name, default_steps)
-
+        self._max_episode_steps = (
+            TASK_SUITE_MAX_STEPS.get(task_suite_name, default_steps)
+            if self.episode_length is None
+            else self.episode_length
+        )
+        self.control_mode = control_mode
         images = {}
         for cam in self.camera_name:
             images[self.camera_name_mapping[cam]] = spaces.Box(
@@ -175,11 +209,36 @@ class LiberoEnv(gym.Env):
             self.observation_space = spaces.Dict(
                 {
                     "pixels": spaces.Dict(images),
-                    "agent_pos": spaces.Box(
-                        low=AGENT_POS_LOW,
-                        high=AGENT_POS_HIGH,
-                        shape=(OBS_STATE_DIM,),
-                        dtype=np.float64,
+                    "robot_state": spaces.Dict(
+                        {
+                            "eef": spaces.Dict(
+                                {
+                                    "pos": spaces.Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float64),
+                                    "quat": spaces.Box(
+                                        low=-np.inf, high=np.inf, shape=(4,), dtype=np.float64
+                                    ),
+                                    "mat": spaces.Box(
+                                        low=-np.inf, high=np.inf, shape=(3, 3), dtype=np.float64
+                                    ),
+                                }
+                            ),
+                            "gripper": spaces.Dict(
+                                {
+                                    "qpos": spaces.Box(
+                                        low=-np.inf, high=np.inf, shape=(2,), dtype=np.float64
+                                    ),
+                                    "qvel": spaces.Box(
+                                        low=-np.inf, high=np.inf, shape=(2,), dtype=np.float64
+                                    ),
+                                }
+                            ),
+                            "joints": spaces.Dict(
+                                {
+                                    "pos": spaces.Box(low=-np.inf, high=np.inf, shape=(7,), dtype=np.float64),
+                                    "vel": spaces.Box(low=-np.inf, high=np.inf, shape=(7,), dtype=np.float64),
+                                }
+                            ),
+                        }
                     ),
                 }
             )
@@ -188,69 +247,113 @@ class LiberoEnv(gym.Env):
             low=ACTION_LOW, high=ACTION_HIGH, shape=(ACTION_DIM,), dtype=np.float32
         )
 
+    def _ensure_env(self) -> None:
+        """Create the underlying OffScreenRenderEnv on first use.
+
+        Called inside the worker subprocess after fork(), so each worker gets
+        its own clean EGL context rather than inheriting a stale one from the
+        parent process (which causes EGL_BAD_CONTEXT crashes with AsyncVectorEnv).
+        """
+        if self._env is not None:
+            return
+        env = OffScreenRenderEnv(
+            bddl_file_name=self._task_bddl_file,
+            camera_heights=self.observation_height,
+            camera_widths=self.observation_width,
+        )
+        env.reset()
+        self._env = env
+
     def render(self):
+        self._ensure_env()
         raw_obs = self._env.env._get_observations()
-        image = self._format_raw_obs(raw_obs)["pixels"]["image"]
+        pixels = self._format_raw_obs(raw_obs)["pixels"]
+        image = next(iter(pixels.values()))
+        image = image[::-1, ::-1]  # flip both H and W for visualization
         return image
 
-    def _make_envs_task(self, task_suite: Any, task_id: int = 0):
-        task = task_suite.get_task(task_id)
-        self.task = task.name
-        self.task_description = task.language
-        task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
-
-        env_args = {
-            "bddl_file_name": task_bddl_file,
-            "camera_heights": self.observation_height,
-            "camera_widths": self.observation_width,
-        }
-        env = OffScreenRenderEnv(**env_args)
-        env.reset()
-        return env
-
-    def _format_raw_obs(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
+    def _format_raw_obs(self, raw_obs: RobotObservation) -> RobotObservation:
+        assert self._env is not None, "_format_raw_obs called before _ensure_env()"
         images = {}
         for camera_name in self.camera_name:
             image = raw_obs[camera_name]
-            image = image[::-1, ::-1]  # rotate 180 degrees
             images[self.camera_name_mapping[camera_name]] = image
-        state = np.concatenate(
-            (
-                raw_obs["robot0_eef_pos"],
-                quat2axisangle(raw_obs["robot0_eef_quat"]),
-                raw_obs["robot0_gripper_qpos"],
-            )
-        )
-        agent_pos = state
+
+        eef_pos = raw_obs.get("robot0_eef_pos")
+        eef_quat = raw_obs.get("robot0_eef_quat")
+
+        # rotation matrix from controller
+        eef_mat = self._env.robots[0].controller.ee_ori_mat if eef_pos is not None else None
+        gripper_qpos = raw_obs.get("robot0_gripper_qpos")
+        gripper_qvel = raw_obs.get("robot0_gripper_qvel")
+        joint_pos = raw_obs.get("robot0_joint_pos")
+        joint_vel = raw_obs.get("robot0_joint_vel")
+        obs = {
+            "pixels": images,
+            "robot_state": {
+                "eef": {
+                    "pos": eef_pos,  # (3,)
+                    "quat": eef_quat,  # (4,)
+                    "mat": eef_mat,  # (3, 3)
+                },
+                "gripper": {
+                    "qpos": gripper_qpos,  # (2,)
+                    "qvel": gripper_qvel,  # (2,)
+                },
+                "joints": {
+                    "pos": joint_pos,  # (7,)
+                    "vel": joint_vel,  # (7,)
+                },
+            },
+        }
         if self.obs_type == "pixels":
             return {"pixels": images.copy()}
+
         if self.obs_type == "pixels_agent_pos":
-            return {
-                "pixels": images.copy(),
-                "agent_pos": agent_pos,
-            }
+            # Validate required fields are present
+            if eef_pos is None or eef_quat is None or gripper_qpos is None:
+                raise ValueError(
+                    f"Missing required robot state fields in raw observation. "
+                    f"Got eef_pos={eef_pos is not None}, eef_quat={eef_quat is not None}, "
+                    f"gripper_qpos={gripper_qpos is not None}"
+                )
+            return obs
+
         raise NotImplementedError(
             f"The observation type '{self.obs_type}' is not supported in LiberoEnv. "
             "Please switch to an image-based obs_type (e.g. 'pixels', 'pixels_agent_pos')."
         )
 
     def reset(self, seed=None, **kwargs):
+        self._ensure_env()
         super().reset(seed=seed)
         self._env.seed(seed)
-        if self.init_states and self._init_states is not None:
-            self._env.set_init_state(self._init_states[self._init_state_id])
         raw_obs = self._env.reset()
+        if self.init_states and self._init_states is not None:
+            raw_obs = self._env.set_init_state(self._init_states[self.init_state_id % len(self._init_states)])
+            self.init_state_id += self._reset_stride  # Change init_state_id when reset
 
         # After reset, objects may be unstable (slightly floating, intersecting, etc.).
         # Step the simulator with a no-op action for a few frames so everything settles.
         # Increasing this value can improve determinism and reproducibility across resets.
         for _ in range(self.num_steps_wait):
             raw_obs, _, _, _ = self._env.step(get_libero_dummy_action())
+
+        if self.control_mode == "absolute":
+            for robot in self._env.robots:
+                robot.controller.use_delta = False
+        elif self.control_mode == "relative":
+            for robot in self._env.robots:
+                robot.controller.use_delta = True
+        else:
+            raise ValueError(f"Invalid control mode: {self.control_mode}")
         observation = self._format_raw_obs(raw_obs)
         info = {"is_success": False}
         return observation, info
 
-    def step(self, action: np.ndarray) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
+    def step(self, action: np.ndarray) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
+        self._ensure_env()
+        assert self._env is not None
         if action.ndim != 1:
             raise ValueError(
                 f"Expected action to be 1-D (shape (action_dim,)), "
@@ -270,18 +373,13 @@ class LiberoEnv(gym.Env):
         )
         observation = self._format_raw_obs(raw_obs)
         if terminated:
-            info["final_info"] = {
-                "task": self.task,
-                "task_id": self.task_id,
-                "done": bool(done),
-                "is_success": bool(is_success),
-            }
             self.reset()
         truncated = False
         return observation, reward, terminated, truncated, info
 
     def close(self):
-        self._env.close()
+        if self._env is not None:
+            self._env.close()
 
 
 def _make_env_fns(
@@ -291,8 +389,12 @@ def _make_env_fns(
     task_id: int,
     n_envs: int,
     camera_names: list[str],
+    episode_length: int | None,
     init_states: bool,
     gym_kwargs: Mapping[str, Any],
+    control_mode: str,
+    camera_name_mapping: dict[str, str] | None = None,
+    is_libero_plus: bool = False,
 ) -> list[Callable[[], LiberoEnv]]:
     """Build n_envs factory callables for a single (suite, task_id)."""
 
@@ -304,7 +406,12 @@ def _make_env_fns(
             task_suite_name=suite_name,
             camera_name=camera_names,
             init_states=init_states,
+            episode_length=episode_length,
             episode_index=episode_index,
+            n_envs=n_envs,
+            control_mode=control_mode,
+            camera_name_mapping=camera_name_mapping,
+            is_libero_plus=is_libero_plus,
             **local_kwargs,
         )
 
@@ -324,6 +431,10 @@ def create_libero_envs(
     camera_name: str | Sequence[str] = "agentview_image,robot0_eye_in_hand_image",
     init_states: bool = True,
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
+    control_mode: str = "relative",
+    episode_length: int | None = None,
+    camera_name_mapping: dict[str, str] | None = None,
+    is_libero_plus: bool = False,
 ) -> dict[str, dict[int, Any]]:
     """
     Create vectorized LIBERO environments with a consistent return shape.
@@ -343,7 +454,7 @@ def create_libero_envs(
     gym_kwargs = dict(gym_kwargs or {})
     task_ids_filter = gym_kwargs.pop("task_ids", None)  # optional: limit to specific tasks
 
-    camera_names = _parse_camera_names(camera_name)
+    camera_names = parse_camera_names(camera_name)
     suite_names = [s.strip() for s in str(task).split(",") if s.strip()]
     if not suite_names:
         raise ValueError("`task` must contain at least one LIBERO suite name.")
@@ -354,28 +465,45 @@ def create_libero_envs(
     if task_ids_filter is not None:
         print(f"Restricting to task_ids={task_ids_filter}")
 
-    out: dict[str, dict[int, Any]] = defaultdict(dict)
+    is_async = env_cls is gym.vector.AsyncVectorEnv
 
+    out: dict[str, dict[int, Any]] = defaultdict(dict)
     for suite_name in suite_names:
         suite = _get_suite(suite_name)
         total = len(suite.tasks)
         selected = _select_task_ids(total, task_ids_filter)
-
         if not selected:
             raise ValueError(f"No tasks selected for suite '{suite_name}' (available: {total}).")
+
+        # All tasks in a suite share identical observation/action spaces.
+        # Probe once and reuse to avoid creating a temp env per task.
+        cached_obs_space: spaces.Space | None = None
+        cached_act_space: spaces.Space | None = None
+        cached_metadata: dict[str, Any] | None = None
 
         for tid in selected:
             fns = _make_env_fns(
                 suite=suite,
+                episode_length=episode_length,
                 suite_name=suite_name,
                 task_id=tid,
                 n_envs=n_envs,
                 camera_names=camera_names,
                 init_states=init_states,
                 gym_kwargs=gym_kwargs,
+                control_mode=control_mode,
+                camera_name_mapping=camera_name_mapping,
+                is_libero_plus=is_libero_plus,
             )
-            out[suite_name][tid] = env_cls(fns)
+            if is_async:
+                lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space, cached_metadata)
+                if cached_obs_space is None:
+                    cached_obs_space = lazy.observation_space
+                    cached_act_space = lazy.action_space
+                    cached_metadata = lazy.metadata
+                out[suite_name][tid] = lazy
+            else:
+                out[suite_name][tid] = env_cls(fns)
             print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")
 
-    # return plain dicts for predictability
     return {suite: dict(task_map) for suite, task_map in out.items()}

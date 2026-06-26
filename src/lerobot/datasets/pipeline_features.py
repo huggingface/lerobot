@@ -16,14 +16,15 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
-from lerobot.configs.types import PipelineFeatureType
-from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.configs import PipelineFeatureType
 from lerobot.processor import DataProcessorPipeline
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE, OBS_STR
+from lerobot.utils.feature_utils import hw_to_dataset_features
 
 
 def create_initial_features(
-    action: dict[str, Any] | None = None, observation: dict[str, Any] | None = None
+    action: RobotAction | None = None, observation: RobotObservation | None = None
 ) -> dict[PipelineFeatureType, dict[str, Any]]:
     """
     Creates the initial features dict for the dataset from action and observation specs.
@@ -43,11 +44,11 @@ def create_initial_features(
     return features
 
 
-# Helper to filter state/action keys based on regex patterns.
-def should_keep(key: str, patterns: tuple[str]) -> bool:
+# Helper to filter state/action keys based on compiled regex patterns.
+def should_keep(key: str, patterns: tuple[re.Pattern] | None) -> bool:
     if patterns is None:
         return True
-    return any(re.search(pat, key) for pat in patterns)
+    return any(pat.search(key) for pat in patterns)
 
 
 def strip_prefix(key: str, prefixes_to_strip: tuple[str]) -> str:
@@ -69,25 +70,29 @@ def aggregate_pipeline_dataset_features(
     initial_features: dict[PipelineFeatureType, dict[str, Any]],
     *,
     use_videos: bool = True,
+    exclude_images: bool = False,
     patterns: Sequence[str] | None = None,
 ) -> dict[str, dict]:
     """
     Aggregates and filters pipeline features to create a dataset-ready features dictionary.
 
     This function transforms initial features using the pipeline, categorizes them as action or observations
-    (image or state), filters them based on `use_videos` and `patterns`, and finally
+    (image or state), filters them based on `exclude_images` and `patterns`, and finally
     formats them for use with a Hugging Face LeRobot Dataset.
 
     Args:
         pipeline: The DataProcessorPipeline to apply.
         initial_features: A dictionary of raw feature specs for actions and observations.
-        use_videos: If False, image features are excluded.
+        use_videos: Controls the storage dtype for image features. If True, images are stored as "video"; if False, they are stored as "image".
+        exclude_images: If True, image features are dropped entirely from the output.
         patterns: A sequence of regex patterns to filter action and state features.
                   Image features are not affected by this filter.
 
     Returns:
         A dictionary of features formatted for a Hugging Face LeRobot Dataset.
     """
+    compiled_patterns = tuple(re.compile(p) for p in patterns) if patterns is not None else None
+
     all_features = pipeline.transform_features(initial_features)
 
     # Intermediate storage for categorized and filtered features.
@@ -117,9 +122,9 @@ def aggregate_pipeline_dataset_features(
             )
 
             # 2. Apply filtering rules.
-            if is_image and not use_videos:
+            if is_image and exclude_images:
                 continue
-            if not is_image and not should_keep(key, patterns):
+            if not is_image and not should_keep(key, compiled_patterns):
                 continue
 
             # 3. Add the feature to the appropriate group with a clean name.

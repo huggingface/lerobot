@@ -35,10 +35,11 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
-from lerobot.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_PREFIX, OBS_STATE, OBS_STR, REWARD
+
+from ..pretrained import PreTrainedPolicy
+from ..utils import get_device_from_parameters, get_output_shape, populate_queues
+from .configuration_tdmpc import TDMPCConfig
 
 
 class TDMPCPolicy(PreTrainedPolicy):
@@ -65,6 +66,7 @@ class TDMPCPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: TDMPCConfig,
+        **kwargs,
     ):
         """
         Args:

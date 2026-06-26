@@ -58,7 +58,7 @@ test-act-ete-train:
 		--dataset.episodes="[0]" \
 		--batch_size=2 \
 		--steps=4 \
-		--eval_freq=2 \
+		--env_eval_freq=2 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--save_freq=2 \
@@ -96,7 +96,7 @@ test-diffusion-ete-train:
 		--dataset.episodes="[0]" \
 		--batch_size=2 \
 		--steps=2 \
-		--eval_freq=2 \
+		--env_eval_freq=2 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--save_checkpoint=true \
@@ -126,7 +126,7 @@ test-tdmpc-ete-train:
 		--dataset.episodes="[0]" \
 		--batch_size=2 \
 		--steps=2 \
-		--eval_freq=2 \
+		--env_eval_freq=2 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--save_checkpoint=true \
@@ -161,7 +161,7 @@ test-smolvla-ete-train:
 		--dataset.episodes="[0]" \
 		--batch_size=2 \
 		--steps=4 \
-		--eval_freq=2 \
+		--env_eval_freq=2 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--save_freq=2 \
@@ -178,3 +178,9 @@ test-smolvla-ete-eval:
 		--env.episode_length=5 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1
+
+# E2E annotation pipeline smoke test against a tiny in-memory fixture
+# dataset. Opt-in (not part of `make test-end-to-end`) and uses a stub VLM
+# backend, so it does not require a real model checkpoint or GPU.
+annotation-e2e:
+	uv run python -m tests.annotations.run_e2e_smoke

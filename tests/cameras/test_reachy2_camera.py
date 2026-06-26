@@ -20,6 +20,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+pytest.importorskip("reachy2_sdk")
+
 from lerobot.cameras.reachy2_camera import Reachy2Camera, Reachy2CameraConfig
 from lerobot.utils.errors import DeviceNotConnectedError
 
@@ -127,19 +129,7 @@ def test_async_read(camera):
     try:
         img = camera.async_read()
 
-        assert camera.thread is not None
-        assert camera.thread.is_alive()
         assert isinstance(img, np.ndarray)
-    finally:
-        if camera.is_connected:
-            camera.disconnect()
-
-
-def test_async_read_timeout(camera):
-    camera.connect()
-    try:
-        with pytest.raises(TimeoutError):
-            camera.async_read(timeout_ms=0)
     finally:
         if camera.is_connected:
             camera.disconnect()
@@ -158,6 +148,44 @@ def test_disconnect_before_connect(camera):
 def test_async_read_before_connect(camera):
     with pytest.raises(DeviceNotConnectedError):
         _ = camera.async_read()
+
+
+def test_read_latest(camera):
+    camera.connect()
+
+    frame = camera.read()
+    latest = camera.read_latest()
+
+    assert isinstance(latest, np.ndarray)
+    assert latest.shape == frame.shape
+
+
+def test_read_latest_before_connect(camera):
+    # camera fixture yields an unconnected camera instance
+    with pytest.raises(DeviceNotConnectedError):
+        _ = camera.read_latest()
+
+
+def test_read_latest_high_frequency(camera):
+    camera.connect()
+
+    # prime to ensure frames are available
+    ref = camera.read()
+
+    for _ in range(20):
+        latest = camera.read_latest()
+        assert isinstance(latest, np.ndarray)
+        assert latest.shape == ref.shape
+
+
+def test_read_latest_too_old(camera):
+    camera.connect()
+
+    # prime to ensure frames are available
+    _ = camera.read()
+
+    with pytest.raises(TimeoutError):
+        _ = camera.read_latest(max_age_ms=0)  # immediately too old
 
 
 def test_wrong_camera_name():

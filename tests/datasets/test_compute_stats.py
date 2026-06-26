@@ -18,6 +18,8 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.datasets.compute_stats import (
     RunningQuantileStats,
     _assert_type_and_shape,
@@ -79,6 +81,29 @@ def test_get_feature_stats_images():
     assert "min" in stats and "max" in stats and "mean" in stats and "std" in stats and "count" in stats
     np.testing.assert_equal(stats["count"], np.array([100]))
     assert stats["min"].shape == stats["max"].shape == stats["mean"].shape == stats["std"].shape
+
+
+def test_get_feature_stats_uint8_images_preserves_std():
+    data = np.array(
+        [
+            [
+                [[0, 64], [128, 255]],
+                [[255, 128], [64, 0]],
+                [[32, 96], [160, 224]],
+            ],
+            [
+                [[16, 80], [144, 240]],
+                [[240, 144], [80, 16]],
+                [[48, 112], [176, 208]],
+            ],
+        ],
+        dtype=np.uint8,
+    )
+
+    stats = get_feature_stats(data, axis=(0, 2, 3), keepdims=True)
+
+    expected_std = data.transpose(0, 2, 3, 1).reshape(-1, 3).std(axis=0).reshape(1, 3, 1, 1)
+    np.testing.assert_allclose(stats["std"], expected_std)
 
 
 def test_get_feature_stats_axis_0_keepdims(sample_array):
