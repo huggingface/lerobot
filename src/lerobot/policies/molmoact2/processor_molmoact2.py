@@ -1005,6 +1005,93 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         return features
 
 
+@ProcessorStepRegistry.register(name="molmoact2_state_frame_transform")
+@dataclass
+class MolmoAct2StateFrameTransformStep(ProcessorStep):
+    """Convert robot state from arm frame to model frame before normalization.
+
+    Required for zero-shot deployment of MolmoAct2-SO100_101 on SO-100/101
+    arms calibrated with LeRobot >= 0.5.0 (v3.0 convention). The checkpoint
+    was trained on data using a different joint convention (sign flip on
+    shoulder_lift, 90 deg offset on shoulder_lift and elbow_flex).
+
+    No-op when joint_signs and joint_offsets are None (default), so this
+    step has no effect on fine-tuned models or other embodiments.
+
+    state_model = signs * arm_state + offsets
+
+    See: https://huggingface.co/docs/lerobot/backwardcomp
+    """
+
+    joint_signs: list[float] | None = None
+    joint_offsets: list[float] | None = None
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if self.joint_signs is None and self.joint_offsets is None:
+            return transition
+        observation = transition.get(TransitionKey.OBSERVATION)
+        if not isinstance(observation, dict) or OBS_STATE not in observation:
+            return transition
+        transition = transition.copy()
+        observation = observation.copy()
+        state = torch.as_tensor(observation[OBS_STATE], dtype=torch.float32)
+        n = len(self.joint_signs)
+        signs = torch.tensor(self.joint_signs, dtype=torch.float32, device=state.device)
+        offsets = torch.tensor(self.joint_offsets, dtype=torch.float32, device=state.device)
+        state[..., :n] = signs * state[..., :n] + offsets
+        observation[OBS_STATE] = state
+        transition[TransitionKey.OBSERVATION] = observation
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {"joint_signs": self.joint_signs, "joint_offsets": self.joint_offsets}
+
+
+@ProcessorStepRegistry.register(name="molmoact2_action_frame_transform")
+@dataclass
+class MolmoAct2ActionFrameTransformStep(ProcessorStep):
+    """Convert model action from model frame back to arm frame after unnormalization.
+
+    Inverse of MolmoAct2StateFrameTransformStep. Required for zero-shot
+    MolmoAct2-SO100_101 on SO-100/101 arms. No-op when both fields are None.
+
+    action_arm = signs * (model_action - offsets)
+
+    See: https://huggingface.co/docs/lerobot/backwardcomp
+    """
+
+    joint_signs: list[float] | None = None
+    joint_offsets: list[float] | None = None
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if self.joint_signs is None and self.joint_offsets is None:
+            return transition
+        action = transition.get(TransitionKey.ACTION)
+        if action is None:
+            return transition
+        transition = transition.copy()
+        action = torch.as_tensor(action, dtype=torch.float32)
+        n = len(self.joint_signs)
+        signs = torch.tensor(self.joint_signs, dtype=torch.float32, device=action.device)
+        offsets = torch.tensor(self.joint_offsets, dtype=torch.float32, device=action.device)
+        action[..., :n] = signs * (action[..., :n] - offsets)
+        transition[TransitionKey.ACTION] = action
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {"joint_signs": self.joint_signs, "joint_offsets": self.joint_offsets}
+
+
 @ProcessorStepRegistry.register(name="molmoact2_clamp_action")
 @dataclass
 class MolmoAct2ClampActionProcessorStep(ProcessorStep):
@@ -1067,6 +1154,10 @@ def make_molmoact2_pre_post_processors(
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
+        MolmoAct2StateFrameTransformStep(
+            joint_signs=config.joint_signs,
+            joint_offsets=config.joint_offsets,
+        ),
         MolmoAct2MaskedNormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
@@ -1101,6 +1192,10 @@ def make_molmoact2_pre_post_processors(
             features=config.output_features,
             norm_map=config.normalization_mapping,
             stats=masked_dataset_stats,
+        ),
+        MolmoAct2ActionFrameTransformStep(
+            joint_signs=config.joint_signs,
+            joint_offsets=config.joint_offsets,
         ),
         DeviceProcessorStep(device="cpu"),
     ]
