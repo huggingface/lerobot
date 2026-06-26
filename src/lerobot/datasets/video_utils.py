@@ -458,7 +458,17 @@ def encode_video_frames(
     target_size: tuple[int, int] | None = None,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
-    # Check encoder availability 
+    if camera_encoder is None:
+        camera_encoder = camera_encoder_defaults()
+    vcodec = camera_encoder.vcodec
+    pix_fmt = camera_encoder.pix_fmt
+    g = camera_encoder.g
+    crf = camera_encoder.crf
+    fast_decode = camera_encoder.fast_decode
+    if preset is None:
+        preset = camera_encoder.preset
+
+    # Check encoder availability
     # Hardware encoders: h264_nvmpi (Jetson), h264_nvenc (NVIDIA desktop), h264_v4l2m2m, h264_omx
     supported_codecs = [
         "h264", "hevc", "libsvtav1", "libx264",
@@ -467,11 +477,6 @@ def encode_video_frames(
     ]
     if vcodec not in supported_codecs:
         raise ValueError(f"Unsupported video codec: {vcodec}. Supported codecs are: {supported_codecs}.")
-
-    if camera_encoder is None:
-        camera_encoder = camera_encoder_defaults()
-    vcodec = camera_encoder.vcodec
-    pix_fmt = camera_encoder.pix_fmt
 
     video_path = Path(video_path)
     imgs_dir = Path(imgs_dir)
@@ -500,13 +505,6 @@ def encode_video_frames(
         )
         if input_list:
             break
-    
-    # Define video output frame size (assuming all input frames are the same size)
-    # Get input frames
-    template = "frame-" + ("[0-9]" * 6) + ".png"
-    input_list = sorted(
-        glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("-")[-1].split(".")[0])
-    )
 
     if len(input_list) == 0:
         raise FileNotFoundError(f"No images found in {imgs_dir}.")

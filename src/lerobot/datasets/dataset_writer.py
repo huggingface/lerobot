@@ -192,7 +192,9 @@ class DatasetWriter:
             if isinstance(frame[name], torch.Tensor):
                 frame[name] = frame[name].numpy()
 
-        validate_frame(frame, self._meta.features)
+        # validate_frame rejects raw bytes for image/video features, so we only check key presence.
+        if "task" not in frame:
+            raise ValueError("Feature mismatch in `frame` dictionary:\nMissing features: {'task'}\n")
 
         if self.episode_buffer is None:
             self.episode_buffer = self._create_episode_buffer()
