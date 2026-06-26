@@ -206,7 +206,8 @@ def _poll_until_done(
         try:
             info = inspect_job(job_id=job_id)
             failures = 0
-            stage = info.status.stage.value
+            # `stage` is an enum in some huggingface_hub versions and a plain str in others.
+            stage = getattr(info.status.stage, "value", info.status.stage)
             if stage in _TERMINAL_STAGES:
                 if status_holder is not None:
                     status_holder["message"] = getattr(info.status, "message", None)

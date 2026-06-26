@@ -41,12 +41,15 @@ def test_resolve_job_tags_always_includes_lerobot_and_dedups():
     assert resolve_job_tags(["lelab", "lerobot", "lelab"]) == ["lerobot", "lelab"]
 
 
-def _fake_inspect(stage_value):
-    return lambda job_id: SimpleNamespace(status=SimpleNamespace(stage=SimpleNamespace(value=stage_value)))
+def _fake_inspect(stage_value, *, as_enum=True):
+    # huggingface_hub returns `stage` as an enum (with `.value`) in some versions and a plain str in others.
+    stage = SimpleNamespace(value=stage_value) if as_enum else stage_value
+    return lambda job_id: SimpleNamespace(status=SimpleNamespace(stage=stage))
 
 
-def test_poll_until_done_returns_terminal_stage(monkeypatch):
-    monkeypatch.setattr("lerobot.jobs.hf.inspect_job", _fake_inspect("COMPLETED"))
+@pytest.mark.parametrize("as_enum", [True, False], ids=["enum_stage", "str_stage"])
+def test_poll_until_done_returns_terminal_stage(monkeypatch, as_enum):
+    monkeypatch.setattr("lerobot.jobs.hf.inspect_job", _fake_inspect("COMPLETED", as_enum=as_enum))
     done = threading.Event()
     assert _poll_until_done("j", done, poll_interval=0.01) == "COMPLETED"
     assert done.is_set()
