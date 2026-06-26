@@ -28,7 +28,9 @@ import argparse
 import contextlib
 import faulthandler
 import gc
+import os
 import sys
+import tempfile
 import time
 
 import numpy as np
@@ -164,7 +166,7 @@ def main():
             did_blend = False
             t_start = time.time()
 
-            log_path = "/tmp/sonic_pose_log.csv"
+            log_path = os.path.join(tempfile.gettempdir(), "sonic_pose_log.csv")
             jnames = [m.name for m in G1_29_JointIndex]
             log_ctx = open(log_path, "w") if args.log_csv else None  # noqa: SIM115
             if log_ctx:
