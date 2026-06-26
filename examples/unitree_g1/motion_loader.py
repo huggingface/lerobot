@@ -25,7 +25,7 @@ body's *root orientation removed* (per-frame canonical), exactly like the live
 deploy stream's ``smpl_joints_local`` (see ``process_smpl_joints`` in the GEAR
 PICO teleop and ``smpl_joints_multi_future_local`` in training). The reference
 ``smpl_filtered`` clips instead store **world-frame** joints (heading retained),
-so feeding them raw makes the robot move but mis-track / never face-forward.
+so feeding them raw makes the robot move but track poorly / never face-forward.
 This loader therefore canonicalizes on load using the clip's per-frame root
 orientation (``pose_aa[:, :3]``):
 
