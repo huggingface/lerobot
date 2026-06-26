@@ -43,14 +43,14 @@ def load_pkl(path: str) -> dict:
     except Exception:
         # joblib clips are zlib-compressed pickles; fall back to manual inflate.
         import contextlib
-        import pickle
+        import pickle  # nosec B403 - loads trusted local SMPL clips authored by the user
         import zlib
 
         with open(path, "rb") as f:
             raw = f.read()
         with contextlib.suppress(zlib.error):
             raw = zlib.decompress(raw)
-        return pickle.loads(raw)
+        return pickle.loads(raw)  # nosec B301 - local, user-provided motion files only
 
 
 def main():

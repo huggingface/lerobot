@@ -766,7 +766,7 @@ def _planner_worker(path, req_q, res_q, stop_evt, version, seed, use_gpu):
     while not stop_evt.is_set():
         try:
             ctx, gf, ms_dict = req_q.get(timeout=0.05)
-        except Exception:
+        except queue.Empty:  # nosec B112 - idle poll, nothing queued this tick
             continue
         try:
             inp = _build_planner_inputs(ctx, ms_dict, version, seed)
