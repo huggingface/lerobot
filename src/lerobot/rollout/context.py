@@ -320,7 +320,8 @@ def build_rollout_context(
             raise ValueError(
                 f"Visual feature mismatch between policy and robot hardware.\n"
                 f"Policy expects: {expected_visuals}\n"
-                f"Robot provides: {provided_visuals}"
+                f"Robot provides: {provided_visuals}\n"
+                "Use --rename_map to map camera names."
             )
 
     # --- 5. Dataset -------------
