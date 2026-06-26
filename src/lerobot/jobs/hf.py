@@ -45,7 +45,8 @@ from huggingface_hub import (
 
 from lerobot.common.train_utils import push_checkpoint_to_hub
 from lerobot.configs import parser
-from lerobot.jobs.dataset import ensure_dataset_available
+
+from .dataset import ensure_dataset_available
 
 if TYPE_CHECKING:
     from lerobot.configs.train import TrainPipelineConfig
