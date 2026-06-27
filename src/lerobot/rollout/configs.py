@@ -153,7 +153,7 @@ class EpisodicStrategyConfig(RolloutStrategyConfig):
 @RolloutStrategyConfig.register_subclass("eval")
 @dataclass
 class EvalStrategyConfig(RolloutStrategyConfig):
-    """Multi-episode autonomous rollout that scores task success, no data recording.
+    """Multi-episode autonomous rollout that scores task success.
 
     Runs ``num_episodes`` episodes of up to ``episode_time_s`` each. After
     every episode (except the last), the robot is held at its initial
@@ -166,6 +166,10 @@ class EvalStrategyConfig(RolloutStrategyConfig):
     is marked successful the first time `check_success()` returns True, and
     that step index is recorded. At the end, aggregate success_rate and
     success-step stats are logged and optionally written to `output_path`.
+
+    Recording is optional: set ``--dataset.repo_id=...`` (same ``rollout_``
+    prefix convention as ``episodic``) to also save a video/dataset of every
+    episode. Without it, no frames are kept — only the success metrics.
     """
 
     num_episodes: int = 10
@@ -299,11 +303,6 @@ class RolloutConfig:
         if isinstance(self.strategy, BaseStrategyConfig) and self.dataset is not None:
             raise ValueError(
                 "Base strategy does not record data. Use sentry, highlight, or dagger for recording."
-            )
-
-        if isinstance(self.strategy, EvalStrategyConfig) and self.dataset is not None:
-            raise ValueError(
-                "Eval strategy does not record data. Use episodic (optionally alongside eval) for recording."
             )
 
         # Sentry MUST use streaming encoding to avoid disk I/O blocking the control loop

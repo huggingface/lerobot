@@ -14,26 +14,31 @@
 
 """Eval rollout strategy: multi-episode autonomous run that scores task success.
 
-No data recording — use ``episodic`` instead (or alongside, in a separate
-run) if you also want a dataset/video. Designed primarily for the MuJoCo
-sim (``sim_so101``), where ``robot.check_success()`` can read privileged
-state (e.g. whether the cube was lifted) that real hardware has no
-equivalent for.
+Recording is optional: pass ``--dataset.repo_id=...`` (must start with
+``rollout_``, same convention as ``episodic``) to also save a video/dataset
+of every episode alongside the success metrics. Without a dataset config,
+no frames are kept. Designed primarily for the MuJoCo sim (``sim_so101``),
+where ``robot.check_success()`` can read privileged state (e.g. whether the
+cube was lifted) that real hardware has no equivalent for.
 """
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import logging
 import statistics
 import time
 
+from lerobot.datasets import VideoEncodingManager
+from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.robot_utils import precise_sleep
 
 from ..configs import EvalStrategyConfig
 from ..context import RolloutContext
-from .core import RolloutStrategy, send_next_action
+from .core import RolloutStrategy, safe_push_to_hub, send_next_action
 
 logger = logging.getLogger(__name__)
 
@@ -69,37 +74,55 @@ class EvalStrategy(RolloutStrategy):
 
     def run(self, ctx: RolloutContext) -> None:
         robot = ctx.hardware.robot_wrapper
+        dataset = ctx.data.dataset
+        cfg = ctx.runtime.cfg
+        single_task = (cfg.dataset.single_task if cfg.dataset else "") or cfg.task
 
-        for episode in range(self.config.num_episodes):
-            if ctx.runtime.shutdown_event.is_set():
-                break
+        encoding_ctx = VideoEncodingManager(dataset) if dataset is not None else contextlib.nullcontext()
+        with encoding_ctx:
+            try:
+                for episode in range(self.config.num_episodes):
+                    if ctx.runtime.shutdown_event.is_set():
+                        break
 
-            self._engine.reset()
-            self._interpolator.reset()
-            self._engine.resume()
+                    self._engine.reset()
+                    self._interpolator.reset()
+                    self._engine.resume()
 
-            result = self._run_episode(ctx, robot, episode)
-            self._results.append(result)
-            logger.info(
-                "Episode %d/%d: success=%s success_step=%s steps=%d",
-                episode + 1,
-                self.config.num_episodes,
-                result.success,
-                result.success_step,
-                result.num_steps,
-            )
+                    result = self._run_episode(ctx, robot, episode, dataset, single_task)
+                    self._results.append(result)
+                    logger.info(
+                        "Episode %d/%d: success=%s success_step=%s steps=%d",
+                        episode + 1,
+                        self.config.num_episodes,
+                        result.success,
+                        result.success_step,
+                        result.num_steps,
+                    )
 
-            is_last = episode == self.config.num_episodes - 1
-            if not is_last and self.config.reset_to_initial_position:
-                self._return_to_initial_position(ctx.hardware, duration_s=1)
-                precise_sleep(self.config.reset_time_s)
+                    if dataset is not None:
+                        dataset.save_episode()
+
+                    is_last = episode == self.config.num_episodes - 1
+                    if not is_last and self.config.reset_to_initial_position:
+                        self._return_to_initial_position(ctx.hardware, duration_s=1)
+                        precise_sleep(self.config.reset_time_s)
+            finally:
+                # Safety net: persist a partially-recorded episode left by an
+                # unexpected exception or KeyboardInterrupt instead of dropping it.
+                if dataset is not None:
+                    with contextlib.suppress(Exception):
+                        dataset.save_episode()
 
         self._log_summary()
         if self.config.output_path:
             self._write_summary(self.config.output_path)
 
-    def _run_episode(self, ctx: RolloutContext, robot, episode: int) -> EpisodeResult:
+    def _run_episode(
+        self, ctx: RolloutContext, robot, episode: int, dataset, single_task: str
+    ) -> EpisodeResult:
         fps = ctx.runtime.cfg.fps
+        features = ctx.data.dataset_features
         interpolator = self._interpolator
         control_interval = interpolator.get_control_interval(fps)
 
@@ -126,6 +149,10 @@ class EvalStrategy(RolloutStrategy):
             if action_dict is not None:
                 step += 1
                 self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                if dataset is not None:
+                    obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                    action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
+                    dataset.add_frame({**obs_frame, **action_frame, "task": single_task})
                 if not success and self._check_success(robot):
                     success = True
                     success_step = step
@@ -182,8 +209,21 @@ class EvalStrategy(RolloutStrategy):
         logger.info("Wrote eval summary to %s", path)
 
     def teardown(self, ctx: RolloutContext) -> None:
+        cfg = ctx.runtime.cfg
+        dataset = ctx.data.dataset
+
+        if dataset is not None:
+            logger.info("Finalizing dataset...")
+            dataset.finalize()
+            if (
+                cfg.dataset is not None
+                and cfg.dataset.push_to_hub
+                and safe_push_to_hub(dataset, tags=cfg.dataset.tags, private=cfg.dataset.private)
+            ):
+                logger.info("Dataset uploaded to hub")
+
         self._teardown_hardware(
             ctx.hardware,
-            return_to_initial_position=ctx.runtime.cfg.return_to_initial_position,
+            return_to_initial_position=cfg.return_to_initial_position,
         )
         logger.info("Eval strategy teardown complete")
