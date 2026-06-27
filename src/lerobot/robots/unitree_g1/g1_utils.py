@@ -71,6 +71,7 @@ def make_locomotion_controller(name: str | None):
         "GrootLocomotionController": "lerobot.robots.unitree_g1.controllers.gr00t_locomotion",
         "HolosomaLocomotionController": "lerobot.robots.unitree_g1.controllers.holosoma_locomotion",
         "SonicWholeBodyController": "lerobot.robots.unitree_g1.controllers.sonic_whole_body",
+        "MjlabMotionImitationController": "lerobot.robots.unitree_g1.controllers.mjlab_motion_imitation",
     }
     module_path = controllers.get(name)
     if module_path is None:
