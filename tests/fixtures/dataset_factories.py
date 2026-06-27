@@ -49,6 +49,39 @@ from tests.fixtures.constants import (
 )
 
 
+def add_frames(dataset: LeRobotDataset, num_frames: int) -> None:
+    """Append ``num_frames`` synthetic frames to ``dataset``.
+
+    Generates per-feature payloads from ``dataset.meta``: uint16 depth ramps for
+    keys in ``dataset.meta.depth_keys``, uint8 random noise for video/image keys,
+    and float32 zeros for everything else. ``DEFAULT_FEATURES`` (timestamp,
+    frame_index, ...) are auto-populated by ``add_frame`` and skipped here.
+    """
+    video_keys = dataset.meta.video_keys
+    depth_keys = dataset.meta.depth_keys
+    # Smooth gradient base reused per (H, W) to keep depth frames cheap to
+    # encode (HEVC Main 12 hates white noise).
+    _depth_base_cache: dict[tuple[int, int], np.ndarray] = {}
+    for i in range(num_frames):
+        frame: dict = {"task": "test"}
+        for key, ft in dataset.meta.features.items():
+            if key in DEFAULT_FEATURES:
+                continue
+            shape = ft["shape"]
+            if key in depth_keys:
+                h, w, _ = shape
+                base = _depth_base_cache.setdefault(
+                    (h, w),
+                    np.linspace(100.0, 10_000.0, h * w, dtype=np.float32).reshape(h, w, 1),
+                )
+                frame[key] = (base + 50.0 * i).clip(0, 65535).astype(np.uint16)
+            elif key in video_keys:
+                frame[key] = np.random.randint(0, 256, shape, dtype=np.uint8)
+            else:
+                frame[key] = np.zeros(shape, dtype=np.float32)
+        dataset.add_frame(frame)
+
+
 class LeRobotDatasetFactory(Protocol):
     def __call__(self, *args, **kwargs) -> LeRobotDataset: ...
 
@@ -485,10 +518,14 @@ def lerobot_dataset_factory(
         hf_dataset: datasets.Dataset | None = None,
         data_files_size_in_mb: float = DEFAULT_DATA_FILE_SIZE_IN_MB,
         chunks_size: int = DEFAULT_CHUNK_SIZE,
+        camera_features: dict | None = None,
         **kwargs,
     ) -> LeRobotDataset:
         # Instantiate objects
         if info is None:
+            info_kwargs = {}
+            if camera_features is not None:
+                info_kwargs["camera_features"] = camera_features
             info = info_factory(
                 total_episodes=total_episodes,
                 total_frames=total_frames,
@@ -496,6 +533,7 @@ def lerobot_dataset_factory(
                 use_videos=use_videos,
                 data_files_size_in_mb=data_files_size_in_mb,
                 chunks_size=chunks_size,
+                **info_kwargs,
             )
         if stats is None:
             stats = stats_factory(features=info.features)
