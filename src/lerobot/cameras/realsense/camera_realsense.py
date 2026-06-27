@@ -189,19 +189,27 @@ class RealSenseCamera(Camera):
                 f"Failed to open {self}.Run `lerobot-find-cameras realsense` to find available cameras."
             ) from e
 
-        self._configure_capture_settings()
-        self._start_read_thread()
+        try:
+            self._configure_capture_settings()
+            self._start_read_thread()
 
-        # NOTE(Steven/Caroline): Enforcing at least one second of warmup as RS cameras need a bit of time before the first read. If we don't wait, the first read from the warmup will raise.
-        self.warmup_s = max(self.warmup_s, 1)
+            # NOTE(Steven/Caroline): Enforcing at least one second of warmup as RS cameras need a bit of time before the first read. If we don't wait, the first read from the warmup will raise.
+            self.warmup_s = max(self.warmup_s, 1)
 
-        start_time = time.time()
-        while time.time() - start_time < self.warmup_s:
-            self.async_read(timeout_ms=self.warmup_s * 1000)
-            time.sleep(0.1)
-        with self.frame_lock:
-            if self.latest_color_frame is None or self.use_depth and self.latest_depth_frame is None:
-                raise ConnectionError(f"{self} failed to capture frames during warmup.")
+            start_time = time.time()
+            while time.time() - start_time < self.warmup_s:
+                self.async_read(timeout_ms=self.warmup_s * 1000)
+                time.sleep(0.1)
+            with self.frame_lock:
+                if self.latest_color_frame is None or self.use_depth and self.latest_depth_frame is None:
+                    raise ConnectionError(f"{self} failed to capture frames during warmup.")
+        except Exception:
+            self._stop_read_thread()
+            if self.rs_pipeline is not None:
+                self.rs_pipeline.stop()
+                self.rs_pipeline = None
+                self.rs_profile = None
+            raise
 
         logger.info(f"{self} connected.")
 

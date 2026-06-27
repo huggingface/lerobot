@@ -164,17 +164,24 @@ class OpenCVCamera(Camera):
                 f"Failed to open {self}.Run `lerobot-find-cameras opencv` to find available cameras."
             )
 
-        self._configure_capture_settings()
-        self._start_read_thread()
+        try:
+            self._configure_capture_settings()
+            self._start_read_thread()
 
-        if warmup and self.warmup_s > 0:
-            start_time = time.time()
-            while time.time() - start_time < self.warmup_s:
-                self.async_read(timeout_ms=self.warmup_s * 1000)
-                time.sleep(0.1)
-            with self.frame_lock:
-                if self.latest_frame is None:
-                    raise ConnectionError(f"{self} failed to capture frames during warmup.")
+            if warmup and self.warmup_s > 0:
+                start_time = time.time()
+                while time.time() - start_time < self.warmup_s:
+                    self.async_read(timeout_ms=self.warmup_s * 1000)
+                    time.sleep(0.1)
+                with self.frame_lock:
+                    if self.latest_frame is None:
+                        raise ConnectionError(f"{self} failed to capture frames during warmup.")
+        except Exception:
+            self._stop_read_thread()
+            if self.videocapture is not None:
+                self.videocapture.release()
+                self.videocapture = None
+            raise
 
         logger.info(f"{self} connected.")
 
@@ -338,7 +345,8 @@ class OpenCVCamera(Camera):
                 }
 
                 found_cameras_info.append(camera_info)
-                camera.release()
+
+            camera.release()
 
         return found_cameras_info
 
