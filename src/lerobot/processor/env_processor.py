@@ -42,7 +42,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
     -   Maps the concatenated state to `"observation.state"`.
 
     **Image Processing:**
-    -   Rotates images by 180 degrees by flipping both height and width dimensions.
+    -   Horizontally flips images by reversing the width dimension.
     -   This accounts for the HuggingFaceVLA/libero camera orientation convention.
     """
 
@@ -55,8 +55,8 @@ class LiberoProcessorStep(ObservationProcessorStep):
             if key.startswith(f"{OBS_IMAGES}."):
                 img = processed_obs[key]
 
-                # Flip both H and W
-                img = torch.flip(img, dims=[2, 3])
+                # Flip W to align LIBERO camera observations with real-world Franka data.
+                img = torch.flip(img, dims=[3])
 
                 processed_obs[key] = img
         # Process robot_state into a flat state vector
