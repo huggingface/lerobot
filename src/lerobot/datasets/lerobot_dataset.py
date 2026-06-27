@@ -24,7 +24,7 @@ import torch.utils
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.configs import VideoEncoderConfig
+from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig, RGBEncoderConfig
 from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
@@ -58,8 +58,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         return_uint8: bool = False,
+        depth_output_unit: str = DEFAULT_DEPTH_UNIT,
         batch_encoding_size: int = 1,
-        camera_encoder: VideoEncoderConfig | None = None,
+        rgb_encoder: RGBEncoderConfig | None = None,
+        depth_encoder: DepthEncoderConfig | None = None,
         encoder_threads: int | None = None,
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
@@ -183,8 +185,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
-            camera_encoder (VideoEncoderConfig | None, optional): Video encoder settings for cameras
-                (codec, quality, etc.). When ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults`
+            rgb_encoder (RGBEncoderConfig | None, optional): Video encoder settings for cameras
+                (codec, quality, etc.). When ``None``, :func:`~lerobot.configs.video.rgb_encoder_defaults`
+                is used by the writer.
+            depth_encoder (DepthEncoderConfig | None, optional): Video encoder settings for depth cameras
+                (codec, quality, etc.). When ``None``, :func:`~lerobot.configs.video.depth_encoder_defaults`
                 is used by the writer.
             encoder_threads (int | None, optional): Number of encoder threads (global). ``None`` lets the
                 codec decide.
@@ -206,6 +211,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.revision = revision if revision else CODEBASE_VERSION
         self._video_backend = video_backend if video_backend else get_safe_default_video_backend()
         self._return_uint8 = return_uint8
+        self._depth_output_unit = depth_output_unit
         self._batch_encoding_size = batch_encoding_size
         self._encoder_threads = encoder_threads
 
@@ -246,6 +252,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             return_uint8=self._return_uint8,
+            depth_output_unit=self._depth_output_unit,
         )
         self.image_transforms = image_transforms
 
@@ -271,14 +278,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if streaming_encoding and len(self.meta.video_keys) > 0:
                 streaming_enc = self._build_streaming_encoder(
                     self.meta.fps,
-                    camera_encoder,
+                    rgb_encoder,
+                    depth_encoder,
                     encoder_queue_maxsize,
                     encoder_threads,
                 )
             self.writer = DatasetWriter(
                 meta=self.meta,
                 root=self.root,
-                camera_encoder=camera_encoder,
+                rgb_encoder=rgb_encoder,
+                depth_encoder=depth_encoder,
                 encoder_threads=encoder_threads,
                 batch_encoding_size=batch_encoding_size,
                 streaming_encoder=streaming_enc,
@@ -314,19 +323,22 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 delta_timestamps=self.delta_timestamps,
                 image_transforms=self.image_transforms,
                 return_uint8=self._return_uint8,
+                depth_output_unit=self._depth_output_unit,
             )
         return self.reader
 
     @staticmethod
     def _build_streaming_encoder(
         fps: int,
-        camera_encoder: VideoEncoderConfig | None,
+        rgb_encoder: RGBEncoderConfig | None,
+        depth_encoder: DepthEncoderConfig | None,
         encoder_queue_maxsize: int,
         encoder_threads: int | None,
     ) -> StreamingVideoEncoder:
         return StreamingVideoEncoder(
             fps=fps,
-            camera_encoder=camera_encoder,
+            rgb_encoder=rgb_encoder,
+            depth_encoder=depth_encoder,
             queue_maxsize=encoder_queue_maxsize,
             encoder_threads=encoder_threads,
         )
@@ -655,7 +667,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_threads: int = 0,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
-        camera_encoder: VideoEncoderConfig | None = None,
+        rgb_encoder: RGBEncoderConfig | None = None,
+        depth_encoder: DepthEncoderConfig | None = None,
         metadata_buffer_size: int = 10,
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
@@ -686,8 +699,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             video_backend: Video decoding backend (used when reading back).
             batch_encoding_size: Number of episodes to accumulate before
                 batch-encoding videos. ``1`` means encode immediately.
-            camera_encoder: Video encoder settings for cameras (codec, quality, etc.).
-                When ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults` is used.
+            rgb_encoder: Video encoder settings for cameras (codec, quality, etc.).
+                When ``None``, :func:`~lerobot.configs.video.rgb_encoder_defaults` is used.
+            depth_encoder: Video encoder settings for depth cameras (codec, quality, etc.).
+                When ``None``, :func:`~lerobot.configs.video.depth_encoder_defaults` is used.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
             metadata_buffer_size: Number of episode metadata records to buffer
@@ -722,6 +737,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episodes = None
         obj._video_backend = video_backend if video_backend is not None else get_safe_default_video_backend()
         obj._return_uint8 = False
+        obj._depth_output_unit = DEFAULT_DEPTH_UNIT
         obj._batch_encoding_size = batch_encoding_size
         obj._encoder_threads = encoder_threads
 
@@ -731,12 +747,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
             streaming_enc = cls._build_streaming_encoder(
-                fps, camera_encoder, encoder_queue_maxsize, encoder_threads
+                fps, rgb_encoder, depth_encoder, encoder_queue_maxsize, encoder_threads
             )
         obj.writer = DatasetWriter(
             meta=obj.meta,
             root=obj.root,
-            camera_encoder=camera_encoder,
+            rgb_encoder=rgb_encoder,
+            depth_encoder=depth_encoder,
             encoder_threads=encoder_threads,
             batch_encoding_size=batch_encoding_size,
             streaming_encoder=streaming_enc,
@@ -759,7 +776,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         force_cache_sync: bool = False,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
-        camera_encoder: VideoEncoderConfig | None = None,
+        rgb_encoder: RGBEncoderConfig | None = None,
+        depth_encoder: DepthEncoderConfig | None = None,
         encoder_threads: int | None = None,
         image_writer_processes: int = 0,
         image_writer_threads: int = 0,
@@ -787,8 +805,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             video_backend: Video decoding backend for reading back data.
             batch_encoding_size: Number of episodes to accumulate before
                 batch-encoding videos.
-            camera_encoder: Video encoder settings for cameras (codec, quality, etc.).
-                When ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults` is used.
+            rgb_encoder: Video encoder settings for cameras (codec, quality, etc.).
+                When ``None``, :func:`~lerobot.configs.video.rgb_encoder_defaults` is used.
+            depth_encoder: Video encoder settings for depth cameras (codec, quality, etc.).
+                When ``None``, :func:`~lerobot.configs.video.depth_encoder_defaults` is used.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
             image_writer_processes: Subprocesses for async image writing.
@@ -816,6 +836,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episodes = None
         obj._video_backend = video_backend if video_backend else get_safe_default_video_backend()
         obj._return_uint8 = False
+        obj._depth_output_unit = DEFAULT_DEPTH_UNIT
         obj._batch_encoding_size = batch_encoding_size
 
         if obj._requested_root is not None:
@@ -835,12 +856,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
             streaming_enc = cls._build_streaming_encoder(
-                obj.meta.fps, camera_encoder, encoder_queue_maxsize, encoder_threads
+                obj.meta.fps, rgb_encoder, depth_encoder, encoder_queue_maxsize, encoder_threads
             )
         obj.writer = DatasetWriter(
             meta=obj.meta,
             root=obj.root,
-            camera_encoder=camera_encoder,
+            rgb_encoder=rgb_encoder,
+            depth_encoder=depth_encoder,
             encoder_threads=encoder_threads,
             batch_encoding_size=batch_encoding_size,
             streaming_encoder=streaming_enc,
