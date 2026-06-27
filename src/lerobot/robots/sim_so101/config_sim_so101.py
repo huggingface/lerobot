@@ -36,6 +36,22 @@ class SimCameraConfig:
     fps: int = 30
 
 
+@dataclass
+class SimLiftSuccessConfig:
+    """Episode succeeds once a free body has been lifted off the table.
+
+    Mirrors the "Lift" success criterion used by robosuite/LIBERO-style
+    benchmarks: success is the body's z position rising ``height_m`` above
+    where it rested at connect time, which only happens while it's grasped
+    and held (resting contact alone can't raise it).
+    """
+
+    # Name of the MJCF body to track (must have a freejoint, e.g. `scene_cube.xml`'s "cube").
+    body_name: str = "cube"
+    # How far above its resting height (meters) counts as "lifted".
+    height_m: float = 0.05
+
+
 @RobotConfig.register_subclass("sim_so101")
 @dataclass
 class SimSO101Config(RobotConfig):
@@ -72,3 +88,9 @@ class SimSO101Config(RobotConfig):
 
     # Body joints are reported/commanded in degrees, matching so101 use_degrees=True.
     use_degrees: bool = True
+
+    # Optional task-success check, queried by the "eval" rollout strategy via
+    # `check_success()`. Read directly off privileged sim state (not exposed
+    # through `get_observation`), so it has no effect on what the policy sees.
+    # None disables success tracking (e.g. scenes without a trackable object).
+    success: SimLiftSuccessConfig | None = None

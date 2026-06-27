@@ -54,6 +54,8 @@ class SimSO101(Robot):
         self._qpos_addr: dict[str, int] = {}
         self._gripper_range: tuple[float, float] | None = None
         self._n_substeps = 1
+        self._success_qpos_addr: int | None = None
+        self._success_rest_z: float | None = None
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -99,7 +101,9 @@ class SimSO101(Robot):
             self._actuator_ids[motor] = act_id
             self._qpos_addr[motor] = int(self._model.jnt_qposadr[joint_id])
 
-        gripper_joint = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_JOINT, self.config.joint_map[GRIPPER])
+        gripper_joint = mujoco.mj_name2id(
+            self._model, mujoco.mjtObj.mjOBJ_JOINT, self.config.joint_map[GRIPPER]
+        )
         self._gripper_range = tuple(float(x) for x in self._model.jnt_range[gripper_joint])
 
         self._n_substeps = max(1, round((1.0 / self.config.control_fps) / self._model.opt.timestep))
@@ -108,6 +112,24 @@ class SimSO101(Robot):
             self._renderers[key] = mujoco.Renderer(self._model, height=cam.height, width=cam.width)
 
         mujoco.mj_forward(self._model, self._data)
+
+        if self.config.success is not None:
+            body_name = self.config.success.body_name
+            body_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+            if body_id < 0:
+                raise ValueError(
+                    f"MJCF '{self.config.mjcf_path}' has no body named '{body_name}' "
+                    f"(SimSO101Config.success.body_name)."
+                )
+            joint_id = self._model.body_jntadr[body_id]
+            if joint_id < 0 or self._model.jnt_type[joint_id] != mujoco.mjtJoint.mjJNT_FREE:
+                raise ValueError(
+                    f"Body '{body_name}' has no freejoint — success tracking needs a freejoint "
+                    f"body (e.g. the 'cube' body in scene_cube.xml) to read its z position from."
+                )
+            self._success_qpos_addr = int(self._model.jnt_qposadr[joint_id])
+            self._success_rest_z = float(self._data.qpos[self._success_qpos_addr + 2])
+
         logger.info(f"{self} connected (sim, {self._n_substeps} substeps per control step).")
 
     @property
@@ -140,13 +162,28 @@ class SimSO101(Robot):
 
         for motor in BODY_MOTORS:
             val = action[f"{motor}.pos"]
-            self._data.ctrl[self._actuator_ids[motor]] = float(np.deg2rad(val)) if self.config.use_degrees else val
+            self._data.ctrl[self._actuator_ids[motor]] = (
+                float(np.deg2rad(val)) if self.config.use_degrees else val
+            )
         self._data.ctrl[self._actuator_ids[GRIPPER]] = self._gripper_robot_to_sim(action[f"{GRIPPER}.pos"])
 
         for _ in range(self._n_substeps):
             mujoco.mj_step(self._model, self._data)
 
         return {key: val for key, val in action.items() if key.endswith(".pos")}
+
+    @check_if_not_connected
+    def check_success(self) -> bool:
+        """Whether the configured success body currently sits above its lift threshold.
+
+        Privileged sim-state read for evaluation only — never passed through
+        `get_observation`, so it has no effect on the policy. Returns False
+        when `SimSO101Config.success` is unset (no tracked body).
+        """
+        if self._success_qpos_addr is None:
+            return False
+        z = float(self._data.qpos[self._success_qpos_addr + 2])
+        return (z - self._success_rest_z) >= self.config.success.height_m
 
     def _gripper_sim_to_robot(self, rad: float) -> float:
         lo, hi = self._gripper_range
@@ -163,4 +200,6 @@ class SimSO101(Robot):
         self._renderers = {}
         self._model = None
         self._data = None
+        self._success_qpos_addr = None
+        self._success_rest_z = None
         logger.info(f"{self} disconnected.")
