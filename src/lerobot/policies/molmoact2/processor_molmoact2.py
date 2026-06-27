@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The Allen Institute for Artificial Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,10 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""MolmoAct2 pre/post processing pipeline.
+
+Builds the multimodal prompt (images, discretised state, task text),
+tokenises it via the vendored MolmoAct2 processor, and handles quantile
+normalisation with optional per-dimension gripper masking.
+"""
+
 from __future__ import annotations
 
 import json
-import os
+import logging
+import math
 import re
 from contextlib import suppress
 from copy import deepcopy
@@ -27,7 +33,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
-from huggingface_hub import snapshot_download
 from torch import Tensor
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
@@ -54,14 +59,71 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
 
-from .configuration_molmoact2 import MolmoAct2Config, infer_molmoact2_max_sequence_length
+from .configuration_molmoact2 import MolmoAct2Config
+from .modeling_molmoact2 import _hf_token, _resolve_checkpoint_location
+
+logger = logging.getLogger(__name__)
+
+MOLMOACT2_DEFAULT_NUM_IMAGES = 2
+MOLMOACT2_IMAGE_TOKENS_PER_IMAGE = 196
+MOLMOACT2_FIXED_PROMPT_TOKEN_BUDGET = 80
+MOLMOACT2_TASK_TOKEN_BUDGET = 32
+MOLMOACT2_SEQUENCE_LENGTH_MARGIN = 32
+MOLMOACT2_SEQUENCE_LENGTH_MULTIPLE = 64
+MOLMOACT2_DISCRETE_ACTION_WRAPPER_TOKENS = 4
+MOLMOACT2_MIN_DISCRETE_ACTION_TOKENS_PER_STEP = 6
+MOLMOACT2_DISCRETE_ACTION_TOKENS_PER_DIM = 0.95
+
+
+def _round_up(value: int, multiple: int) -> int:
+    return int(math.ceil(value / multiple) * multiple)
+
+
+def infer_molmoact2_max_sequence_length(
+    *,
+    num_images: int,
+    state_dim: int,
+    action_dim: int,
+    action_horizon: int,
+    include_discrete_action: bool,
+) -> int:
+    """Infer the padded text/image sequence cap from MolmoAct2's fixed token layout."""
+    if num_images < 1:
+        num_images = MOLMOACT2_DEFAULT_NUM_IMAGES
+    if state_dim < 0:
+        state_dim = 0
+    if action_dim < 1:
+        action_dim = 1
+    if action_horizon < 1:
+        action_horizon = 1
+
+    image_tokens = num_images * MOLMOACT2_IMAGE_TOKENS_PER_IMAGE
+    prompt_tokens = (
+        MOLMOACT2_FIXED_PROMPT_TOKEN_BUDGET
+        + MOLMOACT2_TASK_TOKEN_BUDGET
+        + state_dim
+        + MOLMOACT2_SEQUENCE_LENGTH_MARGIN
+    )
+    action_tokens = 0
+    if include_discrete_action:
+        action_tokens_per_step = max(
+            MOLMOACT2_MIN_DISCRETE_ACTION_TOKENS_PER_STEP,
+            math.ceil(action_dim * MOLMOACT2_DISCRETE_ACTION_TOKENS_PER_DIM),
+        )
+        action_tokens = MOLMOACT2_DISCRETE_ACTION_WRAPPER_TOKENS + action_horizon * action_tokens_per_step
+
+    return _round_up(
+        image_tokens + prompt_tokens + action_tokens,
+        MOLMOACT2_SEQUENCE_LENGTH_MULTIPLE,
+    )
+
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import Qwen2Tokenizer
 
-    from .hf_model.image_processing_molmoact2 import MolmoAct2ImageProcessor
-    from .hf_model.processing_molmoact2 import MolmoAct2Processor
-    from .hf_model.video_processing_molmoact2 import MolmoAct2VideoProcessor
+    from .molmoact2_hf_model.image_processing_molmoact2 import MolmoAct2ImageProcessor
+    from .molmoact2_hf_model.processing_molmoact2 import MolmoAct2Processor
+    from .molmoact2_hf_model.video_processing_molmoact2 import MolmoAct2VideoProcessor
 else:
     Qwen2Tokenizer = None
     MolmoAct2ImageProcessor = None
@@ -69,7 +131,7 @@ else:
     MolmoAct2VideoProcessor = None
 
 if TYPE_CHECKING or (_transformers_available and _scipy_available):
-    from .hf_model.action_tokenizer import UniversalActionProcessor
+    from .molmoact2_hf_model.action_tokenizer import UniversalActionProcessor
 else:
     UniversalActionProcessor = None
 
@@ -95,32 +157,6 @@ _QUESTION_PREFIX_PATTERNS = tuple(
         r"^(?:the\s+task\s+is\s+to|your\s+task\s+is\s+to)\s+",
     )
 )
-
-
-def _hf_token() -> str | None:
-    return os.environ.get("HF_TOKEN") or os.environ.get("HF_ACCESS_TOKEN")
-
-
-def _resolve_checkpoint_location(
-    checkpoint_path: str,
-    *,
-    revision: str | None = None,
-    force_download: bool = False,
-) -> str:
-    checkpoint_path = str(checkpoint_path or "").strip()
-    if not checkpoint_path:
-        raise ValueError("MolmoAct2 policy requires `checkpoint_path`.")
-    local_path = Path(checkpoint_path).expanduser()
-    if local_path.exists():
-        return str(local_path)
-    return snapshot_download(
-        repo_id=checkpoint_path,
-        repo_type="model",
-        revision=revision,
-        force_download=force_download,
-        ignore_patterns=["*.py", "*.pyc", "__pycache__/*"],
-        token=_hf_token(),
-    )
 
 
 def _load_hf_norm_stats_for_tag(

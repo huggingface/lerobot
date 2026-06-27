@@ -252,6 +252,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
 def make_pre_post_processors(
     policy_cfg: PreTrainedConfig,
     pretrained_path: str | None = None,
+    pretrained_revision: str | None = None,
     **kwargs: Unpack[ProcessorConfigKwargs],
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
@@ -309,6 +310,7 @@ def make_pre_post_processors(
             overrides=kwargs.get("preprocessor_overrides", {}),
             to_transition=batch_to_transition,
             to_output=transition_to_batch,
+            revision=pretrained_revision,
         )
         postprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
@@ -318,6 +320,7 @@ def make_pre_post_processors(
             overrides=kwargs.get("postprocessor_overrides", {}),
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
+            revision=pretrained_revision,
         )
         _reconnect_relative_absolute_steps(preprocessor, postprocessor)
         return preprocessor, postprocessor
@@ -557,6 +560,7 @@ def make_policy(
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
         kwargs["pretrained_name_or_path"] = cfg.pretrained_path
+        kwargs["revision"] = cfg.pretrained_revision
         policy = policy_cls.from_pretrained(**kwargs)
     elif cfg.pretrained_path and cfg.use_peft:
         # Load a pretrained PEFT model on top of the policy. The pretrained path points to the folder/repo

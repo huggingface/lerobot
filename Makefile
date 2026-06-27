@@ -58,7 +58,7 @@ test-act-ete-train:
 		--dataset.episodes="[0]" \
 		--batch_size=2 \
 		--steps=4 \
-		--eval_freq=2 \
+		--env_eval_freq=2 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--save_freq=2 \
@@ -96,7 +96,7 @@ test-diffusion-ete-train:
 		--dataset.episodes="[0]" \
 		--batch_size=2 \
 		--steps=2 \
-		--eval_freq=2 \
+		--env_eval_freq=2 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--save_checkpoint=true \
@@ -126,7 +126,7 @@ test-tdmpc-ete-train:
 		--dataset.episodes="[0]" \
 		--batch_size=2 \
 		--steps=2 \
-		--eval_freq=2 \
+		--env_eval_freq=2 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--save_checkpoint=true \
@@ -161,7 +161,7 @@ test-smolvla-ete-train:
 		--dataset.episodes="[0]" \
 		--batch_size=2 \
 		--steps=4 \
-		--eval_freq=2 \
+		--env_eval_freq=2 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--save_freq=2 \
