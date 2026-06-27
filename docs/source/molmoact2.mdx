@@ -438,7 +438,7 @@ all joint data (observations and actions) must be transformed to match.
 
 The converted LeRobot checkpoint (`lerobot/MolmoAct2-SO100_101-LeRobot`)
 already includes this correction in its processor pipeline. If you convert
-or fine-tune the checkpoint yourself, set the following in the policy config:
+or fine-tune the checkpoint yourself, set the following in the policy config (`configuration_molmoact2.py`):
 
 - `joint_signs`: `[1, -1, 1, 1, 1, 1]` (flips shoulder_lift direction)
 - `joint_offsets`: `[0, 90, 90, 0, 0, 0]` (shifts shoulder_lift and elbow_flex by 90°)
