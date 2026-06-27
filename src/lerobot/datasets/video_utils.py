@@ -352,8 +352,15 @@ def decode_video_frames_torchcodec(
     # get metadata for frame information
     metadata = decoder.metadata
     average_fps = metadata.average_fps
-    # convert timestamps to frame indices
-    frame_indices = [round(ts * average_fps) for ts in timestamps]
+    num_frames = metadata.num_frames
+    # Convert timestamps to frame indices, clamped into the valid range [0, num_frames - 1].
+    # A query can resolve to an index one past the last frame when the timestamps stored in the
+    # metadata (built from the nominal fps) drift slightly from the file's measured average_fps,
+    # e.g. after merging/concatenating many videos into a single large file. Without clamping,
+    # `get_frames_at` raises a hard `IndexError: Invalid frame index=N ... must be less than N`
+    # near a file boundary. Clamping returns the closest valid frame instead; the tolerance_s
+    # check below still rejects queries that are genuinely too far in time (matching the pyav backend).
+    frame_indices = [min(max(round(ts * average_fps), 0), num_frames - 1) for ts in timestamps]
     # retrieve frames based on indices
     frames_batch = decoder.get_frames_at(indices=frame_indices)
 

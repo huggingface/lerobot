@@ -32,7 +32,9 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pyav_utils import get_codec
 from lerobot.datasets.utils import INFO_PATH
 from lerobot.datasets.video_utils import (
+    FrameTimestampError,
     concatenate_video_files,
+    decode_video_frames_pyav,
     encode_video_frames,
     get_video_info,
     reencode_video,
@@ -637,3 +639,69 @@ class TestFromVideoInfo:
         # ``{}`` placeholder (typical after a merge with disagreeing sources)
         # must not leak into the reconstructed config.
         assert cfg.extra_options == VideoEncoderConfig().extra_options
+
+
+class TestDecodeVideoFramesBoundary:
+    """Regression tests for issue #3883.
+
+    When merging/concatenating datasets, many source videos are packed into a single large
+    file. The per-episode timestamps stored in the metadata are built from the *nominal* fps,
+    but the torchcodec backend converts them to frame indices using the file's *measured*
+    ``average_fps``. Near the end of a large file that tiny multiplicative difference can round
+    a query up to ``num_frames`` -- one past the last valid index -- which made
+    ``decode_video_frames_torchcodec`` raise a hard
+    ``IndexError: Invalid frame index=N for streamIndex=0; must be less than N``
+    (the crash reported in #3883). The pyav backend never crashes on the same input: it picks
+    the closest decoded frame and defers to the ``tolerance_s`` check. The decoder must clamp
+    out-of-range indices so both backends behave consistently.
+    """
+
+    @staticmethod
+    def _boundary_timestamp(video_path: Path, num_frames: int) -> float:
+        """A timestamp that resolves to frame index ``num_frames`` (one past the end)."""
+        from torchcodec.decoders import VideoDecoder
+
+        average_fps = VideoDecoder(str(video_path)).metadata.average_fps
+        # round(ts * average_fps) == num_frames  ->  out of range by exactly one frame.
+        return num_frames / average_fps
+
+    @require_libsvtav1
+    def test_torchcodec_boundary_index_returns_last_frame(self, tmp_path):
+        """A boundary query returns the closest valid frame instead of raising ``IndexError``."""
+        pytest.importorskip("torchcodec")
+        import torch
+        from torchcodec.decoders import VideoDecoder
+
+        from lerobot.datasets.video_utils import decode_video_frames_torchcodec
+
+        num_frames, fps = 24, 30
+        video_path = _encode_video(tmp_path / "v.mp4", num_frames=num_frames, fps=fps)
+        boundary_ts = self._boundary_timestamp(video_path, num_frames)
+
+        # Before the fix this raised
+        # ``IndexError: Invalid frame index=24 for streamIndex=0; must be less than 24``.
+        # A generous tolerance accepts the clamped (last) frame so the call returns it.
+        frames = decode_video_frames_torchcodec(video_path, [boundary_ts], tolerance_s=1.0)
+        assert frames.shape[0] == 1
+
+        last_frame = (
+            VideoDecoder(str(video_path)).get_frames_at(indices=[num_frames - 1]).data[0] / 255.0
+        ).to(torch.float32)
+        assert torch.allclose(frames[0], last_frame)
+
+    @require_libsvtav1
+    def test_torchcodec_boundary_matches_pyav_soft_error(self, tmp_path):
+        """With a tight tolerance both backends raise the soft ``FrameTimestampError`` (not ``IndexError``)."""
+        pytest.importorskip("torchcodec")
+        from lerobot.datasets.video_utils import decode_video_frames_torchcodec
+
+        num_frames, fps = 24, 30
+        video_path = _encode_video(tmp_path / "v.mp4", num_frames=num_frames, fps=fps)
+        boundary_ts = self._boundary_timestamp(video_path, num_frames)
+
+        # Before the fix torchcodec raised a hard ``IndexError`` here; now it rejects the
+        # too-far query the same way the pyav fallback does.
+        with pytest.raises(FrameTimestampError):
+            decode_video_frames_torchcodec(video_path, [boundary_ts], tolerance_s=1e-4)
+        with pytest.raises(FrameTimestampError):
+            decode_video_frames_pyav(video_path, [boundary_ts], tolerance_s=1e-4)
