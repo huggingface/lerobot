@@ -28,6 +28,7 @@ from lerobot.scripts.lerobot_edit_dataset import (
     ModifyTasksConfig,
     OperationConfig,
     RemoveFeatureConfig,
+    ResizeImagesConfig,
     SplitConfig,
     _validate_config,
 )
@@ -48,6 +49,7 @@ class TestOperationTypeParsing:
             ("split", SplitConfig),
             ("merge", MergeConfig),
             ("remove_feature", RemoveFeatureConfig),
+            ("resize_images", ResizeImagesConfig),
             ("modify_tasks", ModifyTasksConfig),
             ("convert_image_to_video", ConvertImageToVideoConfig),
             ("info", InfoConfig),
@@ -92,6 +94,7 @@ class TestOperationTypeParsing:
             ("split", SplitConfig),
             ("merge", MergeConfig),
             ("remove_feature", RemoveFeatureConfig),
+            ("resize_images", ResizeImagesConfig),
             ("modify_tasks", ModifyTasksConfig),
             ("convert_image_to_video", ConvertImageToVideoConfig),
             ("info", InfoConfig),
@@ -103,3 +106,24 @@ class TestOperationTypeParsing:
         )
         resolved_name = OperationConfig.get_choice_name(type(cfg.operation))
         assert resolved_name == type_name
+
+    def test_resize_images_parses_size_and_keys(self):
+        cfg = parse_cfg(
+            [
+                "--repo_id",
+                "test/repo",
+                "--operation.type",
+                "resize_images",
+                "--operation.height",
+                "128",
+                "--operation.width",
+                "160",
+                "--operation.image_keys",
+                "['observation.images.top']",
+            ]
+        )
+
+        assert isinstance(cfg.operation, ResizeImagesConfig)
+        assert cfg.operation.height == 128
+        assert cfg.operation.width == 160
+        assert cfg.operation.image_keys == ["observation.images.top"]

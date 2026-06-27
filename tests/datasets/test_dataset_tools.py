@@ -34,6 +34,7 @@ from lerobot.datasets.dataset_tools import (
     modify_tasks,
     reencode_dataset,
     remove_feature,
+    resize_images,
     split_dataset,
 )
 from lerobot.datasets.io_utils import load_info
@@ -600,6 +601,46 @@ def test_remove_camera_feature(sample_dataset, tmp_path):
 
     sample_item = dataset_without_camera[0]
     assert camera_to_remove not in sample_item
+
+
+def test_resize_images_updates_metadata_and_data(sample_dataset, tmp_path):
+    """Test resizing image features in a dataset."""
+    output_dir = tmp_path / "resized"
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+
+        resized_dataset = resize_images(
+            sample_dataset,
+            size=(112, 160),
+            output_dir=output_dir,
+            repo_id="test/resized",
+        )
+
+    image_key = "observation.images.top"
+    assert resized_dataset.meta.features[image_key]["shape"] == (112, 160, 3)
+    assert resized_dataset.meta.total_episodes == sample_dataset.meta.total_episodes
+    assert resized_dataset.meta.total_frames == sample_dataset.meta.total_frames
+
+    item = resized_dataset.hf_dataset.with_format(None)[0]
+    assert item[image_key].size == (160, 112)
+    assert "action" in item
+    assert "observation.state" in item
+
+
+def test_resize_images_rejects_invalid_image_key(sample_dataset, tmp_path):
+    """Test error when resizing a non-image feature."""
+    with pytest.raises(ValueError, match="Invalid image keys"):
+        resize_images(
+            sample_dataset,
+            size=(112, 160),
+            image_keys=["observation.state"],
+            output_dir=tmp_path / "resized",
+        )
 
 
 def test_complex_workflow_integration(sample_dataset, tmp_path):

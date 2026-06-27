@@ -108,6 +108,23 @@ Remove camera feature:
         --operation.type remove_feature \
         --operation.feature_names "['observation.image']"
 
+Resize all image features and save to a new dataset:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht_image \
+        --new_repo_id lerobot/pusht_image_128 \
+        --operation.type resize_images \
+        --operation.height 128 \
+        --operation.width 128
+
+Resize selected image features:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht_image \
+        --new_root /path/to/pusht_image_resized \
+        --operation.type resize_images \
+        --operation.image_keys "['observation.image']" \
+        --operation.height 128 \
+        --operation.width 160
+
 Modify tasks - set a single task for all episodes (WARNING: modifies in-place):
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
@@ -235,6 +252,7 @@ from lerobot.datasets import (
     recompute_stats,
     reencode_dataset,
     remove_feature,
+    resize_images,
     split_dataset,
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
@@ -274,6 +292,14 @@ class MergeConfig(OperationConfig):
 @dataclass
 class RemoveFeatureConfig(OperationConfig):
     feature_names: list[str] | None = None
+
+
+@OperationConfig.register_subclass("resize_images")
+@dataclass
+class ResizeImagesConfig(OperationConfig):
+    height: int | None = None
+    width: int | None = None
+    image_keys: list[str] | None = None
 
 
 @OperationConfig.register_subclass("modify_tasks")
@@ -515,6 +541,44 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
 
     logging.info(f"Dataset saved to {output_dir}")
     logging.info(f"Remaining features: {list(new_dataset.meta.features.keys())}")
+
+    if cfg.push_to_hub:
+        logging.info(f"Pushing to hub as {output_repo_id}")
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
+
+
+def handle_resize_images(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, ResizeImagesConfig):
+        raise ValueError("Operation config must be ResizeImagesConfig")
+
+    if cfg.operation.height is None or cfg.operation.width is None:
+        raise ValueError("height and width must be specified for resize_images operation")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    output_repo_id, output_dir = get_output_path(
+        cfg.repo_id,
+        new_repo_id=cfg.new_repo_id,
+        root=cfg.root,
+        new_root=cfg.new_root,
+    )
+
+    if output_dir == dataset.root:
+        dataset.root = dataset.root.with_name(dataset.root.name + "_old")
+
+    logging.info(
+        f"Resizing image features {cfg.operation.image_keys or dataset.meta.image_keys} "
+        f"to {(cfg.operation.height, cfg.operation.width)}"
+    )
+    new_dataset = resize_images(
+        dataset,
+        size=(cfg.operation.height, cfg.operation.width),
+        image_keys=cfg.operation.image_keys,
+        output_dir=output_dir,
+        repo_id=output_repo_id,
+    )
+
+    logging.info(f"Dataset saved to {output_dir}")
+    logging.info(f"Image features: {new_dataset.meta.image_keys}")
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {output_repo_id}")
@@ -801,6 +865,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_merge(cfg)
     elif operation_type == "remove_feature":
         handle_remove_feature(cfg)
+    elif operation_type == "resize_images":
+        handle_resize_images(cfg)
     elif operation_type == "modify_tasks":
         handle_modify_tasks(cfg)
     elif operation_type == "convert_image_to_video":

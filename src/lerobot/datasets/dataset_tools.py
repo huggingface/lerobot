@@ -474,6 +474,83 @@ def remove_feature(
     )
 
 
+def resize_images(
+    dataset: LeRobotDataset,
+    size: tuple[int, int],
+    image_keys: list[str] | None = None,
+    output_dir: str | Path | None = None,
+    repo_id: str | None = None,
+) -> LeRobotDataset:
+    """Resize image features in a LeRobotDataset and create a new dataset.
+
+    Args:
+        dataset: The source LeRobotDataset.
+        size: Target image size as ``(height, width)``.
+        image_keys: Image feature names to resize. If None, all image features are resized.
+        output_dir: Root directory where the resized dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id.
+        repo_id: Resized dataset identifier. If not specified, defaults to ``{dataset.repo_id}_resized``.
+
+    Returns:
+        New dataset with selected image features resized.
+    """
+    if len(size) != 2:
+        raise ValueError("size must be a tuple of (height, width)")
+
+    height, width = size
+    if height <= 0 or width <= 0:
+        raise ValueError("size height and width must be positive")
+
+    available_image_keys = dataset.meta.image_keys
+    if not available_image_keys:
+        raise ValueError(f"No image features found in dataset {dataset.repo_id}")
+
+    selected_image_keys = image_keys or available_image_keys
+    invalid_keys = set(selected_image_keys) - set(available_image_keys)
+    if invalid_keys:
+        raise ValueError(f"Invalid image keys: {invalid_keys}")
+
+    if repo_id is None:
+        repo_id = f"{dataset.repo_id}_resized"
+    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
+
+    new_features = deepcopy(dataset.meta.features)
+    for key in selected_image_keys:
+        feature = deepcopy(new_features[key])
+        old_shape = tuple(feature["shape"])
+        if len(old_shape) != 3:
+            raise ValueError(f"Image feature '{key}' must have shape (height, width, channels)")
+        channels = old_shape[2]
+        feature["shape"] = (height, width, channels)
+        new_features[key] = feature
+
+    new_meta = LeRobotDatasetMetadata.create(
+        repo_id=repo_id,
+        fps=dataset.meta.fps,
+        features=new_features,
+        robot_type=dataset.meta.robot_type,
+        root=output_dir,
+        use_videos=len(dataset.meta.video_keys) > 0,
+    )
+
+    _copy_data_with_resized_images(
+        dataset=dataset,
+        new_meta=new_meta,
+        image_keys=selected_image_keys,
+        size=(height, width),
+    )
+
+    if new_meta.video_keys:
+        _copy_videos(dataset, new_meta)
+
+    return LeRobotDataset(
+        repo_id=repo_id,
+        root=output_dir,
+        image_transforms=dataset.image_transforms,
+        delta_timestamps=dataset.delta_timestamps,
+        tolerance_s=dataset.tolerance_s,
+    )
+
+
 def _fractions_to_episode_indices(
     total_episodes: int,
     splits: dict[str, float],
@@ -1041,6 +1118,50 @@ def _copy_data_with_feature_changes(
             frame_idx = end_idx
 
         # Write using the same chunk/file structure as source
+        dst_path = new_meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+
+        _write_parquet(df, dst_path, new_meta)
+
+    _copy_episodes_metadata_and_stats(dataset, new_meta)
+
+
+def _copy_data_with_resized_images(
+    dataset: LeRobotDataset,
+    new_meta: LeRobotDatasetMetadata,
+    image_keys: list[str],
+    size: tuple[int, int],
+) -> None:
+    """Copy data files while resizing selected image columns."""
+    data_dir = dataset.root / DATA_DIR
+    parquet_files = sorted(data_dir.glob("*/*.parquet"))
+
+    if not parquet_files:
+        raise ValueError(f"No parquet files found in {data_dir}")
+
+    height, width = size
+    hf_dataset = dataset.hf_dataset.with_format(None)
+
+    for src_path in tqdm(parquet_files, desc="Resizing image data files"):
+        df = pd.read_parquet(src_path).reset_index(drop=True)
+        frame_indices = [int(idx) for idx in df["index"].tolist()]
+        image_rows = hf_dataset.select(frame_indices).select_columns(image_keys)
+        resized_columns = {key: [] for key in image_keys}
+
+        for item in image_rows:
+            for key in image_keys:
+                resized_columns[key].append(item[key].resize((width, height)))
+
+        for key, values in resized_columns.items():
+            df[key] = values
+
+        relative_path = src_path.relative_to(dataset.root)
+        chunk_dir = relative_path.parts[1]
+        file_name = relative_path.parts[2]
+
+        chunk_idx = int(chunk_dir.split("-")[1])
+        file_idx = int(file_name.split("-")[1].split(".")[0])
+
         dst_path = new_meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
         dst_path.parent.mkdir(parents=True, exist_ok=True)
 
