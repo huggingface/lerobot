@@ -17,7 +17,7 @@ the paper, see [allenai/molmoact2](https://github.com/allenai/molmoact2).
 Install LeRobot with the MolmoAct2 optional dependencies:
 
 ```bash
-pip install -e ".[molmoact2]"
+uv sync --locked --extra molmoact2
 ```
 
 To run the models in this repository, you need an NVIDIA GPU. The measurements
@@ -46,8 +46,8 @@ The repo has been tested with Ubuntu 22.04.
 
 To use MolmoAct2 in a LeRobot training config, set:
 
-```python
-policy.type=molmoact2
+```bash
+--policy.type=molmoact2
 ```
 
 ## Training
@@ -103,7 +103,7 @@ accelerate launch \
   --batch_size=32 \
   --num_workers=4 \
   --log_freq=20 \
-  --eval_freq=-1 \
+  --env_eval_freq=-1 \
   --save_checkpoint=true \
   --save_freq=2000
 ```
@@ -142,7 +142,7 @@ accelerate launch \
   --batch_size=32 \
   --num_workers=4 \
   --log_freq=20 \
-  --eval_freq=-1 \
+  --env_eval_freq=-1 \
   --save_checkpoint=true \
   --save_freq=2000
 ```

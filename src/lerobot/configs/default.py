@@ -44,12 +44,16 @@ class DatasetConfig:
     # Has no effect on datasets without depth cameras.
     depth_output_unit: str = DEFAULT_DEPTH_UNIT
     streaming: bool = False
+    # Fraction of episodes held out per task for offline evaluation (0.0 = disabled).
+    eval_split: float = 0.0
 
     def __post_init__(self) -> None:
         if self.depth_output_unit not in (DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT):
             raise ValueError(
                 f"depth_output_unit must be '{DEPTH_METER_UNIT}' or '{DEPTH_MILLIMETER_UNIT}', got {self.depth_output_unit!r}"
             )
+        if not (0.0 <= self.eval_split < 1.0):
+            raise ValueError(f"eval_split must be in [0.0, 1.0), got {self.eval_split}")
         if self.episodes is not None:
             if any(ep < 0 for ep in self.episodes):
                 raise ValueError(
