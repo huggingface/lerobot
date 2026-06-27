@@ -190,6 +190,7 @@ class RealSenseCamera(Camera):
             ) from e
 
         self._configure_capture_settings()
+        self._configure_sensor_options()
         self._start_read_thread()
 
         # NOTE(Steven/Caroline): Enforcing at least one second of warmup as RS cameras need a bit of time before the first read. If we don't wait, the first read from the warmup will raise.
@@ -322,6 +323,94 @@ class RealSenseCamera(Camera):
             else:
                 self.width, self.height = actual_width, actual_height
                 self.capture_width, self.capture_height = actual_width, actual_height
+
+    def _get_color_sensor(self) -> "rs.sensor":
+        """Returns the sensor that controls the color stream.
+
+        Most RealSense cameras expose "RGB Camera" for color. The D405 has no
+        separate RGB module — its color stream comes from "Stereo Module".
+        We try RGB Camera first, then fall back to Stereo Module.
+        """
+        if self.rs_profile is None:
+            raise RuntimeError(f"{self}: rs_profile must be initialized before use.")
+
+        device = self.rs_profile.get_device()
+        sensors = {s.get_info(rs.camera_info.name): s for s in device.query_sensors()}
+
+        for name in ("RGB Camera", "Stereo Module"):
+            if name in sensors:
+                return sensors[name]
+
+        available = list(sensors.keys())
+        raise RuntimeError(f"{self}: no color sensor found. Available sensors: {available}")
+
+    def _set_sensor_option(self, sensor: "rs.sensor", option: "rs.option", value: float, label: str) -> None:
+        """Sets a sensor option, re-raising range errors with actionable diagnostics."""
+        try:
+            sensor.set_option(option, value)
+        except Exception as e:
+            range_info = ""
+            try:
+                option_range = sensor.get_option_range(option)
+                range_info = (
+                    f" (supported range: min={option_range.min}, max={option_range.max}, "
+                    f"step={option_range.step}, default={option_range.default})"
+                )
+            except Exception:
+                range_info = " (option range unavailable)"
+            raise ValueError(
+                f"{self}: failed to set {label} to {value}{range_info}. Original error: {e}"
+            ) from e
+
+    def _configure_sensor_options(self) -> None:
+        """Applies manual sensor options (exposure, gain, white balance) to the color sensor.
+
+        When exposure or gain is set, auto-exposure is disabled first. When white_balance
+        is set, auto white balance is disabled first. Skipped entirely if no options are set.
+
+        Raises:
+            ValueError: If a requested value is outside the sensor's supported range. The
+                error message includes the option name, requested value, and supported range.
+        """
+        config = self.config
+        if config.exposure is None and config.gain is None and config.white_balance is None:
+            return
+
+        color_sensor = self._get_color_sensor()
+
+        if (config.exposure is not None or config.gain is not None) and color_sensor.supports(
+            rs.option.enable_auto_exposure
+        ):
+            self._set_sensor_option(color_sensor, rs.option.enable_auto_exposure, 0, "auto-exposure")
+            logger.info(f"{self} auto-exposure disabled.")
+
+        if config.exposure is not None:
+            if color_sensor.supports(rs.option.exposure):
+                self._set_sensor_option(color_sensor, rs.option.exposure, config.exposure, "exposure")
+                logger.info(f"{self} exposure set to {config.exposure}.")
+            else:
+                logger.warning(f"{self} sensor does not support manual exposure.")
+
+        if config.gain is not None:
+            if color_sensor.supports(rs.option.gain):
+                self._set_sensor_option(color_sensor, rs.option.gain, config.gain, "gain")
+                logger.info(f"{self} gain set to {config.gain}.")
+            else:
+                logger.warning(f"{self} sensor does not support manual gain.")
+
+        if config.white_balance is not None:
+            if color_sensor.supports(rs.option.enable_auto_white_balance):
+                self._set_sensor_option(
+                    color_sensor, rs.option.enable_auto_white_balance, 0, "auto white balance"
+                )
+                logger.info(f"{self} auto white balance disabled.")
+            if color_sensor.supports(rs.option.white_balance):
+                self._set_sensor_option(
+                    color_sensor, rs.option.white_balance, config.white_balance, "white balance"
+                )
+                logger.info(f"{self} white balance set to {config.white_balance}.")
+            else:
+                logger.warning(f"{self} sensor does not support manual white balance.")
 
     @check_if_not_connected
     def read_depth(self, timeout_ms: int = 200) -> NDArray[Any]:
