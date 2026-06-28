@@ -665,7 +665,9 @@ def _relative_action_chunks_by_horizon(
     return chunks
 
 
-def _compute_horizon_relative_action_stats(chunks_by_horizon: list[list[np.ndarray]]) -> dict[str, np.ndarray]:
+def _compute_horizon_relative_action_stats(
+    chunks_by_horizon: list[list[np.ndarray]],
+) -> dict[str, np.ndarray]:
     if not chunks_by_horizon or not any(chunks_by_horizon):
         raise ValueError("Cannot compute relative action statistics without unpadded action vectors.")
 
@@ -779,7 +781,9 @@ def _make_relative_action_training_stats(
             num_vectors += len(vectors)
 
     if num_vectors < 2:
-        raise ValueError("Cannot compute relative action statistics from fewer than 2 unpadded action vectors.")
+        raise ValueError(
+            "Cannot compute relative action statistics from fewer than 2 unpadded action vectors."
+        )
 
     stats[ACTION] = _compute_horizon_relative_action_stats(chunks_by_horizon or [])
     return stats
@@ -1091,7 +1095,9 @@ def make_groot_pre_post_processors(
     if config.use_relative_actions and not checkpoint_has_stats:
         relative_dataset_stats = dataset_stats
         if not _stats_preserve_action_horizon(relative_dataset_stats):
-            relative_dataset_stats = _make_relative_action_training_stats_from_dataset_meta(config, dataset_meta)
+            relative_dataset_stats = _make_relative_action_training_stats_from_dataset_meta(
+                config, dataset_meta
+            )
         relative_assets = _build_n1_7_relative_action_processor_assets(
             config,
             relative_dataset_stats,
@@ -1651,7 +1657,6 @@ class GrootN17PackInputsStep(ProcessorStep):
         if not normalized_groups or start_idx != action.shape[-1]:
             return None
         return torch.cat(normalized_groups, dim=-1)
-
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         obs = transition.get(TransitionKey.OBSERVATION, {}) or {}
