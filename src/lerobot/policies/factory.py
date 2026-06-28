@@ -92,11 +92,33 @@ def _restore_pi052_pretrained_state(
 
     from safetensors.torch import load_file  # noqa: PLC0415
 
+    log = logging.getLogger(__name__)
+
     base = Path(pretrained_path)
     if not base.exists():
-        return
+        # ``pretrained_path`` may be a HF Hub repo id rather than a local dir.
+        # ``from_pretrained`` downloads the model weights, but pi052 builds its
+        # processors fresh (so the generic loader never fetches them), leaving
+        # the processor JSON + normalizer-stat safetensors un-downloaded. Resolve
+        # them from the hub here — otherwise the quantile stats are silently left
+        # at fresh init and the policy runs completely un-normalized.
+        try:
+            from huggingface_hub import snapshot_download  # noqa: PLC0415
 
-    log = logging.getLogger(__name__)
+            base = Path(
+                snapshot_download(
+                    repo_id=str(pretrained_path),
+                    allow_patterns=["policy_preprocessor*", "policy_postprocessor*"],
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "PI052 state restore: %s is not a local dir and could not be resolved "
+                "as a hub repo (%s); normalizer stats left at fresh init",
+                pretrained_path,
+                exc,
+            )
+            return
 
     for pipeline, config_filename in [
         (preprocessor, f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"),
