@@ -54,11 +54,16 @@ class EpisodeResult:
 class EvalStrategy(RolloutStrategy):
     """Autonomous multi-episode rollout that tracks per-episode task success.
 
-    Each episode runs the policy for up to ``episode_time_s`` seconds. If the
-    robot implements ``check_success()`` (duck-typed — real hardware doesn't),
-    it's polled every step; the episode is marked successful on the first
-    True, and that step index is kept as "success step". A short hold phase
-    between episodes returns the robot to its initial position.
+    Each episode runs the policy for up to ``episode_time_s`` wall-clock seconds,
+    and also up to ``episode_steps`` control steps if that's set (whichever limit
+    is hit first ends the episode). ``episode_time_s`` alone doesn't guarantee a
+    specific step count — actual steps-per-second depends on render/inference
+    speed, which can vary (e.g. CPU mesh rendering); set ``episode_steps`` when a
+    reproducible step count matters more than a wall-clock budget. If the robot
+    implements ``check_success()`` (duck-typed — real hardware doesn't), it's
+    polled every step; the episode is marked successful on the first True, and
+    that step index is kept as "success step". A short hold phase between
+    episodes returns the robot to its initial position.
     """
 
     config: EvalStrategyConfig
@@ -131,8 +136,9 @@ class EvalStrategy(RolloutStrategy):
         step = 0
         timestamp = 0.0
         start_t = time.perf_counter()
+        max_steps = self.config.episode_steps
 
-        while timestamp < self.config.episode_time_s:
+        while timestamp < self.config.episode_time_s and (max_steps is None or step < max_steps):
             loop_start = time.perf_counter()
 
             if ctx.runtime.shutdown_event.is_set():

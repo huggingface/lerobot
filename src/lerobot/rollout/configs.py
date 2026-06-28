@@ -174,6 +174,12 @@ class EvalStrategyConfig(RolloutStrategyConfig):
 
     num_episodes: int = 10
     episode_time_s: float = 30.0
+    # If set, an episode also ends after this many control steps, whichever comes
+    # first against episode_time_s. episode_time_s is wall-clock, not sim time, so
+    # how many steps actually fit in it varies with render/inference speed (e.g. CPU
+    # mesh rendering); set this when a specific, reproducible step count matters more
+    # than a specific wall-clock duration.
+    episode_steps: int | None = None
     reset_time_s: float = 3.0
     # Whether to move the robot back to its startup position between episodes.
     reset_to_initial_position: bool = True
