@@ -301,28 +301,22 @@ def _stats(values):
 
 
 def _expected_albumentations_eval_image(image_np, cv2, *, target_size, shortest_edge, crop_fraction):
-    height, width = image_np.shape[:2]
-    if height != width:
-        square_edge = max(height, width)
-        pad_h = square_edge - height
-        pad_w = square_edge - width
-        image_np = cv2.copyMakeBorder(
-            image_np,
-            pad_h // 2,
-            pad_h - pad_h // 2,
-            pad_w // 2,
-            pad_w - pad_w // 2,
-            cv2.BORDER_CONSTANT,
-            value=(0, 0, 0),
-        )
+    del target_size
 
-    image_np = cv2.resize(image_np, (shortest_edge, shortest_edge), interpolation=cv2.INTER_AREA)
-    crop_h = max(1, int(shortest_edge * crop_fraction))
-    crop_w = max(1, int(shortest_edge * crop_fraction))
-    top = (shortest_edge - crop_h) // 2
-    left = (shortest_edge - crop_w) // 2
-    image_np = image_np[top : top + crop_h, left : left + crop_w]
-    return cv2.resize(image_np, (target_size[1], target_size[0]), interpolation=cv2.INTER_AREA)
+    def resize_shortest_edge(frame):
+        height, width = frame.shape[:2]
+        scale = shortest_edge / float(min(height, width))
+        resized_height = max(1, int(round(height * scale)))
+        resized_width = max(1, int(round(width * scale)))
+        return cv2.resize(frame, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+
+    image_np = resize_shortest_edge(image_np)
+    height, width = image_np.shape[:2]
+    crop_h = max(1, int(height * crop_fraction))
+    crop_w = max(1, int(width * crop_fraction))
+    top = (height - crop_h) // 2
+    left = (width - crop_w) // 2
+    return resize_shortest_edge(image_np[top : top + crop_h, left : left + crop_w])
 
 
 class _DummyGrootModel(nn.Module):
@@ -1588,7 +1582,9 @@ def test_groot_n1_7_vlm_encode_uses_per_sample_language():
             self.encoded_texts = None
 
         def apply_chat_template(self, conversation, tokenize, add_generation_prompt):
-            text = conversation[0]["content"][-1]["text"]
+            content = conversation[0]["content"]
+            assert [item["type"] for item in content] == ["image", "text"]
+            text = content[-1]["text"]
             self.rendered_texts.append(text)
             return f"rendered:{text}"
 
@@ -1626,6 +1622,7 @@ def test_groot_n1_7_vlm_encode_packs_images_time_major_then_camera_order():
     class FakeProcessor:
         def __init__(self):
             self.add_generation_prompts = []
+            self.conversation_content_types = []
             self.conversation_image_values = []
             self.conversation_texts = []
             self.encoded_texts = None
@@ -1635,6 +1632,7 @@ def test_groot_n1_7_vlm_encode_packs_images_time_major_then_camera_order():
             assert tokenize is False
             self.add_generation_prompts.append(add_generation_prompt)
             content = conversation[0]["content"]
+            self.conversation_content_types.append([item["type"] for item in content])
             self.conversation_image_values.append(
                 [int(np.asarray(item["image"])[0, 0, 0]) for item in content if item["type"] == "image"]
             )
@@ -1672,6 +1670,10 @@ def test_groot_n1_7_vlm_encode_packs_images_time_major_then_camera_order():
     output = step(transition)
 
     assert fake_proc.conversation_image_values == [[1, 2, 3, 4], [5, 6, 7, 8]]
+    assert fake_proc.conversation_content_types == [
+        ["image", "image", "image", "image", "text"],
+        ["image", "image", "image", "image", "text"],
+    ]
     assert fake_proc.encoded_image_values == [1, 2, 3, 4, 5, 6, 7, 8]
     assert fake_proc.conversation_texts == ["task a", "task b"]
     assert fake_proc.encoded_texts == ["rendered:task a", "rendered:task b"]
@@ -1705,7 +1707,7 @@ def test_groot_n1_7_vlm_image_transform_matches_albumentations_eval_path():
     expected = expected[crop_start : crop_start + crop_edge, crop_start : crop_start + crop_edge]
     expected = cv2.resize(expected, (256, 256), interpolation=cv2.INTER_AREA)
 
-    assert transformed.size == (256, 256)
+    assert transformed.shape == (256, 256, 3)
     np.testing.assert_array_equal(np.asarray(transformed), expected)
 
 
@@ -1717,7 +1719,9 @@ def test_groot_n1_7_vlm_encode_transforms_non_square_two_camera_sample_like_core
             self.images = None
 
         def apply_chat_template(self, conversation, tokenize, add_generation_prompt):
-            return conversation[0]["content"][-1]["text"]
+            content = conversation[0]["content"]
+            assert [item["type"] for item in content] == ["image", "image", "text"]
+            return content[-1]["text"]
 
         def __call__(self, text, images, return_tensors, padding):
             self.images = images
@@ -1792,7 +1796,6 @@ def test_groot_n1_7_vlm_encode_config_round_trips_model_name():
 def test_groot_n1_7_processor_uses_qwen_component_assets(monkeypatch):
     pytest.importorskip("transformers")
 
-    import transformers
 
     from lerobot.policies.groot import processor_groot
 
@@ -1833,10 +1836,10 @@ def test_groot_n1_7_processor_uses_qwen_component_assets(monkeypatch):
             cls.from_pretrained_called = True
             raise AssertionError("Cosmos does not publish processor_config.json")
 
-    monkeypatch.setattr(transformers, "AutoTokenizer", FakeTokenizer)
-    monkeypatch.setattr(transformers, "Qwen2VLImageProcessorFast", FakeImageProcessor)
-    monkeypatch.setattr(transformers, "Qwen3VLVideoProcessor", FakeVideoProcessor)
-    monkeypatch.setattr(transformers, "Qwen3VLProcessor", FakeProcessor)
+    monkeypatch.setattr(processor_groot, "AutoTokenizer", FakeTokenizer)
+    monkeypatch.setattr(processor_groot, "Qwen2VLImageProcessor", FakeImageProcessor)
+    monkeypatch.setattr(processor_groot, "Qwen3VLVideoProcessor", FakeVideoProcessor)
+    monkeypatch.setattr(processor_groot, "Qwen3VLProcessor", FakeProcessor)
 
     processor = processor_groot._build_n1_7_processor("nvidia/Cosmos-Reason2-2B")
 
@@ -2304,6 +2307,55 @@ def test_groot_n1_7_generated_relative_stats_match_oss_gr00t_reference_numbers()
 
     decoded = decode_step({TransitionKey.ACTION: packed[TransitionKey.ACTION]})
     torch.testing.assert_close(decoded[TransitionKey.ACTION], action_a.unsqueeze(0), atol=1e-5, rtol=1e-5)
+
+
+def test_groot_n1_7_relative_action_stats_skip_padded_tail_chunks():
+    samples = [
+        {
+            OBS_STATE: torch.tensor([10.0, 100.0]),
+            ACTION: torch.tensor([[11.0, 101.0], [12.0, 102.0], [13.0, 103.0]]),
+            f"{ACTION}_is_pad": torch.tensor([False, False, False]),
+        },
+        {
+            OBS_STATE: torch.tensor([20.0, 200.0]),
+            ACTION: torch.tensor([[18.0, 198.0], [16.0, 196.0], [14.0, 194.0]]),
+            f"{ACTION}_is_pad": torch.tensor([False, False, False]),
+        },
+        {
+            OBS_STATE: torch.tensor([0.0, 0.0]),
+            ACTION: torch.tensor([[999.0, 999.0], [888.0, 888.0], [777.0, 777.0]]),
+            f"{ACTION}_is_pad": torch.tensor([False, False, True]),
+        },
+    ]
+
+    class _Dataset:
+        meta = SimpleNamespace(stats={})
+
+        def __len__(self):
+            return len(samples)
+
+        def __getitem__(self, idx):
+            return samples[idx]
+
+    relative_dataset_stats = _make_relative_action_training_stats(
+        _Dataset(),
+        exclude_joints=[],
+        action_names=None,
+        preserve_action_horizon=True,
+    )
+
+    torch.testing.assert_close(
+        torch.as_tensor(relative_dataset_stats[ACTION]["count"]),
+        torch.tensor([2, 2, 2]),
+    )
+    torch.testing.assert_close(
+        torch.as_tensor(relative_dataset_stats[ACTION]["min"]),
+        torch.tensor([[-2.0, -2.0], [-4.0, -4.0], [-6.0, -6.0]]),
+    )
+    torch.testing.assert_close(
+        torch.as_tensor(relative_dataset_stats[ACTION]["max"]),
+        torch.tensor([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]]),
+    )
 
 
 def test_groot_policy_selects_n1_7_model_class(monkeypatch):

@@ -552,6 +552,7 @@ def _reconnect_groot_n1_7_pack_decode_steps(
             step.pack_step = pack_step
 
 
+
 def _resolve_feature_names_from_dataset_meta(dataset_meta: Any | None, feature_key: str) -> list[str] | None:
     features = getattr(dataset_meta, "features", {}) or {}
     feature = features.get(feature_key) if isinstance(features, dict) else None
@@ -634,9 +635,10 @@ def _relative_action_chunks_by_horizon(
     if pad_mask is not None:
         mask = torch.as_tensor(pad_mask, dtype=torch.bool).cpu()
         if mask.ndim == 1 and batch_size == 1 and mask.numel() == horizon:
-            keep[0] = ~mask
+            keep[0, :] = not bool(mask.any())
         elif mask.ndim == 2 and tuple(mask.shape) == (batch_size, horizon):
-            keep = ~mask
+            complete_chunks = ~mask.any(dim=1)
+            keep = complete_chunks[:, None].expand(batch_size, horizon).clone()
 
     chunks: list[list[np.ndarray]] = [[] for _ in range(horizon)]
     relative_np = relative_action.detach().cpu().numpy()
@@ -1308,24 +1310,23 @@ def _transform_n1_7_image_for_vlm_albumentations(
     if not image_np.flags.c_contiguous:
         image_np = np.ascontiguousarray(image_np)
 
-    height, width = image_np.shape[:2]
-    if height != width:
-        square_edge = max(height, width)
-        pad_h = square_edge - height
-        pad_w = square_edge - width
-        image_np = cv2.copyMakeBorder(
-            image_np,
-            pad_h // 2,
-            pad_h - pad_h // 2,
-            pad_w // 2,
-            pad_w - pad_w // 2,
-            cv2.BORDER_CONSTANT,
-            value=(0, 0, 0),
+    resize_edge = shortest_image_edge or target_h
+
+    def resize_shortest_edge(frame: np.ndarray) -> np.ndarray:
+        height, width = frame.shape[:2]
+        shortest_edge = min(height, width)
+        if shortest_edge == resize_edge:
+            return frame
+        scale = resize_edge / float(shortest_edge)
+        resized_height = max(1, int(round(height * scale)))
+        resized_width = max(1, int(round(width * scale)))
+        return cv2.resize(
+            frame,
+            (resized_width, resized_height),
+            interpolation=cv2.INTER_AREA,
         )
 
-    resize_edge = shortest_image_edge or target_h
-    if image_np.shape[:2] != (resize_edge, resize_edge):
-        image_np = cv2.resize(image_np, (resize_edge, resize_edge), interpolation=cv2.INTER_AREA)
+    image_np = resize_shortest_edge(image_np)
 
     if crop_fraction is None and image_crop_size is not None:
         crop_fraction = image_crop_size[0] / float(target_h)
@@ -1337,9 +1338,7 @@ def _transform_n1_7_image_for_vlm_albumentations(
         left = max(0, (width - crop_w) // 2)
         image_np = image_np[top : top + crop_h, left : left + crop_w]
 
-    if image_np.shape[:2] != (target_h, target_w):
-        image_np = cv2.resize(image_np, (target_w, target_h), interpolation=cv2.INTER_AREA)
-    return image_np
+    return resize_shortest_edge(image_np)
 
 
 def _transform_n1_7_image_for_vlm_torch(

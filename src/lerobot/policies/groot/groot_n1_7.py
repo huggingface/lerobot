@@ -255,6 +255,11 @@ class Qwen3Backbone(nn.Module):
         load_pretrained_weights: bool = True,
     ):
         require_package("transformers", extra="groot")
+        if Qwen3VLForConditionalGeneration is None:
+            raise ImportError(
+                "Qwen3VLForConditionalGeneration is required for GR00T N1.7. "
+                "Install a transformers version with Qwen3-VL support."
+            )
         super().__init__()
         transformers_loading_kwargs = transformers_loading_kwargs or {"trust_remote_code": True}
 
