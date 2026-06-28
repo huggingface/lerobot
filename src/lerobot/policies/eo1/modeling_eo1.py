@@ -116,6 +116,8 @@ class EO1Policy(PreTrainedPolicy):
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         self.eval()
 
+        self._apply_pending_flush()
+
         if len(self._action_queue) == 0:
             actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
             self._action_queue.extend(actions.transpose(0, 1))

@@ -200,19 +200,26 @@ All policies inherit a `flush_action_queue()` method from `PreTrainedPolicy`
 policy.flush_action_queue()
 ```
 
-Calling it discards any precomputed actions so that the very next `select_action()` call triggers a fresh forward pass with the current (new) task string.
+Calling it **requests** that precomputed actions be discarded so that the very next `select_action()` call can trigger a fresh forward pass with the current (new) task string.
 
-The base-class implementation covers both naming conventions used across LeRobot policies automatically — no per-policy override needed:
+The request is intentionally deferred for thread safety: the prompt-listener callback runs in a background thread, while queue consumption (`popleft()`) happens in the main control loop. Clearing the queue directly from the listener thread can race with `select_action()`, so the base class records a flush request and the policy applies it on the next control tick.
+
+At the base-class level the implementation is:
 
 ```python
-# PreTrainedPolicy.flush_action_queue() — base class, no override required
+# PreTrainedPolicy.flush_action_queue()
+self._flush_requested = True
+
+# PreTrainedPolicy._apply_pending_flush()
 if hasattr(self, "_queues") and ACTION in self._queues:
-    self._queues[ACTION].clear()          # SmolVLA, TDMPC, VQBeT, WallX, …
+    self._queues[ACTION].clear()          # SmolVLA, Diffusion, TDMPC, VQBeT, WallX, …
 if hasattr(self, "_action_queue"):
-    self._action_queue.clear()            # Pi0, EO1, Groot, …
+    self._action_queue.clear()            # ACT, Pi0, EO1, Groot, Pi05, …
 ```
 
-Policies without a queue (e.g. ACT, pure Diffusion Policy) inherit a silent no-op.
+Current queue-backed policies call `_apply_pending_flush()` at the start of `select_action()`, so the deferred flush is now honored consistently across the rollout stack.
+
+Policies without a queue inherit a silent no-op.
 
 ### Wiring flush to the broker
 
@@ -222,7 +229,7 @@ Pass `policy.flush_action_queue` as an on-change callback:
 broker.register_on_change(policy.flush_action_queue)
 ```
 
-Now whenever the operator types a new task the queue is cleared in the listener thread, and the **next** `get_action()` call runs the VLM with the new instruction.
+Now whenever the operator types a new task the listener thread records a flush request, and the **next** `get_action()` / `select_action()` cycle applies it safely from the main control thread before consuming any stale actions.
 
 ### Flush vs. drain — choosing the right behaviour
 
@@ -326,7 +333,14 @@ echo "place it in the bin" >> /tmp/robot_task
 echo "pick up the bottle"  >> /tmp/robot_task
 ```
 
-The log confirms the switch: `[SmolVLA._get_action_chunk] task received by policy: ['grab the red cup\n']`.
+The switch is visible in the logs immediately:
+
+```text
+INFO  Task switched: 'pick up the bottle' → 'grab the red cup'
+INFO  [SyncInference] task='grab the red cup' | action[0:5]=...
+```
+
+The demo loop also logs the active task per tick, so you can verify exactly when the rollout starts executing under the new instruction.
 
 ### Key arguments
 
@@ -343,13 +357,16 @@ The log confirms the switch: `[SmolVLA._get_action_chunk] task received by polic
 
 1. `PromptBroker` is created with the initial task.
 2. `StdinPromptListener` daemon thread watches for new lines on stdin.
-3. If `--flush_on_switch` (default): `broker.register_on_change(policy.flush_action_queue)` is called so the action queue is cleared on every switch.
+3. If `--flush_on_switch` (default): `broker.register_on_change(policy.flush_action_queue)` is called so a deferred flush request is recorded on every switch.
 4. `SyncInferenceEngine` reads `broker.get_task()` on every `get_action()` call and injects it into the observation before calling the policy.
-5. The preprocessor appends `\n` (`NewLineTaskProcessorStep`) then tokenizes the string before the VLM sees it.
+5. Queue-backed policies apply that pending flush at the start of `select_action()`, so stale buffered actions are discarded safely in the main control thread.
+6. The preprocessor appends `\n` (`NewLineTaskProcessorStep`) then tokenizes the string before the VLM sees it.
 
-The exact task the VLM receives can be confirmed with the debug print in `_get_action_chunk`:
+The active task can be confirmed from the rollout logs:
+
 ```
-[SmolVLA._get_action_chunk] task received by policy: ['pick up the bottle\n']
+[SyncInference] task='pick up the bottle' | action[0:5]=...
+tick   12 | task='pick up the bottle' | action[0:5]=...
 ```
 
 ---
@@ -385,7 +402,7 @@ No changes needed in the inference engines or strategies — they always read fr
 | File | Change |
 |------|--------|
 | [`src/lerobot/rollout/prompt_broker.py`](../src/lerobot/rollout/prompt_broker.py) | **New** — `PromptBroker` (with `register_on_change`), `PromptListenerBase`, `StdinPromptListener` |
-| [`src/lerobot/rollout/configs.py`](../src/lerobot/rollout/configs.py) | Added `hot_prompt: bool`, `hot_prompt_source: str` to `RolloutConfig` |
+| [`src/lerobot/rollout/configs.py`](../src/lerobot/rollout/configs.py) | Added `hot_prompt`, `hot_prompt_source`, and `hot_prompt_flush` to `RolloutConfig` |
 | [`src/lerobot/rollout/context.py`](../src/lerobot/rollout/context.py) | `RuntimeContext.prompt_broker` field; broker creation + listener start in `build_rollout_context()` |
 | [`src/lerobot/rollout/inference/sync.py`](../src/lerobot/rollout/inference/sync.py) | `prompt_broker` param; per-call `broker.get_task()` in `get_action()` |
 | [`src/lerobot/rollout/inference/rtc.py`](../src/lerobot/rollout/inference/rtc.py) | `prompt_broker` param; per-call `broker.get_task()` in `_rtc_loop()` |
@@ -394,7 +411,8 @@ No changes needed in the inference engines or strategies — they always read fr
 | [`src/lerobot/rollout/strategies/highlight.py`](../src/lerobot/rollout/strategies/highlight.py) | Per-frame broker read instead of pre-loop capture |
 | [`src/lerobot/rollout/strategies/dagger.py`](../src/lerobot/rollout/strategies/dagger.py) | Per-frame broker read in both `_run_continuous_recording` and `_run_corrections_only` |
 | [`src/lerobot/rollout/__init__.py`](../src/lerobot/rollout/__init__.py) | Re-exports `PromptBroker`, `StdinPromptListener` |
-| [`src/lerobot/policies/pretrained.py`](../src/lerobot/policies/pretrained.py) | `flush_action_queue()` added to `PreTrainedPolicy` base class |
+| [`src/lerobot/policies/pretrained.py`](../src/lerobot/policies/pretrained.py) | Deferred `flush_action_queue()` + `_apply_pending_flush()` helper added to `PreTrainedPolicy` |
+| `src/lerobot/policies/*/modeling_*.py` | Queue-backed policies call `_apply_pending_flush()` at the start of `select_action()` |
 | [`tests/test_prompt_broker.py`](../tests/test_prompt_broker.py) | **New** — 11 unit tests (6 broker, 5 listener) |
 | [`tests/test_rollout.py`](../tests/test_rollout.py) | 3 integration tests for broker + `SyncInferenceEngine` |
 | [`examples/hot_prompt_demo.py`](../examples/hot_prompt_demo.py) | **New** — mock-robot demo, no GPU needed |
@@ -406,8 +424,4 @@ No changes needed in the inference engines or strategies — they always read fr
 
 When `--hot_prompt=false` (the default), `prompt_broker` is `None` everywhere and all code falls back to the original static `self._task` / `cfg.task` path.  
 **No behaviour change for existing users.**
-
-
-`lerobot-rollout` supports updating the language task prompt **while the robot is running** — no restart required.  
-This is the foundation for voice-commanded robots: a speech-to-text (STT) process can pipe new tasks into the rollout script in real time.
 

@@ -414,6 +414,8 @@ class XVLAPolicy(PreTrainedPolicy):
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
+        self._apply_pending_flush()
+
         if len(self._queues[ACTION]) == 0:
             actions = self._get_action_chunk(batch)
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])

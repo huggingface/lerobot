@@ -1683,6 +1683,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if self._rtc_enabled():
             raise AssertionError("RTC is not supported for select_action, use it with predict_action_chunk")
         self.eval()
+        self._apply_pending_flush()
         if len(self._action_queue) == 0:
             actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
             self._action_queue.extend(actions.transpose(0, 1))

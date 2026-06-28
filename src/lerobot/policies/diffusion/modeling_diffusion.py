@@ -152,6 +152,8 @@ class DiffusionPolicy(PreTrainedPolicy):
         # NOTE: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
 
+        self._apply_pending_flush()
+
         if len(self._queues[ACTION]) == 0:
             actions = self.predict_action_chunk(batch, noise=noise)
             self._queues[ACTION].extend(actions.transpose(0, 1))
