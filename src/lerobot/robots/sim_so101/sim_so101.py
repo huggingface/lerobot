@@ -117,12 +117,16 @@ class SimSO101(Robot):
         if home_key_id >= 0:
             mujoco.mj_resetDataKeyframe(self._model, self._data, home_key_id)
 
-        # Match the cube's start x to the (possibly shifted) belt centre, since the
-        # keyframe hard-codes it at the default position.
+        # Place the cube relative to the (possibly shifted) belt: always on the belt
+        # centre line in x, and in y either parked directly in front of the robot
+        # (y=0, graspable for static eval) when the belt is stopped, or fed from the
+        # -y end so it travels through the reachable region when the belt is running.
         if belt_center_x is not None:
             cube_joint_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_JOINT, "cube_free")
             if cube_joint_id >= 0:
-                self._data.qpos[int(self._model.jnt_qposadr[cube_joint_id])] = belt_center_x
+                cube_qadr = int(self._model.jnt_qposadr[cube_joint_id])
+                self._data.qpos[cube_qadr] = belt_center_x
+                self._data.qpos[cube_qadr + 1] = -0.20 if self.config.belt_speed != 0 else 0.0
 
         # Conveyor belt (e.g. scene_cube.xml's "belt"): a velocity actuator's ctrl is a
         # standing command, not a per-step one, so set it once here rather than in
