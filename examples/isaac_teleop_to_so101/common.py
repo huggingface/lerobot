@@ -99,10 +99,17 @@ streaming the follower is held at its measured pose.
 Requires the ``isaac-teleop`` extra (``isaacteleop``) and an OpenXR runtime.
 """
 
+import atexit
 import json
+import logging
+import os
+import select
 import subprocess
+import sys
+import threading
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -132,6 +139,14 @@ from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.rotation import Rotation
+
+# Terminal control for the stdin keyboard backend is Unix-only (absent on Windows).
+try:
+    import termios
+
+    _HAS_TERMIOS = True
+except ImportError:  # pragma: no cover - Windows
+    _HAS_TERMIOS = False
 
 FPS = 30
 
@@ -616,3 +631,150 @@ def build_device(cfg: LoopConfig) -> tuple:
 
     device.startup()
     return robot, device, motor_names
+
+
+# ============================================================================
+# Keyboard control (stdin backend; works over SSH / Wayland / headless-with-a-tty)
+# ============================================================================
+
+# Backends for init_keyboard_listener(), selectable via LEROBOT_KEYBOARD_BACKEND.
+_VALID_KEYBOARD_BACKENDS = {"auto", "stdin", "pynput", "none"}
+
+
+def _stdin_is_tty() -> bool:
+    """True when stdin is an interactive terminal we can read keys from."""
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except Exception:
+        return False
+
+
+class _StdinKeyboardListener:
+    """Read arrow / Esc keys from a raw-mode stdin TTY (SSH- and Wayland-friendly).
+
+    Drop-in for the pynput listener in ``lerobot.common.control_utils``: same ``.stop()``
+    method and the same effect on the shared ``events`` dict. Where the global pynput/X
+    listener can't see keystrokes (over SSH, under Wayland, or headless-with-a-tty), stdin
+    still receives them. Puts the terminal in non-canonical, no-echo mode — KEEPING signals
+    so Ctrl-C still raises ``KeyboardInterrupt`` — polls stdin on a daemon thread, and ALWAYS
+    restores the original terminal mode on :meth:`stop` and at interpreter exit (so a crash
+    or Ctrl-C never leaves the shell with echo off).
+    """
+
+    def __init__(self, events: dict):
+        self._events = events
+        self._fd = sys.stdin.fileno()
+        self._old_term = termios.tcgetattr(self._fd)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._restored = False
+        # Belt-and-braces: restore the tty even if stop() is never reached (crash / hard exit).
+        atexit.register(self._restore)
+
+    def start(self) -> None:
+        new = termios.tcgetattr(self._fd)
+        # Clear ICANON (line buffering) + ECHO; KEEP ISIG so Ctrl-C / Ctrl-Z still signal.
+        new[3] &= ~(termios.ICANON | termios.ECHO)
+        termios.tcsetattr(self._fd, termios.TCSADRAIN, new)
+        self._thread = threading.Thread(target=self._run, name="isaac-stdin-keys", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                ready, _, _ = select.select([self._fd], [], [], 0.1)
+                if not ready:
+                    continue
+                data = os.read(self._fd, 1024)
+            except (OSError, ValueError):
+                break  # fd closed / stdin gone
+            if data:
+                self._dispatch(data)
+
+    def _dispatch(self, data: bytes) -> None:
+        # Read the whole available buffer and walk it: an arrow key arrives as the 3 bytes
+        # ``ESC [ C/D`` together, while a real Esc is a lone ESC — matching the full sequence
+        # avoids mistaking Esc for the start of an arrow.
+        events = self._events
+        i, n = 0, len(data)
+        while i < n:
+            if data[i] != 0x1B:  # only ESC-initiated keys are meaningful here
+                i += 1
+                continue
+            seq = data[i : i + 3]
+            if seq == b"\x1b[C":  # Right arrow
+                print("Right arrow pressed. Ending the episode early...")
+                events["exit_early"] = True
+                i += 3
+            elif seq == b"\x1b[D":  # Left arrow
+                print("Left arrow pressed. Re-recording the last episode...")
+                events["rerecord_episode"] = True
+                events["exit_early"] = True
+                i += 3
+            elif data[i : i + 2] == b"\x1b[":  # other CSI sequence (Up/Down/...) -> ignore
+                i += 3 if n - i >= 3 else n
+            else:  # lone ESC (not the start of an arrow) -> stop recording
+                print("Escape pressed. Stopping data recording...")
+                events["stop_recording"] = True
+                events["exit_early"] = True
+                i += 1
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+        self._restore()
+
+    def _restore(self) -> None:
+        if self._restored:
+            return
+        self._restored = True
+        with suppress(Exception):
+            termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old_term)
+
+
+def _new_events() -> dict:
+    return {"exit_early": False, "rerecord_episode": False, "stop_recording": False}
+
+
+def init_keyboard_listener():
+    """Keyboard listener for the recording shortcuts, with a stdin backend for SSH / headless.
+
+    Drop-in for ``lerobot.common.control_utils.init_keyboard_listener`` but prefers a stdin
+    (termios) backend so the Right / Left / Esc shortcuts work over SSH, under Wayland, and on
+    headless boxes that have a TTY — where the upstream global pynput/X listener silently
+    captures nothing. Backend selection (override with ``LEROBOT_KEYBOARD_BACKEND`` ∈
+    {auto, stdin, pynput, none}, default auto):
+
+    - interactive TTY -> the stdin backend in this module;
+    - otherwise (GUI launch, no tty) -> delegate to the upstream pynput / headless listener;
+    - ``none`` -> headless (returns ``None``).
+
+    Returns ``(listener, events)`` where ``listener`` has ``.stop()`` (or is ``None`` when
+    headless), and ``events`` is a dict with bool flags ``exit_early`` / ``rerecord_episode`` /
+    ``stop_recording`` set by the key presses.
+    """
+    choice = os.environ.get("LEROBOT_KEYBOARD_BACKEND", "auto").strip().lower()
+    if choice not in _VALID_KEYBOARD_BACKENDS:
+        logging.warning("Unknown LEROBOT_KEYBOARD_BACKEND=%r; using 'auto'.", choice)
+        choice = "auto"
+
+    stdin_ok = _HAS_TERMIOS and _stdin_is_tty()
+
+    if choice == "none":
+        return None, _new_events()
+    if choice in ("auto", "stdin") and stdin_ok:
+        events = _new_events()
+        listener = _StdinKeyboardListener(events)
+        listener.start()
+        logging.info(
+            "Keyboard control via stdin (terminal): Right = end episode early, Left = re-record, Esc = stop."
+        )
+        return listener, events
+    if choice == "stdin":  # forced stdin but no usable TTY -> headless
+        return None, _new_events()
+
+    # auto without a TTY, or choice == 'pynput': defer to the upstream pynput / headless listener.
+    from lerobot.common.control_utils import init_keyboard_listener as _upstream_listener
+
+    return _upstream_listener()
