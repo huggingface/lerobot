@@ -62,8 +62,9 @@ class SimSO101Config(RobotConfig):
     pipeline (``lerobot-rollout --inference.type=rtc``) can run without hardware.
     """
 
-    # Path to the MuJoCo scene XML. Use the Menagerie SO-ARM100 ``scene.xml``,
-    # extended with one ``<camera>`` element per entry in ``cameras``.
+    # Path to the MuJoCo scene XML. Use the Menagerie SO-101
+    # (``robotstudio_so101``) ``scene.xml``, extended with one ``<camera>``
+    # element per entry in ``cameras`` beyond its built-in ``wrist_cam``.
     mjcf_path: str
 
     # Offscreen-rendered observation cameras. Key -> spec.
@@ -74,15 +75,17 @@ class SimSO101Config(RobotConfig):
     control_fps: float = 30.0
 
     # so101 motor name -> MuJoCo actuator/joint name.
-    # Defaults match the Menagerie SO-ARM100 model.
+    # Identity by default: the Menagerie SO-101 model's joint/actuator names
+    # already match the so101_follower motor names. Override only if using a
+    # differently-named MJCF (e.g. the older SO-ARM100 model).
     joint_map: dict[str, str] = field(
         default_factory=lambda: {
-            "shoulder_pan": "Rotation",
-            "shoulder_lift": "Pitch",
-            "elbow_flex": "Elbow",
-            "wrist_flex": "Wrist_Pitch",
-            "wrist_roll": "Wrist_Roll",
-            "gripper": "Jaw",
+            "shoulder_pan": "shoulder_pan",
+            "shoulder_lift": "shoulder_lift",
+            "elbow_flex": "elbow_flex",
+            "wrist_flex": "wrist_flex",
+            "wrist_roll": "wrist_roll",
+            "gripper": "gripper",
         }
     )
 
@@ -94,3 +97,20 @@ class SimSO101Config(RobotConfig):
     # through `get_observation`), so it has no effect on what the policy sees.
     # None disables success tracking (e.g. scenes without a trackable object).
     success: SimLiftSuccessConfig | None = None
+
+    # Conveyor belt speed in m/s, set once at connect() time (constant for the whole
+    # rollout — not a per-step control). Applied as the ctrl of an MJCF actuator named
+    # "belt_motor" if the MJCF has one (e.g. scene_cube.xml's belt); silently has no
+    # effect on scenes without a belt. 0 by default so existing non-belt behavior is
+    # unchanged unless explicitly set.
+    belt_speed: float = 0.0
+
+    # Distance in meters from the robot base (origin) to the belt's near (robot-side)
+    # edge. connect() slides the whole pick-and-place layout (conveyor frame + moving
+    # surface + drop-off box + the cube's start position) forward/back to honor it,
+    # keeping the robot -> belt -> box arrangement intact (the box follows so it stays
+    # just beyond the far edge). Default 0.14 reproduces the bundled scene_cube.xml
+    # exactly. No effect on scenes without a "belt" body. Note the home keyframe's arm
+    # pose is tuned for the default; very different distances may not frame the cube in
+    # wrist_cam at start, and the cube must stay within the arm's ~0.40 m reach.
+    belt_distance: float = 0.14

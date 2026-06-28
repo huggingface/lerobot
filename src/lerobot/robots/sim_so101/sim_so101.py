@@ -56,6 +56,7 @@ class SimSO101(Robot):
         self._n_substeps = 1
         self._success_qpos_addr: int | None = None
         self._success_rest_z: float | None = None
+        self._belt_qpos_addr: int | None = None
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -87,6 +88,57 @@ class SimSO101(Robot):
 
         self._model = mujoco.MjModel.from_xml_path(self.config.mjcf_path)
         self._data = mujoco.MjData(self._model)
+
+        # Slide the whole pick-and-place layout to honor belt_distance (gap from the
+        # origin to the belt's near edge). Shifting the conveyor frame, the moving belt
+        # surface and the box by the same delta preserves their relative spacing (the
+        # box stays just beyond the belt's far edge); the cube's start x is matched to
+        # the belt centre after the keyframe reset below. No-op without a "belt" body.
+        belt_body_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, "belt")
+        belt_center_x: float | None = None
+        if belt_body_id >= 0:
+            belt_top_geom = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_GEOM, "belt_top")
+            belt_half_x = float(self._model.geom_size[belt_top_geom][0])
+            belt_center_x = self.config.belt_distance + belt_half_x
+            dx = belt_center_x - float(self._model.body_pos[belt_body_id][0])
+            for body_name in ("conveyor_frame", "belt", "box"):
+                bid = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+                if bid >= 0:
+                    self._model.body_pos[bid][0] += dx
+
+        # If the MJCF defines a "home" keyframe, start there instead of the MJCF's
+        # qpos=0 default. Joint `ref` attributes don't help here: they only recalibrate
+        # what a given qpos *number* means, not the actual rest configuration (`ref`
+        # leaves the compiled qpos=ref pose geometrically identical to qpos=0 without it),
+        # so a keyframe is the only way to give the rollout a deliberate starting pose
+        # (e.g. one where an eye-in-hand camera actually faces the work area instead of
+        # wherever zero-angle-on-every-joint happens to point it).
+        home_key_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_KEY, "home")
+        if home_key_id >= 0:
+            mujoco.mj_resetDataKeyframe(self._model, self._data, home_key_id)
+
+        # Match the cube's start x to the (possibly shifted) belt centre, since the
+        # keyframe hard-codes it at the default position.
+        if belt_center_x is not None:
+            cube_joint_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_JOINT, "cube_free")
+            if cube_joint_id >= 0:
+                self._data.qpos[int(self._model.jnt_qposadr[cube_joint_id])] = belt_center_x
+
+        # Conveyor belt (e.g. scene_cube.xml's "belt"): a velocity actuator's ctrl is a
+        # standing command, not a per-step one, so set it once here rather than in
+        # send_action(). No-op on scenes without a "belt_motor" actuator.
+        belt_act_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_ACTUATOR, "belt_motor")
+        if belt_act_id >= 0:
+            self._data.ctrl[belt_act_id] = self.config.belt_speed
+            # The slide joint would physically translate the belt body (and its rendered
+            # geom) through world space, so the green surface itself drifts off-screen
+            # within seconds. Instead we run it as a treadmill: send_action() snaps the
+            # slide position back to 0 every control step while leaving its velocity
+            # alone, so the contact still sees a moving surface (friction drags resting
+            # objects at belt speed) but the surface never visibly moves — the separate
+            # static frame geoms are what make it read as a conveyor.
+            belt_joint_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_JOINT, "belt_slide")
+            self._belt_qpos_addr = int(self._model.jnt_qposadr[belt_joint_id])
 
         # Resolve so101 motor -> MuJoCo actuator id + joint qpos address. Fail fast
         # if the scene's naming doesn't match joint_map.
@@ -169,6 +221,13 @@ class SimSO101(Robot):
 
         for _ in range(self._n_substeps):
             mujoco.mj_step(self._model, self._data)
+
+        if self._belt_qpos_addr is not None:
+            # Treadmill: zero the belt's position (not its velocity) so the surface
+            # drags objects without visibly translating. mj_forward re-derives
+            # xpos/cam_xpos now, since get_observation() renders before the next step.
+            self._data.qpos[self._belt_qpos_addr] = 0.0
+            mujoco.mj_forward(self._model, self._data)
 
         return {key: val for key, val in action.items() if key.endswith(".pos")}
 
