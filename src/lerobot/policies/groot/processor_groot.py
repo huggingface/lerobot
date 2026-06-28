@@ -469,6 +469,7 @@ def make_groot_pre_post_processors_from_pretrained(
         # lerobot-eval or the policy server) to the freshly built steps.
         _apply_groot_step_overrides(preprocessor, preprocessor_overrides)
         _apply_groot_step_overrides(postprocessor, postprocessor_overrides)
+        _apply_groot_action_decode_transform(postprocessor, config.action_decode_transform)
         return preprocessor, postprocessor
 
     preprocessor, postprocessor = _load_groot_processor_pipelines(
@@ -480,6 +481,7 @@ def make_groot_pre_post_processors_from_pretrained(
     )
     _reconnect_groot_relative_absolute_steps(preprocessor, postprocessor)
     _reconnect_groot_n1_7_pack_decode_steps(preprocessor, postprocessor)
+    _apply_groot_action_decode_transform(postprocessor, config.action_decode_transform)
     return preprocessor, postprocessor
 
 
@@ -551,6 +553,20 @@ def _reconnect_groot_n1_7_pack_decode_steps(
         if isinstance(step, GrootN17ActionDecodeStep) and step.pack_step is None:
             step.pack_step = pack_step
 
+
+def _apply_groot_action_decode_transform(
+    postprocessor: PolicyProcessorPipeline,
+    action_decode_transform: str | None,
+) -> None:
+    use_libero_transform = action_decode_transform == GROOT_ACTION_DECODE_TRANSFORM_LIBERO
+
+    for step in postprocessor.steps:
+        if isinstance(step, GrootN17ActionDecodeStep):
+            step.action_decode_transform = action_decode_transform
+        elif isinstance(step, GrootActionUnpackUnnormalizeStep):
+            step.libero_gripper_action = use_libero_transform
+            if use_libero_transform:
+                step.libero_gripper_binarize = True
 
 
 def _resolve_feature_names_from_dataset_meta(dataset_meta: Any | None, feature_key: str) -> list[str] | None:
@@ -1198,6 +1214,7 @@ def make_groot_pre_post_processors(
             stats=padded_stats,
             normalize_min_max=True,
             clip_normalized_action=True,
+            libero_gripper_action=config.action_decode_transform == GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
         )
     else:
         action_decode_step = GrootN17ActionDecodeStep(

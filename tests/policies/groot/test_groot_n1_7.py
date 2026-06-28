@@ -1391,6 +1391,80 @@ def test_groot_n1_7_action_decode_requires_gripper_key_for_libero_transform():
         step({TransitionKey.ACTION: torch.zeros(1, 1, 1)})
 
 
+def test_groot_n1_7_fallback_processors_wire_libero_transform_to_postprocessor():
+    config = _groot_config()
+    dataset_stats = {
+        OBS_STATE: {
+            "min": torch.zeros(8),
+            "max": torch.ones(8),
+        },
+        ACTION: {
+            "min": torch.zeros(7),
+            "max": torch.ones(7),
+        },
+    }
+
+    _, postprocessor = make_groot_pre_post_processors(config, dataset_stats=dataset_stats)
+
+    action_decode_step = next(
+        step for step in postprocessor.steps if isinstance(step, GrootActionUnpackUnnormalizeStep)
+    )
+    assert action_decode_step.libero_gripper_action is True
+
+
+def test_groot_n1_7_loaded_fallback_postprocessor_honors_config_action_decode_transform(tmp_path):
+    input_features, output_features = _groot_features(state_dim=8, action_dim=7)
+    dataset_stats = {
+        OBS_STATE: {
+            "min": torch.zeros(8),
+            "max": torch.ones(8),
+        },
+        ACTION: {
+            "min": torch.zeros(7),
+            "max": torch.ones(7),
+        },
+    }
+    disabled_config = GrootConfig(
+        input_features=input_features,
+        output_features=output_features,
+        device="cpu",
+        use_bf16=False,
+        action_decode_transform=None,
+    )
+    preprocessor, postprocessor = make_groot_pre_post_processors(
+        disabled_config,
+        dataset_stats=dataset_stats,
+    )
+    save_dir = tmp_path / "saved_fallback_processors"
+    disabled_config.save_pretrained(save_dir)
+    preprocessor.save_pretrained(save_dir)
+    postprocessor.save_pretrained(save_dir)
+
+    saved_postprocessor = json.loads((save_dir / "policy_postprocessor.json").read_text())
+    saved_decode_config = next(
+        step["config"]
+        for step in saved_postprocessor["steps"]
+        if step["registry_name"] == "groot_action_unpack_unnormalize_v2"
+    )
+    assert saved_decode_config["libero_gripper_action"] is False
+
+    enabled_config = GrootConfig(
+        input_features=input_features,
+        output_features=output_features,
+        device="cpu",
+        use_bf16=False,
+        action_decode_transform=GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
+    )
+    _, loaded_postprocessor = make_pre_post_processors(enabled_config, pretrained_path=str(save_dir))
+    action_decode_step = next(
+        step for step in loaded_postprocessor.steps if isinstance(step, GrootActionUnpackUnnormalizeStep)
+    )
+
+    assert action_decode_step.libero_gripper_action is True
+    output = action_decode_step({TransitionKey.ACTION: torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]])})
+    torch.testing.assert_close(output[TransitionKey.ACTION][0, -1], torch.tensor(1.0))
+
+
 def test_groot_n1_7_postprocessor_converts_libero_gripper_convention():
     step = GrootActionUnpackUnnormalizeStep(
         env_action_dim=7,
