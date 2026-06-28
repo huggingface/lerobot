@@ -128,6 +128,8 @@ class RTCInferenceEngine(InferenceEngine):
         self._detector = None
         self._supervisor_camera: str | None = None
         self._supervisor_cooldown_s: float = 0.0
+        self._target_visible_required: bool = False
+        self._detector_waiting_for_target: bool = False
         self._chunk_size: int | None = None
         self._last_detector_fire: float = -1.0
         self._last_detector_frame_id: int | None = None
@@ -136,10 +138,12 @@ class RTCInferenceEngine(InferenceEngine):
             self._detector = make_detector(supervisor_config.detector)
             self._supervisor_camera = supervisor_config.camera
             self._supervisor_cooldown_s = supervisor_config.cooldown_s
+            self._target_visible_required = supervisor_config.require_target_visible
             logger.info(
-                "RTC detector enabled: type=%s camera=%s (dynamic replan)",
+                "RTC detector enabled: type=%s camera=%s require_target_visible=%s (dynamic replan)",
                 supervisor_config.detector.type,
                 supervisor_config.camera,
+                supervisor_config.require_target_visible,
             )
 
         self._action_queue: ActionQueue | None = None
@@ -254,6 +258,7 @@ class RTCInferenceEngine(InferenceEngine):
         self._last_detector_fire = -1.0
         self._last_detector_frame_id = None
         self._dynamic_queue_threshold = None
+        self._detector_waiting_for_target = False
 
     # ------------------------------------------------------------------
     # Action production (called from main thread)
@@ -302,6 +307,24 @@ class RTCInferenceEngine(InferenceEngine):
         if output.effective_chunk_size_threshold is not None and self._chunk_size:
             self._dynamic_queue_threshold = output.effective_chunk_size_threshold * self._chunk_size
 
+        if self._target_visible_required:
+            if output.target_visible is False:
+                if not self._detector_waiting_for_target:
+                    logger.info(
+                        "RTC detector waiting for target visibility: camera=%s reason=%s",
+                        self._supervisor_camera,
+                        output.reason,
+                    )
+                self._detector_waiting_for_target = True
+            elif output.target_visible is True:
+                if self._detector_waiting_for_target:
+                    logger.info(
+                        "RTC detector target visible: camera=%s center_px=%s",
+                        self._supervisor_camera,
+                        output.center_px,
+                    )
+                self._detector_waiting_for_target = False
+
         if output.replan_now:
             now = time.perf_counter()
             if now - self._last_detector_fire > self._supervisor_cooldown_s:
@@ -314,6 +337,18 @@ class RTCInferenceEngine(InferenceEngine):
                 return True, self._dynamic_queue_threshold
 
         return False, self._dynamic_queue_threshold
+
+    def _should_run_inference(
+        self,
+        queue_size: int,
+        effective_threshold: float,
+        detector_replan: bool,
+    ) -> bool:
+        if detector_replan:
+            return True
+        if self._target_visible_required and self._detector_waiting_for_target:
+            return False
+        return queue_size <= effective_threshold
 
     # ------------------------------------------------------------------
     # RTC: background inference thread
@@ -349,7 +384,7 @@ class RTCInferenceEngine(InferenceEngine):
                     if dynamic_threshold is not None:
                         effective_threshold = dynamic_threshold
 
-                if queue.qsize() <= effective_threshold or detector_replan:
+                if self._should_run_inference(queue.qsize(), effective_threshold, detector_replan):
                     try:
                         current_time = time.perf_counter()
                         idx_before = queue.get_action_index()

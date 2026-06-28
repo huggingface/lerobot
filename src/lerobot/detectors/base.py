@@ -32,6 +32,7 @@ class DetectorOutput:
     """Structured detector output for event-triggered and speed-adaptive replanning."""
 
     replan_now: bool = False
+    target_visible: bool | None = None
     center_px: tuple[float, float] | None = None
     speed_px_s: float | None = None
     effective_chunk_size_threshold: float | None = None

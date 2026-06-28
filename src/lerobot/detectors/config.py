@@ -139,6 +139,7 @@ class SupervisorConfig:
     camera: str = "overall"
     poll_fps: int = 20
     cooldown_s: float = 1.0
+    require_target_visible: bool = False
     detector: DetectorConfig = field(default_factory=MotionDetectorConfig)
 
     def __post_init__(self):
