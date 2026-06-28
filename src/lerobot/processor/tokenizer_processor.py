@@ -23,7 +23,6 @@ token IDs and attention masks, which are then added to the observation dictionar
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -49,6 +48,7 @@ if TYPE_CHECKING or _transformers_available:
 else:
     AutoProcessor = None
     AutoTokenizer = None
+
 
 @dataclass
 @ProcessorStepRegistry.register(name="tokenizer_processor")

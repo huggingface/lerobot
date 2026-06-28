@@ -1,14 +1,14 @@
 #!/usr/bin/env python
-"""Interactive demo for hot-prompt switching — no robot or GPU required.
+"""Interactive demo for online task switching — no robot or GPU required.
 
 Runs a fake control loop using a mock robot and a dummy policy.
 Type a new task in the terminal and press Enter to switch the prompt live.
 
 Usage
 -----
-    conda run -n lerobot_rollout python examples/hot_prompt_demo.py
-    conda run -n lerobot_rollout python examples/hot_prompt_demo.py --fps=5
-    conda run -n lerobot_rollout python examples/hot_prompt_demo.py --task="pick up cube" --fps=2
+    conda run -n lerobot_rollout python examples/online_task_switching/demo.py
+    conda run -n lerobot_rollout python examples/online_task_switching/demo.py --fps=5
+    conda run -n lerobot_rollout python examples/online_task_switching/demo.py --task="pick up cube" --fps=2
 
 Press Ctrl-C to stop.
 """
@@ -32,7 +32,7 @@ logging.basicConfig(
     format="%(asctime)s  %(levelname)-7s  %(name)s — %(message)s",
     datefmt="%H:%M:%S",
 )
-logger = logging.getLogger("hot_prompt_demo")
+logger = logging.getLogger("online_task_switching_demo")
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ def main():
     # 3. Control loop
     # ------------------------------------------------------------------
     logger.info("=" * 60)
-    logger.info("Hot-prompt demo started")
+    logger.info("Online task-switching demo started")
     logger.info("  Initial task : '%s'", args.task)
     logger.info("  FPS          : %.0f", args.fps)
     logger.info("  Duration     : %s", f"{args.duration}s" if args.duration > 0 else "infinite (Ctrl-C to stop)")

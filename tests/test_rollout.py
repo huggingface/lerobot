@@ -351,7 +351,7 @@ def test_rollout_context_fields():
 
 
 # ---------------------------------------------------------------------------
-# Hot-prompt integration: broker wired through SyncInferenceEngine
+# Online task-switching integration: broker wired through SyncInferenceEngine
 # ---------------------------------------------------------------------------
 
 

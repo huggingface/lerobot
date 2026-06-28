@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Hot-prompt switching demo with a real SmolVLA checkpoint.
+"""Online task-switching switching demo with a real SmolVLA checkpoint.
 
 No physical robot required.  Synthetic (zero) camera frames and robot state
 are fed to the real policy so you can see how the action output changes when
@@ -7,11 +7,11 @@ you switch the language task live.
 
 Usage
 -----
-    conda run -n lerobot_rollout python examples/hot_prompt_smolvla_demo.py \\
+    conda run -n lerobot_rollout python examples/online_task_switching/smolvla_demo.py \\
         --checkpoint /path/to/pretrained_model
 
     # override task, device, FPS:
-    conda run -n lerobot_rollout python examples/hot_prompt_smolvla_demo.py \\
+    conda run -n lerobot_rollout python examples/online_task_switching/smolvla_demo.py \\
         --checkpoint /path/to/pretrained_model \\
         --task "pick up the bottle" \\
         --device cuda \\
@@ -19,7 +19,7 @@ Usage
 
     # pipe tasks in from another terminal using a file + tail -f:
     > /tmp/robot_task   # create empty file
-    conda run -n lerobot_rollout python examples/hot_prompt_smolvla_demo.py \\
+    conda run -n lerobot_rollout python examples/online_task_switching/smolvla_demo.py \\
         --checkpoint /path/to/pretrained_model --fps 1 \\
         < <(tail -f /tmp/robot_task) &
     echo "grab the cup" >> /tmp/robot_task
@@ -49,7 +49,7 @@ logging.basicConfig(
     format="%(asctime)s  %(levelname)-7s  %(name)s — %(message)s",
     datefmt="%H:%M:%S",
 )
-logger = logging.getLogger("hot_prompt_smolvla")
+logger = logging.getLogger("online_task_switching_smolvla")
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +250,7 @@ def main() -> None:
     # 7. Control loop
     # ------------------------------------------------------------------
     logger.info("=" * 65)
-    logger.info("Hot-prompt SmolVLA demo started")
+    logger.info("Online task-switching SmolVLA demo started")
     logger.info("  Checkpoint   : %s", args.checkpoint)
     logger.info("  Initial task : '%s'", args.task)
     logger.info("  FPS          : %.1f", args.fps)

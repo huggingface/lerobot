@@ -15,8 +15,8 @@ lerobot-rollout \
     --robot.type=so100_follower \
     --robot.port=/dev/ttyACM0 \
     --task="pick up cube" \
-    --hot_prompt=true \
-    --hot_prompt_flush=true \
+    --online_task_switching=true \
+    --online_task_switching_flush=true \
     --duration=0
 ```
 
@@ -30,7 +30,7 @@ The log will immediately show:
 
 ```
 INFO  Task switched: 'pick up cube' → 'fold the towel'
-INFO  hot_prompt_flush=on — action queue will be cleared immediately on task switch
+INFO  online_task_switching_flush=on — action queue will be cleared immediately on task switch
 ```
 
 Every subsequent inference call uses the new task — no episode boundary, no restart.
@@ -44,8 +44,8 @@ lerobot-rollout \
     --robot.type=so100_follower \
     --robot.port=/dev/ttyACM0 \
     --task="pick up cube" \
-    --hot_prompt=true \
-    --hot_prompt_flush=false \
+    --online_task_switching=true \
+    --online_task_switching_flush=false \
     --duration=0
 ```
 
@@ -55,9 +55,9 @@ lerobot-rollout \
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--hot_prompt` | `bool` | `false` | Enable runtime task switching |
-| `--hot_prompt_source` | `str` | `"stdin"` | Where new prompts come from. Currently: `"stdin"` |
-| `--hot_prompt_flush` | `bool` | `true` | Flush the policy action queue immediately on switch (set to `false` to let the current chunk drain) |
+| `--online_task_switching` | `bool` | `false` | Enable runtime task switching |
+| `--online_task_switching_source` | `str` | `"stdin"` | Where new prompts come from. Currently: `"stdin"` |
+| `--online_task_switching_flush` | `bool` | `true` | Flush the policy action queue immediately on switch (set to `false` to let the current chunk drain) |
 
 All three flags live in `RolloutConfig` ([src/lerobot/rollout/configs.py](../src/lerobot/rollout/configs.py)).
 
@@ -136,9 +136,9 @@ listener.start(broker, shutdown_event)   # non-blocking, daemon thread
 `build_rollout_context()` ([`src/lerobot/rollout/context.py`](../src/lerobot/rollout/context.py)) creates the broker and starts the listener **before** building the inference engine:
 
 ```python
-if cfg.hot_prompt:
+if cfg.online_task_switching:
     prompt_broker = PromptBroker(initial_task=task_str)
-    if cfg.hot_prompt_source == "stdin":
+    if cfg.online_task_switching_source == "stdin":
         StdinPromptListener().start(prompt_broker, shutdown_event)
 ```
 
@@ -249,7 +249,7 @@ In the SmolVLA demo this is controlled by `--flush_on_switch` / `--no-flush_on_s
 Run the script in a terminal and type prompts directly:
 
 ```bash
-lerobot-rollout --hot_prompt=true --task="pick up cube" ...
+lerobot-rollout --online_task_switching=true --task="pick up cube" ...
 
 # In the same terminal, type and press Enter:
 > grasp the red block
@@ -264,8 +264,8 @@ Pipe the output of any speech-to-text tool directly:
 # whisper_stt_tool outputs one transcription per line to stdout
 whisper_stt_tool --model=base | \
     lerobot-rollout \
-        --hot_prompt=true \
-        --hot_prompt_source=stdin \
+        --online_task_switching=true \
+        --online_task_switching_source=stdin \
         --task="waiting for command" \
         --strategy.type=base \
         --policy.path=user/my_smolvla_policy \
@@ -285,8 +285,8 @@ This avoids the blocking-open problem of FIFOs and works across conda environmen
 > /tmp/robot_task   # create (or truncate) the file
 
 lerobot-rollout \
-    --hot_prompt=true \
-    --hot_prompt_source=stdin \
+    --online_task_switching=true \
+    --online_task_switching_source=stdin \
     --task="initial task" \
     ... < <(tail -f /tmp/robot_task)
 
@@ -304,7 +304,7 @@ A future `HttpPromptListener` will expose a small REST endpoint:
 
 ```bash
 # Start rollout with HTTP source (not yet implemented)
-lerobot-rollout --hot_prompt=true --hot_prompt_source=http --hot_prompt_port=8765 ...
+lerobot-rollout --online_task_switching=true --online_task_switching_source=http --online_task_switching_port=8765 ...
 
 # Send from anywhere
 curl -X POST http://localhost:8765/task -d '{"task": "fold the towel"}'
@@ -314,13 +314,13 @@ curl -X POST http://localhost:8765/task -d '{"task": "fold the towel"}'
 
 ## SmolVLA Demo (no robot required)
 
-`examples/hot_prompt_smolvla_demo.py` loads a real SmolVLA checkpoint and feeds it synthetic (zero) camera frames and robot state, so you can test hot-prompt switching without any hardware.
+`examples/online_task_switching_smolvla_demo.py` loads a real SmolVLA checkpoint and feeds it synthetic (zero) camera frames and robot state, so you can test online task switching without any hardware.
 
 ```bash
 # Terminal 1 — start the demo
 conda activate lerobot_rollout
 > /tmp/robot_task   # create the file
-python examples/hot_prompt_smolvla_demo.py \
+python examples/online_task_switching_smolvla_demo.py \
     --checkpoint /path/to/pretrained_model \
     --task "pick up the bottle" \
     --fps 0.5 \
@@ -387,11 +387,11 @@ class MyCustomListener(PromptListenerBase):
 2. Register it in `build_rollout_context()` in `context.py`:
 
 ```python
-elif cfg.hot_prompt_source == "my_custom":
+elif cfg.online_task_switching_source == "my_custom":
     MyCustomListener().start(prompt_broker, shutdown_event)
 ```
 
-3. Add the new key to the `hot_prompt_source` docstring in `configs.py`.
+3. Add the new key to the `online_task_switching_source` docstring in `configs.py`.
 
 No changes needed in the inference engines or strategies — they always read from the broker.
 
@@ -402,7 +402,7 @@ No changes needed in the inference engines or strategies — they always read fr
 | File | Change |
 |------|--------|
 | [`src/lerobot/rollout/prompt_broker.py`](../src/lerobot/rollout/prompt_broker.py) | **New** — `PromptBroker` (with `register_on_change`), `PromptListenerBase`, `StdinPromptListener` |
-| [`src/lerobot/rollout/configs.py`](../src/lerobot/rollout/configs.py) | Added `hot_prompt`, `hot_prompt_source`, and `hot_prompt_flush` to `RolloutConfig` |
+| [`src/lerobot/rollout/configs.py`](../src/lerobot/rollout/configs.py) | Added `online_task_switching`, `online_task_switching_source`, and `online_task_switching_flush` to `RolloutConfig` |
 | [`src/lerobot/rollout/context.py`](../src/lerobot/rollout/context.py) | `RuntimeContext.prompt_broker` field; broker creation + listener start in `build_rollout_context()` |
 | [`src/lerobot/rollout/inference/sync.py`](../src/lerobot/rollout/inference/sync.py) | `prompt_broker` param; per-call `broker.get_task()` in `get_action()` |
 | [`src/lerobot/rollout/inference/rtc.py`](../src/lerobot/rollout/inference/rtc.py) | `prompt_broker` param; per-call `broker.get_task()` in `_rtc_loop()` |
@@ -415,13 +415,13 @@ No changes needed in the inference engines or strategies — they always read fr
 | `src/lerobot/policies/*/modeling_*.py` | Queue-backed policies call `_apply_pending_flush()` at the start of `select_action()` |
 | [`tests/test_prompt_broker.py`](../tests/test_prompt_broker.py) | **New** — 11 unit tests (6 broker, 5 listener) |
 | [`tests/test_rollout.py`](../tests/test_rollout.py) | 3 integration tests for broker + `SyncInferenceEngine` |
-| [`examples/hot_prompt_demo.py`](../examples/hot_prompt_demo.py) | **New** — mock-robot demo, no GPU needed |
-| [`examples/hot_prompt_smolvla_demo.py`](../examples/hot_prompt_smolvla_demo.py) | **New** — real SmolVLA checkpoint demo with synthetic frames; `--flush_on_switch` flag |
+| [`examples/online_task_switching_demo.py`](../examples/online_task_switching_demo.py) | **New** — mock-robot demo, no GPU needed |
+| [`examples/online_task_switching_smolvla_demo.py`](../examples/online_task_switching_smolvla_demo.py) | **New** — real SmolVLA checkpoint demo with synthetic frames; `--flush_on_switch` flag |
 
 ---
 
 ## Backward Compatibility
 
-When `--hot_prompt=false` (the default), `prompt_broker` is `None` everywhere and all code falls back to the original static `self._task` / `cfg.task` path.  
+When `--online_task_switching=false` (the default), `prompt_broker` is `None` everywhere and all code falls back to the original static `self._task` / `cfg.task` path.  
 **No behaviour change for existing users.**
 

@@ -417,24 +417,24 @@ def build_rollout_context(
     )
     task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
     prompt_broker: PromptBroker | None = None
-    if cfg.hot_prompt:
+    if cfg.online_task_switching:
         prompt_broker = PromptBroker(initial_task=task_str)
-        if cfg.hot_prompt_source == "stdin":
+        if cfg.online_task_switching_source == "stdin":
             StdinPromptListener().start(prompt_broker, shutdown_event)
         else:
             logger.warning(
-                "Unknown hot_prompt_source '%s'; hot-switching disabled", cfg.hot_prompt_source
+                "Unknown online_task_switching_source '%s'; hot-switching disabled", cfg.online_task_switching_source
             )
             prompt_broker = None
         if prompt_broker is not None:
-            if cfg.hot_prompt_flush:
+            if cfg.online_task_switching_flush:
                 prompt_broker.register_on_change(policy.flush_action_queue)
                 logger.info(
-                    "hot_prompt_flush=on — action queue will be cleared immediately on task switch"
+                    "online_task_switching_flush=on — action queue will be cleared immediately on task switch"
                 )
             else:
                 logger.info(
-                    "hot_prompt_flush=off — new task takes effect after current action chunk drains"
+                    "online_task_switching_flush=off — new task takes effect after current action chunk drains"
                 )
     inference_strategy = create_inference_engine(
         cfg.inference,

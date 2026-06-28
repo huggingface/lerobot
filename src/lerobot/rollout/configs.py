@@ -225,19 +225,19 @@ class RolloutConfig:
     interpolation_multiplier: int = 1
     device: str | None = None
     task: str = ""
-    # Hot-prompt switching: enable runtime task updates from an external source.
+    # Online task-switching switching: enable runtime task updates from an external source.
     # When True, a background listener reads new task strings and pushes them to
     # all inference engines and recording strategies without restarting the script.
-    hot_prompt: bool = False
+    online_task_switching: bool = False
     # Source for incoming prompts. Currently supported: "stdin".
     # Future sources: "http" (FastAPI POST /task), "zmq".
-    hot_prompt_source: str = "stdin"
+    online_task_switching_source: str = "stdin"
     # When True (default), flush the policy's precomputed action queue immediately
     # on a task switch so the VLM/model re-runs with the new instruction on the
     # very next tick.  Set to False to let the current chunk drain first (smoother
     # motion continuity, but the new task takes effect up to chunk_size ticks later).
-    # Has no effect when hot_prompt=False.
-    hot_prompt_flush: bool = True
+    # Has no effect when online_task_switching=False.
+    online_task_switching_flush: bool = True
     display_data: bool = False
     # Visualization backend used when display_data is True: "rerun" or "foxglove".
     display_mode: str = "rerun"

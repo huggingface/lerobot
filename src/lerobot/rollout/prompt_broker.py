@@ -26,10 +26,10 @@ Supported sources
     active task::
 
         # Interactive: type a new task and press Enter
-        lerobot-rollout --hot_prompt=true --task="pick up cube" ...
+        lerobot-rollout --online_task_switching=true --task="pick up cube" ...
 
         # Pipe from a voice-STT tool:
-        whisper_stt_tool | lerobot-rollout --hot_prompt=true ...
+        whisper_stt_tool | lerobot-rollout --online_task_switching=true ...
 """
 
 from __future__ import annotations
@@ -116,7 +116,7 @@ class StdinPromptListener(PromptListenerBase):
 
     Unix-pipe example::
 
-        whisper_stt_tool | lerobot-rollout --hot_prompt=true ...
+        whisper_stt_tool | lerobot-rollout --online_task_switching=true ...
     """
 
     _SELECT_TIMEOUT_S: float = 0.5
