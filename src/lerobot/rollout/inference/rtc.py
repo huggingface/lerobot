@@ -311,13 +311,6 @@ class RTCInferenceEngine(InferenceEngine):
                         actions = self._policy.predict_action_chunk(
                             preprocessed, inference_delay=delay, prev_chunk_left_over=prev_actions
                         )
-                        _preview = actions.squeeze(0)[0, :5].tolist()
-                        logger.info(
-                            "[RTCInference] chunk #%d | task='%s' | chunk[0][0:5]=%s",
-                            inference_count + 1,
-                            _task,
-                            [f"{v:.4f}" for v in _preview],
-                        )
 
                         original = actions.squeeze(0).clone()
                         processed = self._postprocessor(actions).squeeze(0)

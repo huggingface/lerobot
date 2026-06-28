@@ -50,9 +50,6 @@ else:
     AutoProcessor = None
     AutoTokenizer = None
 
-logger = logging.getLogger(__name__)
-
-
 @dataclass
 @ProcessorStepRegistry.register(name="tokenizer_processor")
 class TokenizerProcessorStep(ObservationProcessorStep):
@@ -185,8 +182,6 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         task = self.get_task(self.transition)
         if task is None:
             raise ValueError("Task cannot be None")
-
-        logger.info("[TokenizerProcessor] input text=%s", task)
 
         # Tokenize the task (this will create CPU tensors)
         tokenized_prompt = self._tokenize_text(task)

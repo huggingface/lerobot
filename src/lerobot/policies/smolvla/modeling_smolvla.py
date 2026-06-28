@@ -51,8 +51,6 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 ```
 
 """
-
-import logging
 import math
 from collections import deque
 from typing import TypedDict, Unpack
@@ -72,8 +70,6 @@ from ..utils import (
 )
 from .configuration_smolvla import SmolVLAConfig
 from .smolvlm_with_expert import SmolVLMWithExpertModel
-
-logger = logging.getLogger(__name__)
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -292,12 +288,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
         state = self.prepare_state(batch)
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-        logger.info(
-            "[SmolVLA._get_action_chunk] lang_tokens shape=%s | first_ids=%s | n_lang_tokens=%s",
-            tuple(lang_tokens.shape),
-            lang_tokens[0, :8].tolist(),
-            lang_masks.sum(dim=-1).tolist(),
-        )
 
         actions = self.model.sample_actions(
             images, img_masks, lang_tokens, lang_masks, state, noise=noise, **kwargs
