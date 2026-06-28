@@ -76,15 +76,12 @@ from common import (  # noqa: E402
     Device,
     build_device,
     hold_action,
+    init_keyboard_listener,
 )
 
 from lerobot.cameras import CameraConfig  # noqa: F401
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.common.control_utils import (
-    init_keyboard_listener,
-    is_headless,
-    sanity_check_dataset_robot_compatibility,
-)
+from lerobot.common.control_utils import sanity_check_dataset_robot_compatibility
 from lerobot.configs import parser
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.datasets import (
@@ -254,14 +251,14 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
         listener, events = init_keyboard_listener()
 
-        loop_kwargs = dict(
-            robot=robot,
-            device=device,
-            motor_names=motor_names,
-            events=events,
-            fps=cfg.dataset.fps,
-            single_task=cfg.dataset.single_task,
-        )
+        loop_kwargs = {
+            "robot": robot,
+            "device": device,
+            "motor_names": motor_names,
+            "events": events,
+            "fps": cfg.dataset.fps,
+            "single_task": cfg.dataset.single_task,
+        }
 
         with VideoEncodingManager(dataset):
             recorded_episodes = 0
@@ -305,7 +302,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         if robot.is_connected:
             robot.disconnect()
 
-        if not is_headless() and listener is not None:
+        if listener is not None:
             listener.stop()
 
         if cfg.dataset.push_to_hub:
