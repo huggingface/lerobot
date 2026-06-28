@@ -35,7 +35,7 @@ from .dataset_tools import (
     remove_feature,
     split_dataset,
 )
-from .factory import make_dataset, resolve_delta_timestamps
+from .factory import make_dataset, make_train_eval_datasets, resolve_delta_timestamps
 from .image_writer import safe_stop_image_writer
 from .io_utils import load_episodes, write_stats
 from .language import (
@@ -89,6 +89,7 @@ __all__ = [
     "get_feature_stats",
     "load_episodes",
     "make_dataset",
+    "make_train_eval_datasets",
     "merge_datasets",
     "modify_features",
     "modify_tasks",

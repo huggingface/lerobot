@@ -207,7 +207,7 @@ lerobot-record \
     --dataset.num_episodes=5 \
     --dataset.single_task="Grab the black cube" \
     --dataset.streaming_encoding=true \
-    # --dataset.camera_encoder.vcodec=auto \
+    # --dataset.rgb_encoder.vcodec=auto \
     --dataset.encoder_threads=2
 ```
 </hfoption>
@@ -390,9 +390,17 @@ Set the flow of data recording using command-line arguments:
 
 Control the data recording flow using keyboard shortcuts:
 
-- Press **Right Arrow (`→`)**: Early stop the current episode or reset time and move to the next.
-- Press **Left Arrow (`←`)**: Cancel the current episode and re-record it.
-- Press **Escape (`ESC`)**: Immediately stop the session, encode videos, and upload the dataset.
+- Press **Right Arrow (`→`)** or **`n`**: Early stop the current episode or reset time and move to the next.
+- Press **Left Arrow (`←`)** or **`r`**: Cancel the current episode and re-record it.
+- Press **Escape (`ESC`)** or **`q`**: Immediately stop the session, encode videos, and upload the dataset.
+
+<Tip>
+
+These control-flow shortcuts work on **X11, Wayland, and headless/SSH** sessions. When a global keyboard backend isn't available (Wayland, a headless machine, or macOS without Accessibility permission), `lerobot-record` automatically reads the same keys from the terminal — launch it from an interactive terminal and keep it focused. You can also use the letter equivalents **`n`** (next, same as `→`), **`r`** (re-record, same as `←`) and **`q`** (quit, same as `ESC`). No `$DISPLAY` setup is required.
+
+This applies to the recording control flow only. Keyboard **teleoperation** (driving the robot with the keyboard) still needs a global key backend, so it works only on an X11 session, a Windows desktop, or macOS with Accessibility/Input Monitoring granted — not on Wayland or headless sessions.
+
+</Tip>
 
 #### Tips for gathering data
 
@@ -406,7 +414,7 @@ If you want to dive deeper into this important topic, you can check out the [blo
 
 #### Troubleshooting:
 
-- On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
+- On Linux, the recording control-flow keys (arrow keys, Escape) work on X11, Wayland, and headless/SSH sessions as long as `lerobot-record` runs in an interactive terminal — no `$DISPLAY` setup is needed. If the keys have no effect, make sure you are in an interactive (TTY) terminal, not a piped/non-TTY session, and that it is focused; the letter equivalents `n` / `r` / `q` also work. Keyboard _teleoperation_ (as opposed to the recording control flow) still requires a global key backend — an X11 session, a Windows desktop, or macOS with Accessibility/Input Monitoring granted — and is unavailable on Wayland or headless machines. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
 
 ## Visualize a dataset
 
