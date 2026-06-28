@@ -1,6 +1,6 @@
 # !/usr/bin/env python
 
-# Copyright 2024 NVIDIA Corporation and The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 NVIDIA Corporation and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,17 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Record the current SO-101 joint positions as the reset-origin pose.
+"""Save the current SO-101 joint positions as the reset-origin pose (override).
 
 Move the arm to the desired reset/home position by hand (torque off), then run
 this script.  It reads the current joint positions and writes them to
-``reset_pose.json`` next to this file.  ``teleoperate.py`` loads that file on
-startup and uses it as the reset target instead of the hardcoded defaults.
+``reset_pose.json`` next to this file.  ``teleoperate.py`` / ``record.py`` load that file
+on startup and use it as the reset target instead of the hardcoded defaults.
 
 Usage::
 
     # 1. Move arm to desired reset pose by hand
-    python record_reset_pose.py [--port /dev/ttyACM0] [--id so101_follower_arm]
+    python override_reset_pose.py [--port /dev/ttyACM0] [--id so101_follower_arm]
 
     # 2. Inspect the saved values
     cat reset_pose.json

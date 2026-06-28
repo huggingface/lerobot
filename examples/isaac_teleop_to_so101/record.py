@@ -68,15 +68,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
 
-# teleoperate.py lives in the same directory; add it to the path so it is importable.
+# common.py lives in the same directory; add it to the path so it is importable.
 sys.path.insert(0, str(Path(__file__).parent))
-from teleoperate import (  # noqa: E402
+from common import (  # noqa: E402
     ALIGN_DURATION_S,
-    CLOUDXR_ENV_FILE,
     RESET_DURATION_S,
     Device,
-    setup_leader,
-    setup_xr,
+    build_device,
+    hold_action,
 )
 
 from lerobot.cameras import CameraConfig  # noqa: F401
@@ -96,9 +95,9 @@ from lerobot.datasets import (
     safe_stop_image_writer,
 )
 from lerobot.processor import make_default_processors
-from lerobot.robots import RobotConfig, make_robot_from_config
+from lerobot.robots import RobotConfig
 from lerobot.robots.so_follower import SOFollowerConfig  # noqa: F401  (registers so101_follower)
-from lerobot.teleoperators.isaac_teleop import IsaacTeleopConfig, SO101LeaderArmConfig
+from lerobot.teleoperators.isaac_teleop import IsaacTeleopConfig
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.robot_utils import precise_sleep
@@ -178,7 +177,7 @@ def _record_loop(
         if action is None:
             # Device idle (XR clutch disengaged, or leader stream stale) — hold at the
             # measured joint positions.
-            action = {f"{name}.pos": float(obs[f"{name}.pos"]) for name in motor_names}
+            action = hold_action(obs, motor_names)
 
         robot.send_action(action)
 
@@ -196,23 +195,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
 
-    # Default the CloudXR env file to the one in this directory (same as teleoperate.py).
-    if cfg.teleop.cloudxr_env_file is None:
-        cfg.teleop.cloudxr_env_file = CLOUDXR_ENV_FILE
-
-    robot = make_robot_from_config(cfg.robot)
-    robot.connect()
-    motor_names = list(robot.bus.motors.keys())
-
-    # Dispatch on the parsed Isaac device, same as teleoperate.py (the registry yields
-    # xr_controller -> XRControllerConfig or so101_leader -> SO101LeaderArmConfig). setup_xr
-    # reads cfg.reset_to_origin/reset_duration; setup_leader reads cfg.launch_plugin/align/
-    # align_duration.
-    if isinstance(cfg.teleop, SO101LeaderArmConfig):
-        device = setup_leader(cfg, robot, motor_names)
-    else:
-        device = setup_xr(cfg, robot, motor_names)
-    device.startup()
+    # Connect the follower, build the selected Isaac device, and run its pre-loop startup
+    # (reset slew / leader align) — shared with teleoperate.py.
+    robot, device, motor_names = build_device(cfg)
 
     # Build dataset feature spec.  The IK pipeline lives inside device.compute(), so the
     # action features are exactly robot.action_features (joint positions in degrees).
