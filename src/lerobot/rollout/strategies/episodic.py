@@ -230,7 +230,7 @@ class EpisodicStrategy(RolloutStrategy):
             if self._handle_warmup(ctx.runtime.cfg.use_torch_compile, loop_start, control_interval):
                 continue
 
-            action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
+            action_dict = send_next_action(obs_processed, obs, ctx, interpolator, self._action_smoother)
 
             if action_dict is not None:
                 obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)

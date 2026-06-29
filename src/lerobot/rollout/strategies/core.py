@@ -19,7 +19,7 @@ from __future__ import annotations
 import abc
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.utils.action_interpolator import ActionInterpolator
@@ -37,6 +37,41 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class ActionSmoother:
+    """Stateful EMA + velocity clip for robot action dictionaries."""
+
+    def __init__(self) -> None:
+        self._previous: dict[str, Any] | None = None
+
+    def reset(self) -> None:
+        self._previous = None
+
+    def apply(
+        self,
+        action: dict[str, Any],
+        alpha: float,
+        max_delta: float,
+        reset_threshold: float,
+    ) -> dict[str, Any]:
+        if self._previous is None:
+            self._previous = dict(action)
+            return action
+
+        smoothed = dict(action)
+        for key, value in action.items():
+            previous_value = self._previous.get(key, value)
+            if abs(value - previous_value) <= reset_threshold:
+                value = alpha * value + (1.0 - alpha) * previous_value
+
+            delta = value - previous_value
+            if abs(delta) > max_delta:
+                delta = max(-max_delta, min(max_delta, delta))
+            smoothed[key] = previous_value + delta
+
+        self._previous = dict(smoothed)
+        return smoothed
+
+
 class RolloutStrategy(abc.ABC):
     """Abstract base for rollout execution strategies.
 
@@ -51,6 +86,7 @@ class RolloutStrategy(abc.ABC):
         self._interpolator: ActionInterpolator | None = None
         self._warmup_flushed: bool = False
         self._cached_obs_processed: dict | None = None
+        self._action_smoother = ActionSmoother()
 
     def _init_engine(self, ctx: RolloutContext) -> None:
         """Attach the inference engine and action interpolator, then start the backend.
@@ -67,7 +103,11 @@ class RolloutStrategy(abc.ABC):
         self._engine.start()
         self._warmup_flushed = False
         self._cached_obs_processed = None
+        self._reset_action_smoothing()
         logger.info("Inference engine started")
+
+    def _reset_action_smoothing(self) -> None:
+        self._action_smoother.reset()
 
     def _process_observation_and_notify(self, processors: ProcessorContext, obs_raw: dict) -> dict:
         """Run the observation processor and notify the engine — throttled to policy ticks.
@@ -112,6 +152,7 @@ class RolloutStrategy(abc.ABC):
             logger.info("Warmup complete — flushing stale state and resuming engine")
             engine.reset()
             interpolator.reset()
+            self._reset_action_smoothing()
             self._warmup_flushed = True
             engine.resume()
         return False
@@ -271,6 +312,7 @@ def send_next_action(
     obs_raw: dict,
     ctx: RolloutContext,
     interpolator: ActionInterpolator,
+    action_smoother: ActionSmoother | None = None,
 ) -> dict | None:
     """Dispatch the next action to the robot.
 
@@ -300,5 +342,15 @@ def send_next_action(
         raise ValueError(f"Interpolated tensor length ({len(interp)}) != action keys ({len(ordered_keys)})")
     action_dict = {k: interp[i].item() for i, k in enumerate(ordered_keys)}
     processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
+    cfg = ctx.runtime.cfg
+    if cfg.action_smoothing_enabled:
+        if action_smoother is None:
+            raise ValueError("action_smoother is required when action smoothing is enabled")
+        processed = action_smoother.apply(
+            processed,
+            alpha=cfg.action_smoothing_alpha,
+            max_delta=cfg.action_smoothing_max_delta,
+            reset_threshold=cfg.action_smoothing_reset_threshold,
+        )
     ctx.hardware.robot_wrapper.send_action(processed)
     return action_dict

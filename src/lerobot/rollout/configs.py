@@ -223,6 +223,15 @@ class RolloutConfig:
     fps: float = 30.0
     duration: float = 0.0  # 0 = infinite (24/7 mode)
     interpolation_multiplier: int = 1
+    # Post-processor for absolute action commands. Disabled by default because
+    # not every robot action space is safe to smooth as a position target.
+    action_smoothing_enabled: bool = False
+    # EMA weight for the current action: lower values smooth more but add lag.
+    action_smoothing_alpha: float = 0.25
+    # Maximum per-control-tick change in action units.
+    action_smoothing_max_delta: float = 1.25
+    # Action gap above which EMA blending is skipped; velocity clipping still applies.
+    action_smoothing_reset_threshold: float = 10.0
     device: str | None = None
     task: str = ""
     display_data: bool = False
@@ -252,6 +261,14 @@ class RolloutConfig:
 
     def __post_init__(self):
         """Validate config invariants and load the policy config from ``--policy.path``."""
+        if self.action_smoothing_enabled:
+            if not 0.0 <= self.action_smoothing_alpha <= 1.0:
+                raise ValueError("action_smoothing_alpha must be in [0.0, 1.0]")
+            if self.action_smoothing_max_delta <= 0.0:
+                raise ValueError("action_smoothing_max_delta must be > 0.0")
+            if self.action_smoothing_reset_threshold < 0.0:
+                raise ValueError("action_smoothing_reset_threshold must be >= 0.0")
+
         # --- Strategy-specific validation ---
         if isinstance(self.strategy, DAggerStrategyConfig) and self.teleop is None:
             raise ValueError("DAgger strategy requires --teleop.type to be set")

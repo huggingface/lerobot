@@ -341,6 +341,7 @@ class DAggerStrategy(RolloutStrategy):
 
         engine.reset()
         interpolator.reset()
+        self._reset_action_smoothing()
         events.reset()
         engine.resume()
 
@@ -415,7 +416,9 @@ class DAggerStrategy(RolloutStrategy):
                         if self._handle_warmup(cfg.use_torch_compile, loop_start, control_interval):
                             continue
 
-                        action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
+                        action_dict = send_next_action(
+                            obs_processed, obs, ctx, interpolator, self._action_smoother
+                        )
                         if action_dict is not None:
                             self._log_telemetry(obs_processed, action_dict, ctx.runtime)
                             last_action = ctx.processors.robot_action_processor((action_dict, obs))
@@ -498,6 +501,7 @@ class DAggerStrategy(RolloutStrategy):
 
         engine.reset()
         interpolator.reset()
+        self._reset_action_smoothing()
         events.reset()
         engine.resume()
 
@@ -597,7 +601,9 @@ class DAggerStrategy(RolloutStrategy):
                         if self._handle_warmup(cfg.use_torch_compile, loop_start, control_interval):
                             continue
 
-                        action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
+                        action_dict = send_next_action(
+                            obs_processed, obs, ctx, interpolator, self._action_smoother
+                        )
                         if action_dict is not None:
                             self._log_telemetry(obs_processed, action_dict, ctx.runtime)
                             last_action = ctx.processors.robot_action_processor((action_dict, obs))
@@ -623,8 +629,8 @@ class DAggerStrategy(RolloutStrategy):
     # State-machine transition side-effects
     # ------------------------------------------------------------------
 
-    @staticmethod
     def _apply_transition(
+        self,
         old_phase: DAggerPhase,
         new_phase: DAggerPhase,
         engine,
@@ -687,6 +693,7 @@ class DAggerStrategy(RolloutStrategy):
         elif new_phase == DAggerPhase.AUTONOMOUS:
             logger.info("Resuming autonomous mode - resetting engine and interpolator")
             interpolator.reset()
+            self._reset_action_smoothing()
             engine.reset()
             engine.resume()
 
