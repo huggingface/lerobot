@@ -42,13 +42,17 @@ def mock_rerun(monkeypatch):
             # Scalars may be built from a single float or from a 1D array batch.
             self.value = value
 
+    class DummySeriesLines:
+        def __init__(self, *, names=None, **kwargs):
+            self.names = names
+
     class DummyImage:
         def __init__(self, arr):
             self.arr = arr
 
         def compress(self, *a, **k):
             return self
-    
+
     class DummyDepthImage:
         def __init__(self, arr, colormap=None):
             self.arr = arr
@@ -80,6 +84,7 @@ def mock_rerun(monkeypatch):
         __package__="rerun",
         __spec__=SimpleNamespace(name="rerun", submodule_search_locations=None),
         Scalars=DummyScalar,
+        SeriesLines=DummySeriesLines,
         Image=DummyImage,
         DepthImage=DummyDepthImage,
         components=SimpleNamespace(Colormap=SimpleNamespace(Viridis="viridis")),
@@ -114,6 +119,14 @@ def _obj_for(calls, key):
         if k == key:
             return obj
     raise KeyError(f"Key {key} not found in calls: {calls}")
+
+
+def _obj_of_type(calls, key, type_name):
+    """Find the first object of a given type logged under a key (a key may be logged more than once)."""
+    for k, obj, _kw in calls:
+        if k == key and type(obj).__name__ == type_name:
+            return obj
+    raise KeyError(f"No {type_name} found under key {key} in calls: {calls}")
 
 
 def _kwargs_for(calls, key):
@@ -152,32 +165,28 @@ def test_log_rerun_data_envtransition_scalars_and_image(mock_rerun):
     action_data = transition.get(TransitionKey.ACTION, {})
     vu.log_rerun_data(observation=obs_data, action=action_data)
 
-    # We expect:
-    # - observation.state.temperature -> Scalars
-    # - observation.camera -> Image (HWC) with static=True
-    # - action.throttle -> Scalars
-    # - action.vector -> single Scalars batch (no per-element suffix)
+    # We expect every scalar/vector to be grouped into a single batch per modality:
+    # - observation -> one Scalars batch (the temperature) + a static SeriesLines for the names
+    # - observation.camera -> Image (HWC) with static=True (images keep their own entity path)
+    # - action -> one Scalars batch (throttle + flattened vector) + a static SeriesLines
     expected_keys = {
-        f"{OBS_STATE}.temperature",
+        "observation",
         "observation.camera",
-        "action.throttle",
-        "action.vector",
+        "action",
     }
     assert set(_keys(calls)) == expected_keys
 
-    # Check scalar types and values
-    temp_obj = _obj_for(calls, f"{OBS_STATE}.temperature")
-    assert type(temp_obj).__name__ == "DummyScalar"
-    assert float(temp_obj.value) == pytest.approx(25.0)
+    # Observation scalars grouped into one batch under "observation"
+    obs_batch = _obj_of_type(calls, "observation", "DummyScalar")
+    np.testing.assert_allclose(np.asarray(obs_batch.value), [25.0])
+    obs_names = _obj_of_type(calls, "observation", "DummySeriesLines")
+    assert obs_names.names == ["state.temperature"]
 
-    throttle_obj = _obj_for(calls, "action.throttle")
-    assert type(throttle_obj).__name__ == "DummyScalar"
-    assert float(throttle_obj.value) == pytest.approx(0.7)
-
-    # 1D vector logged as a single batched Scalars under one entity path
-    vec = _obj_for(calls, "action.vector")
-    assert type(vec).__name__ == "DummyScalar"
-    np.testing.assert_allclose(np.asarray(vec.value), [1.0, 2.0])
+    # Action scalar + flattened vector grouped into one batch under "action"
+    act_batch = _obj_of_type(calls, "action", "DummyScalar")
+    np.testing.assert_allclose(np.asarray(act_batch.value), [0.7, 1.0, 2.0])
+    act_names = _obj_of_type(calls, "action", "DummySeriesLines")
+    assert act_names.names == ["throttle", "vector[0]", "vector[1]"]
 
     # Check image handling: CHW -> HWC
     img_obj = _obj_for(calls, "observation.camera")
@@ -194,11 +203,11 @@ def test_log_rerun_data_envtransition_scalars_and_image(mock_rerun):
     spatial_views = _views_by_kind(bp, "Spatial2DView")
     assert {v.origin for v in spatial_views} == {"observation.camera"}
 
-    # One time-series view each for observation and action scalars
+    # A single time-series view each for the grouped observation and action scalars
     ts_views = {v.name: v for v in _views_by_kind(bp, "TimeSeriesView")}
     assert set(ts_views) == {"observation", "action"}
-    assert ts_views["observation"].contents == [f"{OBS_STATE}.temperature"]
-    assert ts_views["action"].contents == ["action.throttle", "action.vector"]
+    assert ts_views["observation"].contents == ["observation"]
+    assert ts_views["action"].contents == ["action"]
 
 
 def test_log_rerun_data_plain_list_ordering_and_prefixes(mock_rerun):
@@ -221,24 +230,19 @@ def test_log_rerun_data_plain_list_ordering_and_prefixes(mock_rerun):
     # First dict was treated as observation, second as action
     vu.log_rerun_data(observation=obs_plain, action=act_plain)
 
-    # Expected keys with auto-prefixes. The 1D vector is a single batched Scalars.
+    # Keys are grouped: one "observation" batch, one image path, one "action" batch. None is skipped.
     expected = {
-        "observation.temp",
+        "observation",
         "observation.img",
-        "action.throttle",
-        "action.vec",
+        "action",
     }
     logged = set(_keys(calls))
     assert logged == expected
 
-    # Scalars
-    t = _obj_for(calls, "observation.temp")
-    assert type(t).__name__ == "DummyScalar"
-    assert float(t.value) == pytest.approx(1.5)
-
-    throttle = _obj_for(calls, "action.throttle")
-    assert type(throttle).__name__ == "DummyScalar"
-    assert float(throttle.value) == pytest.approx(0.3)
+    # Observation scalar grouped into one batch (the None entry is skipped)
+    obs_batch = _obj_of_type(calls, "observation", "DummyScalar")
+    np.testing.assert_allclose(np.asarray(obs_batch.value), [1.5])
+    assert _obj_of_type(calls, "observation", "DummySeriesLines").names == ["temp"]
 
     # Image stays HWC
     img = _obj_for(calls, "observation.img")
@@ -246,10 +250,15 @@ def test_log_rerun_data_plain_list_ordering_and_prefixes(mock_rerun):
     assert img.arr.shape == (5, 6, 3)
     assert _kwargs_for(calls, "observation.img").get("static", False) is True
 
-    # Vector logged as a single batched Scalars under one entity path
-    vec = _obj_for(calls, "action.vec")
-    assert type(vec).__name__ == "DummyScalar"
-    np.testing.assert_allclose(np.asarray(vec.value), [9, 8, 7])
+    # Action scalar + flattened vector grouped into one batch under "action"
+    act_batch = _obj_of_type(calls, "action", "DummyScalar")
+    np.testing.assert_allclose(np.asarray(act_batch.value), [0.3, 9, 8, 7])
+    assert _obj_of_type(calls, "action", "DummySeriesLines").names == [
+        "throttle",
+        "vec[0]",
+        "vec[1]",
+        "vec[2]",
+    ]
 
     # Blueprint sent once with the expected view layout
     assert len(blueprints) == 1
@@ -257,8 +266,8 @@ def test_log_rerun_data_plain_list_ordering_and_prefixes(mock_rerun):
     spatial_views = _views_by_kind(bp, "Spatial2DView")
     assert {v.origin for v in spatial_views} == {"observation.img"}
     ts_views = {v.name: v for v in _views_by_kind(bp, "TimeSeriesView")}
-    assert ts_views["observation"].contents == ["observation.temp"]
-    assert ts_views["action"].contents == ["action.throttle", "action.vec"]
+    assert ts_views["observation"].contents == ["observation"]
+    assert ts_views["action"].contents == ["action"]
 
 
 def test_log_rerun_data_kwargs_only(mock_rerun):
@@ -270,30 +279,30 @@ def test_log_rerun_data_kwargs_only(mock_rerun):
     )
 
     keys = set(_keys(calls))
-    assert "observation.temp" in keys
+    assert "observation" in keys
     assert "observation.gray" in keys
-    assert "action.a" in keys
+    assert "action" in keys
 
-    temp = _obj_for(calls, "observation.temp")
-    assert type(temp).__name__ == "DummyScalar"
-    assert float(temp.value) == pytest.approx(10.0)
+    temp = _obj_of_type(calls, "observation", "DummyScalar")
+    np.testing.assert_allclose(np.asarray(temp.value), [10.0])
+    assert _obj_of_type(calls, "observation", "DummySeriesLines").names == ["temp"]
 
     img = _obj_for(calls, "observation.gray")
     assert type(img).__name__ == "DummyDepthImage"  # single-channel -> DepthImage
     assert img.arr.shape == (8, 8, 1)  # remains HWC
     assert _kwargs_for(calls, "observation.gray").get("static", False) is True
 
-    a = _obj_for(calls, "action.a")
-    assert type(a).__name__ == "DummyScalar"
-    assert float(a.value) == pytest.approx(1.0)
+    a = _obj_of_type(calls, "action", "DummyScalar")
+    np.testing.assert_allclose(np.asarray(a.value), [1.0])
+    assert _obj_of_type(calls, "action", "DummySeriesLines").names == ["a"]
 
     # Blueprint sent once, with a spatial view for the image and time-series views for scalars
     assert len(blueprints) == 1
     bp = blueprints[0]
     assert {v.origin for v in _views_by_kind(bp, "Spatial2DView")} == {"observation.gray"}
     ts_views = {v.name: v for v in _views_by_kind(bp, "TimeSeriesView")}
-    assert ts_views["observation"].contents == ["observation.temp"]
-    assert ts_views["action"].contents == ["action.a"]
+    assert ts_views["observation"].contents == ["observation"]
+    assert ts_views["action"].contents == ["action"]
 
 
 def test_log_rerun_data_blueprint_sent_only_once(mock_rerun):

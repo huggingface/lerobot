@@ -97,6 +97,73 @@ def _ensure_blueprint(observation_paths: set[str], action_paths: set[str], image
     rr.send_blueprint(blueprint)
 
 
+def _collect_observation(
+    rr, observation: RobotObservation, image_paths: set[str], compress_images: bool
+) -> tuple[list[str], list[float]]:
+    """Log observation images individually and gather every observation scalar into one batch.
+
+    Images (and depth maps) keep their own entity path; all scalar / vector values are flattened into a
+    single ``(names, values)`` pair so they can be logged as one grouped ``rr.Scalars`` batch.
+    """
+    names: list[str] = []
+    values: list[float] = []
+    for k, v in observation.items():
+        if v is None:
+            continue
+        key = str(k)
+        label = key[len(OBS_PREFIX) :] if key.startswith(OBS_PREFIX) else key
+        path = key if key.startswith(OBS_PREFIX) else f"{OBS_PREFIX}{key}"
+
+        if _is_scalar(v):
+            names.append(label)
+            values.append(float(v))
+        elif isinstance(v, np.ndarray):
+            arr = v
+            # Convert CHW -> HWC when needed
+            if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
+                arr = np.transpose(arr, (1, 2, 0))
+            if arr.ndim <= 1:
+                _extend_scalars(names, values, label, arr)
+            else:
+                if arr.shape[-1] == 1:
+                    img_entity = rr.DepthImage(arr, colormap=rr.components.Colormap.Viridis)
+                else:
+                    img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
+                rr.log(path, entity=img_entity, static=True)
+                image_paths.add(path)
+    return names, values
+
+
+def _collect_action(action: RobotAction) -> tuple[list[str], list[float]]:
+    """Gather every action scalar / vector value into one ``(names, values)`` batch."""
+    names: list[str] = []
+    values: list[float] = []
+    for k, v in action.items():
+        if v is None:
+            continue
+        key = str(k)
+        label = key[len(ACTION_PREFIX) :] if key.startswith(ACTION_PREFIX) else key
+
+        if _is_scalar(v):
+            names.append(label)
+            values.append(float(v))
+        elif isinstance(v, np.ndarray):
+            _extend_scalars(names, values, label, v.reshape(-1))
+    return names, values
+
+
+def _extend_scalars(names: list[str], values: list[float], label: str, arr: np.ndarray) -> None:
+    """Append a 0/1-D array to the grouped scalar batch, naming multi-element entries ``label[i]``."""
+    flat = arr.reshape(-1).astype(float)
+    if flat.size == 1:
+        names.append(label)
+        values.append(float(flat[0]))
+    else:
+        for i, val in enumerate(flat):
+            names.append(f"{label}[{i}]")
+            values.append(float(val))
+
+
 def log_rerun_data(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
@@ -107,17 +174,19 @@ def log_rerun_data(
 
     This function iterates through the provided observation and action dictionaries and sends their contents
     to the Rerun viewer. It handles different data types appropriately:
-    - Scalars values (floats, ints) are logged as `rr.Scalars`.
+    - All observation scalars/vectors are gathered and logged as a single `rr.Scalars` batch under the
+      `observation` entity path; likewise every action value is logged as one `rr.Scalars` batch under the
+      `action` entity path. This keeps a robot's joints grouped in one plot instead of split across one
+      entity path (and one log call) per joint.
     - 3D NumPy arrays that resemble images (e.g., with 1, 3, or 4 channels first) are transposed
-      from CHW to HWC format, (optionally) compressed to JPEG and logged as `rr.Image` or `rr.EncodedImage`.
-    - 1D NumPy arrays are logged as a single `rr.Scalars` batch under one entity path, so that every
-      dimension shares the same view instead of being split across one view per element.
-    - Multi-dimensional **action** arrays are flattened and logged as a single `rr.Scalars` batch.
+      from CHW to HWC format, (optionally) compressed to JPEG and logged as `rr.Image` or `rr.EncodedImage`,
+      and (for single-channel depth) as `rr.DepthImage`. Each image keeps its own entity path.
+    - Vector (1D / flattened) values contribute one named series per element (`label[i]`) within the batch.
 
     Keys are automatically namespaced with "observation." or "action." if not already present.
 
-    On the first call, a blueprint is built and sent so observation and action scalars get separate
-    time-series views and each image gets its own spatial view.
+    On the first call, the per-series names and a blueprint are sent so the observation and action scalars
+    each get a single time-series view and each image gets its own spatial view.
 
     Args:
         observation: An optional dictionary containing observation data to log.
@@ -128,46 +197,32 @@ def log_rerun_data(
     require_package("rerun-sdk", extra="viz", import_name="rerun")
     import rerun as rr
 
+    image_paths: set[str] = set()
     observation_paths: set[str] = set()
     action_paths: set[str] = set()
-    image_paths: set[str] = set()
+    observation_names: list[str] = []
+    action_names: list[str] = []
 
     if observation:
-        for k, v in observation.items():
-            if v is None:
-                continue
-            key = k if str(k).startswith(OBS_PREFIX) else f"{OBS_STR}.{k}"
-
-            if _is_scalar(v):
-                rr.log(key, rr.Scalars(float(v)))
-                observation_paths.add(key)
-            elif isinstance(v, np.ndarray):
-                arr = v
-                # Convert CHW -> HWC when needed
-                if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
-                    arr = np.transpose(arr, (1, 2, 0))
-                if arr.ndim == 1:
-                    rr.log(key, rr.Scalars(arr.astype(float)))
-                    observation_paths.add(key)
-                else:
-                    if arr.shape[-1] == 1:
-                        img_entity = rr.DepthImage(arr, colormap=rr.components.Colormap.Viridis)
-                    else:
-                        img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
-                    rr.log(key, entity=img_entity, static=True)
-                    image_paths.add(key)
+        observation_names, observation_values = _collect_observation(
+            rr, observation, image_paths, compress_images
+        )
+        if observation_values:
+            rr.log(OBS_STR, rr.Scalars(observation_values))
+            observation_paths.add(OBS_STR)
 
     if action:
-        for k, v in action.items():
-            if v is None:
-                continue
-            key = k if str(k).startswith(ACTION_PREFIX) else f"{ACTION}.{k}"
+        action_names, action_values = _collect_action(action)
+        if action_values:
+            rr.log(ACTION, rr.Scalars(action_values))
+            action_paths.add(ACTION)
 
-            if _is_scalar(v):
-                rr.log(key, rr.Scalars(float(v)))
-                action_paths.add(key)
-            elif isinstance(v, np.ndarray):
-                rr.log(key, rr.Scalars(v.reshape(-1).astype(float)))
-                action_paths.add(key)
+    # On the first call, statically log the per-series names so the grouped batches show a readable
+    # label (e.g. "shoulder_pan.pos") for each line, then send the blueprint.
+    if getattr(log_rerun_data, "blueprint", None) is None:
+        if observation_names:
+            rr.log(OBS_STR, rr.SeriesLines(names=observation_names), static=True)
+        if action_names:
+            rr.log(ACTION, rr.SeriesLines(names=action_names), static=True)
 
     _ensure_blueprint(observation_paths, action_paths, image_paths)
