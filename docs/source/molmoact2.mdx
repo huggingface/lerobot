@@ -409,7 +409,7 @@ Example with an SO-100 robot using top and side cameras:
 ```bash
 lerobot-rollout \
   --policy.path=lerobot/MolmoAct2-SO100_101-LeRobot \
-  --rename_map='{"top": "cam0", "side": "cam1"}' \
+  --rename_map='{"observation.images.top": "observation.images.cam0", "observation.images.side": "observation.images.cam1"}' \
   --robot.type=so100_follower \
   --robot.port=/dev/ttyACM0 \
   --robot.cameras='{
@@ -422,7 +422,7 @@ lerobot-rollout \
 To use a wrist camera instead, just change the rename mapping:
 
 ```bash
---rename_map='{"top": "cam0", "wrist": "cam1"}'
+--rename_map='{"observation.images.top": "observation.images.cam0", "observation.images.wrist": "observation.images.cam1"}'
 ```
 
 ### Joint frame transform (SO-100/101 zero-shot)

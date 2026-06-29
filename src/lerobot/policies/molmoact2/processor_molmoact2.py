@@ -1027,14 +1027,14 @@ class MolmoAct2StateFrameTransformStep(ProcessorStep):
     joint_offsets: list[float] | None = None
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        if self.joint_signs is None and self.joint_offsets is None:
+        if self.joint_signs is None or self.joint_offsets is None:
             return transition
         observation = transition.get(TransitionKey.OBSERVATION)
         if not isinstance(observation, dict) or OBS_STATE not in observation:
             return transition
         transition = transition.copy()
         observation = observation.copy()
-        state = torch.as_tensor(observation[OBS_STATE], dtype=torch.float32)
+        state = torch.as_tensor(observation[OBS_STATE], dtype=torch.float32).clone()
         n = len(self.joint_signs)
         signs = torch.tensor(self.joint_signs, dtype=torch.float32, device=state.device)
         offsets = torch.tensor(self.joint_offsets, dtype=torch.float32, device=state.device)
@@ -1069,13 +1069,13 @@ class MolmoAct2ActionFrameTransformStep(ProcessorStep):
     joint_offsets: list[float] | None = None
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        if self.joint_signs is None and self.joint_offsets is None:
+        if self.joint_signs is None or self.joint_offsets is None:
             return transition
         action = transition.get(TransitionKey.ACTION)
         if action is None:
             return transition
         transition = transition.copy()
-        action = torch.as_tensor(action, dtype=torch.float32)
+        action = torch.as_tensor(action, dtype=torch.float32).clone()
         n = len(self.joint_signs)
         signs = torch.tensor(self.joint_signs, dtype=torch.float32, device=action.device)
         offsets = torch.tensor(self.joint_offsets, dtype=torch.float32, device=action.device)
