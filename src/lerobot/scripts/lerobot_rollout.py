@@ -142,9 +142,9 @@ Usage examples
         --robot.port=/dev/ttyACM0 \\
         --task="pick up cube" --duration=60 \\
         --display_data=true \\
-        --dataset.camera_encoder.vcodec=h264 \\
-        --dataset.camera_encoder.preset=fast \\
-        --dataset.camera_encoder.extra_options={"tune": "film", "profile:v": "high", "bf": 2}
+        --dataset.rgb_encoder.vcodec=h264 \\
+        --dataset.rgb_encoder.preset=fast \\
+        --dataset.rgb_encoder.extra_options={"tune": "film", "profile:v": "high", "bf": 2}
 """
 
 import logging
@@ -174,6 +174,7 @@ from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
     bi_openarm_leader,
+    bi_openarm_mini,
     bi_rebot_102_leader,
     bi_so_leader,
     homunculus,

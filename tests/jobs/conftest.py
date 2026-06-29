@@ -1,6 +1,4 @@
-#!/usr/bin/env python
-
-# Copyright 2026 The Allen Institute for Artificial Intelligence and The HuggingFace Inc. team. All rights reserved.
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,4 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa
+# Importing concrete policy configs registers their draccus `--policy.type`
+# choices (e.g. "act") so tests can parse them.
+from lerobot.policies.act.configuration_act import ACTConfig  # noqa: F401

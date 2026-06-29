@@ -18,7 +18,7 @@ import logging
 import time
 
 from lerobot.cameras.opencv import OpenCVCameraConfig
-from lerobot.common.control_utils import init_keyboard_listener, predict_action
+from lerobot.common.control_utils import predict_action
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.datasets import LeRobotDataset, aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.model.kinematics import RobotKinematics
@@ -41,6 +41,7 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
+from lerobot.utils.keyboard_input import init_keyboard_listener
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
