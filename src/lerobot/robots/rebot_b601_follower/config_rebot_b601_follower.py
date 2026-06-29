@@ -67,7 +67,7 @@ class RebotB601FollowerConfig:
 
     # Max speed (deg/s) per joint for POS_VEL arms and FORCE_POS gripper (motor order).
     pos_vel_velocity: float | list[float] = field(
-        default_factory=lambda: [150.0, 150.0, 150.0, 150.0, 150.0, 150.0, 500.0]
+        default_factory=lambda: [150.0, 150.0, 150.0, 150.0, 150.0, 150.0, 900.0]
     )
 
     # Arm control: "mit" or "pos_vel".
@@ -81,7 +81,7 @@ class RebotB601FollowerConfig:
     gripper_control_mode: str = "force_pos"
 
     # FORCE_POS only: max grip force, in [0, 1].
-    gripper_torque_ratio: float = 0.05
+    gripper_torque_ratio: float = 0.07
 
     # MIT only.
     gripper_mit_kp: float = 8.0
