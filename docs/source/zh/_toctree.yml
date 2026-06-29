@@ -1,0 +1,6 @@
+- sections:
+  - local: index
+    title: LeRobot
+  - local: installation
+    title: 安裝
+  title: 開始使用
