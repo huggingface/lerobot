@@ -20,6 +20,7 @@ Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wand
 
 import dataclasses
 import logging
+import sys
 import time
 from contextlib import nullcontext
 from pprint import pformat
@@ -46,7 +47,7 @@ from lerobot.common.train_utils import (
     update_last_checkpoint,
 )
 from lerobot.common.wandb_utils import WandBLogger
-from lerobot.configs import parser
+from lerobot.configs import JobConfig, parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
@@ -748,10 +749,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
 def _remote_target_in_argv() -> bool:
     """True when the CLI requests a remote HF Jobs run (--job.target=<non-local>)."""
-    import sys
-
-    from lerobot.configs import JobConfig
-
     target = None
     args = sys.argv[1:]
     for i, tok in enumerate(args):
