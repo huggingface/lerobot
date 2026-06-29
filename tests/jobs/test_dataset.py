@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -47,11 +46,7 @@ def test_dataset_local_only_uploads_privately(tmp_path, monkeypatch):
 
     api = _api_with_dataset(False)
     mock_ds_cls = MagicMock()
-    fake_datasets_module = MagicMock()
-    fake_datasets_module.LeRobotDataset = mock_ds_cls
-    monkeypatch.setitem(sys.modules, "lerobot.datasets", fake_datasets_module)
-    # The `datasets` extra isn't installed in the base test env; skip the import guard.
-    monkeypatch.setattr("lerobot.jobs.dataset.require_package", lambda *a, **k: None)
+    monkeypatch.setattr("lerobot.jobs.dataset.LeRobotDataset", mock_ds_cls)
 
     assert ensure_dataset_available("user/ds", api=api, tags=["lerobot", "lelab"]) is None
 

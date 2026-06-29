@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from lerobot.utils.import_utils import require_package
+
+# LeRobotDataset (imported at module top in dataset.py) pulls in heavy dataset deps;
+# guard the optional dependency here so importing this package fails loudly if it's missing.
+require_package("datasets", extra="dataset")
+
 from .hf import submit_to_hf
 
 __all__ = ["submit_to_hf"]
