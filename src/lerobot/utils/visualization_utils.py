@@ -89,6 +89,9 @@ def _ensure_blueprint(observation_paths: set[str], action_paths: set[str], image
     if getattr(log_rerun_data, "blueprint", None) is not None:
         return
 
+    if not (observation_paths or action_paths or image_paths):
+        return
+
     # Safe + zero-overhead: `log_rerun_data` already ran the `require_package` guard and imported rerun.
     import rerun as rr
 
@@ -167,6 +170,7 @@ def log_rerun_data(
                 rr.log(key, rr.Scalars(float(v)))
                 action_paths.add(key)
             elif isinstance(v, np.ndarray):
+                # Flatten any (incl. higher-dimensional) array into a single batched Scalars
                 rr.log(key, rr.Scalars(v.reshape(-1).astype(float)))
                 action_paths.add(key)
 
