@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,6 +29,7 @@ from torch import Tensor, nn
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.device_utils import is_amp_available
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -40,6 +42,21 @@ from .action_head import VLAJEPAActionHead
 from .configuration_vla_jepa import VLAJEPAConfig
 from .qwen_interface import Qwen3VLInterface
 from .world_model import ActionConditionedVideoPredictor
+
+
+def _get_autocast_context(device_type: str, dtype: torch.dtype = torch.bfloat16):
+    """Return an autocast context appropriate for the device.
+
+    MPS does not support ``torch.autocast`` at all.  On CUDA devices
+    without bfloat16 support (compute capability < 8.0) we fall back to
+    float16.
+    """
+    if not is_amp_available(device_type):
+        return nullcontext()
+    if device_type == "cuda" and dtype == torch.bfloat16 and not torch.cuda.is_bf16_supported():
+        dtype = torch.float16
+    return torch.autocast(device_type=device_type, dtype=dtype)
+
 
 # ============================================================================
 # Native VLA-JEPA Model - follows original starVLA VLA_JEPA.py implementation
@@ -227,7 +244,7 @@ class VLAJEPAModel(nn.Module):
 
         device_type = next(self.parameters()).device.type
 
-        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+        with _get_autocast_context(device_type, torch.bfloat16):
             last_hidden = self._qwen_last_decoder_hidden(qwen_inputs)  # [B, seq_len, H]
             b, _, h = last_hidden.shape
 
@@ -285,7 +302,7 @@ class VLAJEPAModel(nn.Module):
             return {"wm_loss": wm_loss}
 
         # ---- Step 4: Action Head ----
-        with torch.autocast(device_type=device_type, dtype=torch.float32):
+        with _get_autocast_context(device_type, torch.float32):
             actions_tensor = torch.tensor(
                 np.array(actions), device=last_hidden.device, dtype=torch.float32
             )  # [B, T_full, action_dim]
@@ -363,7 +380,7 @@ class VLAJEPAModel(nn.Module):
 
         device_type = next(self.parameters()).device.type
 
-        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+        with _get_autocast_context(device_type, torch.bfloat16):
             last_hidden = self._qwen_last_decoder_hidden(qwen_inputs)  # [B, seq_len, H]
             b, _, h = last_hidden.shape
             embodied_action_tokens = last_hidden[embodied_indices[0], embodied_indices[1], :].view(b, -1, h)
