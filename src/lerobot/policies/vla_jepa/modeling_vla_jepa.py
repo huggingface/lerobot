@@ -74,6 +74,11 @@ class VLAJEPAModel(nn.Module):
         self.action_tokens, self.action_token_ids, self.embodied_action_token_id = (
             self.qwen.expand_tokenizer()
         )
+        self.register_buffer(
+            "_action_token_ids_t",
+            torch.tensor(self.action_token_ids, dtype=torch.long),
+            persistent=False,
+        )
 
         # Action head (flow-matching DiT)
         self.action_model = VLAJEPAActionHead(config, cross_attention_dim=self.qwen.model.config.hidden_size)
@@ -174,7 +179,7 @@ class VLAJEPAModel(nn.Module):
         embodied_idx = (input_ids == self.embodied_action_token_id).nonzero(as_tuple=True)
         action_idx = None
         if need_action_tokens:
-            action_mask = torch.isin(input_ids, torch.tensor(self.action_token_ids, device=input_ids.device))
+            action_mask = torch.isin(input_ids, self._action_token_ids_t)
             action_idx = action_mask.nonzero(as_tuple=True)
 
         device_type = next(self.parameters()).device.type
@@ -187,7 +192,7 @@ class VLAJEPAModel(nn.Module):
                 if action_idx is not None
                 else None
             )
-        return last_hidden, embodied_action_tokens, action_tokens
+        return embodied_action_tokens, action_tokens
 
     def _world_model_loss(self, videos: Tensor, action_tokens: Tensor) -> Tensor:
         """JEPA encode + predictor L1 loss. `videos` is [B, V, T, C, H, W] float in [0, 1]."""
@@ -264,14 +269,14 @@ class VLAJEPAModel(nn.Module):
         action_is_pad: Tensor | None = None,
     ) -> dict[str, Tensor]:
         """Native forward: Qwen encode → optional world-model loss → optional action-head loss."""
-        last_hidden, embodied_action_tokens, action_tokens = self._encode_qwen(
+        embodied_action_tokens, action_tokens = self._encode_qwen(
             images, instructions, need_action_tokens=self.config.enable_world_model
         )
 
-        if self.config.enable_world_model:
+        if self.config.enable_world_model and videos is not None:
             wm_loss = self._world_model_loss(videos, action_tokens)
         else:
-            wm_loss = torch.zeros((), device=last_hidden.device)
+            wm_loss = torch.zeros((), device=embodied_action_tokens.device)
 
         if actions is None:
             return {"wm_loss": wm_loss}
@@ -296,8 +301,7 @@ class VLAJEPAModel(nn.Module):
                 for views in images
             ]
 
-        _, embodied_action_tokens, _ = self._encode_qwen(images, instructions, need_action_tokens=False)
-        state = state.to(embodied_action_tokens.dtype) if state is not None else None
+        embodied_action_tokens, _ = self._encode_qwen(images, instructions, need_action_tokens=False)
         return self.action_model.predict_action(
             embodied_action_tokens.float(), state.float() if state is not None else None
         )
@@ -341,7 +345,7 @@ class VLAJEPAPolicy(PreTrainedPolicy):
 
     # ---- Format Conversion: LeRobot → Native ----
 
-    def _prepare_model_inputs(self, batch: dict[str, Tensor]) -> dict[str, Any]:
+    def _prepare_model_inputs(self, batch: dict[str, Tensor], training=True) -> dict[str, Any]:
         """Convert a LeRobot batch to the model's batched, on-device inputs.
 
         LeRobot format:
@@ -381,8 +385,8 @@ class VLAJEPAPolicy(PreTrainedPolicy):
 
         inputs: dict[str, Any] = {"images": images, "instructions": instructions}
 
-        # Videos [B, V, T, C, H, W] - only assembled when the world model consumes them.
-        if self.model.config.enable_world_model:
+        # Videos [B, V, T, C, H, W] - only assembled during training when the world model consumes them.
+        if self.model.config.enable_world_model and training:
             views = [batch[k].unsqueeze(1) if batch[k].ndim == 4 else batch[k] for k in image_keys]
             inputs["videos"] = self.model.qwen.to_pixel_values(torch.stack(views, dim=1))
 
@@ -404,7 +408,7 @@ class VLAJEPAPolicy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """LeRobot train forward: convert → native forward → aggregate losses."""
-        native_output = self.model.forward(**self._prepare_model_inputs(batch))
+        native_output = self.model.forward(**self._prepare_model_inputs(batch, training=True))
 
         ref = next(iter(native_output.values()))
         zero = torch.zeros((), device=ref.device, dtype=ref.dtype)
@@ -422,7 +426,7 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
-        inputs = self._prepare_model_inputs(batch)
+        inputs = self._prepare_model_inputs(batch, training=False)
         actions = self.model.predict_action(inputs["images"], inputs["instructions"], inputs.get("state"))
         return actions.to(device=self.config.device, dtype=torch.float32)
 
