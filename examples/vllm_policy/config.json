@@ -1,0 +1,126 @@
+{
+    "type": "vllm",
+    "n_obs_steps": 1,
+    "input_features": {},
+    "output_features": {},
+    "device": "mps",
+    "use_amp": false,
+    "use_peft": false,
+    "push_to_hub": true,
+    "repo_id": null,
+    "private": null,
+    "tags": null,
+    "license": null,
+    "pretrained_path": null,
+    "chunk_size": 16,
+    "n_action_steps": 16,
+    "host": "127.0.0.1",
+    "port": 8080,
+    "ws_path": "/v1/realtime/robot/openpi",
+    "connect_timeout_s": 30.0,
+    "max_msg_bytes": 67108864,
+    "embodiment": "libero_sim",
+    "prompt_override": null,
+    "image_height": 256,
+    "image_width": 256,
+    "external_camera_obs_key": "observation.images.image",
+    "wrist_camera_obs_key": "observation.images.image2",
+    "send_wrist_camera": true,
+    "action_space": "libero_7d",
+    "images_as_list": true,
+    "flip_images_180": false,
+    "modality_config": {
+        "state": {
+            "x": {
+                "start": 0,
+                "end": 1
+            },
+            "y": {
+                "start": 1,
+                "end": 2
+            },
+            "z": {
+                "start": 2,
+                "end": 3
+            },
+            "roll": {
+                "start": 3,
+                "end": 4
+            },
+            "pitch": {
+                "start": 4,
+                "end": 5
+            },
+            "yaw": {
+                "start": 5,
+                "end": 6
+            },
+            "gripper": {
+                "start": 6,
+                "end": 8
+            }
+        },
+        "action": {
+            "x": {
+                "start": 0,
+                "end": 1
+            },
+            "y": {
+                "start": 1,
+                "end": 2
+            },
+            "z": {
+                "start": 2,
+                "end": 3
+            },
+            "roll": {
+                "start": 3,
+                "end": 4
+            },
+            "pitch": {
+                "start": 4,
+                "end": 5
+            },
+            "yaw": {
+                "start": 5,
+                "end": 6
+            },
+            "gripper": {
+                "start": 6,
+                "end": 7
+            }
+        }
+    },
+    "request_seed": null,
+    "state_obs_key": "observation.state",
+    "gripper_qpos_open": 0.04,
+    "gripper_qpos_closed": 0.0,
+    "send_joint_position": true,
+    "joint_dim": 7,
+    "action_keys": [
+        "x",
+        "y",
+        "z",
+        "roll",
+        "pitch",
+        "yaw",
+        "gripper"
+    ],
+    "gripper_keys": [
+        "gripper"
+    ],
+    "control_mode": "relative",
+    "action_scale": 1.0,
+    "gripper_action_open": -1.0,
+    "gripper_action_close": 1.0,
+    "decode_subtract_state": true,
+    "gripper_normalize": true,
+    "gripper_binarize": true,
+    "gripper_invert": true,
+    "clip_action": true,
+    "normalization_mapping": {
+        "VISUAL": "IDENTITY",
+        "STATE": "IDENTITY",
+        "ACTION": "IDENTITY"
+    }
+}
