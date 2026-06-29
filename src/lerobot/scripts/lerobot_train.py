@@ -20,6 +20,7 @@ Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wand
 
 import dataclasses
 import logging
+import sys
 import time
 from contextlib import nullcontext
 from pprint import pformat
@@ -41,15 +42,17 @@ from lerobot.common.train_utils import (
     load_training_batch_size,
     load_training_num_processes,
     load_training_state,
+    push_checkpoint_to_hub,
     save_checkpoint,
     update_last_checkpoint,
 )
 from lerobot.common.wandb_utils import WandBLogger
-from lerobot.configs import parser
+from lerobot.configs import JobConfig, parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
+from lerobot.jobs import submit_to_hf
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.rewards import make_reward_pre_post_processors
@@ -188,6 +191,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         cfg: A `TrainPipelineConfig` object containing all training configurations.
         accelerator: Optional Accelerator instance. If None, one will be created automatically.
     """
+    if cfg.job.is_remote:
+        return submit_to_hf(cfg)
+
     from lerobot.utils.import_utils import require_package
 
     require_package("accelerate", extra="training")
@@ -655,6 +661,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     optim_state_dict=optim_state_dict,
                 )
                 update_last_checkpoint(checkpoint_dir)
+                if cfg.save_checkpoint_to_hub:
+                    push_checkpoint_to_hub(
+                        checkpoint_dir,
+                        cfg.policy.repo_id,
+                        private=cfg.policy.private,
+                    )
                 if wandb_logger:
                     wandb_logger.log_policy(checkpoint_dir)
 
@@ -735,8 +747,25 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     accelerator.end_training()
 
 
+def _remote_target_in_argv() -> bool:
+    """True when the CLI requests a remote HF Jobs run (--job.target=<non-local>)."""
+    target = None
+    args = sys.argv[1:]
+    for i, tok in enumerate(args):
+        if tok == "--job.target" and i + 1 < len(args):
+            target = args[i + 1]
+        elif tok.startswith("--job.target="):
+            target = tok.split("=", 1)[1]
+    return JobConfig.is_remote_target(target)
+
+
 def main():
     register_third_party_plugins()
+    if _remote_target_in_argv():
+        # The policy device is resolved on the remote pod, not here, so silence the
+        # client-side "Device '...' is not available" warning PreTrainedConfig emits
+        # while parsing the config (it fires before train() can dispatch remotely).
+        logging.getLogger("lerobot.configs.policies").setLevel(logging.ERROR)
     train()
 
 
