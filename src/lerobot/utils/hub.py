@@ -20,7 +20,7 @@ from typing import Any, TypeVar
 from huggingface_hub import HfApi
 from huggingface_hub.utils import validate_hf_hub_args
 
-from lerobot.utils.constants import CHECKPOINTS_DIR
+from .constants import CHECKPOINTS_DIR
 
 T = TypeVar("T", bound="HubMixin")
 
