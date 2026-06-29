@@ -16,13 +16,13 @@
 blend:
 
   high_level_subtask:
-    weight: 0.30
+    weight: 0.25
     messages:
       - {role: user, content: "${task}", stream: high_level}
       - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
 
   low_level_execution:
-    weight: 0.55
+    weight: 0.60
     messages:
       # The action expert is conditioned on the SUBTASK — at inference
       # `HighLevelSubtaskFwd` generates it via the LM head and feeds it
