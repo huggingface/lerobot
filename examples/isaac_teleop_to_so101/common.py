@@ -104,6 +104,7 @@ import json
 import logging
 import os
 import select
+import socket
 import subprocess
 import sys
 import threading
@@ -326,6 +327,103 @@ def _load_reset_target(motor_names: list[str]) -> dict[str, float]:
     return {name: RESET_ORIGIN_DEG.get(name, 0.0) for name in motor_names}
 
 
+# CloudXR web client URL + the WSS-proxy/cert port (Isaac Teleop quick start, step 5).
+_CLOUDXR_WEB_CLIENT_URL = "https://nvidia.github.io/IsaacTeleop/client"
+_CLOUDXR_WSS_PORT = 48322
+# How often to re-print the connection hint while waiting for the headset [s].
+_XR_CONNECT_REMINDER_S = 15.0
+# Virtual / bridge / USB-gadget interfaces a headset can't reach over the network — skip
+# by name prefix (``docker0``, compose ``br-*``, ``veth*``, libvirt ``virbr*``, and the
+# Tegra USB device-mode bridge ``l4tbr0``).
+_SKIP_IFACE_PREFIXES = ("docker", "br-", "veth", "virbr", "l4tbr")
+
+
+def _primary_ipv4() -> str | None:
+    """The workstation's primary outbound IPv4 (the default-route interface).
+
+    Standard UDP-socket trick: ``connect()`` on a datagram socket selects the egress
+    interface WITHOUT sending any packets, then ``getsockname()`` reports its IP.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
+
+
+def _candidate_ipv4s() -> list[tuple[str, str]]:
+    """Return ``[(interface, ipv4), ...]`` the headset might reach this workstation at.
+
+    Lists each interface's IPv4 (via ``psutil`` when available), dropping loopback
+    (127.x) and link-local (169.254.x) addresses plus virtual/bridge/USB-gadget
+    interfaces (see ``_SKIP_IFACE_PREFIXES``), with the primary outbound interface
+    first. Falls back to just the primary IP when ``psutil`` is unavailable.
+    """
+    primary = _primary_ipv4()
+    found: list[tuple[str, str]] = []
+    try:
+        import psutil
+
+        for iface, addrs in psutil.net_if_addrs().items():
+            if iface.startswith(_SKIP_IFACE_PREFIXES):
+                continue
+            for addr in addrs:
+                if addr.family != socket.AF_INET:
+                    continue
+                ip = addr.address
+                if ip.startswith("127.") or ip.startswith("169.254."):
+                    continue
+                found.append((iface, ip))
+    except Exception:
+        if primary:
+            found.append(("default", primary))
+    found.sort(key=lambda t: t[1] != primary)  # primary outbound interface first
+    return found
+
+
+def _print_xr_connect_help() -> None:
+    """Print how to connect the headset to this workstation over CloudXR."""
+    ips = _candidate_ipv4s()
+    print("\n" + "=" * 76)
+    print("Connect your XR headset to this workstation over NVIDIA CloudXR:")
+    print(f"  1. In the headset, open the CloudXR web client:  {_CLOUDXR_WEB_CLIENT_URL}")
+    print("  2. Enter this workstation's IP address:")
+    if ips:
+        for iface, ip in ips:
+            print(f"        {ip:<15}  ({iface})")
+        if len(ips) > 1:
+            print("     (use the address on the same network as your headset)")
+    else:
+        print("        <could not determine — check `hostname -I` / `ip addr`>")
+    print(f"  3. Accept the self-signed cert at https://<that-ip>:{_CLOUDXR_WSS_PORT}/ , then Connect.")
+    print("=" * 76 + "\n")
+
+
+def _wait_for_xr_controller(teleop_device: XRController) -> None:
+    """Block until the XR controller is tracked (headset connected + controllers live).
+
+    Prints connection instructions, then polls ``get_action()`` until
+    :attr:`XRController.is_tracking`, re-printing a reminder every
+    ``_XR_CONNECT_REMINDER_S`` seconds. User-paced; ``Ctrl-C`` aborts (no hard timeout —
+    donning a headset and connecting is operator-driven). Mirrors :func:`_wait_for_leader`.
+    """
+    _print_xr_connect_help()
+    print("Waiting for the headset controllers to start streaming…  (Ctrl-C to abort)")
+    last_reminder = time.time()
+    while True:
+        teleop_device.get_action()  # steps the session; updates is_tracking
+        if teleop_device.is_tracking:
+            print("Headset connected — controllers are streaming.")
+            return
+        if time.time() - last_reminder >= _XR_CONNECT_REMINDER_S:
+            print("…still waiting for the headset to connect (Ctrl-C to abort).")
+            last_reminder = time.time()
+        time.sleep(1.0 / FPS)
+
+
 def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
     """Build the XR controller device bundle (clutch + soft-orientation IK pipeline)."""
     # Loads ./SO101/so101_new_calib.urdf relative to this folder. Run
@@ -388,6 +486,14 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
 
     def startup() -> None:
         nonlocal clutch
+        # Bring up CloudXR + the OpenXR session FIRST, then wait for the operator to don
+        # the headset and connect BEFORE moving the arm — so the reset slew happens while
+        # they are watching in VR (mirrors the leader waiting for its plugin to stream).
+        teleop_device.connect()
+        if not teleop_device.is_connected:
+            raise ValueError("Teleop is not connected!")
+        _wait_for_xr_controller(teleop_device)
+
         if cfg.reset_to_origin:
             target = _load_reset_target(motor_names)
             source = "reset_pose.json" if RESET_POSE_FILE.exists() else "hardcoded defaults"
@@ -404,9 +510,6 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
         home_base_T_ee = kinematics_solver.forward_kinematics(q_measured_deg)  # noqa: N806
         clutch = Clutch(home_base_T_ee)
 
-        teleop_device.connect()
-        if not teleop_device.is_connected:
-            raise ValueError("Teleop is not connected!")
         print("Starting teleop loop. Squeeze and move the controller to teleoperate the robot...")
 
     def compute(robot_obs: RobotObservation | None) -> RobotAction | None:
