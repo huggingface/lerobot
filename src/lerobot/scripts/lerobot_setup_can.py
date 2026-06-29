@@ -38,6 +38,7 @@ lerobot-setup-can --mode=speed --interfaces=can0
 ```
 """
 
+import logging
 import subprocess
 import sys
 import time
@@ -46,6 +47,8 @@ from dataclasses import dataclass, field
 import draccus
 
 from lerobot.utils.import_utils import _can_available
+
+logger = logging.getLogger(__name__)
 
 MOTOR_NAMES = {
     0x01: "joint_1",
@@ -104,19 +107,19 @@ def setup_interface(interface: str, bitrate: int, data_bitrate: int, use_fd: boo
 
         result = subprocess.run(cmd, capture_output=True, text=True)  # nosec B607
         if result.returncode != 0:
-            print(f"  ✗ Failed to configure: {result.stderr}")
+            logger.error(f"  ✗ Failed to configure: {result.stderr}")
             return False
 
         result = subprocess.run(  # nosec B607
             ["sudo", "ip", "link", "set", interface, "up"], capture_output=True, text=True
         )
         if result.returncode != 0:
-            print(f"  ✗ Failed to bring up: {result.stderr}")
+            logger.error(f"  ✗ Failed to bring up: {result.stderr}")
             return False
 
         return True
     except Exception as e:
-        print(f"  ✗ Error: {e}")
+        logger.error(f"  ✗ Error: {e}")
         return False
 
 
@@ -154,7 +157,7 @@ def test_motor(bus, motor_id: int, timeout: float, use_fd: bool):
         bus.send(disable_msg)
         bus.recv(timeout=0.1)  # Clear any pending responses
     except Exception:
-        print(f"Error sending message to motor 0x{motor_id:02X}")
+        logger.error(f"Error sending message to motor 0x{motor_id:02X}")
 
     return responses, None
 
@@ -164,10 +167,10 @@ def test_interface(cfg: CANSetupConfig, interface: str):
     import can
 
     is_up, status, _ = check_interface_status(interface)
-    print(f"\n{interface}: {status}")
+    logger.info(f"\n{interface}: {status}")
 
     if not is_up:
-        print(f"  ⚠ Interface is not UP. Run: lerobot-setup-can --mode=setup --interfaces {interface}")
+        logger.warning(f"  ⚠ Interface is not UP. Run: lerobot-setup-can --mode=setup --interfaces {interface}")
         return {}
 
     try:
@@ -176,7 +179,7 @@ def test_interface(cfg: CANSetupConfig, interface: str):
             kwargs.update({"data_bitrate": cfg.data_bitrate, "fd": True})
         bus = can.interface.Bus(**kwargs)
     except Exception as e:
-        print(f"  ✗ Connection failed: {e}")
+        logger.error(f"  ✗ Connection failed: {e}")
         return {}
 
     results = {}
@@ -189,16 +192,16 @@ def test_interface(cfg: CANSetupConfig, interface: str):
             responses, error = test_motor(bus, motor_id, cfg.timeout, cfg.use_fd)
 
             if error:
-                print(f"  Motor 0x{motor_id:02X} ({motor_name}): ✗ {error}")
+                logger.warning(f"  Motor 0x{motor_id:02X} ({motor_name}): ✗ {error}")
                 results[motor_id] = {"found": False, "error": error}
             elif responses:
-                print(f"  Motor 0x{motor_id:02X} ({motor_name}): ✓ FOUND")
+                logger.info(f"  Motor 0x{motor_id:02X} ({motor_name}): ✓ FOUND")
                 for resp_id, data, is_fd in responses:
                     fd_flag = " [FD]" if is_fd else ""
-                    print(f"    → Response 0x{resp_id:02X}{fd_flag}: {data}")
+                    logger.info(f"    → Response 0x{resp_id:02X}{fd_flag}: {data}")
                 results[motor_id] = {"found": True, "responses": responses}
             else:
-                print(f"  Motor 0x{motor_id:02X} ({motor_name}): ✗ No response")
+                logger.warning(f"  Motor 0x{motor_id:02X} ({motor_name}): ✗ No response")
                 results[motor_id] = {"found": False}
 
             time.sleep(0.05)
@@ -206,7 +209,7 @@ def test_interface(cfg: CANSetupConfig, interface: str):
         bus.shutdown()
 
     found = sum(1 for r in results.values() if r.get("found"))
-    print(f"\n  Summary: {found}/{len(cfg.motor_ids)} motors found")
+    logger.info(f"\n  Summary: {found}/{len(cfg.motor_ids)} motors found")
     return results
 
 
@@ -216,10 +219,10 @@ def speed_test(cfg: CANSetupConfig, interface: str):
 
     is_up, status, _ = check_interface_status(interface)
     if not is_up:
-        print(f"{interface}: {status} - skipping")
+        logger.info(f"{interface}: {status} - skipping")
         return
 
-    print(f"\n{interface}: Running speed test ({cfg.speed_iterations} iterations)...")
+    logger.info(f"\n{interface}: Running speed test ({cfg.speed_iterations} iterations)...")
 
     try:
         kwargs = {"channel": interface, "interface": "socketcan", "bitrate": cfg.bitrate}
@@ -227,7 +230,7 @@ def speed_test(cfg: CANSetupConfig, interface: str):
             kwargs.update({"data_bitrate": cfg.data_bitrate, "fd": True})
         bus = can.interface.Bus(**kwargs)
     except Exception as e:
-        print(f"  ✗ Connection failed: {e}")
+        logger.error(f"  ✗ Connection failed: {e}")
         return
 
     responding_motor = None
@@ -238,11 +241,11 @@ def speed_test(cfg: CANSetupConfig, interface: str):
             break
 
     if not responding_motor:
-        print("  ✗ No responding motors found")
+        logger.warning("  ✗ No responding motors found")
         bus.shutdown()
         return
 
-    print(f"  Testing with motor 0x{responding_motor:02X}...")
+    logger.info(f"  Testing with motor 0x{responding_motor:02X}...")
     latencies = []
 
     for _ in range(cfg.speed_iterations):
@@ -263,46 +266,46 @@ def speed_test(cfg: CANSetupConfig, interface: str):
     if latencies:
         avg_latency = sum(latencies) / len(latencies)
         hz = 1000.0 / avg_latency if avg_latency > 0 else 0
-        print(f"  ✓ Success rate: {len(latencies)}/{cfg.speed_iterations}")
-        print(f"  ✓ Avg latency: {avg_latency:.2f} ms")
-        print(f"  ✓ Max frequency: {hz:.1f} Hz")
+        logger.info(f"  ✓ Success rate: {len(latencies)}/{cfg.speed_iterations}")
+        logger.info(f"  ✓ Avg latency: {avg_latency:.2f} ms")
+        logger.info(f"  ✓ Max frequency: {hz:.1f} Hz")
     else:
-        print("  ✗ No successful responses")
+        logger.warning("  ✗ No successful responses")
 
 
 def run_setup(cfg: CANSetupConfig):
     """Setup CAN interfaces."""
-    print("=" * 50)
-    print("CAN Interface Setup")
-    print("=" * 50)
-    print(f"Mode: {'CAN FD' if cfg.use_fd else 'CAN 2.0'}")
-    print(f"Bitrate: {cfg.bitrate / 1_000_000:.1f} Mbps")
+    logger.info("=" * 50)
+    logger.info("CAN Interface Setup")
+    logger.info("=" * 50)
+    logger.info(f"Mode: {'CAN FD' if cfg.use_fd else 'CAN 2.0'}")
+    logger.info(f"Bitrate: {cfg.bitrate / 1_000_000:.1f} Mbps")
     if cfg.use_fd:
-        print(f"Data bitrate: {cfg.data_bitrate / 1_000_000:.1f} Mbps")
-    print()
+        logger.info(f"Data bitrate: {cfg.data_bitrate / 1_000_000:.1f} Mbps")
+    logger.info("")
 
     interfaces = cfg.get_interfaces()
     for interface in interfaces:
-        print(f"Configuring {interface}...")
+        logger.info(f"Configuring {interface}...")
         if setup_interface(interface, cfg.bitrate, cfg.data_bitrate, cfg.use_fd):
             is_up, status, _ = check_interface_status(interface)
-            print(f"  ✓ {interface}: {status}")
+            logger.info(f"  ✓ {interface}: {status}")
         else:
-            print(f"  ✗ {interface}: Failed")
+            logger.warning(f"  ✗ {interface}: Failed")
 
-    print("\nSetup complete!")
-    print("\nNext: Test motors with:")
-    print(f"  lerobot-setup-can --mode=test --interfaces {','.join(interfaces)}")
+    logger.info("\nSetup complete!")
+    logger.info("\nNext: Test motors with:")
+    logger.info(f"  lerobot-setup-can --mode=test --interfaces {','.join(interfaces)}")
 
 
 def run_test(cfg: CANSetupConfig):
     """Test motors on CAN interfaces."""
-    print("=" * 50)
-    print("CAN Motor Test")
-    print("=" * 50)
-    print(f"Testing motors 0x{min(cfg.motor_ids):02X}-0x{max(cfg.motor_ids):02X}")
-    print(f"Mode: {'CAN FD' if cfg.use_fd else 'CAN 2.0'}")
-    print()
+    logger.info("=" * 50)
+    logger.info("CAN Motor Test")
+    logger.info("=" * 50)
+    logger.info(f"Testing motors 0x{min(cfg.motor_ids):02X}-0x{max(cfg.motor_ids):02X}")
+    logger.info(f"Mode: {'CAN FD' if cfg.use_fd else 'CAN 2.0'}")
+    logger.info("")
 
     interfaces = cfg.get_interfaces()
     all_results = {}
@@ -311,25 +314,25 @@ def run_test(cfg: CANSetupConfig):
 
     total_found = sum(sum(1 for r in res.values() if r.get("found")) for res in all_results.values())
 
-    print("\n" + "=" * 50)
-    print("Summary")
-    print("=" * 50)
-    print(f"Total motors found: {total_found}")
+    logger.info("\n" + "=" * 50)
+    logger.info("Summary")
+    logger.info("=" * 50)
+    logger.info(f"Total motors found: {total_found}")
 
     if total_found == 0:
-        print("\n⚠ No motors found! Check:")
-        print("  1. Motors are powered (24V)")
-        print("  2. CAN wiring (CANH, CANL, GND)")
-        print("  3. Motor timeout parameter > 0 (use Damiao tools)")
-        print("  4. 120Ω termination at both cable ends")
-        print(f"  5. Interface configured: lerobot-setup-can --mode=setup --interfaces {interfaces[0]}")
+        logger.warning("\n⚠ No motors found! Check:")
+        logger.warning("  1. Motors are powered (24V)")
+        logger.warning("  2. CAN wiring (CANH, CANL, GND)")
+        logger.warning("  3. Motor timeout parameter > 0 (use Damiao tools)")
+        logger.warning("  4. 120Ω termination at both cable ends")
+        logger.warning(f"  5. Interface configured: lerobot-setup-can --mode=setup --interfaces {interfaces[0]}")
 
 
 def run_speed(cfg: CANSetupConfig):
     """Run speed tests on CAN interfaces."""
-    print("=" * 50)
-    print("CAN Speed Test")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("CAN Speed Test")
+    logger.info("=" * 50)
 
     for interface in cfg.get_interfaces():
         speed_test(cfg, interface)
@@ -338,7 +341,7 @@ def run_speed(cfg: CANSetupConfig):
 @draccus.wrap()
 def setup_can(cfg: CANSetupConfig):
     if not _can_available:
-        print("Error: python-can not installed. Install with: pip install python-can")
+        logger.error("Error: python-can not installed. Install with: pip install python-can")
         sys.exit(1)
 
     if cfg.mode == "setup":
@@ -348,8 +351,8 @@ def setup_can(cfg: CANSetupConfig):
     elif cfg.mode == "speed":
         run_speed(cfg)
     else:
-        print(f"Unknown mode: {cfg.mode}")
-        print("Available modes: setup, test, speed")
+        logger.error(f"Unknown mode: {cfg.mode}")
+        logger.error("Available modes: setup, test, speed")
         sys.exit(1)
 
 

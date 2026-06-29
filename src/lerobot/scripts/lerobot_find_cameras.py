@@ -113,17 +113,17 @@ def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[s
         else:
             logger.warning("No cameras (OpenCV or RealSense) were detected.")
     else:
-        print("\n--- Detected Cameras ---")
+        logger.info("\n--- Detected Cameras ---")
         for i, cam_info in enumerate(all_cameras_info):
-            print(f"Camera #{i}:")
+            logger.info(f"Camera #{i}:")
             for key, value in cam_info.items():
                 if key == "default_stream_profile" and isinstance(value, dict):
-                    print(f"  {key.replace('_', ' ').capitalize()}:")
+                    logger.info(f"  {key.replace('_', ' ').capitalize()}:")
                     for sub_key, sub_value in value.items():
-                        print(f"    {sub_key.capitalize()}: {sub_value}")
+                        logger.info(f"    {sub_key.capitalize()}: {sub_value}")
                 else:
-                    print(f"  {key.replace('_', ' ').capitalize()}: {value}")
-            print("-" * 20)
+                    logger.info(f"  {key.replace('_', ' ').capitalize()}: {value}")
+            logger.info("-" * 20)
     return all_cameras_info
 
 
@@ -278,10 +278,10 @@ def save_images_from_all_cameras(
         except KeyboardInterrupt:
             logger.info("Capture interrupted by user.")
         finally:
-            print("\nFinalizing image saving...")
+            logger.info("Finalizing image saving...")
             executor.shutdown(wait=True)
             cleanup_cameras(cameras_to_use)
-            print(f"Image capture finished. Images saved to {output_dir}")
+            logger.info(f"Image capture finished. Images saved to {output_dir}")
 
 
 def main():

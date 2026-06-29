@@ -76,6 +76,8 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD
 from lerobot.utils.utils import init_logging
 
+logger = logging.getLogger(__name__)
+
 
 def get_feature_names(dataset: LeRobotDataset, key: str) -> list[str]:
     """Return per-dimension names for a feature from the dataset metadata.
@@ -256,7 +258,7 @@ def visualize_dataset(
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
-            print("Ctrl-C received. Exiting.")
+            logger.info("Ctrl-C received. Exiting.")
 
 
 def main():
