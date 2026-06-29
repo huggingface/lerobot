@@ -13,11 +13,10 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 
 import torch
 
-from lerobot.detectors import SupervisorConfig
 from lerobot.robots.config import RobotConfig
 
 from .constants import (
@@ -138,12 +137,6 @@ class RobotClientConfig:
     chunk_size_threshold: float = field(default=0.5, metadata={"help": "Threshold for chunk size control"})
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
 
-    # Supervisor monitor configuration (optional event-triggered / speed-adaptive replanning).
-    # Disabled by default. Select the detector with
-    # --supervisor.detector.type=motion|red_cube_speed and tune it with
-    # --supervisor.detector.<field>=... (see lerobot.detectors.config).
-    supervisor: SupervisorConfig = field(default_factory=SupervisorConfig)
-
     # Aggregate function configuration (CLI-compatible)
     aggregate_fn_name: str = field(
         default="weighted_average",
@@ -186,9 +179,6 @@ class RobotClientConfig:
         if self.actions_per_chunk <= 0:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
 
-        # Supervisor / detector parameters are validated by SupervisorConfig and the
-        # selected DetectorConfig subclass (see lerobot.detectors.config).
-
         self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)
 
     @classmethod
@@ -210,11 +200,4 @@ class RobotClientConfig:
             "task": self.task,
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
             "aggregate_fn_name": self.aggregate_fn_name,
-            "supervisor": {
-                "enabled": self.supervisor.enabled,
-                "camera": self.supervisor.camera,
-                "poll_fps": self.supervisor.poll_fps,
-                "cooldown_s": self.supervisor.cooldown_s,
-                "detector": {"type": self.supervisor.detector.type, **asdict(self.supervisor.detector)},
-            },
         }

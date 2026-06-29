@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Red-cube image-plane speed detector for speed-adaptive replanning."""
+"""Red-cube image-plane position/velocity predictor for the overhead camera."""
 
 from __future__ import annotations
 
@@ -21,33 +21,26 @@ import time
 import numpy as np
 from numpy.typing import NDArray
 
-from .base import DetectorOutput
+from .base import PredictorOutput
 
 
-class RedCubeSpeedDetector:
-    """Estimate red cube image-plane speed and suggest a replan threshold.
+class CubePredictor:
+    """Estimate the red cube's image-plane center and velocity from one frame.
 
-    This detector uses a simple dependency-free HSV red mask. Red wraps around
-    the hue axis, so pixels near both 0 and 360 degrees are accepted.
+    Uses a simple dependency-free HSV red mask (red wraps around the hue axis, so
+    pixels near both 0 and 360 degrees are accepted). The center is the mask
+    centroid; the velocity is the per-frame centroid displacement divided by the
+    measured control-loop dt, returned as a ``(vx, vy)`` vector so a consumer can
+    advance the cube along its travel direction.
     """
 
     def __init__(
         self,
-        slow_speed_px_s: float,
-        fast_speed_px_s: float,
-        min_chunk_size_threshold: float,
-        max_chunk_size_threshold: float,
-        urgent_speed_px_s: float,
         hue_tolerance_deg: float = 20.0,
         saturation_min: float = 0.45,
         value_min: float = 0.25,
         min_area_ratio: float = 0.001,
     ):
-        self.slow_speed_px_s = slow_speed_px_s
-        self.fast_speed_px_s = fast_speed_px_s
-        self.min_chunk_size_threshold = min_chunk_size_threshold
-        self.max_chunk_size_threshold = max_chunk_size_threshold
-        self.urgent_speed_px_s = urgent_speed_px_s
         self.hue_tolerance_deg = hue_tolerance_deg
         self.saturation_min = saturation_min
         self.value_min = value_min
@@ -56,61 +49,60 @@ class RedCubeSpeedDetector:
         self._prev_center: tuple[float, float] | None = None
         self._prev_time_s: float | None = None
 
-    def __call__(self, frame: NDArray) -> DetectorOutput:
+    def __call__(self, frame: NDArray) -> PredictorOutput:
         return self.detect(frame, now_s=time.perf_counter())
 
-    def detect(self, frame: NDArray, now_s: float) -> DetectorOutput:
-        mask = self._red_mask(frame)
+    def detect(self, frame: NDArray, now_s: float) -> PredictorOutput:
+        mask = self.red_mask(frame)
         area_ratio = float(mask.mean())
         if area_ratio < self.min_area_ratio:
             self._prev_center = None
             self._prev_time_s = None
-            return DetectorOutput(target_visible=False, reason="red_cube_not_visible")
+            return PredictorOutput(target_visible=False, reason="red_cube_not_visible")
 
         ys, xs = np.nonzero(mask)
         center = (float(xs.mean()), float(ys.mean()))
-        speed_px_s = self._estimate_speed(center, now_s)
+        velocity = self._estimate_velocity(center, now_s)
         self._prev_center = center
         self._prev_time_s = now_s
 
-        if speed_px_s is None:
-            return DetectorOutput(target_visible=True, center_px=center, reason="red_cube_initialized")
+        if velocity is None:
+            return PredictorOutput(target_visible=True, center_px=center, reason="red_cube_initialized")
 
-        threshold = self._map_speed_to_threshold(speed_px_s)
-        replan_now = speed_px_s >= self.urgent_speed_px_s
-        reason = "red_cube_urgent_speed" if replan_now else "red_cube_speed"
-        return DetectorOutput(
-            replan_now=replan_now,
+        return PredictorOutput(
             target_visible=True,
             center_px=center,
-            speed_px_s=speed_px_s,
-            effective_chunk_size_threshold=threshold,
-            reason=reason,
+            velocity_px_s=velocity,
+            reason="red_cube_tracked",
         )
 
-    def _estimate_speed(self, center: tuple[float, float], now_s: float) -> float | None:
+    @staticmethod
+    def predict_center(
+        center_px: tuple[float, float],
+        velocity_px_s: tuple[float, float],
+        lead_s: float,
+    ) -> tuple[float, float]:
+        """Constant-velocity extrapolation: ``center + velocity * lead_s``."""
+        return (
+            center_px[0] + velocity_px_s[0] * lead_s,
+            center_px[1] + velocity_px_s[1] * lead_s,
+        )
+
+    def _estimate_velocity(
+        self, center: tuple[float, float], now_s: float
+    ) -> tuple[float, float] | None:
         if self._prev_center is None or self._prev_time_s is None:
             return None
 
         dt = now_s - self._prev_time_s
         if dt <= 0:
-            return 0.0
+            return (0.0, 0.0)
 
-        dx = center[0] - self._prev_center[0]
-        dy = center[1] - self._prev_center[1]
-        return float(np.hypot(dx, dy) / dt)
+        vx = (center[0] - self._prev_center[0]) / dt
+        vy = (center[1] - self._prev_center[1]) / dt
+        return (float(vx), float(vy))
 
-    def _map_speed_to_threshold(self, speed_px_s: float) -> float:
-        if self.fast_speed_px_s <= self.slow_speed_px_s:
-            return self.max_chunk_size_threshold
-
-        alpha = (speed_px_s - self.slow_speed_px_s) / (self.fast_speed_px_s - self.slow_speed_px_s)
-        alpha = float(np.clip(alpha, 0.0, 1.0))
-        return self.min_chunk_size_threshold + alpha * (
-            self.max_chunk_size_threshold - self.min_chunk_size_threshold
-        )
-
-    def _red_mask(self, frame: NDArray) -> NDArray[np.bool_]:
+    def red_mask(self, frame: NDArray) -> NDArray[np.bool_]:
         if frame.ndim != 3 or frame.shape[2] < 3:
             raise ValueError(f"Expected an RGB image with shape HxWx3, got {frame.shape}")
 
