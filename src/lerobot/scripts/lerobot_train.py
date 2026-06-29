@@ -51,6 +51,7 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
+from lerobot.jobs import submit_to_hf
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.rewards import make_reward_pre_post_processors
@@ -190,8 +191,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         accelerator: Optional Accelerator instance. If None, one will be created automatically.
     """
     if cfg.job.is_remote:
-        from lerobot.jobs import submit_to_hf
-
         return submit_to_hf(cfg)
 
     from lerobot.utils.import_utils import require_package

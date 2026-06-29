@@ -54,10 +54,10 @@ def test_no_target_is_not_remote(monkeypatch):
 
 def test_train_dispatches_to_submit_when_remote(monkeypatch):
     """A remote --job.target short-circuits train() to the HF Jobs submitter."""
-    import lerobot.jobs
+    import lerobot.scripts.lerobot_train as train_module
 
     captured = []
-    monkeypatch.setattr(lerobot.jobs, "submit_to_hf", lambda cfg: captured.append(cfg) or "submitted")
+    monkeypatch.setattr(train_module, "submit_to_hf", lambda cfg: captured.append(cfg) or "submitted")
     cfg = draccus.parse(
         TrainPipelineConfig,
         args=["--dataset.repo_id", "u/d", "--policy.type", "act", "--job.target", "a10g-small"],
