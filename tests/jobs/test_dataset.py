@@ -16,6 +16,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.jobs.dataset import ensure_dataset_available
 
 
