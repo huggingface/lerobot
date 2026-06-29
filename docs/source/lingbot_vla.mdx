@@ -1,0 +1,106 @@
+# LingBot-VLA
+
+LingBot-VLA is an open-source embodied foundation model from the [LingBot / Robbyant](https://github.com/Robbyant/lingbot-vla) team. The LeRobot implementation is adapted from their open-source [lingbot-vla](https://github.com/Robbyant/lingbot-vla) repository.
+
+LingBot-VLA is now integrated into Hugging Face's LeRobot ecosystem. You can now post-train, evaluate, and deploy LingBot-VLA directly through LeRobot, on the same footing as OpenVLA, π0, SmolVLA, and WALL-OSS. The integration mirrors the WALL-OSS / `wall_x` precedent (Qwen2.5-VL + flow matching), so customizing and deploying LingBot-VLA is a one-line affair.
+
+## Model Overview
+
+LingBot-VLA pairs a **Qwen2.5-VL** multimodal backbone with a **Qwen2 action expert** and **Flow-Matching** continuous action generation, supporting cross-embodiment and bimanual manipulation. Core features:
+
+- **External VLM↔expert KV fusion (LingBot core IP)**: per-layer `compute_kqv` → concatenate prefix/suffix Q/K/V → unified attention → split back by length, rather than framework-internal fusion.
+- **75-D unified state/action space** (`max_state_dim=75`, `max_action_dim=75`, `chunk_size=50`): the key to cross-embodiment alignment; per-slot semantics in the [Deployment Protocol](./lingbot_vla_deployment).
+- **AdaRMSNorm time-conditioned action expert** (flow-matching timestep conditioning).
+- **Optional depth-alignment head** (depth loss + MoGe; experimental, off by default on the main path).
+
+## Installation Requirements
+
+1. Install LeRobot by following our [Installation Guide](./installation).
+2. Install LingBot dependencies by running:
+
+   ```bash
+   pip install -e ".[lingbot]"
+   ```
+
+## Usage
+
+To use LingBot-VLA in LeRobot, specify the policy type as:
+
+```python
+policy.type=lingbot_vla
+```
+
+## Training
+
+For training LingBot-VLA, you can use the standard LeRobot training script with the appropriate configuration:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=lingbot_vla \
+    --output_dir=./outputs/lingbot_training \
+    --job_name=lingbot_training \
+    --policy.repo_id=your_repo_id \
+    --policy.pretrained_name_or_path=robbyant/lingbot-vla-4b \
+    --policy.attention_implementation=eager \
+    --policy.num_steps=10 \
+    --steps=3000 \
+    --policy.device=cuda \
+    --batch_size=32
+```
+
+### Training Arguments
+
+Only LingBot-specific arguments are listed; all other arguments are the standard LeRobot ones.
+
+| Argument                       | Description                                                                                          |
+| ------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `--policy.type`                | Specifies using the LingBot-VLA policy architecture (`lingbot_vla`)                                  |
+| `--policy.pretrained_name_or_path` | Path to pretrained LingBot weights: `robbyant/lingbot-vla-4b` (HF format, loaded directly)        |
+| `--policy.attention_implementation` | Dual-stream attention backend — `eager` (default), `fa2` (needs the flash-attn extra), or `flex`   |
+| `--policy.num_steps`           | Flow-matching denoising steps (default `10`)                                                         |
+| `--policy.loss_type`           | Flow-matching loss: `fm` (MSE, default) / `L1_fm` (L1)                                               |
+| `--policy.chunk_size`          | Action chunk length (default `50`)                                                                   |
+
+## Inference / Deployment
+
+Load the policy and predict actions in a single line:
+
+```python
+from lerobot.policies.lingbot_vla.modeling_lingbot_vla import LingbotVLAPolicy
+from lerobot.policies.lingbot_vla.processor_lingbot_vla import make_lingbot_vla_pre_post_processors
+
+# `config` carries your embodiment's input/output features (camera views, real
+# state/action dims). State and action are padded to the 75-D slots internally.
+policy = LingbotVLAPolicy.from_pretrained("robbyant/lingbot-vla-4b", config=config, strict=True)
+preprocessor, postprocessor = make_lingbot_vla_pre_post_processors(config, dataset_stats=stats)
+
+batch = preprocessor(observation)  # observation: dict of images + state + task string
+action = postprocessor(policy.select_action(batch))
+```
+
+**Single-process in-process is preferred** (the 4B model runs on a single GPU); only real-robot cross-machine deployment needs WebSocket. The WebSocket protocol — fields, shapes, `reset` timing, chunk return convention, and control-frame handling — is documented on the [Deployment Protocol](./lingbot_vla_deployment) sub-page (this resolves the historical "only the 1st episode succeeds" frame-offset bug).
+
+### Quick start (one-line)
+
+A one-line smoke test ships with the integration:
+
+```bash
+bash examples/lingbot_vla/run_lingbot_vla.sh
+```
+
+This loads the policy from a pretrained checkpoint, feeds a synthetic observation (one camera view + real-dim state + a `task` string) through the processor pipeline, runs `select_action`, and asserts a final action vector matching the configured action dimension — verifying the full install → load → infer path end to end. Override the checkpoint with `LINGBOT_CKPT` and the device with `LINGBOT_DEVICE`.
+
+### Robot Config (reBotArm / SO-ARM101 → 75-D slot mapping)
+
+| Embodiment            | LeRobot robot class        | Note                                  |
+| --------------------- | -------------------------- | ------------------------------------- |
+| Seeed reBotArm single | `rebot_b601_follower`      | joint motors, already in main repo    |
+| Seeed reBotArm bimanual | `bi_rebot_b601_follower` | bimanual uses both sides of the 75-D  |
+| SO-ARM101 single      | `so_follower`              | servos                                |
+
+The 75-D slot order, gripper channels, and zero-fill semantics are tabulated per-embodiment in the migration guide (mismatches here are silent — see the Deployment Protocol).
+
+## License
+
+This model follows the **Apache 2.0 License**, consistent with the original [lingbot-vla repository](https://github.com/Robbyant/lingbot-vla).

@@ -210,6 +210,12 @@ wallx = [
     "torchdiffeq>=0.2.4,<0.3.0",
     "lerobot[qwen-vl-utils-dep]",
 ]
+lingbot = [
+    "lerobot[transformers-dep]",
+    "lerobot[peft-dep]",
+    "lerobot[scipy-dep]",
+    "lerobot[qwen-vl-utils-dep]",
+]
 pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 molmoact2 = ["lerobot[transformers-dep]", "lerobot[peft-dep]", "lerobot[scipy-dep]"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "lerobot[accelerate-dep]"]
@@ -305,6 +311,7 @@ all = [
     "lerobot[diffusion]",
     "lerobot[multi_task_dit]",
     "lerobot[wallx]",
+    "lerobot[lingbot]",
     "lerobot[pi]",
     "lerobot[molmoact2]",
     "lerobot[smolvla]",
@@ -404,6 +411,7 @@ ignore = [
 # E402: conditional-import guards (TYPE_CHECKING / is_package_available) must precede the imports they protect
 "src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
 "src/lerobot/policies/wall_x/**" = ["N801", "N812", "SIM102", "SIM108", "SIM210", "SIM211", "B006", "B007", "SIM118"] # Supprese these as they are coming from original Qwen2_5_vl code TODO(pepijn): refactor original
+"src/lerobot/policies/lingbot_vla/**" = ["N801", "N806", "N812", "SIM102", "SIM108", "SIM210", "SIM211", "B006", "B007", "SIM118"] # Suppressed: adapted from original Qwen2.5-VL code
 
 [tool.ruff.lint.isort]
 combine-as-imports = true

@@ -1,0 +1,106 @@
+# LingBot-VLA Deployment Protocol Reference
+
+This page documents the client↔server WebSocket inference protocol used by LingBot-VLA for cross-machine real-robot deployment: fields, shapes, `reset` timing, chunk return convention, and control-frame handling. It is the contract that eliminates the historical "frame-offset / only the 1st episode succeeds" bug.
+
+> **Single-process in-process is preferred** (the 4B model runs on a single GPU). Only real-robot cross-machine deployment needs WebSocket.
+
+## 1. Transport overview
+
+| Item               | Convention                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------- |
+| Transport          | WebSocket (single long-lived connection), binary frames carrying msgpack                     |
+| Codec              | msgpack (`packb` / `unpackb`)                                                                |
+| Interaction model  | Strict lockstep: send 1, receive 1; the i-th response corresponds to the i-th request (§4)   |
+| Connection life    | One connection per eval session; call `reset` once at the start of every episode (§3)        |
+
+Lockstep is simple but fragile: correctness depends 100% on `send_count == recv_count`. If §4 control frames are handled wrong, you get a permanent off-by-one — the historical root cause.
+
+## 2. infer request / response
+
+**Request `infer` (client → server)** — field names follow the server source.
+
+| Field                        | Type / shape       | Description                                                                                      |
+| ---------------------------- | ------------------ | ----------------------------------------------------------------------------------------------- |
+| `observation.images.<name>`  | uint8 `(H, W, 3)`  | Per-camera image (e.g. `cam_high` / `cam_left_wrist` / `cam_right_wrist`). Key must match `robot_config` or `ValueError`. |
+| `observation.state`          | float `(state_dim,)` | Proprioception, padded per the 75-D slot convention (§5)                                       |
+| `task`                       | str                | Language instruction. (Easy to miss: the `__main__` example uses a pi0 prompt that does not match the real server — copying it silently fails.) |
+
+**Response (server → client)**
+
+| Field        | Shape          | Description                                                                                |
+| ------------ | -------------- | ----------------------------------------------------------------------------------------- |
+| `action`     | float `(T, 14)`| One action chunk, `T = chunk_size` (default 50); 14 = real embodiment action dim (bimanual 6+1 gripper ×2), distinct from the internal 75-D (§5) |
+| `use_length` | int            | Number of steps in the chunk to actually execute (≤ T). The client executes only the first `use_length` steps before re-observing. |
+
+**Chunk open-loop convention**: each `infer` returns `T` steps, executed open-loop (default 50) before re-observing. This amplifies any "one beat late" — being one beat off equals being one whole chunk (~half a second) behind.
+
+## 3. reset request
+
+| Field        | Type        | Description                                          |
+| ------------ | ----------- | --------------------------------------------------- |
+| `reset`      | bool / flag | Marks an episode reset (clears inference-side cache / chunk queue) |
+| `robo_name`  | str         | Embodiment id; selects slot mapping / norm_stats     |
+
+**Timing**: call once at the start of every episode, before any `infer`. Missing `reset` → cross-episode state / chunk residue → artificially low success rate.
+
+## 4. Frame-layer protocol (correctness命门)
+
+A WebSocket multiplexes data frames and control frames on the same TCP stream. The client must consume control frames correctly itself (a raw-socket client is hand-written to dodge py3.10/3.12 `websockets` version conflicts, so no library eats the pings for you).
+
+| opcode | Frame type                         | Required client handling                                 |
+| ------ | ---------------------------------- | -------------------------------------------------------- |
+| `0x02` | binary (msgpack business data)     | The only returnable frame → `unpackb` then return         |
+| `0x09` | ping (server auto-sends every 20s) | Reply one pong, keep reading; **never re-send data**      |
+| `0x0A` | pong                               | Ignore, keep reading                                      |
+| `0x08` | close                              | Raise `ConnectionError`                                   |
+| `0x01` | text                               | Treat as server error traceback, raise `RuntimeError`     |
+
+**Two iron rules (violation = permanent off-by-one):**
+
+1. **Send data exactly once per inference** — the send must be outside the read loop; control-frame branches must never re-send the observation.
+2. **Consume control frames transparently** — on ping/pong do not return and do not re-send; just `continue` to the next frame until a `0x02` arrives.
+
+**Historical failure**: the old `_send_recv` did `return self._send_recv(data)` on ping, and that function re-packs+sends at its top → the same observation is sent twice → the server queues an extra response → every subsequent `infer` returns the previous frame's action → because of the 50-step open-loop chunk, this is equivalent to a full-chunk lag → "usually only the 1st episode succeeds."
+
+### Reference implementation (verified fix)
+
+```python
+def _send_recv(self, data):
+    if self._sock is None:
+        raise ConnectionError("Not connected")
+    self._ws_write_frame(self._sock, self._packer.pack(data))  # send ONCE, outside the loop
+    while True:
+        opcode, raw = self._ws_read_frame(self._sock)
+        if opcode == 0x09:  # ping -> pong
+            self._ws_write_frame(self._sock, raw, opcode=0x0A)
+            continue
+        if opcode == 0x0A:  # pong
+            continue
+        if opcode == 0x08:  # close
+            raise ConnectionError("Server closed connection")
+        if opcode == 0x01:  # text -> server error
+            raise RuntimeError(f"Server error:\n{raw.decode()}")
+        if opcode == 0x02:  # binary -> response
+            return _msgpack_unpackb(raw)
+        raise RuntimeError(f"Unexpected opcode 0x{opcode:02X}")
+```
+
+**Additional rule**: `sock.recv(2)` is not guaranteed to return 2 bytes in one call on TCP; under load, reading the header desyncs. Read the header / length / mask key with `recv_exact(n)` (loop until n bytes are read).
+
+## 5. 75-D ↔ real embodiment dim slot convention (#48 / #49)
+
+- 75-D is the unified training-side maximum (`max_state_dim = max_action_dim = 75`), used for cross-embodiment alignment; unused slots are zero-filled.
+- The real embodiment action is 14-D (bimanual 6 joints + 1 gripper ×2); the on-wire `action` shape is `(T, 14)`.
+- **Must be tabulated per slot**: for each embodiment (reBotArm single/bimanual, SO-ARM101) the 75-D slot order, which slot each joint/gripper channel falls in, and the zero-fill ranges. A wrong slot order or gripper channel is **silent** (no error) and directly causes "gripper opening/closing randomly / actions scrambled" (#47/#48/#49).
+
+> This table is the only line of defense against silent mismatch. Maintain it per-embodiment and keep it in the migration guide.
+
+## 6. Validation checklist (self-check for integrators)
+
+- [ ] Send/recv count 1:1 (`send_cnt += 1` where data is sent, `recv_cnt += 1` where a binary is returned; they must stay equal every `infer`; a fixed delta of 1 is the frame-offset signature).
+- [ ] Disable ping (`serve(ping_interval=None)`); if behavior recovers from the 2nd episode onward, the ping handling is the bug.
+- [ ] The obs image keys match `robot_config` exactly (missing key → `ValueError`; extra/wrong key → partial silent failure).
+- [ ] `task` field present and not the pi0 prompt.
+- [ ] `reset` called at the start of every episode.
+- [ ] `use_length` honored (only the first `use_length` steps executed).
+- [ ] 75-D slots / gripper channels verified against the embodiment table.
