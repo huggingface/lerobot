@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The Allen Institute for Artificial Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,32 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa
 
 """Image processor class for MolmoAct2"""
 
-from typing import Optional, Union
-import numpy as np
 import einops
+import numpy as np
 import torch
 import torchvision.transforms
-
+from transformers.feature_extraction_utils import BatchFeature
+from transformers.image_processing_utils import BaseImageProcessor, get_size_dict
+from transformers.image_transforms import convert_to_rgb
 from transformers.image_utils import (
     IMAGENET_STANDARD_MEAN,
     IMAGENET_STANDARD_STD,
     ImageInput,
     PILImageResampling,
     make_flat_list_of_images,
-    valid_images,
     to_numpy_array,
+    valid_images,
 )
-from transformers.image_transforms import convert_to_rgb
 from transformers.processing_utils import ImagesKwargs
-from transformers.image_processing_utils import BaseImageProcessor, get_size_dict
-from transformers.utils import logging
-from transformers.feature_extraction_utils import BatchFeature
 from transformers.utils import TensorType, logging
-
 
 logger = logging.get_logger(__name__)
 
@@ -73,8 +66,8 @@ def resize_image(
         )(image)
         resized = torch.clip(resized, 0.0, 1.0).to(dtype)
     else:
-        assert image.dtype == torch.uint8, "SigLIP expects float images or uint8 images, but got {}".format(
-            image.dtype
+        assert image.dtype == torch.uint8, (
+            f"SigLIP expects float images or uint8 images, but got {image.dtype}"
         )
         in_min = 0.0
         in_max = 255.0
@@ -96,7 +89,6 @@ def resize_image(
 def select_tiling(h, w, patch_size, max_num_crops):
     """Divide in image of size [w, h] in up to max_num_patches of size patch_size"""
     original_size = np.stack([h, w])  # [1, 2]
-    original_res = h * w
     tilings = []
     for i in range(1, max_num_crops + 1):
         for j in range(1, max_num_crops + 1):
@@ -406,13 +398,17 @@ class MolmoAct2ImageProcessor(BaseImageProcessor):
         image_std: float | list[float] | None = None,
         do_convert_rgb: bool = True,
         max_crops: int = 8,
-        overlap_margins: list[int] = [4, 4],
+        overlap_margins: list[int] | None = None,
         crop_mode: str = "overlap-and-resize-c2",
         patch_size: int = 14,
-        pooling_size: list[int] = [2, 2],
+        pooling_size: list[int] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        if overlap_margins is None:
+            overlap_margins = [4, 4]
+        if pooling_size is None:
+            pooling_size = [2, 2]
         size = size if size is not None else {"height": 378, "width": 378}
         size = get_size_dict(size, default_to_square=True)
         self.size = size

@@ -150,7 +150,10 @@ def log_rerun_data(
                     rr.log(key, rr.Scalars(arr.astype(float)))
                     observation_paths.add(key)
                 else:
-                    img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
+                    if arr.shape[-1] == 1:
+                        img_entity = rr.DepthImage(arr, colormap=rr.components.Colormap.Viridis)
+                    else:
+                        img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
                     rr.log(key, entity=img_entity, static=True)
                     image_paths.add(key)
 

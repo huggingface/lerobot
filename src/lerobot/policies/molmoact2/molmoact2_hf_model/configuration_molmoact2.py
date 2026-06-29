@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The Allen Institute for Artificial Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa
 
 """
 MolmoAct2 configuration
 """
 
-from typing import Optional, Any
+from typing import Any
 
 from transformers import PretrainedConfig
 from transformers.modeling_rope_utils import rope_config_validation

@@ -2,15 +2,15 @@
 
 When video storage is enabled, LeRobot stores each camera stream as an **MP4** file instead of saving one image file per timestep. Video encoding compresses across time, which usually cuts dataset size and I/O compared to a pile of PNG, while keeping MP4 — a format every player and loader understands.
 
-Encoding frames into an MP4 is a full FFmpeg pipeline: choice of encoder, pixel format, GOP/keyframes, quality vs. speed, and optional extra encoder flags. Most of these knobs are user-tunable through `camera_encoder`, a nested `VideoEncoderConfig` (`lerobot.configs.video.VideoEncoderConfig`) passed through PyAV.
+Encoding frames into an MP4 is a full FFmpeg pipeline: choice of encoder, pixel format, GOP/keyframes, quality vs. speed, and optional extra encoder flags. Most of these knobs are user-tunable through `rgb_encoder`, a nested `RGBEncoderConfig` (`lerobot.configs.video.RGBEncoderConfig`) passed through PyAV.
 
-You can set these parameters from the CLI with `--dataset.camera_encoder.<field>` (e.g. with `lerobot-record` or `lerobot-rollout`). The same block applies to every camera video stream in that run.
+You can set these parameters from the CLI with `--dataset.rgb_encoder.<field>` (e.g. with `lerobot-record` or `lerobot-rollout`). The same block applies to every camera video stream in that run.
 
 <Tip>
-  Video storage must be on for `camera_encoder` to have any effect —
+  Video storage must be on for `rgb_encoder` to have any effect —
   `use_videos=True` in Python APIs, or `--dataset.video=true` on the CLI (the
-  recording default). With video off, inputs stay as images and `camera_encoder`
-  is ignored.
+  recording default). With video off, inputs stay as images and `rgb_encoder` is
+  ignored.
 </Tip>
 
 For details on **when** frames are written vs. encoded (streaming vs. post-episode), queues, and other top-level `--dataset.*` switches, see [Streaming Video Encoding](./streaming_video_encoding). For an encoding-parameter comparison and experiments, see the [video-benchmark Space](https://huggingface.co/spaces/lerobot/video-benchmark).
@@ -33,9 +33,9 @@ lerobot-record \
     --dataset.single_task="Grab the cube" \
     --dataset.streaming_encoding=true \
     --dataset.encoder_threads=2 \
-    --dataset.camera_encoder.vcodec=h264 \
-    --dataset.camera_encoder.preset=fast \
-    --dataset.camera_encoder.extra_options={"tune": "film", "profile:v": "high", "bf": 2} \
+    --dataset.rgb_encoder.vcodec=h264 \
+    --dataset.rgb_encoder.preset=fast \
+    --dataset.rgb_encoder.extra_options={"tune": "film", "profile:v": "high", "bf": 2} \
     --display_data=true
 ```
 
@@ -50,7 +50,7 @@ Only override these parameters if you have a specific reason to, and measure the
 
 </Tip>
 
-All flags below are prefixed with `--dataset.camera_encoder.` on the CLI.
+All flags below are prefixed with `--dataset.rgb_encoder.` on the CLI.
 
 | Parameter       | Type             | Default       | Description                                                                                                                                                                            |
 | --------------- | ---------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -62,6 +62,77 @@ All flags below are prefixed with `--dataset.camera_encoder.` on the CLI.
 | `fast_decode`   | `int`            | `0`           | `libsvtav1`: `0–2`, passed via `svtav1-params`. <br/>`h264` / `hevc` (software): if `>0`, sets `tune=fastdecode`. <br/>Other codecs: usually unused.                                   |
 | `video_backend` | `str`            | `"pyav"`      | Only `"pyav"` is currently implemented for video encoding.                                                                                                                             |
 | `extra_options` | `dict`           | `{}`          | Extra FFmpeg or codec specific options merged after the structured fields above. Cannot override keys already set by those fields.                                                     |
+
+---
+
+## Depth streams
+
+Depth maps (Intel RealSense, Reachy 2) are stored as their **own video streams** alongside the RGB streams. Raw depth (`uint16` millimetres or `float32` metres) can't survive an 8-bit codec, so LeRobot **quantizes** each map to a 12-bit code (`[0, 4095]`) — logarithmically by default, to match the `1/depth` error profile of depth sensors — then packs it into a high-bit-depth pixel format (`gray12le`) and encodes it with a 12-bit codec.
+
+```mermaid
+flowchart LR
+    A["Raw depth (uint16 mm / float32 m)"] --> B["Clip to depth_min, depth_max"]
+    B --> C["Quantize to 12-bit code 0–4095 (log or linear)"]
+    C --> D["Pack into gray12le"]
+    D --> E["Encode video (hevc Main 12)"]
+    E --> F[("MP4 + metadata: depth_min/max, shift, use_log")]
+    F -. "load time (depth_output_unit)" .-> G["Dequantize to mm or m"]
+
+    classDef input fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
+    classDef encode fill:#ede7f6,stroke:#5e35b1,color:#311b92;
+    classDef store fill:#fff8e1,stroke:#f9a825,color:#e65100;
+    classDef load fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;
+
+    class A input;
+    class B,C,D,E encode;
+    class F store;
+    class G load;
+```
+
+Configure the depth pipeline through a parallel **`depth_encoder`** block (`DepthEncoderConfig`). It shares every `RGBEncoderConfig` field (`vcodec`, `pix_fmt`, `crf`, …) and adds four quantizer knobs, set via `--dataset.depth_encoder.<field>`:
+
+```bash
+lerobot-record \
+    ... \
+    --dataset.depth_encoder.vcodec=hevc \
+    --dataset.depth_encoder.depth_min=0.05 \
+    --dataset.depth_encoder.depth_max=5.0 \
+    --dataset.depth_encoder.use_log=true
+```
+
+| Parameter       | Type    | Default                         | Description                                                                                                                            |
+| --------------- | ------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `vcodec`        | `str`   | `"hevc"`                        | HEVC Main 12 (a 12-bit-capable codec, MP4-compatible).                                                                                 |
+| `extra_options` | `dict`  | `{"x265-params": "lossless=1"}` | **Depth defaults to lossless** (exact round-trip); `crf` is ignored. Pass `extra_options={}` and set `crf` for a smaller lossy stream. |
+| `pix_fmt`       | `str`   | `"gray12le"`                    | Single-channel 12-bit pixel format used to carry the quantized codes.                                                                  |
+| `depth_min`     | `float` | `0.01`                          | Depth in metres mapped to quantum `0`. Values below are clipped on decode.                                                             |
+| `depth_max`     | `float` | `10.0`                          | Depth in metres mapped to quantum `4095`. Values above are clipped on decode.                                                          |
+| `shift`         | `float` | `3.5`                           | Pre-log offset (metres) used in logarithmic quantization for numerical stability near zero. Must satisfy `depth_min + shift > 0`.      |
+| `use_log`       | `bool`  | `True`                          | If `true`, quantize in log-space (recommended for typical depth sensors). Set to `false` for uniform/linear quantization.              |
+
+> [!TIP]
+> `depth_min`, `depth_max`, and `shift` are always interpreted in **metres**, regardless of the input depth's unit. Inputs are auto-detected: integer arrays (e.g. `uint16` millimetres straight from a RealSense) are treated as millimetres, floating arrays as metres.
+> Pick `depth_min` / `depth_max` to bracket the actual working range of your sensor — quanta outside that range saturate, which can crush detail at the boundaries.
+
+Depth features are flagged with `"is_depth_map": true` in `meta/info.json`, and their quantizer settings (`video.depth_min`, `video.depth_max`, `video.shift`, `video.use_log`) are persisted — which is what lets depth be **dequantized back to physical units** on load.
+
+### Output unit at load time
+
+`depth_encoder` is a **record-time** concern. The unit that depth maps are dequantized to on _load_ (e.g. during training) is set separately by the read-time flag `--dataset.depth_output_unit`:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=<my_username>/<my_dataset_name> \
+    --dataset.depth_output_unit=m \
+    --policy.type=act
+```
+
+| Parameter           | Type  | Default | Description                                                                                  |
+| ------------------- | ----- | ------- | -------------------------------------------------------------------------------------------- |
+| `depth_output_unit` | `str` | `"mm"`  | Physical unit depth maps are dequantized to on load: `"mm"` (millimetres) or `"m"` (metres). |
+
+> [!TIP]
+> This is purely a decode-time presentation choice — it does **not** alter the stored video or its metadata, so the same dataset can be read as `mm` or `m` without re-encoding. It has no effect on datasets without depth cameras.
 
 ---
 
@@ -82,7 +153,7 @@ After the first episode of a video stream is encoded, the encoder configuration 
         "video.pix_fmt": "yuv420p",
         "video.fps": 30,
         "video.channels": 3,
-        "video.is_depth_map": false,
+        "is_depth_map": false,
         "video.g": 2,
         "video.crf": 30,
         "video.preset": "fast",
@@ -97,12 +168,12 @@ After the first episode of a video stream is encoded, the encoder configuration 
 
 Two sources contribute to the `info` block:
 
-- **Stream-derived** (read back from the encoded MP4 with PyAV): `video.height`, `video.width`, `video.codec`, `video.pix_fmt`, `video.fps`, `video.channels`, `video.is_depth_map`, plus `audio.*` if an audio stream is present.
-- **Encoder-derived** (taken from `VideoEncoderConfig`): `video.g`, `video.crf`, `video.preset`, `video.fast_decode`, `video.video_backend`, `video.extra_options`.
+- **Stream-derived** (read back from the encoded MP4 with PyAV): `video.height`, `video.width`, `video.codec`, `video.pix_fmt`, `video.fps`, `video.channels`, `is_depth_map`, plus `audio.*` if an audio stream is present.
+- **Encoder-derived** (taken from `RGBEncoderConfig` or `DepthEncoderConfig`): `video.g`, `video.crf`, `video.preset`, `video.fast_decode`, `video.video_backend`, `video.extra_options`.
 
 <Tip>
   This block is populated **once**, from the **first** episode. It assumes every
-  episode in the dataset was encoded with the same `camera_encoder`. Changing
+  episode in the dataset was encoded with the same `rgb_encoder`. Changing
   encoder settings partway through a recording is not supported — the
   `info.json` will only reflect the parameters used for the first episode.
 </Tip>
