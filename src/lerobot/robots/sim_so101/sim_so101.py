@@ -55,7 +55,9 @@ class SimSO101(Robot):
         self._gripper_range: tuple[float, float] | None = None
         self._n_substeps = 1
         self._success_qpos_addr: int | None = None
+        self._success_dofadr: int | None = None
         self._success_rest_z: float | None = None
+        self._box_bounds: tuple[float, float, float, float, float] | None = None
         self._belt_qpos_addr: int | None = None
 
     @property
@@ -184,7 +186,41 @@ class SimSO101(Robot):
                     f"body (e.g. the 'cube' body in scene_cube.xml) to read its z position from."
                 )
             self._success_qpos_addr = int(self._model.jnt_qposadr[joint_id])
+            self._success_dofadr = int(self._model.jnt_dofadr[joint_id])
             self._success_rest_z = float(self._data.qpos[self._success_qpos_addr + 2])
+
+            criterion = self.config.success.criterion
+            if criterion == "place_in_box":
+                # Precompute the box's world-frame AABB from its (axis-aligned) geoms:
+                # horizontal footprint + top rim. check_success() then counts the body
+                # as "placed" when it's settled within that footprint and below the rim
+                # — the solid walls mean anything inside the footprint and below the rim
+                # is physically in the cavity, not beside/on the box.
+                box_name = self.config.success.box_body_name
+                box_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, box_name)
+                if box_id < 0:
+                    raise ValueError(
+                        f"MJCF '{self.config.mjcf_path}' has no body named '{box_name}' "
+                        f"(SimSO101Config.success.box_body_name), required for criterion "
+                        f"'place_in_box'."
+                    )
+                geom_ids = [g for g in range(self._model.ngeom) if self._model.geom_bodyid[g] == box_id]
+                if not geom_ids:
+                    raise ValueError(f"Box body '{box_name}' has no geoms to bound its cavity.")
+                xmin = ymin = float("inf")
+                xmax = ymax = rim = float("-inf")
+                for g in geom_ids:
+                    gx, gy, gz = (float(v) for v in self._data.geom_xpos[g])
+                    hx, hy, hz = (float(v) for v in self._model.geom_size[g])
+                    xmin, xmax = min(xmin, gx - hx), max(xmax, gx + hx)
+                    ymin, ymax = min(ymin, gy - hy), max(ymax, gy + hy)
+                    rim = max(rim, gz + hz)
+                self._box_bounds = (xmin, xmax, ymin, ymax, rim)
+            elif criterion != "lift":
+                raise ValueError(
+                    f"Unknown success criterion '{criterion}' "
+                    f"(SimSO101Config.success.criterion); expected 'lift' or 'place_in_box'."
+                )
 
         logger.info(f"{self} connected (sim, {self._n_substeps} substeps per control step).")
 
@@ -237,7 +273,7 @@ class SimSO101(Robot):
 
     @check_if_not_connected
     def check_success(self) -> bool:
-        """Whether the configured success body currently sits above its lift threshold.
+        """Whether the configured success criterion is currently met.
 
         Privileged sim-state read for evaluation only — never passed through
         `get_observation`, so it has no effect on the policy. Returns False
@@ -245,7 +281,16 @@ class SimSO101(Robot):
         """
         if self._success_qpos_addr is None:
             return False
-        z = float(self._data.qpos[self._success_qpos_addr + 2])
+        addr = self._success_qpos_addr
+        if self.config.success.criterion == "place_in_box":
+            cx, cy, cz = (float(self._data.qpos[addr + i]) for i in range(3))
+            xmin, xmax, ymin, ymax, rim = self._box_bounds
+            if not (xmin < cx < xmax and ymin < cy < ymax and cz < rim):
+                return False
+            vel = self._data.qvel[self._success_dofadr : self._success_dofadr + 3]
+            return bool(np.linalg.norm(vel) < self.config.success.settle_speed_mps)
+        # default: "lift"
+        z = float(self._data.qpos[addr + 2])
         return (z - self._success_rest_z) >= self.config.success.height_m
 
     def _gripper_sim_to_robot(self, rad: float) -> float:
@@ -264,5 +309,7 @@ class SimSO101(Robot):
         self._model = None
         self._data = None
         self._success_qpos_addr = None
+        self._success_dofadr = None
         self._success_rest_z = None
+        self._box_bounds = None
         logger.info(f"{self} disconnected.")
