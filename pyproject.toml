@@ -124,7 +124,7 @@ hardware = [
     "lerobot[deepdiff-dep]",
 ]
 viz = [
-    "rerun-sdk>=0.24.0,<0.34.0",
+    "rerun-sdk>=0.24.0,<0.34.1",
 ]
 # ── User-facing composite extras (map to CLI scripts) ─────
 # lerobot-record, lerobot-replay, lerobot-calibrate, lerobot-teleoperate, etc.

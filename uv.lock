@@ -3395,7 +3395,7 @@ requires-dist = [
     { name = "qwen-vl-utils", marker = "extra == 'qwen-vl-utils-dep'", specifier = ">=0.0.11,<0.1.0" },
     { name = "reachy2-sdk", marker = "extra == 'reachy2'", specifier = ">=1.0.15,<1.1.0" },
     { name = "requests", specifier = ">=2.32.0,<3.0.0" },
-    { name = "rerun-sdk", marker = "extra == 'viz'", specifier = ">=0.24.0,<0.34.0" },
+    { name = "rerun-sdk", marker = "extra == 'viz'", specifier = ">=0.24.0,<0.34.1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.1" },
     { name = "safetensors", specifier = ">=0.4.3,<1.0.0" },
     { name = "scikit-image", marker = "extra == 'video-benchmark'", specifier = ">=0.23.2,<0.26.0" },
@@ -5803,7 +5803,7 @@ wheels = [
 
 [[package]]
 name = "rerun-sdk"
-version = "0.33.0"
+version = "0.33.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
@@ -5814,10 +5814,10 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/31/17/5a521e86ac0064bd0f452e3e98e2422433511b54110423c0217d2cc1234f/rerun_sdk-0.33.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:97f123e3ef6aa69b60194bc566e5435c7d4040757ed4f58297ea46c8ef320c5c", size = 125707606, upload-time = "2026-05-29T09:42:53.584Z" },
-    { url = "https://files.pythonhosted.org/packages/34/2f/2ca2599aca03b69fbcac7c8391ef50376968edd7c58b96de53a4b7f20624/rerun_sdk-0.33.0-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:8f734cf59419dcfbc46915bea6cec030224f16e96c3a597f0ccf7cb7b058dd43", size = 135271020, upload-time = "2026-05-29T09:43:00.106Z" },
-    { url = "https://files.pythonhosted.org/packages/2e/ba/d70997b43e6db4f58c4326c29c6a6a384ddc6c2fe125f231c885ad9b3b1f/rerun_sdk-0.33.0-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:53d95609f8b330026bcd041bf6d11b46ee1c18b6fbde155135f291fe86328eeb", size = 139552018, upload-time = "2026-05-29T09:43:06.275Z" },
-    { url = "https://files.pythonhosted.org/packages/14/a5/0cac294d16aff6c9a2f183f838428a0380b4d2fd9e053bb37b3041999ad5/rerun_sdk-0.33.0-cp310-abi3-win_amd64.whl", hash = "sha256:b152992a72ec240062c8c285bd30ab681b464a25efbe1464c66fdac82320de1f", size = 120418186, upload-time = "2026-05-29T09:43:13.733Z" },
+    { url = "https://files.pythonhosted.org/packages/16/07/380198590b194f1c17052d672865aa4a56e606eae47665f66edfb391999d/rerun_sdk-0.33.1-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:c0115b710289022587bd2e9ecb715f98d1e87dd7d8ac48e053324131d4addc89", size = 125706253, upload-time = "2026-06-22T09:04:18.974Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/eb/6741bbf6868175ab126aff58d372066241c6cd2fc1c4f82ed64069728e73/rerun_sdk-0.33.1-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:14451d31bc7bd0f7c6bcc9c1213ed679ab81b65ecd8b36eae99f738219897dc5", size = 135278374, upload-time = "2026-06-22T09:04:26.768Z" },
+    { url = "https://files.pythonhosted.org/packages/04/28/fd3b832652900fe3415739e7411c8af8af4c44e9e1a9d55d79e37f7f9094/rerun_sdk-0.33.1-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:0f87da7a270614074aca37846350f9e257f65081345474748f578c7da64fdeba", size = 139565470, upload-time = "2026-06-22T09:04:34.941Z" },
+    { url = "https://files.pythonhosted.org/packages/19/41/339920f5a6734054c07bcae543365a7ef3368ceee3eb67906e2e38bd1d67/rerun_sdk-0.33.1-cp310-abi3-win_amd64.whl", hash = "sha256:b2c2af67f3c2a85b282669d97b52596593fcfdd19bf57c423f18827c837a6e49", size = 120411717, upload-time = "2026-06-22T09:04:42.643Z" },
 ]
 
 [[package]]
