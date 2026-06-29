@@ -77,6 +77,10 @@ class XRController(IsaacTeleopTeleoperator):
         # isaacteleop-backed object), then reuse it every step. Constructed lazily
         # in connect() so this module imports without isaacteleop installed.
         self._external_inputs: dict[str, Any] | None = None
+        # Whether the most recent get_action() read a tracked controller (headset
+        # connected over CloudXR + controllers live). The owning loop polls this to
+        # wait for the operator to connect before driving the arm.
+        self._is_tracking = False
 
     # ------------------------------------------------------------------
     # Pipeline construction
@@ -160,6 +164,17 @@ class XRController(IsaacTeleopTeleoperator):
     def feedback_features(self) -> dict:
         return {}
 
+    @property
+    def is_tracking(self) -> bool:
+        """Whether the last :meth:`get_action` read a tracked controller.
+
+        ``False`` until the headset is connected over CloudXR and its controllers are
+        live (the stream's optional controller group is present). Mirrors
+        :attr:`~lerobot.teleoperators.isaac_teleop.teleop_so101_leader_arm.SO101LeaderArm.is_tracking`;
+        the owning loop polls it to wait for the operator to connect before commanding the arm.
+        """
+        return self._is_tracking
+
     # ------------------------------------------------------------------
     # Action extraction
     # ------------------------------------------------------------------
@@ -205,18 +220,22 @@ class XRController(IsaacTeleopTeleoperator):
         grip_quat = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
         squeeze = 0.0
         trigger = 0.0
-        if not getattr(controller, "is_none", False):
+        # The optional controller group is None until the headset is connected and its
+        # controllers are live; expose that as is_tracking so the owning loop can wait
+        # for the operator to connect over CloudXR before driving the arm.
+        self._is_tracking = not getattr(controller, "is_none", False)
+        if self._is_tracking:
             # Defensive: a controller group may not be fully populated every frame
-            # (untracked/odd frame, missing axis, unexpected wrapper shape). Any
-            # read failure leaves the safe defaults above so the loop freezes the
-            # arm instead of crashing.
+            # (odd frame, missing axis, unexpected wrapper shape). Any read failure
+            # leaves the safe defaults above and is reported as not-tracked, so the loop
+            # freezes the arm instead of crashing or trusting a partial frame.
             try:
                 grip_pos = np.asarray(controller[ControllerInputIndex.GRIP_POSITION], dtype=np.float32)
                 grip_quat = np.asarray(controller[ControllerInputIndex.GRIP_ORIENTATION], dtype=np.float32)
                 squeeze = float(controller[ControllerInputIndex.SQUEEZE_VALUE])
                 trigger = float(controller[ControllerInputIndex.TRIGGER_VALUE])
             except (IndexError, KeyError, TypeError, ValueError):
-                pass
+                self._is_tracking = False
 
         return {
             "grip_pos": grip_pos,
