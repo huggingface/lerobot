@@ -77,6 +77,8 @@
     title: Multitask DiT Policy
   - local: walloss
     title: WALL-OSS
+  - local: openeai
+    title: OpenEAI-VLA
   title: "Policies"
 - sections:
   - local: sarm
