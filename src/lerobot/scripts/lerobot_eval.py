@@ -52,6 +52,7 @@ You can learn about the CLI options for this script in the `EvalPipelineConfig` 
 import concurrent.futures as cf
 import json
 import logging
+import os
 import threading
 import time
 from collections import defaultdict
@@ -238,6 +239,17 @@ def rollout(
                 observation["task"] = list(env.call("task"))
             except (AttributeError, NotImplementedError):
                 observation["task"] = [""] * env.num_envs
+
+        # Diagnostic (EVAL_TASK_OVERRIDE): replace the env task string with a
+        # fixed hand-written instruction for every env. Isolates whether the
+        # action head can execute a given phrasing, independent of the env's
+        # own description. Logs the original once for comparison.
+        _task_override = os.environ.get("EVAL_TASK_OVERRIDE")
+        if _task_override:
+            if step == 0:
+                logging.info("EVAL_TASK_OVERRIDE active: env task[0]=%r -> %r",
+                             observation["task"][0], _task_override)
+            observation["task"] = [_task_override] * env.num_envs
 
         # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
         observation = env_preprocessor(observation)
