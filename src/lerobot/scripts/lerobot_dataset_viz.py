@@ -205,10 +205,12 @@ def visualize_dataset(
         if first_index is None:
             first_index = batch["index"][0].item()
 
+        # iterate over the batch
         for i in range(len(batch["index"])):
             rr.set_time("frame_index", sequence=batch["index"][i].item() - first_index)
             rr.set_time("timestamp", timestamp=batch["timestamp"][i].item())
 
+            # display each camera image (or depth map)
             for key in dataset.meta.camera_keys:
                 if key in dataset.meta.depth_keys:
                     depth = to_hwc_uint16_numpy(batch[key][i])
@@ -223,9 +225,11 @@ def visualize_dataset(
                     img_entity = rr.Image(img).compress() if display_compressed_images else rr.Image(img)
                     rr.log(key, entity=img_entity)
 
+            # display the action space (e.g. actuators command)
             if ACTION in batch:
                 rr.log(ACTION, rr.Scalars(batch[ACTION][i].numpy()))
 
+            # display the observed state space (e.g. agent position in joint space)
             if OBS_STATE in batch:
                 rr.log("state", rr.Scalars(batch[OBS_STATE][i].numpy()))
 
@@ -238,6 +242,7 @@ def visualize_dataset(
             if "next.success" in batch:
                 rr.log("next.success", rr.Scalars(batch["next.success"][i].item()))
 
+    # save .rrd locally
     if mode == "local" and save:
         output_dir.mkdir(parents=True, exist_ok=True)
         repo_id_str = repo_id.replace("/", "_")
