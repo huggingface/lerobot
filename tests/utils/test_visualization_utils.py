@@ -48,7 +48,7 @@ def mock_rerun(monkeypatch):
 
         def compress(self, *a, **k):
             return self
-    
+
     class DummyDepthImage:
         def __init__(self, arr, colormap=None):
             self.arr = arr
