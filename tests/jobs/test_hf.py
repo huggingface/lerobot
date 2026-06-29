@@ -21,6 +21,8 @@ import draccus
 import httpx
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.jobs.hf import (
     _pod_forwarded_args,
