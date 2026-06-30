@@ -327,7 +327,7 @@ class GrootConfig(PreTrainedConfig):
     # Enable GR00T-style state-relative action chunks (action chunk expressed relative to the current
     # observation state).
     use_relative_actions: bool = False
-    
+
     # relative_exclude_joints names the action dimensions that stay absolute; the
     # match is substring/case-insensitive against the dataset action feature names. With the empty
     # default every dimension is treated as relative, including the gripper -- set e.g. ["gripper"] to

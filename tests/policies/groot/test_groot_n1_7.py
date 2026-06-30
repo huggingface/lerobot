@@ -1013,7 +1013,7 @@ def test_groot_n1_7_pack_inputs_normalizes_action_chunk_per_dimension_before_pad
 
 def test_groot_n1_7_pack_inputs_raises_when_relative_groups_cannot_normalize():
     # Relative groups carry per-chunk-timestep stats; if the action horizon exceeds the available
-    # stat rows, grouped normalization cannot apply and the flat fallback would silently mis-scale.
+    # stat rows, grouped normalization cannot apply and the flat fallback would silently wrongly scale.
     step = GrootN17PackInputsStep(
         action_horizon=3,
         valid_action_horizon=3,

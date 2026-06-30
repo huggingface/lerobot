@@ -1671,7 +1671,7 @@ class GrootN17PackInputsStep(ProcessorStep):
 
         Relative groups normalize with per-chunk-timestep (2D) ``relative_action`` stats, which the
         flat ``_min_max_norm`` fallback cannot honor, so a relative config that fails grouped
-        normalization must fail loudly rather than silently mis-scale every timestep.
+        normalization must fail loudly rather than silently wrongly scale every timestep.
         """
         if not isinstance(self.modality_config, dict):
             return False
@@ -1808,7 +1808,7 @@ class GrootN17PackInputsStep(ProcessorStep):
                         "relative-action chunk: the action layout or horizon does not match the "
                         f"checkpoint relative_action stats (action shape {tuple(action.shape)}). The flat "
                         "min/max fallback cannot honor per-chunk-timestep relative stats, so refusing to "
-                        "silently mis-normalize. Recompute the relative action stats so their horizon and "
+                        "silently wrongly normalize. Recompute the relative action stats so their horizon and "
                         "dimensions match the action chunk."
                     )
                 else:
