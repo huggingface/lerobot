@@ -367,6 +367,16 @@ class LeRobotDatasetMetadata:
         ``output_unit`` on read. This converts the unit-bearing stat entries so
         stats match the frames consumers see.
         """
+        missing_unit_keys = [
+            key for key in self.depth_keys if (self.features[key].get("info") or {}).get("depth_unit") is None
+        ]
+        if missing_unit_keys:
+            logging.warning(
+                f"Depth feature(s) {missing_unit_keys} have no recorded 'depth_unit' in their info. "
+                f"Depth maps and stats for these keys will be returned AS IS, with no unit conversion "
+                f"to the requested output unit {output_unit!r}. Re-record the dataset or set 'depth_unit' "
+                f"in the feature info (meta/info.json) to enable conversion."
+            )
         if self.stats is None:
             return
         for key in self.depth_keys:
