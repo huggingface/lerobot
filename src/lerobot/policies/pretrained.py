@@ -387,7 +387,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self,
         peft_config=None,
         peft_cli_overrides: dict | None = None,
-    ) -> "PreTrainedPolicy":
+    ) -> PreTrainedPolicy:
         """
         Wrap this policy with PEFT adapters for parameter-efficient fine-tuning.
 
