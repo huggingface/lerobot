@@ -21,7 +21,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-from transformers.feature_extraction_utils import BatchFeature
 
 from lerobot.policies.groot.action_head.cross_attention_dit import AlternateVLDiT
 from lerobot.policies.groot.groot_n1_7 import GR00TN17
@@ -109,6 +108,8 @@ def test_groot_n1_7_vlm_chat_content_order_matches_oss_reference():
 
 def test_groot_n1_7_alternate_vl_dit_matches_oss_reference():
     """Run the LeRobot DiT with native OSS weights and identical inputs."""
+
+    pytest.importorskip("diffusers")
 
     fixture = torch.load(_fixture_path("alternate_vl_dit_small.pt"), map_location="cpu", weights_only=True)
     model = AlternateVLDiT(
@@ -227,6 +228,10 @@ def test_groot_n1_7_qwen_backbone_matches_oss_checkpoint_reference():
         pytest.skip("Set GROOT_N17_PARITY_CHECKPOINT to run the 3B OSS Qwen parity test.")
     if not torch.cuda.is_available():
         pytest.skip("The 3B OSS Qwen parity test requires CUDA.")
+
+    pytest.importorskip("transformers")
+
+    from transformers.feature_extraction_utils import BatchFeature
 
     fixture = torch.load(_fixture_path("qwen_backbone_so101.pt"), map_location="cpu", weights_only=True)
     model = GR00TN17.from_pretrained(checkpoint).to(device="cuda", dtype=torch.bfloat16).eval()
