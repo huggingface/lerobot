@@ -28,9 +28,17 @@ from lerobot.scripts.lerobot_imgtransform_viz import (
     save_each_transform,
 )
 from lerobot.transforms import (
+    CoarseDropout,
+    GammaCorrection,
+    GaussianNoise,
+    GaussianPatchBrightness,
     ImageTransformConfig,
     ImageTransforms,
     ImageTransformsConfig,
+    JPEGCompression,
+    MotionBlur,
+    PlanckianJitter,
+    RandomShadow,
     RandomSubsetApply,
     SharpnessJitter,
     make_transform_from_config,
@@ -455,3 +463,63 @@ def test_save_each_transform(img_tensor_factory, tmp_path):
             assert (transform_dir / file_name).exists(), (
                 f"{file_name} was not found in {transform} directory."
             )
+
+
+# --- Tests for robotics-relevant augmentations ---
+
+ROBOTICS_TRANSFORMS = [
+    ("GaussianNoise", GaussianNoise, {"std": (5.0, 25.0)}),
+    ("MotionBlur", MotionBlur, {"kernel_size": (3, 11)}),
+    ("JPEGCompression", JPEGCompression, {"quality": (15, 75)}),
+    ("GaussianPatchBrightness", GaussianPatchBrightness, {}),
+    ("RandomShadow", RandomShadow, {"opacity": (0.3, 0.6)}),
+    ("CoarseDropout", CoarseDropout, {"max_holes": 8}),
+    ("GammaCorrection", GammaCorrection, {"gamma": (0.5, 2.0)}),
+    ("PlanckianJitter", PlanckianJitter, {"strength": (0.85, 1.15)}),
+]
+
+
+@pytest.mark.parametrize("name,cls,kwargs", ROBOTICS_TRANSFORMS, ids=[t[0] for t in ROBOTICS_TRANSFORMS])
+def test_robotics_transform_shape_preserved(name, cls, kwargs, img_tensor_factory):
+    img = img_tensor_factory()
+    tf = cls(**kwargs)
+    out = tf(img)
+    assert out.shape == img.shape, f"{name} changed shape: {img.shape} -> {out.shape}"
+
+
+@pytest.mark.parametrize("name,cls,kwargs", ROBOTICS_TRANSFORMS, ids=[t[0] for t in ROBOTICS_TRANSFORMS])
+def test_robotics_transform_output_range(name, cls, kwargs, img_tensor_factory):
+    img = img_tensor_factory()
+    tf = cls(**kwargs)
+    out = tf(img)
+    assert out.min() >= -0.01, f"{name} min below range: {out.min():.4f}"
+    assert out.max() <= 1.01, f"{name} max above range: {out.max():.4f}"
+
+
+@pytest.mark.parametrize("name,cls,kwargs", ROBOTICS_TRANSFORMS, ids=[t[0] for t in ROBOTICS_TRANSFORMS])
+def test_robotics_transform_float_output(name, cls, kwargs, img_tensor_factory):
+    img = img_tensor_factory()
+    tf = cls(**kwargs)
+    out = tf(img)
+    assert out.is_floating_point(), f"{name} output dtype={out.dtype}"
+
+
+@pytest.mark.parametrize("name,cls,kwargs", ROBOTICS_TRANSFORMS, ids=[t[0] for t in ROBOTICS_TRANSFORMS])
+def test_robotics_transform_non_float_passthrough(name, cls, kwargs):
+    int_img = torch.randint(0, 255, (3, 32, 32), dtype=torch.uint8)
+    tf = cls(**kwargs)
+    out = tf(int_img)
+    assert torch.equal(out, int_img), f"{name} modified non-float input"
+
+
+@pytest.mark.parametrize("name,cls,kwargs", ROBOTICS_TRANSFORMS, ids=[t[0] for t in ROBOTICS_TRANSFORMS])
+def test_robotics_transform_via_config(name, cls, kwargs):
+    cfg = ImageTransformConfig(type=name, kwargs=kwargs)
+    tf = make_transform_from_config(cfg)
+    assert isinstance(tf, cls), f"Config produced {type(tf)}, expected {cls}"
+
+
+def test_make_transform_error_message_includes_custom():
+    """Error message should list all registered custom transforms."""
+    with pytest.raises(ValueError, match="GaussianNoise"):
+        make_transform_from_config(ImageTransformConfig(type="NonExistent"))
