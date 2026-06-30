@@ -46,6 +46,7 @@ from lerobot.policies.groot.processor_groot import (
     N1_7_NATIVE_ACTION_HORIZON,
     _make_relative_action_training_stats,
     _transform_n1_7_image_for_vlm_albumentations,
+    _transform_n1_7_image_for_vlm_torch,
     make_groot_pre_post_processors,
 )
 from lerobot.processor import (
@@ -245,6 +246,7 @@ def _write_raw_n1_7_libero_checkpoint(path):
                     "shortest_image_edge": 256,
                     "crop_fraction": 0.95,
                     "use_albumentations": True,
+                    "letter_box_transform": False,
                     "max_action_horizon": 40,
                     "max_state_dim": 132,
                     "max_action_dim": 132,
@@ -609,6 +611,7 @@ def test_raw_n1_7_libero_checkpoint_processors_use_checkpoint_assets(tmp_path):
     assert vlm_encode.shortest_image_edge == 256
     assert vlm_encode.crop_fraction == 0.95
     assert vlm_encode.use_albumentations is True
+    assert vlm_encode.letter_box_transform is False
     assert decode_actions.raw_stats["action"]["gripper"]["q99"] == [115.0]
     assert decode_actions.env_action_dim == 7
     assert decode_actions.use_percentiles is True
@@ -682,6 +685,7 @@ def test_groot_n1_7_saved_processors_round_trip_checkpoint_specific_fields(tmp_p
         config_filename="policy_postprocessor.json",
     )
     pack_inputs = next(step for step in loaded_preprocessor.steps if isinstance(step, GrootN17PackInputsStep))
+    vlm_encode = next(step for step in loaded_preprocessor.steps if isinstance(step, GrootN17VLMEncodeStep))
     decode_actions = next(
         step for step in loaded_postprocessor.steps if isinstance(step, GrootN17ActionDecodeStep)
     )
@@ -690,6 +694,7 @@ def test_groot_n1_7_saved_processors_round_trip_checkpoint_specific_fields(tmp_p
     assert pack_inputs.action_horizon == 40
     assert pack_inputs.video_modality_keys == ["image", "wrist_image"]
     assert pack_inputs.clip_outliers is True
+    assert vlm_encode.letter_box_transform is False
     torch.testing.assert_close(
         pack_inputs.stats[OBS_STATE]["min"],
         torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]),
@@ -1858,6 +1863,58 @@ def test_groot_n1_7_vlm_image_transform_matches_albumentations_eval_path():
     np.testing.assert_array_equal(np.asarray(transformed), expected)
 
 
+def test_groot_n1_7_albumentations_letterbox_is_opt_in():
+    pytest.importorskip("cv2", exc_type=ImportError)
+
+    image = np.full((3, 5, 3), 255, dtype=np.uint8)
+
+    default = _transform_n1_7_image_for_vlm_albumentations(
+        image,
+        image_crop_size=None,
+        image_target_size=[10, 10],
+        shortest_image_edge=10,
+        crop_fraction=None,
+    )
+    letterboxed = _transform_n1_7_image_for_vlm_albumentations(
+        image,
+        image_crop_size=None,
+        image_target_size=[10, 10],
+        shortest_image_edge=10,
+        crop_fraction=None,
+        letter_box_transform=True,
+    )
+
+    assert default.shape == (10, 17, 3)
+    assert default.min() == 255
+    assert letterboxed.shape == (10, 10, 3)
+    assert letterboxed.min() < 255
+
+
+def test_groot_n1_7_torch_letterbox_is_opt_in():
+    image = torch.full((3, 3, 5), 255, dtype=torch.uint8)
+
+    default = _transform_n1_7_image_for_vlm_torch(
+        image,
+        image_crop_size=None,
+        image_target_size=[10, 10],
+        shortest_image_edge=10,
+        crop_fraction=None,
+    )
+    letterboxed = _transform_n1_7_image_for_vlm_torch(
+        image,
+        image_crop_size=None,
+        image_target_size=[10, 10],
+        shortest_image_edge=10,
+        crop_fraction=None,
+        letter_box_transform=True,
+    )
+
+    assert tuple(default.shape) == (3, 10, 10)
+    assert int(default.min()) == 255
+    assert tuple(letterboxed.shape) == (3, 10, 10)
+    assert int(letterboxed.min()) < 255
+
+
 def test_groot_n1_7_vlm_encode_transforms_non_square_two_camera_sample_like_core_albumentations():
     cv2 = pytest.importorskip("cv2", exc_type=ImportError)
 
@@ -1928,6 +1985,7 @@ def test_groot_n1_7_vlm_encode_config_round_trips_model_name():
         shortest_image_edge=256,
         crop_fraction=0.95,
         use_albumentations=True,
+        letter_box_transform=True,
     )
 
     restored = GrootN17VLMEncodeStep(**step.get_config())
@@ -1938,6 +1996,7 @@ def test_groot_n1_7_vlm_encode_config_round_trips_model_name():
     assert restored.shortest_image_edge == 256
     assert restored.crop_fraction == 0.95
     assert restored.use_albumentations is True
+    assert restored.letter_box_transform is True
 
 
 def test_groot_n1_7_processor_uses_qwen_component_assets(monkeypatch):
