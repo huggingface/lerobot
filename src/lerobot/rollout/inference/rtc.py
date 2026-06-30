@@ -26,6 +26,7 @@ import logging
 import math
 import time
 import traceback
+from contextlib import nullcontext
 from threading import Event, Lock, Thread
 from typing import Any
 
@@ -35,7 +36,12 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc import ActionQueue, LatencyTracker, reanchor_relative_rtc_prefix
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.utils import prepare_observation_for_inference
-from lerobot.predictors import PredictorConfig, shift_cube_in_frame
+from lerobot.predictors import (
+    PredictorConfig,
+    make_flow_token_warp_fn,
+    make_token_warp_fn,
+    shift_cube_in_frame,
+)
 from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
@@ -128,13 +134,33 @@ class RTCInferenceEngine(InferenceEngine):
         # Disabled by default -> behaviour is unchanged.
         self._predictor_config = predictor_config
         self._predictor = None
+        self._flow_estimator = None
         self._predictor_camera: str | None = None
+        self._predictor_mode: str = "image_shift"
+        self._latent_mask_threshold: float = 0.0
+        self._flow_motion_threshold: float = 0.0
         if predictor_config is not None and predictor_config.enabled:
-            self._predictor = predictor_config.make()
             self._predictor_camera = predictor_config.camera
+            self._predictor_mode = predictor_config.mode
+            self._latent_mask_threshold = predictor_config.latent_mask_threshold
+            self._flow_motion_threshold = predictor_config.flow_motion_threshold
+            if self._predictor_mode == "latent_flow":
+                self._flow_estimator = predictor_config.make_flow()
+            else:
+                self._predictor = predictor_config.make()
+            if self._predictor_mode in ("latent_warp", "latent_flow") and not hasattr(
+                policy, "set_latent_warp"
+            ):
+                logger.warning(
+                    "RTC predictor mode %r requested but policy %s has no set_latent_warp "
+                    "hook; falling back to no time-advance.",
+                    self._predictor_mode,
+                    type(policy).__name__,
+                )
             logger.info(
-                "RTC overhead predictor enabled: camera=%s (time-advanced observation)",
+                "RTC overhead predictor enabled: camera=%s mode=%s (time-advanced observation)",
                 predictor_config.camera,
+                self._predictor_mode,
             )
 
         self._action_queue: ActionQueue | None = None
@@ -242,10 +268,13 @@ class RTCInferenceEngine(InferenceEngine):
         self._postprocessor.reset()
         if self._action_queue is not None:
             self._action_queue.clear()
-        # Rebuild the predictor so per-episode state (previous frame, cube track)
-        # is cleared.
+        # Rebuild the predictor / flow estimator so per-episode state (previous
+        # frame, cube track) is cleared.
         if self._predictor_config is not None and self._predictor_config.enabled:
-            self._predictor = self._predictor_config.make()
+            if self._predictor_mode == "latent_flow":
+                self._flow_estimator = self._predictor_config.make_flow()
+            else:
+                self._predictor = self._predictor_config.make()
 
     # ------------------------------------------------------------------
     # Action production (called from main thread)
@@ -267,22 +296,21 @@ class RTCInferenceEngine(InferenceEngine):
     # ------------------------------------------------------------------
 
     def _time_advanced_obs(self, obs: dict, delay: int, time_per_chunk: float) -> dict:
-        """Advance the cube forward by the inference latency and return an obs view.
+        """Advance the cube in the RGB frame by the inference latency (``image_shift``).
 
         Runs the cube predictor on the configured camera, extrapolates the cube to
         where it will be after ``delay`` control steps (``lead_s = delay *
-        time_per_chunk``), and shifts the cube there in the frame. The returned
-        dict is a shallow copy with only the predictor camera replaced, so the
-        shared observation holder is never mutated. Falls back to the original
-        ``obs`` when the predictor is disabled, the frame is missing, the cube is
-        not visible/tracked yet, or ``delay`` is zero.
+        time_per_chunk``) and shifts it there, returning a shallow copy with only the
+        predictor camera replaced (the shared observation holder is never mutated).
+        The latent modes advance in feature space instead (:meth:`_latent_warp_context`),
+        so this is a no-op for them. Falls back to the original ``obs`` when disabled,
+        the frame is missing, the cube is not tracked yet, or ``delay`` is zero.
         """
-        if self._predictor is None or delay <= 0:
+        if self._predictor is None or self._predictor_mode != "image_shift" or delay <= 0:
             return obs
         frame = obs.get(self._predictor_camera)
         if frame is None:
             return obs
-
         try:
             output = self._predictor(frame)
             if output.center_px is None or output.velocity_px_s is None:
@@ -293,10 +321,101 @@ class RTCInferenceEngine(InferenceEngine):
         except Exception as e:  # noqa: BLE001 - predictor must never crash the RTC loop
             logger.debug("RTC predictor skipped frame: %s", e)
             return obs
-
         advanced = dict(obs)
         advanced[self._predictor_camera] = shifted
         return advanced
+
+    def _latent_warp_context(self, obs: dict, delay: int, time_per_chunk: float, preprocessed: dict):
+        """Context manager that advances the cube in feature space for one inference.
+
+        For ``latent_warp`` / ``latent_flow``, builds a per-image patch-token warp from
+        the predictor-camera frame and installs it via ``policy.set_latent_warp`` for
+        the duration of one ``predict_action_chunk``. Returns a no-op context for other
+        modes, when the policy lacks the hook, or when the warp can't be built (it must
+        never crash the RTC loop).
+        """
+        if self._predictor_mode not in ("latent_warp", "latent_flow") or delay <= 0:
+            return nullcontext()
+        if not hasattr(self._policy, "set_latent_warp"):
+            return nullcontext()
+        frame = obs.get(self._predictor_camera)
+        if frame is None:
+            return nullcontext()
+        try:
+            warp_fns = self._build_latent_warp_fns(frame, delay * time_per_chunk, preprocessed)
+        except Exception as e:  # noqa: BLE001 - latent warp must never crash the RTC loop
+            logger.debug("RTC latent warp skipped frame: %s", e)
+            return nullcontext()
+        if warp_fns is None:
+            return nullcontext()
+        return self._policy.set_latent_warp(warp_fns)
+
+    def _build_latent_warp_fns(self, frame, lead_s: float, preprocessed: dict):
+        """Build the per-image patch-token warp list for ``policy.set_latent_warp``.
+
+        Only the predictor camera gets a warp function (others ``None``), indexed in the
+        order the policy embeds present image features (matching SmolVLA's
+        ``embed_prefix``). ``latent_warp`` rigidly shifts the colour-masked cube by the
+        analytic offset; ``latent_flow`` advances each patch by its own dense-flow
+        velocity. The mask / offset / flow field are projected into the policy's
+        encoder-input space (the resize/pad used by ``prepare_images``) so the patch
+        grid lines up with what the encoder sees. Returns ``None`` when the cube/flow is
+        unavailable or the predictor camera is absent from the present features.
+        """
+        image_features = getattr(self._policy.config, "image_features", {}) or {}
+        present = [key for key in image_features if key in preprocessed]
+        cam = self._predictor_camera
+        idx = next(
+            (i for i, key in enumerate(present) if key == cam or key.split(".")[-1] == cam),
+            None,
+        )
+        if idx is None:
+            return None
+
+        resize = getattr(self._policy.config, "resize_imgs_with_padding", None)
+        target = (int(resize[0]), int(resize[1])) if resize is not None else None
+        if target is not None:
+            # Match prepare_images: resize_with_pad(img, width, height) -> (.., height, width).
+            from lerobot.policies.smolvla.modeling_smolvla import resize_with_pad
+
+        if self._predictor_mode == "latent_warp":
+            output = self._predictor(frame)
+            if output.center_px is None or output.velocity_px_s is None:
+                return None
+            mask = self._predictor.red_mask(frame)  # (H, W) bool
+            h0, w0 = mask.shape
+            offset = (output.velocity_px_s[0] * lead_s, output.velocity_px_s[1] * lead_s)
+            pixel_mask, image_hw = torch.as_tensor(mask, dtype=torch.bool), (h0, w0)
+            if target is not None:
+                target_w, target_h = target
+                m = torch.as_tensor(mask, dtype=torch.float32)[None, None]
+                pixel_mask = resize_with_pad(m, target_w, target_h, pad_value=0.0)[0, 0] > 0.5
+                scale = min(target_w / w0, target_h / h0)  # aspect-preserving resize
+                offset = (offset[0] * scale, offset[1] * scale)
+                image_hw = (target_h, target_w)
+            warp_fn = make_token_warp_fn(
+                pixel_mask, offset, image_hw, mask_threshold=self._latent_mask_threshold
+            )
+        else:  # latent_flow
+            out = self._flow_estimator(frame)
+            if out is None:  # first frame of the episode -> no flow yet
+                return None
+            flow = torch.as_tensor(out.flow, dtype=torch.float32) * (lead_s / out.dt if out.dt > 0 else 0.0)
+            h0, w0 = int(flow.shape[0]), int(flow.shape[1])
+            image_hw = (h0, w0)
+            if target is not None:
+                target_w, target_h = target
+                f = resize_with_pad(flow.permute(2, 0, 1)[None], target_w, target_h, pad_value=0.0)[0]
+                scale = min(target_w / w0, target_h / h0)  # aspect-preserving resize
+                flow = (f * scale).permute(1, 2, 0)
+                image_hw = (target_h, target_w)
+            warp_fn = make_flow_token_warp_fn(
+                flow, image_hw, motion_threshold=self._flow_motion_threshold
+            )
+
+        fns: list = [None] * len(present)
+        fns[idx] = warp_fn
+        return fns
 
     # ------------------------------------------------------------------
     # RTC: background inference thread
@@ -365,9 +484,10 @@ class RTCInferenceEngine(InferenceEngine):
                                 prev_actions, target_steps=self._rtc_config.execution_horizon
                             )
 
-                        actions = self._policy.predict_action_chunk(
-                            preprocessed, inference_delay=delay, prev_chunk_left_over=prev_actions
-                        )
+                        with self._latent_warp_context(obs, delay, time_per_chunk, preprocessed):
+                            actions = self._policy.predict_action_chunk(
+                                preprocessed, inference_delay=delay, prev_chunk_left_over=prev_actions
+                            )
 
                         original = actions.squeeze(0).clone()
                         processed = self._postprocessor(actions).squeeze(0)

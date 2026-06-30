@@ -54,6 +54,7 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 
 import math
 from collections import deque
+from contextlib import contextmanager
 from typing import TypedDict, Unpack
 
 import torch
@@ -308,6 +309,23 @@ class SmolVLAPolicy(PreTrainedPolicy):
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
 
         return batch
+
+    @contextmanager
+    def set_latent_warp(self, warp_fns: list | None):
+        """Temporarily install per-image latent time-advance warp functions.
+
+        ``warp_fns`` is indexed in the order images are embedded in
+        ``embed_prefix`` (present image features); entries may be ``None``. Used by
+        the RTC engine's ``latent_warp`` predictor mode to advance the cube on the
+        vision patch-token grid for the duration of one inference call. Restores
+        the previous state on exit so nothing leaks across calls.
+        """
+        previous = self.model._latent_warp_fns
+        self.model._latent_warp_fns = warp_fns
+        try:
+            yield
+        finally:
+            self.model._latent_warp_fns = previous
 
     @torch.no_grad()
     def predict_action_chunk(
@@ -605,6 +623,11 @@ class VLAFlowMatching(nn.Module):
         self.prefix_length = self.config.prefix_length
         self.rtc_processor = rtc_processor
 
+        # Optional per-image latent time-advance warp functions, indexed in the
+        # order images are embedded in ``embed_prefix`` (present image features).
+        # ``None`` -> no warp (default). Set by ``SmolVLAPolicy.set_latent_warp``.
+        self._latent_warp_fns: list | None = None
+
         # Compile model if requested
         if config.compile_model:
             torch.set_float32_matmul_precision("high")
@@ -662,8 +685,10 @@ class VLAFlowMatching(nn.Module):
                 embs.append(image_start_token)
                 pad_masks.append(image_start_mask)
 
-            img_emb = self.vlm_with_expert.embed_image(img)
-            img_emb = img_emb
+            warp_fn = None
+            if self._latent_warp_fns is not None and _img_idx < len(self._latent_warp_fns):
+                warp_fn = self._latent_warp_fns[_img_idx]
+            img_emb = self.vlm_with_expert.embed_image(img, warp_fn=warp_fn)
 
             # Normalize image embeddings
             img_emb_dim = img_emb.shape[-1]

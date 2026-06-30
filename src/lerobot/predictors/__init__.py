@@ -21,14 +21,30 @@ is the training-free image-edit baseline used to synthesise that frame.
 """
 
 from .base import PredictorOutput
-from .config import CubePredictorConfig, PredictorConfig
+from .config import CubePredictorConfig, PredictorConfig, PredictorMode
 from .cube_predictor import CubePredictor
+from .latent_warp import (
+    make_flow_token_warp_fn,
+    make_token_warp_fn,
+    mask_to_token_grid,
+    warp_token_grid,
+    warp_token_grid_by_flow,
+)
+from .optical_flow import DenseFlowEstimator, FlowOutput
 from .shift import shift_cube_in_frame
 
 __all__ = [
     "CubePredictor",
     "CubePredictorConfig",
+    "DenseFlowEstimator",
+    "FlowOutput",
     "PredictorConfig",
+    "PredictorMode",
     "PredictorOutput",
+    "make_flow_token_warp_fn",
+    "make_token_warp_fn",
+    "mask_to_token_grid",
     "shift_cube_in_frame",
+    "warp_token_grid",
+    "warp_token_grid_by_flow",
 ]

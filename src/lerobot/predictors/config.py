@@ -14,18 +14,33 @@
 
 """Overhead cube-predictor configuration.
 
-``PredictorConfig`` bundles the wiring (enable flag, camera key) and the cube
-detector parameters. It is embedded by the RTC inference engine; when enabled,
-the predictor advances the cube on the configured camera by the inference
-latency and the engine feeds the time-advanced frame to the policy. Disabled by
-default so existing behavior is unchanged.
+``PredictorConfig`` bundles the wiring (enable flag, camera key, time-advance
+``mode``) and the cube detector parameters. It is embedded by the RTC inference
+engine; when enabled, the predictor advances the cube on the configured camera by
+the inference latency and the engine feeds the time-advanced observation to the
+policy. Disabled by default so existing behavior is unchanged.
+
+Time-advance ``mode`` selects how (and where) the cube is advanced:
+
+- ``"image_shift"`` (default): analytic colour-tracked velocity; edit RGB pixels
+  with :func:`shift.shift_cube_in_frame`; the policy re-encodes the edited frame.
+- ``"latent_warp"``: analytic colour-tracked velocity; rigidly translate the cube
+  on the policy's vision patch-token grid (:mod:`latent_warp`). No pixel edit / re-encode.
+- ``"latent_flow"``: *dense optical flow* (:mod:`optical_flow`) -> per-patch velocity;
+  advance each patch token along its own flow (:func:`latent_warp.warp_token_grid_by_flow`).
+  No colour heuristic, no rigid-motion assumption.
+
+The two latent modes require a policy that exposes a latent-warp hook (currently SmolVLA).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 from .cube_predictor import CubePredictor
+
+PredictorMode = Literal["image_shift", "latent_warp", "latent_flow"]
 
 
 @dataclass
@@ -61,18 +76,43 @@ class PredictorConfig:
     """Overhead cube-position predictor for time-advanced observations.
 
     When ``enabled``, the RTC engine runs the cube predictor on ``camera`` and
-    shifts the cube forward by the inference latency before feeding the frame to
-    the policy. Disabled by default -> behaviour is unchanged.
+    advances the cube forward by the inference latency before feeding it to the
+    policy. ``mode`` selects how the time-advance is realised (pixel edit vs.
+    latent patch-token warp). Disabled by default -> behaviour is unchanged.
     """
 
     enabled: bool = False
     camera: str = "overall"
+    mode: PredictorMode = "image_shift"
+    # latent_warp only: a patch is treated as cube when its fractional cube
+    # coverage exceeds this threshold (0.0 -> any overlap counts).
+    latent_mask_threshold: float = 0.0
+    # latent_flow only: dense optical-flow backend and the patch-unit flow
+    # magnitude below which a patch is held static (0.0 -> warp every patch).
+    flow_algorithm: str = "dis"
+    flow_motion_threshold: float = 0.0
     cube: CubePredictorConfig = field(default_factory=CubePredictorConfig)
 
     def __post_init__(self):
         if self.enabled and not self.camera:
             raise ValueError("camera must be set when the predictor is enabled")
+        if self.mode not in ("image_shift", "latent_warp", "latent_flow"):
+            raise ValueError(
+                f"mode must be 'image_shift', 'latent_warp', or 'latent_flow', got {self.mode!r}"
+            )
+        if not 0 <= self.latent_mask_threshold < 1:
+            raise ValueError(f"latent_mask_threshold must be in [0, 1), got {self.latent_mask_threshold}")
+        if self.flow_algorithm not in ("dis", "farneback"):
+            raise ValueError(f"flow_algorithm must be 'dis' or 'farneback', got {self.flow_algorithm!r}")
+        if self.flow_motion_threshold < 0:
+            raise ValueError(f"flow_motion_threshold must be >= 0, got {self.flow_motion_threshold}")
 
     def make(self) -> CubePredictor:
         """Instantiate the cube predictor callable described by this config."""
         return self.cube.make()
+
+    def make_flow(self):
+        """Instantiate the dense optical-flow estimator for ``latent_flow`` mode."""
+        from .optical_flow import DenseFlowEstimator
+
+        return DenseFlowEstimator(algorithm=self.flow_algorithm)
