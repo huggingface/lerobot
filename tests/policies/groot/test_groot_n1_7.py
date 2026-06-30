@@ -30,10 +30,12 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.policies.factory import make_policy_config, make_pre_post_processors
 from lerobot.policies.groot.configuration_groot import (
     GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
+    GROOT_N1_7,
     GROOT_N1_7_BASE_MODEL,
     GrootConfig,
     infer_groot_n1_7_action_execution_horizon,
     infer_groot_n1_7_action_horizon,
+    normalize_groot_model_version,
 )
 from lerobot.policies.groot.modeling_groot import GrootPolicy
 from lerobot.policies.groot.processor_groot import (
@@ -348,6 +350,18 @@ def test_groot_defaults_use_n1_7():
     assert config.chunk_size == 40
     assert config.n_action_steps == 40
     assert len(config.action_delta_indices) == 40
+
+
+@pytest.mark.parametrize("legacy_version", ["n1.5", "n1_5", "n15", "1.5"])
+def test_groot_normalize_model_version_rejects_n1_5_aliases(legacy_version):
+    # model_version is no longer a GrootConfig field, but normalize_groot_model_version is still
+    # live (e.g. via infer_groot_model_version) and must keep rejecting N1.5 with removal guidance.
+    with pytest.raises(ValueError, match="Unsupported GR00T model_version"):
+        normalize_groot_model_version(legacy_version)
+
+
+def test_groot_normalize_model_version_accepts_n1_7():
+    assert normalize_groot_model_version(GROOT_N1_7) == GROOT_N1_7
 
 
 def test_groot_n1_7_accepts_named_action_decode_transform():
@@ -995,6 +1009,42 @@ def test_groot_n1_7_pack_inputs_normalizes_action_chunk_per_dimension_before_pad
     assert action_mask[0, :3, :3].sum().item() == 9
     assert action_mask[0, 3:].sum().item() == 0
     assert action_mask[0, :, 3:].sum().item() == 0
+
+
+def test_groot_n1_7_pack_inputs_raises_when_relative_groups_cannot_normalize():
+    # Relative groups carry per-chunk-timestep stats; if the action horizon exceeds the available
+    # stat rows, grouped normalization cannot apply and the flat fallback would silently mis-scale.
+    step = GrootN17PackInputsStep(
+        action_horizon=3,
+        valid_action_horizon=3,
+        max_state_dim=2,
+        max_action_dim=2,
+        normalize_min_max=True,
+        raw_stats={
+            "state": {"single_arm": {"min": [0.0, 0.0], "max": [1.0, 1.0]}},
+            "action": {"single_arm": {"min": [0.0, 0.0], "max": [1.0, 1.0]}},
+            # only one horizon row, but the action chunk has horizon 3
+            "relative_action": {"single_arm": {"min": [[-1.0, -1.0]], "max": [[1.0, 1.0]]}},
+        },
+        modality_config={
+            "state": {"modality_keys": ["single_arm"]},
+            "action": {
+                "modality_keys": ["single_arm"],
+                "action_configs": [
+                    {"rep": "RELATIVE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None}
+                ],
+                "delta_indices": [0, 1, 2],
+            },
+        },
+    )
+    transition = {
+        TransitionKey.OBSERVATION: {OBS_STATE: torch.zeros(1, 2)},
+        TransitionKey.ACTION: torch.zeros(1, 3, 2),
+        TransitionKey.COMPLEMENTARY_DATA: {"task": ["Move"]},
+    }
+
+    with pytest.raises(ValueError, match="could not apply native grouped normalization"):
+        step(transition)
 
 
 def test_groot_n1_7_pack_inputs_trains_native_relative_groups_with_absolute_gripper():

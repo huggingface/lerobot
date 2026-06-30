@@ -996,6 +996,7 @@ def _build_n1_7_relative_action_processor_assets(
         }
         for group in groups
     ]
+    # 40 matches the action horizon of the only N1.7 base model (nvidia/GR00T-N1.7-3B)
     action_horizon = min(config.chunk_size, 40)
     modality_config: dict[str, Any] = {
         "state": {"modality_keys": [group.key for group in groups]},
@@ -1194,6 +1195,13 @@ def make_groot_pre_post_processors(
     )
     relative_step: RelativeActionsProcessorStep | None = None
     if config.use_relative_actions and not uses_native_relative_actions:
+        logging.warning(
+            "GR00T relative actions are using the generic RelativeActionsProcessorStep fallback because "
+            "the checkpoint already carries non-relative statistics. Relative deltas will be normalized "
+            "with absolute action stats rather than Isaac-GR00T's per-horizon relative stats. For "
+            "OSS-faithful relative normalization, build from a checkpoint without baked-in stats (or "
+            "pass dataset_meta) so native relative stats are computed."
+        )
         relative_step = RelativeActionsProcessorStep(
             enabled=True,
             exclude_joints=list(config.relative_exclude_joints or []),
@@ -1658,6 +1666,25 @@ class GrootN17PackInputsStep(ProcessorStep):
             return None
         return torch.cat(normalized_groups, dim=-1)
 
+    def _uses_relative_action_groups(self) -> bool:
+        """True when the action modality declares at least one relative group.
+
+        Relative groups normalize with per-chunk-timestep (2D) ``relative_action`` stats, which the
+        flat ``_min_max_norm`` fallback cannot honor, so a relative config that fails grouped
+        normalization must fail loudly rather than silently mis-scale every timestep.
+        """
+        if not isinstance(self.modality_config, dict):
+            return False
+        action_config = self.modality_config.get("action", {})
+        if not isinstance(action_config, dict):
+            return False
+        action_configs = action_config.get("action_configs", [])
+        if not isinstance(action_configs, list):
+            return False
+        return any(
+            isinstance(cfg, dict) and config_value(cfg.get("rep")) == "relative" for cfg in action_configs
+        )
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         obs = transition.get(TransitionKey.OBSERVATION, {}) or {}
         comp = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}) or {}
@@ -1775,6 +1802,15 @@ class GrootN17PackInputsStep(ProcessorStep):
                 normalized_action = self._normalize_action_groups_for_training(action)
                 if normalized_action is not None:
                     action = normalized_action
+                elif self._uses_relative_action_groups():
+                    raise ValueError(
+                        "GrootN17PackInputsStep could not apply native grouped normalization to a "
+                        "relative-action chunk: the action layout or horizon does not match the "
+                        f"checkpoint relative_action stats (action shape {tuple(action.shape)}). The flat "
+                        "min/max fallback cannot honor per-chunk-timestep relative stats, so refusing to "
+                        "silently mis-normalize. Recompute the relative action stats so their horizon and "
+                        "dimensions match the action chunk."
+                    )
                 else:
                     flat = _min_max_norm(action.reshape(bsz * horizon, dim), ACTION)
                     action = flat.view(bsz, horizon, dim)
