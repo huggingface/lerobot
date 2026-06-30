@@ -364,7 +364,7 @@ class LeRobotDatasetMetadata:
 
         Depth stats are stored in the unit the frames were recorded in
         (``features[key]["info"]["depth_unit"]``), while frames are returned in
-        ``output_unit`` on read. This converts the unit-bearing stat entries so 
+        ``output_unit`` on read. This converts the unit-bearing stat entries so
         stats match the frames consumers see.
         """
         if self.stats is None:
@@ -375,8 +375,7 @@ class LeRobotDatasetMetadata:
                 continue
             factor = MM_PER_METRE if stored_unit == DEPTH_METER_UNIT else 1.0 / MM_PER_METRE
             self.stats[key] = {
-                stat: value if stat == "count" else value * factor
-                for stat, value in self.stats[key].items()
+                stat: value if stat == "count" else value * factor for stat, value in self.stats[key].items()
             }
 
     @property
