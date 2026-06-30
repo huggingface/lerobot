@@ -49,16 +49,18 @@ from tests.fixtures.constants import (
 )
 
 
-def add_frames(dataset: LeRobotDataset, num_frames: int) -> None:
+def add_frames(dataset: LeRobotDataset, num_frames: int, depth_dtype: np.dtype = np.uint16) -> None:
     """Append ``num_frames`` synthetic frames to ``dataset``.
 
-    Generates per-feature payloads from ``dataset.meta``: uint16 depth ramps for
-    keys in ``dataset.meta.depth_keys``, uint8 random noise for video/image keys,
-    and float32 zeros for everything else. ``DEFAULT_FEATURES`` (timestamp,
-    frame_index, ...) are auto-populated by ``add_frame`` and skipped here.
+    Generates per-feature payloads from ``dataset.meta``: depth ramps (``depth_dtype``,
+    default ``uint16`` millimetres; pass ``np.float32`` for metres) for keys in
+    ``dataset.meta.depth_keys``, uint8 random noise for video/image keys, and float32
+    zeros for everything else. ``DEFAULT_FEATURES`` (timestamp, frame_index, ...) are
+    auto-populated by ``add_frame`` and skipped here.
     """
     video_keys = dataset.meta.video_keys
     depth_keys = dataset.meta.depth_keys
+    depth_is_float = np.issubdtype(depth_dtype, np.floating)
     # Smooth gradient base reused per (H, W) to keep depth frames cheap to
     # encode (HEVC Main 12 hates white noise).
     _depth_base_cache: dict[tuple[int, int], np.ndarray] = {}
@@ -70,11 +72,14 @@ def add_frames(dataset: LeRobotDataset, num_frames: int) -> None:
             shape = ft["shape"]
             if key in depth_keys:
                 h, w, _ = shape
+                # Float depth is expressed in metres, integer depth in millimetres.
+                lo, hi = (0.1, 10.0) if depth_is_float else (100.0, 10_000.0)
                 base = _depth_base_cache.setdefault(
                     (h, w),
-                    np.linspace(100.0, 10_000.0, h * w, dtype=np.float32).reshape(h, w, 1),
+                    np.linspace(lo, hi, h * w, dtype=np.float32).reshape(h, w, 1),
                 )
-                frame[key] = (base + 50.0 * i).clip(0, 65535).astype(np.uint16)
+                step = (0.05 if depth_is_float else 50.0) * i
+                frame[key] = (base + step).clip(0, 65535).astype(depth_dtype)
             elif key in video_keys:
                 frame[key] = np.random.randint(0, 256, shape, dtype=np.uint8)
             else:
