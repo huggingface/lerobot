@@ -2957,11 +2957,17 @@ gamepad = [
     { name = "pygame" },
 ]
 groot = [
+    { name = "av" },
+    { name = "datasets" },
     { name = "decord", marker = "platform_machine == 'AMD64' or platform_machine == 'x86_64'" },
     { name = "diffusers" },
     { name = "dm-tree" },
+    { name = "jsonlines" },
+    { name = "pandas" },
     { name = "peft" },
+    { name = "pyarrow" },
     { name = "timm" },
+    { name = "torchcodec", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
     { name = "transformers" },
 ]
 grpcio-dep = [
@@ -3240,6 +3246,7 @@ requires-dist = [
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'annotations'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'core-scripts'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'dataset-viz'" },
+    { name = "lerobot", extras = ["dataset"], marker = "extra == 'groot'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'hilserl'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'libero'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'metaworld'" },

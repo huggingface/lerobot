@@ -2256,7 +2256,7 @@ def test_groot_n1_7_relative_action_processors_compute_stats_from_runtime_datase
         assert kwargs["delta_timestamps"][ACTION] == [0.0, 1 / runtime_meta.fps]
         return _RelativeStatsDataset()
 
-    monkeypatch.setattr("lerobot.datasets.lerobot_dataset.LeRobotDataset", _fake_lerobot_dataset)
+    monkeypatch.setattr("lerobot.policies.groot.processor_groot.LeRobotDataset", _fake_lerobot_dataset)
     config._runtime_dataset_meta = runtime_meta
 
     preprocessor, postprocessor = make_groot_pre_post_processors(config, dataset_stats=absolute_dataset_stats)
