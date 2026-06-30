@@ -26,13 +26,13 @@ from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import require_package
 
 from .configuration_fastwam import FastWAMConfig
-from .modular_fastwam import ActionDiT, FastWAM, MoT
-from .wan_components import (
+from .wan.components import (
     build_wan_tokenizer,
     load_pretrained_wan_text_encoder,
     load_pretrained_wan_vae,
 )
-from .wan_video_dit import WanVideoDiT
+from .wan.modular import ActionDiT, FastWAM, MoT
+from .wan.video_dit import WanVideoDiT
 
 
 class FastWAMPolicy(PreTrainedPolicy):

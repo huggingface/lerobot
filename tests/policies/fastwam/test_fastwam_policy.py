@@ -257,7 +257,7 @@ def test_from_pretrained_uses_base_loader_and_skips_wan_backbone(monkeypatch, tm
         raise AssertionError("from_pretrained must not initialize or download the Wan2.2 backbone")
 
     monkeypatch.setattr(
-        "lerobot.policies.fastwam.modular_fastwam.FastWAM.from_wan22_pretrained",
+        "lerobot.policies.fastwam.wan.modular.FastWAM.from_wan22_pretrained",
         fail_if_wan_pretrained_is_loaded,
     )
 
@@ -348,7 +348,7 @@ def test_vae_adapter_empty_build_encode_decode_shapes():
     pytest.importorskip("diffusers")
     from diffusers import AutoencoderKLWan
 
-    from lerobot.policies.fastwam.wan_adapters import WanVideoVAE38
+    from lerobot.policies.fastwam.wan.adapters import WanVideoVAE38
 
     # Production always loads a real pretrained VAE from the diffusers repo; here we
     # build the same architecture with random weights and dummy standardization stats

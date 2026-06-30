@@ -36,8 +36,8 @@ if TYPE_CHECKING or _diffusers_available:
 else:
     AutoencoderKLWan = None
 
-from .wan_adapters import WanVideoVAE38
-from .wan_video_dit import WanVideoDiT
+from .adapters import WanVideoVAE38
+from .video_dit import WanVideoDiT
 
 logger = logging.getLogger(__name__)
 

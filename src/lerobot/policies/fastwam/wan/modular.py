@@ -25,7 +25,7 @@ import torch.nn as nn
 import torch.nn.functional as functional
 from PIL import Image
 
-from .wan_components import (
+from .components import (
     WAN22_DIFFUSERS_MODEL_ID,
     WAN_T5_TOKENIZER,
     build_wan_tokenizer,
@@ -34,7 +34,7 @@ from .wan_components import (
     load_wan_video_dit,
     resolve_wan_dit_paths,
 )
-from .wan_video_dit import (
+from .video_dit import (
     FastWAMAttentionBlock,
     WanContinuousFlowMatchScheduler,
     fastwam_masked_attention,

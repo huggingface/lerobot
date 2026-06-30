@@ -15,12 +15,13 @@
 import logging
 from typing import Any
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as functional
 from einops import rearrange
 
-from .wan.modules.model import (
+from .model import (
     WanAttentionBlock,
     WanLayerNorm,
     WanModel,
@@ -29,9 +30,16 @@ from .wan.modules.model import (
     rope_params,
     sinusoidal_embedding_1d,
 )
-from .wan.utils.fm_solvers import get_sampling_sigmas
 
 logger = logging.getLogger(__name__)
+
+
+def get_sampling_sigmas(sampling_steps, shift):
+    # Vendored from Wan2.2 (formerly wan/utils/fm_solvers.py); computes the
+    # noise-level (sigma) schedule for Wan-compatible flow-matching inference.
+    sigma = np.linspace(1, 0, sampling_steps + 1)[:sampling_steps]
+    sigma = shift * sigma / (1 + (shift - 1) * sigma)
+    return sigma
 
 
 def create_custom_forward(module):
@@ -92,10 +100,6 @@ def fastwam_masked_attention(
 
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
     return x * (1 + scale) + shift
-
-
-def _get_wan_sampling_sigmas(num_inference_steps: int, shift: float) -> list[float]:
-    return get_sampling_sigmas(num_inference_steps, shift)
 
 
 class WanContinuousFlowMatchScheduler:
@@ -173,7 +177,7 @@ class WanContinuousFlowMatchScheduler:
             raise ValueError(f"`shift` must be positive, got {shift}")
 
         sigma_steps = torch.as_tensor(
-            _get_wan_sampling_sigmas(num_inference_steps, shift),
+            get_sampling_sigmas(num_inference_steps, shift),
             device=device,
             dtype=torch.float32,
         )
