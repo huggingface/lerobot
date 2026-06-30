@@ -324,9 +324,14 @@ class GrootConfig(PreTrainedConfig):
     # Set to True only after installing a flash-attn build matching your torch/CUDA env.
     use_flash_attention: bool = False
 
-    # Enable GR00T-style state-relative action chunks. Prefer deriving action representation from
-    # embodiment metadata; relative_exclude_joints is a flat-vector override for datasets without it.
+    # Enable GR00T-style state-relative action chunks (action chunk expressed relative to the current
+    # observation state).
     use_relative_actions: bool = False
+
+    # relative_exclude_joints names the action dimensions that stay absolute; the
+    # match is substring/case-insensitive against the dataset action feature names. With the empty
+    # default every dimension is treated as relative, including the gripper -- set e.g. ["gripper"] to
+    # keep the gripper absolute, matching the Isaac-GR00T single-arm + absolute-gripper convention.
     relative_exclude_joints: list[str] = field(default_factory=list)
 
     # Training parameters

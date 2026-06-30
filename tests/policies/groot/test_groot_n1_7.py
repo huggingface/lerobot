@@ -30,10 +30,12 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.policies.factory import make_policy_config, make_pre_post_processors
 from lerobot.policies.groot.configuration_groot import (
     GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
+    GROOT_N1_7,
     GROOT_N1_7_BASE_MODEL,
     GrootConfig,
     infer_groot_n1_7_action_execution_horizon,
     infer_groot_n1_7_action_horizon,
+    normalize_groot_model_version,
 )
 from lerobot.policies.groot.modeling_groot import GrootPolicy
 from lerobot.policies.groot.processor_groot import (
@@ -41,6 +43,7 @@ from lerobot.policies.groot.processor_groot import (
     GrootN17ActionDecodeStep,
     GrootN17PackInputsStep,
     GrootN17VLMEncodeStep,
+    N1_7_NATIVE_ACTION_HORIZON,
     _make_relative_action_training_stats,
     _transform_n1_7_image_for_vlm_albumentations,
     make_groot_pre_post_processors,
@@ -76,6 +79,14 @@ def _groot_config() -> GrootConfig:
         use_bf16=False,
         **kwargs,
     )
+
+
+def _native_action_chunk(rows: list[list[float]]) -> torch.Tensor:
+    chunk = torch.tensor(rows, dtype=torch.float32)
+    if chunk.shape[0] >= N1_7_NATIVE_ACTION_HORIZON:
+        return chunk[:N1_7_NATIVE_ACTION_HORIZON]
+    tail = chunk[-1:].repeat(N1_7_NATIVE_ACTION_HORIZON - chunk.shape[0], 1)
+    return torch.cat([chunk, tail], dim=0)
 
 
 def _raw_n1_7_libero_config(model_path) -> GrootConfig:
@@ -348,6 +359,18 @@ def test_groot_defaults_use_n1_7():
     assert config.chunk_size == 40
     assert config.n_action_steps == 40
     assert len(config.action_delta_indices) == 40
+
+
+@pytest.mark.parametrize("legacy_version", ["n1.5", "n1_5", "n15", "1.5"])
+def test_groot_normalize_model_version_rejects_n1_5_aliases(legacy_version):
+    # model_version is no longer a GrootConfig field, but normalize_groot_model_version is still
+    # live (e.g. via infer_groot_model_version) and must keep rejecting N1.5 with removal guidance.
+    with pytest.raises(ValueError, match="Unsupported GR00T model_version"):
+        normalize_groot_model_version(legacy_version)
+
+
+def test_groot_normalize_model_version_accepts_n1_7():
+    assert normalize_groot_model_version(GROOT_N1_7) == GROOT_N1_7
 
 
 def test_groot_n1_7_accepts_named_action_decode_transform():
@@ -995,6 +1018,42 @@ def test_groot_n1_7_pack_inputs_normalizes_action_chunk_per_dimension_before_pad
     assert action_mask[0, :3, :3].sum().item() == 9
     assert action_mask[0, 3:].sum().item() == 0
     assert action_mask[0, :, 3:].sum().item() == 0
+
+
+def test_groot_n1_7_pack_inputs_raises_when_relative_groups_cannot_normalize():
+    # Relative groups carry per-chunk-timestep stats; if the action horizon exceeds the available
+    # stat rows, grouped normalization cannot apply and the flat fallback would silently mis-scale.
+    step = GrootN17PackInputsStep(
+        action_horizon=3,
+        valid_action_horizon=3,
+        max_state_dim=2,
+        max_action_dim=2,
+        normalize_min_max=True,
+        raw_stats={
+            "state": {"single_arm": {"min": [0.0, 0.0], "max": [1.0, 1.0]}},
+            "action": {"single_arm": {"min": [0.0, 0.0], "max": [1.0, 1.0]}},
+            # only one horizon row, but the action chunk has horizon 3
+            "relative_action": {"single_arm": {"min": [[-1.0, -1.0]], "max": [[1.0, 1.0]]}},
+        },
+        modality_config={
+            "state": {"modality_keys": ["single_arm"]},
+            "action": {
+                "modality_keys": ["single_arm"],
+                "action_configs": [
+                    {"rep": "RELATIVE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None}
+                ],
+                "delta_indices": [0, 1, 2],
+            },
+        },
+    )
+    transition = {
+        TransitionKey.OBSERVATION: {OBS_STATE: torch.zeros(1, 2)},
+        TransitionKey.ACTION: torch.zeros(1, 3, 2),
+        TransitionKey.COMPLEMENTARY_DATA: {"task": ["Move"]},
+    }
+
+    with pytest.raises(ValueError, match="could not apply native grouped normalization"):
+        step(transition)
 
 
 def test_groot_n1_7_pack_inputs_trains_native_relative_groups_with_absolute_gripper():
@@ -2022,7 +2081,7 @@ def test_groot_n1_7_relative_action_training_processors_save_native_grouped_stat
     samples = [
         {
             OBS_STATE: torch.tensor([10.0, 20.0, 30.0, 40.0, 50.0, 0.0]),
-            ACTION: torch.tensor(
+            ACTION: _native_action_chunk(
                 [
                     [8.0, 17.0, 26.0, 35.0, 44.0, 0.0],
                     [12.0, 23.0, 34.0, 45.0, 56.0, 100.0],
@@ -2031,7 +2090,7 @@ def test_groot_n1_7_relative_action_training_processors_save_native_grouped_stat
         },
         {
             OBS_STATE: torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 50.0]),
-            ACTION: torch.tensor(
+            ACTION: _native_action_chunk(
                 [
                     [-1.0, -2.0, -3.0, -4.0, -5.0, 25.0],
                     [1.0, 2.0, 3.0, 4.0, 5.0, 75.0],
@@ -2058,10 +2117,12 @@ def test_groot_n1_7_relative_action_training_processors_save_native_grouped_stat
         action_names=action_names,
         preserve_action_horizon=True,
     )
-    expected_relative_action_stats = {
-        "min": torch.tensor([-2.0, -3.0, -4.0, -5.0, -6.0, 1.0, 2.0, 3.0, 4.0, 5.0, 0.0]),
-        "max": torch.tensor([-1.0, -2.0, -3.0, -4.0, -5.0, 2.0, 3.0, 4.0, 5.0, 6.0, 100.0]),
-    }
+    expected_relative_action_min_prefix = torch.tensor(
+        [-2.0, -3.0, -4.0, -5.0, -6.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+    )
+    expected_relative_action_max_prefix = torch.tensor(
+        [-1.0, -2.0, -3.0, -4.0, -5.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    )
 
     preprocessor, postprocessor = make_groot_pre_post_processors(
         config, dataset_stats=relative_dataset_stats, dataset_meta=_RelativeStatsDataset.meta
@@ -2084,17 +2145,26 @@ def test_groot_n1_7_relative_action_training_processors_save_native_grouped_stat
         {"rep": "RELATIVE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None},
         {"rep": "ABSOLUTE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None},
     ]
-    assert pack_config["raw_stats"]["relative_action"]["single_arm"]["min"] == [
+    pack_relative_min = pack_config["raw_stats"]["relative_action"]["single_arm"]["min"]
+    assert pack_relative_min[:2] == [
         [-2.0, -3.0, -4.0, -5.0, -6.0],
         [1.0, 2.0, 3.0, 4.0, 5.0],
     ]
-    assert pack_config["raw_stats"]["relative_action"]["single_arm"]["count"] == [2, 2]
+    assert len(pack_relative_min) == N1_7_NATIVE_ACTION_HORIZON
+    assert (
+        pack_config["raw_stats"]["relative_action"]["single_arm"]["count"] == [2] * N1_7_NATIVE_ACTION_HORIZON
+    )
     assert pack_config["raw_stats"]["action"]["gripper"]["min"] == [0.0]
     assert pack_config["raw_stats"]["action"]["gripper"]["max"] == [100.0]
 
     pack_state = load_file(tmp_path / pack_entry["state_file"])
-    torch.testing.assert_close(pack_state[f"{ACTION}.min"], expected_relative_action_stats["min"])
-    torch.testing.assert_close(pack_state[f"{ACTION}.max"], expected_relative_action_stats["max"])
+    expected_flat_dim = N1_7_NATIVE_ACTION_HORIZON * 5 + 1
+    assert pack_state[f"{ACTION}.min"].shape == (expected_flat_dim,)
+    assert pack_state[f"{ACTION}.max"].shape == (expected_flat_dim,)
+    torch.testing.assert_close(pack_state[f"{ACTION}.min"][:10], expected_relative_action_min_prefix)
+    torch.testing.assert_close(pack_state[f"{ACTION}.max"][:10], expected_relative_action_max_prefix)
+    assert pack_state[f"{ACTION}.min"][-1].item() == 0.0
+    assert pack_state[f"{ACTION}.max"][-1].item() == 100.0
 
     postprocessor_config = json.loads((tmp_path / "policy_postprocessor.json").read_text())
     assert not any(
@@ -2107,11 +2177,16 @@ def test_groot_n1_7_relative_action_training_processors_save_native_grouped_stat
     )
     decode_config = decode_entry["config"]
     assert decode_config["use_relative_action"] is True
-    assert decode_config["raw_stats"]["relative_action"]["single_arm"]["max"] == [
+    decode_relative_max = decode_config["raw_stats"]["relative_action"]["single_arm"]["max"]
+    assert decode_relative_max[:2] == [
         [-1.0, -2.0, -3.0, -4.0, -5.0],
         [2.0, 3.0, 4.0, 5.0, 6.0],
     ]
-    assert decode_config["raw_stats"]["relative_action"]["single_arm"]["count"] == [2, 2]
+    assert len(decode_relative_max) == N1_7_NATIVE_ACTION_HORIZON
+    assert (
+        decode_config["raw_stats"]["relative_action"]["single_arm"]["count"]
+        == [2] * N1_7_NATIVE_ACTION_HORIZON
+    )
     assert decode_config["raw_stats"]["action"]["gripper"]["max"] == [100.0]
 
 
@@ -2149,7 +2224,7 @@ def test_groot_n1_7_relative_action_processors_compute_stats_from_runtime_datase
     samples = [
         {
             OBS_STATE: torch.tensor([10.0, 20.0, 30.0, 40.0, 50.0, 0.0]),
-            ACTION: torch.tensor(
+            ACTION: _native_action_chunk(
                 [
                     [8.0, 17.0, 26.0, 35.0, 44.0, 0.0],
                     [12.0, 23.0, 34.0, 45.0, 56.0, 100.0],
@@ -2158,7 +2233,7 @@ def test_groot_n1_7_relative_action_processors_compute_stats_from_runtime_datase
         },
         {
             OBS_STATE: torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 50.0]),
-            ACTION: torch.tensor(
+            ACTION: _native_action_chunk(
                 [
                     [-1.0, -2.0, -3.0, -4.0, -5.0, 25.0],
                     [1.0, 2.0, 3.0, 4.0, 5.0, 75.0],
@@ -2189,7 +2264,9 @@ def test_groot_n1_7_relative_action_processors_compute_stats_from_runtime_datase
         assert kwargs["root"] == runtime_meta.root
         assert kwargs["revision"] == runtime_meta.revision
         assert kwargs["download_videos"] is False
-        assert kwargs["delta_timestamps"][ACTION] == [0.0, 1 / runtime_meta.fps]
+        assert kwargs["delta_timestamps"][ACTION] == [
+            index / runtime_meta.fps for index in range(N1_7_NATIVE_ACTION_HORIZON)
+        ]
         return _RelativeStatsDataset()
 
     monkeypatch.setattr("lerobot.datasets.lerobot_dataset.LeRobotDataset", _fake_lerobot_dataset)
@@ -2200,11 +2277,15 @@ def test_groot_n1_7_relative_action_processors_compute_stats_from_runtime_datase
     assert not any(isinstance(step, RelativeActionsProcessorStep) for step in preprocessor.steps)
     assert isinstance(postprocessor.steps[0], GrootN17ActionDecodeStep)
     pack_step = next(step for step in preprocessor.steps if isinstance(step, GrootN17PackInputsStep))
-    assert pack_step.raw_stats["relative_action"]["single_arm"]["min"] == [
+    assert pack_step.action_horizon == N1_7_NATIVE_ACTION_HORIZON
+    assert pack_step.valid_action_horizon == 2
+    pack_relative_min = pack_step.raw_stats["relative_action"]["single_arm"]["min"]
+    assert pack_relative_min[:2] == [
         [-2.0, -3.0, -4.0, -5.0, -6.0],
         [1.0, 2.0, 3.0, 4.0, 5.0],
     ]
-    assert pack_step.raw_stats["relative_action"]["single_arm"]["count"] == [2, 2]
+    assert len(pack_relative_min) == N1_7_NATIVE_ACTION_HORIZON
+    assert pack_step.raw_stats["relative_action"]["single_arm"]["count"] == [2] * N1_7_NATIVE_ACTION_HORIZON
     assert pack_step.raw_stats["action"]["gripper"]["max"] == [100.0]
 
 
@@ -2249,14 +2330,14 @@ def test_groot_n1_7_generated_relative_stats_match_oss_gr00t_reference_numbers()
     }
     state_a = torch.tensor([10.0, 20.0, 30.0, 40.0, 50.0, 25.0])
     state_b = torch.tensor([0.0, -10.0, 10.0, -20.0, 20.0, 75.0])
-    action_a = torch.tensor(
+    action_a = _native_action_chunk(
         [
             [11.0, 22.0, 33.0, 44.0, 55.0, 20.0],
             [12.0, 24.0, 36.0, 48.0, 60.0, 80.0],
             [13.0, 26.0, 39.0, 52.0, 65.0, 90.0],
         ]
     )
-    action_b = torch.tensor(
+    action_b = _native_action_chunk(
         [
             [-1.0, -8.0, 13.0, -16.0, 25.0, 30.0],
             [-2.0, -6.0, 16.0, -12.0, 30.0, 40.0],
@@ -2333,12 +2414,13 @@ def test_groot_n1_7_generated_relative_stats_match_oss_gr00t_reference_numbers()
         ]
     )
 
-    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["min"][:, :5]), oss_arm_min)
-    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["max"][:, :5]), oss_arm_max)
-    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["mean"][:, :5]), oss_arm_mean)
-    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["std"][:, :5]), oss_arm_std)
-    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["q01"][:, :5]), oss_arm_q01)
-    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["q99"][:, :5]), oss_arm_q99)
+    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["min"][:3, :5]), oss_arm_min)
+    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["max"][:3, :5]), oss_arm_max)
+    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["mean"][:3, :5]), oss_arm_mean)
+    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["std"][:3, :5]), oss_arm_std)
+    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["q01"][:3, :5]), oss_arm_q01)
+    torch.testing.assert_close(torch.as_tensor(relative_dataset_stats[ACTION]["q99"][:3, :5]), oss_arm_q99)
+    assert torch.as_tensor(relative_dataset_stats[ACTION]["min"]).shape[0] == N1_7_NATIVE_ACTION_HORIZON
 
     preprocessor, postprocessor = make_groot_pre_post_processors(
         config,
@@ -2349,16 +2431,16 @@ def test_groot_n1_7_generated_relative_stats_match_oss_gr00t_reference_numbers()
     decode_step = next(step for step in postprocessor.steps if isinstance(step, GrootN17ActionDecodeStep))
 
     assert pack_step.use_percentiles is True
-    torch.testing.assert_close(
-        torch.as_tensor(pack_step.raw_stats["relative_action"]["single_arm"]["min"]),
-        oss_arm_min,
-    )
-    torch.testing.assert_close(
-        torch.as_tensor(pack_step.raw_stats["relative_action"]["single_arm"]["q99"]),
-        oss_arm_q99,
-    )
-    assert pack_step.stats[ACTION]["min"] == pytest.approx([*oss_arm_min.flatten().tolist(), 20.0])
-    assert pack_step.stats[ACTION]["max"] == pytest.approx([*oss_arm_max.flatten().tolist(), 90.0])
+    pack_relative_min = torch.as_tensor(pack_step.raw_stats["relative_action"]["single_arm"]["min"])
+    pack_relative_q99 = torch.as_tensor(pack_step.raw_stats["relative_action"]["single_arm"]["q99"])
+    assert pack_relative_min.shape == (N1_7_NATIVE_ACTION_HORIZON, 5)
+    assert pack_relative_q99.shape == (N1_7_NATIVE_ACTION_HORIZON, 5)
+    torch.testing.assert_close(pack_relative_min[:3], oss_arm_min)
+    torch.testing.assert_close(pack_relative_q99[:3], oss_arm_q99)
+    assert pack_step.stats[ACTION]["min"][:15] == pytest.approx(oss_arm_min.flatten().tolist())
+    assert pack_step.stats[ACTION]["max"][:15] == pytest.approx(oss_arm_max.flatten().tolist())
+    assert pack_step.stats[ACTION]["min"][-1] == pytest.approx(20.0)
+    assert pack_step.stats[ACTION]["max"][-1] == pytest.approx(90.0)
 
     packed = pack_step(
         {
@@ -2377,7 +2459,13 @@ def test_groot_n1_7_generated_relative_stats_match_oss_gr00t_reference_numbers()
     torch.testing.assert_close(packed[TransitionKey.ACTION][0, :3, :6], expected_normalized)
 
     decoded = decode_step({TransitionKey.ACTION: packed[TransitionKey.ACTION]})
-    torch.testing.assert_close(decoded[TransitionKey.ACTION], action_a.unsqueeze(0), atol=1e-5, rtol=1e-5)
+    assert decoded[TransitionKey.ACTION].shape == (1, N1_7_NATIVE_ACTION_HORIZON, 6)
+    torch.testing.assert_close(
+        decoded[TransitionKey.ACTION][:, :3],
+        action_a.unsqueeze(0)[:, :3],
+        atol=1e-5,
+        rtol=1e-5,
+    )
 
 
 def test_groot_n1_7_relative_action_stats_skip_padded_tail_chunks():
