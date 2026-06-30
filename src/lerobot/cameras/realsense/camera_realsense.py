@@ -250,7 +250,9 @@ class RealSenseCamera(Camera):
                 if (self.use_rgb and self.latest_color_frame is None) or (
                     self.use_depth and self.latest_depth_frame is None
                 ):
-                    raise ConnectionError(f"{self} failed to capture frames even after hardware reset.")
+                    raise ConnectionError(
+                        f"{self} failed to capture frames even after hardware reset."
+                    ) from None
 
         logger.info(f"{self} connected.")
 
@@ -333,8 +335,11 @@ class RealSenseCamera(Camera):
         if self.width and self.height and self.fps:
             if self.use_rgb:
                 rs_config.enable_stream(
-                    rs.stream.color, self.capture_width, self.capture_height,
-                    rs.format.bgr8 if self.color_format == "bgr8" else rs.format.rgb8, self.fps
+                    rs.stream.color,
+                    self.capture_width,
+                    self.capture_height,
+                    rs.format.bgr8 if self.color_format == "bgr8" else rs.format.rgb8,
+                    self.fps,
                 )
             if self.use_depth:
                 rs_config.enable_stream(

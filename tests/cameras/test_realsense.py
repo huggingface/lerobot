@@ -230,15 +230,19 @@ def test_rotation(rotation):
 
 # --- D405 color_format tests ---
 
+
 def test_color_format_default_is_rgb8():
     config = RealSenseCameraConfig(serial_number_or_name="test123")
     assert config.color_format == "rgb8"
+
 
 def test_color_format_bgr8_accepted():
     config = RealSenseCameraConfig(serial_number_or_name="test123", color_format="bgr8")
     assert config.color_format == "bgr8"
 
+
 def test_color_format_invalid_rejected():
     import pytest
+
     with pytest.raises(ValueError, match="color_format"):
         RealSenseCameraConfig(serial_number_or_name="test123", color_format="yuv422")
