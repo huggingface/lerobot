@@ -168,6 +168,12 @@ class VlmConfig:
     # Forwarded as extra_body.chat_template_kwargs (e.g. {"enable_thinking": false}).
     chat_template_kwargs: dict[str, Any] | None = None
 
+    # OpenAI-style thinking budget hint ("low"/"medium"/"high"); forwarded to
+    # the server when set. Used to cap a thinking model's reasoning so it
+    # leaves tokens for the actual JSON answer (e.g. Gemini via its
+    # OpenAI-compatible endpoint).
+    reasoning_effort: str | None = None
+
 
 @dataclass
 class ExecutorConfig:
