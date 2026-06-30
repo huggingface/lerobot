@@ -298,10 +298,10 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
             chosen = clients[rr_counter["i"] % len(clients)]
             rr_counter["i"] += 1
         response = chosen.chat.completions.create(**kwargs)
-        # Some OpenAI-compatible servers (e.g. Gemini) can return a choice
-        # with no message (safety filter, or a "thinking" model that spends
-        # the whole budget before emitting content). Treat that as an empty
-        # reply so the JSON-retry path handles it instead of crashing the run.
+        # Some OpenAI-compatible servers can return a choice with no message
+        # (safety filter, or a "thinking" model that spends the whole budget
+        # before emitting content). Treat that as an empty reply so the
+        # JSON-retry path handles it instead of crashing the run.
         choice = response.choices[0] if response.choices else None
         message = choice.message if choice is not None else None
         return (message.content if message is not None else None) or ""
