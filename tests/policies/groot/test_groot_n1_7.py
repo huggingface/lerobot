@@ -30,10 +30,12 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.policies.factory import make_policy_config, make_pre_post_processors
 from lerobot.policies.groot.configuration_groot import (
     GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
+    GROOT_N1_7,
     GROOT_N1_7_BASE_MODEL,
     GrootConfig,
     infer_groot_n1_7_action_execution_horizon,
     infer_groot_n1_7_action_horizon,
+    normalize_groot_model_version,
 )
 from lerobot.policies.groot.modeling_groot import GrootPolicy
 from lerobot.policies.groot.processor_groot import (
@@ -92,6 +94,8 @@ def _raw_n1_7_libero_config(model_path) -> GrootConfig:
 
 
 def test_n1_7_backbone_accepts_transformers_5_layout_and_forwards_mm_token_type_ids(monkeypatch):
+    pytest.importorskip("transformers")
+
     from transformers.feature_extraction_utils import BatchFeature
 
     import lerobot.policies.groot.groot_n1_7 as groot_n1_7
@@ -185,6 +189,8 @@ def test_n1_7_backbone_accepts_transformers_5_layout_and_forwards_mm_token_type_
 
 
 def test_n1_7_backbone_preserves_missing_qwen_optional_dependency_error(monkeypatch):
+    pytest.importorskip("transformers")
+
     import lerobot.policies.groot.groot_n1_7 as groot_n1_7
 
     monkeypatch.setattr(
@@ -350,6 +356,18 @@ def test_groot_defaults_use_n1_7():
     assert len(config.action_delta_indices) == 40
 
 
+@pytest.mark.parametrize("legacy_version", ["n1.5", "n1_5", "n15", "1.5"])
+def test_groot_normalize_model_version_rejects_n1_5_aliases(legacy_version):
+    # model_version is no longer a GrootConfig field, but normalize_groot_model_version is still
+    # live (e.g. via infer_groot_model_version) and must keep rejecting N1.5 with removal guidance.
+    with pytest.raises(ValueError, match="Unsupported GR00T model_version"):
+        normalize_groot_model_version(legacy_version)
+
+
+def test_groot_normalize_model_version_accepts_n1_7():
+    assert normalize_groot_model_version(GROOT_N1_7) == GROOT_N1_7
+
+
 def test_groot_n1_7_accepts_named_action_decode_transform():
     config = GrootConfig(
         action_decode_transform="libero",
@@ -393,6 +411,8 @@ def test_groot_predict_action_chunk_accepts_rtc_kwargs():
 
 
 def test_groot_predict_action_chunk_forwards_n1_7_rtc_prefix(monkeypatch):
+    pytest.importorskip("transformers")
+
     from lerobot.policies.groot.groot_n1_7 import GR00TN17
 
     dummy_model = _DummyGrootModel()
@@ -422,6 +442,8 @@ def test_groot_predict_action_chunk_forwards_n1_7_rtc_prefix(monkeypatch):
 
 
 def test_groot_predict_action_chunk_strips_padded_n1_7_rtc_prefix(monkeypatch):
+    pytest.importorskip("transformers")
+
     from lerobot.policies.groot.groot_n1_7 import GR00TN17
 
     dummy_model = _DummyGrootModel()
@@ -455,6 +477,8 @@ def test_groot_predict_action_chunk_strips_padded_n1_7_rtc_prefix(monkeypatch):
 
 
 def test_groot_n1_7_predict_action_chunk_truncates_to_checkpoint_valid_horizon(tmp_path, monkeypatch):
+    pytest.importorskip("transformers")
+
     from lerobot.policies.groot.groot_n1_7 import GR00TN17
 
     model_path = tmp_path / "libero_spatial"
@@ -508,6 +532,8 @@ def test_groot_from_pretrained_rejects_mismatched_caller_config(tmp_path):
 
 
 def test_groot_from_pretrained_keeps_matching_caller_config(tmp_path, monkeypatch):
+    pytest.importorskip("transformers")
+
     from lerobot.policies.groot.groot_n1_7 import GR00TN17
 
     model_path = tmp_path / "GR00T-N1.7-local"
@@ -522,6 +548,8 @@ def test_groot_from_pretrained_keeps_matching_caller_config(tmp_path, monkeypatc
 
 
 def test_groot_from_pretrained_infers_n1_7_from_ambiguous_local_config(tmp_path, monkeypatch):
+    pytest.importorskip("transformers")
+
     from lerobot.policies.groot.groot_n1_7 import GR00TN17
 
     model_path = tmp_path / "local-checkpoint"
@@ -995,6 +1023,42 @@ def test_groot_n1_7_pack_inputs_normalizes_action_chunk_per_dimension_before_pad
     assert action_mask[0, :3, :3].sum().item() == 9
     assert action_mask[0, 3:].sum().item() == 0
     assert action_mask[0, :, 3:].sum().item() == 0
+
+
+def test_groot_n1_7_pack_inputs_raises_when_relative_groups_cannot_normalize():
+    # Relative groups carry per-chunk-timestep stats; if the action horizon exceeds the available
+    # stat rows, grouped normalization cannot apply and the flat fallback would silently wrongly scale.
+    step = GrootN17PackInputsStep(
+        action_horizon=3,
+        valid_action_horizon=3,
+        max_state_dim=2,
+        max_action_dim=2,
+        normalize_min_max=True,
+        raw_stats={
+            "state": {"single_arm": {"min": [0.0, 0.0], "max": [1.0, 1.0]}},
+            "action": {"single_arm": {"min": [0.0, 0.0], "max": [1.0, 1.0]}},
+            # only one horizon row, but the action chunk has horizon 3
+            "relative_action": {"single_arm": {"min": [[-1.0, -1.0]], "max": [[1.0, 1.0]]}},
+        },
+        modality_config={
+            "state": {"modality_keys": ["single_arm"]},
+            "action": {
+                "modality_keys": ["single_arm"],
+                "action_configs": [
+                    {"rep": "RELATIVE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None}
+                ],
+                "delta_indices": [0, 1, 2],
+            },
+        },
+    )
+    transition = {
+        TransitionKey.OBSERVATION: {OBS_STATE: torch.zeros(1, 2)},
+        TransitionKey.ACTION: torch.zeros(1, 3, 2),
+        TransitionKey.COMPLEMENTARY_DATA: {"task": ["Move"]},
+    }
+
+    with pytest.raises(ValueError, match="could not apply native grouped normalization"):
+        step(transition)
 
 
 def test_groot_n1_7_pack_inputs_trains_native_relative_groups_with_absolute_gripper():
@@ -2430,6 +2494,8 @@ def test_groot_n1_7_relative_action_stats_skip_padded_tail_chunks():
 
 
 def test_groot_policy_selects_n1_7_model_class(monkeypatch):
+    pytest.importorskip("transformers")
+
     from lerobot.policies.groot.groot_n1_7 import GR00TN17
 
     called = {}
@@ -2447,6 +2513,8 @@ def test_groot_policy_selects_n1_7_model_class(monkeypatch):
 
 
 def test_groot_policy_forwards_n1_7_qwen_inputs(monkeypatch):
+    pytest.importorskip("transformers")
+
     from lerobot.policies.groot.groot_n1_7 import GR00TN17
 
     dummy_model = _DummyGrootModel()
@@ -2505,6 +2573,8 @@ def test_groot_select_action_rejects_relative_action_policies():
 
 
 def test_groot_n1_7_select_action_uses_checkpoint_valid_horizon(tmp_path, monkeypatch):
+    pytest.importorskip("transformers")
+
     from lerobot.policies.groot.groot_n1_7 import GR00TN17
 
     model_path = tmp_path / "libero_spatial"
@@ -2697,6 +2767,8 @@ def test_qwen3_backbone_can_initialize_from_config_without_downloading_weights(m
 
 
 def test_gr00t_n1_7_from_pretrained_defers_backbone_weight_loading(monkeypatch, tmp_path):
+    pytest.importorskip("transformers")
+
     from huggingface_hub.errors import HFValidationError
 
     import lerobot.policies.groot.groot_n1_7 as groot_n1_7
