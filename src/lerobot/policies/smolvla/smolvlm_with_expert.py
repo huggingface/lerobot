@@ -188,7 +188,7 @@ class SmolVLMWithExpertModel(nn.Module):
         if self.train_expert_only:
             self.vlm.eval()
 
-    def embed_image(self, image: torch.Tensor):
+    def embed_image(self, image: torch.Tensor, warp_fn=None):
         patch_attention_mask = None
         # Get sequence from the vision encoder
         image_hidden_states = (
@@ -199,6 +199,11 @@ class SmolVLMWithExpertModel(nn.Module):
             )
             .last_hidden_state
         )
+        # Optional latent time-advance: warp the cube on the pre-shuffle patch-token
+        # grid (row-major H*W) before the connector resamples it. Default-off; see
+        # lerobot.predictors.latent_warp and SmolVLAPolicy.set_latent_warp.
+        if warp_fn is not None:
+            image_hidden_states = warp_fn(image_hidden_states)
         # Modality projection & resampling
         image_hidden_states = self.get_vlm_model().connector(image_hidden_states)
         return image_hidden_states
