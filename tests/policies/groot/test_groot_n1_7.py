@@ -2180,6 +2180,8 @@ def test_groot_n1_7_relative_action_training_processors_save_native_grouped_stat
 
 
 def test_groot_n1_7_relative_action_processors_compute_stats_from_runtime_dataset_meta(monkeypatch, tmp_path):
+    pytest.importorskip("datasets")
+
     input_features, output_features = _groot_features(state_dim=6, action_dim=6)
     action_names = [
         "shoulder_pan.pos",
