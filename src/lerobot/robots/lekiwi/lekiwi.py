@@ -72,6 +72,12 @@ class LeKiwi(Robot):
         )
         self.arm_motors = [motor for motor in self.bus.motors if motor.startswith("arm")]
         self.base_motors = [motor for motor in self.bus.motors if motor.startswith("base")]
+        depth_cameras = [name for name, cfg in config.cameras.items() if getattr(cfg, "use_depth", False)]
+        if depth_cameras:
+            raise NotImplementedError(
+                f"Depth cameras are not supported on LeKiwi (got depth-enabled cameras: {depth_cameras}). "
+                "The host/client transport only carries color frames."
+            )
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property

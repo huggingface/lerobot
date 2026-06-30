@@ -35,14 +35,13 @@ import time
 
 from lerobot.common.control_utils import (
     follower_smooth_move_to,
-    init_keyboard_listener,
-    is_headless,
     teleop_smooth_move_to,
     teleop_supports_feedback,
 )
 from lerobot.datasets import VideoEncodingManager
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
+from lerobot.utils.keyboard_input import init_keyboard_listener
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import log_rerun_data
@@ -307,7 +306,7 @@ class EpisodicStrategy(RolloutStrategy):
 
         log_say("Stop recording", play_sounds, blocking=True)
 
-        if not is_headless() and self._listener is not None:
+        if self._listener is not None:
             self._listener.stop()
 
         if ctx.data.dataset is not None:

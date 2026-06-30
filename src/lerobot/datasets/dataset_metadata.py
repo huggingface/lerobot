@@ -14,7 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
-from collections.abc import Callable
+import logging
+from collections.abc import Callable, Iterable
 from copy import deepcopy
 from pathlib import Path
 
@@ -339,6 +340,25 @@ class LeRobotDatasetMetadata:
         return [key for key, ft in self.features.items() if ft["dtype"] == "video"]
 
     @property
+    def depth_keys(self) -> list[str]:
+        """Keys to access depth-map modalities stored as videos or images.
+
+        A depth key is a feature whose ``info`` dict carries ``"is_depth_map": True``
+        (or the legacy ``"video.is_depth_map"`` inside ``info`` or ``video_info``).
+        """
+
+        def _is_depth(ft: dict) -> bool:
+            info = ft.get("info") or {}
+            video_info = ft.get("video_info") or {}
+            return (
+                info.get("is_depth_map", False)
+                or info.get("video.is_depth_map", False)
+                or video_info.get("video.is_depth_map", False)
+            )
+
+        return [key for key, ft in self.features.items() if _is_depth(ft)]
+
+    @property
     def camera_keys(self) -> list[str]:
         """Keys to access visual modalities (regardless of their storage method)."""
         return [key for key, ft in self.features.items() if ft["dtype"] in ["video", "image"]]
@@ -581,29 +601,48 @@ class LeRobotDatasetMetadata:
     def update_video_info(
         self,
         video_key: str | None = None,
-        camera_encoder: VideoEncoderConfig | None = None,
+        video_encoder: VideoEncoderConfig | None = None,
+        preserve_keys: Iterable[str] | None = None,
     ) -> None:
-        """Populate per-feature video info in ``info.json``.
+        """Populate or refresh per-feature video info in ``info.json``.
 
         Warning: this function writes info from first episode videos, implicitly assuming that all videos have
         been encoded the same way. Also, this means it assumes the first episode exists.
 
+        Always re-probes the videos and overwrites existing info for every recomputed
+        key. ``preserve_keys`` lists keys whose existing values must be kept (e.g.
+        data-intrinsic entries like ``is_depth_map`` and depth quantization params)
+        instead of being recomputed.
+
         Args:
             video_key: If provided, only update this video key. Otherwise update
                 all video keys in the dataset.
-            camera_encoder: Encoder configuration used to produce the
+            video_encoder: Encoder configuration used to produce the
                 videos. When provided, its fields are recorded as
                 ``video.<field>`` entries alongside the stream-derived
                 ``video.*`` entries (see :func:`get_video_info`).
+            preserve_keys: Keys whose existing values are kept instead of being
+                recomputed. ``None`` (default) recomputes every key.
         """
         if video_key is not None and video_key not in self.video_keys:
             raise ValueError(f"Video key {video_key} not found in dataset")
 
         video_keys = [video_key] if video_key is not None else self.video_keys
+        preserve_set = set(preserve_keys or ())
         for key in video_keys:
-            if not self.features[key].get("info", None):
-                video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
-                self.info.features[key]["info"] = get_video_info(video_path, camera_encoder=camera_encoder)
+            existing = self.features[key].get("info") or {}
+            video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
+            new_info = get_video_info(video_path, video_encoder=video_encoder)
+            # Drop preserved keys so the existing values win on merge.
+            new_info = {k: v for k, v in new_info.items() if k not in preserve_set}
+            merged = {**existing, **new_info}
+            # Migrate the legacy depth marker to the canonical key.
+            if "video.is_depth_map" in merged:
+                logging.warning(
+                    f"Migrating legacy 'video.is_depth_map' to 'is_depth_map' for feature {key!r}."
+                )
+                merged.setdefault("is_depth_map", merged.pop("video.is_depth_map"))
+            self.info.features[key]["info"] = merged
 
     def update_chunk_settings(
         self,

@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The Allen Institute for Artificial Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,15 +14,8 @@
 
 from __future__ import annotations
 
-import json
-import math
-import os
-from contextlib import suppress
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
-
-from huggingface_hub import snapshot_download
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import (
@@ -36,146 +27,6 @@ from lerobot.optim import (
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from ..rtc.configuration_rtc import RTCConfig
-
-MOLMOACT2_DEFAULT_NUM_IMAGES = 2
-MOLMOACT2_IMAGE_TOKENS_PER_IMAGE = 196
-MOLMOACT2_FIXED_PROMPT_TOKEN_BUDGET = 80
-MOLMOACT2_TASK_TOKEN_BUDGET = 32
-MOLMOACT2_SEQUENCE_LENGTH_MARGIN = 32
-MOLMOACT2_SEQUENCE_LENGTH_MULTIPLE = 64
-MOLMOACT2_DISCRETE_ACTION_WRAPPER_TOKENS = 4
-MOLMOACT2_MIN_DISCRETE_ACTION_TOKENS_PER_STEP = 6
-MOLMOACT2_DISCRETE_ACTION_TOKENS_PER_DIM = 0.95
-
-
-def _hf_token() -> str | None:
-    return os.environ.get("HF_TOKEN") or os.environ.get("HF_ACCESS_TOKEN")
-
-
-def _resolve_checkpoint_location(
-    checkpoint_path: str,
-    *,
-    revision: str | None = None,
-    force_download: bool = False,
-) -> str:
-    checkpoint_path = str(checkpoint_path or "").strip()
-    if not checkpoint_path:
-        raise ValueError("MolmoAct2 policy requires `checkpoint_path`.")
-    local_path = Path(checkpoint_path).expanduser()
-    if local_path.exists():
-        return str(local_path)
-    return snapshot_download(
-        repo_id=checkpoint_path,
-        repo_type="model",
-        revision=revision,
-        force_download=force_download,
-        ignore_patterns=["*.py", "*.pyc", "__pycache__/*"],
-        token=_hf_token(),
-    )
-
-
-def _load_hf_norm_metadata_for_tag(
-    checkpoint_path: str,
-    *,
-    revision: str | None,
-    force_download: bool,
-    norm_tag: str | None,
-) -> dict[str, Any]:
-    norm_tag = str(norm_tag or "").strip()
-    if not norm_tag:
-        return {}
-    checkpoint_location = Path(
-        _resolve_checkpoint_location(
-            checkpoint_path,
-            revision=revision,
-            force_download=force_download,
-        )
-    )
-    norm_stats_filename = "norm_stats.json"
-    config_path = checkpoint_location / "config.json"
-    if config_path.exists():
-        with suppress(OSError, json.JSONDecodeError):
-            norm_stats_filename = str(
-                json.loads(config_path.read_text()).get("norm_stats_filename") or norm_stats_filename
-            )
-    stats_path = checkpoint_location / norm_stats_filename
-    if not stats_path.exists():
-        raise FileNotFoundError(
-            f"MolmoAct2 HF checkpoint is missing {norm_stats_filename!r}; cannot resolve norm_tag={norm_tag!r}."
-        )
-    payload = json.loads(stats_path.read_text())
-    metadata_by_tag = payload.get("metadata_by_tag")
-    if not isinstance(metadata_by_tag, dict):
-        raise ValueError(f"MolmoAct2 norm stats file {stats_path} has no metadata_by_tag mapping.")
-    metadata = metadata_by_tag.get(norm_tag)
-    if not isinstance(metadata, dict):
-        available = sorted(str(tag) for tag in metadata_by_tag)
-        raise ValueError(f"Unknown MolmoAct2 norm_tag={norm_tag!r}. Available tags: {available}.")
-    return metadata
-
-
-@LRSchedulerConfig.register_subclass("molmoact2_cosine_decay_with_warmup")
-@dataclass
-class MolmoAct2CosineDecayWithWarmupSchedulerConfig(CosineDecayWithWarmupSchedulerConfig):
-    """MolmoAct2-local cosine scheduler with optional decay-step auto-match.
-
-    LeRobot's generic cosine scheduler keeps an explicit integer decay length.
-    For MolmoAct2, leaving num_decay_steps unset means "decay across this run's
-    training steps"; build() is the first point where num_training_steps is known.
-    """
-
-    num_decay_steps: int | None
-
-    def build(self, optimizer, num_training_steps: int):
-        return CosineDecayWithWarmupSchedulerConfig(
-            peak_lr=self.peak_lr,
-            decay_lr=self.decay_lr,
-            num_warmup_steps=self.num_warmup_steps,
-            num_decay_steps=num_training_steps if self.num_decay_steps is None else self.num_decay_steps,
-        ).build(optimizer, num_training_steps=num_training_steps)
-
-
-def _round_up(value: int, multiple: int) -> int:
-    return int(math.ceil(value / multiple) * multiple)
-
-
-def infer_molmoact2_max_sequence_length(
-    *,
-    num_images: int,
-    state_dim: int,
-    action_dim: int,
-    action_horizon: int,
-    include_discrete_action: bool,
-) -> int:
-    """Infer the padded text/image sequence cap from MolmoAct2's fixed token layout."""
-    if num_images < 1:
-        num_images = MOLMOACT2_DEFAULT_NUM_IMAGES
-    if state_dim < 0:
-        state_dim = 0
-    if action_dim < 1:
-        action_dim = 1
-    if action_horizon < 1:
-        action_horizon = 1
-
-    image_tokens = num_images * MOLMOACT2_IMAGE_TOKENS_PER_IMAGE
-    prompt_tokens = (
-        MOLMOACT2_FIXED_PROMPT_TOKEN_BUDGET
-        + MOLMOACT2_TASK_TOKEN_BUDGET
-        + state_dim
-        + MOLMOACT2_SEQUENCE_LENGTH_MARGIN
-    )
-    action_tokens = 0
-    if include_discrete_action:
-        action_tokens_per_step = max(
-            MOLMOACT2_MIN_DISCRETE_ACTION_TOKENS_PER_STEP,
-            math.ceil(action_dim * MOLMOACT2_DISCRETE_ACTION_TOKENS_PER_DIM),
-        )
-        action_tokens = MOLMOACT2_DISCRETE_ACTION_WRAPPER_TOKENS + action_horizon * action_tokens_per_step
-
-    return _round_up(
-        image_tokens + prompt_tokens + action_tokens,
-        MOLMOACT2_SEQUENCE_LENGTH_MULTIPLE,
-    )
 
 
 @PreTrainedConfig.register_subclass("molmoact2")
@@ -228,6 +79,15 @@ class MolmoAct2Config(PreTrainedConfig):
     eval_seed: int | None = None
     rtc_config: RTCConfig | None = None
 
+    # Joint frame transform for cross-calibration compatibility.
+    # Some MolmoAct2 checkpoints were trained on data using a different joint
+    # convention than the current LeRobot calibration. Set both to apply a
+    # sign/offset correction at runtime (state before model, action after).
+    # See: https://huggingface.co/docs/lerobot/backwardcomp
+    # Default is None (no transform). Both must be set together.
+    joint_signs: list[float] | None = None
+    joint_offsets: list[float] | None = None
+
     # Default is full finetuning with gradients from the action expert flowing into the VLM.
     enable_lora_vlm: bool = False
     lora_rank: int = 64
@@ -255,7 +115,7 @@ class MolmoAct2Config(PreTrainedConfig):
     optimizer_grad_clip_norm: float = 1.0
 
     scheduler_warmup_steps: int = 200
-    scheduler_decay_steps: int | None = None
+    scheduler_decay_steps: int = 100_000
     scheduler_decay_lr: float = 1e-6
 
     normalization_mapping: dict[str, NormalizationMode] = field(
@@ -272,6 +132,10 @@ class MolmoAct2Config(PreTrainedConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if (self.joint_signs is None) != (self.joint_offsets is None):
+            raise ValueError("joint_signs and joint_offsets must both be set or both be None.")
+        if self.joint_signs is not None and len(self.joint_signs) != len(self.joint_offsets):
+            raise ValueError("joint_signs and joint_offsets must have the same length.")
         if self.action_mode not in {"continuous", "discrete", "both"}:
             raise ValueError(
                 f"Unsupported action_mode={self.action_mode!r}. "
@@ -333,41 +197,6 @@ class MolmoAct2Config(PreTrainedConfig):
         if self.max_sequence_length is not None and self.max_sequence_length < 1:
             raise ValueError(f"max_sequence_length must be >= 1 or None, got {self.max_sequence_length}.")
 
-    def inferred_max_sequence_length(
-        self,
-        *,
-        num_images: int | None = None,
-        state_dim: int | None = None,
-        action_dim: int | None = None,
-        action_horizon: int | None = None,
-        include_discrete_action: bool | None = None,
-    ) -> int:
-        if self.max_sequence_length is not None:
-            return int(self.max_sequence_length)
-
-        if num_images is None:
-            num_images = len(self.image_keys) or len(self.image_features) or MOLMOACT2_DEFAULT_NUM_IMAGES
-        if state_dim is None:
-            state_feature = self.robot_state_feature
-            state_dim = int(state_feature.shape[0]) if state_feature is not None else 0
-        if action_dim is None:
-            action_feature = self.action_feature
-            action_dim = (
-                int(action_feature.shape[0]) if action_feature is not None else self.expected_max_action_dim
-            )
-        if action_horizon is None:
-            action_horizon = self.chunk_size
-        if include_discrete_action is None:
-            include_discrete_action = self.action_mode in {"discrete", "both"}
-
-        return infer_molmoact2_max_sequence_length(
-            num_images=int(num_images),
-            state_dim=int(state_dim),
-            action_dim=int(action_dim),
-            action_horizon=int(action_horizon),
-            include_discrete_action=bool(include_discrete_action),
-        )
-
     @property
     def observation_delta_indices(self) -> None:
         return None
@@ -390,7 +219,7 @@ class MolmoAct2Config(PreTrainedConfig):
         )
 
     def get_scheduler_preset(self) -> LRSchedulerConfig | None:
-        return MolmoAct2CosineDecayWithWarmupSchedulerConfig(
+        return CosineDecayWithWarmupSchedulerConfig(
             peak_lr=self.optimizer_lr,
             decay_lr=self.scheduler_decay_lr,
             num_warmup_steps=self.scheduler_warmup_steps,
@@ -426,94 +255,3 @@ class MolmoAct2Config(PreTrainedConfig):
                 shape=(self.expected_max_action_dim,),
             )
             self.output_features[ACTION] = action_feature
-
-    def apply_norm_tag_metadata(self) -> None:
-        if not str(self.norm_tag or "").strip():
-            return
-        metadata = _load_hf_norm_metadata_for_tag(
-            self.checkpoint_path,
-            revision=self.checkpoint_revision,
-            force_download=bool(self.checkpoint_force_download),
-            norm_tag=self.norm_tag,
-        )
-        if metadata.get("action_horizon") is not None:
-            self.chunk_size = int(metadata["action_horizon"])
-        if metadata.get("n_action_steps") is not None:
-            self.n_action_steps = int(metadata["n_action_steps"])
-        if not self.setup_type and metadata.get("setup_type") is not None:
-            self.setup_type = str(metadata["setup_type"])
-        if not self.control_mode and metadata.get("control_mode") is not None:
-            self.control_mode = str(metadata["control_mode"])
-
-    def saved_policy_action_mode(self) -> str | None:
-        pretrained_path = getattr(self, "pretrained_path", None)
-        if pretrained_path is None:
-            return None
-        config_path = Path(pretrained_path) / "config.json"
-        if not config_path.exists():
-            return None
-        try:
-            mode = json.loads(config_path.read_text()).get("action_mode")
-        except (OSError, json.JSONDecodeError):
-            return None
-        if mode in {"continuous", "discrete", "both"}:
-            return str(mode)
-        return None
-
-    def training_action_mode(self, saved_policy_action_mode: str | None = None) -> str:
-        return saved_policy_action_mode or self.action_mode
-
-    def validate_inference_action_mode(self, saved_policy_action_mode: str | None = None) -> None:
-        requested_mode = self.inference_action_mode
-        if requested_mode is None:
-            return
-        training_mode = self.training_action_mode(saved_policy_action_mode)
-        if requested_mode == "continuous" and training_mode == "discrete":
-            raise ValueError(
-                "MolmoAct2 checkpoint was trained with action_mode='discrete' and cannot run "
-                "continuous inference."
-            )
-        if requested_mode == "discrete" and training_mode == "continuous":
-            raise ValueError(
-                "MolmoAct2 checkpoint was trained with action_mode='continuous' and cannot run "
-                "discrete inference. Train with action_mode='both' or action_mode='discrete' first."
-            )
-
-    def validate_checkpoint_action_mode(
-        self,
-        checkpoint_action_mode: str,
-        *,
-        has_action_expert: bool,
-    ) -> None:
-        if self.action_mode == "both" and checkpoint_action_mode != "both":
-            raise ValueError(
-                f"action_mode='both' requires checkpoint action_mode='both', got {checkpoint_action_mode!r}."
-            )
-        if self.action_mode == "discrete" and checkpoint_action_mode not in {"discrete", "both"}:
-            raise ValueError(
-                f"action_mode='discrete' requires checkpoint action_mode in {{'discrete', 'both'}}, "
-                f"got {checkpoint_action_mode!r}."
-            )
-        if self.action_mode in {"continuous", "both"} and not has_action_expert:
-            raise ValueError("Continuous MolmoAct2 training requires an action expert checkpoint.")
-
-    def resolve_inference_action_mode(
-        self,
-        requested_mode: str | None,
-        saved_policy_action_mode: str | None = None,
-    ) -> str:
-        training_mode = self.training_action_mode(saved_policy_action_mode)
-        if requested_mode is None:
-            requested_mode = self.inference_action_mode
-        if requested_mode is None:
-            raise ValueError(
-                "MolmoAct2 inference requires `inference_action_mode` to be set explicitly "
-                "to either 'continuous' or 'discrete'."
-            )
-        if requested_mode not in {"continuous", "discrete"}:
-            raise ValueError("MolmoAct2 inference_action_mode must be either 'continuous' or 'discrete'.")
-        if requested_mode == "continuous" and training_mode == "discrete":
-            raise ValueError("MolmoAct2 action_mode='discrete' checkpoint cannot run continuous inference.")
-        if requested_mode == "discrete" and training_mode == "continuous":
-            raise ValueError("MolmoAct2 action_mode='continuous' checkpoint cannot run discrete inference.")
-        return requested_mode

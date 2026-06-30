@@ -23,7 +23,7 @@ from typing import TypedDict, TypeVar, Unpack
 
 import packaging
 import safetensors
-from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download
+from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor, save_model as save_model_as_safetensor
@@ -129,10 +129,43 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         if not getattr(cls, "name", None):
             raise TypeError(f"Class {cls.__name__} must define 'name'")
 
-    def _save_pretrained(self, save_directory: Path) -> None:
+    def save_pretrained(
+        self,
+        save_directory: str | Path,
+        *,
+        state_dict: dict[str, Tensor] | None = None,
+        repo_id: str | None = None,
+        push_to_hub: bool = False,
+        card_kwargs: dict | None = None,
+        **push_to_hub_kwargs,
+    ) -> str | None:
+        """Save the policy to a directory (and optionally push to the Hub).
+
+        Overrides `HubMixin.save_pretrained` to add a `state_dict` argument (mirroring
+        `transformers.PreTrainedModel.save_pretrained`). Under FSDP, `self.state_dict()` would
+        return sharded tensors, so the caller gathers the full state dict via a cross-rank
+        collective and passes it here for `_save_pretrained` to write directly.
+        """
+        save_directory = Path(save_directory)
+        save_directory.mkdir(parents=True, exist_ok=True)
+        self._save_pretrained(save_directory, state_dict=state_dict)
+        if push_to_hub:
+            if repo_id is None:
+                repo_id = save_directory.name
+            return self.push_to_hub(repo_id=repo_id, card_kwargs=card_kwargs, **push_to_hub_kwargs)
+        return None
+
+    def _save_pretrained(self, save_directory: Path, state_dict: dict[str, Tensor] | None = None) -> None:
         self.config._save_pretrained(save_directory)
         model_to_save = self.module if hasattr(self, "module") else self
-        save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
+        if state_dict is None:
+            save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
+            return
+        # A pre-gathered (e.g. FSDP full) state dict was supplied: write it directly.
+        # `save_torch_state_dict` discards shared-tensor duplicates just like `save_model` does;
+        # pin `max_shard_size` above the total size so the output stays a single `model.safetensors`
+        total_bytes = sum(t.numel() * t.element_size() for t in state_dict.values())
+        save_torch_state_dict(state_dict, str(save_directory), max_shard_size=max(total_bytes, 1))
 
     @classmethod
     def from_pretrained(
@@ -270,6 +303,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self,
         cfg: TrainPipelineConfig,
         peft_model=None,
+        state_dict: dict[str, Tensor] | None = None,
     ):
         api = HfApi()
         repo_id = api.create_repo(
@@ -287,7 +321,8 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 peft_model.save_pretrained(saved_path)
                 self.config.save_pretrained(saved_path)
             else:
-                self.save_pretrained(saved_path)  # Calls _save_pretrained and stores model tensors
+                # Calls _save_pretrained and stores model tensors
+                self.save_pretrained(saved_path, state_dict=state_dict)
 
             card = self.generate_model_card(
                 cfg.dataset.repo_id, self.config.type, self.config.license, self.config.tags, cfg=cfg
@@ -305,6 +340,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 ignore_patterns=["*.tmp", "*.log"],
             )
 
+            # Contract: lerobot.jobs.hf.submit_to_hf watches for this exact
+            # "Model pushed to <url>" line to end a remote run early. Keep the wording
+            # and URL format in sync (it falls back to status polling if they drift).
             logging.info(f"Model pushed to {commit_info.repo_url.url}")
 
     def generate_model_card(
