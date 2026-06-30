@@ -39,7 +39,7 @@ from lerobot.configs.video import (
 from .image_writer import squeeze_single_channel
 from .pyav_utils import write_u16_plane
 
-_MM_PER_METRE = 1000.0
+MM_PER_METRE = 1000.0
 _UINT16_MAX = 65535
 
 
@@ -126,12 +126,12 @@ def quantize_depth(
 
     # Convert depth_min, depth_max, and shift to the resolved input unit.
     depth_min_u = (
-        np.float32(depth_min) if resolved_unit == DEPTH_METER_UNIT else np.float32(depth_min * _MM_PER_METRE)
+        np.float32(depth_min) if resolved_unit == DEPTH_METER_UNIT else np.float32(depth_min * MM_PER_METRE)
     )
     depth_max_u = (
-        np.float32(depth_max) if resolved_unit == DEPTH_METER_UNIT else np.float32(depth_max * _MM_PER_METRE)
+        np.float32(depth_max) if resolved_unit == DEPTH_METER_UNIT else np.float32(depth_max * MM_PER_METRE)
     )
-    shift_u = np.float32(shift) if resolved_unit == DEPTH_METER_UNIT else np.float32(shift * _MM_PER_METRE)
+    shift_u = np.float32(shift) if resolved_unit == DEPTH_METER_UNIT else np.float32(shift * MM_PER_METRE)
 
     # Normalization and quantization is performed in the resolved input unit.
     if use_log:
@@ -236,7 +236,7 @@ def dequantize_depth(
 
         # mm path: round + clamp in float32, skipping the uint16 round-trip
         # when returning a tensor (torch.uint16 is poorly supported).
-        buf.mul_(_MM_PER_METRE).round_().clamp_(0.0, _UINT16_MAX)
+        buf.mul_(MM_PER_METRE).round_().clamp_(0.0, _UINT16_MAX)
         if output_tensor:
             return buf
         return buf.cpu().numpy().astype(np.uint16, copy=False)
@@ -259,7 +259,7 @@ def dequantize_depth(
     if output_unit == DEPTH_METER_UNIT:
         return torch.from_numpy(buf) if output_tensor else buf
 
-    np.multiply(buf, _MM_PER_METRE, out=buf)
+    np.multiply(buf, MM_PER_METRE, out=buf)
     np.rint(buf, out=buf)
     np.clip(buf, 0.0, _UINT16_MAX, out=buf)
     if output_tensor:

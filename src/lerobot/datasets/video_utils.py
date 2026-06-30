@@ -47,7 +47,7 @@ from lerobot.configs import (
 )
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
-from .depth_utils import quantize_depth
+from .depth_utils import MM_PER_METRE, quantize_depth
 from .pyav_utils import get_pix_fmt_channels
 
 logger = logging.getLogger(__name__)
@@ -848,6 +848,9 @@ class _CameraEncoderThread(threading.Thread):
                 # Reshape CHW to (H*W, C) for per-channel stats
                 channels = img_downsampled.shape[0]
                 img_for_stats = img_downsampled.transpose(1, 2, 0).reshape(-1, channels)
+                # Depth stats are canonically stored in millimetres; metre (float) depth is scaled up.
+                if self.is_depth and np.issubdtype(frame_data.dtype, np.floating):
+                    img_for_stats = img_for_stats * MM_PER_METRE
                 stats_tracker.update(img_for_stats)
 
                 frame_count += 1
