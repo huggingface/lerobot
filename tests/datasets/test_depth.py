@@ -245,3 +245,44 @@ class TestFeatureFileRouting:
 
         dataset.save_episode()
         dataset.finalize()
+
+
+# ── 5. Depth stats unit canonicalization (millimetres) ────────────────
+
+
+class TestDepthStatsUnit:
+    """Depth stats are always stored in millimetres, regardless of raw frame dtype."""
+
+    NUM_FRAMES = 4
+
+    @pytest.mark.parametrize("use_videos", [False, True])
+    def test_stats_canonicalized_to_mm(self, tmp_path, features_factory, use_videos):
+        """Float (metre) and integer (millimetre) depth over the same physical range
+        yield identical millimetre-scale stats."""
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+        def _record(depth_dtype, root):
+            features = features_factory(
+                camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH, use_videos=use_videos
+            )
+            dataset = LeRobotDataset.create(
+                repo_id=DUMMY_REPO_ID,
+                fps=DEFAULT_FPS,
+                features=features,
+                root=root,
+                use_videos=use_videos,
+                streaming_encoding=use_videos,
+            )
+            add_frames(dataset, num_frames=self.NUM_FRAMES, depth_dtype=depth_dtype)
+            dataset.save_episode()
+            dataset.finalize()
+            return np.asarray(dataset.meta.stats[DEPTH_KEY]["mean"]).reshape(-1)
+
+        # add_frames ramps float depth over 0.1–10 m and integer depth over 100–10000 mm
+        # (the same physical range), so canonicalized stats must match.
+        mean_m = _record(np.float32, tmp_path / "ds_m")
+        mean_mm = _record(np.uint16, tmp_path / "ds_mm")
+
+        # Float (metre) input is scaled to millimetres, not left in the single-digit metre range.
+        assert mean_m.item() > 50.0
+        np.testing.assert_allclose(mean_m, mean_mm, rtol=0.05)
