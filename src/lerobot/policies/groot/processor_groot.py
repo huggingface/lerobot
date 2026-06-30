@@ -20,6 +20,7 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import cv2
 import numpy as np
 import torch
 import torchvision.transforms.v2.functional as tv_functional
@@ -1323,13 +1324,6 @@ def _transform_n1_7_image_for_vlm_albumentations(
         return image
 
     target_h, target_w = image_target_size
-
-    try:
-        import cv2
-    except ImportError as exc:
-        raise ImportError(
-            "GR00T N1.7 checkpoints with use_albumentations=True require opencv-python-headless."
-        ) from exc
 
     image_np = np.asarray(image)
     if image_np.ndim == 2:
