@@ -340,6 +340,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 ignore_patterns=["*.tmp", "*.log"],
             )
 
+            # Contract: lerobot.jobs.hf.submit_to_hf watches for this exact
+            # "Model pushed to <url>" line to end a remote run early. Keep the wording
+            # and URL format in sync (it falls back to status polling if they drift).
             logging.info(f"Model pushed to {commit_info.repo_url.url}")
 
     def generate_model_card(

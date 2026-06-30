@@ -77,13 +77,66 @@ from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD
 from lerobot.utils.utils import init_logging
 
 
+def get_feature_names(dataset: LeRobotDataset, key: str) -> list[str]:
+    """Return per-dimension names for a feature from the dataset metadata.
+
+    Only flat-list ``names`` metadata is used. Dict-style ``names`` and missing names fall back to ``{key}_{i}`` indices.
+    """
+    feature = dataset.features[key]
+    dim = feature["shape"][-1]
+
+    names = feature.get("names")
+    if isinstance(names, list) and len(names) == dim:
+        return [str(name) for name in names]
+
+    return [f"{key}_{d}" for d in range(dim)]
+
+
+def check_chw_float32(frame: torch.Tensor) -> None:
+    """
+    Check if a frame is a channel-first, float32 tensor.
+    """
+    assert frame.dtype == torch.float32
+    assert frame.ndim == 3
+    c, h, w = frame.shape
+    assert c < h and c < w, f"expect channel first images, but instead {frame.shape}"
+
+
 def to_hwc_uint8_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
-    assert chw_float32_torch.dtype == torch.float32
-    assert chw_float32_torch.ndim == 3
-    c, h, w = chw_float32_torch.shape
-    assert c < h and c < w, f"expect channel first images, but instead {chw_float32_torch.shape}"
+    check_chw_float32(chw_float32_torch)
     hwc_uint8_numpy = (chw_float32_torch * 255).type(torch.uint8).permute(1, 2, 0).numpy()
     return hwc_uint8_numpy
+
+
+def build_blueprint_from_dataset(dataset: LeRobotDataset):
+    """Build a Rerun blueprint laying out camera images and time series for the given dataset.
+
+    Camera images and scalar signals (action, state, reward, done, success) are arranged in a grid.
+    The per-dimension series names for ``action`` and ``state`` are applied directly
+    via blueprint overrides.
+    """
+    import rerun as rr
+    import rerun.blueprint as rrb
+
+    views = [rrb.Spatial2DView(origin=key, name=key) for key in dataset.meta.camera_keys]
+
+    # Style multi-dimensional signals (action, state) with per-dimension names.
+    for origin, key in ((ACTION, ACTION), ("state", OBS_STATE)):
+        if key in dataset.features:
+            names = get_feature_names(dataset, key)
+            styling = rr.SeriesLines(names=names)
+            views.append(rrb.TimeSeriesView(origin=origin, name=origin, overrides={origin: styling}))
+    for key in (DONE, REWARD, "next.success"):
+        if key in dataset.features:
+            views.append(rrb.TimeSeriesView(origin=key, name=key))
+
+    return rrb.Blueprint(rrb.Grid(*views))
+
+
+def to_hwc_uint16_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
+    check_chw_float32(chw_float32_torch)
+    hwc_uint16_numpy = chw_float32_torch.round().type(torch.uint16).permute(1, 2, 0).numpy()
+    return hwc_uint16_numpy
 
 
 def visualize_dataset(
@@ -124,7 +177,8 @@ def visualize_dataset(
     import rerun as rr
 
     spawn_local_viewer = mode == "local" and not save
-    rr.init(f"{repo_id}/episode_{episode_index}", spawn=spawn_local_viewer)
+    blueprint = build_blueprint_from_dataset(dataset)
+    rr.init(f"{repo_id}/episode_{episode_index}", spawn=spawn_local_viewer, default_blueprint=blueprint)
 
     # Manually call python garbage collector after `rr.init` to avoid hanging in a blocking flush
     # when iterating on a dataloader with `num_workers` > 0
@@ -138,30 +192,46 @@ def visualize_dataset(
 
     logging.info("Logging to Rerun")
 
+    # Use the dataset's q01/q99 depth statistics for robust depth range bounds
+    depth_ranges = {}
+    for key in dataset.meta.depth_keys:
+        stats = dataset.meta.stats[key]
+        lo = stats["q01"] if "q01" in stats else stats["min"]
+        hi = stats["q99"] if "q99" in stats else stats["max"]
+        depth_ranges[key] = (float(np.asarray(lo).item()), float(np.asarray(hi).item()))
+
     first_index = None
     for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
         if first_index is None:
             first_index = batch["index"][0].item()
+
         # iterate over the batch
         for i in range(len(batch["index"])):
             rr.set_time("frame_index", sequence=batch["index"][i].item() - first_index)
             rr.set_time("timestamp", timestamp=batch["timestamp"][i].item())
 
-            # display each camera image
+            # display each camera image (or depth map)
             for key in dataset.meta.camera_keys:
-                img = to_hwc_uint8_numpy(batch[key][i])
-                img_entity = rr.Image(img).compress() if display_compressed_images else rr.Image(img)
-                rr.log(key, entity=img_entity)
+                if key in dataset.meta.depth_keys:
+                    depth = to_hwc_uint16_numpy(batch[key][i])
+                    depth_entity = rr.DepthImage(
+                        depth,
+                        colormap=rr.components.Colormap.Viridis,
+                        depth_range=depth_ranges[key],
+                    )
+                    rr.log(key, entity=depth_entity)
+                else:
+                    img = to_hwc_uint8_numpy(batch[key][i])
+                    img_entity = rr.Image(img).compress() if display_compressed_images else rr.Image(img)
+                    rr.log(key, entity=img_entity)
 
-            # display each dimension of action space (e.g. actuators command)
+            # display the action space (e.g. actuators command)
             if ACTION in batch:
-                for dim_idx, val in enumerate(batch[ACTION][i]):
-                    rr.log(f"{ACTION}/{dim_idx}", rr.Scalars(val.item()))
+                rr.log(ACTION, rr.Scalars(batch[ACTION][i].numpy()))
 
-            # display each dimension of observed state space (e.g. agent position in joint space)
+            # display the observed state space (e.g. agent position in joint space)
             if OBS_STATE in batch:
-                for dim_idx, val in enumerate(batch[OBS_STATE][i]):
-                    rr.log(f"state/{dim_idx}", rr.Scalars(val.item()))
+                rr.log("state", rr.Scalars(batch[OBS_STATE][i].numpy()))
 
             if DONE in batch:
                 rr.log(DONE, rr.Scalars(batch[DONE][i].item()))
@@ -172,9 +242,8 @@ def visualize_dataset(
             if "next.success" in batch:
                 rr.log("next.success", rr.Scalars(batch["next.success"][i].item()))
 
+    # save .rrd locally
     if mode == "local" and save:
-        # save .rrd locally
-        output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         repo_id_str = repo_id.replace("/", "_")
         rrd_path = output_dir / f"{repo_id_str}_episode_{episode_index}.rrd"
@@ -182,7 +251,7 @@ def visualize_dataset(
         return rrd_path
 
     elif mode == "distant":
-        # stop the process from exiting since it is serving the websocket connection
+        # Keep the process alive while it serves the gRPC/web connection.
         try:
             while True:
                 time.sleep(1)
@@ -297,12 +366,14 @@ def main():
         )
         logging.warning("Setting grpc_port to ws_port value.")
         kwargs["grpc_port"] = kwargs.pop("ws_port")
+    else:
+        kwargs.pop("ws_port")  # Always remove ws_port from kwargs
 
     init_logging()
     logging.info("Loading dataset")
     dataset = LeRobotDataset(repo_id, episodes=[args.episode_index], root=root, tolerance_s=tolerance_s)
 
-    visualize_dataset(dataset, **vars(args))
+    visualize_dataset(dataset, **kwargs)
 
 
 if __name__ == "__main__":
