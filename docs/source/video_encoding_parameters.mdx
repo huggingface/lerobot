@@ -134,6 +134,9 @@ lerobot-train \
 > [!TIP]
 > This is purely a decode-time presentation choice — it does **not** alter the stored video or its metadata, so the same dataset can be read as `mm` or `m` without re-encoding. It has no effect on datasets without depth cameras.
 
+> [!IMPORTANT]
+> Depth statistics in `meta/stats.json` are always computed in **millimetres**, regardless of the raw frame dtype.
+
 ---
 
 ## Persistence in dataset metadata
