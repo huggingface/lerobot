@@ -22,6 +22,7 @@ import numpy as np
 from lerobot.processor import RelativeActionsProcessorStep
 from lerobot.utils.constants import ACTION, OBS_STATE
 
+from .depth_utils import MM_PER_METRE
 from .io_utils import load_image_as_numpy
 
 DEFAULT_QUANTILES = [0.01, 0.10, 0.50, 0.90, 0.99]
@@ -508,8 +509,8 @@ def compute_episode_stats(
     Note:
         For 'image'/'video' features, stats are computed per channel and kept with a
         leading channel axis (e.g. shape (3, 1, 1) for RGB). RGB stats are divided by
-        255 to land in [0, 1]; depth maps (features flagged with ``is_depth_map``) skip
-        this rescaling and remain in their stored units.
+        255 to land in [0, 1]; depth maps (features flagged with ``is_depth_map``) are
+        instead canonicalized to millimetres regardless of the raw frame unit.
     """
     if quantile_list is None:
         quantile_list = DEFAULT_QUANTILES
@@ -533,9 +534,14 @@ def compute_episode_stats(
         )
 
         if features[key]["dtype"] in ["image", "video"]:
-            normalization_factor = (
-                255.0 if not (features[key].get("info") or {}).get("is_depth_map", False) else 1.0
-            )
+            if (features[key].get("info") or {}).get("is_depth_map", False):
+                # Depth stats are canonically stored in millimetres; metre (float) depth is
+                # scaled up, integer (millimetre) depth is left as-is.
+                normalization_factor = (
+                    1.0 / MM_PER_METRE if np.issubdtype(ep_ft_array.dtype, np.floating) else 1.0
+                )
+            else:
+                normalization_factor = 255.0
             ep_stats[key] = {
                 k: v if k == "count" else np.squeeze(v / normalization_factor, axis=0)
                 for k, v in ep_stats[key].items()
