@@ -14,10 +14,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import pytest
+import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.scripts.lerobot_dataset_viz import visualize_dataset
+from lerobot.scripts.lerobot_dataset_viz import get_extra_scalar_keys, is_scalar_like, visualize_dataset
+from lerobot.utils.constants import ACTION, OBS_STATE
+
+
+class DummyMeta:
+    camera_keys = ["observation.images.front"]
+
+
+class DummyDataset:
+    meta = DummyMeta()
+    features = {
+        "index": {"dtype": "int64", "shape": [1]},
+        ACTION: {"dtype": "float32", "shape": [6]},
+        OBS_STATE: {"dtype": "float32", "shape": [6]},
+        "observation.images.front": {"dtype": "video", "shape": [3, 480, 640]},
+        "q_target": {"dtype": "float32", "shape": [1]},
+        "intervention": {"dtype": "bool", "shape": []},
+        "embedding": {"dtype": "float32", "shape": [32]},
+        "comment": {"dtype": "string"},
+    }
+
+
+def test_get_extra_scalar_keys_skips_known_metadata_and_non_scalars():
+    assert get_extra_scalar_keys(DummyDataset()) == ["q_target", "intervention"]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (torch.tensor(1.0), True),
+        (torch.tensor([1.0]), True),
+        (torch.tensor([1.0, 2.0]), False),
+        (1.0, True),
+        (True, True),
+    ],
+)
+def test_is_scalar_like(value, expected):
+    assert is_scalar_like(value) is expected
 
 
 @pytest.mark.skip("TODO: add dummy videos")
