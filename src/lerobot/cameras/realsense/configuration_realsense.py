@@ -16,6 +16,8 @@ from dataclasses import dataclass
 
 from ..configs import CameraConfig, ColorMode, Cv2Rotation
 
+VALID_COLOR_FORMATS = {"rgb8", "bgr8"}
+
 
 @CameraConfig.register_subclass("intelrealsense")
 @dataclass
@@ -57,6 +59,7 @@ class RealSenseCameraConfig(CameraConfig):
 
     serial_number_or_name: str
     color_mode: ColorMode = ColorMode.RGB
+    color_format: str = "rgb8"
     use_rgb: bool = True
     use_depth: bool = False
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
@@ -68,6 +71,8 @@ class RealSenseCameraConfig(CameraConfig):
 
         if not self.use_rgb and not self.use_depth:
             raise ValueError("At least one of `use_rgb` or `use_depth` must be enabled.")
+        if self.color_format not in VALID_COLOR_FORMATS:
+            raise ValueError(f"color_format must be one of {VALID_COLOR_FORMATS}, got '{self.color_format}'")
 
         values = (self.fps, self.width, self.height)
         if any(v is not None for v in values) and any(v is None for v in values):
