@@ -62,10 +62,7 @@ def make_observation(seed: int, video_keys, lang_key, state_spec):
     # One ndarray per state key, shape (B, T=1, key_dim); dim taken from statistics.
     # Keys with dim 0 (e.g. disabled eef on some embodiments) are still emitted as
     # present-but-empty so the processor's state transform finds every expected key.
-    state = {
-        k: rng.standard_normal((BATCH_SIZE, 1, dim)).astype(np.float32)
-        for k, dim in state_spec
-    }
+    state = {k: rng.standard_normal((BATCH_SIZE, 1, dim)).astype(np.float32) for k, dim in state_spec}
     language = {lang_key: [[PROMPT] for _ in range(BATCH_SIZE)]}
     return {"video": video, "state": state, "language": language}
 
@@ -181,7 +178,12 @@ def main():
         state_spec = [(k, len(v["min"])) for k, v in stats[tag]["state"].items()]
         try:
             dump_one_tag(
-                policy, fair_model, tag, all_modality[tag], state_spec, args,
+                policy,
+                fair_model,
+                tag,
+                all_modality[tag],
+                state_spec,
+                args,
                 out_dir / f"original_n1_7_{tag}.npz",
             )
             done.append(tag)
