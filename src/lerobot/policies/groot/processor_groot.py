@@ -27,7 +27,7 @@ import torchvision.transforms.v2.functional as tv_functional
 from einops import rearrange
 from torchvision.transforms import InterpolationMode
 
-from lerobot.utils.import_utils import _transformers_available, require_package
+from lerobot.utils.import_utils import _datasets_available, _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import (
@@ -43,6 +43,11 @@ else:
     Qwen2VLImageProcessor = None
     Qwen3VLProcessor = None
     Qwen3VLVideoProcessor = None
+
+if TYPE_CHECKING or _datasets_available:
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+else:
+    LeRobotDataset = None
 
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
@@ -811,7 +816,7 @@ def _make_relative_action_training_stats_from_dataset_meta(
     if dataset_meta is None or repo_id is None or root is None or fps is None:
         return None
 
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    require_package("datasets", extra="groot")
 
     delta_timestamps = {ACTION: [index / fps for index in config.action_delta_indices]}
     dataset = LeRobotDataset(
