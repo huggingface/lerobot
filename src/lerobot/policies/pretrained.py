@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import abc
 import builtins
 import dataclasses
@@ -19,7 +21,7 @@ import os
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, TypedDict, TypeVar, Unpack
 
 import packaging
 import safetensors
@@ -38,10 +40,13 @@ from .utils import log_model_loading_keys
 
 T = TypeVar("T", bound="PreTrainedPolicy")
 
+if TYPE_CHECKING:
+    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+
 
 def _build_card_context(
     cfg: TrainPipelineConfig | None,
-    dataset_repo_id: str | None,
+    dataset_meta: LeRobotDatasetMetadata | None,
     input_features: dict | None,
     output_features: dict | None,
 ) -> dict:
@@ -72,30 +77,16 @@ def _build_card_context(
             "lerobot_version": __version__,
         }
 
-    if dataset_repo_id:
-        dataset_cfg = getattr(cfg, "dataset", None)
-        try:
-            from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-
-            meta = LeRobotDatasetMetadata(
-                dataset_repo_id,
-                root=getattr(dataset_cfg, "root", None),
-                revision=getattr(dataset_cfg, "revision", None),
-            )
-            context["dataset"] = {
-                "repo_id": dataset_repo_id,
-                "episodes": meta.total_episodes,
-                "frames": meta.total_frames,
-                "fps": meta.fps,
-                "tasks": [str(task) for task in meta.tasks.index],
-            }
-            context["robot_type"] = meta.robot_type
-            context["cameras"] = [key.split(".")[-1] for key in meta.camera_keys]
-        except Exception as e:  # noqa: BLE001 — dataset details are optional, never fail the push
-            logging.warning(
-                f"Could not load dataset metadata for '{dataset_repo_id}'; those sections will be "
-                f"omitted from the model card. ({e})"
-            )
+    if dataset_meta is not None:
+        context["dataset"] = {
+            "repo_id": dataset_meta.repo_id,
+            "episodes": dataset_meta.total_episodes,
+            "frames": dataset_meta.total_frames,
+            "fps": dataset_meta.fps,
+            "tasks": [str(task) for task in dataset_meta.tasks.index],
+        }
+        context["robot_type"] = dataset_meta.robot_type
+        context["cameras"] = [key.split(".")[-1] for key in dataset_meta.camera_keys]
 
     return context
 
@@ -304,6 +295,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         cfg: TrainPipelineConfig,
         peft_model=None,
         state_dict: dict[str, Tensor] | None = None,
+        dataset_meta: LeRobotDatasetMetadata | None = None,
     ):
         api = HfApi()
         repo_id = api.create_repo(
@@ -325,7 +317,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 self.save_pretrained(saved_path, state_dict=state_dict)
 
             card = self.generate_model_card(
-                cfg.dataset.repo_id, self.config.type, self.config.license, self.config.tags, cfg=cfg
+                cfg.dataset.repo_id,
+                self.config.type,
+                self.config.license,
+                self.config.tags,
+                cfg=cfg,
+                dataset_meta=dataset_meta,
             )
             card.save(str(saved_path / "README.md"))
 
@@ -352,6 +349,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         license: str | None,
         tags: list[str] | None,
         cfg: TrainPipelineConfig | None = None,
+        dataset_meta: LeRobotDatasetMetadata | None = None,
     ) -> ModelCard:
         base_model_mapping = {
             "smolvla": "lerobot/smolvla_base",
@@ -372,7 +370,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         )
 
         context = _build_card_context(
-            cfg, dataset_repo_id, self.config.input_features, self.config.output_features
+            cfg, dataset_meta, self.config.input_features, self.config.output_features
         )
         # Used by the template to pre-fill commands and the "Fine-tuned from" line.
         context["policy_repo_id"] = getattr(self.config, "repo_id", None)
