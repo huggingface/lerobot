@@ -38,18 +38,31 @@ class SimCameraConfig:
 
 @dataclass
 class SimLiftSuccessConfig:
-    """Episode succeeds once a free body has been lifted off the table.
+    """Episode-success criterion read from privileged sim state.
 
-    Mirrors the "Lift" success criterion used by robosuite/LIBERO-style
-    benchmarks: success is the body's z position rising ``height_m`` above
-    where it rested at connect time, which only happens while it's grasped
-    and held (resting contact alone can't raise it).
+    Two criteria, selected by ``criterion``:
+
+    - ``"lift"`` (default) — the "Lift" criterion used by robosuite/LIBERO-style
+      benchmarks: success is the tracked body's z position rising ``height_m``
+      above where it rested at connect time, which only happens while it's
+      grasped and held (resting contact alone can't raise it).
+    - ``"place_in_box"`` — pick-and-place: success once the tracked body comes
+      to rest *inside* the ``box_body_name`` body's cavity (within its geoms'
+      horizontal footprint and below their top rim), moving slower than
+      ``settle_speed_mps`` so a body merely passing over/through isn't counted.
     """
 
     # Name of the MJCF body to track (must have a freejoint, e.g. `scene_cube.xml`'s "cube").
     body_name: str = "cube"
-    # How far above its resting height (meters) counts as "lifted".
+    # Which criterion to score: "lift" or "place_in_box".
+    criterion: str = "lift"
+    # "lift": how far above its resting height (meters) counts as "lifted".
     height_m: float = 0.05
+    # "place_in_box": MJCF body whose cavity the tracked body must end up in.
+    box_body_name: str = "box"
+    # "place_in_box": max tracked-body speed (m/s) to count as settled (not just
+    # passing through the box volume).
+    settle_speed_mps: float = 0.05
 
 
 @RobotConfig.register_subclass("sim_so101")
