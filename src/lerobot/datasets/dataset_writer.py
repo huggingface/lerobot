@@ -41,6 +41,7 @@ from lerobot.configs import (
 
 from .compute_stats import compute_episode_stats
 from .dataset_metadata import LeRobotDatasetMetadata
+from .depth_utils import infer_depth_unit
 from .feature_utils import (
     get_hf_features_from_features,
     validate_episode_buffer,
@@ -208,6 +209,15 @@ class DatasetWriter:
         self.episode_buffer["frame_index"].append(frame_index)
         self.episode_buffer["timestamp"].append(timestamp)
         self.episode_buffer["task"].append(frame.pop("task"))
+
+        # Record each depth feature's input unit once, inferred from the first frame's dtype.
+        if frame_index == 0:
+            for depth_key in self._meta.depth_keys:
+                if depth_key not in frame:
+                    continue
+                info = self._meta.features[depth_key].setdefault("info", {})
+                if info.get("depth_unit") is None:
+                    info["depth_unit"] = infer_depth_unit(np.asarray(frame[depth_key]).dtype)
 
         # Start streaming encoder on first frame of episode
         if frame_index == 0 and self._streaming_encoder is not None:

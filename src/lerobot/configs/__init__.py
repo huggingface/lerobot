@@ -34,6 +34,8 @@ from .types import (
 )
 from .video import (
     DEFAULT_DEPTH_UNIT,
+    DEPTH_METER_UNIT,
+    DEPTH_MILLIMETER_UNIT,
     VALID_VIDEO_CODECS,
     VIDEO_ENCODER_INFO_KEYS,
     DepthEncoderConfig,
@@ -72,6 +74,8 @@ __all__ = [
     "encoder_config_from_video_info",
     # Constants
     "DEFAULT_DEPTH_UNIT",
+    "DEPTH_METER_UNIT",
+    "DEPTH_MILLIMETER_UNIT",
     "VALID_VIDEO_CODECS",
     "VIDEO_ENCODER_INFO_KEYS",
 ]
