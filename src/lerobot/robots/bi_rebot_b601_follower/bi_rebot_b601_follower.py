@@ -65,7 +65,13 @@ class BiRebotB601Follower(BimanualMixin, Robot):
             cameras=left_arm_cameras,
             motor_can_ids=config.left_arm_config.motor_can_ids,
             pos_vel_velocity=config.left_arm_config.pos_vel_velocity,
+            control_mode=config.left_arm_config.control_mode,
+            mit_kp=config.left_arm_config.mit_kp,
+            mit_kd=config.left_arm_config.mit_kd,
+            gripper_control_mode=config.left_arm_config.gripper_control_mode,
             gripper_torque_ratio=config.left_arm_config.gripper_torque_ratio,
+            gripper_mit_kp=config.left_arm_config.gripper_mit_kp,
+            gripper_mit_kd=config.left_arm_config.gripper_mit_kd,
             joint_limits=config.left_arm_config.joint_limits,
         )
 
@@ -80,7 +86,13 @@ class BiRebotB601Follower(BimanualMixin, Robot):
             cameras=config.right_arm_config.cameras,
             motor_can_ids=config.right_arm_config.motor_can_ids,
             pos_vel_velocity=config.right_arm_config.pos_vel_velocity,
+            control_mode=config.right_arm_config.control_mode,
+            mit_kp=config.right_arm_config.mit_kp,
+            mit_kd=config.right_arm_config.mit_kd,
+            gripper_control_mode=config.right_arm_config.gripper_control_mode,
             gripper_torque_ratio=config.right_arm_config.gripper_torque_ratio,
+            gripper_mit_kp=config.right_arm_config.gripper_mit_kp,
+            gripper_mit_kd=config.right_arm_config.gripper_mit_kd,
             joint_limits=config.right_arm_config.joint_limits,
         )
 
