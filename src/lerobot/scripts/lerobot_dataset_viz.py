@@ -168,8 +168,6 @@ def visualize_dataset(
     **kwargs,
 ) -> Path | None:
     if display_mode == "foxglove":
-        if save:
-            logging.warning("--save is ignored with --display-mode foxglove (no .rrd file is written).")
         from lerobot.utils.foxglove_visualization import serve_foxglove_dataset_playback
 
         logging.info("Starting Foxglove server")
@@ -421,6 +419,17 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.display_mode == "foxglove":
+        rerun_only = ("mode", "save", "output_dir", "grpc_port", "batch_size", "num_workers")
+        ignored = [name for name in rerun_only if getattr(args, name) != parser.get_default(name)]
+        if ignored:
+            logging.warning(
+                "These flags only apply to `--display-mode rerun` and are ignored with "
+                "`--display-mode foxglove`: %s.",
+                ", ".join(f"--{name.replace('_', '-')}" for name in ignored),
+            )
+
     kwargs = vars(args)
     repo_id = kwargs.pop("repo_id")
     root = kwargs.pop("root")

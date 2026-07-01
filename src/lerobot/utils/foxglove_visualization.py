@@ -17,7 +17,7 @@
 Live control-loop streaming (:func:`log_foxglove_data`) and seekable dataset playback
 (:func:`serve_foxglove_dataset_playback`) over a Foxglove WebSocket server. Callers usually select a
 backend at runtime through the dispatch in :mod:`lerobot.utils.visualization_utils` rather than
-importing from here directly. Requires the ``foxglove`` extra (``pip install 'lerobot[foxglove]'``).
+importing from here directly. Requires the ``viz`` extra (``pip install 'lerobot[viz]'``).
 """
 
 import logging
@@ -84,7 +84,7 @@ def init_foxglove(host: str = "127.0.0.1", port: int | None = 8765) -> None:
         port: Port to bind the WebSocket server to (defaults to 8765).
     """
 
-    require_package("foxglove-sdk", extra="foxglove", import_name="foxglove")
+    require_package("foxglove-sdk", extra="viz", import_name="foxglove")
     import foxglove
 
     # Live-stream state lives as attributes on ``log_foxglove_data``:
@@ -276,7 +276,7 @@ def log_foxglove_data(
             for CPU and quality.
     """
 
-    require_package("foxglove-sdk", extra="foxglove", import_name="foxglove")
+    require_package("foxglove-sdk", extra="viz", import_name="foxglove")
 
     if getattr(log_foxglove_data, "server", None) is None:
         raise RuntimeError("init_foxglove() must be called before log_foxglove_data().")
@@ -401,7 +401,7 @@ def serve_foxglove_dataset_playback(
             waiting for the user to press play in the Foxglove app.
     """
 
-    require_package("foxglove-sdk", extra="foxglove", import_name="foxglove")
+    require_package("foxglove-sdk", extra="viz", import_name="foxglove")
     import bisect
     import threading
 
