@@ -2839,6 +2839,7 @@ all = [
     { name = "pygame" },
     { name = "pymunk" },
     { name = "pynput" },
+    { name = "pyorbbecsdk2", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "pyrealsense2", marker = "sys_platform != 'darwin'" },
     { name = "pyrealsense2-macosx", marker = "sys_platform == 'darwin'" },
     { name = "pyserial" },
@@ -3070,6 +3071,9 @@ notebook = [
 openarms = [
     { name = "python-can" },
 ]
+orbbec = [
+    { name = "pyorbbecsdk2", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+]
 peft = [
     { name = "peft" },
     { name = "transformers" },
@@ -3297,6 +3301,7 @@ requires-dist = [
     { name = "lerobot", extras = ["multi-task-dit"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["notebook"], marker = "extra == 'dev'" },
     { name = "lerobot", extras = ["openarms"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["orbbec"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["peft"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["peft-dep"], marker = "extra == 'groot'" },
     { name = "lerobot", extras = ["peft-dep"], marker = "extra == 'molmoact2'" },
@@ -3391,6 +3396,7 @@ requires-dist = [
     { name = "pygame", marker = "extra == 'pygame-dep'", specifier = ">=2.5.1,<2.7.0" },
     { name = "pymunk", marker = "extra == 'pusht'", specifier = ">=6.6.0,<7.0.0" },
     { name = "pynput", marker = "extra == 'pynput-dep'", specifier = ">=1.7.8,<1.9.0" },
+    { name = "pyorbbecsdk2", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'orbbec'", specifier = ">=2.0.15,<3.0.0" },
     { name = "pyrealsense2", marker = "sys_platform != 'darwin' and extra == 'intelrealsense'", specifier = ">=2.55.1.6486,<2.57.0" },
     { name = "pyrealsense2-macosx", marker = "sys_platform == 'darwin' and extra == 'intelrealsense'", specifier = ">=2.54,<2.57.0" },
     { name = "pyserial", marker = "extra == 'pyserial-dep'", specifier = ">=3.5,<4.0" },
@@ -3424,7 +3430,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.6.0" },
     { name = "wandb", marker = "extra == 'training'", specifier = ">=0.24.0,<0.28.0" },
 ]
-provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "fastwam", "hilserl", "vla-jepa", "async", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
+provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "orbbec", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "fastwam", "hilserl", "vla-jepa", "async", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
 [[package]]
 name = "librt"
@@ -5350,6 +5356,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/6f/16/912b7225d56284859cd9a672827f18be43f8012f8b7b932bc4bd959a298e/pyopengl-3.1.10.tar.gz", hash = "sha256:c4a02d6866b54eb119c8e9b3fb04fa835a95ab802dd96607ab4cdb0012df8335", size = 1915580, upload-time = "2025-08-18T02:33:01.76Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/de/e4/1ba6f44e491c4eece978685230dde56b14d51a0365bc1b774ddaa94d14cd/pyopengl-3.1.10-py3-none-any.whl", hash = "sha256:794a943daced39300879e4e47bd94525280685f42dbb5a998d336cfff151d74f", size = 3194996, upload-time = "2025-08-18T02:32:59.902Z" },
+]
+
+[[package]]
+name = "pyorbbecsdk2"
+version = "2.0.18"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/db/b2/8ea3169dccef8fc214c1a5da6a3e308dd049fc99334a06187985438b4837/pyorbbecsdk2-2.0.18-cp312-cp312-manylinux_2_27_x86_64.whl", hash = "sha256:3e90d2ff98948bce682374d3597da6aa293ba0cf7107d193a8515333279ffc2d", size = 16376718, upload-time = "2026-02-25T05:43:57.012Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/4e/fd416137d4dca0b8548b6bb89398e0b1141c77cf5c8d5286e8f6a63ec175/pyorbbecsdk2-2.0.18-cp313-cp313-manylinux_2_27_x86_64.whl", hash = "sha256:0ec3dfea8d505ef5797d930f02468e54918802c24b68361f4cda1fdaa812231f", size = 16377501, upload-time = "2026-02-25T05:45:49.153Z" },
 ]
 
 [[package]]
