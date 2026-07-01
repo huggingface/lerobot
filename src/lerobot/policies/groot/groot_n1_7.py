@@ -60,6 +60,19 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _tie_unused_qwen_lm_head(model: nn.Module) -> None:
+    """Restore the TF4 weight tie so the unused LM head stays frozen and is omitted on save."""
+    lm_head = getattr(model, "lm_head", None)
+    get_input_embeddings = getattr(model, "get_input_embeddings", None)
+    if lm_head is None or not callable(get_input_embeddings):
+        return
+    input_embeddings = get_input_embeddings()
+    embedding_weight = getattr(input_embeddings, "weight", None)
+    if embedding_weight is None:
+        return
+    lm_head.weight = embedding_weight
+
+
 GR00T_N1_7_DEFAULTS: dict[str, Any] = {
     "model_dtype": "bfloat16",
     "dtype": "bfloat16",
@@ -288,6 +301,7 @@ class Qwen3Backbone(nn.Module):
                 config_kwargs=transformers_loading_kwargs,
             ).eval()
 
+        _tie_unused_qwen_lm_head(self.model)
         while len(self.language_model.layers) > select_layer:
             self.language_model.layers.pop(-1)
 
@@ -603,7 +617,7 @@ class GR00TN17ActionHead(nn.Module):
 
         pred = self.action_decoder(model_output, embodiment_id)
         pred_actions = pred[:, -actions.shape[1] :]
-        action_mask = action_input.action_mask.to(dtype=pred_actions.dtype)
+        action_mask = action_input.action_mask
         action_loss = F.mse_loss(pred_actions, velocity, reduction="none") * action_mask
         loss = action_loss.sum() / (action_mask.sum() + 1e-6)
         return BatchFeature(
