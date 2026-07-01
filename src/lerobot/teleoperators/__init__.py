@@ -17,5 +17,6 @@
 from .config import TeleoperatorConfig
 from .teleoperator import Teleoperator
 from .utils import TeleopEvents, make_teleoperator_from_config
+from .ds4_arm import DS4ArmTeleop, DS4ArmConfig
 
 __all__ = ["Teleoperator", "TeleoperatorConfig", "TeleopEvents", "make_teleoperator_from_config"]
