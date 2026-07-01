@@ -164,12 +164,13 @@ def visualize_dataset(
     display_compressed_images: bool = False,
     display_mode: str = "rerun",
     host: str = "127.0.0.1",
+    autoplay: bool = True,
     **kwargs,
 ) -> Path | None:
     if display_mode == "foxglove":
         if save:
             logging.warning("--save is ignored with --display-mode foxglove (no .rrd file is written).")
-        from lerobot.utils.visualization_utils import serve_foxglove_dataset_playback
+        from lerobot.utils.foxglove_visualization import serve_foxglove_dataset_playback
 
         logging.info("Starting Foxglove server")
         serve_foxglove_dataset_playback(
@@ -178,6 +179,7 @@ def visualize_dataset(
             host=host,
             port=web_port if web_port is not None else 8765,
             compress_images=display_compressed_images,
+            autoplay=autoplay,
         )
         return None
 
@@ -406,6 +408,15 @@ def main():
         help=(
             "Host to bind the Foxglove WebSocket server to when `--display-mode foxglove` is set "
             "(127.0.0.1 for local only, 0.0.0.0 for all interfaces)."
+        ),
+    )
+    parser.add_argument(
+        "--no-autoplay",
+        dest="autoplay",
+        action="store_false",
+        help=(
+            "For `--display-mode foxglove`: don't start playing automatically when a client "
+            "connects; wait for play to be pressed in the Foxglove app instead."
         ),
     )
 
