@@ -106,6 +106,3 @@ class WanVideoVAE38(torch.nn.Module):
         z = z * self.latents_std.float().to(z.device) + self.latents_mean.float().to(z.device)
         out = self.vae.decode(z.to(device=dev, dtype=dtype)).sample
         return out.float().clamp_(-1.0, 1.0)
-
-
-__all__ = ["WanVideoVAE38"]

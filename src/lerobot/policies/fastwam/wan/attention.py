@@ -17,11 +17,6 @@ except ModuleNotFoundError:
 
 import warnings
 
-__all__ = [
-    "flash_attention",
-    "attention",
-]
-
 
 def flash_attention(
     q,

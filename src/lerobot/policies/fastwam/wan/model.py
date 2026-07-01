@@ -24,8 +24,6 @@ else:
 
 from .attention import flash_attention
 
-__all__ = ["WanModel"]
-
 
 def sinusoidal_embedding_1d(dim, position):
     # preprocess

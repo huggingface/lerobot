@@ -348,7 +348,7 @@ def test_vae_adapter_empty_build_encode_decode_shapes():
     pytest.importorskip("diffusers")
     from diffusers import AutoencoderKLWan
 
-    from lerobot.policies.fastwam.wan.adapters import WanVideoVAE38
+    from lerobot.policies.fastwam.wan import WanVideoVAE38
 
     # Production always loads a real pretrained VAE from the diffusers repo; here we
     # build the same architecture with random weights and dummy standardization stats
