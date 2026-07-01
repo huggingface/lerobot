@@ -183,23 +183,28 @@ def _log_foxglove_image(
     channels: dict | None = None,
     log_time: int | None = None,
     depth_range: tuple[float, float] | None = None,
+    raw_depth_values: bool = False,
 ) -> None:
     """Log an image on a cached per-topic channel.
 
-    Frames are cast to ``uint8`` and the encoding is chosen from the channel count: 1 => ``mono8``,
-    3 => ``rgb8`` (float input assumed in [0, 1]), 4 => ``rgba8``; other counts are skipped with a
-    warning. When ``compress_images`` is set, ``mono8`` and ``rgb8`` are JPEG-encoded instead.
+    The encoding is chosen from the channel count and dtype: a single-channel ``float`` or ``uint16``
+    frame is a depth map (``32FC1``/``16UC1``), single-channel ``uint8`` is ``mono8``, 3 => ``rgb8``
+    (float input assumed in [0, 1], cast to uint8), 4 => ``rgba8``; other counts are skipped with a
+    warning. When ``compress_images`` is set, ``rgb8`` is JPEG-encoded instead.
 
     Args:
         topic: Foxglove topic to log on.
         frame_id: Frame id stamped on the message.
         arr: Image as HWC or CHW (CHW is transposed to HWC), any dtype.
-        compress_images: JPEG-encode ``mono8`` and ``rgb8`` frames; ignored for ``rgba8``.
+        compress_images: JPEG-encode ``rgb8`` frames; ignored for other encodings.
         channels: Per-topic channel cache to reuse (see :func:`_log_foxglove_scalars`).
         log_time: Message time in nanoseconds, also written to the header timestamp; when ``None``
             the server's receive time is used.
-        depth_range: ``(lo, hi)`` bounds used to clip a single-channel frame before it is encoded as
-            a regular image.
+        depth_range: ``(lo, hi)`` clip bounds in a depth frame's own input units. Depth frames
+            (``32FC1``/``16UC1``) are rescaled onto Foxglove's default display max for their encoding
+            (``1.0`` / ``10000``) so they show with sensible contrast; ``depth_range`` sets the source
+            range, else the frame's own min/max is used. Ignored for ``mono8``/``rgb8``/``rgba8``.
+        raw_depth_values: If True, depth values are not rescaled and are logged as is.
     """
 
     from foxglove.channels import CompressedImageChannel, RawImageChannel
@@ -217,37 +222,47 @@ def _log_foxglove_image(
     height, width = arr.shape[0], arr.shape[1]
     n_channels = 1 if arr.ndim == 2 else arr.shape[2]
 
-    # Apply depth range clipping to single channel depth maps.
-    if depth_range is not None and n_channels == 1:
-        lo, hi = depth_range
-        arr = arr.clip(lo, hi)
-
-    if n_channels == 3 and np.issubdtype(arr.dtype, np.floating):
-        arr = (arr * 255.0).clip(0, 255)
-    arr = np.ascontiguousarray(arr, dtype=np.uint8)
-
-    if compress_images and n_channels in (1, 3):
-        buf_src = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR) if n_channels == 3 else arr
-        _, buf = cv2.imencode(".jpg", buf_src)
-        channel = channels.get(topic)
-        if channel is None:
-            channel = channels[topic] = CompressedImageChannel(topic=topic)
-        channel.log(
-            CompressedImage(timestamp=timestamp, frame_id=frame_id, data=buf.tobytes(), format="jpeg"),
-            **log_kwargs,
+    if n_channels == 1 and arr.dtype != np.uint8:
+        # Depth map: infer the encoding from the dtype.
+        encoding, target_dtype, value_max = (
+            ("32FC1", np.float32, 1.0)
+            if np.issubdtype(arr.dtype, np.floating)
+            else ("16UC1", np.uint16, 10000.0)
         )
-        return
+        if not raw_depth_values:
+            # Rescale onto the encoding's display max with respect to the given depth_range.
+            lo, hi = depth_range if depth_range is not None else (float(arr.min()), float(arr.max()))
+            arr = arr.clip(lo, hi).astype(np.float32)
+            arr = (arr - lo) / ((hi - lo) if hi > lo else 1.0) * value_max
+        arr = np.ascontiguousarray(arr, dtype=target_dtype)
+    else:
+        if n_channels == 3 and np.issubdtype(arr.dtype, np.floating):
+            arr = (arr * 255.0).clip(0, 255)
+        arr = np.ascontiguousarray(arr, dtype=np.uint8)
 
-    encoding = {1: "mono8", 3: "rgb8", 4: "rgba8"}.get(n_channels)
-    if encoding is None:
-        logging.warning(
-            "Foxglove: skipping image on topic '%s' with unsupported shape %s (%d channels); "
-            "expected 1 (mono8), 3 (rgb8), or 4 (rgba8) channels.",
-            topic,
-            tuple(arr.shape),
-            n_channels,
-        )
-        return
+        if compress_images and n_channels == 3:
+            buf_src = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+            _, buf = cv2.imencode(".jpg", buf_src)
+            channel = channels.get(topic)
+            if channel is None:
+                channel = channels[topic] = CompressedImageChannel(topic=topic)
+            channel.log(
+                CompressedImage(timestamp=timestamp, frame_id=frame_id, data=buf.tobytes(), format="jpeg"),
+                **log_kwargs,
+            )
+            return
+
+        encoding = {1: "mono8", 3: "rgb8", 4: "rgba8"}.get(n_channels)
+        if encoding is None:
+            logging.warning(
+                "Foxglove: skipping image on topic '%s' with unsupported shape %s (%d channels); "
+                "expected 1 (mono8/16UC1/32FC1), 3 (rgb8), or 4 (rgba8) channels.",
+                topic,
+                tuple(arr.shape),
+                n_channels,
+            )
+            return
+
     channel = channels.get(topic)
     if channel is None:
         channel = channels[topic] = RawImageChannel(topic=topic)
@@ -258,7 +273,7 @@ def _log_foxglove_image(
             width=width,
             height=height,
             encoding=encoding,
-            step=width * n_channels,
+            step=width * n_channels * arr.itemsize,
             data=arr.tobytes(),
         ),
         **log_kwargs,
@@ -471,6 +486,7 @@ def serve_foxglove_dataset_playback(
                 channels=channels,
                 log_time=log_time,
                 depth_range=depth_ranges.get(key),
+                raw_depth_values=True,
             )
         _log_foxglove_scalars(
             _foxglove_topic(OBS_STATE),
