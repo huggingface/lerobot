@@ -7,6 +7,7 @@ LeRobot offers multiple options for video capture:
 | `OpenCVCamera`    | Phone, built-in laptop, USB webcams |
 | `ZMQCamera`       | Network-connected cameras           |
 | `RealSenseCamera` | Intel RealSense (with depth)        |
+| `OrbbecCamera`    | Orbbec (with depth)                 |
 | `Reachy2Camera`   | Reachy 2 robot cameras              |
 
 > [!TIP]
@@ -16,10 +17,10 @@ LeRobot offers multiple options for video capture:
 
 Every camera requires a unique identifier to be instantiated, allowing you to distinguish between multiple connected devices.
 
-`OpenCVCamera` and `RealSenseCamera` support auto-discovery. Run the command below to list available devices and their identifiers. Note that these identifiers may change after rebooting your computer or re-plugging the camera, depending on your operating system.
+`OpenCVCamera`, `RealSenseCamera` and `OrbbecCamera` support auto-discovery. Run the command below to list available devices and their identifiers. Note that these identifiers may change after rebooting your computer or re-plugging the camera, depending on your operating system.
 
 ```bash
-lerobot-find-cameras opencv # or realsense for Intel Realsense cameras
+lerobot-find-cameras opencv # or realsense for Intel Realsense cameras, or orbbec for Orbbec cameras
 ```
 
 The output will look something like this if you have two cameras connected:
@@ -153,6 +154,47 @@ finally:
     camera.disconnect()
 ```
 <!-- prettier-ignore-end -->
+
+</hfoption>
+<hfoption id="Orbbec Camera">
+
+Orbbec support relies on the `pyorbbecsdk` library. Install it with the optional extra
+(prebuilt wheels are published for Linux x86_64):
+
+```bash
+pip install 'lerobot[orbbec]'
+```
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras.orbbec import OrbbecCamera, OrbbecCameraConfig
+from lerobot.cameras import ColorMode, Cv2Rotation
+
+# Create an `OrbbecCameraConfig` specifying your camera's serial number (or unique name).
+config = OrbbecCameraConfig(
+    serial_number_or_name="CP1234567890",
+    fps=30,
+    width=1280,
+    height=720,
+    color_mode=ColorMode.RGB,
+    rotation=Cv2Rotation.NO_ROTATION,
+)
+
+# Instantiate and connect an `OrbbecCamera` with warm-up read (default).
+camera = OrbbecCamera(config)
+camera.connect()
+
+# Capture a color frame via `read()`.
+try:
+    color_frame = camera.read()
+    print("Color frame shape:", color_frame.shape)
+finally:
+    camera.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+> [!NOTE]
+> `OrbbecCamera` is color-only: `read()` returns an `(H, W, 3)` `uint8` RGB frame. Depth capture is not implemented yet, so LeRobot dataset image features keep the usual RGB shape.
 
 </hfoption>
 </hfoptions>
