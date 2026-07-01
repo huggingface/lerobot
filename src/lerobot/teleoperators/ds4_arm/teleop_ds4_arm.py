@@ -46,14 +46,14 @@ _AXIS_LS_Y = 1
 _AXIS_RS_X = 2
 _AXIS_RS_Y = 3
 
-_BTN_CROSS    = 0
-_BTN_CIRCLE   = 1
-_BTN_SQUARE   = 2
+_BTN_CROSS = 0
+_BTN_CIRCLE = 1
+_BTN_SQUARE = 2
 _BTN_TRIANGLE = 3
-_BTN_L1       = 9
-_BTN_R1       = 10
-_BTN_OPTIONS  = 6
-_BTN_DPAD_UP  = 11   # macOS USB: d-pad reported as buttons
+_BTN_L1 = 9
+_BTN_R1 = 10
+_BTN_OPTIONS = 6
+_BTN_DPAD_UP = 11  # macOS USB: d-pad reported as buttons
 _BTN_DPAD_DOWN = 12
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -80,7 +80,7 @@ class DS4ArmTeleop(Teleoperator):
         cfg = DS4ArmConfig(id="my_ds4")
         with DS4ArmTeleop(cfg) as teleop:
             while True:
-                action = teleop.get_action()   # {motor_name: float, ...}
+                action = teleop.get_action()  # {motor_name: float, ...}
                 robot.send_action(action)
     """
 
@@ -98,7 +98,7 @@ class DS4ArmTeleop(Teleoperator):
         self._dt: float = 1.0 / config.fps
 
         # Per-joint position targets (maintained across calls)
-        self._targets: dict[str, float] = {m: 0.0 for m in config.motor_names}
+        self._targets: dict[str, float] = dict.fromkeys(config.motor_names, 0.0)
 
         # Edge-detection state for toggle buttons
         self._prev_triangle: bool = False
@@ -136,16 +136,11 @@ class DS4ArmTeleop(Teleoperator):
 
         count = pygame.joystick.get_count()
         if count == 0:
-            raise RuntimeError(
-                "No joystick/controller detected. "
-                "Connect the DS4 via USB and try again."
-            )
+            raise RuntimeError("No joystick/controller detected. Connect the DS4 via USB and try again.")
 
         idx = self.config.joystick_index
         if idx >= count:
-            raise RuntimeError(
-                f"Joystick index {idx} requested but only {count} controller(s) found."
-            )
+            raise RuntimeError(f"Joystick index {idx} requested but only {count} controller(s) found.")
 
         self._joy = pygame.joystick.Joystick(idx)
         self._joy.init()
@@ -180,19 +175,19 @@ class DS4ArmTeleop(Teleoperator):
         dz = self.config.deadzone
 
         return {
-            "ls_x":      _apply_deadzone( joy.get_axis(_AXIS_LS_X), dz),
-            "ls_y":      _apply_deadzone(-joy.get_axis(_AXIS_LS_Y), dz),  # inverted
-            "rs_x":      _apply_deadzone( joy.get_axis(_AXIS_RS_X), dz),
-            "rs_y":      _apply_deadzone(-joy.get_axis(_AXIS_RS_Y), dz),  # inverted
-            "dpad_up":   bool(joy.get_button(_BTN_DPAD_UP)),
+            "ls_x": _apply_deadzone(joy.get_axis(_AXIS_LS_X), dz),
+            "ls_y": _apply_deadzone(-joy.get_axis(_AXIS_LS_Y), dz),  # inverted
+            "rs_x": _apply_deadzone(joy.get_axis(_AXIS_RS_X), dz),
+            "rs_y": _apply_deadzone(-joy.get_axis(_AXIS_RS_Y), dz),  # inverted
+            "dpad_up": bool(joy.get_button(_BTN_DPAD_UP)),
             "dpad_down": bool(joy.get_button(_BTN_DPAD_DOWN)),
-            "cross":     bool(joy.get_button(_BTN_CROSS)),
-            "triangle":  bool(joy.get_button(_BTN_TRIANGLE)),
-            "square":    bool(joy.get_button(_BTN_SQUARE)),
-            "circle":    bool(joy.get_button(_BTN_CIRCLE)),
-            "l1":        bool(joy.get_button(_BTN_L1)),
-            "r1":        bool(joy.get_button(_BTN_R1)),
-            "options":   bool(joy.get_button(_BTN_OPTIONS)),
+            "cross": bool(joy.get_button(_BTN_CROSS)),
+            "triangle": bool(joy.get_button(_BTN_TRIANGLE)),
+            "square": bool(joy.get_button(_BTN_SQUARE)),
+            "circle": bool(joy.get_button(_BTN_CIRCLE)),
+            "l1": bool(joy.get_button(_BTN_L1)),
+            "r1": bool(joy.get_button(_BTN_R1)),
+            "options": bool(joy.get_button(_BTN_OPTIONS)),
         }
 
     @check_if_not_connected
@@ -206,7 +201,7 @@ class DS4ArmTeleop(Teleoperator):
         """
         cfg = self.config
         inp = self._read_inputs()
-        dt  = self._dt
+        dt = self._dt
 
         # ── Speed mode ────────────────────────────────────────────────────────
         if inp["square"]:
@@ -219,10 +214,10 @@ class DS4ArmTeleop(Teleoperator):
         # ── Raw target deltas (analog axes) ───────────────────────────────────
         raw = dict(self._targets)  # copy current smoothed state as base
 
-        raw["shoulder_pan"]  += inp["ls_x"] * max_speed * dt
-        raw["shoulder_lift"] += inp["ls_y"] * max_speed * dt   # up-stick = arm up
-        raw["elbow_flex"]    -= inp["rs_y"] * max_speed * dt   # up-stick = elbow down (matches original)
-        raw["wrist_roll"]    += inp["rs_x"] * max_speed * dt
+        raw["shoulder_pan"] += inp["ls_x"] * max_speed * dt
+        raw["shoulder_lift"] += inp["ls_y"] * max_speed * dt  # up-stick = arm up
+        raw["elbow_flex"] -= inp["rs_y"] * max_speed * dt  # up-stick = elbow down (matches original)
+        raw["wrist_roll"] += inp["rs_x"] * max_speed * dt
 
         # ── L1/R1 — wrist pitch (digital) ────────────────────────────────────
         wrist_speed = cfg.speed_l1r1 if not inp["square"] and not inp["circle"] else max_speed
@@ -234,9 +229,9 @@ class DS4ArmTeleop(Teleoperator):
         # ── D-pad — gripper (digital) ─────────────────────────────────────────
         gripper_speed = cfg.speed_dpad if not inp["square"] and not inp["circle"] else max_speed * 0.5
         if inp["dpad_up"]:
-            raw["gripper"] -= gripper_speed * dt   # open
+            raw["gripper"] -= gripper_speed * dt  # open
         if inp["dpad_down"]:
-            raw["gripper"] += gripper_speed * dt   # close
+            raw["gripper"] += gripper_speed * dt  # close
 
         # ── EMA smoothing on analog joints only ───────────────────────────────
         alpha = cfg.smooth_alpha
@@ -245,7 +240,7 @@ class DS4ArmTeleop(Teleoperator):
 
         # Digital joints: apply directly (no smoothing = crisp button feel)
         self._targets["wrist_flex"] = raw["wrist_flex"]
-        self._targets["gripper"]    = raw["gripper"]
+        self._targets["gripper"] = raw["gripper"]
 
         return {f"{m}.pos": self._targets[m] for m in self.config.motor_names}
 

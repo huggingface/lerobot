@@ -1,3 +1,12 @@
+# Fork Notes — DS4 Teleoperator for SO-101
+
+This fork adds native DualShock 4 controller support for the SO-101 follower arm,
+enabling teleoperation and episode recording without a leader arm.
+
+**Added:** `src/lerobot/teleoperators/ds4_arm/` — see [PR #3907](https://github.com/huggingface/lerobot/pull/3907)
+
+---
+
 # DS4 Teleoperator for SO-101
 
 Enables teleoperation and episode recording with a DualShock 4 controller,
@@ -5,22 +14,22 @@ without needing a leader arm.
 
 ## Controller Mapping
 
-| Input | Joint |
-|-------|-------|
-| LS X | shoulder_pan (left/right) |
-| LS Y | shoulder_lift (push up = arm rises) |
-| RS Y | elbow_flex (push up = elbow folds down) |
-| RS X | wrist_roll (twist left/right) |
-| L1 / R1 | wrist_flex (pitch down / up) |
-| D-pad ↑ / ↓ | gripper (open / close) |
+| Input       | Joint                                   |
+| ----------- | --------------------------------------- |
+| LS X        | shoulder_pan (left/right)               |
+| LS Y        | shoulder_lift (push up = arm rises)     |
+| RS Y        | elbow_flex (push up = elbow folds down) |
+| RS X        | wrist_roll (twist left/right)           |
+| L1 / R1     | wrist_flex (pitch down / up)            |
+| D-pad ↑ / ↓ | gripper (open / close)                  |
 
 ## Speed Modes
 
-| Button | Mode | Speed |
-|--------|------|-------|
-| Square | Slow | 40 °/s |
+| Button  | Mode   | Speed  |
+| ------- | ------ | ------ |
+| Square  | Slow   | 40 °/s |
 | Default | Normal | 60 °/s |
-| Circle | Fast | 90 °/s |
+| Circle  | Fast   | 90 °/s |
 
 ## Usage
 

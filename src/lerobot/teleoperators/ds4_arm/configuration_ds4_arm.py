@@ -48,8 +48,8 @@ class DS4ArmConfig(TeleoperatorConfig):
     speed_slow: float = 40.0
     speed_normal: float = 60.0
     speed_fast: float = 90.0
-    speed_dpad: float = 30.0   # gripper (digital)
-    speed_l1r1: float = 30.0   # wrist_flex (digital)
+    speed_dpad: float = 30.0  # gripper (digital)
+    speed_l1r1: float = 30.0  # wrist_flex (digital)
 
     # Target update rate
     fps: float = 30.0
