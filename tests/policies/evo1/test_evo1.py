@@ -24,6 +24,11 @@ import lerobot.policies.evo1.modeling_evo1 as modeling_evo1
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.evo1.configuration_evo1 import Evo1Config
 from lerobot.policies.evo1.flow_matching import FlowmatchingActionHead
+from lerobot.policies.evo1.internvl3_embedder import (
+    IMAGENET_MEAN,
+    IMAGENET_STD,
+    _batched_pixel_values,
+)
 from lerobot.policies.evo1.processor_evo1 import (
     Evo1ActionProcessorStep,
     Evo1PadActionProcessorStep,
@@ -60,7 +65,9 @@ class DummyEVO1(nn.Module):
         self.get_vl_embeddings_calls += 1
         self.grad_enabled_calls.append(torch.is_grad_enabled())
         self.embedder_training_calls.append(self.embedder.training)
-        return torch.ones(len(images), 4, EMBED_DIM, requires_grad=torch.is_grad_enabled())
+        # images is a list of per-camera (B, C, H, W) tensors, so the batch dim is images[0].shape[0].
+        batch_size = images[0].shape[0]
+        return torch.ones(batch_size, 4, EMBED_DIM, requires_grad=torch.is_grad_enabled())
 
     def forward(
         self,
@@ -397,10 +404,12 @@ def test_collect_image_batches_handles_unbatched_chw(monkeypatch):
         f"{OBS_IMAGES}.front": torch.rand(3, 16, 16),
     }
 
-    image_batches, image_masks = policy._collect_image_batches(batch)
+    camera_images, image_masks = policy._collect_image_batches(batch)
 
-    assert len(image_batches) == 1
-    assert len(image_batches[0]) == policy.config.max_views
+    # One present camera, returned as a batched (B, C, H, W) tensor with the unbatched CHW frame
+    # promoted to batch_size=1 (not read as batch_size=C).
+    assert len(camera_images) == 1
+    assert camera_images[0].shape == (1, 3, 16, 16)
     assert image_masks.tolist() == [[True, False]]
 
 
@@ -447,3 +456,28 @@ def test_flowmatching_dict_config_enables_state_encoder_for_horizon_one():
 
     assert pred_velocity.shape == (2, ACTION_DIM)
     assert noise.shape == (2, 1, ACTION_DIM)
+
+
+def test_evo1_batched_pixel_values_shape_and_zero_padding():
+    torch.manual_seed(0)
+    batch_size, image_size, max_views = 2, 448, 3
+    camera_images = [torch.rand(batch_size, 3, 40, 50)]  # a single present camera
+    mean = torch.tensor(IMAGENET_MEAN)
+    std = torch.tensor(IMAGENET_STD)
+
+    pixel_values = _batched_pixel_values(
+        camera_images, max_views, image_size, mean, std, torch.float32, torch.device("cpu")
+    )
+
+    assert pixel_values.shape == (batch_size * max_views, 3, image_size, image_size)
+    grouped = pixel_values.reshape(batch_size, max_views, 3, image_size, image_size)
+    # Absent views (indices 1, 2) are zero images normalized to -mean/std, matching the old padding.
+    expected_pad = (-mean / std).view(1, 3, 1, 1)
+    for view in (1, 2):
+        assert torch.allclose(
+            grouped[:, view], expected_pad.expand(batch_size, 3, image_size, image_size), atol=1e-5
+        )
+    # The present view is genuinely different from the constant pad value.
+    assert not torch.allclose(
+        grouped[:, 0], expected_pad.expand(batch_size, 3, image_size, image_size), atol=1e-3
+    )

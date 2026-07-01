@@ -318,17 +318,20 @@ class EVO1Policy(PreTrainedPolicy):
         self._keep_frozen_embedder_eval()
         return self
 
-    def _collect_image_batches(self, batch: dict[str, Tensor]) -> tuple[list[list[Tensor]], Tensor]:
+    def _collect_image_batches(self, batch: dict[str, Tensor]) -> tuple[list[Tensor], Tensor]:
         camera_keys = self._camera_keys or sorted(key for key in batch if key.startswith(f"{OBS_IMAGES}."))
         if not camera_keys:
             raise ValueError("EVO1 requires at least one visual observation feature.")
+        camera_keys = list(camera_keys)[: self.config.max_views]
 
-        # Normalize each camera tensor to (B, C, H, W) up-front so that batch_size is read
-        # from a real batch dim and not from C in the unbatched (C, H, W) case.
-        normalized: dict[str, Tensor] = {}
-        for camera_key in camera_keys[: self.config.max_views]:
+        # Keep each present camera as a batched (B, C, H, W) tensor on its current (GPU) device.
+        # Resizing/normalization and zero-padding of absent views happen batched inside the
+        # embedder, so images never leave the device here (no per-sample .cpu() round-trip).
+        camera_images: list[Tensor] = []
+        for camera_key in camera_keys:
             image = batch[camera_key]
             if image.dim() == 3:
+                # Promote an unbatched (C, H, W) frame so batch_size is read from a real batch dim.
                 image = image.unsqueeze(0)
             elif image.dim() == 5:
                 image = image[:, -1]
@@ -336,24 +339,16 @@ class EVO1Policy(PreTrainedPolicy):
                 raise ValueError(
                     f"Unsupported image tensor shape for EVO1: key={camera_key} shape={tuple(image.shape)}"
                 )
-            normalized[camera_key] = image
+            camera_images.append(image)
 
-        batch_size = normalized[camera_keys[0]].shape[0]
-        image_batches: list[list[Tensor]] = []
-        image_masks = torch.zeros(batch_size, self.config.max_views, dtype=torch.bool)
+        batch_size = camera_images[0].shape[0]
+        n_present = len(camera_images)
+        image_masks = torch.zeros(
+            batch_size, self.config.max_views, dtype=torch.bool, device=camera_images[0].device
+        )
+        image_masks[:, :n_present] = True
 
-        for batch_index in range(batch_size):
-            sample_images: list[Tensor] = []
-            for camera_key in camera_keys[: self.config.max_views]:
-                sample_images.append(normalized[camera_key][batch_index].detach().cpu())
-            if not sample_images:
-                raise ValueError("EVO1 received a batch without any image tensor.")
-            while len(sample_images) < self.config.max_views:
-                sample_images.append(torch.zeros_like(sample_images[0]))
-            image_batches.append(sample_images[: self.config.max_views])
-            image_masks[batch_index, : min(len(camera_keys), self.config.max_views)] = True
-
-        return image_batches, image_masks
+        return camera_images, image_masks
 
     def _compute_fused_tokens(
         self,
