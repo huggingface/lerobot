@@ -132,10 +132,23 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        for axis in ["x", "y", "z", "gripper"]:
-            features[PipelineFeatureType.ACTION].pop(f"delta_{axis}", None)
+        # Remove the features this step consumes. The upstream
+        # MapTensorToDeltaActionDictStep registers the gripper feature under the key
+        # "gripper" (not "delta_gripper"), so it must be popped by that exact name.
+        for key in ["delta_x", "delta_y", "delta_z", "gripper"]:
+            features[PipelineFeatureType.ACTION].pop(key, None)
 
-        for feat in ["enabled", "target_x", "target_y", "target_z", "target_wx", "target_wy", "target_wz"]:
+        # Declare every feature emitted by action(), including the "gripper_vel" output.
+        for feat in [
+            "enabled",
+            "target_x",
+            "target_y",
+            "target_z",
+            "target_wx",
+            "target_wy",
+            "target_wz",
+            "gripper_vel",
+        ]:
             features[PipelineFeatureType.ACTION][f"{feat}"] = PolicyFeature(
                 type=FeatureType.ACTION, shape=(1,)
             )
