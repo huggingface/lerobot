@@ -236,6 +236,15 @@ wheels = [
 ]
 
 [[package]]
+name = "anytree"
+version = "2.13.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bc/a8/eb55fab589c56f9b6be2b3fd6997aa04bb6f3da93b01154ce6fc8e799db2/anytree-2.13.0.tar.gz", hash = "sha256:c9d3aa6825fdd06af7ebb05b4ef291d2db63e62bb1f9b7d9b71354be9d362714", size = 48389, upload-time = "2025-04-08T21:06:30.662Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7b/98/f6aa7fe0783e42be3093d8ef1b0ecdc22c34c0d69640dfb37f56925cb141/anytree-2.13.0-py3-none-any.whl", hash = "sha256:4cbcf10df36b1f1cba131b7e487ff3edafc9d6e932a3c70071b5b768bab901ff", size = 45077, upload-time = "2025-04-08T21:06:29.494Z" },
+]
+
+[[package]]
 name = "appnope"
 version = "0.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1185,6 +1194,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/0f/d5/c66da9b79e5bdb124974bfe172b4daf3c984ebd9c2a06e2b8a4dc7331c72/defusedxml-0.7.1.tar.gz", hash = "sha256:1bb3032db185915b62d7c6209c5a8792be6a32ab2fedacc84e01b52c51aa3e69", size = 75520, upload-time = "2021-03-08T10:59:26.269Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/07/6c/aa3f2f849e01cb6a001cd8554a88d4c77c5c1a31c95bdf1cf9301e6d9ef4/defusedxml-0.7.1-py2.py3-none-any.whl", hash = "sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61", size = 25604, upload-time = "2021-03-08T10:59:24.45Z" },
+]
+
+[[package]]
+name = "dex-retargeting"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anytree" },
+    { name = "lxml" },
+    { name = "nlopt" },
+    { name = "numpy" },
+    { name = "pin" },
+    { name = "pytransform3d" },
+    { name = "pyyaml" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/26/c1/2ed904c6adb9ef20eabc1ae1cd18acc7a20d1347c58c30a985987dd6b83f/dex_retargeting-0.5.0-py3-none-any.whl", hash = "sha256:347ce785181e7c7dff2c2ca1a55955f6b33b711d33a7171cb4ef89dc19bd66d3", size = 52307, upload-time = "2025-04-05T00:17:29.322Z" },
 ]
 
 [[package]]
@@ -2242,6 +2268,36 @@ wheels = [
 ]
 
 [[package]]
+name = "isaacteleop"
+version = "1.3.131"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/61/6b/aa26693c30423858f1fd1869bdbb729b9fc869e1b17d8aaca404dfbca4c3/isaacteleop-1.3.131-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:7d31e7d15530f4491556af852d7540e5e2fc60c107846840172531929f027da1", size = 16175029, upload-time = "2026-06-24T17:14:46.531Z" },
+    { url = "https://files.pythonhosted.org/packages/30/ff/31905eddb9c07d1378bb4d131f6c82b78b350e18a3fb31a018366580f32b/isaacteleop-1.3.131-cp312-cp312-manylinux_2_35_x86_64.whl", hash = "sha256:1fbb7a527bf2cc8c6334cb6ef9947e203e09aca74dc8839f4d5ee6bb6c11359f", size = 14177078, upload-time = "2026-06-24T22:27:40.11Z" },
+    { url = "https://files.pythonhosted.org/packages/28/70/bf598cc6432347204f5346fca247f41d958b8581d77a16f9eb11bc93d1e8/isaacteleop-1.3.131-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:862eb2cc82f97212e14329adcf65f1148d4e5e454a17e900ce9027cdba08fab0", size = 16173983, upload-time = "2026-06-24T17:15:20.164Z" },
+    { url = "https://files.pythonhosted.org/packages/00/11/240a145cd99fc6b81bd359238c5ce1e7550e235f75751c3f004ea9cc02f6/isaacteleop-1.3.131-cp313-cp313-manylinux_2_35_x86_64.whl", hash = "sha256:c0cc70152d5a345dbede073a3f422c7654a26b083fc0ce6f460b4201e3d7c87e", size = 14176612, upload-time = "2026-06-24T17:15:41.42Z" },
+]
+
+[package.optional-dependencies]
+cloudxr = [
+    { name = "websockets" },
+]
+retargeters = [
+    { name = "cmeel-tinyxml2" },
+    { name = "cmeel-urdfdom" },
+    { name = "dex-retargeting" },
+    { name = "nlopt" },
+    { name = "pin" },
+    { name = "pyyaml" },
+    { name = "scipy" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
+    { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform == 'linux'" },
+]
+
+[[package]]
 name = "ischedule"
 version = "1.2.7"
 source = { registry = "https://pypi.org/simple" }
@@ -3008,6 +3064,13 @@ intelrealsense = [
     { name = "pyrealsense2", marker = "sys_platform != 'darwin'" },
     { name = "pyrealsense2-macosx", marker = "sys_platform == 'darwin'" },
 ]
+isaac-teleop = [
+    { name = "cmeel-tinyxml2" },
+    { name = "cmeel-urdfdom" },
+    { name = "isaacteleop", extra = ["cloudxr", "retargeters"] },
+    { name = "placo" },
+    { name = "scipy" },
+]
 kinematics = [
     { name = "cmeel-tinyxml2" },
     { name = "cmeel-urdfdom" },
@@ -3234,6 +3297,7 @@ requires-dist = [
     { name = "hidapi", marker = "extra == 'gamepad'", specifier = ">=0.14.0,<0.15.0" },
     { name = "huggingface-hub", specifier = ">=1.0.0,<2.0.0" },
     { name = "ipykernel", marker = "extra == 'notebook'", specifier = ">=6.0.0,<7.0.0" },
+    { name = "isaacteleop", extras = ["cloudxr", "retargeters"], marker = "extra == 'isaac-teleop'", specifier = "~=1.3.0" },
     { name = "jsonlines", marker = "extra == 'dataset'", specifier = ">=4.0.0,<5.0.0" },
     { name = "jupyter", marker = "extra == 'notebook'", specifier = ">=1.0.0,<2.0.0" },
     { name = "lerobot", extras = ["accelerate-dep"], marker = "extra == 'smolvla'" },
@@ -3279,6 +3343,7 @@ requires-dist = [
     { name = "lerobot", extras = ["hopejr"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["intelrealsense"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["kinematics"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["kinematics"], marker = "extra == 'isaac-teleop'" },
     { name = "lerobot", extras = ["lekiwi"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["libero"], marker = "sys_platform == 'linux' and extra == 'all'" },
     { name = "lerobot", extras = ["matplotlib-dep"], marker = "extra == 'async'" },
@@ -3323,6 +3388,7 @@ requires-dist = [
     { name = "lerobot", extras = ["robstride"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["sarm"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'aloha'" },
+    { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'isaac-teleop'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'libero'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'metaworld'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'molmoact2'" },
@@ -3417,7 +3483,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.6.0" },
     { name = "wandb", marker = "extra == 'training'", specifier = ">=0.24.0,<0.28.0" },
 ]
-provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "hilserl", "vla-jepa", "async", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
+provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "isaac-teleop", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "hilserl", "vla-jepa", "async", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
 [[package]]
 name = "librt"
@@ -4177,6 +4243,25 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/95/97/51359c77527d45943fe7a94d00a3843b81162e6c4244b3579fe8fc54cb9c/ninja-1.13.0-py3-none-win32.whl", hash = "sha256:8cfbb80b4a53456ae8a39f90ae3d7a2129f45ea164f43fadfa15dc38c4aef1c9", size = 267201, upload-time = "2025-08-11T15:10:15.158Z" },
     { url = "https://files.pythonhosted.org/packages/29/45/c0adfbfb0b5895aa18cec400c535b4f7ff3e52536e0403602fc1a23f7de9/ninja-1.13.0-py3-none-win_amd64.whl", hash = "sha256:fb8ee8719f8af47fed145cced4a85f0755dd55d45b2bddaf7431fa89803c5f3e", size = 309975, upload-time = "2025-08-11T15:10:16.697Z" },
     { url = "https://files.pythonhosted.org/packages/df/93/a7b983643d1253bb223234b5b226e69de6cda02b76cdca7770f684b795f5/ninja-1.13.0-py3-none-win_arm64.whl", hash = "sha256:3c0b40b1f0bba764644385319028650087b4c1b18cdfa6f45cb39a3669b81aa9", size = 290806, upload-time = "2025-08-11T15:10:18.018Z" },
+]
+
+[[package]]
+name = "nlopt"
+version = "2.10.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/39/76558756c758962fcf2c6f8450384e43a8e65cb8dfbb8a93d40014b09b3a/nlopt-2.10.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:19e7a5dd823eab1d167a4fb2f3da13978b997029c9b5e6164d33c747fc7ec542", size = 637168, upload-time = "2025-12-23T15:23:59.667Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/57/87a00a49664ae90f312cf9fd12262a3803d4f81709e01653bc2be6299b63/nlopt-2.10.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:939a0f3ed1710a6b9493a029744e07e8703f56aea4cfd3010d8619c4fba0df8e", size = 440214, upload-time = "2025-12-23T15:24:00.774Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/03/3140b6417a4cb113cd0f5d53b27ada263f81f158355ad991aaeee770e10e/nlopt-2.10.0-cp312-cp312-win_amd64.whl", hash = "sha256:8364bdd98c8265eb87779155f4ab144dd67c7990620244b629f2ebc024d727d1", size = 641684, upload-time = "2025-12-23T15:24:02.094Z" },
+    { url = "https://files.pythonhosted.org/packages/99/85/9f4d06c156d6007da8594f04343c360978595b0de6c1fa41c2fa1295cb11/nlopt-2.10.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:4ff0577b4e866f5696f44d546368f5ee752a249ac73f9c45d8a29513c5f2430f", size = 636965, upload-time = "2025-12-23T15:24:03.226Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/eb/1dbdb4fa2ac8550870eef7f74dcd5c35f4c4df58d223e068daeac20f7c98/nlopt-2.10.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:c3a9697d24f3cb92b53c37cad7dc8900c7cc125dbe95da73bc92a4fed133eaf0", size = 439869, upload-time = "2025-12-23T15:24:04.598Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/44/20f39446c3edb9bd80e37fa0f996118170f8509eea0e118595a6c5aa3b18/nlopt-2.10.0-cp313-cp313-win_amd64.whl", hash = "sha256:98cbe9012ae641970366c9935ffcbb9cdcd6deef8521881a3e2ad7d35ed33506", size = 641822, upload-time = "2025-12-23T15:24:05.708Z" },
+    { url = "https://files.pythonhosted.org/packages/60/87/6e2b468190f8a4467efb9165c94e3ab6c13e03a579fe821fae10479a5003/nlopt-2.10.0-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:404ddd3f77958d54edf8b1dbed187730fe2ab13cd6e6fb2e7b80cfac2958460f", size = 636962, upload-time = "2025-12-23T15:24:06.823Z" },
+    { url = "https://files.pythonhosted.org/packages/10/92/87b81b0d149ef4439c1edd475ac62127904e63efe7aacc89f6279aba957c/nlopt-2.10.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:6a49ba09083bdb10c2fde31e2190a16e0e57050a2e98e37ece9b606ad2cb2a31", size = 439883, upload-time = "2025-12-23T15:24:08.233Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/1d/be16a2bd80f28f7cc838448950c1468ab6fced9939806b6a88396cc4028c/nlopt-2.10.0-cp314-cp314-win_amd64.whl", hash = "sha256:0b0cb9de4270b7ed2d9a299ba379ae6b24d5095b0365a2af9702ff0ccdff5235", size = 660414, upload-time = "2025-12-23T15:24:09.296Z" },
 ]
 
 [[package]]
@@ -5507,6 +5592,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/86/f5/8c0653e5bb54e0cbdfe27bf32d41f27bc4e12faa8742778c17f2a71be2c0/python-xlib-0.33.tar.gz", hash = "sha256:55af7906a2c75ce6cb280a584776080602444f75815a7aff4d287bb2d7018b32", size = 269068, upload-time = "2022-12-25T18:53:00.824Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fc/b8/ff33610932e0ee81ae7f1269c890f697d56ff74b9f5b2ee5d9b7fa2c5355/python_xlib-0.33-py2.py3-none-any.whl", hash = "sha256:c3534038d42e0df2f1392a1b30a15a4ff5fdc2b86cfa94f072bf11b10a164398", size = 182185, upload-time = "2022-12-25T18:52:58.662Z" },
+]
+
+[[package]]
+name = "pytransform3d"
+version = "3.15.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "lxml" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f8/c2/62a4b2378bbf2239f78eba17ecec5d5173bb1df6cad8b4c89ccd6c2ced0c/pytransform3d-3.15.0.tar.gz", hash = "sha256:496538dbd4d3b189f79744dc983554a8c194ee57bfc8c1a2db9bf2e8f68b1053", size = 8254749, upload-time = "2026-04-10T11:40:56.668Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ee/90/dec318aa22c0d9699b2fe856866e165194d743c462f24dc6780577994a93/pytransform3d-3.15.0-py3-none-any.whl", hash = "sha256:a72b01556dee3e3023c328a2f424c2966a6bdbee62e7543e64ff3700054d65e5", size = 165463, upload-time = "2026-04-10T11:40:54.045Z" },
 ]
 
 [[package]]

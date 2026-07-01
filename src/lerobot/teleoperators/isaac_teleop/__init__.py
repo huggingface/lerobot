@@ -25,12 +25,14 @@ and full-body tracking are the natural next devices (add a ``teleop_<device>.py`
 """
 
 from .base import IsaacTeleopTeleoperator
+from .clutch import Clutch
 from .config_isaac_teleop import IsaacTeleopConfig, SO101LeaderArmConfig, XRControllerConfig
 from .teleop_so101_leader_arm import SO101LeaderArm, leader_joints_to_robot_action
 from .teleop_xr_controller import XRController
 from .xr_controller_processor import MapXRControllerActionToRobotAction
 
 __all__ = [
+    "Clutch",
     "IsaacTeleopConfig",
     "IsaacTeleopTeleoperator",
     "MapXRControllerActionToRobotAction",

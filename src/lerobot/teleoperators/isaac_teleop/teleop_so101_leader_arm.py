@@ -62,8 +62,11 @@ from .base import _GRIPPER_MOTOR_SCALE, IsaacTeleopTeleoperator
 from .config_isaac_teleop import SO101LeaderArmConfig
 
 # Canonical SO-101 DOF names and order. Matches the ``so101_leader`` plugin's stream
-# (``JointStateOutput.joints[*].name``) and the SO-101 follower's motor order; defines the
-# ``JointStateSource`` output layout (read positionally) and the emitted action order.
+# (``JointStateOutput.joints[*].name``) and the SO-101 follower's motor order; passed to the
+# ``JointStateSource`` as its output layout and used as the emitted action order. The source
+# maps the incoming stream to this layout BY NAME, and :func:`_joints_group_to_rad` reads it
+# back by the group's own per-slot names (not by this list's index), so a layout mismatch
+# cannot silently mislabel a DOF.
 SO101_LEADER_JOINTS = [
     "shoulder_pan",
     "shoulder_lift",
@@ -109,6 +112,22 @@ def leader_joints_to_robot_action(
         else:
             action[f"{name}.pos"] = float(np.rad2deg(rad))
     return action
+
+
+def _joints_group_to_rad(joints) -> dict[str, float]:
+    """Read a ``JointStateSource`` output group into ``{joint_name: angle [rad]}``.
+
+    Pure (no ``isaacteleop`` import; duck-typed on the group), so it is unit-testable without
+    the XR runtime. The group is positional (an integer-indexed ``TensorGroup``, no string
+    keys), but every slot carries its declared joint name in ``group.group_type.types``. We
+    label each value by THAT name rather than by a positional :data:`SO101_LEADER_JOINTS`
+    index: the source maps the incoming stream to its ``joint_names`` layout by name, so
+    keying off the group's own names means a source/layout mismatch surfaces as a wrong or
+    missing joint key here (caught upstream) instead of silently mirroring the wrong DOF onto
+    the follower.
+    """
+    names = [t.name for t in joints.group_type.types]
+    return {name: float(joints[i]) for i, name in enumerate(names)}
 
 
 class SO101LeaderArm(IsaacTeleopTeleoperator):
@@ -208,10 +227,10 @@ class SO101LeaderArm(IsaacTeleopTeleoperator):
         self._is_tracking = not getattr(joints, "is_none", False)
         if self._is_tracking:
             try:
-                self._last_joints_rad = {name: float(joints[i]) for i, name in enumerate(SO101_LEADER_JOINTS)}
-            except (IndexError, KeyError, TypeError, ValueError):
-                # A partially-populated group on an odd frame: keep held-last, but report
-                # it as not-tracking so the loop holds the follower rather than trusting it.
+                self._last_joints_rad = _joints_group_to_rad(joints)
+            except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+                # A partially-populated / malformed group on an odd frame: keep held-last, but
+                # report it as not-tracking so the loop holds the follower rather than trusting it.
                 self._is_tracking = False
 
         return leader_joints_to_robot_action(

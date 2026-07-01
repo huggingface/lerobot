@@ -16,98 +16,34 @@
 
 """Shared device + control-loop infrastructure for the Isaac Teleop -> SO-101 examples.
 
-Both entry points — ``teleoperate.py`` (drive the arm live) and ``record.py`` (drive +
-save a LeRobot dataset) — build a per-device :class:`Device` bundle here and run the same
-read -> (maybe command) -> hold-when-idle -> sleep loop. ``--teleop.type`` selects the Isaac
-input device (``xr_controller`` | ``so101_leader``); :func:`build_device` connects the
-follower, dispatches to the right ``setup_*``, and runs its pre-loop ``startup``.
+Consumed by ``teleoperate.py`` (drive the arm live) and ``record.py`` (drive + save a
+LeRobot dataset). Both build a per-device :class:`Device` bundle here and run the same
+branchless loop: read -> (maybe command) -> hold-when-idle -> sleep. :func:`build_device`
+connects the SO-101 follower, dispatches on ``--teleop.type`` (``xr_controller`` |
+``so101_leader``) to the matching ``setup_*``, and runs its pre-loop ``startup``.
 
-Each frame a device-specific ``compute`` returns the joint action, or ``None`` to mean
-"device idle -> hold at the measured pose" (XR clutch disengaged, or leader stream stale).
-Per-device ``setup_*`` builds that closure plus a ``startup`` (pre-loop slew / warm-up) and
-``cleanup`` (reap / disconnect); the outer loop is branchless.
+A :class:`Device` bundles three closures: ``compute(obs) -> RobotAction | None`` (the
+per-frame action, or ``None`` to hold at the measured pose when the device is idle — XR
+clutch disengaged or leader stream stale), ``startup`` (pre-loop slew / warm-up), and
+``cleanup`` (reap / disconnect). The two devices:
 
-``xr`` device
--------------
-The XR device is a thin reader: it emits the **raw** controller grip pose (already
-rebased into the robot base frame), the squeeze, and the trigger. ALL the calibration
-lives here in the loop — a small :class:`Clutch` latches the controller origin on engage
-and drives the EE from the delta, so the device carries no per-frame state::
-
-    XRController.get_action()                       # raw base-frame grip_pos/grip_quat + squeeze + trigger
-      -> Clutch.rebase(grip_pos, grip_quat)          # ee_pose = engage-relative delta applied to the EE home (pos + orient)
-      -> MapXRControllerActionToRobotAction          # ee.x/y/z = abs pos, ee.w* = abs orient rotvec, ee.gripper_pos = f(trigger)
-      -> EEBoundsAndSafety                           # workspace clip + per-frame jump clamp (position only)
-      -> InverseKinematicsEEToJoints(ow=small)       # soft-orientation Placo IK (passes ee.gripper_pos -> gripper.pos)
-
-Squeeze (and hold) the controller grip past ``clutch_threshold`` to engage; on the
-engage edge the clutch latches its origin to the current controller pose and its home to
-the last commanded EE pose, so the arm does not jump in position OR orientation. The
-clutch rebases BOTH position and orientation (engage-relative base-frame deltas); the
-orientation target is fed to the IK with a small weight (``IK_ORIENTATION_WEIGHT``) so
-the wrist follows the hand while position dominates (the 5-DOF SO-101 cannot fully
-realize an arbitrary orientation). The analog trigger drives an absolute
-``ee.gripper_pos`` jaw target.
-
-XR startup / safety contract: by default the script slews all joints to a default reset
-pose (a mid-range arm pose with the gripper open) over ``--reset_duration`` seconds
-before entering the loop. Pass ``--reset_to_origin=false`` to skip this slew and keep the
-arm exactly where it is. After the slew (or if skipped) the clutch seeds its home from
-the arm's MEASURED pose (FK of the joints read right after the slew), so the seeded home
-equals the post-reset position and the first engage is jump-free. The robot is commanded
-ONLY while the clutch is engaged; while disengaged the loop re-sends the measured joints
-(an explicit hold), and releasing the clutch freezes it in place.
-
-NOTE: EEBoundsAndSafety clamps (not raises) on a per-frame jump > max_ee_step_m; the
-clutch's no-teleport keeps frames small, but set a generous bound for bring-up.
-
-``leader`` device
------------------
-The input is a back-drivable SO-101 *leader arm* whose six joint angles are streamed by
-Isaac Teleop's native ``so101_leader`` plugin over the OpenXR tensor transport. Because
-the leader and follower share the SO-101 kinematics, the control law is a direct 1:1
-joint mirror -- no clutch, no IK, no URDF::
-
-    so101_leader plugin ──(JointStateOutput over OpenXR)──▶ SO101LeaderArm.get_action()
-                                                                  │  rad2deg + gripper->RANGE_0_100
-                                                                  ▼
-                                                          robot.send_action({joint}.pos)
-
-:class:`SO101LeaderArm` does the unit conversion internally, so the loop is a thin
-read->send mirror. Pieces that must be running:
-
-* **CloudXR runtime** -- auto-launched by ``SO101LeaderArm.connect()`` (the shared
-  ``IsaacTeleopTeleoperator`` base; first launch may prompt for the EULA and take ~30s).
-  Opt out with ``--teleop.auto_launch_cloudxr=false`` if you run CloudXR externally.
-* **so101_leader plugin** -- the C++ device that reads the physical leader's servos and
-  pushes ``JointStateOutput``. Either start it yourself (``so101_leader_plugin <port>``)
-  or pass ``--launch_plugin <path>`` (optionally with ``--teleop.port <port>``) to have
-  the entry point spawn it AFTER CloudXR is up (so it inherits the runtime env). With no
-  ``--teleop.port`` the plugin runs its synthetic trajectory -- a no-hardware dry run.
-  When a port is set, the plugin's tick->radian calibration is inferred from ``--teleop.id``
-  and forwarded as the plugin's third positional arg: the LeRobot-format JSON at
-  ``HF_LEROBOT_CALIBRATION/teleoperators/so_leader/<id>.json`` (the same file the serial
-  SO-101 leader uses). If it does not exist the script warns and the plugin uses its
-  built-in defaults; calibrate via ``lerobot-calibrate --teleop.type=so101_leader
-  --teleop.id=<id>`` or the plugin's ``calibrate`` subcommand.
-
-Leader startup safety: by default the follower is smoothly slewed from its current pose
-to the leader's first reading over ``--align_duration`` seconds (``--align=false`` to
-skip), so the arm does not snap when the 1:1 mirror begins. While the leader is not
-streaming the follower is held at its measured pose.
+* ``xr_controller`` — a thin :class:`XRController` reader whose raw grip pose an in-loop
+  :class:`Clutch` turns into an EE target for LeRobot's Cartesian IK pipeline.
+* ``so101_leader`` — a back-drivable SO-101 leader arm mirrored 1:1 into the follower
+  (no clutch, no IK).
 
 Requires the ``isaac-teleop`` extra (``isaacteleop``) and an OpenXR runtime.
+
+The user-facing guide — pipeline diagrams, the clutch/engage model, the startup safety
+contracts, and the ``so101_leader`` plugin setup — is ``docs/source/isaac_teleop.mdx``;
+this docstring only orients a reader of the source.
 """
 
-import atexit
 import json
 import logging
-import os
-import select
 import socket
 import subprocess
 import sys
-import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -130,6 +66,7 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
     InverseKinematicsEEToJoints,
 )
 from lerobot.teleoperators.isaac_teleop import (
+    Clutch,
     IsaacTeleopConfig,
     MapXRControllerActionToRobotAction,
     SO101LeaderArm,
@@ -139,15 +76,6 @@ from lerobot.teleoperators.isaac_teleop import (
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 from lerobot.utils.robot_utils import precise_sleep
-from lerobot.utils.rotation import Rotation
-
-# Terminal control for the stdin keyboard backend is Unix-only (absent on Windows).
-try:
-    import termios
-
-    _HAS_TERMIOS = True
-except ImportError:  # pragma: no cover - Windows
-    _HAS_TERMIOS = False
 
 FPS = 30
 
@@ -254,68 +182,6 @@ RESET_ORIGIN_DEG: dict[str, float] = {
     "wrist_roll": -65.0,
     "gripper": 0.0,
 }
-
-
-class Clutch:
-    """Engage-relative clutch for both position AND orientation.
-
-    Mirrors Isaac Teleop's ``SO101ClutchRetargeter`` but lives in this loop so the
-    device can stay a thin raw-pose reader. Clutching is the same idea for both
-    channels — latch an origin on engage, then track the base-frame delta from it —
-    applied independently to position and orientation. State:
-
-    - ``_last_commanded_pos`` / ``_last_commanded_rot``: the EE pose the loop last
-      commanded; held while disengaged so the arm freezes where it was left.
-    - ``_home_pos`` / ``_home_rot``: latched on the engage edge — the EE pose the
-      per-frame delta is applied to.
-    - ``_origin_pos`` / ``_origin_rot``: latched on the engage edge — the controller
-      pose the per-frame delta is measured against.
-
-    Each engaged frame :meth:`rebase` returns::
-
-        pos = home_pos + (grip_pos - origin_pos)  # 1:1 controller -> EE translation
-        rot = (R_ctrl @ R_origin ^ -1) @ R_home  # base-frame delta, left-composed
-
-    On the engage edge ``grip_pos == origin_pos`` and ``R_ctrl == R_origin``, so the
-    output is exactly the home pose (== the last commanded pose), i.e. no teleport in
-    position OR orientation. The orientation delta is expressed in the base frame
-    (left multiply), so rotating the hand 30° about base Z rotates the EE 30° about
-    base Z — matching the position convention the operator sees in the room. A
-    mid-task re-clutch latches a fresh home/origin, so the EE resumes from where it
-    was left and tracks the new delta.
-
-    NOTE: ``_home_rot`` is the last *commanded* orientation, not the achieved one. On
-    the 5-DOF SO-101 the arm cannot fully realize an arbitrary orientation, so the
-    commanded and achieved wrist orientation differ — but the commanded signal is
-    continuous across a re-clutch, so there is still no jump.
-    """
-
-    def __init__(self, home_base_T_ee: np.ndarray):  # noqa: N803
-        # Seed the held pose from the arm's measured startup EE pose so the first
-        # engage latches home there (no jump on the first squeeze).
-        home = np.asarray(home_base_T_ee, dtype=float)
-        self._last_commanded_pos = home[:3, 3].copy()
-        self._last_commanded_rot = Rotation.from_matrix(home[:3, :3])
-        self._home_pos = self._last_commanded_pos.copy()
-        self._home_rot = self._last_commanded_rot
-        self._origin_pos = np.zeros(3, dtype=float)
-        self._origin_rot = Rotation.from_quat(np.array([0.0, 0.0, 0.0, 1.0]))
-
-    def engage(self, grip_pos: np.ndarray, grip_quat: np.ndarray) -> None:
-        """Latch the engage home (where the arm is now) and controller origin."""
-        self._home_pos = self._last_commanded_pos.copy()
-        self._home_rot = self._last_commanded_rot
-        self._origin_pos = np.asarray(grip_pos, dtype=float).copy()
-        self._origin_rot = Rotation.from_quat(np.asarray(grip_quat, dtype=float))
-
-    def rebase(self, grip_pos: np.ndarray, grip_quat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Return the absolute base-frame EE target ``(pos [m], quat [xyzw])`` for this frame."""
-        pos = self._home_pos + (np.asarray(grip_pos, dtype=float) - self._origin_pos)
-        rot_ctrl = Rotation.from_quat(np.asarray(grip_quat, dtype=float))
-        rot = (rot_ctrl * self._origin_rot.inv()) * self._home_rot
-        self._last_commanded_pos = pos.copy()
-        self._last_commanded_rot = rot
-        return pos, rot.as_quat()
 
 
 def _load_reset_target(motor_names: list[str]) -> dict[str, float]:
@@ -704,11 +570,14 @@ def build_device(cfg: LoopConfig) -> tuple:
     """Connect the follower, build the selected Isaac device, and run its pre-loop startup.
 
     Shared by ``teleoperate.py`` and ``record.py``. Defaults the CloudXR profile, connects the
-    SO-101 follower FIRST (so the startup slew / clutch-home seed can read live joints),
-    dispatches on ``--teleop.type`` (``so101_leader`` -> :func:`setup_leader`, else
-    :func:`setup_xr`), then runs ``device.startup()`` (XR reset slew / leader align + warm-up)
-    BEFORE returning — matching the original order, where startup runs before any dataset
-    creation in ``record.py``.
+    follower FIRST (so the startup slew / clutch-home seed can read live joints), dispatches on
+    ``--teleop.type`` (``so101_leader`` -> :func:`setup_leader`, else :func:`setup_xr`), then
+    runs ``device.startup()`` (XR reset slew / leader align + warm-up) BEFORE returning —
+    matching the original order, where startup runs before any dataset creation in ``record.py``.
+
+    On success returns ``(robot, device, motor_names)`` with the follower connected and the
+    device warmed up. If any step after ``connect()`` fails (or is interrupted), the follower
+    is disconnected before the error propagates, so a failed setup never leaks the connection.
 
     Returns ``(robot, device, motor_names)``.
     """
@@ -724,160 +593,82 @@ def build_device(cfg: LoopConfig) -> tuple:
     # Connect the follower FIRST so the startup slew and clutch-home seed can use live joint
     # readings.
     robot.connect()
-    motor_names = list(robot.bus.motors.keys())
+    # Everything after connect() can fail (device setup, the ~30s CloudXR startup, or a
+    # Ctrl-C while donning the headset). build_device runs OUTSIDE the callers' try/finally,
+    # so on any failure disconnect the follower here — otherwise the connection leaks.
+    device: Device | None = None
+    try:
+        # Joint names in action order. Robot-agnostic: every LeRobot robot advertises its
+        # motors as ``{name}.pos`` action features, so this works without assuming a ``.bus``
+        # (letting non-bus robots plug in as the integration grows beyond the SO-101).
+        motor_names = [key.removesuffix(".pos") for key in robot.action_features if key.endswith(".pos")]
 
-    # Dispatch on the parsed device config type (the registry only yields these two).
-    if isinstance(cfg.teleop, SO101LeaderArmConfig):
-        device = setup_leader(cfg, robot, motor_names)
-    else:
-        device = setup_xr(cfg, robot, motor_names)
+        # Dispatch on the parsed device config type (the registry only yields these two).
+        if isinstance(cfg.teleop, SO101LeaderArmConfig):
+            device = setup_leader(cfg, robot, motor_names)
+        else:
+            device = setup_xr(cfg, robot, motor_names)
 
-    device.startup()
+        device.startup()
+    except BaseException:
+        # Reap a partially-started teleop device (half-open session / spawned plugin) if it
+        # got that far, then always disconnect the follower before propagating.
+        if device is not None:
+            with suppress(Exception):
+                device.cleanup()
+        robot.disconnect()
+        raise
+
     return robot, device, motor_names
 
 
 # ============================================================================
-# Keyboard control (stdin backend; works over SSH / Wayland / headless-with-a-tty)
+# Keyboard control
 # ============================================================================
-
-# Backends for init_keyboard_listener(), selectable via LEROBOT_KEYBOARD_BACKEND.
-_VALID_KEYBOARD_BACKENDS = {"auto", "stdin", "pynput", "none"}
-
-
-def _stdin_is_tty() -> bool:
-    """True when stdin is an interactive terminal we can read keys from."""
-    try:
-        return sys.stdin is not None and sys.stdin.isatty()
-    except Exception:
-        return False
-
-
-class _StdinKeyboardListener:
-    """Read arrow / Esc keys from a raw-mode stdin TTY (SSH- and Wayland-friendly).
-
-    Drop-in for the pynput listener in ``lerobot.common.control_utils``: same ``.stop()``
-    method and the same effect on the shared ``events`` dict. Where the global pynput/X
-    listener can't see keystrokes (over SSH, under Wayland, or headless-with-a-tty), stdin
-    still receives them. Puts the terminal in non-canonical, no-echo mode — KEEPING signals
-    so Ctrl-C still raises ``KeyboardInterrupt`` — polls stdin on a daemon thread, and ALWAYS
-    restores the original terminal mode on :meth:`stop` and at interpreter exit (so a crash
-    or Ctrl-C never leaves the shell with echo off).
-    """
-
-    def __init__(self, events: dict):
-        self._events = events
-        self._fd = sys.stdin.fileno()
-        self._old_term = termios.tcgetattr(self._fd)
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._restored = False
-        # Belt-and-braces: restore the tty even if stop() is never reached (crash / hard exit).
-        atexit.register(self._restore)
-
-    def start(self) -> None:
-        new = termios.tcgetattr(self._fd)
-        # Clear ICANON (line buffering) + ECHO; KEEP ISIG so Ctrl-C / Ctrl-Z still signal.
-        new[3] &= ~(termios.ICANON | termios.ECHO)
-        termios.tcsetattr(self._fd, termios.TCSADRAIN, new)
-        self._thread = threading.Thread(target=self._run, name="isaac-stdin-keys", daemon=True)
-        self._thread.start()
-
-    def _run(self) -> None:
-        while not self._stop.is_set():
-            try:
-                ready, _, _ = select.select([self._fd], [], [], 0.1)
-                if not ready:
-                    continue
-                data = os.read(self._fd, 1024)
-            except (OSError, ValueError):
-                break  # fd closed / stdin gone
-            if data:
-                self._dispatch(data)
-
-    def _dispatch(self, data: bytes) -> None:
-        # Read the whole available buffer and walk it: an arrow key arrives as the 3 bytes
-        # ``ESC [ C/D`` together, while a real Esc is a lone ESC — matching the full sequence
-        # avoids mistaking Esc for the start of an arrow.
-        events = self._events
-        i, n = 0, len(data)
-        while i < n:
-            if data[i] != 0x1B:  # only ESC-initiated keys are meaningful here
-                i += 1
-                continue
-            seq = data[i : i + 3]
-            if seq == b"\x1b[C":  # Right arrow
-                print("Right arrow pressed. Ending the episode early...")
-                events["exit_early"] = True
-                i += 3
-            elif seq == b"\x1b[D":  # Left arrow
-                print("Left arrow pressed. Re-recording the last episode...")
-                events["rerecord_episode"] = True
-                events["exit_early"] = True
-                i += 3
-            elif data[i : i + 2] == b"\x1b[":  # other CSI sequence (Up/Down/...) -> ignore
-                i += 3 if n - i >= 3 else n
-            else:  # lone ESC (not the start of an arrow) -> stop recording
-                print("Escape pressed. Stopping data recording...")
-                events["stop_recording"] = True
-                events["exit_early"] = True
-                i += 1
-
-    def stop(self) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=1.0)
-        self._restore()
-
-    def _restore(self) -> None:
-        if self._restored:
-            return
-        self._restored = True
-        with suppress(Exception):
-            termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old_term)
-
-
-def _new_events() -> dict:
-    return {"exit_early": False, "rerecord_episode": False, "stop_recording": False}
 
 
 def init_keyboard_listener():
-    """Keyboard listener for the recording shortcuts, with a stdin backend for SSH / headless.
+    """``(listener, events)`` for the recording shortcuts — terminal-first (SSH-friendly).
 
-    Drop-in for ``lerobot.common.control_utils.init_keyboard_listener`` but prefers a stdin
-    (termios) backend so the Right / Left / Esc shortcuts work over SSH, under Wayland, and on
-    headless boxes that have a TTY — where the upstream global pynput/X listener silently
-    captures nothing. Backend selection (override with ``LEROBOT_KEYBOARD_BACKEND`` ∈
-    {auto, stdin, pynput, none}, default auto):
+    This example is normally driven from a terminal, often over SSH, with the arm/headset
+    in front of the operator rather than the workstation's console. Upstream's
+    ``init_keyboard_listener`` prefers pynput's GLOBAL listener whenever a local X display
+    is present (``DISPLAY`` set, non-Wayland) — but that captures the workstation console,
+    not the SSH terminal, so the shortcuts silently do nothing over SSH. So whenever stdin
+    is a TTY we use upstream's stdlib :class:`TerminalKeyListener` directly (it reads the
+    controlling terminal, restores it on exit, and decodes the same keys). With no TTY
+    (GUI launch / piped) we defer to upstream, which selects pynput or a headless no-op.
 
-    - interactive TTY -> the stdin backend in this module;
-    - otherwise (GUI launch, no tty) -> delegate to the upstream pynput / headless listener;
-    - ``none`` -> headless (returns ``None``).
-
-    Returns ``(listener, events)`` where ``listener`` has ``.stop()`` (or is ``None`` when
-    headless), and ``events`` is a dict with bool flags ``exit_early`` / ``rerecord_episode`` /
-    ``stop_recording`` set by the key presses.
+    Controls (both backends): Right / ``n`` end the episode early, Left / ``r`` re-record,
+    Esc / ``q`` stop recording. Returns ``(listener, events)`` where ``listener`` has
+    ``.stop()`` (or is ``None`` when headless) and ``events`` holds the ``exit_early`` /
+    ``rerecord_episode`` / ``stop_recording`` flags the key presses set.
     """
-    choice = os.environ.get("LEROBOT_KEYBOARD_BACKEND", "auto").strip().lower()
-    if choice not in _VALID_KEYBOARD_BACKENDS:
-        logging.warning("Unknown LEROBOT_KEYBOARD_BACKEND=%r; using 'auto'.", choice)
-        choice = "auto"
+    if not (sys.stdin is not None and sys.stdin.isatty()):
+        # No controlling terminal: defer to upstream (pynput on a GUI, else headless no-op).
+        from lerobot.utils.keyboard_input import init_keyboard_listener as _upstream
 
-    stdin_ok = _HAS_TERMIOS and _stdin_is_tty()
+        return _upstream()
 
-    if choice == "none":
-        return None, _new_events()
-    if choice in ("auto", "stdin") and stdin_ok:
-        events = _new_events()
-        listener = _StdinKeyboardListener(events)
-        listener.start()
-        logging.info(
-            "Keyboard control via stdin (terminal): Right = end episode early, Left = re-record, Esc = stop."
-        )
-        return listener, events
-    if choice == "stdin":  # forced stdin but no usable TTY -> headless
-        return None, _new_events()
+    from lerobot.utils.keyboard_input import TerminalKeyListener, apply_recording_control
 
-    # auto without a TTY, or choice == 'pynput': defer to the upstream pynput / headless listener.
-    from lerobot.common.control_utils import init_keyboard_listener as _upstream_listener
+    events = {"exit_early": False, "rerecord_episode": False, "stop_recording": False}
 
-    return _upstream_listener()
+    # Same key -> control mapping upstream's init uses; n/r/q are the arrow/Esc equivalents
+    # that survive laggy SSH/VNC links where escape sequences can split.
+    def on_key(name: str) -> None:
+        key = name.lower()
+        if key in ("right", "n"):
+            apply_recording_control("right", events)
+        elif key in ("left", "r"):
+            apply_recording_control("left", events)
+        elif key in ("esc", "q"):
+            apply_recording_control("esc", events)
+
+    listener = TerminalKeyListener(on_key)
+    listener.start()
+    logging.info(
+        "Keyboard control via terminal — keep this terminal focused: "
+        "Right/n = end episode early, Left/r = re-record, Esc/q = stop."
+    )
+    return listener, events
