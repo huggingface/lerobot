@@ -342,15 +342,18 @@ class EVO1Policy(PreTrainedPolicy):
         image_batches: list[list[Tensor]] = []
         image_masks = torch.zeros(batch_size, self.config.max_views, dtype=torch.bool)
 
-        cpu_images: dict[str, Tensor] = {
-            camera_key: normalized[camera_key].detach().cpu()
+        # Detach each camera tensor once for the whole batch and keep it on-device. The embedder
+        # resizes on the GPU, so there is no host round-trip; indexing per sample below is then a
+        # cheap view with no copy and no device sync.
+        detached_images: dict[str, Tensor] = {
+            camera_key: normalized[camera_key].detach()
             for camera_key in camera_keys[: self.config.max_views]
         }
 
         for batch_index in range(batch_size):
             sample_images: list[Tensor] = []
             for camera_key in camera_keys[: self.config.max_views]:
-                sample_images.append(cpu_images[camera_key][batch_index])
+                sample_images.append(detached_images[camera_key][batch_index])
             if not sample_images:
                 raise ValueError("EVO1 received a batch without any image tensor.")
             while len(sample_images) < self.config.max_views:
