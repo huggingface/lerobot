@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import random
 from copy import copy, deepcopy
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
@@ -136,6 +137,7 @@ class _GrootN17CheckpointProcessorAssets:
     video_horizon: int | None
     use_percentiles: bool
     use_relative_action: bool
+    state_dropout_prob: float
     clip_outliers: bool
     video_modality_keys: list[str] | None
     image_crop_size: list[int] | None
@@ -182,6 +184,9 @@ def _load_n1_7_checkpoint_processor_assets(config: GrootConfig) -> _GrootN17Chec
         modality_config = {}
 
     use_relative_action = bool(processor_kwargs.get("use_relative_action", False))
+    state_dropout_prob = as_optional_float(processor_kwargs.get("state_dropout_prob"))
+    if state_dropout_prob is None:
+        state_dropout_prob = 0.0
     stats = _load_n1_7_checkpoint_stats(
         checkpoint_path,
         processor_kwargs,
@@ -222,6 +227,7 @@ def _load_n1_7_checkpoint_processor_assets(config: GrootConfig) -> _GrootN17Chec
         video_horizon=video_horizon,
         use_percentiles=bool(processor_kwargs.get("use_percentiles", False)),
         use_relative_action=use_relative_action,
+        state_dropout_prob=state_dropout_prob,
         clip_outliers=clip_outliers,
         video_modality_keys=video_modality_keys,
         image_crop_size=as_int_pair(processor_kwargs.get("image_crop_size")),
@@ -445,6 +451,22 @@ def _apply_groot_step_overrides(
                 post_init()
 
 
+def _set_groot_preprocessor_training(
+    preprocessor: PolicyProcessorPipeline,
+    *,
+    training: bool,
+) -> None:
+    """Set the runtime-only mode of GR00T stochastic processor steps.
+
+    Any dataclass step exposing a ``training`` field participates, so processor
+    steps can opt into train-time-only behavior (dropout, augmentation) without
+    this helper enumerating them.
+    """
+    for step in preprocessor.steps:
+        if is_dataclass(step) and any(f.name == "training" for f in fields(step)):
+            setattr(step, "training", training)
+
+
 def make_groot_pre_post_processors_from_pretrained(
     config: GrootConfig,
     pretrained_path: str,
@@ -493,6 +515,7 @@ def make_groot_pre_post_processors_from_pretrained(
     _reconnect_groot_relative_absolute_steps(preprocessor, postprocessor)
     _reconnect_groot_n1_7_pack_decode_steps(preprocessor, postprocessor)
     _apply_groot_action_decode_transform(postprocessor, config.action_decode_transform)
+    _set_groot_preprocessor_training(preprocessor, training=dataset_meta is not None)
     return preprocessor, postprocessor
 
 
@@ -1056,6 +1079,7 @@ def _build_n1_7_relative_action_processor_assets(
         video_horizon=base_assets.video_horizon if base_assets is not None else None,
         use_percentiles=use_percentiles,
         use_relative_action=True,
+        state_dropout_prob=base_assets.state_dropout_prob if base_assets is not None else 0.0,
         clip_outliers=base_assets.clip_outliers if base_assets is not None else True,
         video_modality_keys=video_modality_keys,
         image_crop_size=base_assets.image_crop_size if base_assets is not None else None,
@@ -1160,6 +1184,8 @@ def make_groot_pre_post_processors(
         embodiment_tag=config.embodiment_tag,
         embodiment_mapping=embodiment_mapping,
         normalize_min_max=True,
+        training=dataset_meta is not None,
+        state_dropout_prob=(checkpoint_assets.state_dropout_prob if checkpoint_assets is not None else 0.0),
         stats=padded_stats,
         clip_outliers=clip_outliers,
         video_modality_keys=video_modality_keys,
@@ -1472,6 +1498,8 @@ class GrootN17PackInputsStep(ProcessorStep):
     embodiment_tag: str = "new_embodiment"
     embodiment_mapping: dict[str, int] = field(default_factory=lambda: dict(N1_7_EMBODIMENT_MAPPING))
     normalize_min_max: bool = True
+    training: bool = False
+    state_dropout_prob: float = 0.0
     stats: dict[str, dict[str, Any]] | None = None
     clip_outliers: bool = True
     use_percentiles: bool = False
@@ -1803,6 +1831,13 @@ class GrootN17PackInputsStep(ProcessorStep):
             if dim < self.max_state_dim:
                 pad = torch.zeros(bsz, 1, self.max_state_dim - dim, dtype=state.dtype, device=state.device)
                 state = torch.cat([state, pad], dim=2)
+            if self.training and torch.is_grad_enabled() and self.state_dropout_prob > 0:
+                drop_state = torch.tensor(
+                    [random.random() < self.state_dropout_prob for _ in range(bsz)],
+                    dtype=torch.bool,
+                    device=state.device,
+                ).view(bsz, 1, 1)
+                state = state.masked_fill(drop_state, 0)
             obs["state"] = state
 
         action = transition.get(TransitionKey.ACTION)
@@ -1914,6 +1949,7 @@ class GrootN17PackInputsStep(ProcessorStep):
             "embodiment_tag": self.embodiment_tag,
             "embodiment_mapping": self.embodiment_mapping,
             "normalize_min_max": self.normalize_min_max,
+            "state_dropout_prob": self.state_dropout_prob,
             "clip_outliers": self.clip_outliers,
             "use_percentiles": self.use_percentiles,
             "video_modality_keys": self.video_modality_keys,
