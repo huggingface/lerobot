@@ -84,7 +84,7 @@ import torch
 import torch.utils.data
 import tqdm
 
-from lerobot.configs import DEFAULT_DEPTH_UNIT, DEPTH_MILLIMETER_UNIT
+from lerobot.configs import DEPTH_MILLIMETER_UNIT
 from lerobot.datasets import LeRobotDataset
 from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD, SUCCESS
 from lerobot.utils.utils import init_logging
@@ -229,8 +229,8 @@ def visualize_dataset(
 
     logging.info("Logging to Rerun")
 
-    # In this script, depth frames and stats are dequantized to the default depth_output_unit on load.
-    depth_meter = 1000.0 if DEFAULT_DEPTH_UNIT == DEPTH_MILLIMETER_UNIT else 1.0
+    # Depth frames and stats are dequantized to the dataset's depth_output_unit on load.
+    depth_meter = 1000.0 if dataset.depth_output_unit == DEPTH_MILLIMETER_UNIT else 1.0
 
     # Use the dataset's q01/q99 depth statistics for robust depth range bounds
     depth_ranges = {}

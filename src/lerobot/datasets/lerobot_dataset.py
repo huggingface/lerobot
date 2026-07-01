@@ -352,6 +352,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.meta.fps
 
     @property
+    def depth_output_unit(self) -> str:
+        """Physical unit (``"m"`` or ``"mm"``) depth maps and statistics are returned in on read."""
+        return self._depth_output_unit
+
+    @property
     def num_frames(self) -> int:
         """Number of frames in selected episodes."""
         # Check directly instead of using _ensure_reader(): in write-only mode
