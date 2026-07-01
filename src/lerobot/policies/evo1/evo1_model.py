@@ -14,12 +14,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any
 
 import torch
 import torch.nn as nn
-from PIL import Image
 
 from .flow_matching import FlowmatchingActionHead
 from .internvl3_embedder import InternVL3Embedder
@@ -73,22 +71,25 @@ class EVO1(nn.Module):
         self.per_action_dim = per_action_dim
         self.action_head = FlowmatchingActionHead(config=config).to(self._device)
 
-    def _normalize_image_batches(
+    def get_vl_embeddings(
         self,
-        images: Sequence[Image.Image | torch.Tensor] | Sequence[Sequence[Image.Image | torch.Tensor]],
-        prompt: str | list[str] | None,
+        images: list[torch.Tensor],
         image_mask: torch.Tensor,
-    ) -> tuple[list[list[Image.Image | torch.Tensor]], list[str], torch.Tensor]:
+        prompt: str | list[str] | None = None,
+        return_cls_only: bool | None = None,
+    ) -> torch.Tensor:
+        """Fused VL embeddings from per-camera image batches.
+
+        Args:
+            images: list of per-camera tensors, each shaped ``(B, C, H, W)`` with values in ``[0, 1]``.
+            image_mask: bool tensor ``(B, max_views)`` marking present views.
+        """
+        if return_cls_only is None:
+            return_cls_only = self.return_cls_only
         if not images:
             raise ValueError("EVO1 expects at least one image per sample.")
 
-        first = images[0]
-        if isinstance(first, (Image.Image, torch.Tensor)):
-            image_batches = [list(images)]  # type: ignore[arg-type]
-        else:
-            image_batches = [list(sample) for sample in images]  # type: ignore[arg-type]
-
-        batch_size = len(image_batches)
+        batch_size = images[0].shape[0]
         if prompt is None:
             prompts = [""] * batch_size
         elif isinstance(prompt, str):
@@ -107,21 +108,8 @@ class EVO1(nn.Module):
                 f"image_mask batch size {image_mask.shape[0]} does not match image batch size {batch_size}"
             )
 
-        return image_batches, prompts, image_mask
-
-    def get_vl_embeddings(
-        self,
-        images: list[Image.Image | torch.Tensor] | list[list[Image.Image | torch.Tensor]],
-        image_mask: torch.Tensor,
-        prompt: str | list[str] | None = None,
-        return_cls_only: bool | None = None,
-    ) -> torch.Tensor:
-        if return_cls_only is None:
-            return_cls_only = self.return_cls_only
-
-        image_batches, prompts, image_mask = self._normalize_image_batches(images, prompt, image_mask)
-        return self.embedder.get_fused_image_text_embedding_from_tensor_images(
-            image_tensors_batch=image_batches,
+        return self.embedder.get_fused_image_text_embedding_batched(
+            camera_images=images,
             image_masks=image_mask,
             text_prompts=prompts,
             return_cls_only=return_cls_only,
