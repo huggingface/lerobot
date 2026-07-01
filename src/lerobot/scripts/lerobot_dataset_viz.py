@@ -88,6 +88,9 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD, SUCCESS
 from lerobot.utils.utils import init_logging
 
+DEFAULT_FOXGLOVE_PORT = 8765
+DEFAULT_RERUN_PORT = 9090
+
 
 def get_feature_names(dataset: LeRobotDataset, key: str) -> list[str]:
     """Return per-dimension names for a feature from the dataset metadata.
@@ -175,7 +178,7 @@ def visualize_dataset(
             dataset,
             episode_index,
             host=host,
-            port=web_port if web_port is not None else 8765,
+            port=web_port if web_port is not None else DEFAULT_FOXGLOVE_PORT,
             compress_images=display_compressed_images,
             autoplay=autoplay,
         )
@@ -218,7 +221,9 @@ def visualize_dataset(
         server_uri = rr.serve_grpc(grpc_port=grpc_port)
         logging.info(f"Connect to a Rerun Server: rerun rerun+http://IP:{grpc_port}/proxy")
         rr.serve_web_viewer(
-            open_browser=False, web_port=web_port if web_port is not None else 9090, connect_to=server_uri
+            open_browser=False,
+            web_port=web_port if web_port is not None else DEFAULT_RERUN_PORT,
+            connect_to=server_uri,
         )
 
     logging.info("Logging to Rerun")
