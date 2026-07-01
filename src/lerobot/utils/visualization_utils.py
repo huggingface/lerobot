@@ -12,15 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import numbers
 import os
 import time
 
+import cv2
 import numpy as np
 
 from lerobot.types import RobotAction, RobotObservation
 
-from .constants import ACTION, ACTION_PREFIX, DONE, OBS_PREFIX, OBS_STATE, OBS_STR, REWARD, SUCCESS
+from .constants import (
+    ACTION,
+    ACTION_PREFIX,
+    DONE,
+    OBS_IMAGES,
+    OBS_PREFIX,
+    OBS_STATE,
+    OBS_STR,
+    REWARD,
+    SUCCESS,
+)
 from .import_utils import require_package
 
 # Visualization backends selectable at runtime via a display-mode string (e.g. a --display_mode flag).
@@ -182,7 +194,11 @@ def _foxglove_topic(key: str, *, is_image: bool = False) -> str:
     """
 
     if is_image:
-        name = key[len(OBS_PREFIX) :] if str(key).startswith(OBS_PREFIX) else str(key)
+        name = str(key)
+        for prefix in (f"{OBS_IMAGES}.", OBS_PREFIX):
+            if name.startswith(prefix):
+                name = name[len(prefix) :]
+                break
         return f"/{OBS_STR}/images/{_foxglove_safe_name(name)}"
     source = ACTION if (str(key).startswith(ACTION_PREFIX) or str(key) == ACTION) else OBS_STR
     return f"/{source}/state"
@@ -218,6 +234,15 @@ def _log_foxglove_scalars(
         channel.log(msg, log_time=log_time)
 
 
+def _labeled_scalars(name: str, values, labels: list[str] | None = None) -> dict[str, float]:
+    """Expand a 1D sequence into ``{label: value}`` entries with a consistent fallback."""
+
+    flat = [float(v) for v in values]
+    if labels is None or len(labels) != len(flat):
+        labels = [f"{name}_{i}" for i in range(len(flat))]
+    return dict(zip(labels, flat, strict=True))
+
+
 def _log_foxglove_image(
     topic: str,
     frame_id: str,
@@ -229,9 +254,12 @@ def _log_foxglove_image(
 ) -> None:
     """Log an image on a cached per-topic channel.
 
-    ``arr`` may be HWC or CHW; CHW is transposed to HWC. ``channels`` is the per-topic channel cache
-    to reuse (see :func:`_log_foxglove_scalars`). ``log_time`` is the message time in nanoseconds; when
-    ``None`` the server's receive time is used. It is also written to the message header timestamp.
+    ``arr`` may be HWC or CHW (CHW is transposed to HWC) and any dtype; floating-point images are
+    assumed normalized to [0, 1] and scaled to uint8. With ``compress_images`` set, grayscale (1ch)
+    and color (3ch) frames are JPEG-encoded, while 4-channel (RGBA) frames are always sent raw.
+    ``channels`` is the per-topic channel cache to reuse (see :func:`_log_foxglove_scalars`).
+    ``log_time`` is the message time in nanoseconds; when ``None`` the server's receive time is used.
+    It is also written to the message header timestamp.
     """
 
     from foxglove.channels import CompressedImageChannel, RawImageChannel
@@ -246,14 +274,15 @@ def _log_foxglove_image(
     # Convert CHW -> HWC when needed (mirrors log_rerun_data).
     if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
         arr = np.transpose(arr, (1, 2, 0))
+    if np.issubdtype(arr.dtype, np.floating):
+        arr = (arr * 255.0).clip(0, 255)
+    arr = np.ascontiguousarray(arr, dtype=np.uint8)
     height, width = arr.shape[0], arr.shape[1]
     n_channels = 1 if arr.ndim == 2 else arr.shape[2]
 
-    if compress_images and n_channels == 3:
-        import cv2
-
-        # Camera frames are RGB; cv2.imencode assumes BGR, so swap to keep colors correct.
-        _, buf = cv2.imencode(".jpg", cv2.cvtColor(arr, cv2.COLOR_RGB2BGR))
+    if compress_images and n_channels in (1, 3):
+        buf_src = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR) if n_channels == 3 else arr
+        _, buf = cv2.imencode(".jpg", buf_src)
         channel = channels.get(topic)
         if channel is None:
             channel = channels[topic] = CompressedImageChannel(topic=topic)
@@ -265,8 +294,14 @@ def _log_foxglove_image(
 
     encoding = {1: "mono8", 3: "rgb8", 4: "rgba8"}.get(n_channels)
     if encoding is None:
+        logging.warning(
+            "Foxglove: skipping image on topic '%s' with unsupported shape %s (%d channels); "
+            "expected 1 (mono8), 3 (rgb8), or 4 (rgba8) channels.",
+            topic,
+            tuple(arr.shape),
+            n_channels,
+        )
         return
-    arr = np.ascontiguousarray(arr, dtype=np.uint8)
     channel = channels.get(topic)
     if channel is None:
         channel = channels[topic] = RawImageChannel(topic=topic)
@@ -404,8 +439,7 @@ def log_foxglove_data(
                 obs_scalars[key] = float(v)
             elif isinstance(v, np.ndarray):
                 if v.ndim == 1:
-                    for i, vi in enumerate(v):
-                        obs_scalars[f"{key}_{i}"] = float(vi)
+                    obs_scalars.update(_labeled_scalars(key, v))
                 else:
                     _log_foxglove_image(
                         _foxglove_topic(k, is_image=True),
@@ -425,8 +459,7 @@ def log_foxglove_data(
             if _is_scalar(v):
                 action_scalars[key] = float(v)
             elif isinstance(v, np.ndarray):
-                for i, vi in enumerate(v.flatten()):
-                    action_scalars[f"{key}_{i}"] = float(vi)
+                action_scalars.update(_labeled_scalars(key, v.flatten()))
         _log_foxglove_scalars(_foxglove_topic(ACTION), action_scalars, log_time=now)
 
 
@@ -455,7 +488,7 @@ def _feature_dim_names(feature: dict | None) -> list[str] | None:
         values = list(names.values())
         if values and all(isinstance(v, (list, tuple)) for v in values):
             labels = [str(n) for group in values for n in group]
-        elif values and all(isinstance(v, int) for v in values):
+        elif values and all(isinstance(v, int) and not isinstance(v, bool) for v in values):
             labels = [name for name, _ in sorted(names.items(), key=lambda kv: kv[1])]
     elif isinstance(names, (list, tuple)):
         labels = [str(n) for n in names]
@@ -468,18 +501,24 @@ def _frame_to_scalars(sample: dict, key: str, labels: list[str] | None = None) -
     """Flatten a frame's vector/scalar feature ``key`` into ``{label: value}`` entries.
 
     ``labels`` provides one name per dimension (from the dataset's feature metadata); when absent or
-    the wrong length, dimensions fall back to their index. A scalar feature becomes a single entry.
-    Missing or ``None`` features yield an empty mapping.
+    the wrong length, dimensions fall back to ``{name}_{i}`` (the short feature name), matching the
+    live stream so series names agree. A scalar feature becomes a single entry. Missing or ``None``
+    features yield an empty mapping.
     """
 
     v = sample.get(key)
     if v is None:
         return {}
     arr = v.numpy() if hasattr(v, "numpy") else np.asarray(v)
-    flat = [float(arr)] if arr.ndim == 0 else [float(x) for x in arr.flatten()]
-    if labels is None or len(labels) != len(flat):
-        labels = [str(i) for i in range(len(flat))]
-    return dict(zip(labels, flat, strict=True))
+    if key.startswith(OBS_PREFIX):
+        name = key[len(OBS_PREFIX) :]
+    elif key.startswith(ACTION_PREFIX):
+        name = key[len(ACTION_PREFIX) :]
+    else:
+        name = key
+    if arr.ndim == 0:
+        return {name: float(arr)}
+    return _labeled_scalars(name, arr.flatten(), labels)
 
 
 def serve_foxglove_dataset_playback(
@@ -543,8 +582,6 @@ def serve_foxglove_dataset_playback(
             if arr is None:
                 continue
             arr = arr.numpy() if hasattr(arr, "numpy") else np.asarray(arr)
-            if np.issubdtype(arr.dtype, np.floating):
-                arr = (arr * 255.0).clip(0, 255).astype(np.uint8)
             _log_foxglove_image(
                 _foxglove_topic(key, is_image=True),
                 key,
