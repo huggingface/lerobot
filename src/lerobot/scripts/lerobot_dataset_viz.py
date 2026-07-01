@@ -231,7 +231,9 @@ def visualize_dataset(
     # Use the dataset's q01/q99 depth statistics for robust depth range bounds
     depth_ranges = {}
     for key in dataset.meta.depth_keys:
-        stats = dataset.meta.stats[key]
+        stats = (dataset.meta.stats or {}).get(key)
+        if not stats:
+            continue
         lo = stats["q01"] if "q01" in stats else stats["min"]
         hi = stats["q99"] if "q99" in stats else stats["max"]
         depth_ranges[key] = (float(np.asarray(lo).item()), float(np.asarray(hi).item()))
@@ -253,7 +255,7 @@ def visualize_dataset(
                     depth_entity = rr.DepthImage(
                         depth,
                         colormap=rr.components.Colormap.Viridis,
-                        depth_range=depth_ranges[key],
+                        depth_range=depth_ranges.get(key),
                     )
                     rr.log(key, entity=depth_entity)
                 else:
