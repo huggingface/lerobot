@@ -34,6 +34,7 @@ from lerobot.configs.video import (
     DEPTH_METER_UNIT,
     DEPTH_MILLIMETER_UNIT,
     DEPTH_QMAX,
+    infer_depth_unit,
 )
 
 from .image_writer import squeeze_single_channel
@@ -41,14 +42,6 @@ from .pyav_utils import write_u16_plane
 
 MM_PER_METRE = 1000.0
 _UINT16_MAX = 65535
-
-
-def infer_depth_unit(dtype: np.dtype | type) -> str:
-    """Infer the physical unit of raw depth frames from their dtype.
-
-    Floating-point frames are assumed to be in metres, integer frames in millimetres.
-    """
-    return DEPTH_METER_UNIT if np.issubdtype(np.dtype(dtype), np.floating) else DEPTH_MILLIMETER_UNIT
 
 
 def _validate_log_quant_params(depth_min: float, shift: float) -> None:

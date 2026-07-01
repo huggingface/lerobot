@@ -26,8 +26,8 @@ import pytest
 import torch
 from datasets import Dataset
 
+from lerobot.configs.video import infer_depth_unit
 from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
-from lerobot.datasets.depth_utils import infer_depth_unit
 from lerobot.datasets.feature_utils import get_hf_features_from_features
 from lerobot.datasets.io_utils import flatten_dict, hf_transform_to_torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset

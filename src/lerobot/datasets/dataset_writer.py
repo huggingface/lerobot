@@ -36,12 +36,12 @@ from lerobot.configs import (
     RGBEncoderConfig,
     VideoEncoderConfig,
     depth_encoder_defaults,
+    infer_depth_unit,
     rgb_encoder_defaults,
 )
 
 from .compute_stats import compute_episode_stats
 from .dataset_metadata import LeRobotDatasetMetadata
-from .depth_utils import infer_depth_unit
 from .feature_utils import (
     get_hf_features_from_features,
     validate_episode_buffer,
