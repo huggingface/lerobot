@@ -28,6 +28,7 @@ import pytest
 from lerobot.teleoperators.isaac_teleop.config_isaac_teleop import SO101LeaderArmConfig
 from lerobot.teleoperators.isaac_teleop.teleop_so101_leader_arm import (
     SO101_LEADER_JOINTS,
+    _joints_group_to_rad,
     leader_joints_to_robot_action,
 )
 
@@ -120,6 +121,60 @@ def test_degenerate_gripper_range_does_not_divide_by_zero():
     # open == close: span is 0; the mapping must not raise (defaults to fully open).
     out = _convert({**_all_zero_joints(), "gripper": 0.5}, gripper_open=0.3, gripper_close=0.3)
     assert out["gripper.pos"] == pytest.approx(100.0)
+
+
+# ----------------------------------------------------------------------------
+# _joints_group_to_rad: name-keyed read of the JointStateSource output group
+# ----------------------------------------------------------------------------
+
+
+class _FakeTensorType:
+    """Stand-in for a TensorGroupType entry, which carries its slot's joint name."""
+
+    def __init__(self, name: str):
+        self.name = name
+
+
+class _FakeGroupType:
+    def __init__(self, names: list[str]):
+        self.types = [_FakeTensorType(n) for n in names]
+
+
+class _FakeJointGroup:
+    """Minimal duck-type of isaacteleop's integer-indexed output group.
+
+    Holds a per-slot name (``group_type.types[i].name``) and a positional value, matching how
+    the real ``TensorGroup`` exposes values by integer index while declaring names in its type.
+    """
+
+    def __init__(self, slot_names: list[str], values: list[float]):
+        self.group_type = _FakeGroupType(slot_names)
+        self._values = values
+
+    def __getitem__(self, index: int) -> float:
+        return self._values[index]
+
+
+def test_joints_group_read_by_declared_name():
+    # Values are labeled by the group's own per-slot names, in group order.
+    values = [0.1 * (i + 1) for i in range(len(SO101_LEADER_JOINTS))]
+    group = _FakeJointGroup(SO101_LEADER_JOINTS, values)
+    out = _joints_group_to_rad(group)
+    assert out == {name: pytest.approx(values[i]) for i, name in enumerate(SO101_LEADER_JOINTS)}
+
+
+def test_joints_group_labels_follow_group_layout_not_positional_index():
+    # The safety property: if the group's slot layout is reordered relative to
+    # SO101_LEADER_JOINTS, each value still gets its TRUE joint name (no silent mislabel /
+    # wrong-DOF mirror). Here the group declares the joints reversed.
+    reversed_names = list(reversed(SO101_LEADER_JOINTS))
+    values = [float(i) for i in range(len(reversed_names))]  # value i belongs to reversed_names[i]
+    group = _FakeJointGroup(reversed_names, values)
+    out = _joints_group_to_rad(group)
+    for i, name in enumerate(reversed_names):
+        assert out[name] == pytest.approx(values[i])
+    # e.g. the value in the first slot is labeled "gripper" (reversed[0]), not "shoulder_pan".
+    assert out[reversed_names[0]] == pytest.approx(0.0)
 
 
 # ----------------------------------------------------------------------------

@@ -38,8 +38,13 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-# Upstream SO-101 simulation assets. Pinned to a branch so a layout change
-# upstream does not silently break the example; bump if the path moves.
+# Upstream SO-101 simulation assets, tracked from the moving ``main`` branch (NOT
+# pinned). There is no release to pin to: the repo's only tag (v0.1.1, May 2024)
+# predates the SO-101 and has no Simulation/ dir. The SO101/ layout and the
+# so101_new_calib.urdf filename have been stable on main since the assets landed
+# (2025-05), so tracking main is fine here; if upstream ever moves the path the
+# mesh-reference parse below fails loudly. To freeze the assets, replace ``main``
+# with a commit SHA.
 RAW_BASE = "https://raw.githubusercontent.com/TheRobotStudio/SO-ARM100/main/Simulation/SO101"
 URDF_NAME = "so101_new_calib.urdf"
 
@@ -54,7 +59,7 @@ def _download(url: str, dest: Path, force: bool) -> bool:
         return False
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with urllib.request.urlopen(url) as response:  # noqa: S310 (trusted host)
+        with urllib.request.urlopen(url) as response:  # noqa: S310  # nosec B310 (trusted host)
             data = response.read()
     except urllib.error.HTTPError as e:
         raise SystemExit(f"Failed to download {url}: HTTP {e.code} {e.reason}") from e

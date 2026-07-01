@@ -45,6 +45,7 @@ import abc
 import logging
 import os
 from collections.abc import Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from lerobot.teleoperators.teleoperator import Teleoperator
@@ -195,8 +196,8 @@ class IsaacTeleopTeleoperator(Teleoperator):
 
         logger.info("Launching CloudXR runtime (first run may prompt for EULA and take ~30s)...")
 
-        from pathlib import Path
-
+        # isaacteleop stays lazy (optional dep; keeps this module importable without it);
+        # Path is stdlib, so it lives at module scope.
         from isaacteleop.cloudxr import CloudXRLauncher
 
         self._cloudxr_launcher = CloudXRLauncher(

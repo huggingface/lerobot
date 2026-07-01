@@ -289,7 +289,7 @@ python teleoperate.py --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
     --launch_plugin=/code/Teleop/install/plugins/so101_leader/so101_leader_plugin
 ```
 
-(Note `so101_leader` here is the *Isaac* leader, resolved against the Isaac Teleop device
+(Note `so101_leader` here is the _Isaac_ leader, resolved against the Isaac Teleop device
 registry, distinct from `lerobot-teleoperate`'s serial `so101_leader`.) When a `--teleop.port` is
 set, the plugin's tick→radian calibration is inferred from `--teleop.id` and passed to the plugin
 as its third positional arg — the LeRobot-format JSON at
@@ -367,8 +367,8 @@ adapting the pipeline to other robots.
 ## Troubleshooting
 
 - **`ModuleNotFoundError: isaacteleop`** — the `isaac-teleop` extra is not installed (note `uv sync
-  --locked` does not pull it). Re-run the install command at the top of this guide: `uv pip install
-  'lerobot[isaac-teleop]'`.
+--locked` does not pull it). Re-run the install command at the top of this guide: `uv pip install
+'lerobot[isaac-teleop]'`.
 - **No controllers found** — make sure the CloudXR runtime is running, the firewall ports are
   whitelisted, and the headset is connected (see
   [Set up CloudXR and connect a headset](#set-up-cloudxr-and-connect-a-headset) and the Isaac
