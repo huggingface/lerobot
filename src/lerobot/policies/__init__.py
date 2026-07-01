@@ -18,6 +18,7 @@ from .act.configuration_act import ACTConfig as ACTConfig
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
 from .eo1.configuration_eo1 import EO1Config as EO1Config
 from .factory import get_policy_class, make_policy, make_policy_config, make_pre_post_processors
+from .fastwam.configuration_fastwam import FastWAMConfig as FastWAMConfig
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig as GaussianActorConfig
 from .groot.configuration_groot import GrootConfig as GrootConfig
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config as MolmoAct2Config
@@ -42,6 +43,7 @@ __all__ = [
     "ACTConfig",
     "DiffusionConfig",
     "EO1Config",
+    "FastWAMConfig",
     "GaussianActorConfig",
     "GrootConfig",
     "MolmoAct2Config",
