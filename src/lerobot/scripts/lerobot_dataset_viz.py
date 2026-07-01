@@ -123,6 +123,12 @@ def to_hwc_uint8_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
     return hwc_uint8_numpy
 
 
+def to_hwc_float32_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
+    check_chw_float32(chw_float32_torch)
+    hwc_float32_numpy = chw_float32_torch.permute(1, 2, 0).numpy()
+    return hwc_float32_numpy
+
+
 def build_blueprint_from_dataset(dataset: LeRobotDataset):
     """Build a Rerun blueprint laying out camera images and time series for the given dataset.
 
@@ -146,12 +152,6 @@ def build_blueprint_from_dataset(dataset: LeRobotDataset):
             views.append(rrb.TimeSeriesView(origin=key, name=key))
 
     return rrb.Blueprint(rrb.Grid(*views))
-
-
-def to_hwc_uint16_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
-    check_chw_float32(chw_float32_torch)
-    hwc_uint16_numpy = chw_float32_torch.round().type(torch.uint16).permute(1, 2, 0).numpy()
-    return hwc_uint16_numpy
 
 
 def visualize_dataset(
@@ -249,7 +249,7 @@ def visualize_dataset(
             # display each camera image (or depth map)
             for key in dataset.meta.camera_keys:
                 if key in dataset.meta.depth_keys:
-                    depth = to_hwc_uint16_numpy(batch[key][i])
+                    depth = to_hwc_float32_numpy(batch[key][i])
                     depth_entity = rr.DepthImage(
                         depth,
                         colormap=rr.components.Colormap.Viridis,

@@ -182,15 +182,32 @@ def _log_foxglove_image(
     compress_images: bool,
     channels: dict | None = None,
     log_time: int | None = None,
+    depth_range: tuple[float, float] | None = None,
 ) -> None:
     """Log an image on a cached per-topic channel.
 
-    ``arr`` may be HWC or CHW (CHW is transposed to HWC) and any dtype; floating-point images are
-    assumed normalized to [0, 1] and scaled to uint8. With ``compress_images`` set, grayscale (1ch)
-    and color (3ch) frames are JPEG-encoded, while 4-channel (RGBA) frames are always sent raw.
-    ``channels`` is the per-topic channel cache to reuse (see :func:`_log_foxglove_scalars`).
-    ``log_time`` is the message time in nanoseconds; when ``None`` the server's receive time is used.
-    It is also written to the message header timestamp.
+    Encoding is chosen from the frame's channel count and dtype:
+
+    - Single channel => depth map, logged uncompressed as ``16UC1`` (integer) or ``32FC1`` (float).
+      Plain ``uint8`` grayscale (with no ``depth_range``) is the exception and is sent as ``mono8``.
+    - Three channels => ``rgb8``.
+    - Four channels => ``rgba8``.
+
+    When ``compress_images`` is set, ``mono8`` and ``rgb8`` frames are JPEG-encoded instead; depth
+    and ``rgba8`` frames are always sent raw.
+
+    Args:
+        topic: Foxglove topic to log on.
+        frame_id: Frame id stamped on the message.
+        arr: Image as HWC or CHW (CHW is transposed to HWC), any dtype. Non-depth floating-point
+            images are assumed normalized to [0, 1] and scaled to uint8.
+        compress_images: JPEG-encode ``mono8`` and ``rgb8`` frames; ignored for depth and ``rgba8``.
+        channels: Per-topic channel cache to reuse (see :func:`_log_foxglove_scalars`).
+        log_time: Message time in nanoseconds, also written to the header timestamp; when ``None``
+            the server's receive time is used.
+        depth_range: ``(lo, hi)`` bounds that normalize depth to ``[0, 1]`` ``32FC1`` so Foxglove's
+            default panel scaling matches rerun's ``depth_range`` contrast (a ``RawImage`` carries
+            no value range itself).
     """
 
     from foxglove.channels import CompressedImageChannel, RawImageChannel
@@ -205,11 +222,44 @@ def _log_foxglove_image(
     # Convert CHW -> HWC when needed (mirrors log_rerun_data).
     if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
         arr = np.transpose(arr, (1, 2, 0))
+    height, width = arr.shape[0], arr.shape[1]
+    n_channels = 1 if arr.ndim == 2 else arr.shape[2]
+
+    # Single-channel => depth, unless it's plain uint8 grayscale (kept as mono8 below). Foxglove
+    # renders both 16UC1 (uint16) and 32FC1 (float32) depth with a colormap.
+    if n_channels == 1 and (depth_range is not None or arr.dtype != np.uint8):
+        depth = arr if arr.ndim == 2 else arr[..., 0]
+        if depth_range is not None:
+            lo, hi = depth_range
+            depth = depth.astype(np.float32)
+            depth = np.clip((depth - lo) / (hi - lo), 0.0, 1.0) if hi > lo else np.zeros_like(depth)
+            encoding, step = "32FC1", width * 4
+        elif np.issubdtype(depth.dtype, np.floating):
+            encoding, step = "32FC1", width * 4
+        else:
+            depth = np.clip(np.rint(depth), 0, 65535).astype("<u2")
+            encoding, step = "16UC1", width * 2
+        depth = np.ascontiguousarray(depth, dtype="<f4" if encoding == "32FC1" else "<u2")
+        channel = channels.get(topic)
+        if channel is None:
+            channel = channels[topic] = RawImageChannel(topic=topic)
+        channel.log(
+            RawImage(
+                timestamp=timestamp,
+                frame_id=frame_id,
+                width=width,
+                height=height,
+                encoding=encoding,
+                step=step,
+                data=depth.tobytes(),
+            ),
+            **log_kwargs,
+        )
+        return
+
     if np.issubdtype(arr.dtype, np.floating):
         arr = (arr * 255.0).clip(0, 255)
     arr = np.ascontiguousarray(arr, dtype=np.uint8)
-    height, width = arr.shape[0], arr.shape[1]
-    n_channels = 1 if arr.ndim == 2 else arr.shape[2]
 
     if compress_images and n_channels in (1, 3):
         buf_src = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR) if n_channels == 3 else arr
@@ -422,6 +472,15 @@ def serve_foxglove_dataset_playback(
         raise ValueError("Cannot visualize an empty episode.")
     first_ns, last_ns = times_ns[0], times_ns[-1]
     camera_keys = list(dataset.meta.camera_keys)
+    # Dataset-wide q01/q99 depth bounds (fallback min/max) used to normalize depth to [0, 1].
+    depth_ranges: dict[str, tuple[float, float]] = {}
+    for key in dataset.meta.depth_keys:
+        stats = (dataset.meta.stats or {}).get(key)
+        if not stats:
+            continue
+        lo = stats["q01"] if "q01" in stats else stats["min"]
+        hi = stats["q99"] if "q99" in stats else stats["max"]
+        depth_ranges[key] = (float(np.asarray(lo).item()), float(np.asarray(hi).item()))
     # Per-dimension series labels from the dataset metadata (e.g. joint names), computed once.
     scalar_labels = {
         OBS_STATE: _feature_dim_names(dataset.meta.features.get(OBS_STATE)),
@@ -446,6 +505,7 @@ def serve_foxglove_dataset_playback(
                 compress_images=compress_images,
                 channels=channels,
                 log_time=log_time,
+                depth_range=depth_ranges.get(key),
             )
         _log_foxglove_scalars(
             _foxglove_topic(OBS_STATE),
