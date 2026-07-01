@@ -124,7 +124,7 @@ hardware = [
     "lerobot[deepdiff-dep]",
 ]
 viz = [
-    "rerun-sdk>=0.24.0,<0.27.0",
+    "rerun-sdk>=0.24.0,<0.34.0",
 ]
 # ── User-facing composite extras (map to CLI scripts) ─────
 # lerobot-record, lerobot-replay, lerobot-calibrate, lerobot-teleoperate, etc.
@@ -140,7 +140,14 @@ av-dep = ["av>=15.0.0,<16.0.0"]
 pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 # NOTE: 0.9.16 links against liburdfdom_sensor.so.4, which is unavailable on Ubuntu 24.04
 # (noble ships urdfdom 3.x). Cap below 0.9.16 until system urdfdom 4.x is broadly available.
-placo-dep = ["placo>=0.9.6,<0.9.16"]
+#
+# NOTE: placo pulls in pin (Pinocchio), whose binary wheels dlopen specific cmeel sonames
+# (liburdfdom_sensor.so.4.0, libtinyxml2.so.10) but declare only `>=` floors on their cmeel
+# packages. The 2026-05-21 major bumps (cmeel-urdfdom 6.0.0 -> .so.6, cmeel-tinyxml2 11.0.0
+# -> .so.11) ship newer sonames, so left unpinned the resolver grabs them and `import placo`
+# fails at load with "liburdfdom_sensor.so.4.0: cannot open shared object file" (see #3755).
+# There is no cmeel-urdfdom 5.x; <5 selects the 4.x ABI the placo/pin wheels are built against.
+placo-dep = ["placo>=0.9.6,<0.9.16", "cmeel-urdfdom>=4,<5", "cmeel-tinyxml2<11"]
 transformers-dep = ["transformers>=5.4.0,<5.6.0"]
 grpcio-dep = ["grpcio>=1.73.1,<2.0.0", "protobuf>=6.31.1,<8.0.0"]
 accelerate-dep = ["accelerate>=1.14.0,<2.0.0"]
@@ -222,6 +229,10 @@ robometer = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]", "lerobot
 topreward = ["lerobot[transformers-dep]"]
 xvla = ["lerobot[transformers-dep]"]
 eo1 = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]"]
+fastwam = [
+    "lerobot[transformers-dep]",
+    "lerobot[diffusers-dep]",
+]
 hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.14,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]
 
@@ -301,6 +312,7 @@ all = [
     "lerobot[pi]",
     "lerobot[molmoact2]",
     "lerobot[smolvla]",
+    "lerobot[fastwam]",
     # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
     "lerobot[xvla]",
     "lerobot[hilserl]",
@@ -437,7 +449,8 @@ default.extend-ignore-identifiers-re = [
     "is_compileable",
     "ROBOTIS",
     "OT_VALUE",
-    "VanderBilt"
+    "VanderBilt",
+    "seperated_timestep",
 ]
 
 # TODO: Uncomment when ready to use
