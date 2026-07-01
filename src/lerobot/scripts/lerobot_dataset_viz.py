@@ -70,6 +70,7 @@ local$ lerobot-dataset-viz \
 ```
 This starts a Foxglove WebSocket server that serves the episode on demand from the on-disk dataset,
 so you can play/pause and scrub anywhere in the episode using Foxglove's playback controls.
+Requires the Foxglove extra: ``pip install 'lerobot[foxglove]'``.
 
 """
 

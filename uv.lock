@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "(python_full_version >= '3.15' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux')",
@@ -2831,6 +2831,7 @@ all = [
     { name = "faker" },
     { name = "fastapi" },
     { name = "feetech-servo-sdk" },
+    { name = "foxglove-sdk" },
     { name = "grpcio" },
     { name = "grpcio-tools" },
     { name = "gym-aloha" },
@@ -2915,6 +2916,7 @@ core-scripts = [
     { name = "av" },
     { name = "datasets" },
     { name = "deepdiff" },
+    { name = "foxglove-sdk" },
     { name = "jsonlines" },
     { name = "pandas" },
     { name = "pyarrow" },
@@ -2937,6 +2939,7 @@ dataset = [
 dataset-viz = [
     { name = "av" },
     { name = "datasets" },
+    { name = "foxglove-sdk" },
     { name = "jsonlines" },
     { name = "pandas" },
     { name = "pyarrow" },
@@ -2979,9 +2982,6 @@ feetech = [
     { name = "deepdiff" },
     { name = "feetech-servo-sdk" },
     { name = "pyserial" },
-]
-foxglove = [
-    { name = "foxglove-sdk" },
 ]
 gamepad = [
     { name = "hidapi" },
@@ -3206,6 +3206,7 @@ video-benchmark = [
     { name = "scikit-image" },
 ]
 viz = [
+    { name = "foxglove-sdk" },
     { name = "rerun-sdk" },
 ]
 vla-jepa = [
@@ -3245,7 +3246,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'phone'", specifier = "<1.0" },
     { name = "feetech-servo-sdk", marker = "extra == 'feetech'", specifier = ">=1.0.0,<2.0.0" },
     { name = "flash-attn", marker = "sys_platform != 'darwin' and extra == 'groot'", specifier = ">=2.5.9,<3.0.0" },
-    { name = "foxglove-sdk", marker = "extra == 'foxglove'", specifier = ">=0.25.1,<1.0.0" },
+    { name = "foxglove-sdk", marker = "extra == 'viz'", specifier = ">=0.25.1,<0.26.0" },
     { name = "grpcio", marker = "extra == 'grpcio-dep'", specifier = ">=1.73.1,<2.0.0" },
     { name = "grpcio", marker = "extra == 'reachy2'", specifier = "<=1.73.1" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.73.1,<2.0.0" },
@@ -3441,7 +3442,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.6.0" },
     { name = "wandb", marker = "extra == 'training'", specifier = ">=0.24.0,<0.28.0" },
 ]
-provides-extras = ["dataset", "training", "hardware", "viz", "foxglove", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "hilserl", "vla-jepa", "async", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
+provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "hilserl", "vla-jepa", "async", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
 [[package]]
 name = "librt"

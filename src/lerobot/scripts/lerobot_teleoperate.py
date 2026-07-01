@@ -31,8 +31,8 @@ lerobot-teleoperate \
     --display_data=true
 ```
 
-To stream the data to Foxglove instead of Rerun, add ``--display_mode=foxglove`` (then connect the
-Foxglove app to ``ws://127.0.0.1:8765``; override the port with ``--display_port=<port>``):
+To stream the data to Foxglove instead of Rerun, add ``--display_mode=foxglove``
+(then connect the Foxglove app to ``ws://127.0.0.1:8765``; override the port with ``--display_port=<port>``):
 
 ```shell
 lerobot-teleoperate \
