@@ -77,6 +77,10 @@
     title: Multitask DiT Policy
   - local: walloss
     title: WALL-OSS
+  - local: lingbot_vla
+    title: LingBot-VLA
+  - local: lingbot_vla_deployment
+    title: LingBot-VLA Deployment Protocol
   title: "Policies"
 - sections:
   - local: sarm

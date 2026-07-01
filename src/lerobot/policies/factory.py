@@ -49,6 +49,7 @@ from .diffusion.configuration_diffusion import DiffusionConfig
 from .eo1.configuration_eo1 import EO1Config
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
 from .groot.configuration_groot import GrootConfig
+from .lingbot_vla.configuration_lingbot_vla import LingbotVLAConfig
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from .pi0.configuration_pi0 import PI0Config
@@ -150,6 +151,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .wall_x.modeling_wall_x import WallXPolicy
 
         return WallXPolicy
+    elif name == "lingbot_vla":
+        from .lingbot_vla.modeling_lingbot_vla import LingbotVLAPolicy
+
+        return LingbotVLAPolicy
     elif name == "eo1":
         from .eo1.modeling_eo1 import EO1Policy
 
@@ -212,6 +217,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return XVLAConfig(**kwargs)
     elif policy_type == "wall_x":
         return WallXConfig(**kwargs)
+    elif policy_type == "lingbot_vla":
+        return LingbotVLAConfig(**kwargs)
     elif policy_type == "eo1":
         return EO1Config(**kwargs)
     elif policy_type == "molmoact2":
