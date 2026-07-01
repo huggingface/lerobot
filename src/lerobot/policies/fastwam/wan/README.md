@@ -12,8 +12,9 @@ a single directory.
 
 Copied files:
 
-- `attention.py` (was `wan/modules/attention.py`)
-- `model.py` (was `wan/modules/model.py`)
+- `model.py` (was `wan/modules/model.py`), trimmed: the flash-attention path
+  (the vendored `attention.py` and the block/model `forward`s) was removed.
+  FastWAM's DiT uses SDPA instead (see `video_dit.py`).
 - `get_sampling_sigmas` in `video_dit.py` (was `wan/utils/fm_solvers.py`), inlined
   next to its only caller.
 
@@ -25,7 +26,7 @@ UMT5 text encoder, and tokenizer are no longer vendored - they come from
 ## FastWAM's own code
 
 - `video_dit.py` builds on `model` (`sinusoidal_embedding_1d`, `rope_params`,
-  `rope_apply`, …) and `attention.flash_attention`. Its
+  `rope_apply`, …) and computes attention with SDPA (`fastwam_masked_attention`). Its
   `WanContinuousFlowMatchScheduler` uses `get_sampling_sigmas` for Wan-compatible
   inference timesteps.
 - `components.py` / `adapters.py` load the VAE, text encoder, tokenizer, and the

@@ -266,7 +266,6 @@ class FastWAMAttentionBlock(WanAttentionBlock):
                 dim=hidden_dim,
                 ffn_dim=ffn_dim,
                 num_heads=num_heads,
-                window_size=(-1, -1),
                 qk_norm=True,
                 cross_attn_norm=True,
                 eps=eps,
@@ -276,7 +275,6 @@ class FastWAMAttentionBlock(WanAttentionBlock):
             self.dim = hidden_dim
             self.ffn_dim = ffn_dim
             self.num_heads = num_heads
-            self.window_size = (-1, -1)
             self.qk_norm = True
             self.cross_attn_norm = True
             self.eps = eps
@@ -471,7 +469,6 @@ class WanVideoDiT(WanModel):
             out_dim=out_dim,
             num_heads=num_heads,
             num_layers=num_layers,
-            window_size=(-1, -1),
             qk_norm=True,
             cross_attn_norm=True,
             eps=eps,

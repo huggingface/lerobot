@@ -40,6 +40,12 @@ from .wan import (
 class FastWAMPolicy(PreTrainedPolicy):
     """LeRobot policy wrapper for FastWAM.
 
+    Attention backend: FastWAM's DiT uses ``torch.nn.functional.scaled_dot_product_attention``
+    (SDPA) for all attention. It does not use FlashAttention, because MoT routing requires
+    arbitrary boolean ``[query, key]`` masks that the FlashAttention varlen API cannot express;
+    installing ``flash-attn`` has no effect on the FastWAM path. (SDPA may still dispatch to
+    PyTorch's own flash/mem-efficient/math kernel internally, unrelated to the ``flash-attn`` package.)
+
     Args:
         config (FastWAMConfig): FastWAM policy configuration.
         dataset_stats (dict[str, dict[str, Tensor]] | None): Optional LeRobot

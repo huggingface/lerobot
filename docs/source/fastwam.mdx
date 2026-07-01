@@ -118,6 +118,10 @@ lerobot-rollout \
 
 FastWAM loads the Wan VAE, video DiT, text encoder, and tokenizer from the configured Wan model directory or Hugging Face Hub model id. LeRobot-format FastWAM checkpoints saved by `save_pretrained` also copy the local Wan component files needed by `from_pretrained`.
 
+### Attention Backend
+
+FastWAM's DiT uses PyTorch's `scaled_dot_product_attention` (SDPA) for all attention. It does **not** use FlashAttention: its Mixture-of-Transformers (MoT) routing needs arbitrary boolean `[query, key]` attention masks, which the FlashAttention varlen API cannot express. Installing the `flash-attn` package therefore has no effect on the FastWAM path. (Note that SDPA itself may still select PyTorch's own flash / memory-efficient / math kernel internally — this is unrelated to the `flash-attn` package.)
+
 ### LIBERO Action Toggle
 
 FastWAM LIBERO checkpoints use `policy.toggle_action_dimensions=[-1]` by

@@ -1,28 +1,8 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import math
-from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
-
-from lerobot.utils.import_utils import _diffusers_available
-
-if TYPE_CHECKING or _diffusers_available:
-    from diffusers.configuration_utils import ConfigMixin, register_to_config
-    from diffusers.models.modeling_utils import ModelMixin
-else:
-
-    class ModelMixin:
-        pass
-
-    class ConfigMixin:
-        pass
-
-    def register_to_config(init):
-        return init
-
-
-from .attention import flash_attention
 
 
 def sinusoidal_embedding_1d(dim, position):
@@ -112,16 +92,12 @@ class WanLayerNorm(nn.LayerNorm):
 
 
 class WanSelfAttention(nn.Module):
-    def __init__(self, dim, num_heads, window_size=(-1, -1), qk_norm=True, eps=1e-6):
+    def __init__(self, dim, num_heads, qk_norm=True, eps=1e-6):
         if dim % num_heads != 0:
             raise ValueError(f"dim ({dim}) must be divisible by num_heads ({num_heads}).")
         super().__init__()
-        self.dim = dim
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.window_size = window_size
-        self.qk_norm = qk_norm
-        self.eps = eps
 
         # layers
         self.q = nn.Linear(dim, dim)
@@ -131,81 +107,28 @@ class WanSelfAttention(nn.Module):
         self.norm_q = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
         self.norm_k = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
 
-    def forward(self, x, seq_lens, grid_sizes, freqs):
-        r"""
-        Args:
-            x(Tensor): Shape [B, L, num_heads, C / num_heads]
-            seq_lens(Tensor): Shape [B]
-            grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
-            freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
-        """
-        b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
-
-        # query, key, value function
-        def qkv_fn(x):
-            q = self.norm_q(self.q(x)).view(b, s, n, d)
-            k = self.norm_k(self.k(x)).view(b, s, n, d)
-            v = self.v(x).view(b, s, n, d)
-            return q, k, v
-
-        q, k, v = qkv_fn(x)
-
-        x = flash_attention(
-            q=rope_apply(q, grid_sizes, freqs),
-            k=rope_apply(k, grid_sizes, freqs),
-            v=v,
-            k_lens=seq_lens,
-            window_size=self.window_size,
-        )
-
-        # output
-        x = x.flatten(2)
-        x = self.o(x)
-        return x
-
-
-class WanCrossAttention(WanSelfAttention):
-    def forward(self, x, context, context_lens):
-        r"""
-        Args:
-            x(Tensor): Shape [B, L1, C]
-            context(Tensor): Shape [B, L2, C]
-            context_lens(Tensor): Shape [B]
-        """
-        b, n, d = x.size(0), self.num_heads, self.head_dim
-
-        # compute query, key, value
-        q = self.norm_q(self.q(x)).view(b, -1, n, d)
-        k = self.norm_k(self.k(context)).view(b, -1, n, d)
-        v = self.v(context).view(b, -1, n, d)
-
-        # compute attention
-        x = flash_attention(q, k, v, k_lens=context_lens)
-
-        # output
-        x = x.flatten(2)
-        x = self.o(x)
-        return x
+    # NOTE: FastWAM never runs the upstream Wan attention forward. FastWAMAttentionBlock
+    # reuses only the q/k/v/o/norm submodules defined above and computes attention via
+    # `fastwam_masked_attention` (SDPA). The original flash-attention forward was removed,
+    # which also collapsed the former WanCrossAttention subclass into this class (it only
+    # differed by its forward): self- and cross-attention now share the same projection module.
 
 
 class WanAttentionBlock(nn.Module):
-    def __init__(
-        self, dim, ffn_dim, num_heads, window_size=(-1, -1), qk_norm=True, cross_attn_norm=False, eps=1e-6
-    ):
+    def __init__(self, dim, ffn_dim, num_heads, qk_norm=True, cross_attn_norm=False, eps=1e-6):
         super().__init__()
         self.dim = dim
         self.ffn_dim = ffn_dim
         self.num_heads = num_heads
-        self.window_size = window_size
         self.qk_norm = qk_norm
         self.cross_attn_norm = cross_attn_norm
         self.eps = eps
 
         # layers
         self.norm1 = WanLayerNorm(dim, eps)
-        self.self_attn = WanSelfAttention(dim, num_heads, window_size, qk_norm, eps)
+        self.self_attn = WanSelfAttention(dim, num_heads, qk_norm, eps)
         self.norm3 = WanLayerNorm(dim, eps, elementwise_affine=True) if cross_attn_norm else nn.Identity()
-        self.cross_attn = WanCrossAttention(dim, num_heads, (-1, -1), qk_norm, eps)
+        self.cross_attn = WanSelfAttention(dim, num_heads, qk_norm, eps)
         self.norm2 = WanLayerNorm(dim, eps)
         self.ffn = nn.Sequential(
             nn.Linear(dim, ffn_dim), nn.GELU(approximate="tanh"), nn.Linear(ffn_dim, dim)
@@ -214,44 +137,10 @@ class WanAttentionBlock(nn.Module):
         # modulation
         self.modulation = nn.Parameter(torch.randn(1, 6, dim) / dim**0.5)
 
-    def forward(
-        self,
-        x,
-        e,
-        seq_lens,
-        grid_sizes,
-        freqs,
-        context,
-        context_lens,
-    ):
-        r"""
-        Args:
-            x(Tensor): Shape [B, L, C]
-            e(Tensor): Shape [B, L1, 6, C]
-            seq_lens(Tensor): Shape [B], length of each sequence in batch
-            grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
-            freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
-        """
-        with torch.amp.autocast("cuda", dtype=torch.float32):
-            e = (self.modulation.unsqueeze(0) + e).chunk(6, dim=2)
-
-        # self-attention
-        y = self.self_attn(
-            self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2), seq_lens, grid_sizes, freqs
-        )
-        with torch.amp.autocast("cuda", dtype=torch.float32):
-            x = x + y * e[2].squeeze(2)
-
-        # cross-attention & ffn function
-        def cross_attn_ffn(x, context, context_lens, e):
-            x = x + self.cross_attn(self.norm3(x), context, context_lens)
-            y = self.ffn(self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
-            with torch.amp.autocast("cuda", dtype=torch.float32):
-                x = x + y * e[5].squeeze(2)
-            return x
-
-        x = cross_attn_ffn(x, context, context_lens, e)
-        return x
+    # NOTE: The upstream Wan block forward (self-attention + cross-attention + FFN via
+    # flash-attention) was removed. FastWAM subclasses this block as FastWAMAttentionBlock
+    # and overrides forward to use SDPA with explicit boolean masks; only __init__ (the
+    # norm/attention/ffn submodules) is reused here.
 
 
 class Head(nn.Module):
@@ -282,15 +171,11 @@ class Head(nn.Module):
         return x
 
 
-class WanModel(ModelMixin, ConfigMixin):
+class WanModel(nn.Module):
     r"""
     Wan diffusion backbone supporting both text-to-video and image-to-video.
     """
 
-    ignore_for_config = ["patch_size", "cross_attn_norm", "qk_norm", "text_dim", "window_size"]
-    _no_split_modules = ["WanAttentionBlock"]
-
-    @register_to_config
     def __init__(
         self,
         model_type="t2v",
@@ -304,7 +189,6 @@ class WanModel(ModelMixin, ConfigMixin):
         out_dim=16,
         num_heads=16,
         num_layers=32,
-        window_size=(-1, -1),
         qk_norm=True,
         cross_attn_norm=True,
         eps=1e-6,
@@ -335,8 +219,6 @@ class WanModel(ModelMixin, ConfigMixin):
                 Number of attention heads
             num_layers (`int`, *optional*, defaults to 32):
                 Number of transformer blocks
-            window_size (`tuple`, *optional*, defaults to (-1, -1)):
-                Window size for local attention (-1 indicates global attention)
             qk_norm (`bool`, *optional*, defaults to True):
                 Enable query/key normalization
             cross_attn_norm (`bool`, *optional*, defaults to False):
@@ -361,7 +243,6 @@ class WanModel(ModelMixin, ConfigMixin):
         self.out_dim = out_dim
         self.num_heads = num_heads
         self.num_layers = num_layers
-        self.window_size = window_size
         self.qk_norm = qk_norm
         self.cross_attn_norm = cross_attn_norm
         self.eps = eps
@@ -378,7 +259,7 @@ class WanModel(ModelMixin, ConfigMixin):
         # blocks
         self.blocks = nn.ModuleList(
             [
-                WanAttentionBlock(dim, ffn_dim, num_heads, window_size, qk_norm, cross_attn_norm, eps)
+                WanAttentionBlock(dim, ffn_dim, num_heads, qk_norm, cross_attn_norm, eps)
                 for _ in range(num_layers)
             ]
         )
@@ -404,90 +285,11 @@ class WanModel(ModelMixin, ConfigMixin):
         # initialize weights
         self.init_weights()
 
-    def forward(
-        self,
-        x,
-        t,
-        context,
-        seq_len,
-        y=None,
-    ):
-        r"""
-        Forward pass through the diffusion model
-
-        Args:
-            x (List[Tensor]):
-                List of input video tensors, each with shape [C_in, F, H, W]
-            t (Tensor):
-                Diffusion timesteps tensor of shape [B]
-            context (List[Tensor]):
-                List of text embeddings each with shape [L, C]
-            seq_len (`int`):
-                Maximum sequence length for positional encoding
-            y (List[Tensor], *optional*):
-                Conditional video inputs for image-to-video mode, same shape as x
-
-        Returns:
-            List[Tensor]:
-                List of denoised video tensors with original input shapes [C_out, F, H / 8, W / 8]
-        """
-        if self.model_type == "i2v" and y is None:
-            raise ValueError("y (conditional video input) is required when model_type is 'i2v'.")
-        # params
-        device = self.patch_embedding.weight.device
-        if self.freqs.device != device:
-            self.freqs = self.freqs.to(device)
-
-        if y is not None:
-            x = [torch.cat([u, v], dim=0) for u, v in zip(x, y, strict=False)]
-
-        # embeddings
-        x = [self.patch_embedding(u.unsqueeze(0)) for u in x]
-        grid_sizes = torch.stack([torch.tensor(u.shape[2:], dtype=torch.long) for u in x])
-        x = [u.flatten(2).transpose(1, 2) for u in x]
-        seq_lens = torch.tensor([u.size(1) for u in x], dtype=torch.long)
-        if seq_lens.max() > seq_len:
-            raise ValueError(
-                f"Input sequence length {int(seq_lens.max())} exceeds the maximum seq_len {seq_len}."
-            )
-        x = torch.cat([torch.cat([u, u.new_zeros(1, seq_len - u.size(1), u.size(2))], dim=1) for u in x])
-
-        # time embeddings
-        if t.dim() == 1:
-            t = t.expand(t.size(0), seq_len)
-        with torch.amp.autocast("cuda", dtype=torch.float32):
-            bt = t.size(0)
-            t = t.flatten()
-            e = self.time_embedding(
-                sinusoidal_embedding_1d(self.freq_dim, t).unflatten(0, (bt, seq_len)).float()
-            )
-            e0 = self.time_projection(e).unflatten(2, (6, self.dim))
-
-        # context
-        context_lens = None
-        context = self.text_embedding(
-            torch.stack([torch.cat([u, u.new_zeros(self.text_len - u.size(0), u.size(1))]) for u in context])
-        )
-
-        # arguments
-        kwargs = {
-            "e": e0,
-            "seq_lens": seq_lens,
-            "grid_sizes": grid_sizes,
-            "freqs": self.freqs,
-            "context": context,
-            "context_lens": context_lens,
-        }
-
-        for block in self.blocks:
-            x = block(x, **kwargs)
-
-        # head
-        x = self.head(x, e)
-
-        # unpatchify
-        x = self.unpatchify(x, grid_sizes)
-        return [u.float() for u in x]
+    # NOTE: The upstream Wan diffusion forward (flash-attention based) was removed.
+    # FastWAM's WanVideoDiT subclasses this model, rebuilds `self.blocks` with
+    # FastWAMAttentionBlock, and provides its own SDPA-based forward. Only the
+    # constructor (embeddings, blocks, head, rope buffers) and the helpers below
+    # (unpatchify / init_weights) are reused. WanModel is never run directly.
 
     def unpatchify(self, x, grid_sizes):
         r"""
