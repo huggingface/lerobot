@@ -85,7 +85,7 @@ import torch.utils.data
 import tqdm
 
 from lerobot.datasets import LeRobotDataset
-from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD
+from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD, SUCCESS
 from lerobot.utils.utils import init_logging
 
 
@@ -138,7 +138,7 @@ def build_blueprint_from_dataset(dataset: LeRobotDataset):
             names = get_feature_names(dataset, key)
             styling = rr.SeriesLines(names=names)
             views.append(rrb.TimeSeriesView(origin=origin, name=origin, overrides={origin: styling}))
-    for key in (DONE, REWARD, "next.success"):
+    for key in (DONE, REWARD, SUCCESS):
         if key in dataset.features:
             views.append(rrb.TimeSeriesView(origin=key, name=key))
 
@@ -270,8 +270,8 @@ def visualize_dataset(
             if REWARD in batch:
                 rr.log(REWARD, rr.Scalars(batch[REWARD][i].item()))
 
-            if "next.success" in batch:
-                rr.log("next.success", rr.Scalars(batch["next.success"][i].item()))
+            if SUCCESS in batch:
+                rr.log(SUCCESS, rr.Scalars(batch[SUCCESS][i].item()))
 
     # save .rrd locally
     if mode == "local" and save:
