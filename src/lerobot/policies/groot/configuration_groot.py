@@ -15,11 +15,12 @@
 # limitations under the License.
 
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
-from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
+from lerobot.optim import AdamWConfig, DiffuserSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .utils import read_json
@@ -336,11 +337,14 @@ class GrootConfig(PreTrainedConfig):
 
     # Training parameters
     optimizer_lr: float = 1e-4
-    optimizer_betas: tuple[float, float] = (0.95, 0.999)
+    # Isaac-GR00T N1.7 fine-tunes with AdamW betas (0.9, 0.999).
+    optimizer_betas: tuple[float, float] = (0.9, 0.999)
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 1e-5
     warmup_ratio: float = 0.05
     use_bf16: bool = True
+    # The native N1.7 fine-tuning recipe keeps model parameters in FP32 and computes under BF16 autocast.
+    model_params_fp32: bool = True
 
     # TODO(Steven): Remove these deprecated fields in a future release.
     # Deprecated Isaac-GR00T runner / GR00T N1.5 fields, plus the (never-wired) LoRA fields — all
@@ -480,15 +484,20 @@ class GrootConfig(PreTrainedConfig):
             betas=self.optimizer_betas,
             eps=self.optimizer_eps,
             weight_decay=self.optimizer_weight_decay,
+            grad_clip_norm=1.0,
         )
 
-    def get_scheduler_preset(self) -> CosineDecayWithWarmupSchedulerConfig:
-        """Return scheduler configuration."""
-        return CosineDecayWithWarmupSchedulerConfig(
-            num_warmup_steps=int(10000 * self.warmup_ratio),  # 5% warmup by default
-            num_decay_steps=10000,  # Adjust based on training steps
-            peak_lr=self.optimizer_lr,
-            decay_lr=self.optimizer_lr * 0.1,
+    def get_scheduler_preset(self) -> DiffuserSchedulerConfig:
+        """Return scheduler configuration.
+
+        Isaac-GR00T uses the HF Trainer cosine schedule with ~5% warmup over the
+        actual training update count; DiffuserSchedulerConfig wraps the same
+        diffusers/transformers `get_scheduler("cosine")` implementation and
+        derives num_training_steps from the outer --steps value at runtime.
+        """
+        return DiffuserSchedulerConfig(
+            name="cosine",
+            num_warmup_steps=math.ceil(self.max_steps * self.warmup_ratio),
         )
 
     @property
@@ -503,6 +512,11 @@ class GrootConfig(PreTrainedConfig):
             infer_groot_n1_7_action_horizon(self.base_model_path, self.embodiment_tag) or 40
         )
         return list(range(min(self.chunk_size, model_action_horizon)))
+
+    @property
+    def drop_n_last_frames(self) -> int:
+        """Exclude episode tails that cannot supply a complete N1.7 action chunk."""
+        return max(0, len(self.action_delta_indices) - 1)
 
     @property
     def reward_delta_indices(self) -> None:
