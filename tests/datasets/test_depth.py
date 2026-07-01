@@ -326,3 +326,11 @@ class TestDepthUnitMetadata:
         if not use_videos:
             depth = read_dataset[0][DEPTH_KEY]
             assert torch.allclose(depth, torch.full_like(depth, expected))
+
+            from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+
+            stream_dataset = StreamingLeRobotDataset(
+                repo_id=DUMMY_REPO_ID, root=tmp_path / "ds", depth_output_unit=output_unit
+            )
+            stream_depth = next(iter(stream_dataset))[DEPTH_KEY]
+            assert torch.allclose(stream_depth, torch.full_like(stream_depth, expected))
