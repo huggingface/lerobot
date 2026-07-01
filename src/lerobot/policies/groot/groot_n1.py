@@ -87,7 +87,39 @@ class EagleBackbone(nn.Module):
             print(f"[GROOT] Warning: failed to prepare Eagle cache for backbone: {exc}")
 
         config = AutoConfig.from_pretrained(str(cache_dir), trust_remote_code=True)
-        self.eagle_model = AutoModel.from_config(config, trust_remote_code=True)
+
+        # Determine attention implementation: use flash_attention_2 only when explicitly
+        # requested AND the package is actually installed; otherwise fall back to sdpa
+        # (PyTorch scaled dot-product attention) which is always available on CUDA.
+        try:
+            import flash_attn  # noqa: F401
+
+            _attn_impl = "flash_attention_2" if use_flash_attention else "sdpa"
+        except ImportError:
+            _attn_impl = "sdpa"
+
+        if _attn_impl != "flash_attention_2":
+            # AutoModel.from_config's attn_implementation kwarg only sets the top-level
+            # config; sub-model configs (e.g. vision_config for SiglipVisionModel) are
+            # constructed directly by the Eagle2 model and retain whatever
+            # _attn_implementation_internal was baked into the loaded config.
+            # We must clear it recursively so SiglipVisionModel (and any other sub-model)
+            # doesn't try to use flash-attn.
+            def _clear_flash_attn_recursive(cfg):
+                if cfg is None:
+                    return
+                if getattr(cfg, "_attn_implementation_internal", None) == "flash_attention_2":
+                    cfg._attn_implementation_internal = None
+                if getattr(cfg, "_attn_implementation", None) == "flash_attention_2":
+                    cfg._attn_implementation = _attn_impl
+                for sub_attr in ("vision_config", "text_config", "language_model_config", "llm_config"):
+                    _clear_flash_attn_recursive(getattr(cfg, sub_attr, None))
+
+            _clear_flash_attn_recursive(config)
+
+        self.eagle_model = AutoModel.from_config(
+            config, trust_remote_code=True, attn_implementation=_attn_impl
+        )
 
         if project_to_dim is not None:
             self.eagle_linear = torch.nn.Linear(2048, project_to_dim)
