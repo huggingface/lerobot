@@ -350,11 +350,6 @@ def main():
         ),
     )
     parser.add_argument(
-        "--ws-port",
-        type=int,
-        help="deprecated, please use --grpc-port instead.",
-    )
-    parser.add_argument(
         "--grpc-port",
         type=int,
         default=9876,
@@ -434,15 +429,6 @@ def main():
     repo_id = kwargs.pop("repo_id")
     root = kwargs.pop("root")
     tolerance_s = kwargs.pop("tolerance_s")
-
-    if kwargs["ws_port"] is not None:
-        logging.warning(
-            "--ws-port is deprecated and will be removed in future versions. Please use --grpc-port instead."
-        )
-        logging.warning("Setting grpc_port to ws_port value.")
-        kwargs["grpc_port"] = kwargs.pop("ws_port")
-    else:
-        kwargs.pop("ws_port")  # Always remove ws_port from kwargs
 
     init_logging()
     logging.info("Loading dataset")
