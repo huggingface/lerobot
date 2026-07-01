@@ -7,6 +7,7 @@ LeRobot offers multiple options for video capture:
 | `OpenCVCamera`    | Phone, built-in laptop, USB webcams |
 | `ZMQCamera`       | Network-connected cameras           |
 | `RealSenseCamera` | Intel RealSense (with depth)        |
+| `OrbbecCamera`    | Orbbec RGBD cameras (Gemini series) |
 | `Reachy2Camera`   | Reachy 2 robot cameras              |
 
 > [!TIP]
@@ -16,10 +17,10 @@ LeRobot offers multiple options for video capture:
 
 Every camera requires a unique identifier to be instantiated, allowing you to distinguish between multiple connected devices.
 
-`OpenCVCamera` and `RealSenseCamera` support auto-discovery. Run the command below to list available devices and their identifiers. Note that these identifiers may change after rebooting your computer or re-plugging the camera, depending on your operating system.
+`OpenCVCamera`, `RealSenseCamera`, and `OrbbecCamera` support auto-discovery. Run the command below to list available devices and their identifiers. Note that these identifiers may change after rebooting your computer or re-plugging the camera, depending on your operating system.
 
 ```bash
-lerobot-find-cameras opencv # or realsense for Intel Realsense cameras
+lerobot-find-cameras opencv # or realsense for Intel Realsense cameras, or orbbec for Orbbec cameras
 ```
 
 The output will look something like this if you have two cameras connected:
@@ -63,6 +64,7 @@ The following examples show how to use the camera API to configure and capture f
 
 - **Blocking and non-blocking frame capture** using an OpenCV-based camera
 - **Color and depth capture** using an Intel RealSense camera
+- **RGBD Capture and Training** using an Orbbec camera — To leverage depth data from Orbbec cameras, we developed a 4-channel RGBD variant of ACT, extending the standard 3-channel RGB input to include a depth channel. This model has been validated on the SO101 robotic arm. See the [`so101-act-rgbd`](https://github.com/orbbec/lerobot/tree/feat/orbbec-so101-act-rgbd) branch for details.
 
 > [!WARNING]
 > Failing to cleanly disconnect cameras can cause resource leaks. Use the context manager protocol to ensure automatic cleanup:
@@ -141,6 +143,42 @@ config = RealSenseCameraConfig(
 
 # Instantiate and connect a `RealSenseCamera` with warm-up read (default).
 camera = RealSenseCamera(config)
+camera.connect()
+
+# Capture a color frame via `read()` and a depth map via `read_depth()`.
+try:
+    color_frame = camera.read()
+    depth_map = camera.read_depth()
+    print("Color frame shape:", color_frame.shape)
+    print("Depth map shape:", depth_map.shape)
+finally:
+    camera.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+<hfoption id="Orbbec Camera">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras.orbbec.configuration_orbbec import OrbbecCameraConfig
+from lerobot.cameras.orbbec.camera_orbbec import OrbbecCamera
+from lerobot.cameras.configs import ColorMode, Cv2Rotation
+
+# Create an `OrbbecCameraConfig` specifying index or serial number and enabling depth.
+config = OrbbecCameraConfig(
+    index_or_serial_number=0,  # or use serial number string like "CL4K2310053"
+    fps=30,
+    width=640,
+    height=480,
+    color_mode=ColorMode.RGB,
+    use_depth=True,
+    align_depth=True,
+    rotation=Cv2Rotation.NO_ROTATION,
+)
+
+# Instantiate and connect an `OrbbecCamera` with warm-up read (default).
+camera = OrbbecCamera(config)
 camera.connect()
 
 # Capture a color frame via `read()` and a depth map via `read_depth()`.
