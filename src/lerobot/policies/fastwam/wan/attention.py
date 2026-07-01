@@ -52,8 +52,13 @@ def flash_attention(
     dtype:          torch.dtype. Apply when dtype of q/k/v is not float16/bfloat16.
     """
     half_dtypes = (torch.float16, torch.bfloat16)
-    assert dtype in half_dtypes
-    assert q.device.type == "cuda" and q.size(-1) <= 256
+    if dtype not in half_dtypes:
+        raise ValueError(f"dtype must be one of {half_dtypes}, got {dtype}.")
+    if q.device.type != "cuda" or q.size(-1) > 256:
+        raise ValueError(
+            f"flash_attention requires q on a CUDA device with head dim <= 256, "
+            f"got device={q.device.type} and head dim {q.size(-1)}."
+        )
 
     # params
     b, lq, lk, out_dtype = q.size(0), q.size(1), k.size(1), q.dtype
@@ -108,7 +113,8 @@ def flash_attention(
             deterministic=deterministic,
         )[0].unflatten(0, (b, lq))
     else:
-        assert FLASH_ATTN_2_AVAILABLE
+        if not FLASH_ATTN_2_AVAILABLE:
+            raise RuntimeError("flash_attn (FlashAttention 2) is not available; install it to use this path.")
         x = flash_attn.flash_attn_varlen_func(
             q=q,
             k=k,

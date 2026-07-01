@@ -29,7 +29,8 @@ __all__ = ["WanModel"]
 
 def sinusoidal_embedding_1d(dim, position):
     # preprocess
-    assert dim % 2 == 0
+    if dim % 2 != 0:
+        raise ValueError(f"dim must be even, got {dim}.")
     half = dim // 2
     position = position.type(torch.float64)
 
@@ -41,7 +42,8 @@ def sinusoidal_embedding_1d(dim, position):
 
 @torch.amp.autocast("cuda", enabled=False)
 def rope_params(max_seq_len, dim, theta=10000):
-    assert dim % 2 == 0
+    if dim % 2 != 0:
+        raise ValueError(f"dim must be even, got {dim}.")
     freqs = torch.outer(
         torch.arange(max_seq_len), 1.0 / torch.pow(theta, torch.arange(0, dim, 2).to(torch.float64).div(dim))
     )
@@ -113,7 +115,8 @@ class WanLayerNorm(nn.LayerNorm):
 
 class WanSelfAttention(nn.Module):
     def __init__(self, dim, num_heads, window_size=(-1, -1), qk_norm=True, eps=1e-6):
-        assert dim % num_heads == 0
+        if dim % num_heads != 0:
+            raise ValueError(f"dim ({dim}) must be divisible by num_heads ({num_heads}).")
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
@@ -231,10 +234,8 @@ class WanAttentionBlock(nn.Module):
             grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
         """
-        assert e.dtype == torch.float32
         with torch.amp.autocast("cuda", dtype=torch.float32):
             e = (self.modulation.unsqueeze(0) + e).chunk(6, dim=2)
-        assert e[0].dtype == torch.float32
 
         # self-attention
         y = self.self_attn(
@@ -277,7 +278,6 @@ class Head(nn.Module):
             x(Tensor): Shape [B, L1, C]
             e(Tensor): Shape [B, L1, C]
         """
-        assert e.dtype == torch.float32
         with torch.amp.autocast("cuda", dtype=torch.float32):
             e = (self.modulation.unsqueeze(0) + e.unsqueeze(2)).chunk(2, dim=2)
             x = self.head(self.norm(x) * (1 + e[1].squeeze(2)) + e[0].squeeze(2))
@@ -349,7 +349,8 @@ class WanModel(ModelMixin, ConfigMixin):
 
         super().__init__()
 
-        assert model_type in ["t2v", "i2v", "ti2v", "s2v"]
+        if model_type not in ["t2v", "i2v", "ti2v", "s2v"]:
+            raise ValueError(f"model_type must be one of ['t2v', 'i2v', 'ti2v', 's2v'], got {model_type!r}.")
         self.model_type = model_type
 
         self.patch_size = patch_size
@@ -388,7 +389,10 @@ class WanModel(ModelMixin, ConfigMixin):
         self.head = Head(dim, out_dim, patch_size, eps)
 
         # buffers (don't use register_buffer otherwise dtype will be changed in to())
-        assert (dim % num_heads) == 0 and (dim // num_heads) % 2 == 0
+        if (dim % num_heads) != 0 or (dim // num_heads) % 2 != 0:
+            raise ValueError(
+                f"dim ({dim}) must be divisible by num_heads ({num_heads}) with an even head dim."
+            )
         d = dim // num_heads
         self.freqs = torch.cat(
             [
@@ -429,8 +433,8 @@ class WanModel(ModelMixin, ConfigMixin):
             List[Tensor]:
                 List of denoised video tensors with original input shapes [C_out, F, H / 8, W / 8]
         """
-        if self.model_type == "i2v":
-            assert y is not None
+        if self.model_type == "i2v" and y is None:
+            raise ValueError("y (conditional video input) is required when model_type is 'i2v'.")
         # params
         device = self.patch_embedding.weight.device
         if self.freqs.device != device:
@@ -444,7 +448,10 @@ class WanModel(ModelMixin, ConfigMixin):
         grid_sizes = torch.stack([torch.tensor(u.shape[2:], dtype=torch.long) for u in x])
         x = [u.flatten(2).transpose(1, 2) for u in x]
         seq_lens = torch.tensor([u.size(1) for u in x], dtype=torch.long)
-        assert seq_lens.max() <= seq_len
+        if seq_lens.max() > seq_len:
+            raise ValueError(
+                f"Input sequence length {int(seq_lens.max())} exceeds the maximum seq_len {seq_len}."
+            )
         x = torch.cat([torch.cat([u, u.new_zeros(1, seq_len - u.size(1), u.size(2))], dim=1) for u in x])
 
         # time embeddings
@@ -457,7 +464,6 @@ class WanModel(ModelMixin, ConfigMixin):
                 sinusoidal_embedding_1d(self.freq_dim, t).unflatten(0, (bt, seq_len)).float()
             )
             e0 = self.time_projection(e).unflatten(2, (6, self.dim))
-            assert e.dtype == torch.float32 and e0.dtype == torch.float32
 
         # context
         context_lens = None
