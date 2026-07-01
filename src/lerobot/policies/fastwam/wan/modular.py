@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from collections.abc import Sequence
 from typing import Any
@@ -44,26 +43,7 @@ from .video_dit import (
     sinusoidal_embedding_1d,
 )
 
-
-def _is_main_process() -> bool:
-    if torch.distributed.is_available() and torch.distributed.is_initialized():
-        return torch.distributed.get_rank() == 0
-    for key in ("RANK", "SLURM_PROCID", "LOCAL_RANK"):
-        if key in os.environ:
-            return os.environ.get(key, "0") in ("0", "0\n", "")
-    return True
-
-
-def get_logger(name: str = __name__, level: int = logging.INFO) -> logging.Logger:
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-    if not _is_main_process():
-        logger.propagate = False
-        logger.disabled = True
-    return logger
-
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def _apply_block_norm(block, name: str, x: torch.Tensor) -> torch.Tensor:
