@@ -27,6 +27,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 from gymnasium import spaces
+from scipy.spatial.transform import Rotation
 
 from lerobot.types import RobotObservation
 
@@ -61,8 +62,6 @@ def _compose_eef_pose(new_pose: np.ndarray, init_pose: np.ndarray) -> np.ndarray
     is added, rotation is composed (``init_R * new_R``), and the gripper is taken from the
     prediction. Mirrors ``add_eef_pose`` in the upstream LingBot-VA RoboTwin client.
     """
-    from scipy.spatial.transform import Rotation
-
     new_r = Rotation.from_quat(new_pose[3:7])
     init_r = Rotation.from_quat(init_pose[3:7])
     out_rot = (init_r * new_r).as_quat()

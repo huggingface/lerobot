@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import LRSchedulerConfig
+from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
 from lerobot.utils.constants import ACTION
 
 
@@ -151,8 +151,6 @@ class LingBotVAConfig(PreTrainedConfig):
 
     def get_scheduler_preset(self) -> LRSchedulerConfig | None:
         # Upstream uses a linear warmup followed by a constant LR (warmup_constant_lambda).
-        from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig
-
         return ConstantWithWarmupSchedulerConfig(num_warmup_steps=self.scheduler_warmup_steps)
 
     @property

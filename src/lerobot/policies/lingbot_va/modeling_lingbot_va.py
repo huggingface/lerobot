@@ -38,21 +38,49 @@ import math
 from collections import deque
 from copy import deepcopy
 from functools import partial
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.models.attention import FeedForward
-from diffusers.models.embeddings import PixArtAlphaTextProjection, TimestepEmbedding, Timesteps
-from diffusers.models.modeling_utils import ModelMixin
-from diffusers.models.normalization import FP32LayerNorm
+import torch.nn.functional as F  # noqa: N812
 from einops import rearrange
 from torch import Tensor
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
-from lerobot.utils.import_utils import require_package
+from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
+
+# ``diffusers``/``transformers`` are behind the optional ``lingbot_va`` extra. Guard them so base
+# ``import lerobot`` works without the extra installed; ``LingBotVAPolicy.__init__`` calls
+# ``require_package`` to fail fast when they are actually needed. Only ``WanTransformer3DModel``
+# uses ``ModelMixin``/``ConfigMixin`` as base classes; the rest are instantiated at runtime, so
+# ``None`` stubs are safe.
+if TYPE_CHECKING or _diffusers_available:
+    from diffusers import AutoencoderKLWan
+    from diffusers.configuration_utils import ConfigMixin, register_to_config
+    from diffusers.models.attention import FeedForward
+    from diffusers.models.embeddings import PixArtAlphaTextProjection, TimestepEmbedding, Timesteps
+    from diffusers.models.modeling_utils import ModelMixin
+    from diffusers.models.normalization import FP32LayerNorm
+    from diffusers.pipelines.wan.pipeline_wan import prompt_clean
+else:
+    AutoencoderKLWan = FeedForward = PixArtAlphaTextProjection = None
+    TimestepEmbedding = Timesteps = FP32LayerNorm = prompt_clean = None
+
+    class ModelMixin:
+        pass
+
+    class ConfigMixin:
+        pass
+
+    def register_to_config(func):
+        return func
+
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import T5TokenizerFast, UMT5EncoderModel
+else:
+    T5TokenizerFast = UMT5EncoderModel = None
 
 from .configuration_lingbot_va import LingBotVAConfig
 
@@ -273,7 +301,8 @@ class FlexAttnFunc(nn.Module):
         v_varlen = rearrange(value[0], "s n d -> 1 n s d")
 
         half_dtypes = (torch.float16, torch.bfloat16)
-        assert dtype in half_dtypes
+        if dtype not in half_dtypes:
+            raise ValueError(f"Flex attention requires a half-precision dtype, got {dtype}.")
 
         def half(x):
             return x if x.dtype in half_dtypes else x.to(dtype)
@@ -309,23 +338,23 @@ class FlexAttnFunc(nn.Module):
     def init_mask(latent_shape, action_shape, padded_length, chunk_size, window_size, patch_size, device):
         FlexAttnFunc._ensure_compiled()
         torch._inductor.config.realize_opcount_threshold = 100
-        B, _, L_F, L_H, L_W = latent_shape
-        _, _, A_F, A_H, A_W = action_shape
+        b, _, l_f, l_h, l_w = latent_shape
+        _, _, a_f, a_h, a_w = action_shape
 
         latent_seq_id = (
-            torch.arange(B)[:, None, None, None]
-            .expand(-1, L_F // patch_size[0], L_H // patch_size[1], L_W // patch_size[2])
+            torch.arange(b)[:, None, None, None]
+            .expand(-1, l_f // patch_size[0], l_h // patch_size[1], l_w // patch_size[2])
             .flatten()
         )
-        action_seq_id = torch.arange(B)[:, None, None, None].expand(-1, A_F, A_H, A_W).flatten()
+        action_seq_id = torch.arange(b)[:, None, None, None].expand(-1, a_f, a_h, a_w).flatten()
         seq_ids = torch.cat([latent_seq_id] * 2 + [action_seq_id] * 2)
 
         latent_frame_id = (
-            torch.arange(L_F)[None, :, None, None]
-            .expand(B, -1, L_H // patch_size[1], L_W // patch_size[2])[None]
+            torch.arange(l_f)[None, :, None, None]
+            .expand(b, -1, l_h // patch_size[1], l_w // patch_size[2])[None]
             .flatten()
         )
-        action_frame_id = torch.arange(A_F)[None, :, None, None].expand(B, -1, A_H, A_W)[None].flatten()
+        action_frame_id = torch.arange(a_f)[None, :, None, None].expand(b, -1, a_h, a_w)[None].flatten()
         frame_ids = torch.cat(
             [latent_frame_id // chunk_size * 2] * 2 + [action_frame_id // chunk_size * 2 + 1] * 2
         )
@@ -351,7 +380,7 @@ class FlexAttnFunc(nn.Module):
         )
         FlexAttnFunc.attention_mask = block_mask
 
-        text_seq_ids = torch.arange(B)[:, None].expand(-1, 512).flatten()
+        text_seq_ids = torch.arange(b)[:, None].expand(-1, 512).flatten()
         mask_mod_cross = FlexAttnFunc._get_cross_mask_mod(
             seq_ids.long().to(device), text_seq_ids.long().to(device)
         )
@@ -537,7 +566,8 @@ class WanAttention(nn.Module):
             ids[to_free] = -1
             free = (~mask).nonzero(as_tuple=False).squeeze(-1)
 
-        assert free.numel() >= key_size
+        if free.numel() < key_size:
+            raise RuntimeError(f"KV cache exhausted: need {key_size} free slots, have {free.numel()}.")
         return free[:key_size]
 
     def _next_cache_id(self, cache_name):
@@ -603,9 +633,8 @@ class WanAttention(nn.Module):
 
         hidden_states = self.attn_op(query, key, value)
 
-        if update_cache == 0:
-            if kv_cache is not None and kv_cache["k"] is not None:
-                self.restore_cache(cache_name, slots)
+        if update_cache == 0 and kv_cache is not None and kv_cache["k"] is not None:
+            self.restore_cache(cache_name, slots)
 
         hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states.type_as(query)
@@ -628,7 +657,7 @@ class WanTimeTextImageEmbedding(nn.Module):
         self.text_embedder = PixArtAlphaTextProjection(text_embed_dim, dim, act_fn="gelu_tanh")
 
     def forward(self, timestep: torch.Tensor, dtype=None):
-        B, L = timestep.shape
+        b, seq_len = timestep.shape
         timestep = timestep.reshape(-1)
         timestep = self.timesteps_proj(timestep)
         time_embedder_dtype = self.time_embedder.linear_1.weight.dtype
@@ -636,7 +665,7 @@ class WanTimeTextImageEmbedding(nn.Module):
             timestep = timestep.to(time_embedder_dtype)
         temb = self.time_embedder(timestep).to(dtype=dtype)
         timestep_proj = self.time_proj(self.act_fn(temb))
-        return temb.reshape(B, L, -1), timestep_proj.reshape(B, L, -1)
+        return temb.reshape(b, seq_len, -1), timestep_proj.reshape(b, seq_len, -1)
 
 
 class WanTransformerBlock(nn.Module):
@@ -855,10 +884,10 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin):
             raise ValueError(f"Unsupported input type: {input_type}")
         return hidden_states
 
-    def _time_embed(self, timesteps, H, W, dtype, action_mode=False):
+    def _time_embed(self, timesteps, h, w, dtype, action_mode=False):
         patch_scale_h, patch_scale_w = (1, 1) if action_mode else (self.patch_size[1], self.patch_size[2])
         latent_time_steps = torch.repeat_interleave(
-            timesteps, (H // patch_scale_h) * (W // patch_scale_w), dim=1
+            timesteps, (h // patch_scale_h) * (w // patch_scale_w), dim=1
         )
         current_condition_embedder = (
             self.condition_embedder_action if action_mode else self.condition_embedder
@@ -1067,15 +1096,11 @@ def denormalize_latents(latents: torch.Tensor, latents_mean, latents_std, z_dim)
 
 
 def load_vae(vae_path, torch_dtype, torch_device, subfolder=None):
-    from diffusers import AutoencoderKLWan
-
     vae = AutoencoderKLWan.from_pretrained(vae_path, subfolder=subfolder, torch_dtype=torch_dtype)
     return vae.to(torch_device)
 
 
 def load_text_encoder(text_encoder_path, torch_dtype, torch_device, subfolder=None):
-    from transformers import UMT5EncoderModel
-
     text_encoder = UMT5EncoderModel.from_pretrained(
         text_encoder_path, subfolder=subfolder, torch_dtype=torch_dtype
     )
@@ -1083,8 +1108,6 @@ def load_text_encoder(text_encoder_path, torch_dtype, torch_device, subfolder=No
 
 
 def load_tokenizer(tokenizer_path, subfolder=None):
-    from transformers import T5TokenizerFast
-
     return T5TokenizerFast.from_pretrained(tokenizer_path, subfolder=subfolder)
 
 
@@ -1284,11 +1307,11 @@ class LingBotVAPolicy(PreTrainedPolicy):
     def _add_noise_stream(self, latent, scheduler, action_mask, action_mode, noisy_cond_prob):
         """Flow-matching noising of one stream (port of upstream ``Trainer._add_noise``)."""
         device = latent.device
-        B, _C, F, _H, _W = latent.shape
+        b, _c, f, _h, _w = latent.shape
         p = self.config.patch_size
         patch_f, patch_h, patch_w = (1, 1, 1) if action_mode else (p[0], p[1], p[2])
 
-        ts_ids = _sample_timestep_id(F, num_train_timesteps=scheduler.num_train_timesteps)
+        ts_ids = _sample_timestep_id(f, num_train_timesteps=scheduler.num_train_timesteps)
         noise = torch.zeros_like(latent).normal_()
         timesteps = scheduler.timesteps[ts_ids].to(device)
         noisy_latents = scheduler.add_noise(latent, noise, timesteps, t_dim=2)
@@ -1305,12 +1328,12 @@ class LingBotVAPolicy(PreTrainedPolicy):
                 action=action_mode,
             )
             .to(device)[None]
-            .repeat(B, 1, 1)
+            .repeat(b, 1, 1)
         )
 
         if torch.rand(1).item() < noisy_cond_prob:
             cond_ids = _sample_timestep_id(
-                F, min_timestep_bd=0.5, max_timestep_bd=1.0, num_train_timesteps=scheduler.num_train_timesteps
+                f, min_timestep_bd=0.5, max_timestep_bd=1.0, num_train_timesteps=scheduler.num_train_timesteps
             )
             cond_noise = torch.zeros_like(latent).normal_()
             cond_timesteps = scheduler.timesteps[cond_ids].to(device)
@@ -1324,11 +1347,11 @@ class LingBotVAPolicy(PreTrainedPolicy):
             latent = latent * action_mask.float()
 
         return {
-            "timesteps": timesteps[None].repeat(B, 1),
+            "timesteps": timesteps[None].repeat(b, 1),
             "noisy_latents": noisy_latents,
             "targets": targets,
             "latent": latent,
-            "cond_timesteps": cond_timesteps[None].repeat(B, 1),
+            "cond_timesteps": cond_timesteps[None].repeat(b, 1),
             "grid_id": grid_id,
         }
 
@@ -1345,9 +1368,9 @@ class LingBotVAPolicy(PreTrainedPolicy):
             ld["targets"].shape[-1],
             batch_size=latent_pred.shape[0],
         )
-        Bn, Fn = ld["timesteps"].shape
-        lw = self._train_sched_latent.training_weight(ld["timesteps"].flatten()).reshape(Bn, Fn)
-        aw = self._train_sched_action.training_weight(ad["timesteps"].flatten()).reshape(Bn, Fn)
+        bn, fn = ld["timesteps"].shape
+        lw = self._train_sched_latent.training_weight(ld["timesteps"].flatten()).reshape(bn, fn)
+        aw = self._train_sched_action.training_weight(ad["timesteps"].flatten()).reshape(bn, fn)
 
         latent_loss = F.mse_loss(latent_pred.float(), ld["targets"].float().detach(), reduction="none")
         latent_loss = (
@@ -1429,11 +1452,11 @@ class LingBotVAPolicy(PreTrainedPolicy):
 
         # actions -> [B, action_dim, F, action_per_frame, 1]
         act = batch[ACTION].to(device)  # [B, F*apf, n_used]
-        B = act.shape[0]
+        b = act.shape[0]
         used = cfg.used_action_channel_ids
-        apf, Fc = cfg.action_per_frame, cfg.frame_chunk_size
-        act = act[:, : Fc * apf].reshape(B, Fc, apf, len(used)).permute(0, 3, 1, 2)  # [B, n_used, F, apf]
-        full = act.new_zeros(B, cfg.action_dim, Fc, apf)
+        apf, fc = cfg.action_per_frame, cfg.frame_chunk_size
+        act = act[:, : fc * apf].reshape(b, fc, apf, len(used)).permute(0, 3, 1, 2)  # [B, n_used, F, apf]
+        full = act.new_zeros(b, cfg.action_dim, fc, apf)
         idx = torch.as_tensor(used, device=device)
         full[:, idx] = act
         actions = full.unsqueeze(-1).to(self.dtype)  # [B, action_dim, F, apf, 1]
@@ -1560,8 +1583,6 @@ class LingBotVAPolicy(PreTrainedPolicy):
         self._prompt_embeds, self._negative_prompt_embeds = self._encode_prompt(self._prompt)
 
     def _get_t5_prompt_embeds(self, prompt, max_sequence_length):
-        from diffusers.pipelines.wan.pipeline_wan import prompt_clean
-
         tokenizer = self._frozen["tokenizer"]
         text_encoder = self._frozen["text_encoder"]
         device = self.config.device
@@ -1896,8 +1917,6 @@ class LingBotVAPolicy(PreTrainedPolicy):
                 action_mode=True,
             )
             if not last_step:
-                from einops import rearrange
-
                 action_noise_pred = rearrange(action_noise_pred, "b (f n) c -> b c f n 1", f=frame_chunk_size)
                 if cfg.action_guidance_scale > 1:
                     action_noise_pred = action_noise_pred[1:] + cfg.action_guidance_scale * (

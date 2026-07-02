@@ -14,20 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# NOTE: ``LingBotVAPolicy`` (and the Wan transformer it owns) imports ``diffusers`` as a
-# hard dependency at class-definition time (it subclasses diffusers' ModelMixin/ConfigMixin).
-# To keep base ``import lerobot`` working without the optional ``lingbot_va`` extra, the
-# policy is exposed lazily via module ``__getattr__`` — the heavy import only happens when
-# ``LingBotVAPolicy`` is actually accessed (mirroring the lazy import in policies/factory.py).
 from .configuration_lingbot_va import LingBotVAConfig
+from .modeling_lingbot_va import LingBotVAPolicy
 from .processor_lingbot_va import make_lingbot_va_pre_post_processors
 
 __all__ = ["LingBotVAConfig", "LingBotVAPolicy", "make_lingbot_va_pre_post_processors"]
-
-
-def __getattr__(name):
-    if name == "LingBotVAPolicy":
-        from .modeling_lingbot_va import LingBotVAPolicy
-
-        return LingBotVAPolicy
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
