@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -22,7 +23,7 @@ import torch.nn as nn
 from huggingface_hub import snapshot_download
 from huggingface_hub.errors import HFValidationError, RepositoryNotFoundError
 
-from lerobot.utils.import_utils import _transformers_available
+from lerobot.utils.import_utils import _transformers_available, is_package_available
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
@@ -175,6 +176,27 @@ ACTION_KEY = "action_pred"
 LOSS_KEY = "loss"
 ERROR_MSG = "Error: unexpected input/output"
 N_COLOR_CHANNELS = 3
+
+
+def _ensure_strict_compatible_config_base(config_base: type) -> None:
+    """Fail with an actionable error when `transformers` is too old for `@strict`.
+
+    `@strict` requires the decorated class to already be a dataclass, which is only true of
+    `transformers.PretrainedConfig` from v5.4.0 on. With an older version installed, defining
+    `GR00TN15Config` would otherwise fail at import time with a cryptic
+    `StrictDataclassDefinitionError` (see #3765 and #3775).
+    """
+    if config_base is object or is_dataclass(config_base):
+        return
+    _, version = is_package_available("transformers", return_version=True)
+    raise ImportError(
+        "The GR00T policy requires transformers>=5.4.0 (`PretrainedConfig` must be a dataclass), "
+        f"but transformers=={version} is installed. "
+        "Upgrade with `pip install 'transformers>=5.4.0,<5.6.0'` or `pip install 'lerobot[groot]'`."
+    )
+
+
+_ensure_strict_compatible_config_base(PretrainedConfig)
 
 
 # config
