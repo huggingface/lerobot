@@ -39,6 +39,8 @@ from lerobot.policies.evo1.processor_evo1 import (
     reconcile_evo1_processors,
 )
 from lerobot.policies.factory import get_policy_class, make_policy_config
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.processor import (
     DeviceProcessorStep,
     NormalizerProcessorStep,
@@ -98,6 +100,7 @@ class DummyEvo1Model(nn.Module):
         action_mask=None,
         embodiment_ids=None,
         context_mask=None,
+        **kwargs,
     ):
         batch_size = fused_tokens.shape[0]
         if actions_gt is None:
@@ -122,6 +125,7 @@ class ChunkCountingDummyModel(DummyEvo1Model):
         action_mask=None,
         embodiment_ids=None,
         context_mask=None,
+        **kwargs,
     ):
         if actions_gt is not None:
             return super().forward(fused_tokens, state, actions_gt, action_mask, embodiment_ids, context_mask)
@@ -330,19 +334,23 @@ def test_evo1_model_uses_image_resolution_and_trainable_checkpointing(monkeypatc
     assert captured["enable_gradient_checkpointing"] is True
 
 
+class FakeInternVLModel(nn.Module):
+    """Minimal stand-in with the native HF InternVL submodule layout."""
+
+    def __init__(self):
+        super().__init__()
+        self.language_model = nn.Linear(2, 2)
+        self.vision_tower = nn.Linear(2, 2)
+        self.multi_modal_projector = nn.Linear(2, 2)
+
+
+class FakeEmbedder(nn.Module):
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.model = FakeInternVLModel()
+
+
 def test_set_finetune_flags_targets_native_hf_internvl_submodules(monkeypatch):
-    class FakeInternVLModel(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.language_model = nn.Linear(2, 2)
-            self.vision_tower = nn.Linear(2, 2)
-            self.multi_modal_projector = nn.Linear(2, 2)
-
-    class FakeEmbedder(nn.Module):
-        def __init__(self, **kwargs):
-            super().__init__()
-            self.model = FakeInternVLModel()
-
     monkeypatch.setattr(evo1_model, "InternVL3Embedder", FakeEmbedder)
 
     stage2_model = evo1_model.Evo1Model(make_config(training_stage="stage2"))
@@ -550,11 +558,80 @@ def test_evo1_select_action_queue_orders_steps_and_repredicts(monkeypatch):
     assert policy.model.chunks_predicted == 2
 
 
-def test_evo1_predict_action_chunk_rejects_rtc_kwargs(monkeypatch):
+def test_evo1_predict_action_chunk_rejects_rtc_kwargs_without_rtc_config(monkeypatch):
     monkeypatch.setattr(modeling_evo1, "Evo1Model", DummyEvo1Model)
     policy = modeling_evo1.Evo1Policy(make_config())
-    with pytest.raises(NotImplementedError, match="RTC"):
+    with pytest.raises(RuntimeError, match="RTC"):
         policy.predict_action_chunk(make_batch(include_action=False), inference_delay=2)
+
+
+def test_evo1_rtc_processor_wiring(monkeypatch):
+    monkeypatch.setattr(evo1_model, "InternVL3Embedder", FakeEmbedder)
+    policy = modeling_evo1.Evo1Policy(make_config())
+    assert policy.rtc_processor is None
+    assert policy.model.rtc_processor is None
+
+    # The RTC rollout backend assigns rtc_config after loading and re-inits the processor.
+    policy.config.rtc_config = RTCConfig(execution_horizon=CHUNK_SIZE)
+    policy.init_rtc_processor()
+    assert isinstance(policy.rtc_processor, RTCProcessor)
+    assert policy.model.rtc_processor is policy.rtc_processor
+
+    # RTC drives predict_action_chunk directly; the select_action queue path is unsupported.
+    with pytest.raises(AssertionError, match="select_action"):
+        policy.select_action(make_batch(include_action=False))
+
+
+def test_flowmatching_rtc_guidance_pulls_prefix_toward_previous_chunk():
+    head = make_flowmatching_head(num_inference_timesteps=16)
+    processor = RTCProcessor(RTCConfig(execution_horizon=CHUNK_SIZE))
+    fused = torch.randn(2, 4, EMBED_DIM)
+    state = torch.randn(2, STATE_DIM)
+    action_mask = torch.ones(2, ACTION_DIM, dtype=torch.bool)
+    prev_chunk = torch.tensor([0.7, -0.4, 0.2]).expand(2, CHUNK_SIZE, ACTION_DIM).contiguous()
+
+    torch.manual_seed(0)
+    unguided = head.get_action(fused, state=state, action_mask=action_mask)
+    unguided = unguided.view(2, CHUNK_SIZE, ACTION_DIM)
+    torch.manual_seed(0)
+    guided = head.get_action(
+        fused,
+        state=state,
+        action_mask=action_mask,
+        inference_delay=1,
+        prev_chunk_left_over=prev_chunk,
+        rtc_processor=processor,
+    )
+    guided = guided.view(2, CHUNK_SIZE, ACTION_DIM)
+
+    # The frozen prefix (first inference_delay steps) must land far closer to the previous chunk
+    # than the unguided sample from the same noise does.
+    guided_dist = (guided[:, 0] - prev_chunk[:, 0]).abs().mean()
+    unguided_dist = (unguided[:, 0] - prev_chunk[:, 0]).abs().mean()
+    assert guided_dist < 0.5 * unguided_dist
+    assert torch.isfinite(guided).all()
+
+
+def test_flowmatching_rtc_first_chunk_without_leftover_matches_unguided():
+    head = make_flowmatching_head(num_inference_timesteps=4)
+    processor = RTCProcessor(RTCConfig(execution_horizon=CHUNK_SIZE))
+    fused = torch.randn(2, 4, EMBED_DIM)
+    state = torch.randn(2, STATE_DIM)
+    action_mask = torch.ones(2, ACTION_DIM, dtype=torch.bool)
+
+    torch.manual_seed(0)
+    unguided = head.get_action(fused, state=state, action_mask=action_mask)
+    torch.manual_seed(0)
+    first_chunk = head.get_action(
+        fused,
+        state=state,
+        action_mask=action_mask,
+        inference_delay=2,
+        prev_chunk_left_over=None,
+        rtc_processor=processor,
+    )
+
+    assert torch.allclose(unguided, first_chunk)
 
 
 def test_evo1_missing_configured_camera_needs_empty_cameras_budget(monkeypatch):

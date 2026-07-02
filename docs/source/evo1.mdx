@@ -32,9 +32,9 @@ The broader EVO1 project may include additional training scripts and dataset too
    pip install -e ".[evo1,libero]"
    ```
 
-3. Install a `flash-attn` wheel only if it is compatible with your Python, PyTorch, CUDA, and GPU stack. EVO1 falls back to standard attention when `flash_attn` is not available, but reproducing the official LIBERO checkpoint conversion result below requires the same FlashAttention path used by the original EVO1 checkpoint.
+3. Install a `flash-attn` wheel only if it is compatible with your Python, PyTorch, CUDA, and GPU stack. EVO1 falls back to standard attention when `flash_attn` is not available.
 
-EVO1 uses the native Hugging Face `transformers` InternVL implementation (no `trust_remote_code`), so `policy.vlm_model_name` must point to a natively converted checkpoint such as `OpenGVLab/InternVL3-1B-hf` (note the `-hf` suffix; the original `OpenGVLab/InternVL3-1B` repo requires remote code and cannot be loaded). The first run may download the configured VLM checkpoint unless `policy.vlm_model_name` points to a local model directory.
+EVO1 uses the native Hugging Face `transformers` InternVL implementation, so `policy.vlm_model_name` must point to a natively converted checkpoint such as `OpenGVLab/InternVL3-1B-hf` (note the `-hf` suffix). The first run may download the configured VLM checkpoint unless `policy.vlm_model_name` points to a local model directory.
 
 ## Data Requirements
 
@@ -65,12 +65,6 @@ Once a LeRobot-format EVO1 checkpoint is available, load it with:
 
 ```python
 policy.path=your-org/your-evo1-checkpoint
-```
-
-The converted LIBERO checkpoint used for this PR is available at:
-
-```python
-policy.path=javadcc/evo1-libero-lerobot
 ```
 
 ## Training
@@ -143,39 +137,35 @@ every finetuning flag.
 | `policy.binarize_gripper`                     | `false`                     | Binarizes the postprocessed gripper channel for LIBERO-style eval |
 | `policy.task_field`                           | `task`                      | Batch field used as the language prompt                           |
 
+## Inference
+
+Try it out with a trained EVO1 checkpoint:
+
+```bash
+lerobot-rollout \
+  --policy.path=your-org/your-evo1-checkpoint \
+  --inference.type=rtc \ # optional
+  ...
+```
+
 ## Results
 
-### LIBERO Object Checkpoint Conversion
-
-The checkpoint [javadcc/evo1-libero-lerobot](https://huggingface.co/javadcc/evo1-libero-lerobot)
-is the LeRobot-format conversion of the official EVO1 LIBERO checkpoint. The conversion was checked against
-the official EVO1 checkpoint with the same LIBERO Object initial states and action postprocessing.
+### LIBERO Evaluation
 
 > [!NOTE]
-> This checkpoint is currently hosted in a community namespace and the upstream-to-LeRobot weight
-> conversion script is not part of this integration; a `lerobot`-hosted copy with a pinned revision
-> and the conversion tooling are planned follow-ups.
+> Benchmark results for a `lerobot`-hosted LIBERO checkpoint trained with this implementation
+> will be added once training completes.
 
-| Checkpoint                   | Suite           | Episodes         | Success Rate |
-| ---------------------------- | --------------- | ---------------- | ------------ |
-| Official EVO1 checkpoint     | `libero_object` | 10, one per task | 100%         |
-| LeRobot converted checkpoint | `libero_object` | 10, one per task | 100%         |
-
-For a fixed `libero_object` rollout, the official checkpoint and LeRobot checkpoint produced identical
-pixel embeddings, VLM fused tokens, normalized actions, and denormalized actions for the checked action step
-(`max_abs_diff=0.0`).
-
-The published checkpoint expects the raw LIBERO camera feature names
-`observation.images.agentview_image` and `observation.images.robot0_eye_in_hand_image`. The official EVO1 LIBERO
-rollout protocol also replans every 14 actions and binarizes the gripper command before stepping the simulator.
-The EVO1 policy postprocessor can crop the padded 24D action back to the 7D LIBERO action space and apply that
-gripper binarization. To run the converted checkpoint with LeRobot LIBERO evaluation for the same
-one-episode-per-task setting, keep the raw camera names instead of the default `image`/`image2` mapping, enable
-FlashAttention, and set the LIBERO action postprocessing flags:
+The official EVO1 LIBERO rollout protocol uses the raw LIBERO camera feature names
+(`observation.images.agentview_image` and `observation.images.robot0_eye_in_hand_image`), replans every
+14 actions, and binarizes the gripper command before stepping the simulator. The EVO1 policy postprocessor
+can crop the padded 24D action back to the 7D LIBERO action space and apply that gripper binarization. To
+evaluate a LIBERO checkpoint under the same one-episode-per-task setting, keep the raw camera names instead
+of the default `image`/`image2` mapping and set the LIBERO action postprocessing flags:
 
 ```bash
 lerobot-eval \
-  --policy.path=javadcc/evo1-libero-lerobot \
+  --policy.path=your-org/your-evo1-libero-checkpoint \
   --policy.vlm_model_name=OpenGVLab/InternVL3-1B-hf \
   --policy.device=cuda \
   --policy.use_flash_attn=true \

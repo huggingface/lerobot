@@ -28,6 +28,8 @@ class Evo1Model(nn.Module):
         self.config = config
         self._device = config.device
         self.return_cls_only = config.return_cls_only
+        # Set by Evo1Policy.init_rtc_processor() when config.rtc_config is provided.
+        self.rtc_processor = None
 
         # Gradient checkpointing only pays off when the VLM is actually being trained; keep it off
         # whenever every VLM branch is frozen so the frozen forward stays cheap.
@@ -130,6 +132,9 @@ class Evo1Model(nn.Module):
         action_mask: torch.Tensor | None = None,
         embodiment_ids: torch.Tensor | None = None,
         context_mask: torch.Tensor | None = None,
+        inference_delay: int | None = None,
+        prev_chunk_left_over: torch.Tensor | None = None,
+        execution_horizon: int | None = None,
     ):
         if actions_gt is None:
             return self.action_head.get_action(
@@ -138,6 +143,10 @@ class Evo1Model(nn.Module):
                 action_mask=action_mask,
                 embodiment_id=embodiment_ids,
                 context_mask=context_mask,
+                inference_delay=inference_delay,
+                prev_chunk_left_over=prev_chunk_left_over,
+                execution_horizon=execution_horizon,
+                rtc_processor=self.rtc_processor,
             )
         return self.action_head(
             fused_tokens,
@@ -156,8 +165,21 @@ class Evo1Model(nn.Module):
         action_mask: torch.Tensor | None = None,
         embodiment_ids: torch.Tensor | None = None,
         context_mask: torch.Tensor | None = None,
+        inference_delay: int | None = None,
+        prev_chunk_left_over: torch.Tensor | None = None,
+        execution_horizon: int | None = None,
     ):
-        return self.predict_action(fused_tokens, state, actions_gt, action_mask, embodiment_ids, context_mask)
+        return self.predict_action(
+            fused_tokens,
+            state,
+            actions_gt,
+            action_mask,
+            embodiment_ids,
+            context_mask,
+            inference_delay,
+            prev_chunk_left_over,
+            execution_horizon,
+        )
 
     def _set_module_trainable(self, module: nn.Module, trainable: bool):
         for param in module.parameters():

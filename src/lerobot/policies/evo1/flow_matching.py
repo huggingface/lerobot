@@ -397,6 +397,10 @@ class FlowmatchingActionHead(nn.Module):
         embodiment_id: torch.LongTensor = None,
         action_mask: torch.Tensor = None,
         context_mask: torch.Tensor = None,
+        inference_delay: int | None = None,
+        prev_chunk_left_over: torch.Tensor | None = None,
+        execution_horizon: int | None = None,
+        rtc_processor=None,
     ):
         batch_size = fused_tokens.size(0)
         device = fused_tokens.device
@@ -408,11 +412,7 @@ class FlowmatchingActionHead(nn.Module):
         per_action_dim = self.per_action_dim
 
         action = torch.rand(batch_size, action_dim_total, device=device, dtype=context_tokens.dtype) * 2 - 1
-        action_seq = (
-            action.view(batch_size, self.horizon, per_action_dim)
-            if self.horizon > 1
-            else action.view(batch_size, 1, per_action_dim)
-        )
+        action_seq = action.view(batch_size, self.horizon, per_action_dim)
         action_mask = self._expand_action_mask(
             action_mask,
             batch_size=batch_size,
@@ -430,36 +430,46 @@ class FlowmatchingActionHead(nn.Module):
             raise ValueError(f"num_inference_timesteps must be positive, got {num_steps}")
         dt = 1.0 / num_steps
 
+        use_rtc = rtc_processor is not None and (
+            inference_delay is not None or prev_chunk_left_over is not None
+        )
+
+        def predict_velocity(seq: torch.Tensor, step_time_emb: torch.Tensor) -> torch.Tensor:
+            """Predict the masked flow velocity (x1 - x0 convention) for one integration step."""
+            seq = seq * action_mask
+            action_tokens = self._project_actions(seq, embodiment_id).to(dtype=target_dtype)
+            x = action_tokens
+            for block in self.transformer_blocks:
+                x = block(x, context_tokens, step_time_emb, key_padding_mask)
+            x = self.norm_out(x)
+            x_pooled = self.seq_pool_proj(x.reshape(batch_size, -1)) if self.horizon > 1 else x.squeeze(1)
+            pred = self.mlp_head(x_pooled, embodiment_id)
+            return pred.view(batch_size, self.horizon, per_action_dim) * action_mask
+
         for i in range(num_steps):
             t = i / num_steps
             time_index = min(int(t * 999), 999)
-            time_emb = (
-                self.time_pos_enc(1000)[:, time_index, :].to(device).squeeze(0).to(dtype=context_tokens.dtype)
-            )
+            time_emb = self.time_pos_enc(1000)[:, time_index, :].to(device).squeeze(0).to(dtype=target_dtype)
             time_emb = time_emb.unsqueeze(0).repeat(batch_size, 1)
 
-            action_seq = action_seq * action_mask
-            action_tokens = self._project_actions(action_seq, embodiment_id).to(dtype=target_dtype)
-            time_emb = time_emb.to(dtype=target_dtype)
-
-            x = action_tokens
-            for block in self.transformer_blocks:
-                x = block(x, context_tokens, time_emb, key_padding_mask)
-            x = self.norm_out(x)
-
-            if self.horizon > 1:
-                x_flat = x.reshape(batch_size, -1)
-                x_pooled = self.seq_pool_proj(x_flat)
+            if use_rtc:
+                # RTCProcessor assumes the pi0 flow convention: its `time` runs 1 -> 0 and the
+                # clean-action estimate is x1 = x_t - time * v. EVO1 integrates t: 0 -> 1 with
+                # velocity v = x1 - x0 (so x1 = x_t + (1 - t) * v); passing time = 1 - t and
+                # flipping the velocity sign in both directions maps one convention onto the other.
+                guided = rtc_processor.denoise_step(
+                    x_t=action_seq,
+                    prev_chunk_left_over=prev_chunk_left_over,
+                    inference_delay=inference_delay,
+                    time=1.0 - t,
+                    original_denoise_step_partial=lambda seq, emb=time_emb: -predict_velocity(seq, emb),
+                    execution_horizon=execution_horizon,
+                )
+                velocity = -guided
             else:
-                x_pooled = x.squeeze(1)
+                velocity = predict_velocity(action_seq, time_emb)
 
-            pred = self.mlp_head(x_pooled, embodiment_id)
-            action = action + dt * pred
-            action_seq = (
-                action.view(batch_size, self.horizon, per_action_dim)
-                if self.horizon > 1
-                else action.view(batch_size, 1, per_action_dim)
-            )
+            action_seq = action_seq + dt * velocity
 
         action_seq = action_seq * action_mask
         return action_seq.reshape(batch_size, -1)

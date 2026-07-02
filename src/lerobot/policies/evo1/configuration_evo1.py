@@ -23,6 +23,8 @@ from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineAnnealingWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
+from ..rtc.configuration_rtc import RTCConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,6 +94,10 @@ class Evo1Config(PreTrainedConfig):
     task_field: str = "task"
     embodiment_id_field: str | None = None
     default_embodiment_id: int = 0
+
+    # Real-Time Chunking guidance for asynchronous inference (lerobot-rollout --inference.type=rtc
+    # sets this and calls init_rtc_processor()); None disables RTC.
+    rtc_config: RTCConfig | None = None
 
     optimizer_lr: float = 1e-5
     optimizer_betas: tuple[float, float] = (0.9, 0.999)

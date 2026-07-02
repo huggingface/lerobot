@@ -18,6 +18,7 @@ import builtins
 from collections import deque
 from contextlib import nullcontext
 from pathlib import Path
+from typing import TypedDict, Unpack
 
 import torch
 from torch import Tensor
@@ -26,8 +27,15 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
+from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_evo1 import Evo1Config
 from .evo1_model import Evo1Model
+
+
+class ActionSelectKwargs(TypedDict, total=False):
+    inference_delay: int | None
+    prev_chunk_left_over: Tensor | None
+    execution_horizon: int | None
 
 
 class Evo1Policy(PreTrainedPolicy):
@@ -47,7 +55,24 @@ class Evo1Policy(PreTrainedPolicy):
         self.model = Evo1Model(config, vlm_hub_kwargs=vlm_hub_kwargs)
         self.model.set_finetune_flags()
         self._keep_frozen_embedder_eval()
+        self.init_rtc_processor()
         self.reset()
+
+    def init_rtc_processor(self):
+        """Create the RTC processor when config.rtc_config is set.
+
+        The RTC rollout backend assigns config.rtc_config after loading the policy and re-invokes
+        this method.
+        """
+        self.rtc_processor = None
+        if self.config.rtc_config is not None:
+            self.rtc_processor = RTCProcessor(self.config.rtc_config)
+        model = getattr(self, "model", None)
+        if model is not None:
+            model.rtc_processor = self.rtc_processor
+
+    def _rtc_enabled(self) -> bool:
+        return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
     @classmethod
     def from_pretrained(
@@ -457,11 +482,15 @@ class Evo1Policy(PreTrainedPolicy):
         }
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
-        if kwargs.get("inference_delay") is not None or kwargs.get("prev_chunk_left_over") is not None:
-            raise NotImplementedError(
-                "EVO1 does not implement real-time-chunking (RTC) inference; "
-                "use the synchronous inference backend."
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+        inference_delay = kwargs.get("inference_delay")
+        prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+        execution_horizon = kwargs.get("execution_horizon")
+        if (inference_delay is not None or prev_chunk_left_over is not None) and not self._rtc_enabled():
+            raise RuntimeError(
+                "Received RTC arguments but RTC is not configured for this EVO1 policy: set "
+                "config.rtc_config and call init_rtc_processor() (lerobot-rollout does this for "
+                "--inference.type=rtc)."
             )
         self.eval()
 
@@ -470,6 +499,8 @@ class Evo1Policy(PreTrainedPolicy):
         states, _state_mask = self._prepare_state(batch)
         embodiment_ids = self._get_embodiment_ids(batch, states.shape[0])
         action_mask = self._prepare_inference_action_mask(states.shape[0])
+        if prev_chunk_left_over is not None:
+            prev_chunk_left_over = prev_chunk_left_over.to(device=self._device)
 
         with self._maybe_autocast():
             fused_tokens, context_mask = self._compute_fused_tokens(prompts, image_batches, image_masks)
@@ -479,12 +510,18 @@ class Evo1Policy(PreTrainedPolicy):
                 action_mask=action_mask,
                 embodiment_ids=embodiment_ids,
                 context_mask=context_mask,
+                inference_delay=inference_delay,
+                prev_chunk_left_over=prev_chunk_left_over,
+                execution_horizon=execution_horizon,
             )
         actions = actions.view(states.shape[0], self.config.chunk_size, self.config.max_action_dim)
         return actions.to(dtype=torch.float32)
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+        assert not self._rtc_enabled(), (
+            "RTC is not supported for select_action, use it with predict_action_chunk"
+        )
         self.eval()
         if len(self._action_queue) == 0:
             action_chunk = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
