@@ -1225,6 +1225,7 @@ def make_groot_pre_post_processors(
             crop_fraction=crop_fraction,
             use_albumentations=use_albumentations,
             letter_box_transform=letter_box_transform,
+            training=dataset_meta is not None,
             device=config.device,
         ),
         DeviceProcessorStep(device=config.device),
@@ -1350,6 +1351,7 @@ def _transform_n1_7_image_for_vlm_albumentations(
     shortest_image_edge: int | None,
     crop_fraction: float | None,
     letter_box_transform: bool = False,
+    crop_position: tuple[float, float] | None = None,
 ) -> np.ndarray:
     """cv2/INTER_AREA eval transform mirroring Isaac-GR00T's albumentations preprocessing.
 
@@ -1359,6 +1361,12 @@ def _transform_n1_7_image_for_vlm_albumentations(
     cv2/INTER_AREA resize and floored center-crop here intentionally differ from that
     torch path and must stay bit-exact to the upstream reference. The hot path accepts
     and returns numpy arrays to avoid per-frame PIL round-trips.
+
+    ``crop_position`` selects where the ``crop_fraction`` window sits: ``None``
+    keeps the deterministic center crop (eval contract), while ``(y, x)``
+    fractions in [0, 1] place the window for Isaac's train-time random crop
+    (0.5, 0.5 == center). Training samples one position per sample and reuses
+    it across camera views.
     """
     if image_target_size is None:
         return image
@@ -1410,8 +1418,13 @@ def _transform_n1_7_image_for_vlm_albumentations(
         height, width = image_np.shape[:2]
         crop_h = max(1, int(height * crop_fraction))
         crop_w = max(1, int(width * crop_fraction))
-        top = max(0, (height - crop_h) // 2)
-        left = max(0, (width - crop_w) // 2)
+        if crop_position is None:
+            top = max(0, (height - crop_h) // 2)
+            left = max(0, (width - crop_w) // 2)
+        else:
+            pos_y, pos_x = crop_position
+            top = int(round((height - crop_h) * min(max(pos_y, 0.0), 1.0)))
+            left = int(round((width - crop_w) * min(max(pos_x, 0.0), 1.0)))
         image_np = image_np[top : top + crop_h, left : left + crop_w]
 
     return resize_shortest_edge(image_np)
@@ -2007,6 +2020,11 @@ class GrootN17VLMEncodeStep(ProcessorStep):
     crop_fraction: float | None = None
     use_albumentations: bool = False
     letter_box_transform: bool = False
+    # Runtime-only train/eval mode: True enables Isaac's train-time random crop
+    # (one window per sample, replayed across views); False keeps the
+    # deterministic center crop. Never serialized - reloaded pipelines default
+    # to eval and are re-enabled only when processors are built with dataset_meta.
+    training: bool = False
     device: str | None = None
     _proc: ProcessorMixin | None = field(default=None, init=False, repr=False)
 
@@ -2040,21 +2058,29 @@ class GrootN17VLMEncodeStep(ProcessorStep):
         """
         if self.use_albumentations:
             video_np = np.asarray(video)
-            return [
-                [
-                    _transform_n1_7_image_for_vlm_albumentations(
-                        video_np[batch_idx, timestep, view_idx],
-                        image_crop_size=self.image_crop_size,
-                        image_target_size=self.image_target_size,
-                        shortest_image_edge=self.shortest_image_edge,
-                        crop_fraction=self.crop_fraction,
-                        letter_box_transform=self.letter_box_transform,
-                    )
-                    for timestep in range(video_np.shape[1])
-                    for view_idx in range(video_np.shape[2])
-                ]
-                for batch_idx in range(batch_size)
-            ]
+            train_crop = self.training and torch.is_grad_enabled()
+            sample_images: list[list[Any]] = []
+            for batch_idx in range(batch_size):
+                # Isaac-GR00T samples ONE crop window per sample and replays it
+                # across every (timestep, view) frame of that sample, keeping
+                # cross-view geometry consistent. Eval keeps the center crop.
+                crop_position = (random.random(), random.random()) if train_crop else None
+                sample_images.append(
+                    [
+                        _transform_n1_7_image_for_vlm_albumentations(
+                            video_np[batch_idx, timestep, view_idx],
+                            image_crop_size=self.image_crop_size,
+                            image_target_size=self.image_target_size,
+                            shortest_image_edge=self.shortest_image_edge,
+                            crop_fraction=self.crop_fraction,
+                            letter_box_transform=self.letter_box_transform,
+                            crop_position=crop_position,
+                        )
+                        for timestep in range(video_np.shape[1])
+                        for view_idx in range(video_np.shape[2])
+                    ]
+                )
+            return sample_images
 
         video_t = video if torch.is_tensor(video) else torch.from_numpy(np.ascontiguousarray(video))
         # (B, T, V, H, W, C) uint8 -> (B, T, V, C, H, W)
