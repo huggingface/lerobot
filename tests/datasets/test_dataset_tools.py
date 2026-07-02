@@ -18,6 +18,7 @@
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 import pytest
 import torch
 
@@ -296,6 +297,58 @@ def test_merge_two_datasets(sample_dataset, tmp_path, empty_lerobot_dataset_fact
 
     episode_indices = sorted({int(idx.item()) for idx in merged.hf_dataset["episode_index"]})
     assert episode_indices == list(range(8))
+
+
+def test_merge_reindexes_index_stats(sample_dataset, tmp_path, empty_lerobot_dataset_factory):
+    """Test merged dataset stats stay consistent with reindexed episodes/frames."""
+    features = {
+        "action": {"dtype": "float32", "shape": (6,), "names": None},
+        "observation.state": {"dtype": "float32", "shape": (4,), "names": None},
+        "observation.images.top": {"dtype": "image", "shape": (224, 224, 3), "names": None},
+    }
+
+    dataset2 = empty_lerobot_dataset_factory(
+        root=tmp_path / "test_dataset2",
+        features=features,
+    )
+    for ep_idx in range(3):
+        for _ in range(10):
+            frame = {
+                "action": np.random.randn(6).astype(np.float32),
+                "observation.state": np.random.randn(4).astype(np.float32),
+                "observation.images.top": np.random.randint(0, 255, size=(224, 224, 3), dtype=np.uint8),
+                "task": f"task_{ep_idx % 2}",
+            }
+            dataset2.add_frame(frame)
+        dataset2.save_episode()
+    dataset2.finalize()
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "merged_dataset")
+        merged = merge_datasets(
+            [sample_dataset, dataset2],
+            output_repo_id="merged_dataset",
+            output_dir=tmp_path / "merged_dataset",
+        )
+
+    assert merged.meta.stats["episode_index"]["max"][0] == merged.meta.total_episodes - 1
+    assert merged.meta.stats["index"]["max"][0] == merged.meta.total_frames - 1
+
+    episode_meta_files = sorted((merged.root / "meta" / "episodes").glob("*/*.parquet"))
+    assert episode_meta_files
+    episode_meta = pd.concat([pd.read_parquet(path) for path in episode_meta_files], ignore_index=True)
+    episode_meta = episode_meta.sort_values("episode_index")
+
+    assert len(episode_meta) == merged.meta.total_episodes
+    assert all(episode_meta["stats/episode_index/max"].apply(lambda v: int(np.asarray(v).reshape(-1)[0])) == episode_meta["episode_index"])
+    assert all(
+        episode_meta["stats/index/max"].apply(lambda v: int(np.asarray(v).reshape(-1)[0]))
+        == episode_meta["dataset_to_index"] - 1
+    )
 
 
 def test_merge_empty_list(tmp_path):
