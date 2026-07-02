@@ -77,25 +77,31 @@ To use GR00T N1.7:
 Here's a complete training command for finetuning the base GR00T model on your own dataset:
 
 ```bash
-# Using a multi-GPU setup
-accelerate launch \
-  --multi_gpu \
-  --num_processes=$NUM_GPUS \
-  $(which lerobot-train) \
-  --output_dir=$OUTPUT_DIR \
-  --save_checkpoint=true \
-  --batch_size=$BATCH_SIZE \
-  --steps=$NUM_STEPS \
-  --save_freq=$SAVE_FREQ \
-  --log_freq=$LOG_FREQ \
-  --policy.push_to_hub=true \
+uv run lerobot-train \
+  --dataset.repo_id=sreetz-nv/so101-clean-up-vials-into-rack-50_20260628_131121 \
+  --dataset.image_transforms.enable=true \
   --policy.type=groot \
-  --policy.repo_id=$REPO_ID \
-  --policy.tune_diffusion_model=false \
-  --dataset.repo_id=$DATASET_ID \
-  --wandb.enable=true \
-  --wandb.disable_artifact=true \
-  --job_name=$JOB_NAME
+  --policy.device=cuda \
+  --policy.base_model_path=nvidia/GR00T-N1.7-3B \
+  --policy.embodiment_tag=new_embodiment \
+  --policy.chunk_size=16 \
+  --policy.n_action_steps=16 \
+  --policy.use_relative_actions=true \
+  --policy.relative_exclude_joints='["gripper"]' \
+  --policy.use_bf16=true \
+  --policy.use_flash_attention=true \
+  --policy.push_to_hub=true \
+  --policy.repo_id=sreetz-nv/so101-clean-up-vials-into-rack-50-groot-n17-relact-bs64-20k-20260628_johnny_42 \
+  --seed=42 \
+  --batch_size=64 \
+  --steps=20000 \
+  --save_checkpoint=true \
+  --use_policy_training_preset=true \
+  --env_eval_freq=0 \
+  --eval_steps=0 \
+  --log_freq=100 \
+  --output_dir=outputs/train/sreetz-nv/so101-clean-up-vials-into-rack-50-groot-n17-relact-bs64-20k-20260628_johnny_42 \
+  --job_name=so101-clean-up-vials-into-rack-50-groot-n17-relact-bs64-20k-20260628_johnny_42
 ```
 
 ## Performance Results
@@ -153,25 +159,23 @@ Use `eval.n_episodes >= 50` per suite when reporting success rates.
 Once you have trained your model using your parameters you can run inference in your downstream task. Follow the instructions in [Policy Deployment (lerobot-rollout)](./inference). For example:
 
 ```bash
-lerobot-rollout\
-  --strategy.type=sentry \
-  --strategy.upload_every_n_episodes=5 \
-  --robot.type=bi_so_follower \
-  --robot.left_arm_port=/dev/ttyACM1 \
-  --robot.right_arm_port=/dev/ttyACM0 \
-  --robot.id=bimanual_follower \
-  --robot.cameras='{ right: {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
-    left: {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30},
-    top: {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 30},
-  }' \
+uv run lerobot-rollout \
+  --strategy.type=base \
+  --inference.type=rtc \
+  --policy.path=outputs/train/sreetz-nv/so101-clean-up-vials-into-rack-50-groot-n17-relact-bs64-20k-20260628_johnny_42/checkpoints/020000/pretrained_model/ \
+  --policy.base_model_path=nvidia/GR00T-N1.7-3B \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=orange_andrew \
+  --robot.cameras='{ wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, fourcc: "MJPG"}, front: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30, fourcc: "MJPG"} }' \
+  --task="place the vial in the rack" \
+  --duration=60 \
+  --device=cuda \
   --display_data=true \
-  --dataset.repo_id=<user>/eval_groot-bimanual  \
-  --dataset.single_task="Grab and handover the red cube to the other arm" \
-  --dataset.streaming_encoding=true \
-  --dataset.encoder_threads=2 \
-  # --dataset.rgb_encoder.vcodec=auto \
-  --policy.path=<user>/groot-bimanual \ # your trained model
-  --duration=600
+  --inference.rtc.enabled=false \
+  --inference.rtc.execution_horizon=8 \
+  --inference.queue_threshold=0 \
+  --policy.n_action_steps=8
 ```
 
 ## License
