@@ -22,6 +22,18 @@ Every camera requires a unique identifier to be instantiated, allowing you to di
 lerobot-find-cameras opencv # or realsense for Intel Realsense cameras
 ```
 
+On Linux, OpenCV camera discovery lists `/dev/video*` identifiers without opening the camera devices.
+This avoids backend side effects during discovery, but the default stream profile values may be shown as
+unavailable. To explicitly open detected cameras and save sample images, use:
+
+```bash
+lerobot-find-cameras opencv --save-images
+```
+
+> [!WARNING]
+> `--save-images` opens cameras through their backend. On some Linux OpenCV/V4L2 package combinations,
+> opening a camera can alter its active settings, so use list-only discovery when you only need the camera id.
+
 The output will look something like this if you have two cameras connected:
 
 ```bash
