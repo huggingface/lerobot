@@ -99,6 +99,17 @@ def test_get_observation(follower):
         assert obs[f"{motor}.pos"] == idx
 
 
+def test_get_observation_uses_read_retry(follower):
+    # Feetech buses can intermittently fail a sync_read; the follower should forward the configured
+    # retry count so transient failures don't abort the control loop (see #3131).
+    follower.connect()
+    follower.get_observation()
+
+    follower.bus.sync_read.assert_called_once_with(
+        "Present_Position", num_retry=follower.config.max_read_retry
+    )
+
+
 def test_send_action(follower):
     follower.connect()
 
