@@ -287,6 +287,56 @@ class TestCodecOptions:
             cfg.validate()
 
 
+class TestAsStrings:
+    """``get_codec_options(as_strings=True)`` must return only ``str`` values for every
+    codec branch.  This exercises the bug-fix that converted direct ``opts[key] = <int>``
+    assignments to go through ``set_if``, which respects the ``as_strings`` flag."""
+
+    def _assert_all_strings(self, opts: dict) -> None:
+        non_str = {k: v for k, v in opts.items() if not isinstance(v, str)}
+        assert not non_str, f"Non-string values in codec options: {non_str}"
+
+    @require_libsvtav1
+    def test_libsvtav1_as_strings(self):
+        cfg = VideoEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12, fast_decode=1)
+        opts = cfg.get_codec_options(encoder_threads=4, as_strings=True)
+        self._assert_all_strings(opts)
+
+    @require_h264
+    def test_h264_fast_decode_tune_as_strings(self):
+        """The ``tune=fastdecode`` value must be a string, not an int."""
+        cfg = VideoEncoderConfig(vcodec="h264", fast_decode=1, preset=None)
+        opts = cfg.get_codec_options(as_strings=True)
+        self._assert_all_strings(opts)
+
+    @require_videotoolbox
+    def test_videotoolbox_as_strings(self):
+        """The ``q:v`` value derived from ``crf`` must be a string."""
+        cfg = VideoEncoderConfig(vcodec="h264_videotoolbox", g=2, crf=30, preset=None)
+        opts = cfg.get_codec_options(as_strings=True)
+        self._assert_all_strings(opts)
+
+    @require_nvenc
+    def test_nvenc_as_strings(self):
+        """``rc``, ``qp``, and ``preset`` must all be strings — this is the primary
+        regression test for the bug where ``opts["rc"] = 0`` bypassed ``set_if``."""
+        cfg = VideoEncoderConfig(vcodec="h264_nvenc", g=2, crf=28, preset=7)
+        opts = cfg.get_codec_options(as_strings=True)
+        self._assert_all_strings(opts)
+
+    @require_vaapi
+    def test_vaapi_as_strings(self):
+        cfg = VideoEncoderConfig(vcodec="h264_vaapi", crf=28, preset=None)
+        opts = cfg.get_codec_options(as_strings=True)
+        self._assert_all_strings(opts)
+
+    @require_qsv
+    def test_qsv_as_strings(self):
+        cfg = VideoEncoderConfig(vcodec="h264_qsv", crf=25, preset=None)
+        opts = cfg.get_codec_options(as_strings=True)
+        self._assert_all_strings(opts)
+
+
 class TestExtraOptions:
     @require_libsvtav1
     def test_default_is_empty_dict(self):
