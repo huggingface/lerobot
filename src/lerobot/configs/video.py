@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar, Self
+
+import numpy as np
 
 from lerobot.utils.import_utils import require_package
 
@@ -36,10 +38,11 @@ HW_VIDEO_CODECS = [
     "h264_vaapi",  # Linux Intel/AMD
     "h264_qsv",  # Intel Quick Sync
 ]
-VALID_VIDEO_CODECS: frozenset[str] = frozenset({"h264", "hevc", "libsvtav1", "auto", *HW_VIDEO_CODECS})
+VALID_VIDEO_CODECS: frozenset[str] = frozenset(
+    {"h264", "hevc", "libsvtav1", "libaom-av1", "auto", *HW_VIDEO_CODECS}
+)
 # Aliases for legacy video codec names.
 VIDEO_CODECS_ALIASES: dict[str, str] = {"av1": "libsvtav1"}
-
 
 LIBSVTAV1_DEFAULT_PRESET: int = 12
 
@@ -52,39 +55,53 @@ VIDEO_ENCODER_INFO_KEYS: frozenset[str] = frozenset(
     f"video.{name}" for name in VIDEO_ENCODER_INFO_FIELD_NAMES
 )
 
+# Default depth quantization and encoding parameters.
+DEPTH_QUANT_BITS: int = 12
+DEPTH_QMAX: int = (1 << DEPTH_QUANT_BITS) - 1  # 4095
+
+DEFAULT_DEPTH_MIN: float = 0.01
+DEFAULT_DEPTH_MAX: float = 10.0
+DEFAULT_DEPTH_SHIFT: float = 3.5
+DEFAULT_DEPTH_USE_LOG: bool = True
+DEFAULT_DEPTH_PIX_FMT: str = "gray12le"
+
+DEPTH_METER_UNIT: str = "m"
+DEPTH_MILLIMETER_UNIT: str = "mm"
+DEFAULT_DEPTH_UNIT: str = DEPTH_MILLIMETER_UNIT
+
+
+def infer_depth_unit(dtype: np.dtype | type) -> str:
+    """Infer the physical unit of raw depth frames from their dtype.
+
+    Floating-point frames are assumed to be in metres, integer frames in millimetres.
+    """
+    return DEPTH_METER_UNIT if np.issubdtype(np.dtype(dtype), np.floating) else DEPTH_MILLIMETER_UNIT
+
+
+# Depth-specific tuning fields persisted under ``features[*]["info"]`` as ``video.<name>``.
+DEPTH_ENCODER_INFO_FIELD_NAMES: frozenset[str] = frozenset({"depth_min", "depth_max", "shift", "use_log"})
+
 
 @dataclass
 class VideoEncoderConfig:
-    """Video encoder configuration.
+    """Video encoder configuration."""
 
-    Attributes:
-        vcodec: Video encoder name. ``"auto"`` is resolved during
-            construction (HW encoder if available, else ``libsvtav1``).
-        pix_fmt: Pixel format (e.g. ``"yuv420p"``).
-        g: GOP size (keyframe interval).
-        crf: Quality level — mapped to the native quality parameter of the
-            codec (``crf`` for software, ``qp`` for NVENC/VAAPI,
-            ``q:v`` for VideoToolbox, ``global_quality`` for QSV).
-        preset: Speed/quality preset. Accepted type is per-codec.
-        fast_decode: Fast-decode tuning. For ``libsvtav1`` this is a level (0-2)
-            embedded in ``svtav1-params``. For ``h264`` and ``hevc`` non-zero values
-            set ``tune=fastdecode``. Ignored for other codecs.
-        video_backend: Python to be used for encoding. Only ``"pyav"``
-            is currently supported.
-        extra_options: Free-form dictionary of additional video encoder options
-            (e.g. ``{"tune": "film", "profile:v": "high", "bf": 2}``).
-    """
-
-    vcodec: str = "libsvtav1"  # TODO(CarolinePascal): rename to codec ?
-    pix_fmt: str = "yuv420p"
-    g: int | None = 2
-    crf: int | float | None = 30
-    preset: int | str | None = None
-    fast_decode: int = 0
+    vcodec: str = "libsvtav1"  # Video codec name. "auto" picks a hardware codec if available, else libsvtav1.
+    pix_fmt: str = "yuv420p"  # Pixel format (e.g. yuv420p).
+    g: int | None = 2  # GOP size (keyframe interval).
+    crf: int | float | None = 30  # Quality level. Lower means better quality and larger files.
+    preset: int | str | None = None  # Speed/quality preset. Accepted values are codec-specific.
+    fast_decode: int = 0  # Fast-decode tuning. Accepted values are codec-specific, 0 disables it.
     # TODO(CarolinePascal): add torchcodec support + find a way to unify the
     # two backends (encoding and decoding).
-    video_backend: str = "pyav"
+    video_backend: str = "pyav"  # Encoding backend. Only "pyav" is currently supported.
+    # Extra codec options merged last, e.g. {"tune": "film"}.
     extra_options: dict[str, Any] = field(default_factory=dict)
+
+    # Source-data channel count this encoder is expected to handle. ``None``
+    # disables the pix_fmt channel-count check; concrete subclasses set it
+    # (3 for RGB, 1 for depth, etc.).
+    _DEFAULT_CHANNELS: ClassVar[int | None] = None
 
     def __post_init__(self) -> None:
         self.resolve_vcodec()
@@ -94,9 +111,9 @@ class VideoEncoderConfig:
         self.validate()
 
     @classmethod
-    def from_video_info(cls, video_info: dict | None) -> VideoEncoderConfig:
-        """Reconstruct a :class:`VideoEncoderConfig` from a video feature's ``info`` block.
-        Missing or ``None`` values fall back to the class defaults.
+    def _kwargs_from_video_info(cls, video_info: dict | None) -> dict[str, Any]:
+        """Parse the ``video.*`` keys of a feature ``info`` block into
+        constructor kwargs.
         """
         video_info = video_info or {}
         kwargs: dict[str, Any] = {}
@@ -115,7 +132,15 @@ class VideoEncoderConfig:
                 continue
             kwargs[field_name] = value
 
-        return cls(**kwargs)
+        return kwargs
+
+    @classmethod
+    def from_video_info(cls, video_info: dict | None) -> Self:
+        """Reconstruct an encoder config from a video feature's ``info`` block.
+
+        Missing or ``None`` values fall back to the class defaults.
+        """
+        return cls(**cls._kwargs_from_video_info(video_info))
 
     def detect_available_encoders(self, encoders: list[str] | str) -> list[str]:
         """Return the subset of available encoders based on the specified video backend.
@@ -138,7 +163,9 @@ class VideoEncoderConfig:
             require_package("av", extra="dataset")
             from lerobot.datasets import check_video_encoder_parameters_pyav
 
-            check_video_encoder_parameters_pyav(self.vcodec, self.pix_fmt, self.get_codec_options())
+            check_video_encoder_parameters_pyav(
+                self.vcodec, self.pix_fmt, self.get_codec_options(), channels=self._DEFAULT_CHANNELS
+            )
 
     def resolve_vcodec(self) -> None:
         """Check ``vcodec`` and, when it is ``"auto"``, pick a concrete encoder.
@@ -199,18 +226,24 @@ class VideoEncoderConfig:
             if encoder_threads is not None:
                 svtav1_parts.append(f"lp={encoder_threads}")
             if svtav1_parts:
-                opts["svtav1-params"] = ":".join(svtav1_parts)
+                set_if("svtav1-params", ":".join(svtav1_parts))
         elif self.vcodec in ("h264", "hevc"):
             set_if("crf", self.crf)
             set_if("preset", self.preset)
             if self.fast_decode:
-                opts["tune"] = "fastdecode"
+                set_if("tune", "fastdecode")
             set_if("threads", encoder_threads)
+        elif self.vcodec == "libaom-av1":
+            set_if("crf", self.crf)
+            set_if("preset", self.preset)
+            if encoder_threads is not None:
+                set_if("threads", encoder_threads)
+                set_if("row-mt", 1)
         elif self.vcodec in ("h264_videotoolbox", "hevc_videotoolbox"):
             if self.crf is not None:
-                opts["q:v"] = max(1, min(100, 100 - self.crf * 2))
+                set_if("q:v", max(1, min(100, 100 - self.crf * 2)))
         elif self.vcodec in ("h264_nvenc", "hevc_nvenc"):
-            opts["rc"] = 0
+            set_if("rc", 0)
             set_if("qp", self.crf)
             set_if("preset", self.preset)
         elif self.vcodec == "h264_vaapi":
@@ -230,6 +263,79 @@ class VideoEncoderConfig:
         return opts
 
 
-def camera_encoder_defaults() -> VideoEncoderConfig:
-    """Return a :class:`VideoEncoderConfig` with RGB-camera defaults."""
-    return VideoEncoderConfig()
+@dataclass
+class RGBEncoderConfig(VideoEncoderConfig):
+    """Encoder configuration for RGB camera streams.
+
+    Identical to :class:`VideoEncoderConfig` but declares the 3-channel
+    source-data layout so ``pix_fmt`` is validated against RGB inputs.
+    """
+
+    _DEFAULT_CHANNELS: ClassVar[int] = 3
+
+
+def rgb_encoder_defaults() -> RGBEncoderConfig:
+    """Return a :class:`RGBEncoderConfig` with RGB-camera defaults."""
+    return RGBEncoderConfig()
+
+
+@dataclass
+class DepthEncoderConfig(VideoEncoderConfig):
+    """Encoder configuration for depth-map streams.
+
+    Inherits the full :class:`VideoEncoderConfig` surface (codec, GOP, CRF,
+    preset, ``extra_options``…) and adds the parameters of the depth quantizer.
+    Defaults flip ``vcodec`` to ``"hevc"`` (Main 12 profile) and ``pix_fmt`` to
+    ``"gray12le"``.
+    """
+
+    vcodec: str = "hevc"  # Video codec name. Defaults to HEVC Main 12 (a 12-bit-capable codec).
+    pix_fmt: str = "gray12le"  # Pixel format. Defaults to 12-bit grayscale.
+    extra_options: dict[str, Any] = field(default_factory=lambda: {"x265-params": "lossless=1"})
+
+    depth_min: float = DEFAULT_DEPTH_MIN  # Minimum depth in meters, mapped to the lowest quantum.
+    depth_max: float = DEFAULT_DEPTH_MAX  # Maximum depth in meters, mapped to the highest quantum.
+    shift: float = DEFAULT_DEPTH_SHIFT  # Pre-log offset in meters for numerical stability near zero.
+    use_log: bool = DEFAULT_DEPTH_USE_LOG  # Use logarithmic quantization (True) or linear (False).
+
+    _DEFAULT_CHANNELS: ClassVar[int] = 1
+
+    @classmethod
+    def _kwargs_from_video_info(cls, video_info: dict | None) -> dict[str, Any]:
+        """Layer the depth-specific tuning (``depth_min`` / ``depth_max`` /
+        ``shift`` / ``use_log``) on top of the base parser. Missing keys
+        fall back to the class defaults.
+        """
+        kwargs = super()._kwargs_from_video_info(video_info)
+        video_info = video_info or {}
+        for name in DEPTH_ENCODER_INFO_FIELD_NAMES:
+            value = video_info.get(f"video.{name}")
+            if value is not None:
+                kwargs[name] = value
+        return kwargs
+
+
+def depth_encoder_defaults() -> DepthEncoderConfig:
+    """Return a :class:`DepthEncoderConfig` with depth-camera defaults."""
+    return DepthEncoderConfig()
+
+
+def encoder_config_from_video_info(video_info: dict | None) -> VideoEncoderConfig:
+    """Build the appropriate encoder config from a feature's ``info`` block.
+
+    Dispatches to :class:`DepthEncoderConfig` when the dict marks the feature
+    as a depth map and to :class:`RGBEncoderConfig`
+    otherwise.
+
+    Args:
+        video_info: A feature's ``info`` dict as persisted in ``info.json``,
+            or ``None`` (treated as an empty dict).
+
+    Returns:
+        A :class:`DepthEncoderConfig` for depth features, otherwise a
+        :class:`RGBEncoderConfig`.
+    """
+    video_info = video_info or {}
+    is_depth = bool(video_info.get("is_depth_map") or video_info.get("video.is_depth_map"))
+    cls: type[VideoEncoderConfig] = DepthEncoderConfig if is_depth else RGBEncoderConfig
+    return cls.from_video_info(video_info)
