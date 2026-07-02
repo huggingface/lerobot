@@ -50,6 +50,7 @@ from .eo1.configuration_eo1 import EO1Config
 from .fastwam.configuration_fastwam import FastWAMConfig
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
 from .groot.configuration_groot import GrootConfig
+from .lingbot_va.configuration_lingbot_va import LingBotVAConfig
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from .pi0.configuration_pi0 import PI0Config
@@ -163,6 +164,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .vla_jepa.modeling_vla_jepa import VLAJEPAPolicy
 
         return VLAJEPAPolicy
+    elif name == "lingbot_va":
+        from .lingbot_va.modeling_lingbot_va import LingBotVAPolicy
+
+        return LingBotVAPolicy
     elif name == "fastwam":
         from .fastwam.modeling_fastwam import FastWAMPolicy
 
@@ -223,6 +228,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return MolmoAct2Config(**kwargs)
     elif policy_type == "vla_jepa":
         return VLAJEPAConfig(**kwargs)
+    elif policy_type == "lingbot_va":
+        return LingBotVAConfig(**kwargs)
     elif policy_type == "fastwam":
         return FastWAMConfig(**kwargs)
     else:
@@ -454,6 +461,14 @@ def make_pre_post_processors(
         from .vla_jepa.processor_vla_jepa import make_vla_jepa_pre_post_processors
 
         processors = make_vla_jepa_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, LingBotVAConfig):
+        from .lingbot_va.processor_lingbot_va import make_lingbot_va_pre_post_processors
+
+        processors = make_lingbot_va_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )

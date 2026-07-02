@@ -155,7 +155,8 @@ accelerate-dep = ["accelerate>=1.14.0,<2.0.0"]
 can-dep = ["python-can>=4.2.0,<5.0.0"]
 peft-dep = ["peft>=0.18.0,<1.0.0"]
 scipy-dep = ["scipy>=1.14.0,<2.0.0"]
-diffusers-dep = ["diffusers>=0.27.2,<0.36.0"]
+diffusers-dep = ["diffusers>=0.27.2,<0.37.0"]
+imageio-dep = ["imageio[ffmpeg]>=2.34.0,<3.0.0"]
 qwen-vl-utils-dep = ["qwen-vl-utils>=0.0.11,<0.1.0"]
 matplotlib-dep = ["matplotlib>=3.10.3,<4.0.0", "contourpy>=1.3.0,<2.0.0"] # NOTE: Explicitly listing contourpy helps the resolver converge faster.
 pyserial-dep = ["pyserial>=3.5,<4.0"]
@@ -236,6 +237,7 @@ fastwam = [
 ]
 hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.14,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]
+lingbot_va = ["lerobot[transformers-dep]", "diffusers>=0.36.0,<0.37.0", "lerobot[imageio-dep]", "accelerate>=1.10.0,<2.0.0", "ftfy>=6.0.0,<7.0.0"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
@@ -318,6 +320,7 @@ all = [
     "lerobot[xvla]",
     "lerobot[hilserl]",
     "lerobot[vla_jepa]",
+    "lerobot[lingbot_va]",
     "lerobot[async]",
     "lerobot[dev]",
     "lerobot[test]",
@@ -410,6 +413,9 @@ ignore = [
 # E402: conditional-import guards (TYPE_CHECKING / is_package_available) must precede the imports they protect
 "src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
 "src/lerobot/policies/wall_x/**" = ["N801", "N812", "SIM102", "SIM108", "SIM210", "SIM211", "B006", "B007", "SIM118"] # Supprese these as they are coming from original Qwen2_5_vl code TODO(pepijn): refactor original
+# Vendored Wan2.2 / LingBot-VA model code uses tensor-dimension names (B, F, H, W) and `F` for
+# torch.nn.functional.
+"src/lerobot/policies/lingbot_va/**" = ["N803", "N806", "N812", "SIM102"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
