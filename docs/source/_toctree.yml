@@ -71,6 +71,8 @@
     title: EO-1
   - local: fastwam
     title: FastWAM
+  - local: evo1
+    title: EVO1
   - local: groot
     title: NVIDIA GR00T N1.5
   - local: xvla
