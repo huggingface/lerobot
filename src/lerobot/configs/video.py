@@ -22,6 +22,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Self
 
+import numpy as np
+
 from lerobot.utils.import_utils import require_package
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,15 @@ DEFAULT_DEPTH_PIX_FMT: str = "gray12le"
 DEPTH_METER_UNIT: str = "m"
 DEPTH_MILLIMETER_UNIT: str = "mm"
 DEFAULT_DEPTH_UNIT: str = DEPTH_MILLIMETER_UNIT
+
+
+def infer_depth_unit(dtype: np.dtype | type) -> str:
+    """Infer the physical unit of raw depth frames from their dtype.
+
+    Floating-point frames are assumed to be in metres, integer frames in millimetres.
+    """
+    return DEPTH_METER_UNIT if np.issubdtype(np.dtype(dtype), np.floating) else DEPTH_MILLIMETER_UNIT
+
 
 # Depth-specific tuning fields persisted under ``features[*]["info"]`` as ``video.<name>``.
 DEPTH_ENCODER_INFO_FIELD_NAMES: frozenset[str] = frozenset({"depth_min", "depth_max", "shift", "use_log"})
@@ -215,24 +226,24 @@ class VideoEncoderConfig:
             if encoder_threads is not None:
                 svtav1_parts.append(f"lp={encoder_threads}")
             if svtav1_parts:
-                opts["svtav1-params"] = ":".join(svtav1_parts)
+                set_if("svtav1-params", ":".join(svtav1_parts))
         elif self.vcodec in ("h264", "hevc"):
             set_if("crf", self.crf)
             set_if("preset", self.preset)
             if self.fast_decode:
-                opts["tune"] = "fastdecode"
+                set_if("tune", "fastdecode")
             set_if("threads", encoder_threads)
         elif self.vcodec == "libaom-av1":
             set_if("crf", self.crf)
             set_if("preset", self.preset)
             if encoder_threads is not None:
-                opts["threads"] = encoder_threads
-                opts["row-mt"] = 1
+                set_if("threads", encoder_threads)
+                set_if("row-mt", 1)
         elif self.vcodec in ("h264_videotoolbox", "hevc_videotoolbox"):
             if self.crf is not None:
-                opts["q:v"] = max(1, min(100, 100 - self.crf * 2))
+                set_if("q:v", max(1, min(100, 100 - self.crf * 2)))
         elif self.vcodec in ("h264_nvenc", "hevc_nvenc"):
-            opts["rc"] = 0
+            set_if("rc", 0)
             set_if("qp", self.crf)
             set_if("preset", self.preset)
         elif self.vcodec == "h264_vaapi":
