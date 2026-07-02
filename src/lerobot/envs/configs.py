@@ -24,11 +24,7 @@ import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.configs import FeatureType, PolicyFeature
-from lerobot.processor import (
-    IsaaclabArenaProcessorStep,
-    LiberoProcessorStep,
-    PolicyProcessorPipeline,
-)
+from lerobot.processor import IsaaclabArenaProcessorStep, LiberoProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import (
