@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import logging
 import random
 from typing import TYPE_CHECKING, Any
 
@@ -69,6 +70,8 @@ from .sarm_utils import (
     pad_state_to_max_dim,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class SARMEncodingProcessorStep(ProcessorStep):
     """ProcessorStep that encodes images and text with CLIP and generates stage and progress labels for SARM."""
@@ -107,6 +110,11 @@ class SARMEncodingProcessorStep(ProcessorStep):
             if config.uses_dual_heads
             else None
         )
+
+        # Warn at most once per (annotation_type, episode) about missing/NaN
+        # subtask columns so a misconfigured dataset is visible without spamming
+        # on every batch (#3842).
+        self._warned_missing_annotations: set[tuple[str, int]] = set()
 
         self.device = torch.device(
             self.config.device if self.config.device else "cuda" if torch.cuda.is_available() else "cpu"
@@ -155,6 +163,26 @@ class SARMEncodingProcessorStep(ProcessorStep):
             return self.dense_subtask_names, self.dense_temporal_proportions
         return self.sparse_subtask_names, self.sparse_temporal_proportions
 
+    def _warn_missing_annotations(self, annotation_type: str, ep_idx: int, reason: str) -> None:
+        """Warn once per (annotation_type, episode) that subtask annotations are
+        missing, so the corresponding progress targets silently fall back to
+        all-zero (#3842)."""
+        key = (annotation_type, int(ep_idx))
+        if key in self._warned_missing_annotations:
+            return
+        self._warned_missing_annotations.add(key)
+        logger.warning(
+            "SARM episode %d has no usable '%s' subtask annotations (%s); its '%s' "
+            "progress targets fall back to all-zero, so the '%s' head silently "
+            "collapses to predict-0. Check the episode metadata's '%s' subtask columns.",
+            ep_idx,
+            annotation_type,
+            reason,
+            annotation_type,
+            annotation_type,
+            annotation_type,
+        )
+
     def _load_episode_annotations(
         self,
         ep_idx: int,
@@ -173,11 +201,15 @@ class SARMEncodingProcessorStep(ProcessorStep):
             return prefixed if prefixed in episodes_df.columns else suffix
 
         col_names = col("subtask_names")
-        if col_names not in episodes_df.columns or ep_idx >= len(episodes_df):
+        if col_names not in episodes_df.columns:
+            self._warn_missing_annotations(annotation_type, ep_idx, f"column '{col_names}' is absent")
+            return None, None, None
+        if ep_idx >= len(episodes_df):
             return None, None, None
 
         subtask_names = episodes_df.loc[ep_idx, col_names]
         if subtask_names is None or (isinstance(subtask_names, float) and pd.isna(subtask_names)):
+            self._warn_missing_annotations(annotation_type, ep_idx, f"'{col_names}' is NaN")
             return None, None, None
 
         return (
