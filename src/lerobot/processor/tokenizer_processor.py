@@ -81,6 +81,8 @@ class TokenizerProcessorStep(ObservationProcessorStep):
     padding_side: str = "right"
     padding: str = "max_length"
     truncation: bool = True
+    output_tokens_key: str = OBS_LANGUAGE_TOKENS
+    output_mask_key: str = OBS_LANGUAGE_ATTENTION_MASK
 
     # Internal tokenizer instance (not part of the config)
     input_tokenizer: Any = field(default=None, init=False, repr=False)
@@ -201,8 +203,8 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         new_observation = dict(observation)
 
         # Add tokenized data to the observation
-        new_observation[OBS_LANGUAGE_TOKENS] = tokenized_prompt["input_ids"]
-        new_observation[OBS_LANGUAGE_ATTENTION_MASK] = tokenized_prompt["attention_mask"].to(dtype=torch.bool)
+        new_observation[self.output_tokens_key] = tokenized_prompt["input_ids"]
+        new_observation[self.output_mask_key] = tokenized_prompt["attention_mask"].to(dtype=torch.bool)
 
         # Tokenize subtask if available
         subtask = self.get_subtask(self.transition)
@@ -309,14 +311,14 @@ class TokenizerProcessorStep(ObservationProcessorStep):
             The updated dictionary of policy features.
         """
         # Add a feature for the token IDs if it doesn't already exist
-        if OBS_LANGUAGE_TOKENS not in features[PipelineFeatureType.OBSERVATION]:
-            features[PipelineFeatureType.OBSERVATION][OBS_LANGUAGE_TOKENS] = PolicyFeature(
+        if self.output_tokens_key not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION][self.output_tokens_key] = PolicyFeature(
                 type=FeatureType.LANGUAGE, shape=(self.max_length,)
             )
 
         # Add a feature for the attention mask if it doesn't already exist
-        if OBS_LANGUAGE_ATTENTION_MASK not in features[PipelineFeatureType.OBSERVATION]:
-            features[PipelineFeatureType.OBSERVATION][OBS_LANGUAGE_ATTENTION_MASK] = PolicyFeature(
+        if self.output_mask_key not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION][self.output_mask_key] = PolicyFeature(
                 type=FeatureType.LANGUAGE, shape=(self.max_length,)
             )
 

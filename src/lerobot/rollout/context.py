@@ -350,6 +350,11 @@ def build_rollout_context(
                     "shape": (1,),
                     "names": None,
                 }
+                dataset_features["next.success"] = {
+                    "dtype": "bool",
+                    "shape": (1,),
+                    "names": None,
+                }
 
             repo_name = cfg.dataset.repo_id.split("/", 1)[-1]
             if not repo_name.startswith("rollout_"):

@@ -43,10 +43,10 @@ CORE_STYLES = {
 # validation. Empty by default — populate from a downstream module that
 # also extends ``PERSISTENT_STYLES`` or ``EVENT_ONLY_STYLES`` to declare
 # the new style's column.
-EXTENDED_STYLES: set[str] = set()
+EXTENDED_STYLES: set[str] = {"advantage"}
 STYLE_REGISTRY = CORE_STYLES | EXTENDED_STYLES
 
-PERSISTENT_STYLES = {"subtask", "plan", "memory", "motion", "task_aug"}
+PERSISTENT_STYLES = {"subtask", "plan", "memory", "motion", "task_aug", "advantage"}
 EVENT_ONLY_STYLES = {"interjection", "vqa", "trace"}
 
 # Styles whose ``content`` is grounded in a specific camera view. Rows of these

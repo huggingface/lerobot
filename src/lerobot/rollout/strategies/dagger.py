@@ -113,6 +113,9 @@ class DAggerEvents:
         self.stop_recording = Event()
         self.upload_requested = Event()
 
+        # Episode success labeling
+        self._episode_success: bool | None = None
+
     # -- Thread-safe phase access ------------------------------------------
 
     @property
@@ -155,7 +158,25 @@ class DAggerEvents:
         with self._lock:
             self._phase = DAggerPhase.AUTONOMOUS
             self._pending_transition = None
+            self._episode_success = None
         self.upload_requested.clear()
+
+    def mark_success(self) -> None:
+        """Mark the current episode as successful (called from input threads)."""
+        with self._lock:
+            self._episode_success = True
+
+    def mark_failure(self) -> None:
+        """Mark the current episode as failed (called from input threads)."""
+        with self._lock:
+            self._episode_success = False
+
+    def consume_episode_success(self) -> bool | None:
+        """Consume and reset the episode success label. Returns None if unlabeled."""
+        with self._lock:
+            result = self._episode_success
+            self._episode_success = None
+            return result
 
 
 # ---------------------------------------------------------------------------
@@ -186,12 +207,18 @@ def _init_dagger_keyboard(events: DAggerEvents, cfg: DAggerKeyboardConfig):
             events.request_transition(key_to_event[name])
         if name == cfg.upload:
             events.upload_requested.set()
+        if name == cfg.success:
+            events.mark_success()
+            logger.info("Episode marked as SUCCESS")
+        if name == cfg.failure:
+            events.mark_failure()
+            logger.info("Episode marked as FAILURE")
 
     return create_key_listener(
         dispatch,
         controls_help=(
             f"pause_resume='{cfg.pause_resume}', correction='{cfg.correction}', "
-            f"upload='{cfg.upload}', ESC=stop"
+            f"upload='{cfg.upload}', success='{cfg.success}', failure='{cfg.failure}', ESC=stop"
         ),
     )
 
@@ -211,6 +238,12 @@ def _init_dagger_pedal(events: DAggerEvents, cfg: DAggerPedalConfig):
             events.request_transition(code_to_event[code])
         if code == cfg.upload:
             events.upload_requested.set()
+        if code == cfg.success:
+            events.mark_success()
+            logger.info("Episode marked as SUCCESS (pedal)")
+        if code == cfg.failure:
+            events.mark_failure()
+            logger.info("Episode marked as FAILURE (pedal)")
 
     logger.info("Initializing DAgger foot pedal listener (device=%s)", cfg.device_path)
     return start_pedal_listener(on_press, device_path=cfg.device_path)
@@ -314,6 +347,31 @@ class DAggerStrategy(RolloutStrategy):
         logger.info("DAgger strategy teardown complete")
 
     # ------------------------------------------------------------------
+    # Episode success labeling
+    # ------------------------------------------------------------------
+
+    def _stamp_episode_success(self, dataset) -> None:
+        """Set next.success on the terminal frame based on operator label.
+
+        Called just before save_episode(). If the operator pressed the success
+        key during this episode, the last frame's next.success is set to True.
+        Otherwise all frames remain False (unlabeled = assumed failure).
+        """
+        buf = dataset.writer.episode_buffer
+        if buf is None:
+            return
+
+        success_buf = buf.get("next.success")
+        if not success_buf:
+            return
+
+        label = self._events.consume_episode_success()
+
+        if label:
+            success_buf[-1] = np.array([True], dtype=bool)
+            logger.info("Terminal frame stamped next.success=True")
+
+    # ------------------------------------------------------------------
     # Continuous recording mode (record_autonomous=True)
     # ------------------------------------------------------------------
 
@@ -399,6 +457,7 @@ class DAggerStrategy(RolloutStrategy):
                                 **action_frame,
                                 "task": task_str,
                                 "intervention": np.array([True], dtype=bool),
+                                "next.success": np.array([False], dtype=bool),
                             }
                             dataset.add_frame(frame)
                         record_tick += 1
@@ -427,6 +486,7 @@ class DAggerStrategy(RolloutStrategy):
                                     **action_frame,
                                     "task": task_str,
                                     "intervention": np.array([False], dtype=bool),
+                                    "next.success": np.array([False], dtype=bool),
                                 }
                                 dataset.add_frame(frame)
                             record_tick += 1
@@ -437,6 +497,7 @@ class DAggerStrategy(RolloutStrategy):
                     elapsed = time.perf_counter() - episode_start
                     if elapsed >= episode_duration_s and phase != DAggerPhase.CORRECTING:
                         with self._episode_lock:
+                            self._stamp_episode_success(dataset)
                             dataset.save_episode()
                         episodes_since_push += 1
                         self._needs_push.set()
@@ -466,6 +527,7 @@ class DAggerStrategy(RolloutStrategy):
                 engine.pause()
                 with contextlib.suppress(Exception):
                     with self._episode_lock:
+                        self._stamp_episode_success(dataset)
                         dataset.save_episode()
                     self._needs_push.set()
                     logger.info("Final in-progress episode saved")
@@ -540,6 +602,7 @@ class DAggerStrategy(RolloutStrategy):
                         # Correction ended -> save episode (blocking if not streaming)
                         if old_phase == DAggerPhase.CORRECTING and new_phase == DAggerPhase.PAUSED:
                             with self._episode_lock:
+                                self._stamp_episode_success(dataset)
                                 dataset.save_episode()
                             recorded += 1
                             self._needs_push.set()
@@ -581,6 +644,7 @@ class DAggerStrategy(RolloutStrategy):
                                     **action_frame,
                                     "task": task_str,
                                     "intervention": np.array([True], dtype=bool),
+                                    "next.success": np.array([False], dtype=bool),
                                 }
                             )
                         record_tick += 1
@@ -615,6 +679,7 @@ class DAggerStrategy(RolloutStrategy):
                 engine.pause()
                 with contextlib.suppress(Exception):
                     with self._episode_lock:
+                        self._stamp_episode_success(dataset)
                         dataset.save_episode()
                     self._needs_push.set()
                     logger.info("Final in-progress episode saved")

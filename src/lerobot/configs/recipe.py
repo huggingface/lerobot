@@ -32,6 +32,7 @@ DEFAULT_BINDINGS = {
     "interjection": "emitted_at(t, style=interjection)",
     "vqa": "emitted_at(t, style=vqa, role=assistant)",
     "vqa_query": "emitted_at(t, style=vqa, role=user)",
+    "advantage": "active_at(t, style=advantage)",
 }
 
 PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")

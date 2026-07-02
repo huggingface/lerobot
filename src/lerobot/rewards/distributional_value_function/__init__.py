@@ -1,6 +1,4 @@
-#!/usr/bin/env python
-
-# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .advantage import AdvantageModule
-from .general_vqa import GeneralVqaModule
-from .interjections_and_speech import InterjectionsAndSpeechModule
-from .plan_subtasks_memory import PlanSubtasksMemoryModule
+from .configuration_distributional_value_function import DistributionalVFConfig
+from .modeling_distributional_value_function import DistributionalVFRewardModel
+from .processor_distributional_value_function import make_distributional_vf_pre_post_processors
 
 __all__ = [
-    "AdvantageModule",
-    "GeneralVqaModule",
-    "InterjectionsAndSpeechModule",
-    "PlanSubtasksMemoryModule",
+    "DistributionalVFConfig",
+    "DistributionalVFRewardModel",
+    "make_distributional_vf_pre_post_processors",
 ]

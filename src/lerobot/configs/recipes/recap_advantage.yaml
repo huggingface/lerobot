@@ -1,0 +1,30 @@
+# RECAP advantage-conditioned recipe.
+#
+# Composes task + advantage indicator into the prompt for conditional SFT.
+# The advantage binding resolves to "positive" or "negative" from the
+# language_persistent column (written by lerobot-annotate --advantage).
+# When advantage is absent (30% dropout), the advantage turn is skipped
+# entirely via if_present, training the unconditional branch for CFG.
+#
+# This recipe is policy-agnostic: any VLA that consumes chat-style messages
+# can use it. Override bindings or add blend components for task-specific needs.
+#
+# Paper: pi*0.6, Section IV-B (conditional policy training with I_t).
+
+bindings:
+  advantage: "active_at(t, style=advantage)"
+
+messages:
+  - role: user
+    content: "${task}"
+    stream: high_level
+
+  - role: user
+    content: "Advantage: ${advantage}"
+    stream: high_level
+    if_present: advantage
+
+  - role: assistant
+    content: "${subtask}"
+    stream: low_level
+    target: true
