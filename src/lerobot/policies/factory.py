@@ -338,9 +338,9 @@ def make_pre_post_processors(
         )
         _reconnect_relative_absolute_steps(preprocessor, postprocessor)
         if isinstance(policy_cfg, Evo1Config):
-            from .evo1.processor_evo1 import ensure_evo1_processor_steps
+            from .evo1.processor_evo1 import reconcile_evo1_processors
 
-            preprocessor, postprocessor = ensure_evo1_processor_steps(
+            preprocessor, postprocessor = reconcile_evo1_processors(
                 policy_cfg,
                 preprocessor,
                 postprocessor,

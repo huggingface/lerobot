@@ -43,11 +43,11 @@ logger = logging.getLogger(__name__)
 def _batched_resize_01(images: torch.Tensor, image_size: int) -> torch.Tensor:
     """Resize a batch of ``[0, 1]`` images to ``(image_size, image_size)`` on-device.
 
-    Numerically mirrors InternVL3's per-image PIL preprocessing
+    Numerically mirrors InternVL3's reference PIL preprocessing
     (``to_pil_image`` -> ``Image.resize`` -> ``to_tensor``): the float input is quantized to uint8
     exactly as ``to_pil_image`` does, then resized with bicubic interpolation and antialiasing,
-    which matches PIL's default resampler. This runs as a single batched op instead of a per-image
-    Python loop with a GPU->CPU->PIL->GPU round-trip.
+    which matches PIL's default resampler. Matching the reference pixel-for-pixel keeps the policy
+    interchangeable with checkpoints produced by the upstream EVO1 preprocessing.
 
     Args:
         images: float tensor of shape ``(N, C, H, W)`` with values in ``[0, 1]``.
@@ -75,14 +75,14 @@ def _batched_pixel_values(
 ) -> torch.Tensor:
     """Build InternVL3 ``pixel_values`` from per-camera ``[0, 1]`` image batches without leaving the device.
 
-    Equivalent to running the old per-sample/per-image PIL path (resize -> to_tensor -> ImageNet
-    normalize, a single tile per image) but batched across the whole minibatch. Absent views (fewer
-    cameras than ``max_views``) are zero-padded to reproduce the previous ``torch.zeros_like``
-    padding; those views are masked out downstream via the attention mask.
+    Each image is resized, converted to ``dtype``, and ImageNet-normalized (a single tile per
+    image), batched across the whole minibatch. Absent views (fewer cameras than ``max_views``)
+    are filled with zero images; their placeholder tokens are masked out of attention downstream
+    via ``_mask_absent_image_tokens``.
 
     Returns:
         ``pixel_values`` of shape ``(B * max_views, C, image_size, image_size)``, ordered row-major
-        over ``(sample, view)`` to match the old preprocessing.
+        over ``(sample, view)`` to line up with the per-view image placeholders in the prompt.
     """
     resized: list[torch.Tensor] = []
     for image in camera_images:
@@ -273,10 +273,9 @@ class InternVL3Embedder(nn.Module):
         image_masks: torch.Tensor,
         batch_num_tiles_list: list[list[int]],
     ) -> torch.Tensor:
-        """Zero attention over the image-context tokens of absent views, fully vectorized.
+        """Zero attention over the image-context tokens of absent (zero-padded) views.
 
-        Reproduces the previous per-sample/per-image Python loop, which called ``.item()`` once per
-        image and forced a device->host sync each time, without any host<->device synchronization.
+        Fully vectorized: runs without any host<->device synchronization.
         """
         # A single tile per image (max_num=1), so every image occupies the same number of
         # context tokens.

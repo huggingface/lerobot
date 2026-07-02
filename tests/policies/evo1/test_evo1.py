@@ -34,9 +34,9 @@ from lerobot.policies.evo1.processor_evo1 import (
     Evo1ActionProcessorStep,
     Evo1PadActionProcessorStep,
     Evo1PadStateProcessorStep,
-    ensure_evo1_processor_steps,
     evo1_batch_to_transition,
     make_evo1_pre_post_processors,
+    reconcile_evo1_processors,
 )
 from lerobot.policies.factory import get_policy_class, make_policy_config
 from lerobot.processor import (
@@ -444,55 +444,6 @@ def test_evo1_postprocessor_returns_float32_for_bf16_actions():
     assert processed.dtype == torch.float32
 
 
-def test_evo1_legacy_processors_are_completed_before_normalization():
-    config = make_config(
-        max_state_dim=MAX_STATE_DIM,
-        max_action_dim=8,
-        postprocess_action_dim=7,
-        binarize_gripper=True,
-    )
-    stats = make_stats(action_dim=7)
-    legacy_pre = PolicyProcessorPipeline(
-        steps=[
-            NormalizerProcessorStep(
-                features={**config.input_features, **config.output_features},
-                norm_map=config.normalization_mapping,
-                stats=stats,
-            )
-        ]
-    )
-    legacy_post = PolicyProcessorPipeline(
-        steps=[
-            UnnormalizerProcessorStep(
-                features=config.output_features,
-                norm_map=config.normalization_mapping,
-                stats=stats,
-            )
-        ]
-    )
-
-    preprocessor, postprocessor = ensure_evo1_processor_steps(config, legacy_pre, legacy_post)
-
-    assert preprocessor.to_transition is evo1_batch_to_transition
-    assert isinstance(preprocessor.steps[0], Evo1PadStateProcessorStep)
-    assert isinstance(preprocessor.steps[1], Evo1PadActionProcessorStep)
-    assert isinstance(preprocessor.steps[2], NormalizerProcessorStep)
-    assert isinstance(postprocessor.steps[0], UnnormalizerProcessorStep)
-    assert isinstance(postprocessor.steps[1], Evo1ActionProcessorStep)
-    assert postprocessor.steps[1].action_dim == 7
-    assert postprocessor.steps[1].binarize_gripper is True
-    assert preprocessor.steps[2].features[OBS_STATE].shape == (MAX_STATE_DIM,)
-    assert preprocessor.steps[2]._tensor_stats[OBS_STATE]["min"].shape == (MAX_STATE_DIM,)
-    assert preprocessor.steps[2]._tensor_stats[ACTION]["min"].shape == (8,)
-    assert postprocessor.steps[0].features[ACTION].shape == (8,)
-    assert postprocessor.steps[0]._tensor_stats[ACTION]["min"].shape == (8,)
-
-    preprocessor, postprocessor = ensure_evo1_processor_steps(config, preprocessor, postprocessor)
-    assert sum(isinstance(step, Evo1PadStateProcessorStep) for step in preprocessor.steps) == 1
-    assert sum(isinstance(step, Evo1PadActionProcessorStep) for step in preprocessor.steps) == 1
-    assert sum(isinstance(step, Evo1ActionProcessorStep) for step in postprocessor.steps) == 1
-
-
 def test_evo1_processor_save_load_round_trip_applies_config_overrides(tmp_path):
     train_config = make_config()
     preprocessor, postprocessor = make_evo1_pre_post_processors(train_config, dataset_stats=make_stats())
@@ -512,14 +463,16 @@ def test_evo1_processor_save_load_round_trip_applies_config_overrides(tmp_path):
         to_output=transition_to_policy_action,
     )
 
-    # Simulate eval-time CLI overrides on a checkpoint that already serializes the EVO1 steps.
+    # Simulate eval-time CLI overrides applied on top of the loaded pipelines.
     eval_config = make_config(binarize_gripper=True, postprocess_action_dim=ACTION_DIM)
-    loaded_pre, loaded_post = ensure_evo1_processor_steps(eval_config, loaded_pre, loaded_post)
+    loaded_pre, loaded_post = reconcile_evo1_processors(eval_config, loaded_pre, loaded_post)
 
     assert loaded_pre.to_transition is evo1_batch_to_transition
+    assert sum(isinstance(step, Evo1ActionProcessorStep) for step in loaded_post.steps) == 1
     action_step = next(step for step in loaded_post.steps if isinstance(step, Evo1ActionProcessorStep))
     assert action_step.binarize_gripper is True
     assert action_step.action_dim == ACTION_DIM
+    # The float32 output dtype is part of the serialized pipeline itself.
     device_step = next(step for step in loaded_post.steps if isinstance(step, DeviceProcessorStep))
     assert device_step.float_dtype == "float32"
 
@@ -798,7 +751,7 @@ def test_evo1_batched_pixel_values_shape_and_zero_padding():
 
     assert pixel_values.shape == (batch_size * max_views, 3, image_size, image_size)
     grouped = pixel_values.reshape(batch_size, max_views, 3, image_size, image_size)
-    # Absent views (indices 1, 2) are zero images normalized to -mean/std, matching the old padding.
+    # Absent views (indices 1, 2) are zero images, normalized to the constant -mean/std.
     expected_pad = (-mean / std).view(1, 3, 1, 1)
     for view in (1, 2):
         assert torch.allclose(

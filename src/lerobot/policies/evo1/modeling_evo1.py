@@ -359,7 +359,7 @@ class Evo1Policy(PreTrainedPolicy):
 
         # Keep each present camera as a batched (B, C, H, W) tensor on its current (GPU) device.
         # Resizing/normalization and zero-padding of absent views happen batched inside the
-        # embedder, so images never leave the device here (no per-sample .cpu() round-trip).
+        # embedder, so images never leave the device here.
         camera_images: list[Tensor] = []
         for camera_key in present_keys:
             image = batch[camera_key]

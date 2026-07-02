@@ -100,9 +100,6 @@ class Evo1Config(PreTrainedConfig):
     optimizer_grad_clip_norm: float = 1.0
 
     scheduler_warmup_steps: int = 300
-    # Deprecated, has no effect. Kept only so configs serialized by earlier EVO1 checkpoints
-    # (which stored this field) can still be parsed; draccus rejects unknown fields.
-    drop_last: bool = True
 
     def __post_init__(self):
         super().__post_init__()

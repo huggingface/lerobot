@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -302,74 +302,24 @@ def _pad_evo1_stats(
     return padded_stats
 
 
-def _refresh_evo1_normalization_steps(
-    config: Evo1Config,
-    preprocessor: PolicyProcessorPipeline,
-    postprocessor: PolicyProcessorPipeline,
-) -> None:
-    normalization_features = _evo1_normalization_features(config)
-    action_features = _evo1_action_features(config)
-
-    for step in preprocessor.steps:
-        if isinstance(step, NormalizerProcessorStep):
-            step.features = normalization_features
-            step.stats = _pad_evo1_stats(config, step.stats)
-            step.to(device=step.device, dtype=step.dtype)
-
-    for step in postprocessor.steps:
-        if isinstance(step, UnnormalizerProcessorStep):
-            step.features = action_features
-            step.stats = _pad_evo1_stats(config, step.stats)
-            step.to(device=step.device, dtype=step.dtype)
-
-
-def ensure_evo1_processor_steps(
+def reconcile_evo1_processors(
     config: Evo1Config,
     preprocessor: PolicyProcessorPipeline,
     postprocessor: PolicyProcessorPipeline,
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     """Reconcile checkpoint-loaded pipelines with the current EVO1 config.
 
-    Adds the EVO1 steps when loading older checkpoints that do not serialize them, restores the
-    EVO1 batch converter (converters are not serialized), and refreshes the config-driven step
-    parameters (padding widths, action cropping, gripper binarization) so CLI overrides at
-    load/eval time take effect on checkpoints that already serialize these steps.
+    Two things cannot be restored from a serialized pipeline alone: the EVO1 batch converter
+    (converters are plain functions and are never serialized), and eval-time CLI overrides of the
+    action postprocessing flags (`postprocess_action_dim`, `binarize_gripper`, `gripper_*`). This
+    restores the converter and rebuilds the action step from the current config so those overrides
+    take effect.
     """
-
     # Pipelines reloaded from a checkpoint come back with the default batch converter, which drops
     # non-observation extras (embodiment_id, state_mask, custom task fields) needed by EVO1.
     preprocessor.to_transition = evo1_batch_to_transition
 
-    has_state_padding = any(isinstance(step, Evo1PadStateProcessorStep) for step in preprocessor.steps)
-    if not has_state_padding:
-        steps = list(preprocessor.steps)
-        insert_idx = next(
-            (idx for idx, step in enumerate(steps) if isinstance(step, NormalizerProcessorStep)),
-            len(steps),
-        )
-        steps.insert(insert_idx, Evo1PadStateProcessorStep(max_state_dim=config.max_state_dim))
-        preprocessor.steps = steps
-
-    has_action_padding = any(isinstance(step, Evo1PadActionProcessorStep) for step in preprocessor.steps)
-    if not has_action_padding:
-        steps = list(preprocessor.steps)
-        insert_idx = next(
-            (idx for idx, step in enumerate(steps) if isinstance(step, NormalizerProcessorStep)),
-            len(steps),
-        )
-        steps.insert(insert_idx, Evo1PadActionProcessorStep(max_action_dim=config.max_action_dim))
-        preprocessor.steps = steps
-
-    preprocessor.steps = [
-        replace(step, max_state_dim=config.max_state_dim)
-        if isinstance(step, Evo1PadStateProcessorStep)
-        else replace(step, max_action_dim=config.max_action_dim)
-        if isinstance(step, Evo1PadActionProcessorStep)
-        else step
-        for step in preprocessor.steps
-    ]
-
-    current_action_step = Evo1ActionProcessorStep(
+    action_step = Evo1ActionProcessorStep(
         action_dim=_evo1_action_dim(config),
         binarize_gripper=config.binarize_gripper,
         gripper_index=config.gripper_index,
@@ -386,20 +336,11 @@ def ensure_evo1_processor_steps(
             (idx + 1 for idx, step in enumerate(steps) if isinstance(step, UnnormalizerProcessorStep)),
             0,
         )
-        steps.insert(insert_idx, current_action_step)
+        steps.insert(insert_idx, action_step)
     else:
-        steps[action_step_idx] = current_action_step
-    # Actions must leave the postprocessor as float32 (numpy cannot represent bf16); older
-    # checkpoints serialized the device step without a float_dtype.
-    steps = [
-        replace(step, float_dtype="float32")
-        if isinstance(step, DeviceProcessorStep) and step.float_dtype is None
-        else step
-        for step in steps
-    ]
+        steps[action_step_idx] = action_step
     postprocessor.steps = steps
 
-    _refresh_evo1_normalization_steps(config, preprocessor, postprocessor)
     return preprocessor, postprocessor
 
 
