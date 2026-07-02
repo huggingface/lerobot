@@ -47,8 +47,10 @@ from lerobot.utils.feature_utils import dataset_to_policy_features
 from .act.configuration_act import ACTConfig
 from .diffusion.configuration_diffusion import DiffusionConfig
 from .eo1.configuration_eo1 import EO1Config
+from .fastwam.configuration_fastwam import FastWAMConfig
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
 from .groot.configuration_groot import GrootConfig
+from .molmoact2.configuration_molmoact2 import MolmoAct2Config
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from .pi0.configuration_pi0 import PI0Config
 from .pi05.configuration_pi05 import PI05Config
@@ -56,6 +58,7 @@ from .pretrained import PreTrainedPolicy
 from .smolvla.configuration_smolvla import SmolVLAConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig
 from .utils import validate_visual_features_consistency
+from .vla_jepa.configuration_vla_jepa import VLAJEPAConfig
 from .vqbet.configuration_vqbet import VQBeTConfig
 from .wall_x.configuration_wall_x import WallXConfig
 from .xvla.configuration_xvla import XVLAConfig
@@ -88,7 +91,8 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
     Args:
         name: The name of the policy. Supported names are "tdmpc", "diffusion", "act",
-            "multi_task_dit", "vqbet", "pi0", "pi05", "gaussian_actor", "smolvla", "wall_x".
+            "multi_task_dit", "vqbet", "pi0", "pi05", "gaussian_actor", "smolvla", "wall_x",
+            "molmoact2".
     Returns:
         The policy class corresponding to the given name.
 
@@ -151,6 +155,18 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .eo1.modeling_eo1 import EO1Policy
 
         return EO1Policy
+    elif name == "molmoact2":
+        from .molmoact2.modeling_molmoact2 import MolmoAct2Policy
+
+        return MolmoAct2Policy
+    elif name == "vla_jepa":
+        from .vla_jepa.modeling_vla_jepa import VLAJEPAPolicy
+
+        return VLAJEPAPolicy
+    elif name == "fastwam":
+        from .fastwam.modeling_fastwam import FastWAMPolicy
+
+        return FastWAMPolicy
     else:
         try:
             return _get_policy_cls_from_policy_name(name=name)
@@ -168,7 +184,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
                      "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05", "gaussian_actor",
-                     "smolvla", "wall_x".
+                     "smolvla", "wall_x", "molmoact2".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -203,6 +219,12 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return WallXConfig(**kwargs)
     elif policy_type == "eo1":
         return EO1Config(**kwargs)
+    elif policy_type == "molmoact2":
+        return MolmoAct2Config(**kwargs)
+    elif policy_type == "vla_jepa":
+        return VLAJEPAConfig(**kwargs)
+    elif policy_type == "fastwam":
+        return FastWAMConfig(**kwargs)
     else:
         try:
             config_cls = PreTrainedConfig.get_choice_class(policy_type)
@@ -231,11 +253,13 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     preprocessor_overrides: dict[str, Any] | None
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
+    dataset_meta: Any | None
 
 
 def make_pre_post_processors(
     policy_cfg: PreTrainedConfig,
     pretrained_path: str | None = None,
+    pretrained_revision: str | None = None,
     **kwargs: Unpack[ProcessorConfigKwargs],
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
@@ -293,6 +317,7 @@ def make_pre_post_processors(
             overrides=kwargs.get("preprocessor_overrides", {}),
             to_transition=batch_to_transition,
             to_output=transition_to_batch,
+            revision=pretrained_revision,
         )
         postprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
@@ -302,6 +327,7 @@ def make_pre_post_processors(
             overrides=kwargs.get("postprocessor_overrides", {}),
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
+            revision=pretrained_revision,
         )
         _reconnect_relative_absolute_steps(preprocessor, postprocessor)
         return preprocessor, postprocessor
@@ -406,10 +432,36 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
+
     elif isinstance(policy_cfg, EO1Config):
         from .eo1.processor_eo1 import make_eo1_pre_post_processors
 
         processors = make_eo1_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, MolmoAct2Config):
+        from .molmoact2.processor_molmoact2 import make_molmoact2_pre_post_processors
+
+        processors = make_molmoact2_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_meta=kwargs.get("dataset_meta"),
+        )
+
+    elif isinstance(policy_cfg, VLAJEPAConfig):
+        from .vla_jepa.processor_vla_jepa import make_vla_jepa_pre_post_processors
+
+        processors = make_vla_jepa_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, FastWAMConfig):
+        from .fastwam.processor_fastwam import make_fastwam_pre_post_processors
+
+        processors = make_fastwam_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
@@ -499,6 +551,10 @@ def make_policy(
         action_names = ds_meta.features.get(ACTION, {}).get("names")
         if action_names is not None:
             cfg.action_feature_names = list(action_names)
+    if ds_meta is not None:
+        set_dataset_feature_metadata = getattr(cfg, "set_dataset_feature_metadata", None)
+        if callable(set_dataset_feature_metadata):
+            set_dataset_feature_metadata(ds_meta.features)
 
     kwargs["config"] = cfg
 
@@ -519,6 +575,7 @@ def make_policy(
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
         kwargs["pretrained_name_or_path"] = cfg.pretrained_path
+        kwargs["revision"] = cfg.pretrained_revision
         policy = policy_cls.from_pretrained(**kwargs)
     elif cfg.pretrained_path and cfg.use_peft:
         # Load a pretrained PEFT model on top of the policy. The pretrained path points to the folder/repo

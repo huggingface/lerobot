@@ -58,7 +58,46 @@ def download_dataset(repo_id, episodes):
     print(f"Dataset {repo_id} downloaded successfully")
 
 
-def run_accelerate_training(config_args, num_processes=4, temp_dir=None):
+def _write_multi_gpu_config(f, num_processes):
+    f.write("compute_environment: LOCAL_MACHINE\n")
+    f.write("distributed_type: MULTI_GPU\n")
+    f.write("mixed_precision: 'no'\n")
+    f.write(f"num_processes: {num_processes}\n")
+    f.write("use_cpu: false\n")
+    f.write("gpu_ids: all\n")
+    f.write("downcast_bf16: 'no'\n")
+    f.write("machine_rank: 0\n")
+    f.write("main_training_function: main\n")
+    f.write("num_machines: 1\n")
+    f.write("rdzv_backend: static\n")
+    f.write("same_network: true\n")
+
+
+def _write_fsdp_config(f, num_processes):
+    # FSDP1 with FULL_SHARD (ZeRO-3-equivalent) and FULL_STATE_DICT, matching
+    # docs/source/multi_gpu_training.mdx. ACT's repeated transformer blocks are the wrap units;
+    # fsdp_use_orig_params is required because LeRobot builds the optimizer before prepare().
+    f.write("compute_environment: LOCAL_MACHINE\n")
+    f.write("distributed_type: FSDP\n")
+    f.write("mixed_precision: 'no'\n")
+    f.write(f"num_processes: {num_processes}\n")
+    f.write("use_cpu: false\n")
+    f.write("gpu_ids: all\n")
+    f.write("machine_rank: 0\n")
+    f.write("main_training_function: main\n")
+    f.write("num_machines: 1\n")
+    f.write("rdzv_backend: static\n")
+    f.write("same_network: true\n")
+    f.write("fsdp_config:\n")
+    f.write("  fsdp_version: 1\n")
+    f.write("  fsdp_sharding_strategy: FULL_SHARD\n")
+    f.write("  fsdp_auto_wrap_policy: TRANSFORMER_BASED_WRAP\n")
+    f.write("  fsdp_transformer_layer_cls_to_wrap: ACTEncoderLayer,ACTDecoderLayer\n")
+    f.write("  fsdp_use_orig_params: true\n")
+    f.write("  fsdp_state_dict_type: FULL_STATE_DICT\n")
+
+
+def run_accelerate_training(config_args, num_processes=4, temp_dir=None, distributed_type="MULTI_GPU"):
     """
     Helper function to run training with accelerate launch.
 
@@ -66,6 +105,7 @@ def run_accelerate_training(config_args, num_processes=4, temp_dir=None):
         config_args: List of config arguments to pass to lerobot_train.py
         num_processes: Number of processes (GPUs) to use
         temp_dir: Temporary directory for outputs
+        distributed_type: "MULTI_GPU" (DDP) or "FSDP" — selects the generated accelerate config.
 
     Returns:
         subprocess.CompletedProcess result
@@ -75,18 +115,10 @@ def run_accelerate_training(config_args, num_processes=4, temp_dir=None):
 
     # Write YAML config
     with open(config_path, "w") as f:
-        f.write("compute_environment: LOCAL_MACHINE\n")
-        f.write("distributed_type: MULTI_GPU\n")
-        f.write("mixed_precision: 'no'\n")
-        f.write(f"num_processes: {num_processes}\n")
-        f.write("use_cpu: false\n")
-        f.write("gpu_ids: all\n")
-        f.write("downcast_bf16: 'no'\n")
-        f.write("machine_rank: 0\n")
-        f.write("main_training_function: main\n")
-        f.write("num_machines: 1\n")
-        f.write("rdzv_backend: static\n")
-        f.write("same_network: true\n")
+        if distributed_type == "FSDP":
+            _write_fsdp_config(f, num_processes)
+        else:
+            _write_multi_gpu_config(f, num_processes)
 
     cmd = [
         "accelerate",
@@ -134,7 +166,7 @@ class TestMultiGPUTraining:
                 f"--output_dir={output_dir}",
                 "--batch_size=4",
                 "--steps=10",
-                "--eval_freq=-1",
+                "--env_eval_freq=-1",
                 "--log_freq=5",
                 "--save_freq=10",
                 "--seed=42",
@@ -177,7 +209,7 @@ class TestMultiGPUTraining:
                 f"--output_dir={output_dir}",
                 "--batch_size=4",
                 "--steps=20",
-                "--eval_freq=-1",
+                "--env_eval_freq=-1",
                 "--log_freq=5",
                 "--save_freq=10",
                 "--seed=42",
@@ -211,3 +243,66 @@ class TestMultiGPUTraining:
                 # Verify optimizer state exists
                 optimizer_state = training_state_dir / "optimizer_state.safetensors"
                 assert optimizer_state.exists(), f"No optimizer state in checkpoint {checkpoint_dir}"
+
+    def test_fsdp_optimizer_save_and_resume(self):
+        """
+        Test that FSDP saves the (gathered) optimizer state and can resume from it.
+
+        Trains a few steps under FSDP, verifies the gathered optimizer state is written next to the
+        rest of the training state, then resumes from the checkpoint for more steps and checks it
+        completes without shape/key errors in the FSDP optimizer load path.
+        """
+        # Pre-download dataset to avoid race conditions
+        download_dataset("lerobot/pusht", episodes=[0])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "outputs"
+
+            config_args = [
+                "--dataset.repo_id=lerobot/pusht",
+                "--dataset.episodes=[0]",
+                "--policy.type=act",
+                "--policy.device=cuda",
+                "--policy.push_to_hub=false",
+                f"--output_dir={output_dir}",
+                "--batch_size=4",
+                "--steps=10",
+                "--env_eval_freq=-1",
+                "--log_freq=5",
+                "--save_freq=10",
+                "--seed=42",
+                "--num_workers=0",
+            ]
+
+            result = run_accelerate_training(
+                config_args, num_processes=2, temp_dir=temp_dir, distributed_type="FSDP"
+            )
+            assert result.returncode == 0, (
+                f"FSDP training failed:\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
+            )
+
+            # The gathered optimizer state must be written under FSDP (proves the save collective ran),
+            # in the same safetensors format as single-GPU training.
+            training_state_dir = output_dir / "checkpoints" / "last" / "training_state"
+            optimizer_state = training_state_dir / "optimizer_state.safetensors"
+            optimizer_param_groups = training_state_dir / "optimizer_param_groups.json"
+            assert optimizer_state.exists(), f"FSDP optimizer state not saved in {training_state_dir}"
+            assert optimizer_param_groups.exists(), (
+                f"FSDP optimizer param groups not saved in {training_state_dir}"
+            )
+
+            # Resume from the checkpoint for more steps. A successful run proves load_fsdp_optimizer
+            # accepts the saved state and reshards it without shape/key errors.
+            resume_config = output_dir / "checkpoints" / "last" / "pretrained_model" / "train_config.json"
+            resume_args = [
+                f"--config_path={resume_config}",
+                "--resume=true",
+                "--steps=20",
+            ]
+            resume_result = run_accelerate_training(
+                resume_args, num_processes=2, temp_dir=temp_dir, distributed_type="FSDP"
+            )
+            assert resume_result.returncode == 0, (
+                f"FSDP resume failed:\nSTDOUT:\n{resume_result.stdout}\n\nSTDERR:\n{resume_result.stderr}"
+            )
+            assert "End of training" in resume_result.stdout or "End of training" in resume_result.stderr

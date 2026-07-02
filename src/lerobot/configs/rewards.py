@@ -56,6 +56,8 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     device: str | None = None
 
     pretrained_path: str | None = None
+    # Optional Hub revision (commit hash, branch, or tag) to pin the pretrained reward model version.
+    pretrained_revision: str | None = None
 
     push_to_hub: bool = False
     repo_id: str | None = None
@@ -90,9 +92,9 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     def reward_delta_indices(self) -> list | None:  # type: ignore[type-arg]
         return None
 
-    @abc.abstractmethod
-    def get_optimizer_preset(self) -> OptimizerConfig:
-        raise NotImplementedError
+    def get_optimizer_preset(self) -> OptimizerConfig | None:
+        """Default optimizer for this reward model, or ``None`` for zero-shot models."""
+        return None
 
     def get_scheduler_preset(self) -> LRSchedulerConfig | None:
         return None

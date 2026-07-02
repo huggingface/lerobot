@@ -98,11 +98,23 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
     elif config.type == "openarm_mini":
         from .openarm_mini import OpenArmMini
 
-        return OpenArmMini(config)
+        return OpenArmMini(config)  
     elif config.type == "ds4_arm":
         from .ds4_arm import DS4ArmTeleop
 
         return DS4ArmTeleop(config)
+    elif config.type == "bi_openarm_mini":
+        from .bi_openarm_mini import BiOpenArmMini
+
+        return BiOpenArmMini(config)
+    elif config.type == "rebot_102_leader":
+        from .rebot_102_leader import RebotArm102Leader
+
+        return RebotArm102Leader(config)
+    elif config.type == "bi_rebot_102_leader":
+        from .bi_rebot_102_leader import BiRebot102Leader
+
+        return BiRebot102Leader(config)
     else:
         try:
             return cast("Teleoperator", make_device_from_device_class(config))

@@ -31,17 +31,26 @@ from .dataset_tools import (
     modify_features,
     modify_tasks,
     recompute_stats,
+    reencode_dataset,
     remove_feature,
     split_dataset,
 )
-from .factory import make_dataset, resolve_delta_timestamps
+from .factory import make_dataset, make_train_eval_datasets, resolve_delta_timestamps
 from .image_writer import safe_stop_image_writer
 from .io_utils import load_episodes, write_stats
+from .language import (
+    EVENT_ONLY_STYLES,
+    LANGUAGE_EVENTS,
+    LANGUAGE_PERSISTENT,
+    PERSISTENT_STYLES,
+    STYLE_REGISTRY,
+    column_for_style,
+)
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from .pyav_utils import check_video_encoder_parameters_pyav, detect_available_encoders_pyav
-from .sampler import EpisodeAwareSampler
+from .sampler import EpisodeAwareSampler, compute_sampler_state
 from .streaming_dataset import StreamingLeRobotDataset
 from .utils import DEFAULT_EPISODES_PATH, create_lerobot_dataset_card
 from .video_utils import VideoEncodingManager
@@ -54,10 +63,15 @@ __all__ = [
     "CODEBASE_VERSION",
     "DEFAULT_EPISODES_PATH",
     "DEFAULT_QUANTILES",
+    "EVENT_ONLY_STYLES",
     "EpisodeAwareSampler",
+    "LANGUAGE_EVENTS",
+    "LANGUAGE_PERSISTENT",
     "LeRobotDataset",
     "LeRobotDatasetMetadata",
     "MultiLeRobotDataset",
+    "PERSISTENT_STYLES",
+    "STYLE_REGISTRY",
     "StreamingLeRobotDataset",
     "VideoEncodingManager",
     "check_video_encoder_parameters_pyav",
@@ -68,15 +82,19 @@ __all__ = [
     "aggregate_stats",
     "convert_image_to_video_dataset",
     "create_initial_features",
+    "compute_sampler_state",
     "create_lerobot_dataset_card",
+    "column_for_style",
     "delete_episodes",
     "get_feature_stats",
     "load_episodes",
     "make_dataset",
+    "make_train_eval_datasets",
     "merge_datasets",
     "modify_features",
     "modify_tasks",
     "recompute_stats",
+    "reencode_dataset",
     "remove_feature",
     "resolve_delta_timestamps",
     "safe_stop_image_writer",
