@@ -38,6 +38,9 @@ lerobot-record \\
     --display_data=true
 ```
 
+To stream the data to Foxglove instead of Rerun, add ``--display_mode=foxglove`` (then connect the
+Foxglove app to ``ws://127.0.0.1:8765``; override the port with ``--display_port=<port>``).
+
 Example recording with bimanual so100:
 ```shell
 lerobot-record \\
@@ -158,7 +161,11 @@ from lerobot.utils.utils import (
     init_logging,
     log_say,
 )
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+from lerobot.utils.visualization_utils import (
+    init_visualization,
+    log_visualization_data,
+    shutdown_visualization,
+)
 
 
 @dataclass
@@ -169,11 +176,14 @@ class RecordConfig:
     teleop: TeleoperatorConfig | None = None
     # Display all cameras on screen
     display_data: bool = False
-    # Display data on a remote Rerun server
+    # Visualization backend used when display_data is True: "rerun" or "foxglove".
+    display_mode: str = "rerun"
+    # For "rerun": IP of a remote server to send to. For "foxglove": interface to bind the WebSocket
+    # server to (127.0.0.1 for local only, 0.0.0.0 for all interfaces).
     display_ip: str | None = None
-    # Port of the remote Rerun server
+    # For "rerun": port of the remote server. For "foxglove": port to bind the WebSocket server to.
     display_port: int | None = None
-    # Whether to  display compressed images in Rerun
+    # Whether to display compressed (JPEG) images instead of raw frames
     display_compressed_images: bool = False
     # Use vocal synthesis to read events.
     play_sounds: bool = True
@@ -234,6 +244,7 @@ def record_loop(
     control_time_s: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
+    display_mode: str = "rerun",
     display_compressed_images: bool = False,
 ):
     if dataset is not None and dataset.fps != fps:
@@ -328,8 +339,11 @@ def record_loop(
             dataset.add_frame(frame)
 
         if display_data:
-            log_rerun_data(
-                observation=obs_processed, action=action_values, compress_images=display_compressed_images
+            log_visualization_data(
+                display_mode,
+                observation=obs_processed,
+                action=action_values,
+                compress_images=display_compressed_images,
             )
 
         dt_s = time.perf_counter() - start_loop_t
@@ -355,7 +369,9 @@ def record(
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
-        init_rerun(session_name="recording", ip=cfg.display_ip, port=cfg.display_port)
+        init_visualization(
+            cfg.display_mode, session_name="recording", ip=cfg.display_ip, port=cfg.display_port
+        )
     display_compressed_images = (
         True
         if (cfg.display_data and cfg.display_ip is not None and cfg.display_port is not None)
@@ -465,6 +481,7 @@ def record(
                     control_time_s=cfg.dataset.episode_time_s,
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
+                    display_mode=cfg.display_mode,
                     display_compressed_images=display_compressed_images,
                 )
 
@@ -486,6 +503,7 @@ def record(
                         control_time_s=cfg.dataset.reset_time_s,
                         single_task=cfg.dataset.single_task,
                         display_data=cfg.display_data,
+                        display_mode=cfg.display_mode,
                     )
 
                 if events["rerecord_episode"]:
@@ -510,6 +528,9 @@ def record(
 
         if listener is not None:
             listener.stop()
+
+        if cfg.display_data:
+            shutdown_visualization(cfg.display_mode)
 
         if cfg.dataset.push_to_hub:
             if dataset and dataset.num_episodes > 0:

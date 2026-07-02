@@ -1551,6 +1551,26 @@ wheels = [
 ]
 
 [[package]]
+name = "foxglove-sdk"
+version = "0.25.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c1/a7/86a252782ea0d9baf1357369ad1bbf1ed644768702b0266a3fa3a05361d0/foxglove_sdk-0.25.1.tar.gz", hash = "sha256:8230f3c32ea3ab715818687377491594ec9c7e58e6b0ed8ed91aadf937ce706b", size = 547778, upload-time = "2026-06-02T03:13:18.942Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/15/59f02e8201b8da09ce05d8774820c29efc9149862b70ee6b3a27968e791a/foxglove_sdk-0.25.1-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:5af9f9a691eefbe6e0a47875ff2f7d0fc36607f0920e8690bbdc2dfd4fb22451", size = 17911538, upload-time = "2026-06-02T03:13:12.493Z" },
+    { url = "https://files.pythonhosted.org/packages/27/ed/16d809fab24cbfdf97c15c9cdd80eabfeb447ca545ede426950d62bac848/foxglove_sdk-0.25.1-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:3e908bd87d1926a05c785779d8252db6b87eef685f284ec1cf46ee501645d08e", size = 16452309, upload-time = "2026-06-02T03:13:10.607Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/c3/f95874935a3436841487df1f0202de4d20eabc0adb6b79c94c531bbe7eb3/foxglove_sdk-0.25.1-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:968e32c8668d172f6b546c8e7af658ed35a21ec165adc3bacf53a04dda159f12", size = 2355680, upload-time = "2026-06-02T02:34:01.668Z" },
+    { url = "https://files.pythonhosted.org/packages/38/da/ad22d8d6e3fedde9fc0c49aa8b20394e5e0bc44ab3fba564c77a64ddc7e2/foxglove_sdk-0.25.1-cp310-abi3-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:3f75374fedafe259c40b19bc645589d9453708eab679a5b07c603035f936d29a", size = 2274075, upload-time = "2026-06-02T02:34:07.212Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/fa/1254adb5e72eff507695473e9c82d0e90395b61463e5353762250db30d3d/foxglove_sdk-0.25.1-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7b6d3af517a00342bf7b08a4a65b043f3eafaa197138752b6fbd704fb91043fa", size = 2282160, upload-time = "2026-06-02T02:34:08.812Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/e4/2b22ef06ba4058494c7aa35974d138f8f1ae4cf5273f77d69c9dc3a99b45/foxglove_sdk-0.25.1-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:aed27c0f03a45fd6abdd566498bfee2672391602bcff32c827b8e3a6d8f67ab1", size = 22685338, upload-time = "2026-06-02T02:34:04.688Z" },
+    { url = "https://files.pythonhosted.org/packages/35/7c/58324c99b80eef0b674c8d4f5c2e07c66fd1480a27a8f0d4d79371805111/foxglove_sdk-0.25.1-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:419dd8308e3f91e2ae487b727f1bf1804642990876163b2a353db4a1b1de1425", size = 19326096, upload-time = "2026-06-02T02:34:10.939Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/9c/3452d92959e05fc6b1c1e5f032605d55623aeb6704357d20408f8781bc84/foxglove_sdk-0.25.1-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:0fcb36e628ab3d9043e193f12ad4dbbb955fe18616aac7ef5bca82c52910f108", size = 2539020, upload-time = "2026-06-02T03:13:14.365Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/af/57fa58525d3acb5c5480a6f0ef86450b1a0ccae2b21248edb1376073ce55/foxglove_sdk-0.25.1-cp310-abi3-musllinux_1_2_armv7l.whl", hash = "sha256:7909fd9f94935935dd8813702d84ffdbfebeb3866673c618ce35e8cfedd03029", size = 2550999, upload-time = "2026-06-02T03:13:15.715Z" },
+    { url = "https://files.pythonhosted.org/packages/90/78/f74bb167186c965d475ff360fa6eb7441d5ac6c6239d60f542f63984f849/foxglove_sdk-0.25.1-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:69d5966213b5212b8841b4004fe582db924a74f1610d8452ad890f6931702926", size = 2560166, upload-time = "2026-06-02T03:13:17.254Z" },
+    { url = "https://files.pythonhosted.org/packages/81/83/1c4c6d04fbd4784fe44fb2da021db1adf1f03a371f1e5679a383c1173235/foxglove_sdk-0.25.1-cp310-abi3-win32.whl", hash = "sha256:2a1121a5c74590ff6e61628c4a46dc57d392d290b4beeb29d6852933da56224a", size = 1618124, upload-time = "2026-06-02T03:13:20.158Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/4d/bdb9e252a41a951eb53908ac9cb965b7480c3ba649174f5398d4fcf0ca1d/foxglove_sdk-0.25.1-cp310-abi3-win_amd64.whl", hash = "sha256:6ed3ad0d3e72cd7875e7e293709c5ff90494fe14f1b48a336baffc313a7272cc", size = 16588452, upload-time = "2026-06-02T03:13:21.636Z" },
+]
+
+[[package]]
 name = "fqdn"
 version = "1.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2811,6 +2831,7 @@ all = [
     { name = "faker" },
     { name = "fastapi" },
     { name = "feetech-servo-sdk" },
+    { name = "foxglove-sdk" },
     { name = "grpcio" },
     { name = "grpcio-tools" },
     { name = "gym-aloha" },
@@ -2896,6 +2917,7 @@ core-scripts = [
     { name = "av" },
     { name = "datasets" },
     { name = "deepdiff" },
+    { name = "foxglove-sdk" },
     { name = "jsonlines" },
     { name = "pandas" },
     { name = "pyarrow" },
@@ -2918,6 +2940,7 @@ dataset = [
 dataset-viz = [
     { name = "av" },
     { name = "datasets" },
+    { name = "foxglove-sdk" },
     { name = "jsonlines" },
     { name = "pandas" },
     { name = "pyarrow" },
@@ -3191,6 +3214,7 @@ video-benchmark = [
     { name = "scikit-image" },
 ]
 viz = [
+    { name = "foxglove-sdk" },
     { name = "rerun-sdk" },
 ]
 vla-jepa = [
@@ -3230,6 +3254,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'phone'", specifier = "<1.0" },
     { name = "feetech-servo-sdk", marker = "extra == 'feetech'", specifier = ">=1.0.0,<2.0.0" },
     { name = "flash-attn", marker = "sys_platform != 'darwin' and extra == 'groot'", specifier = ">=2.5.9,<3.0.0" },
+    { name = "foxglove-sdk", marker = "extra == 'viz'", specifier = ">=0.25.1,<0.26.0" },
     { name = "grpcio", marker = "extra == 'grpcio-dep'", specifier = ">=1.73.1,<2.0.0" },
     { name = "grpcio", marker = "extra == 'reachy2'", specifier = "<=1.73.1" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.73.1,<2.0.0" },
