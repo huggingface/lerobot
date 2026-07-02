@@ -106,6 +106,7 @@ class RobotClient:
             lerobot_features,
             config.actions_per_chunk,
             config.policy_device,
+            similarity_fn_name=config.similarity_fn_name,
         )
         self.channel = grpc.insecure_channel(
             self.server_address, grpc_channel_options(initial_backoff=f"{config.environment_dt:.4f}s")
@@ -135,6 +136,13 @@ class RobotClient:
         # Use an event for thread-safe coordination
         self.must_go = threading.Event()
         self.must_go.set()  # Initially set - observations qualify for direct processing
+
+        # In-flight observation gate: set when an obs has been sent to the server
+        # and not yet acknowledged by a returning GetActions call (chunk or Empty).
+        # Prevents the control loop from emitting a second obs while the server is
+        # still processing the previous one — closes the double-refill race that
+        # used to be masked by the similarity check when similarity is "disabled".
+        self._obs_in_flight = threading.Event()
 
     @property
     def running(self):
@@ -277,6 +285,10 @@ class RobotClient:
                 # Use StreamActions to get a stream of actions from the server
                 actions_chunk = self.stub.GetActions(services_pb2.Empty())
                 if len(actions_chunk.data) == 0:
+                    # Server returned Empty (timeout / sanity-check rejection).
+                    # No queue update will happen, so release the in-flight
+                    # gate immediately to avoid deadlocking the control loop.
+                    self._obs_in_flight.clear()
                     continue  # received `Empty` from server, wait for next call
 
                 receive_time = time.time()
@@ -336,6 +348,13 @@ class RobotClient:
 
                 self.must_go.set()  # after receiving actions, next empty queue triggers must-go processing!
 
+                # Release the in-flight gate ONLY now — after the queue has
+                # been refilled. Releasing earlier (e.g. right after GetActions
+                # returned) leaves a window where the control loop sees a
+                # cleared gate but the still-draining old qsize, and fires a
+                # spurious second obs → the tight-V double refill pattern.
+                self._obs_in_flight.clear()
+
                 if verbose:
                     # Get queue state after changes
                     new_size, new_timesteps = self._inspect_action_queue()
@@ -357,6 +376,8 @@ class RobotClient:
 
             except grpc.RpcError as e:
                 self.logger.error(f"Error receiving actions: {e}")
+                # Don't leave the in-flight gate stuck if the RPC itself errored.
+                self._obs_in_flight.clear()
 
     def actions_available(self):
         """Check if there are actions available in the queue"""
@@ -401,7 +422,18 @@ class RobotClient:
         return _performed_action
 
     def _ready_to_send_observation(self):
-        """Flags when the client is ready to send an observation"""
+        """Flags when the client is ready to send an observation.
+
+        Gated on two conditions:
+        1. The action queue is at or below the configured chunk-size threshold.
+        2. No observation is currently in flight to the server. This prevents
+           the control loop from queueing a second inference on top of an
+           in-progress one — the race that produces the "double refill"
+           pattern (especially visible with similarity_fn="disabled", since
+           the server's similarity gate no longer absorbs it).
+        """
+        if self._obs_in_flight.is_set():
+            return False
         with self.action_queue_lock:
             return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
 
@@ -429,7 +461,14 @@ class RobotClient:
                 observation.must_go = self.must_go.is_set() and self.action_queue.empty()
                 current_queue_size = self.action_queue.qsize()
 
-            _ = self.send_observation(observation)
+            # Mark obs as in-flight BEFORE sending so the control loop on the
+            # next tick cannot race ahead and queue a second obs.
+            # The flag is cleared in `receive_actions` once the corresponding
+            # GetActions call returns (chunk or Empty), or here on send failure.
+            self._obs_in_flight.set()
+            send_ok = self.send_observation(observation)
+            if not send_ok:
+                self._obs_in_flight.clear()
 
             self.logger.debug(f"QUEUE SIZE: {current_queue_size} (Must go: {observation.must_go})")
             if observation.must_go:
