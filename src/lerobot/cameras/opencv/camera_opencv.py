@@ -489,7 +489,6 @@ class OpenCVCamera(Camera):
                 logger.warning(f"{self} read thread did not terminate within timeout.")
 
         self.thread = None
-        self.stop_event = None
 
         with self.frame_lock:
             self.latest_frame = None
