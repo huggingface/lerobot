@@ -13,18 +13,34 @@
 # limitations under the License.
 
 from .transforms import (
+    CoarseDropout,
+    GammaCorrection,
+    GaussianNoise,
+    GaussianPatchBrightness,
     ImageTransformConfig,
     ImageTransforms,
     ImageTransformsConfig,
+    JPEGCompression,
+    MotionBlur,
+    PlanckianJitter,
+    RandomShadow,
     RandomSubsetApply,
     SharpnessJitter,
     make_transform_from_config,
 )
 
 __all__ = [
+    "CoarseDropout",
+    "GammaCorrection",
+    "GaussianNoise",
+    "GaussianPatchBrightness",
     "ImageTransformConfig",
     "ImageTransforms",
     "ImageTransformsConfig",
+    "JPEGCompression",
+    "MotionBlur",
+    "PlanckianJitter",
+    "RandomShadow",
     "RandomSubsetApply",
     "SharpnessJitter",
     "make_transform_from_config",
