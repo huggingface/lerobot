@@ -1786,7 +1786,7 @@ class PI052Policy(PreTrainedPolicy):
         suppress_loc_tokens: bool = False,
         use_kv_cache: bool = True,
     ) -> str:
-        """Generate text continuation from a multimodal prefix (used by PI052Runtime).
+        """Generate text continuation from a multimodal prefix (used by the runtime CLI).
 
         ``suppress_loc_tokens=True`` masks PaliGemma's reserved ``<locDDDD>`` ids
         ([256000, 257024)) before sampling — the pretraining prior drifts back to

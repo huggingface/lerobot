@@ -12,31 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PI052 runtime adapter and CLI helpers."""
+"""PI052 bridge to the generic language-conditioned runtime.
 
-from lerobot.runtime import (
-    LanguageConditionedRuntime,
-    RuntimeState,
-    Tick,
-    TickClock,
-    VQAResult,
-)
+The runtime, REPL, and CLI are policy-agnostic and live in
+:mod:`lerobot.runtime`. PI052 supplies only :class:`PI052PolicyAdapter`;
+the ``lerobot-pi052-runtime`` entry point wires it into
+:func:`lerobot.runtime.cli.run`.
+"""
 
 from .pi052_adapter import PI052PolicyAdapter
-from .repl import StdinReader
-from .runtime import PI052Runtime
-from .ui import make_state_panel, print_robot_lines, print_user_line
 
-__all__ = [
-    "LanguageConditionedRuntime",
-    "PI052PolicyAdapter",
-    "PI052Runtime",
-    "RuntimeState",
-    "StdinReader",
-    "Tick",
-    "TickClock",
-    "VQAResult",
-    "make_state_panel",
-    "print_robot_lines",
-    "print_user_line",
-]
+__all__ = ["PI052PolicyAdapter"]

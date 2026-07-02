@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Policy-agnostic high/low-level runtime for language-conditioned policies."""
+"""Policy-agnostic high/low-level runtime for language-conditioned policies.
+
+The tick loop, REPL, and interactive CLI here are policy-independent; a
+policy plugs in by implementing :class:`LanguageConditionedPolicyAdapter`
+and calling :func:`lerobot.runtime.cli.run` with an adapter factory.
+"""
 
 from .language_runtime import (
     LanguageConditionedPolicyAdapter,
@@ -20,7 +25,6 @@ from .language_runtime import (
     RuntimeState,
     Tick,
     TickClock,
-    VQAResult,
 )
 
 __all__ = [
@@ -29,5 +33,4 @@ __all__ = [
     "RuntimeState",
     "Tick",
     "TickClock",
-    "VQAResult",
 ]

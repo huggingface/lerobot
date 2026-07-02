@@ -1,7 +1,6 @@
 from lerobot.runtime import (
     LanguageConditionedRuntime,
     RuntimeState,
-    VQAResult,
 )
 
 
@@ -18,9 +17,6 @@ class FakeAdapter:
     def select_text(self, kind, observation, state, user_text=None):
         self.text_calls.append((kind, user_text))
         return "new plan"
-
-    def answer_vqa(self, question, camera, observation, state):
-        return VQAResult(answer=f"answer: {question}")
 
     def update_language_state(self, observation, state):
         self.updated = True

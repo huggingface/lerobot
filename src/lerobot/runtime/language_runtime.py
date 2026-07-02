@@ -27,15 +27,6 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class VQAResult:
-    """Text answer plus optional parsed spatial payload."""
-
-    answer: str
-    parsed: dict[str, Any] | None = None
-    camera: str | None = None
-
-
-@dataclass
 class RuntimeState:
     """Explicit state shared by the runtime and policy adapter."""
 
@@ -137,14 +128,6 @@ class LanguageConditionedPolicyAdapter(Protocol):
         state: RuntimeState,
         user_text: str | None = None,
     ) -> str: ...
-
-    def answer_vqa(
-        self,
-        question: str,
-        camera: str | None,
-        observation: dict[str, Any] | None,
-        state: RuntimeState,
-    ) -> VQAResult: ...
 
 
 @dataclass
@@ -290,8 +273,6 @@ class LanguageConditionedRuntime:
     def maybe_handle_user_events(self) -> None:
         if self.state.take_event("user_interjection"):
             self._handle_user_interjection()
-        if self.state.take_event("user_vqa_query"):
-            self._handle_vqa_query()
 
     def _handle_user_interjection(self) -> None:
         text = str(self.state.extra.get("recent_interjection") or "")
@@ -305,16 +286,6 @@ class LanguageConditionedRuntime:
         if plan:
             self.state.set_context("plan", plan, label="plan")
         self.state.extra["recent_interjection"] = None
-
-    def _handle_vqa_query(self) -> None:
-        question = str(self.state.extra.get("recent_vqa_query") or "")
-        if not question:
-            return
-        observation = self._current_observation()
-        result = self.policy_adapter.answer_vqa(question, None, observation, self.state)
-        if result.answer:
-            self.state.log(f"  vqa: {result.answer}")
-        self.state.extra["recent_vqa_query"] = None
 
     def maybe_enqueue_action_chunk(self, *, force: bool = False) -> None:
         if self.state.mode != "action" or not self.state.task:

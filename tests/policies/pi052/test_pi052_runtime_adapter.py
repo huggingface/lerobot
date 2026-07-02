@@ -23,9 +23,6 @@ def test_pi052_adapter_builds_recipe_prompts_from_runtime_state():
         {"role": "assistant", "content": "Previous plan:\npick then place"},
         {"role": "user", "content": "wait"},
     ]
-    assert adapter.messages_for("vqa", state, user_text="where is the cup?") == [
-        {"role": "user", "content": "where is the cup?"}
-    ]
 
 
 def test_pi052_adapter_strips_say_markers_from_plan_text():
@@ -37,15 +34,19 @@ def test_pi052_adapter_strips_say_markers_from_plan_text():
 
 
 def test_pi052_runtime_cli_smoke_does_not_load_model(monkeypatch):
-    from lerobot.policies.pi052.inference import runtime_cli
+    """The pi052 entry wires its adapter into the generic runtime CLI."""
+    from lerobot.runtime import cli
+    from lerobot.scripts import lerobot_pi052_runtime
 
     fake_policy = SimpleNamespace(config=SimpleNamespace(device="cpu"))
 
     monkeypatch.setattr(
-        runtime_cli,
+        cli,
         "_load_policy_and_preprocessor",
         lambda policy_path, dataset_repo_id: (fake_policy, None, None, None),
     )
-    monkeypatch.setattr(runtime_cli, "_run_repl", lambda runtime, initial_task, max_ticks: 0)
+    monkeypatch.setattr(cli, "_run_repl", lambda runtime, **kwargs: 0)
 
-    assert runtime_cli.main(["--policy.path=fake", "--no_robot", "--task=clean", "--max_ticks=0"]) == 0
+    assert (
+        lerobot_pi052_runtime.main(["--policy.path=fake", "--no_robot", "--task=clean", "--max_ticks=0"]) == 0
+    )

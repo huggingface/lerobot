@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from lerobot.runtime import RuntimeState, VQAResult
+from lerobot.runtime import RuntimeState
 
 logger = logging.getLogger(__name__)
 
@@ -72,18 +72,6 @@ class PI052PolicyAdapter:
     def plan_from_text(self, text: str) -> str:
         plan, _speech = split_plan_and_say(text)
         return "" if looks_like_gibberish(plan) else plan
-
-    def answer_vqa(
-        self,
-        question: str,
-        camera: str | None,
-        observation: dict[str, Any] | None,
-        state: RuntimeState,
-    ) -> VQAResult:
-        answer = self.select_text("vqa", observation, state, user_text=question)
-        from .vqa import parse_vqa_answer  # noqa: PLC0415
-
-        return VQAResult(answer=answer, parsed=parse_vqa_answer(answer), camera=camera)
 
     def update_language_state(self, observation: dict[str, Any] | None, state: RuntimeState) -> None:
         chunks_per_gen = max(1, int(state.extra.get("subtask_chunks_per_gen", 1) or 1))
@@ -171,8 +159,6 @@ class PI052PolicyAdapter:
             return messages
         if kind == "plan":
             return [{"role": "user", "content": state.task or ""}]
-        if kind == "vqa":
-            return [{"role": "user", "content": user_text or ""}]
         raise ValueError(f"Unknown PI052 text kind: {kind}")
 
 

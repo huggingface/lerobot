@@ -12,13 +12,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""``lerobot-pi052-runtime`` — interactive REPL for trained PI052.
+"""Interactive REPL for a language-conditioned robot policy.
 
-Drives the multi-rate runtime defined in
-:mod:`lerobot.policies.pi052.inference`. Stdin becomes the user
-channel: type a task, then natural-language interjections / questions.
-The runtime prints state changes (plan / subtask / memory / vqa /
-speech) as they happen.
+Policy-agnostic CLI over :class:`lerobot.runtime.LanguageConditionedRuntime`.
+A policy wires it up with :func:`run`, passing an adapter factory
+(``policy -> LanguageConditionedPolicyAdapter``); see
+``lerobot.scripts.lerobot_pi052_runtime`` for the PI052 entry point.
+
+Stdin is the user channel: type a task, then natural-language
+interjections. The runtime prints state changes (plan / subtask /
+memory) as they happen.
 
 Examples
 --------
@@ -27,16 +30,16 @@ Dry run on a Hub checkpoint, no robot connected — useful for sanity-
 checking text generation::
 
     uv run lerobot-pi052-runtime \\
-        --policy.path=pepijn223/pi052_hirobot_super_poulain_tool2 \\
+        --policy.path=<repo-or-dir> \\
         --no_robot \\
         --task="please clean the kitchen"
 
 Same, but feed real frames from an annotated dataset so plan / subtask
-/ memory / VQA generation runs against actual video + state::
+/ memory generation runs against actual video + state::
 
     uv run lerobot-pi052-runtime \\
-        --policy.path=pepijn223/pi052_hirobot_super_poulain_tool2 \\
-        --dataset.repo_id=pepijn223/super_poulain_annotated \\
+        --policy.path=<repo-or-dir> \\
+        --dataset.repo_id=<annotated-dataset> \\
         --dataset.episode=0 \\
         --no_robot \\
         --task="please clean the kitchen"
@@ -45,8 +48,7 @@ With a real robot::
 
     uv run lerobot-pi052-runtime \\
         --policy.path=... \\
-        --robot.type=so101 --robot.port=/dev/tty.usbmodem... \\
-        --tts.voice=alba
+        --robot.type=so101 --robot.port=/dev/tty.usbmodem...
 
 ``--policy.path`` accepts either a local directory or a Hugging Face
 Hub repo id. ``--dataset.repo_id`` likewise.
@@ -61,23 +63,23 @@ from collections.abc import Callable
 from contextlib import suppress
 from typing import Any
 
+from .language_runtime import LanguageConditionedPolicyAdapter, LanguageConditionedRuntime
 from .repl import _emit
 
-logger = logging.getLogger("lerobot.pi052.runtime")
+logger = logging.getLogger("lerobot.runtime")
 
 
-def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description=("Interactive REPL runtime for a trained PI052 hierarchical VLA checkpoint."),
+        prog=prog,
+        description="Interactive REPL runtime for a language-conditioned robot policy.",
     )
     p.add_argument(
         "--policy.path",
         dest="policy_path",
         type=str,
         required=True,
-        help=(
-            "Local directory or Hugging Face Hub repo id pointing at a trained PI052 ``pretrained_model``."
-        ),
+        help="Local directory or Hugging Face Hub repo id pointing at a trained ``pretrained_model``.",
     )
     p.add_argument(
         "--dataset.repo_id",
@@ -88,8 +90,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Optional dataset (local path or Hub repo id) used to drive "
             "observations during dry-run inference. When set, the runtime "
             "reads camera frames + state from the chosen episode and feeds "
-            "them into all forward passes — so plan / subtask / memory / "
-            "VQA generation see the same visual context the policy was "
+            "them into all forward passes — so plan / subtask / memory "
+            "generation see the same visual context the policy was "
             "trained on."
         ),
     )
@@ -168,7 +170,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # an action executor that postprocesses (denormalises) the policy's
     # output and calls ``robot.send_action(...)`` at ``--ctrl_hz``. The
     # high-level REPL-style stdin still works in a background thread
-    # for interjections / VQA.
+    # for interjections.
     p.add_argument(
         "--robot.type",
         dest="robot_type",
@@ -306,7 +308,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 # Columns the runtime supplies itself via its own message stream — strip
-# them so ``RenderMessagesStep`` / ``PI052TextTokenizerStep`` are no-ops.
+# them so the recipe render + text-tokenizer processor steps are no-ops.
 _RUNTIME_OWNED_LANGUAGE_COLS = ("language_persistent", "language_events")
 
 
@@ -331,7 +333,7 @@ def _load_policy_and_preprocessor(
     policy_path: str,
     dataset_repo_id: str | None,
 ) -> tuple[Any, Any, Any, Any]:
-    """Load a PI052 checkpoint (local path or Hub repo id).
+    """Load a policy checkpoint (local path or Hub repo id).
 
     Returns ``(policy, preprocessor, postprocessor, ds_meta)``.
     ``preprocessor`` / ``postprocessor`` / ``ds_meta`` are ``None``
@@ -439,7 +441,7 @@ def _bootstrap_state_from_dataset(
 ) -> dict[str, str]:
     """Pull task / active plan / memory / subtask at ``start_frame``, so the
     runtime's first prompt matches the canonical training prompts (an OOD
-    prompt makes the model fall back to its dominant mode, VQA JSON spam).
+    prompt makes the model fall back to its dominant training mode).
     """
     from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: PLC0415
 
@@ -519,7 +521,7 @@ def _select_task_interactively(
         # bootstrap default (may be None — REPL handles that).
         return bootstrap_task
 
-    print("\n[pi052] Select startup task:", flush=True)
+    print("\n[runtime] Select startup task:", flush=True)
     if options:
         for i, opt in enumerate(options, 1):
             marker = "  (dataset default)" if opt == bootstrap_task else ""
@@ -887,18 +889,13 @@ def _build_robot_action_executor(
 def _print_runtime_help() -> None:
     """Print the slash-command reference."""
     print(
-        "[pi052] commands (arguments need no quotes):\n"
+        "[runtime] commands (arguments need no quotes):\n"
         "  /action <task>     run the robot; an argument switches to that task\n"
         "  /action            resume the robot on the current task\n"
         "  /action <seconds>  run the robot for N seconds, then auto-pause\n"
         "  /pause             pause the action loop — robot holds position\n"
-        "  /question <text>   pause and answer one VQA question\n"
         "  /help              show this help\n"
-        "  stop | quit | exit end the session\n"
-        "\n"
-        "  VQA examples:\n"
-        "    /question point to the yellow cube     -> point overlay\n"
-        "    /question detect the blue cube         -> bounding-box overlay",
+        "  stop | quit | exit end the session",
         flush=True,
     )
 
@@ -935,7 +932,6 @@ def _handle_slash_command(runtime: Any, line: str) -> bool:
                             (seconds), no argument resumes the current
                             task.
       ``/pause``            pause the action loop — the robot holds.
-      ``/question "text"``  pause and answer one VQA question.
       ``/help``             print the command reference.
 
     Returns ``True`` when ``line`` was a recognised command (consumed).
@@ -955,7 +951,7 @@ def _handle_slash_command(runtime: Any, line: str) -> bool:
             secs = float(rest)
             runtime.state["action_deadline"] = _time.monotonic() + secs
             print(
-                f"[pi052] action — running {secs:g}s, then auto-pause",
+                f"[runtime] action — running {secs:g}s, then auto-pause",
                 flush=True,
             )
         else:
@@ -965,16 +961,16 @@ def _handle_slash_command(runtime: Any, line: str) -> bool:
                 # New task → drop the stale subtask so the high-level
                 # loop regenerates one for the new goal.
                 runtime.state["current_subtask"] = None
-                print(f"[pi052] action — task: {rest!r}", flush=True)
+                print(f"[runtime] action — task: {rest!r}", flush=True)
             elif runtime.state.get("task"):
                 print(
-                    f"[pi052] action — resuming: {runtime.state['task']!r}",
+                    f"[runtime] action — resuming: {runtime.state['task']!r}",
                     flush=True,
                 )
             else:
                 runtime.state["mode"] = "paused"
                 print(
-                    "[pi052] no task set — use /action <your task>",
+                    "[runtime] no task set — use /action <your task>",
                     flush=True,
                 )
         return True
@@ -983,44 +979,13 @@ def _handle_slash_command(runtime: Any, line: str) -> bool:
         runtime.state["mode"] = "paused"
         runtime.state["action_deadline"] = None
         _clear_action_queue(runtime)
-        print("[pi052] paused — robot holding position", flush=True)
-        return True
-
-    if cmd in {"/question", "/q", "/ask", "/vqa", "/vlm"}:
-        # A question always pauses the action loop first so the policy
-        # is not used concurrently by the background runtime thread.
-        runtime.state["mode"] = "paused"
-        runtime.state["action_deadline"] = None
-        _clear_action_queue(runtime)
-        if not rest:
-            print(
-                "[pi052] usage: /question <your question>  (e.g. /question point to the yellow cube)",
-                flush=True,
-            )
-            return True
-        _run_vqa_query(runtime, rest)
+        print("[runtime] paused — robot holding position", flush=True)
         return True
 
     if cmd in {"/help", "/?"}:
         _print_runtime_help()
         return True
     return False
-
-
-def _run_vqa_query(runtime: Any, question: str) -> None:
-    """Run one interactive VQA question against the runtime's policy.
-
-    Invoked by ``/question`` — the action loop is paused first so the
-    policy is free for a synchronous VQA call.
-    """
-    from lerobot.policies.pi052.inference.vqa import handle_vqa_query  # noqa: PLC0415
-
-    handle_vqa_query(
-        policy_adapter=runtime.policy_adapter,
-        observation_provider=runtime.observation_provider,
-        question=question,
-        state=runtime.state,
-    )
 
 
 def _run_autonomous(
@@ -1030,6 +995,7 @@ def _run_autonomous(
     auto_start: bool,
     initial_task: str | None,
     max_ticks: int | None,
+    panel_label: str = "Runtime",
 ) -> int:
     """Drive the runtime continuously at ``ctrl_hz`` while accepting
     stdin events in the foreground.
@@ -1049,10 +1015,10 @@ def _run_autonomous(
     if not auto_start and runtime.state.get("mode", "paused") == "action":
         try:
             input(
-                "[pi052] Robot connected — starting in ACTION mode. Press ENTER to begin, Ctrl+C to abort. "
+                "[runtime] Robot connected — starting in ACTION mode. Press ENTER to begin, Ctrl+C to abort. "
             )
         except (EOFError, KeyboardInterrupt):
-            print("\n[pi052] aborted before start", flush=True)
+            print("\n[runtime] aborted before start", flush=True)
             return 130
 
     if initial_task:
@@ -1061,7 +1027,7 @@ def _run_autonomous(
     thread = threading.Thread(
         target=runtime.run,
         kwargs={"max_ticks": max_ticks},
-        name="pi052-runtime-loop",
+        name="runtime-loop",
         daemon=True,
     )
     thread.start()
@@ -1085,7 +1051,9 @@ def _run_autonomous(
 
     runtime._flush_logs = _flush_into_scrollback  # type: ignore[method-assign]
 
-    redraw = _make_state_panel_renderer(runtime, mode_label="autonomous", scrollback=_scrollback)
+    redraw = _make_state_panel_renderer(
+        runtime, mode_label="autonomous", panel_label=panel_label, scrollback=_scrollback
+    )
     redraw()
     print(
         "  [autonomous] /action <task> to run  ·  /pause to stop  ·  "
@@ -1119,7 +1087,7 @@ def _run_autonomous(
                     if hasattr(queue, "clear"):
                         queue.clear()
                     print(
-                        "\n[pi052] timed action elapsed — paused",
+                        "\n[runtime] timed action elapsed — paused",
                         flush=True,
                     )
                 else:
@@ -1130,7 +1098,7 @@ def _run_autonomous(
                         print("> ", end="", flush=True)
             _panel_stop.wait(0.7)
 
-    panel_thread = threading.Thread(target=_panel_loop, name="pi052-panel-redraw", daemon=True)
+    panel_thread = threading.Thread(target=_panel_loop, name="runtime-panel-redraw", daemon=True)
     panel_thread.start()
 
     try:
@@ -1160,11 +1128,11 @@ def _run_autonomous(
                 _emit(runtime.state, "user_interjection")
             else:
                 print(
-                    "[pi052] no task yet — use /action <your task> to start",
+                    "[runtime] no task yet — use /action <your task> to start",
                     flush=True,
                 )
     except KeyboardInterrupt:
-        print("\n[pi052] interrupt — stopping", flush=True)
+        print("\n[runtime] interrupt — stopping", flush=True)
     finally:
         _panel_stop.set()
         runtime.stop()
@@ -1175,9 +1143,9 @@ def _run_autonomous(
             time.sleep(0.1)
         try:
             robot.disconnect()
-            print("[pi052] robot disconnected", flush=True)
+            print("[runtime] robot disconnected", flush=True)
         except Exception as exc:  # noqa: BLE001
-            print(f"[pi052] WARNING: robot.disconnect raised {exc}", flush=True)
+            print(f"[runtime] WARNING: robot.disconnect raised {exc}", flush=True)
 
     return 0
 
@@ -1186,6 +1154,7 @@ def _make_state_panel_renderer(
     runtime: Any,
     *,
     mode_label: str,
+    panel_label: str = "Runtime",
     scrollback: list[str] | None = None,
 ) -> Callable[[list[str] | None], None]:
     """Return a closure that prints the task/subtask/plan/memory panel.
@@ -1204,24 +1173,15 @@ def _make_state_panel_renderer(
         st = runtime.state
         run_mode = st.get("mode", "action")
         mode_tag = "[green]mode: action[/]" if run_mode == "action" else "[yellow]mode: paused[/]"
-        console.rule(f"[bold]PI052[/] · {mode_label} · {mode_tag}", style="cyan")
+        console.rule(f"[bold]{panel_label}[/] · {mode_label} · {mode_tag}", style="cyan")
         # Always-visible command hint so the operator never has to
         # remember the slash commands.
         if run_mode == "action":
-            console.print(
-                "  [dim]commands:[/] [bold]/pause[/] stop  ·  "
-                "[bold]/question[/] <text> ask  ·  [bold]/help[/]  ·  [bold]stop[/]"
-            )
+            console.print("  [dim]commands:[/] [bold]/pause[/] stop  ·  [bold]/help[/]  ·  [bold]stop[/]")
         else:
             console.print(
-                "  [dim]commands:[/] [bold]/action[/] <task> run  ·  "
-                "[bold]/question[/] <text> ask  ·  [bold]/help[/]  ·  [bold]stop[/]"
+                "  [dim]commands:[/] [bold]/action[/] <task> run  ·  [bold]/help[/]  ·  [bold]stop[/]"
             )
-        # Reference VQA prompts — the two answer shapes that draw an
-        # overlay (point + bounding box). No quotes needed.
-        console.print(
-            "  [dim]vqa examples:[/] /question point to the yellow cube  ·  /question detect the blue cube"
-        )
         for key, label in (
             ("task", "task"),
             ("current_subtask", "subtask"),
@@ -1238,13 +1198,8 @@ def _make_state_panel_renderer(
             if isinstance(st.get("action_queue"), (list, tuple)) or hasattr(st.get("action_queue"), "__len__")
             else 0
         )
-        pending = len(st.get("tool_calls_pending") or [])
         dispatched = int(st.get("actions_dispatched") or 0)
-        console.print(
-            f"  [dim]queued actions: {queue_len}    "
-            f"dispatched: {dispatched}    "
-            f"pending tool calls: {pending}[/]"
-        )
+        console.print(f"  [dim]queued actions: {queue_len}    dispatched: {dispatched}[/]")
 
         # Overfit / memorisation diagnostics. The high-level steps
         # surface the raw generation each time they fire (even when
@@ -1278,8 +1233,8 @@ def _make_state_panel_renderer(
             console.print(f"  [dim]gen rejects     memory:{mem_gib}  plan:{plan_gib}[/]")
         console.rule(style="cyan")
         # Runtime scrollback — log lines pushed from generation steps
-        # (warnings, gibberish rejections, plan/say speech, vqa
-        # answers). Last N lines, oldest first.
+        # (warnings, gibberish rejections, plan speech). Last N lines,
+        # oldest first.
         if scrollback:
             for line in scrollback:
                 console.print(f"  [magenta]{line.rstrip()}[/]")
@@ -1290,9 +1245,7 @@ def _make_state_panel_renderer(
             console.print()
         if not st.get("task"):
             console.print(
-                "  [dim]Type [bold]/action <your task>[/bold] to begin, "
-                "[bold]/question <text>[/bold] to ask, /help for commands, "
-                "stop to exit.[/]"
+                "  [dim]Type [bold]/action <your task>[/bold] to begin, /help for commands, stop to exit.[/]"
             )
 
     return _redraw
@@ -1338,8 +1291,21 @@ def _silence_noisy_loggers() -> None:
     logging.getLogger("lerobot.robots.utils").setLevel(logging.ERROR)
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parse_args(argv)
+def run(
+    argv: list[str] | None = None,
+    *,
+    adapter_factory: Callable[[Any], LanguageConditionedPolicyAdapter],
+    panel_label: str = "Runtime",
+    prog: str | None = None,
+) -> int:
+    """Run the interactive language-conditioned runtime CLI.
+
+    A policy wires this up by passing ``adapter_factory`` — a callable
+    that turns a loaded policy into a :class:`LanguageConditionedPolicyAdapter`
+    (typically the adapter class itself). ``panel_label`` names the state
+    panel; ``prog`` sets the argparse program name for ``--help``.
+    """
+    args = _parse_args(argv, prog=prog)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
@@ -1349,14 +1315,14 @@ def main(argv: list[str] | None = None) -> int:
     autonomous_mode = bool(args.robot_type) and not args.no_robot
     if autonomous_mode and not args.dataset_repo_id:
         print(
-            "[pi052] ERROR: autonomous robot mode requires --dataset.repo_id "
+            "[runtime] ERROR: autonomous robot mode requires --dataset.repo_id "
             "for action-denormalisation stats and feature shapes. Pass the "
             "same dataset the policy was trained on.",
             file=sys.stderr,
         )
         return 2
 
-    print(f"[pi052] loading policy from {args.policy_path}", flush=True)
+    print(f"[runtime] loading policy from {args.policy_path}", flush=True)
     policy, preprocessor, postprocessor, ds_meta = _load_policy_and_preprocessor(
         args.policy_path, args.dataset_repo_id
     )
@@ -1387,7 +1353,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if chosen:
             args.task = chosen
-            print(f"[pi052] task: {args.task!r}", flush=True)
+            print(f"[runtime] task: {args.task!r}", flush=True)
 
     # No startup prompts — the runtime is command-driven. It comes up at
     # the command line in ``paused`` mode (robot idle) unless ``--mode``
@@ -1401,7 +1367,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if autonomous_mode:
         print(
-            f"[pi052] connecting to robot.type={args.robot_type} port={args.robot_port}",
+            f"[runtime] connecting to robot.type={args.robot_type} port={args.robot_port}",
             flush=True,
         )
         robot = _build_robot(
@@ -1425,7 +1391,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.dataset_repo_id is not None:
         print(
-            f"[pi052] streaming observations from {args.dataset_repo_id} "
+            f"[runtime] streaming observations from {args.dataset_repo_id} "
             f"episode={args.dataset_episode} "
             f"start_frame={args.dataset_start_frame}",
             flush=True,
@@ -1440,13 +1406,8 @@ def main(argv: list[str] | None = None) -> int:
             augment=getattr(args, "dataset_augment_at_inference", False),
         )
 
-    from lerobot.policies.pi052.inference import (  # noqa: PLC0415
-        LanguageConditionedRuntime,
-        PI052PolicyAdapter,
-    )
-
     runtime = LanguageConditionedRuntime(
-        policy_adapter=PI052PolicyAdapter(policy),
+        policy_adapter=adapter_factory(policy),
         observation_provider=observation_provider,
         action_executor=robot_executor,
         # No background event collector — the REPL drives ticks
@@ -1466,7 +1427,7 @@ def main(argv: list[str] | None = None) -> int:
     runtime.state["text_gen_min_new_tokens"] = int(getattr(args, "text_min_new_tokens", 0) or 0)
     runtime.state["text_gen_temperature"] = float(getattr(args, "text_temperature", 0.0) or 0.0)
     runtime.state["text_gen_top_p"] = float(getattr(args, "text_top_p", 1.0) or 1.0)
-    # Subtask throttle: the PI052 adapter updates language state only once every N
+    # Subtask throttle: the adapter updates language state only once every N
     # action-chunk boundaries. Lets you run N action chunks per LM-head
     # subtask gen (e.g. ``--subtask_chunks_per_gen=5`` ≈ 5 flow-matching
     # chunks per subtask refresh) so the subtask doesn't churn while
@@ -1493,6 +1454,7 @@ def main(argv: list[str] | None = None) -> int:
             auto_start=args.auto_start,
             initial_task=args.task,
             max_ticks=args.max_ticks,
+            panel_label=panel_label,
         )
     # Fire one full pipeline tick at startup so the obs diagnostic
     # *and* the subtask generation actually run before the REPL
@@ -1508,11 +1470,13 @@ def main(argv: list[str] | None = None) -> int:
             logger.warning("startup tick failed: %s", exc)
             startup_logs = []
         for line in startup_logs or []:
-            print(f"[pi052] {line}", flush=True)
-    return _run_repl(runtime, initial_task=args.task, max_ticks=args.max_ticks)
+            print(f"[runtime] {line}", flush=True)
+    return _run_repl(runtime, initial_task=args.task, max_ticks=args.max_ticks, panel_label=panel_label)
 
 
-def _run_repl(runtime: Any, *, initial_task: str | None, max_ticks: int | None) -> int:
+def _run_repl(
+    runtime: Any, *, initial_task: str | None, max_ticks: int | None, panel_label: str = "Runtime"
+) -> int:
     """Claude-Code-style block REPL.
 
     Each turn redraws a status block (task / subtask / plan / memory)
@@ -1526,12 +1490,12 @@ def _run_repl(runtime: Any, *, initial_task: str | None, max_ticks: int | None) 
         from rich.console import Console  # noqa: PLC0415
     except ImportError:
         print(
-            "[pi052] rich is required for the interactive REPL. `pip install rich` and re-run.",
+            "[runtime] rich is required for the interactive REPL. `pip install rich` and re-run.",
             file=sys.stderr,
         )
         return 2
 
-    _redraw = _make_state_panel_renderer(runtime, mode_label="dry-run")
+    _redraw = _make_state_panel_renderer(runtime, mode_label="dry-run", panel_label=panel_label)
     # Keep a local ``console`` just for the styled input prompt; the
     # state panel is owned by the shared renderer.
     console = Console(highlight=False)
@@ -1570,7 +1534,7 @@ def _run_repl(runtime: Any, *, initial_task: str | None, max_ticks: int | None) 
             # task to be meaningful.
             if not runtime.state.get("task"):
                 print(
-                    "[pi052] no task yet — use /action <your task>",
+                    "[runtime] no task yet — use /action <your task>",
                     flush=True,
                 )
                 _redraw(last_logs)
@@ -1588,7 +1552,3 @@ def _run_repl(runtime: Any, *, initial_task: str | None, max_ticks: int | None) 
         console.print("\n[dim]interrupted[/]")
     console.print("[dim]runtime stopped[/]")
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

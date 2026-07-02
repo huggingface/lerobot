@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Rich-based REPL layout for the PI052 runtime.
+"""Rich-based REPL layout for the language-conditioned runtime.
 
 Two-zone terminal layout:
 
@@ -56,7 +56,7 @@ _STATE_KEYS = (
 )
 
 
-def make_state_panel(state: dict[str, Any]) -> Any:
+def make_state_panel(state: dict[str, Any], *, title: str = "Runtime state") -> Any:
     """Render the persistent state panel for the live region.
 
     Returns a :class:`rich.panel.Panel`. Caller passes it to
@@ -76,19 +76,13 @@ def make_state_panel(state: dict[str, Any]) -> Any:
         table.add_row(label, rendered)
     queue = state.get("action_queue")
     queue_len = len(queue) if hasattr(queue, "__len__") else 0
-    pending = state.get("tool_calls_pending") or []
-    footer = Text.assemble(
-        ("queued actions: ", "dim"),
-        (str(queue_len), "bold cyan"),
-        ("    pending tool calls: ", "dim"),
-        (str(len(pending)), "bold magenta"),
-    )
+    footer = Text.assemble(("queued actions: ", "dim"), (str(queue_len), "bold cyan"))
     table.add_row("", footer)
     run_mode = state.get("mode", "action")
     mode_tag = "[green]action[/]" if run_mode == "action" else "[yellow]paused[/]"
     return Panel(
         table,
-        title=f"[bold]PI052 state[/] · mode: {mode_tag}",
+        title=f"[bold]{title}[/] · mode: {mode_tag}",
         border_style="cyan",
     )
 

@@ -11,21 +11,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Stdin REPL event collector for the PI052 runtime.
+"""Stdin REPL event collector for the language-conditioned runtime.
 
 Reads non-blocking stdin lines, classifies each one heuristically:
 
   "stop" / "quit" / "exit"               → state["stop"] = True
   "/action" / "/pause"                    → set state["mode"]
-  ends with "?"                           → user_vqa_query event
   starts with "task:" or first line       → set runtime task
   anything else                           → user_interjection event
 
 Plugged into the runtime via ``event_collector=StdinReader().poll``.
 
-Note: the shipped CLI (``lerobot-pi052-runtime``) drives stdin
-directly in its REPL / autonomous loops and does *not* wire this
-collector; it's kept as the documented embedding hook and for tests.
+Note: the shipped CLI drives stdin directly in its REPL / autonomous
+loops and does *not* wire this collector; it's kept as the documented
+embedding hook and for tests.
 """
 
 from __future__ import annotations
@@ -92,17 +91,12 @@ class StdinReader:
         if not state.get("task"):
             task = line[5:].strip() if lower.startswith("task:") else line
             state["task"] = task
-            print(f"[pi052] Task: {task}", flush=True)
+            print(f"[runtime] Task: {task}", flush=True)
             self._seen_first_line = True
             return
 
-        # Question → VQA; statement → interjection.
-        if lower.endswith("?"):
-            state["recent_vqa_query"] = line
-            _emit(state, "user_vqa_query")
-        else:
-            state["recent_interjection"] = line
-            _emit(state, "user_interjection")
+        state["recent_interjection"] = line
+        _emit(state, "user_interjection")
 
 
 def _emit(state: Any, event_name: str) -> None:
