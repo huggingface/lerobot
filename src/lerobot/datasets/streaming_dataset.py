@@ -129,6 +129,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         byte_index_build_in_memory: bool | None = None,
         byte_index_workers: int = 8,
         byte_index_max_episodes: int | None = None,
+        video_fetch_workers: int = 16,
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -188,6 +189,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 if the sidecar parquet is missing on disk.
             byte_index_workers (int, optional): Parallel moov-index workers for in-memory builds.
             byte_index_max_episodes (int | None, optional): Cap episodes indexed (debug/smoke tests).
+            video_fetch_workers (int, optional): Concurrent byte-range fetch threads per consumer
+                feeding the episode byte cache. Each episode's cameras fetch in parallel, so this
+                converts directly into concurrent range GETs — the fetch-throughput knob.
         """
         super().__init__()
         self.repo_id = repo_id
@@ -230,6 +234,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.byte_index_build_in_memory = byte_index_build_in_memory
         self.byte_index_workers = byte_index_workers
         self.byte_index_max_episodes = byte_index_max_episodes
+        self.video_fetch_workers = video_fetch_workers
         self._episode_byte_cache = None
         self._byte_index = None
         self._data_root = None
@@ -256,7 +261,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
             data_root = self._resolve_data_root()
             index_dir = self.byte_index_path or (self.meta.root / "meta" / "byte_index")
-            sidecar_exists = (index_dir / "files.parquet").exists() and (index_dir / "episodes.parquet").exists()
+            sidecar_exists = (index_dir / "files.parquet").exists() and (
+                index_dir / "episodes.parquet"
+            ).exists()
             build_in_memory = (
                 self.byte_index_build_in_memory
                 if self.byte_index_build_in_memory is not None
@@ -529,10 +536,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         return VideoDecoderCache(max_size=min((self.episode_pool_size + 1) * num_cameras, 128))
 
     def _use_episode_byte_cache(self) -> bool:
-        return (
-            self.video_byte_cache_gb not in (None, 0)
-            and self.data_files_root is not None
-        )
+        return self.video_byte_cache_gb not in (None, 0) and self.data_files_root is not None
 
     def _make_episode_byte_cache(self):
         from .episode_byte_cache import EpisodeByteCache
@@ -544,6 +548,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self._byte_index,
             max_bytes,
             data_root=self._data_root,
+            max_prefetch_workers=self.video_fetch_workers,
         )
 
     def _submit_episode_prefetch(self, episode_batch: dict[str, list[list]]) -> dict[str, list[list]]:

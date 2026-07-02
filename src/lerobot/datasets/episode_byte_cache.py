@@ -14,7 +14,6 @@ import fsspec
 
 from .byte_index import EpisodeByteIndex, EpisodeSliceLookup
 from .mp4_episode_slice import SparseMp4Reader
-from .torchcodec_utils import open_video_decoder
 
 logger = logging.getLogger(__name__)
 
@@ -61,23 +60,24 @@ class CacheStats:
 @dataclass
 class _EpisodeEntry:
     decoders: dict[str, Any] = field(default_factory=dict)
-    ready: threading.Event = field(default_factory=threading.Event)
+    futures: dict[str, Future] = field(default_factory=dict)
     error: Exception | None = None
 
 
 class RangeFetcher:
-    """Sequential byte-range GETs via fsspec."""
+    """Byte-range GETs via fsspec, one request per range (no open/seek/read layering)."""
 
     def __init__(self, path: str):
-        self.path = path
-        self._fs = fsspec.filesystem("hf") if path.startswith("hf://") else fsspec.filesystem("file")
+        # Resolve any fsspec URL (hf://, s3://, gs://, plain local paths, ...), so S3-compatible
+        # stores (e.g. Backblaze B2 via s3://) work identically to the Hub.
+        self._fs, self.path = fsspec.core.url_to_fs(path)
 
     def fetch(self, lo: int, hi: int) -> bytes:
         if hi < lo:
             return b""
-        with self._fs.open(self.path, "rb", block_size=max(2**20, hi - lo + 1), cache_type="none") as f:
-            f.seek(lo)
-            return f.read(hi - lo + 1)
+        # cat_file issues a single ranged GET (end-exclusive); fs.open would add a metadata
+        # round-trip and buffered-read layering per fetch.
+        return self._fs.cat_file(self.path, start=lo, end=hi + 1)
 
 
 class EpisodeByteCache:
@@ -91,7 +91,7 @@ class EpisodeByteCache:
         max_bytes: int,
         *,
         data_root: str,
-        max_prefetch_workers: int = 4,
+        max_prefetch_workers: int = 16,
     ):
         if max_bytes <= 0:
             raise ValueError(f"max_bytes must be positive; got {max_bytes}")
@@ -106,7 +106,6 @@ class EpisodeByteCache:
         self._episodes: dict[int, _EpisodeEntry] = {}
         self._stats = CacheStats()
         self._executor = ThreadPoolExecutor(max_workers=max_prefetch_workers)
-        self._futures: dict[int, Future] = {}
 
     @property
     def stats(self) -> CacheStats:
@@ -114,47 +113,48 @@ class EpisodeByteCache:
             return CacheStats(**{k: getattr(self._stats, k) for k in CacheStats.__dataclass_fields__})
 
     def submit_prefetch(self, ep_idx: int) -> None:
+        # One future per (episode, camera): an episode's cameras fetch in parallel instead of
+        # back-to-back on one thread, so the worker pool converts directly into concurrent
+        # range GETs (the fetch throughput lever).
         with self._lock:
-            if ep_idx in self._episodes or ep_idx in self._futures:
+            if ep_idx in self._episodes:
                 return
+            entry = _EpisodeEntry()
+            self._episodes[ep_idx] = entry
             self._stats.prefetch_submitted += 1
-            fut = self._executor.submit(self._prefetch_episode, ep_idx)
-            self._futures[ep_idx] = fut
+            for cam in self.byte_index.video_keys:
+                entry.futures[cam] = self._executor.submit(self._prefetch_camera, ep_idx, cam, entry)
+
+    def _prefetch_camera(self, ep_idx: int, cam: str, entry: _EpisodeEntry) -> None:
+        try:
+            entry.decoders[cam] = self._get_or_build_decoder(ep_idx, cam)
+        except Exception as exc:
+            entry.error = exc
 
     def ensure_ready(self, ep_idx: int) -> None:
-        with self._lock:
-            fut = self._futures.pop(ep_idx, None)
-        if fut is not None:
-            with self._lock:
-                self._stats.prefetch_waits += 1
-            fut.result()
         entry = self._episodes.get(ep_idx)
         if entry is None:
             raise KeyError(f"episode {ep_idx} not prefetched")
+        pending = [f for f in entry.futures.values() if not f.done()]
+        if pending:
+            with self._lock:
+                self._stats.prefetch_waits += 1
+        for fut in entry.futures.values():
+            fut.result()
         if entry.error is not None:
             raise entry.error
-        entry.ready.wait()
 
     def get_decoder(self, ep_idx: int, video_key: str) -> Any:
         entry = self._episodes[ep_idx]
+        fut = entry.futures.get(video_key)
+        if fut is not None:
+            fut.result()
         if entry.error is not None:
             raise entry.error
-        entry.ready.wait()
         return entry.decoders[video_key]
 
     def close(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)
-
-    def _prefetch_episode(self, ep_idx: int) -> None:
-        entry = _EpisodeEntry()
-        self._episodes[ep_idx] = entry
-        try:
-            for cam in self.byte_index.video_keys:
-                entry.decoders[cam] = self._get_or_build_decoder(ep_idx, cam)
-        except Exception as exc:
-            entry.error = exc
-        finally:
-            entry.ready.set()
 
     def _get_or_build_decoder(self, ep_idx: int, cam: str) -> Any:
         key = (ep_idx, cam)
@@ -163,12 +163,15 @@ class EpisodeByteCache:
             if cached is not None:
                 self._cache.move_to_end(key)
                 self._stats.hits += 1
-                payload, _ = cached
-                t0 = time.perf_counter()
-                dec = self._decoder_from_payload(payload, ep_idx, cam)
-                with self._lock:
-                    self._stats.buffer_hit_decoder_s += time.perf_counter() - t0
-                return dec
+        if cached is not None:
+            # Build the decoder outside the lock: self._lock is non-reentrant, and decoding
+            # while holding it would also serialize every other fetch thread.
+            payload, _ = cached
+            t0 = time.perf_counter()
+            dec = self._decoder_from_payload(payload, ep_idx, cam)
+            with self._lock:
+                self._stats.buffer_hit_decoder_s += time.perf_counter() - t0
+            return dec
 
         payload, payload_bytes, dec = self._fetch_manifest_slice(ep_idx, cam)
 
@@ -240,9 +243,11 @@ class EpisodeByteCache:
             self._stats.bytes_fetched += len(header)
         return header
 
-    def _decoder_from_payload(
-        self, payload: SparseMp4Reader, ep_idx: int, cam: str
-    ) -> Any:
+    def _decoder_from_payload(self, payload: SparseMp4Reader, ep_idx: int, cam: str) -> Any:
+        # Lazy import: torchcodec_utils touches private torchcodec symbols that vary across
+        # torchcodec versions; importing this module must not require them.
+        from .torchcodec_utils import open_video_decoder
+
         payload.seek(0)
         mappings = self.byte_index.custom_frame_mappings(ep_idx, cam)
         return open_video_decoder(payload, frame_mappings=mappings)
@@ -252,7 +257,7 @@ class EpisodeByteCache:
         end = float(dec.metadata.end_stream_seconds)
         duration = max(0.01, end - begin)
         for ts in (begin + 1e-3, begin + 0.5 * duration, end - 1e-3):
-            dec.get_frames_played_at([ts]).data
+            _ = dec.get_frames_played_at([ts]).data
 
     def _rewind_payload(self, payload: SparseMp4Reader) -> None:
         payload.seek(0)
