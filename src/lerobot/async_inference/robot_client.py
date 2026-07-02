@@ -22,12 +22,10 @@ python src/lerobot/async_inference/robot_client.py \
     --robot.id=black \
     --task="dummy" \
     --server_address=127.0.0.1:8080 \
-    --policy_type=act \
-    --pretrained_name_or_path=user/model \
-    --policy_device=mps \
     --client_device=cpu \
-    --actions_per_chunk=50 \
     --chunk_size_threshold=0.5 \
+    --enable_pending_observation=True \
+    --pending_observation_timeout_s=2.0 \
     --aggregate_fn_name=weighted_average \
     --debug_visualize_queue_size=True
 ```
@@ -106,6 +104,7 @@ class RobotClient:
             lerobot_features,
             config.actions_per_chunk,
             config.policy_device,
+            config.rename_map,
         )
         self.channel = grpc.insecure_channel(
             self.server_address, grpc_channel_options(initial_backoff=f"{config.environment_dt:.4f}s")
@@ -121,6 +120,9 @@ class RobotClient:
         self.action_chunk_size = -1
 
         self._chunk_size_threshold = config.chunk_size_threshold
+        self._pending_observation_lock = threading.Lock()
+        self._pending_observation = False
+        self._pending_observation_sent_at = None
 
         self.action_queue = Queue()
         self.action_queue_lock = threading.Lock()  # Protect queue operations
@@ -157,7 +159,8 @@ class RobotClient:
             self.logger.debug(
                 f"Policy type: {self.policy_config.policy_type} | "
                 f"Pretrained name or path: {self.policy_config.pretrained_name_or_path} | "
-                f"Device: {self.policy_config.device}"
+                f"Device: {self.policy_config.device} | "
+                f"Actions per chunk: {self.policy_config.actions_per_chunk}"
             )
 
             self.stub.SendPolicyInstructions(policy_setup)
@@ -192,6 +195,9 @@ class RobotClient:
         if not isinstance(obs, TimedObservation):
             raise ValueError("Input observation needs to be a TimedObservation!")
 
+        # Wall-clock timestamps are used because this value is compared on the
+        # remote server. The client and server clocks must be synchronized.
+        obs.client_send_timestamp = time.time()
         start_time = time.perf_counter()
         observation_bytes = pickle.dumps(obs)
         serialize_time = time.perf_counter() - start_time
@@ -205,6 +211,10 @@ class RobotClient:
                 silent=True,
             )
             _ = self.stub.SendObservations(observation_iterator)
+            if self.config.enable_pending_observation:
+                with self._pending_observation_lock:
+                    self._pending_observation = True
+                    self._pending_observation_sent_at = time.perf_counter()
             obs_timestep = obs.get_timestep()
             self.logger.debug(f"Sent observation #{obs_timestep} | ")
 
@@ -286,8 +296,25 @@ class RobotClient:
                 timed_actions = pickle.loads(actions_chunk.data)  # nosec
                 deserialize_time = time.perf_counter() - deserialize_start
 
+                server_send_timestamp = (
+                    getattr(timed_actions[0], "server_send_timestamp", None) if timed_actions else None
+                )
+                if server_send_timestamp is not None:
+                    server_to_client_ms = (
+                        receive_time - server_send_timestamp
+                    ) * 1000
+                    self.logger.info(
+                        f"[LATENCY] server_to_client={server_to_client_ms:.2f}ms | "
+                        f"action_timestep={timed_actions[0].get_timestep()}"
+                    )
+
                 # Log device type of received actions
                 if len(timed_actions) > 0:
+                    if self.config.enable_pending_observation:
+                        with self._pending_observation_lock:
+                            self._pending_observation = False
+                            self._pending_observation_sent_at = None
+
                     received_device = timed_actions[0].get_action().device.type
                     self.logger.debug(f"Received actions on device: {received_device}")
 
@@ -402,6 +429,19 @@ class RobotClient:
 
     def _ready_to_send_observation(self):
         """Flags when the client is ready to send an observation"""
+        if self.config.enable_pending_observation:
+            with self._pending_observation_lock:
+                if self._pending_observation:
+                    elapsed = time.perf_counter() - self._pending_observation_sent_at
+                    if elapsed <= self.config.pending_observation_timeout_s:
+                        return False
+
+                    self.logger.warning(
+                        f"Pending observation timed out after {elapsed:.2f}s; sending a new observation."
+                    )
+                    self._pending_observation = False
+                    self._pending_observation_sent_at = None
+
         with self.action_queue_lock:
             return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
 
