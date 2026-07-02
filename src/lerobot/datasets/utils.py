@@ -26,7 +26,6 @@ import numpy as np
 import packaging.version
 import torch
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
-from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.utils.utils import flatten_dict, unflatten_dict
 

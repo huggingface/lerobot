@@ -14,12 +14,11 @@
 
 """PI052 runtime adapter and CLI helpers."""
 
-from lerobot.policies.language_conditioned import (
+from lerobot.runtime import (
     LanguageConditionedRuntime,
     RuntimeState,
     Tick,
     TickClock,
-    ToolCall,
     VQAResult,
 )
 
@@ -36,7 +35,6 @@ __all__ = [
     "StdinReader",
     "Tick",
     "TickClock",
-    "ToolCall",
     "VQAResult",
     "make_state_panel",
     "print_robot_lines",

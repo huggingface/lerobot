@@ -14,11 +14,10 @@
 
 from __future__ import annotations
 
-import copy
 from typing import TYPE_CHECKING, Literal
 
 import torch
-from torch import Tensor, nn
+from torch import nn
 from torch.nn import functional as F  # noqa: N812
 
 from lerobot.utils.import_utils import _transformers_available
@@ -391,6 +390,7 @@ __all__ = [
 # width/depth variant config (renamed from GemmaConfig to avoid clashing with
 # transformers' GemmaConfig).
 
+
 def sdpa_attention_forward(
     module,
     query: torch.Tensor,
@@ -754,4 +754,3 @@ class PaliGemmaWithExpertModel(
             prefix_past_key_values = None
 
         return [prefix_output, suffix_output], prefix_past_key_values
-

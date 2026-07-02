@@ -131,19 +131,10 @@ def _loc_to_norm(idx: int) -> float:
 def parse_loc_answer(answer: str) -> dict | None:
     """Parse a PaliGemma ``<loc>``-format spatial VQA answer.
 
-    PI052 trains spatial answers in PaliGemma's native detection
-    vocabulary, label-first: a point is ``<label> <locY><locX>``, a box
-    is ``<label> <locY0><locX0><locY1><locX1>``, and multiple boxes are
-    joined by `` ; `` (e.g. ``cube <loc..><loc..><loc..><loc..> ; box
-    <loc..><loc..><loc..><loc..>``). Loc-first formats are also accepted
-    — this parser strips loc tokens and treats the remainder as the
-    label, so order is irrelevant. Coordinates come back *normalized*
-    ([0, 1]); the overlay denormalizes them against the chosen camera
-    frame's pixel size.
-
-    Returns ``{"kind", "payload", "normalized": True}`` on success
-    (``payload`` mirrors the JSON shapes so the overlay code is shared),
-    or ``None`` when the answer carries no ``<loc>`` tokens.
+    Point: ``<label> <locY><locX>``; box: ``<label> <locY0><locX0><locY1><locX1>``;
+    multiple boxes joined by `` ; `` (label/loc order irrelevant). Returns
+    ``{"kind", "payload", "normalized": True}`` with [0, 1] coords mirroring the
+    JSON shapes (shared overlay code), or ``None`` without ``<loc>`` tokens.
     """
     if not answer or "<loc" not in answer:
         return None
@@ -178,14 +169,10 @@ def parse_loc_answer(answer: str) -> dict | None:
 
 
 def parse_vqa_answer(answer: str) -> dict | None:
-    """Parse a VQA answer string into ``{"kind", "payload"}``.
+    """Parse a VQA answer (``<loc>`` text or JSON) into ``{"kind", "payload"}``.
 
-    ``kind`` is one of the ``VQA_ANSWER_SHAPES`` names (``bbox``,
-    ``keypoint``, ``count``, ``attribute``, ``spatial``) or ``"unknown"``
-    when the JSON doesn't match any known shape. PaliGemma ``<loc>``
-    spatial answers are detected first (PI052 trains them in that native
-    format). Returns ``None`` when the answer is neither ``<loc>`` text
-    nor a parseable JSON object.
+    ``kind`` is a ``VQA_ANSWER_SHAPES`` name or ``"unknown"``; ``<loc>`` answers
+    are tried first. Returns ``None`` when neither format parses.
     """
     if not answer or not answer.strip():
         return None

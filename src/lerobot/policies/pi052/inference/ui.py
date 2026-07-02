@@ -25,12 +25,8 @@ Two-zone terminal layout:
     └───────────────────────────────────────────────────┘
     > _
 
-The state panel re-renders on every state change. Chat lines are
-``console.print``'d above the live region so they accumulate naturally
-in scrollback. Implemented with :class:`rich.live.Live` plus
-:func:`rich.console.Console.input` for the prompt — when an input is
-pending, ``rich.Live`` auto-suspends so the input doesn't fight the
-panel for cursor position.
+Chat lines print above a ``rich.Live`` region (natural scrollback); the
+state panel re-renders on change, auto-suspending while input is pending.
 """
 
 from __future__ import annotations

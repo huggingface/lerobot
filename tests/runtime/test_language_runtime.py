@@ -1,7 +1,6 @@
-from lerobot.policies.language_conditioned import (
+from lerobot.runtime import (
     LanguageConditionedRuntime,
     RuntimeState,
-    ToolCall,
     VQAResult,
 )
 
@@ -18,11 +17,7 @@ class FakeAdapter:
 
     def select_text(self, kind, observation, state, user_text=None):
         self.text_calls.append((kind, user_text))
-        return "new plan <say>ok</say>"
-
-    def parse_tool_calls(self, text):
-        assert text == "new plan <say>ok</say>"
-        return [ToolCall("say", {"text": "ok"})]
+        return "new plan"
 
     def answer_vqa(self, question, camera, observation, state):
         return VQAResult(answer=f"answer: {question}")
@@ -30,14 +25,6 @@ class FakeAdapter:
     def update_language_state(self, observation, state):
         self.updated = True
         state.set_context("subtask", "pick cup", label="subtask")
-
-
-class FakeTool:
-    def __init__(self):
-        self.calls = []
-
-    def call(self, args):
-        self.calls.append(args)
 
 
 def test_runtime_tick_updates_language_enqueues_and_dispatches_action():
@@ -59,24 +46,20 @@ def test_runtime_tick_updates_language_enqueues_and_dispatches_action():
     assert "  subtask: pick cup" in logs
 
 
-def test_runtime_handles_user_interjection_and_dispatches_tools():
+def test_runtime_handles_user_interjection():
     adapter = FakeAdapter()
-    tool = FakeTool()
     runtime = LanguageConditionedRuntime(
         policy_adapter=adapter,
         observation_provider=lambda: {"observation.state": 1},
-        tools={"say": tool},
     )
     runtime.set_task("clean")
     runtime.state.extra["recent_interjection"] = "please say ok"
     runtime.state.emit("user_interjection")
 
-    logs = runtime.step_once()
+    runtime.step_once()
 
     assert ("interjection", "please say ok") in adapter.text_calls
-    assert runtime.state.language_context["plan"] == "new plan <say>ok</say>"
-    assert tool.calls == [{"text": "ok"}]
-    assert "  speech: ok" in logs
+    assert runtime.state.language_context["plan"] == "new plan"
 
 
 def test_runtime_state_aliases_legacy_keys_to_language_context():

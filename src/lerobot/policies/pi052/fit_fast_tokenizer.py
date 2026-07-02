@@ -122,9 +122,11 @@ def fit_fast_tokenizer(
 
     if out_dir.exists() and (out_dir / _CACHE_SENTINEL).exists():
         logger.info(
-            "FAST tokenizer cache hit: %s — re-using fitted tokenizer for "
-            "dataset=%s base=%s n_samples=%d",
-            out_dir, dataset_repo_id, base_tokenizer_name, n_samples,
+            "FAST tokenizer cache hit: %s — re-using fitted tokenizer for dataset=%s base=%s n_samples=%d",
+            out_dir,
+            dataset_repo_id,
+            base_tokenizer_name,
+            n_samples,
         )
         return str(out_dir)
 
@@ -136,10 +138,7 @@ def fit_fast_tokenizer(
     # and compiles a ``.pyc`` — concurrent writers occasionally produce
     # a stale / partial ``.pyc`` and the subsequent ``from .. import
     # UniversalActionProcessor`` raises ``AttributeError``.
-    is_leader = (
-        int(os.environ.get("RANK", "0")) == 0
-        and int(os.environ.get("LOCAL_RANK", "0")) == 0
-    )
+    is_leader = int(os.environ.get("RANK", "0")) == 0 and int(os.environ.get("LOCAL_RANK", "0")) == 0
     if not is_leader:
         timeout_s = 1800.0  # 30 min — covers ~1024-sample fits on cold caches
         start = time.monotonic()
@@ -155,14 +154,15 @@ def fit_fast_tokenizer(
         return str(out_dir)
 
     logger.info(
-        "FAST tokenizer cache miss — fitting on dataset=%s "
-        "base=%s n_samples=%d chunk_size=%d → %s",
-        dataset_repo_id, base_tokenizer_name, n_samples, chunk_size, out_dir,
+        "FAST tokenizer cache miss — fitting on dataset=%s base=%s n_samples=%d chunk_size=%d → %s",
+        dataset_repo_id,
+        base_tokenizer_name,
+        n_samples,
+        chunk_size,
+        out_dir,
     )
 
     from transformers import AutoProcessor  # noqa: PLC0415
-
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: PLC0415
 
     # Stream a single episode's worth of action chunks at a time so
     # we don't blow memory on huge datasets. Random episode +
@@ -186,16 +186,14 @@ def fit_fast_tokenizer(
     # for ~2.5 h before NCCL killed it). Reading the ``action`` column
     # straight from the parquet shards is also faster: each per-episode
     # ``LeRobotDataset`` instantiation re-parses every meta file.
-    from huggingface_hub import snapshot_download  # noqa: PLC0415
     import pyarrow as _pa  # noqa: PLC0415
     import pyarrow.parquet as _pq  # noqa: PLC0415
+    from huggingface_hub import snapshot_download  # noqa: PLC0415
 
     snap = Path(snapshot_download(repo_id=dataset_repo_id, repo_type="dataset"))
     data_files = sorted((snap / "data").glob("chunk-*/file-*.parquet"))
     if not data_files:
-        raise RuntimeError(
-            f"FAST fit: no ``data/chunk-*/file-*.parquet`` shards found under {snap!s}."
-        )
+        raise RuntimeError(f"FAST fit: no ``data/chunk-*/file-*.parquet`` shards found under {snap!s}.")
 
     # Read just the (episode_index, action) columns once across all
     # shards. This is the same pattern used elsewhere in the codebase
@@ -215,9 +213,7 @@ def fit_fast_tokenizer(
         # Fallback path for nested-list types: flatten via to_pylist().
         acts = np.asarray(acts_col.to_pylist(), dtype=np.float32)
     if acts.ndim != 2:
-        raise RuntimeError(
-            f"FAST fit: expected ``action`` rows to be 1-D vectors; got shape {acts.shape}."
-        )
+        raise RuntimeError(f"FAST fit: expected ``action`` rows to be 1-D vectors; got shape {acts.shape}.")
 
     # Episode index → slice (start, stop) into ``acts`` along axis 0.
     # ``eps`` is monotonically increasing within each parquet shard but
@@ -268,7 +264,9 @@ def fit_fast_tokenizer(
     actions = np.stack(actions_buf, axis=0).astype(np.float32)  # (N, H, D)
     logger.info(
         "FAST fit: collected %d chunks of shape %s from %d episodes",
-        actions.shape[0], actions.shape[1:], eps_visited,
+        actions.shape[0],
+        actions.shape[1:],
+        eps_visited,
     )
 
     # Quantile-normalise per dimension before fitting.

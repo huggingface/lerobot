@@ -182,22 +182,12 @@ def _sample_indices(value: Any, batch_size: int) -> list[int | None]:
     return [int(value)] * batch_size
 
 
-# ---------------------------------------------------------------------------
-# VQA spatial answers → PaliGemma <loc> format (PI052 only)
-#
-# PaliGemma is pre-trained on detection / pointing with a ``<locNNNN>``
-# vocabulary (normalized [0, 1023]). The recipe's bbox / keypoint VQA
-# answers are stored as JSON in Qwen2.5-VL's grounding convention:
-# **0–1000 normalized coordinates**, NOT pixels. (Verified empirically
-# on the published datasets: x and y both span 0..1000 with ~30% of
-# values exceeding the camera's pixel dimensions — they're not pixels.)
-# Converting to ``<loc>`` is therefore camera-resolution-independent:
-# ``loc_idx = round(coord / 1000 * 1023)``. We do the conversion here —
-# not in the dataset — so the dataset keeps the raw JSON and stays
-# backbone-agnostic.
-# ---------------------------------------------------------------------------
+# VQA spatial answers → PaliGemma <loc> format (PI052 only).
+# Dataset JSON uses Qwen2.5-VL's 0–1000 *normalized* grounding coords (not
+# pixels — verified empirically); PaliGemma's <locNNNN> vocab is [0, 1023], so
+# ``loc_idx = round(coord / 1000 * 1023)`` is resolution-independent. Converted
+# here, not in the dataset, so the raw JSON stays backbone-agnostic.
 
-# The 0–1000 scale Qwen2.5-VL emits for grounding coordinates.
 _VQA_COORD_SCALE = 1000.0
 
 
@@ -276,10 +266,7 @@ def _vqa_answer_to_loc(answer: dict[str, Any]) -> str | None:
             label = str(det.get("label", "")).strip()
             if not label:
                 continue
-            toks = (
-                f"{_loc_token(y1)}{_loc_token(x1)}"
-                f"{_loc_token(y2)}{_loc_token(x2)}"
-            )
+            toks = f"{_loc_token(y1)}{_loc_token(x1)}{_loc_token(y2)}{_loc_token(x2)}"
             parts.append(f"{label} {toks}")
         return " ; ".join(parts) if parts else None
     return None
@@ -393,9 +380,7 @@ class PI052TextTokenizerStep(ProcessorStep):
             return self._tokenizer
         from transformers import AutoTokenizer  # noqa: PLC0415
 
-        self._tokenizer = register_paligemma_loc_tokens(
-            AutoTokenizer.from_pretrained(self.tokenizer_name)
-        )
+        self._tokenizer = register_paligemma_loc_tokens(AutoTokenizer.from_pretrained(self.tokenizer_name))
         return self._tokenizer
 
     # ------------------------------------------------------------------
@@ -517,9 +502,7 @@ class PI052TextTokenizerStep(ProcessorStep):
                     break
         # Append EOS to supervised target turns so the LM head learns to
         # stop (the span covers it → it becomes a supervised label).
-        prompt, spans = _format_messages(
-            messages, target_indices, getattr(tokenizer, "eos_token", None)
-        )
+        prompt, spans = _format_messages(messages, target_indices, getattr(tokenizer, "eos_token", None))
 
         encoded = tokenizer(
             prompt,
@@ -627,9 +610,7 @@ def _classify_for_dropout(message: dict[str, Any]) -> str | None:
     if isinstance(content, list):
         text_parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
         content = " ".join(text_parts)
-    elif content is None:
-        return None
-    elif not isinstance(content, str):
+    elif content is None or not isinstance(content, str):
         return None
     s = content.strip()
     if s.startswith("Plan:") or s.startswith("Previous plan"):

@@ -50,9 +50,6 @@ With a real robot::
 
 ``--policy.path`` accepts either a local directory or a Hugging Face
 Hub repo id. ``--dataset.repo_id`` likewise.
-
-Tool dispatch (TTS via ``SayTool``) is enabled by default when
-``pocket-tts`` is installed; pass ``--no_tts`` to disable.
 """
 
 from __future__ import annotations
@@ -64,14 +61,9 @@ from collections.abc import Callable
 from contextlib import suppress
 from typing import Any
 
+from .repl import _emit
+
 logger = logging.getLogger("lerobot.pi052.runtime")
-
-
-def _emit(state: Any, event_name: str) -> None:
-    if hasattr(state, "emit"):
-        state.emit(event_name)
-    else:
-        state.setdefault("events_this_tick", []).append(event_name)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -244,18 +236,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--no_tts",
-        action="store_true",
-        help="Disable the ``say`` tool dispatch.",
-    )
-    p.add_argument(
-        "--tts.voice",
-        dest="tts_voice",
-        type=str,
-        default="alba",
-        help="Pocket-tts voice name (or path to a .wav for cloning).",
-    )
-    p.add_argument(
         "--chunk_hz",
         type=float,
         default=1.0,
@@ -402,19 +382,11 @@ def _build_observation_provider(
     device: str,
     augment: bool = False,
 ) -> Callable[[], dict | None]:
-    """Build a closure that feeds dataset frames into the runtime.
+    """Closure feeding preprocessed dataset frames to the runtime, advancing
+    ``advance_per_tick`` frames per call and looping at episode end.
 
-    Each call returns a preprocessed observation batch (images +
-    state, batched, on the policy's device, normalized) suitable for
-    ``policy.select_action`` and ``policy.select_message``. The
-    closure walks the chosen episode forward by ``advance_per_tick``
-    frames per call, looping back to the episode start when it falls
-    off the end.
-
-    The dataset's ``language_persistent`` / ``language_events``
-    columns are stripped before the sample reaches the preprocessor,
-    so ``RenderMessagesStep`` and ``PI052TextTokenizerStep`` are
-    no-ops; the runtime supplies its own messages from current state.
+    Language columns are stripped first — the runtime supplies its own
+    messages from current state, not the dataset's annotations.
     """
     from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: PLC0415
 
@@ -422,15 +394,9 @@ def _build_observation_provider(
     if len(ds) == 0:
         raise ValueError(f"Dataset {dataset_repo_id!r} episode {episode} is empty.")
 
-    # Optional: apply the same torchvision-v2 augmentation pipeline
-    # that training used, so dry-run sees frames from the augmented
-    # support region (not just the unperturbed dataset frames). When
-    # the LM head still generates coherent text under this, it has
-    # learned over the augmentation distribution — the *opposite* of
-    # the "memorised one specific frame per supervision" failure
-    # mode. When it collapses to ``\n`` here too, the head is hyper-
-    # specific to the unperturbed training samples and only the
-    # retrain can help.
+    # Optional: replay training's augmentation pipeline so dry-run probes the
+    # augmented support region — coherent text under jitter means the LM head
+    # generalized; collapse to "\n" means it memorised unperturbed frames.
     inference_aug = None
     if augment:
         from lerobot.transforms import (  # noqa: PLC0415
@@ -471,15 +437,9 @@ def _bootstrap_state_from_dataset(
     episode: int,
     start_frame: int,
 ) -> dict[str, str]:
-    """Pull task / active plan / active memory / active subtask at ``start_frame``.
-
-    The model is heavily memorised on the exact training prompts the
-    recipe rendered from this dataset (canonical task wording,
-    persistent atoms emitted earlier in the episode). Reconstructing
-    that state at REPL startup lets the runtime's first prompt line
-    up with what training looked like — without it the model sees an
-    out-of-distribution prompt and falls back to its dominant
-    training mode (VQA JSON spam).
+    """Pull task / active plan / memory / subtask at ``start_frame``, so the
+    runtime's first prompt matches the canonical training prompts (an OOD
+    prompt makes the model fall back to its dominant mode, VQA JSON spam).
     """
     from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: PLC0415
 
@@ -535,20 +495,10 @@ def _select_task_interactively(
     ds_meta: Any,
     bootstrap_task: str | None,
 ) -> str | None:
-    """Ask the operator which task to run at startup.
-
-    Behaviour:
-
-    * If a dataset is loaded, build a numbered menu of every unique task
-      string in ``ds_meta.tasks`` (canonical bootstrap task listed first
-      as the default). Add a ``[c] type a custom task`` option.
-    * If no dataset is loaded, show a plain ``Enter task:`` prompt.
-    * Non-TTY runs (scripts, pipes) skip the prompt and return the
-      bootstrap task so the existing "first stdin line becomes task"
-      flow in ``_run_repl`` / ``_run_autonomous`` still works.
-
-    Returns the chosen task string, or ``None`` when the operator declines
-    to pick one (Ctrl-D / empty + no default).
+    """Interactive task picker: numbered menu of dataset tasks (bootstrap task
+    as default) plus a custom-input option; plain prompt without a dataset.
+    Non-TTY runs skip the prompt and return the bootstrap task. Returns
+    ``None`` when the operator declines (Ctrl-D / empty + no default).
     """
     options: list[str] = []
     seen: set[str] = set()
@@ -745,18 +695,10 @@ def _build_robot_observation_provider(
     task: str | None,
     ds_features: dict[str, Any] | None,
 ) -> Callable[[], dict | None]:
-    """Closure that reads from the robot, runs the policy preprocessor.
-
-    Each call: ``robot.get_observation()`` (raw per-joint + per-camera
-    dict, possibly with scalar floats) → ``build_inference_frame``
-    (extract the keys the dataset declared, reshape per-joint floats
-    into a single ``observation.state`` vector, prefix camera keys
-    with ``observation.images.``, convert to tensors with batch dim
-    on device) → wrap in an ``EnvTransition`` (the preprocessor
-    pipeline is transition-shaped, keyed by ``TransitionKey``) →
-    preprocessor (rename, normalise) → unwrap and return the flat
-    observation batch ``policy.select_action`` / ``policy.select_message``
-    consume.
+    """Closure reading from the robot each call: ``robot.get_observation()`` →
+    ``build_inference_frame`` (state vector + image tensors, batched, on device)
+    → ``EnvTransition``-wrapped preprocessor (rename, normalise) → flat
+    observation batch for ``select_action`` / ``select_message``.
     """
     import torch  # noqa: PLC0415
 
@@ -768,19 +710,10 @@ def _build_robot_observation_provider(
     torch_device = torch.device(device) if isinstance(device, str) else device
     robot_type = getattr(robot, "robot_type", None) or getattr(getattr(robot, "config", None), "type", None)
 
-    # Pre-compute the camera-key → target (H, W) map from
-    # ``ds_features``. The training distribution sees frames at the
-    # recorded resolution (e.g. 480×640); a live Mac/USB camera will
-    # almost always hand us a different native size (720p / 1080p).
-    # PI052's internal ``resize_with_pad(512, 512)`` does pad the
-    # input to a fixed canvas, but the *geometry* of that pad differs
-    # by input aspect ratio — top/left padding varies, so the visual
-    # tokens at each tile carry different content than what the model
-    # saw at training. The action expert tolerates this (flow head
-    # rides broad geometry); the LM head, supervised much more
-    # tightly on visual features, goes out of distribution and the
-    # head's distribution at position 0 collapses to its dominant
-    # mode (a memorised ``\n``-only run in this checkpoint).
+    # Camera-key → training (H, W) map from ``ds_features``. Live cameras
+    # rarely match the recorded resolution, and a different aspect ratio
+    # changes resize_with_pad's padding geometry — the flow head tolerates
+    # that, but the tightly-supervised LM head goes OOD and collapses.
     _resize_logged = {"done": False}
     target_image_shapes: dict[str, tuple[int, int]] = {}
     if ds_features:
@@ -814,12 +747,8 @@ def _build_robot_observation_provider(
         # columns the robot stream may carry through.
         _strip_runtime_owned_language_cols(raw)
 
-        # Force-match the training-time visual distribution:
-        # every camera frame the model trained on came from the
-        # dataset at its recorded (H, W). Resize the live frame to
-        # that exact shape so the downstream resize_with_pad geometry
-        # matches training. Without this the LM head is OOD on every
-        # tick.
+        # Resize live frames to the training (H, W) so the downstream
+        # resize_with_pad geometry matches what the model saw in training.
         if target_image_shapes:
             try:
                 import cv2 as _cv2  # noqa: PLC0415
@@ -851,13 +780,8 @@ def _build_robot_observation_provider(
                         continue
                     raw[cam_key] = _cv2.resize(img, (target_w, target_h), interpolation=_cv2.INTER_AREA)
                 _resize_logged["done"] = True
-                # Print the state vector once so the operator can eyeball
-                # it against the dataset's stats. State OOD is a real
-                # failure mode for VLAs — the prefix carries state via
-                # the projection layer, and a neutral home pose can
-                # easily sit a couple σ off the supervised support
-                # region. Gated on ``first_call`` so this doesn't spam
-                # every observation tick.
+                # One-shot state-vector print so the operator can eyeball it
+                # against dataset stats (state OOD is a real VLA failure mode).
                 if first_call and "observation.state" in (ds_features or {}):
                     state_names = ds_features["observation.state"].get("names") or []
                     state_vals = [raw.get(n) for n in state_names]
@@ -1374,19 +1298,6 @@ def _make_state_panel_renderer(
     return _redraw
 
 
-def _build_tools(no_tts: bool, tts_voice: str) -> dict[str, Any]:
-    """Instantiate the tools declared on this dataset/policy."""
-    if no_tts:
-        return {}
-    try:
-        from lerobot.tools import SayTool  # noqa: PLC0415
-
-        return {"say": SayTool(voice=tts_voice)}
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Could not initialise SayTool (%s) — speech disabled.", exc)
-        return {}
-
-
 def _silence_noisy_loggers() -> None:
     """Drop chatty third-party loggers down to WARNING.
 
@@ -1529,10 +1440,6 @@ def main(argv: list[str] | None = None) -> int:
             augment=getattr(args, "dataset_augment_at_inference", False),
         )
 
-    tools = _build_tools(args.no_tts, args.tts_voice)
-    if tools:
-        print(f"[pi052] tools loaded: {list(tools)}", flush=True)
-
     from lerobot.policies.pi052.inference import (  # noqa: PLC0415
         LanguageConditionedRuntime,
         PI052PolicyAdapter,
@@ -1540,7 +1447,6 @@ def main(argv: list[str] | None = None) -> int:
 
     runtime = LanguageConditionedRuntime(
         policy_adapter=PI052PolicyAdapter(policy),
-        tools=tools,
         observation_provider=observation_provider,
         action_executor=robot_executor,
         # No background event collector — the REPL drives ticks

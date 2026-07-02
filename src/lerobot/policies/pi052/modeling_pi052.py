@@ -14,30 +14,16 @@
 
 """π0.5 v2 policy — dual-head training & hierarchical inference.
 
-A thin subclass of :class:`PI05Policy` that:
-
-* keeps the PaliGemma ``lm_head`` unfrozen during fine-tuning
-  (``PI05Policy`` zeroes / freezes it because it never reads from
-  the head; ``PI052Config.unfreeze_lm_head`` flips that),
-* adds a ``text_loss`` term computed via cross-entropy on
-  ``text_labels`` (built by ``PI052TextTokenizerStep``),
-* adds :meth:`select_message` for AR text generation at inference
-  (the high-level step in the π0.5 paper's two-stage inference loop),
-* combines both losses in :meth:`forward` per Eq. (1) of the paper:
-
-      L = H(x, f_θ_text) + α * ‖ω - a - f_θ_action(...)‖²
-
-  with α controllable via ``config.flow_loss_weight``.
-
-The multi-rate inference runtime in ``lerobot.policies.pi052.inference``
-(driven by the ``lerobot-pi052-runtime`` CLI) sits on top of this:
-``predict_action_chunk`` for the action expert and ``select_message``
-for the LM head.
+π0.5 with the PaliGemma LM head re-enabled: adds a text CE loss on
+``text_labels`` next to the flow loss (L = H(x, f_θ_text) + α·flow, α via
+``config.flow_loss_weight``) and :meth:`select_message` for AR text
+generation. The multi-rate runtime in ``lerobot.policies.pi052.inference``
+(``lerobot-pi052-runtime`` CLI) drives ``predict_action_chunk`` +
+``select_message``. See :class:`PI052Config` for the knobs.
 """
 
 from __future__ import annotations
 
-import builtins
 import logging
 import math
 import types
@@ -71,6 +57,7 @@ logger = logging.getLogger(__name__)
 # PI0.5 flow-matching model + helpers (pi052-specific). The generic dual-expert
 # transformer (PaliGemmaWithExpertModel, sdpa_attention_forward,
 # compute_layer_complete, get_gemma_config) lives in lerobot.policies.pi_gemma.
+
 
 class ActionSelectKwargs(TypedDict, total=False):
     inference_delay: int | None
@@ -524,9 +511,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         # Precompute the whole timestep schedule on-device once, instead of
         # rebuilding a tensor from a Python float every step
         # (``torch.tensor(time, device=cuda)`` is a host->device sync ×num_steps).
-        times = torch.tensor(
-            [1.0 + s * dt for s in range(num_steps)], dtype=torch.float32, device=device
-        )
+        times = torch.tensor([1.0 + s * dt for s in range(num_steps)], dtype=torch.float32, device=device)
 
         x_t = noise
         for step in range(num_steps):
@@ -562,20 +547,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
                 self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
 
-        import os as _os  # noqa: PLC0415
-
-        if _os.environ.get("PI052_DEBUG_TENSORS") == "1" and not getattr(self, "_dbg_act_done", False):
-            import logging as _lg  # noqa: PLC0415
-
-            _a = x_t.float()
-            ad = self.config.max_action_dim
-            _lg.getLogger(__name__).info(
-                "PI052_DEBUG predicted norm action chunk shape=%s min=%.3f max=%.3f mean=%.3f std=%.3f (real dims only) (expect ~[-1,1])",
-                tuple(x_t.shape), _a[..., :12].min().item(), _a[..., :12].max().item(),
-                _a[..., :12].mean().item(), _a[..., :12].std().item(),
-            )
-            self._dbg_act_done = True
-
         return x_t
 
     def denoise_step(
@@ -599,9 +570,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
-        full_att_2d_masks_4d = self._prepare_attention_masks_4d(
-            full_att_2d_masks, dtype=suffix_embs.dtype
-        )
+        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks, dtype=suffix_embs.dtype)
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
 
         # The expert forward appends the suffix K/V to the prefix cache in-place
@@ -624,7 +593,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)
         return self.action_out_proj(suffix_out)
-
 
 
 # FAST action-token vocab size (``lerobot/fast-action-tokenizer``). The
@@ -802,9 +770,7 @@ def _fast_lin_ce(
     # Fold the boolean mask into the target via ignore_index. No
     # ``.any().item()`` sync — Liger returns 0.0 when every position
     # is ignored, preserving graph capture for CUDA graphs.
-    shift_targets = torch.where(
-        shift_valid, shift_targets, torch.full_like(shift_targets, -100)
-    )
+    shift_targets = torch.where(shift_valid, shift_targets, torch.full_like(shift_targets, -100))
 
     B, T_1, H = shift_hidden.shape
     flat_hidden = shift_hidden.reshape(B * T_1, H).to(lm_head_weight.dtype)
@@ -826,6 +792,7 @@ def _fast_lin_ce(
 # K/V so the action loss's gradient cannot flow back into the VLM's K
 # and V projections. Forward output is bit-equivalent to the standard
 # layer; backward differs only on the path action_loss → VLM K/V.
+
 
 def _compute_layer_ki(
     layer_idx,
@@ -912,11 +879,19 @@ def _compute_layer_ki(
 
     att_vlm, _ = sdpa_attention_forward(
         paligemma.model.language_model.layers[layer_idx].self_attn,
-        Q_vlm, K_for_vlm, V_for_vlm, mask_for_vlm, scaling,
+        Q_vlm,
+        K_for_vlm,
+        V_for_vlm,
+        mask_for_vlm,
+        scaling,
     )
     att_action, _ = sdpa_attention_forward(
         paligemma.model.language_model.layers[layer_idx].self_attn,
-        Q_action, K_for_action, V_for_action, mask_for_action, scaling,
+        Q_action,
+        K_for_action,
+        V_for_action,
+        mask_for_action,
+        scaling,
     )
     att = torch.cat([att_vlm, att_action], dim=1)
 
@@ -983,22 +958,31 @@ def _paligemma_forward_ki(
         hasattr(self.gemma_expert.model, "gradient_checkpointing")
         and self.gemma_expert.model.gradient_checkpointing
         and self.training
-    ) or (
-        hasattr(self, "gradient_checkpointing") and self.gradient_checkpointing and self.training
-    )
+    ) or (hasattr(self, "gradient_checkpointing") and self.gradient_checkpointing and self.training)
 
     for layer_idx in range(num_layers):
         if use_gc:
             inputs_embeds = torch.utils.checkpoint.checkpoint(
                 _compute_layer_ki,
-                layer_idx, inputs_embeds, attention_mask, position_ids, adarms_cond,
-                use_reentrant=False, preserve_rng_state=False,
-                paligemma=self.paligemma, gemma_expert=self.gemma_expert,
+                layer_idx,
+                inputs_embeds,
+                attention_mask,
+                position_ids,
+                adarms_cond,
+                use_reentrant=False,
+                preserve_rng_state=False,
+                paligemma=self.paligemma,
+                gemma_expert=self.gemma_expert,
             )
         else:
             inputs_embeds = _compute_layer_ki(
-                layer_idx, inputs_embeds, attention_mask, position_ids, adarms_cond,
-                paligemma=self.paligemma, gemma_expert=self.gemma_expert,
+                layer_idx,
+                inputs_embeds,
+                attention_mask,
+                position_ids,
+                adarms_cond,
+                paligemma=self.paligemma,
+                gemma_expert=self.gemma_expert,
             )
 
     outputs_embeds = []
@@ -1057,8 +1041,7 @@ class PI052Policy(PreTrainedPolicy):
             backbone._pi052_orig_forward = backbone.forward
             backbone.forward = types.MethodType(_paligemma_forward_ki, backbone)
             logger.info(
-                "PI052: knowledge insulation enabled — action→VLM K/V "
-                "gradients are blocked in attention."
+                "PI052: knowledge insulation enabled — action→VLM K/V gradients are blocked in attention."
             )
 
         # Per-env hierarchical-inference state. Sized lazily on the first
@@ -1167,9 +1150,8 @@ class PI052Policy(PreTrainedPolicy):
         ):
             return self._pi05_flow_forward(batch, reduction=reduction)
 
-        run_flow = (
-            self.config.flow_loss_weight > 0
-            and (predict_actions_t is None or bool(predict_actions_t.any().item()))
+        run_flow = self.config.flow_loss_weight > 0 and (
+            predict_actions_t is None or bool(predict_actions_t.any().item())
         )
         run_text = self.config.text_loss_weight > 0 and text_labels is not None
 
@@ -1330,13 +1312,24 @@ class PI052Policy(PreTrainedPolicy):
         num_repeats = int(getattr(self.config, "flow_num_repeats", 1))
         if num_repeats > 1:
             prefix_out, flow_loss = self._amortized_prefix_and_flow(
-                actions, prefix_embs, prefix_pad, prefix_att,
-                non_fast_prefix_len, fast_len, predict_actions_t, num_repeats,
+                actions,
+                prefix_embs,
+                prefix_pad,
+                prefix_att,
+                non_fast_prefix_len,
+                fast_len,
+                predict_actions_t,
+                num_repeats,
             )
         else:
             prefix_out, flow_loss = self._combined_prefix_and_flow(
-                actions, prefix_embs, prefix_pad, prefix_att,
-                non_fast_prefix_len, fast_len, predict_actions_t,
+                actions,
+                prefix_embs,
+                prefix_pad,
+                prefix_att,
+                non_fast_prefix_len,
+                fast_len,
+                predict_actions_t,
             )
 
         text_loss, fast_loss = self._prefix_ce_losses(
@@ -1371,9 +1364,7 @@ class PI052Policy(PreTrainedPolicy):
         suffix_embs, suffix_pad, suffix_att, adarms_cond = self.model.embed_suffix(x_t, time)
 
         # ---- bf16 alignment (mirrors PI05Pytorch.forward) -----------
-        first_layer = (
-            self.model.paligemma_with_expert.paligemma.model.language_model.layers[0]
-        )
+        first_layer = self.model.paligemma_with_expert.paligemma.model.language_model.layers[0]
         if first_layer.self_attn.q_proj.weight.dtype == torch.bfloat16:
             suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
@@ -1407,9 +1398,7 @@ class PI052Policy(PreTrainedPolicy):
             non_fast_valid = prefix_pad[:, :non_fast_prefix_len].sum(dim=1, keepdim=True)
             suffix_pos = non_fast_valid + torch.cumsum(suffix_pad, dim=1) - 1
             position_ids = torch.cat([position_ids[:, : prefix_pad.shape[1]], suffix_pos], dim=1)
-        att_2d_masks_4d = self.model._prepare_attention_masks_4d(
-            att_2d_masks, dtype=prefix_embs.dtype
-        )
+        att_2d_masks_4d = self.model._prepare_attention_masks_4d(att_2d_masks, dtype=prefix_embs.dtype)
 
         # ---- forward (capture BOTH expert outputs) ------------------
         (prefix_out, suffix_out), _ = self.model.paligemma_with_expert.forward(
@@ -1422,9 +1411,7 @@ class PI052Policy(PreTrainedPolicy):
         )
 
         # ---- flow loss (mirrors PI05Pytorch.forward) ----------------
-        suffix_out_slice = suffix_out[:, -self.model.config.chunk_size :].to(
-            dtype=torch.float32
-        )
+        suffix_out_slice = suffix_out[:, -self.model.config.chunk_size :].to(dtype=torch.float32)
         v_t = self.model.action_out_proj(suffix_out_slice)
         flow_per_dim = F.mse_loss(u_t, v_t, reduction="none")
         # Truncate to the actual action dimensionality (PI05 pads
@@ -1670,9 +1657,7 @@ class PI052Policy(PreTrainedPolicy):
             use_cache=False,
         )
         if vlm_out is None:
-            raise RuntimeError(
-                "PI052 text+fast loss: VLM forward returned no hidden states."
-            )
+            raise RuntimeError("PI052 text+fast loss: VLM forward returned no hidden states.")
 
         lm_head = self.model.paligemma_with_expert.paligemma.lm_head
 
@@ -1682,7 +1667,7 @@ class PI052Policy(PreTrainedPolicy):
             # embed_prefix lays out as [images, language]; with FAST
             # appended the full sequence is [images, language, FAST].
             if fast_len > 0:
-                text_hidden = vlm_out[:, -(fast_len + lang_len):-fast_len, :]
+                text_hidden = vlm_out[:, -(fast_len + lang_len) : -fast_len, :]
             else:
                 text_hidden = vlm_out[:, -lang_len:, :]
             text_loss = _shifted_lin_ce(
@@ -1693,11 +1678,7 @@ class PI052Policy(PreTrainedPolicy):
             )
 
         fast_loss: Tensor | None = None
-        if (
-            action_tokens is not None
-            and action_code_mask is not None
-            and fast_len > 0
-        ):
+        if action_tokens is not None and action_code_mask is not None and fast_len > 0:
             fast_hidden = vlm_out[:, -fast_len:, :]
             fast_loss = _fast_lin_ce(
                 fast_hidden,
@@ -1714,9 +1695,7 @@ class PI052Policy(PreTrainedPolicy):
     # ------------------------------------------------------------------
 
     @torch.no_grad()
-    def debug_text_predictions(
-        self, batch: dict[str, Tensor], max_samples: int = 5
-    ) -> dict[str, Tensor]:
+    def debug_text_predictions(self, batch: dict[str, Tensor], max_samples: int = 5) -> dict[str, Tensor]:
         """Run the text-loss forward but return argmax predictions instead of CE.
 
         Lets a periodic training-loop hook compare what the LM head emits
@@ -1764,10 +1743,7 @@ class PI052Policy(PreTrainedPolicy):
             position_ids = torch.cumsum(prefix_pad, dim=1) - 1
             att_2d_4d = self.model._prepare_attention_masks_4d(att_2d)
             backbone = self.model.paligemma_with_expert
-            backbone_dtype = (
-                backbone.paligemma.model.language_model.layers[0]
-                .self_attn.q_proj.weight.dtype
-            )
+            backbone_dtype = backbone.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
             if att_2d_4d.dtype != backbone_dtype:
                 att_2d_4d = att_2d_4d.to(dtype=backbone_dtype)
 
@@ -1778,7 +1754,7 @@ class PI052Policy(PreTrainedPolicy):
                 inputs_embeds=[prefix_embs, None],
                 use_cache=False,
             )
-            text_hidden = vlm_out[:, -sub_labels.shape[1]:, :]
+            text_hidden = vlm_out[:, -sub_labels.shape[1] :, :]
             lm_head = backbone.paligemma.lm_head
             text_logits = lm_head(text_hidden.to(lm_head.weight.dtype))
             preds = text_logits.argmax(dim=-1)
@@ -1810,27 +1786,19 @@ class PI052Policy(PreTrainedPolicy):
         suppress_loc_tokens: bool = False,
         use_kv_cache: bool = True,
     ) -> str:
-        """Generate text continuation from a multimodal prefix.
+        """Generate text continuation from a multimodal prefix (used by PI052Runtime).
 
-        Consumed by :class:`lerobot.policies.pi052.inference.PI052Runtime`
-        for the high-level / VQA / memory-update text streams.
-
-        ``suppress_loc_tokens`` masks PaliGemma's reserved ``<locDDDD>``
-        ids ([256000, 257024)) to ``-inf`` before sampling. PaliGemma's
-        pretraining puts heavy first-token mass on these ids for any
-        ``Assistant:`` continuation; with a small fine-tuning text-CE
-        budget (or aggressive LR decay) the LM head can drift back
-        toward that prior even when teacher-forced argmax stays at
-        100%. Callsites that legitimately emit ``<loc>`` (VQA spatial
-        answers) must keep this ``False``; subtask / memory / plan
-        generation should pass ``True``.
+        ``suppress_loc_tokens=True`` masks PaliGemma's reserved ``<locDDDD>`` ids
+        ([256000, 257024)) before sampling — the pretraining prior drifts back to
+        them on small text-CE budgets. Pass ``True`` for subtask/memory/plan,
+        ``False`` for VQA (spatial answers legitimately emit ``<loc>``).
         """
         self.eval()
 
         if tokenizer is None:
             from transformers import AutoTokenizer  # noqa: PLC0415
 
-            from .inference.steps import _get_loc_tokenizer  # noqa: PLC0415
+            from .inference.pi052_adapter import _get_loc_tokenizer  # noqa: PLC0415
             from .text_processor_pi052 import register_paligemma_loc_tokens  # noqa: PLC0415
 
             tok_name = getattr(self.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
@@ -1840,7 +1808,7 @@ class PI052Policy(PreTrainedPolicy):
 
         special_ids: set[int] = set()
         try:
-            for sid in (tokenizer.all_special_ids or []):
+            for sid in tokenizer.all_special_ids or []:
                 if sid is not None:
                     special_ids.add(int(sid))
         except Exception:  # noqa: BLE001
@@ -1886,10 +1854,7 @@ class PI052Policy(PreTrainedPolicy):
         # fp32 even when the rest is bf16, so ``next(parameters())``
         # would land on one of those and we'd skip the cast. q_proj is
         # always cast with the rest, so its dtype is the one SDPA sees.
-        backbone_dtype = (
-            backbone.paligemma.model.language_model.layers[0]
-            .self_attn.q_proj.weight.dtype
-        )
+        backbone_dtype = backbone.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
 
         for _ in range(max_new_tokens):
             if cache is None:
@@ -1989,7 +1954,7 @@ class PI052Policy(PreTrainedPolicy):
         return self._action_queue.popleft()
 
     def _with_low_level_subtask_prompt(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
-        from .inference.steps import _build_text_batch  # noqa: PLC0415
+        from .inference.pi052_adapter import _build_text_batch  # noqa: PLC0415
         from .text_processor_pi052 import discretize_state_str  # noqa: PLC0415
 
         n = self._batch_size_from_observation(batch)
@@ -2015,20 +1980,10 @@ class PI052Policy(PreTrainedPolicy):
         # own task + observation, then stack the per-env prompts into a single
         # (n, L) batch for the action expert. This keeps batch_size > 1 correct
         # (env i is conditioned on env i's subtask, not a broadcast of env 0).
-        # Diagnostic toggle (PI052_SUBTASK_USE_TASK=1): skip the learned subtask
-        # generator and condition the action expert on the raw task text. Isolates
-        # whether the generator is the eval bottleneck — eval-only, off by default.
-        import os  # noqa: PLC0415
-
-        use_task_directly = os.environ.get("PI052_SUBTASK_USE_TASK") == "1"
-
         rows: list[tuple[Tensor, Tensor | None]] = []
         tokenizer = None
         for i in range(n):
-            if use_task_directly:
-                subtask = tasks[i]
-                self.last_subtasks[i] = subtask
-            elif regenerate or not self.last_subtasks[i]:
+            if regenerate or not self.last_subtasks[i]:
                 obs_i = self._slice_observation(batch, i)
                 subtask = self._generate_low_level_subtask(obs_i, tasks[i], i)
             else:
@@ -2043,27 +1998,6 @@ class PI052Policy(PreTrainedPolicy):
                 [{"role": "user", "content": content}],
                 add_generation_prompt=False,
             )
-            if (
-                os.environ.get("PI052_DEBUG_TENSORS") == "1"
-                and i == 0
-                and not getattr(self, "_dbg_prompt_done", False)
-            ):
-                import logging as _lg  # noqa: PLC0415
-
-                _tok = text_batch["tokenizer"]
-                _ids = text_batch["lang_tokens"][0]
-                _decoded = _tok.decode(_ids.tolist())
-                _log = _lg.getLogger(__name__)
-                _log.info("PI052_DEBUG eval low-level content[0]: %r", content)
-                _log.info("PI052_DEBUG eval decoded prompt[0]: %r", _decoded)
-                if torch.is_tensor(state_all):
-                    _s = state_all[i].float()
-                    _log.info(
-                        "PI052_DEBUG eval norm state[0]: min=%.3f max=%.3f mean=%.3f | digits=%s",
-                        _s.min().item(), _s.max().item(), _s.mean().item(),
-                        discretize_state_str(state_all[i]),
-                    )
-                self._dbg_prompt_done = True
             rows.append((text_batch["lang_tokens"], text_batch["lang_masks"]))
             tokenizer = text_batch["tokenizer"]
 
@@ -2072,9 +2006,7 @@ class PI052Policy(PreTrainedPolicy):
         # Scalar aliases mirror env 0 for back-compat / single-env overlays.
         self.last_subtask = self.last_subtasks[0] if self.last_subtasks else None
         self.last_subtask_raw = self.last_subtasks_raw[0] if self.last_subtasks_raw else None
-        self.last_subtask_source = (
-            self.last_subtasks_source[0] if self.last_subtasks_source else "unset"
-        )
+        self.last_subtask_source = self.last_subtasks_source[0] if self.last_subtasks_source else "unset"
 
         out = dict(batch)
         out[OBS_LANGUAGE_TOKENS] = tokens
@@ -2082,7 +2014,10 @@ class PI052Policy(PreTrainedPolicy):
         return out
 
     def _generate_low_level_subtask(self, obs_i: dict[str, Tensor], task: str, i: int) -> str:
-        from .inference.steps import _generate_with_policy, _looks_like_gibberish  # noqa: PLC0415
+        from .inference.pi052_adapter import (  # noqa: PLC0415
+            _generate_with_policy,
+            looks_like_gibberish as _looks_like_gibberish,
+        )
 
         msg = ""
         if task:
@@ -2163,9 +2098,7 @@ class PI052Policy(PreTrainedPolicy):
         return out
 
     @staticmethod
-    def _stack_token_rows(
-        rows: list[tuple[Tensor, Tensor | None]], tokenizer: Any
-    ) -> tuple[Tensor, Tensor]:
+    def _stack_token_rows(rows: list[tuple[Tensor, Tensor | None]], tokenizer: Any) -> tuple[Tensor, Tensor]:
         """Right-pad per-env ``(1, L_i)`` token/mask rows and stack to ``(n, L)``.
 
         Right-padding with a False attention mask matches the training-time
@@ -2264,7 +2197,7 @@ class PI052Policy(PreTrainedPolicy):
     # ------------------------------------------------------------------
     @classmethod
     def from_pretrained(
-        cls: builtins.type[T],
+        cls: type[T],
         pretrained_name_or_path: str | Path,
         *,
         config: PreTrainedConfig | None = None,
@@ -2493,13 +2426,9 @@ class PI052Policy(PreTrainedPolicy):
         base_lr = float(self.config.optimizer_lr)
         groups: list[dict[str, object]] = []
         if backbone_params:
-            groups.append(
-                {"params": backbone_params, "lr": base_lr * backbone_scale, "name": "backbone"}
-            )
+            groups.append({"params": backbone_params, "lr": base_lr * backbone_scale, "name": "backbone"})
         if expert_params:
-            groups.append(
-                {"params": expert_params, "lr": base_lr * expert_scale, "name": "action_expert"}
-            )
+            groups.append({"params": expert_params, "lr": base_lr * expert_scale, "name": "action_expert"})
         if head_params:
             groups.append({"params": head_params, "lr": base_lr * head_scale, "name": "lm_head"})
         # Sanity: a non-trivial head scale that matches no params would silently
@@ -2514,12 +2443,17 @@ class PI052Policy(PreTrainedPolicy):
             "PI052Policy LR groups (base=%.3g): backbone=%.3g (×%.3g, n=%d), "
             "action_expert=%.3g (×%.3g, n=%d), lm_head=%.3g (×%.3g, n=%d)",
             base_lr,
-            base_lr * backbone_scale, backbone_scale, len(backbone_params),
-            base_lr * expert_scale, expert_scale, len(expert_params),
-            base_lr * head_scale, head_scale, len(head_params),
+            base_lr * backbone_scale,
+            backbone_scale,
+            len(backbone_params),
+            base_lr * expert_scale,
+            expert_scale,
+            len(expert_params),
+            base_lr * head_scale,
+            head_scale,
+            len(head_params),
         )
         return groups
-
 
     def init_rtc_processor(self):
         """Initialize RTC processor if RTC is enabled in config."""
@@ -2558,24 +2492,9 @@ class PI052Policy(PreTrainedPolicy):
                 f"(batch: {batch.keys()}) (image_features: {self.config.image_features})"
             )
 
-        # Diagnostic (PI052_DEBUG_TENSORS=1): dump raw + processed image stats
-        # once, to compare the eval env's image pipeline against training.
-        import os as _os  # noqa: PLC0415
-
-        _dbg = _os.environ.get("PI052_DEBUG_TENSORS") == "1" and not getattr(self, "_dbg_img_done", False)
-
         # Preprocess image features present in the batch
         for key in present_img_keys:
             img = batch[key]
-
-            if _dbg and key == present_img_keys[0]:
-                import logging as _lg  # noqa: PLC0415
-
-                _r = img.float()
-                _lg.getLogger(__name__).info(
-                    "PI052_DEBUG raw img[%s] shape=%s dtype=%s min=%.3f max=%.3f mean=%.3f",
-                    key, tuple(img.shape), str(img.dtype), _r.min().item(), _r.max().item(), _r.mean().item(),
-                )
 
             # Ensure tensor is on the same device as the model
             if img.device != device:
@@ -2598,16 +2517,6 @@ class PI052Policy(PreTrainedPolicy):
 
             # Normalize from [0,1] to [-1,1] as expected by siglip
             img = img * 2.0 - 1.0
-
-            if _dbg and key == present_img_keys[0]:
-                import logging as _lg  # noqa: PLC0415
-
-                _p = img.float()
-                _lg.getLogger(__name__).info(
-                    "PI052_DEBUG processed img[%s] shape=%s min=%.3f max=%.3f mean=%.3f (expect ~[-1,1])",
-                    key, tuple(img.shape), _p.min().item(), _p.max().item(), _p.mean().item(),
-                )
-                self._dbg_img_done = True
 
             # from openpi preprocess_observation_pytorch: Convert back to [B, C, H, W] format if it was originally channels-first
             if is_channels_first:
@@ -2632,7 +2541,6 @@ class PI052Policy(PreTrainedPolicy):
         """Pad action"""
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
-
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:

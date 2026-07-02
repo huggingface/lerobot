@@ -12,7 +12,9 @@ from lerobot.processor.render_messages_processor import RenderMessagesStep  # no
 from lerobot.types import TransitionKey  # noqa: E402
 
 
-def test_render_messages_step_noops_without_language_columns():
+def test_render_messages_step_renders_task_fallback_without_language_columns():
+    """No language columns + a task string → low-level task fallback render,
+    matching what the policy sees at eval time on unannotated observations."""
     recipe = TrainingRecipe(
         messages=[
             MessageTurn(role="user", content="${task}", stream="high_level"),
@@ -20,6 +22,24 @@ def test_render_messages_step_noops_without_language_columns():
         ]
     )
     transition = create_transition(complementary_data={"task": "do it"})
+
+    out = RenderMessagesStep(recipe)(transition)
+    data = out[TransitionKey.COMPLEMENTARY_DATA]
+
+    assert data["messages"] == [{"role": "user", "content": "do it"}]
+    assert data["message_streams"] == ["low_level"]
+    assert data["target_message_indices"] == []
+    assert data["task"] == "do it"
+
+
+def test_render_messages_step_noops_without_language_columns_or_task():
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(role="user", content="${task}", stream="high_level"),
+            MessageTurn(role="assistant", content="${subtask}", stream="low_level", target=True),
+        ]
+    )
+    transition = create_transition(complementary_data={})
 
     assert RenderMessagesStep(recipe)(transition) == transition
 

@@ -250,14 +250,6 @@ annotations = [
     # install it locally only if you run your own ``vllm serve``.
 ]
 
-# Tool implementations under src/lerobot/tools/. Each tool's dependencies
-# are isolated so adding a new tool doesn't bloat the base install.
-# Currently only `say` (Kyutai pocket-tts; CPU-only, ~100M params).
-tools = [
-    "pocket-tts>=1.0.0,<3.0.0",
-    "scipy>=1.11.0,<2.0.0",  # SayTool.output_dir uses scipy.io.wavfile
-]
-
 # Development
 dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools>=1.73.1,<2.0.0", "mypy>=1.19.1", "ruff>=0.14.1", "lerobot[notebook]"]
 notebook = ["jupyter>=1.0.0,<2.0.0", "ipykernel>=6.0.0,<7.0.0"]

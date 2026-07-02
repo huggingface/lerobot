@@ -19,12 +19,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from lerobot.policies.language_conditioned import (
+from lerobot.runtime import (
     LanguageConditionedRuntime,
     RuntimeState,
     Tick,
     TickClock,
-    ToolCall,
     VQAResult,
 )
 
@@ -38,7 +37,6 @@ class PI052Runtime(LanguageConditionedRuntime):
         self,
         policy: Any,
         *,
-        tools: dict[str, Any] | None = None,
         observation_provider: Callable[[], dict | None] | None = None,
         robot_executor: Callable[[Any], None] | None = None,
         event_collector: Callable[[RuntimeState], None] | None = None,
@@ -51,7 +49,6 @@ class PI052Runtime(LanguageConditionedRuntime):
             policy_adapter=policy if isinstance(policy, PI052PolicyAdapter) else PI052PolicyAdapter(policy),
             observation_provider=observation_provider,
             action_executor=robot_executor,
-            tools=tools or {},
             event_collector=event_collector,
             chunk_hz=chunk_hz,
             ctrl_hz=ctrl_hz,
@@ -67,6 +64,5 @@ __all__ = [
     "RuntimeState",
     "Tick",
     "TickClock",
-    "ToolCall",
     "VQAResult",
 ]

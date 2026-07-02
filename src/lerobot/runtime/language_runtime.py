@@ -27,14 +27,6 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ToolCall:
-    """A pending runtime tool invocation."""
-
-    name: str
-    arguments: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
 class VQAResult:
     """Text answer plus optional parsed spatial payload."""
 
@@ -51,7 +43,6 @@ class RuntimeState:
     language_context: dict[str, str] = field(default_factory=dict)
     action_queue: deque[Any] = field(default_factory=deque)
     events: set[str] = field(default_factory=set)
-    pending_tools: list[ToolCall] = field(default_factory=list)
     log_lines: list[str] = field(default_factory=list)
     mode: str = "action"
     stop: bool = False
@@ -64,7 +55,6 @@ class RuntimeState:
         "current_plan": ("language_context", "plan"),
         "current_subtask": ("language_context", "subtask"),
         "current_memory": ("language_context", "memory"),
-        "tool_calls_pending": ("pending_tools", None),
         "events_this_tick": ("events", None),
         "_tick": ("tick", None),
     }
@@ -148,8 +138,6 @@ class LanguageConditionedPolicyAdapter(Protocol):
         user_text: str | None = None,
     ) -> str: ...
 
-    def parse_tool_calls(self, text: str) -> list[ToolCall]: ...
-
     def answer_vqa(
         self,
         question: str,
@@ -210,7 +198,6 @@ class LanguageConditionedRuntime:
     policy_adapter: LanguageConditionedPolicyAdapter
     observation_provider: Callable[[], dict[str, Any] | None] | None = None
     action_executor: Callable[[Any], None] | None = None
-    tools: dict[str, Any] = field(default_factory=dict)
     event_collector: Callable[[RuntimeState], None] | None = None
     chunk_hz: float = 4.0
     ctrl_hz: float = 50.0
@@ -271,7 +258,6 @@ class LanguageConditionedRuntime:
         self.maybe_handle_user_events()
         self.maybe_enqueue_action_chunk(force=force_rates)
         self.dispatch_action(force=force_rates)
-        self.dispatch_tools()
         self.state.events.clear()
 
     def _current_observation(self) -> dict[str, Any] | None:
@@ -315,14 +301,6 @@ class LanguageConditionedRuntime:
         out = self.policy_adapter.select_text("interjection", observation, self.state, user_text=text)
         if not out:
             return
-        calls = self.policy_adapter.parse_tool_calls(out)
-        for call in calls:
-            self.state.pending_tools.append(call)
-        if calls:
-            self.state.emit("tool_call_pending")
-            for call in calls:
-                if call.name == "say" and call.arguments.get("text"):
-                    self.state.log(f"  speech: {call.arguments['text']}")
         plan = getattr(self.policy_adapter, "plan_from_text", lambda value: value)(out)
         if plan:
             self.state.set_context("plan", plan, label="plan")
@@ -393,27 +371,6 @@ class LanguageConditionedRuntime:
             self.state.actions_dispatched += 1
         if latest is not None and self.action_executor is not None:
             self.action_executor(latest)
-
-    def dispatch_tools(self) -> None:
-        if not (self.state.take_event("tool_call_pending") or self.state.pending_tools):
-            return
-        pending = list(self.state.pending_tools)
-        self.state.pending_tools = []
-        for call in pending:
-            name = call.name if isinstance(call, ToolCall) else (call.get("function") or {}).get("name")
-            args = (
-                call.arguments
-                if isinstance(call, ToolCall)
-                else (call.get("function") or {}).get("arguments", {})
-            )
-            tool = self.tools.get(name)
-            if tool is None:
-                self.state.log(f"  [warn] tool {name!r} not registered — skipping call")
-                continue
-            try:
-                tool.call(args)
-            except Exception as exc:  # noqa: BLE001
-                self.state.log(f"  [error] tool dispatch failed: {exc}")
 
     def _handle_action_deadline(self) -> None:
         deadline = self.state.action_deadline

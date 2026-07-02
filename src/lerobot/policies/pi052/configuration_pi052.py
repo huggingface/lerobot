@@ -56,11 +56,9 @@ class PI052Config(PI05Config):
 
     # Recipe / language stack ---------------------------------------------
     recipe_path: str | None = "recipes/subtask_mem.yaml"
-    """Path (absolute or relative to ``src/lerobot/configs/``) to a
-    ``TrainingRecipe`` YAML. Defaults to the compact Hi-Robot blend
-    shipped with this policy. Set to ``None`` to disable recipe
-    rendering and fall back to π0.5's single-task ``Task: ... Action:``
-    prompt path (unannotated datasets keep working that way)."""
+    """``TrainingRecipe`` YAML path (absolute or relative to
+    ``src/lerobot/configs/``). ``None`` disables recipe rendering — unannotated
+    datasets fall back to π0.5's plain ``Task: ... Action:`` prompt."""
 
     apply_chat_template: bool = False
     """PaliGemma is *not* chat-pretrained — its tokenizer doesn't ship a

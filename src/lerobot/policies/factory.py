@@ -96,12 +96,8 @@ def _restore_pi052_pretrained_state(
 
     base = Path(pretrained_path)
     if not base.exists():
-        # ``pretrained_path`` may be a HF Hub repo id rather than a local dir.
-        # ``from_pretrained`` downloads the model weights, but pi052 builds its
-        # processors fresh (so the generic loader never fetches them), leaving
-        # the processor JSON + normalizer-stat safetensors un-downloaded. Resolve
-        # them from the hub here — otherwise the quantile stats are silently left
-        # at fresh init and the policy runs completely un-normalized.
+        # Hub repo id, not a local dir: fetch the processor JSON + stats here
+        # (the generic loader never does for pi052's fresh-built processors).
         try:
             from huggingface_hub import snapshot_download  # noqa: PLC0415
 
@@ -398,17 +394,8 @@ def make_pre_post_processors(
             policy configuration type.
     """
     if pretrained_path and getattr(policy_cfg, "type", None) == "pi052":
-        # pi052 pipelines don't roundtrip through the saved
-        # ``policy_preprocessor.json``: ``RenderMessagesStep`` holds a
-        # Python ``TrainingRecipe`` (not JSON-serializable; saved as
-        # ``{}``) and ``ActionTokenizerProcessorStep`` saves a host-only
-        # FAST tokenizer path. Generic ``from_pretrained`` then dies
-        # with ``RenderMessagesStep.__init__() missing 1 required
-        # positional argument: 'recipe'`` (job 22164494).
-        #
-        # Mirror ``lerobot_pi052_runtime``'s bootstrap: build pipelines
-        # fresh from ``config.recipe_path`` and transplant the saved
-        # stateful blobs (normalizer stats) from the checkpoint dir.
+        # pi052 pipelines don't JSON-roundtrip — rebuild fresh and transplant
+        # saved state (see ``_restore_pi052_pretrained_state`` for why).
         from .pi052.processor_pi052 import make_pi052_pre_post_processors
 
         preprocessor, postprocessor = make_pi052_pre_post_processors(

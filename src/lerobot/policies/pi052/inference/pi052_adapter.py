@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from lerobot.policies.language_conditioned import RuntimeState, ToolCall, VQAResult
+from lerobot.runtime import RuntimeState, VQAResult
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +68,6 @@ class PI052PolicyAdapter:
             top_p=float(state.extra.get("text_top_p") or 1.0),
             suppress_loc_tokens=kind in {"subtask", "memory", "interjection"},
         )
-
-    def parse_tool_calls(self, text: str) -> list[ToolCall]:
-        _plan, speech = split_plan_and_say(text)
-        return [ToolCall("say", {"text": speech})] if speech else []
 
     def plan_from_text(self, text: str) -> str:
         plan, _speech = split_plan_and_say(text)
@@ -305,7 +301,3 @@ def split_plan_and_say(text: str) -> tuple[str, str]:
     speech = match.group(1).strip().strip('"').strip("'")
     plan = (text[: match.start()] + text[match.end() :]).strip()
     return plan, speech
-
-
-def messages_for_vqa(question: str) -> list[dict[str, Any]]:
-    return [{"role": "user", "content": question}]

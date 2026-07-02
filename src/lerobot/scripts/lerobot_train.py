@@ -50,7 +50,6 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import (
     EpisodeAwareSampler,
-    WeightedEpisodeAwareSampler,
     compute_sampler_state,
     make_dataset,
 )
@@ -118,14 +117,6 @@ def update_policy(
     if sample_weighter is not None:
         sample_weights, weight_stats = sample_weighter.compute_batch_weights(batch)
 
-    # Diagnostic-only: skip DDP gradient all-reduce to isolate compute vs comms
-    # in the per-step time. Training is incorrect under this flag; use for probes.
-    sync_ctx = (
-        accelerator.no_sync(policy)
-        if os.environ.get("LEROBOT_DEBUG_NO_GRAD_SYNC") == "1"
-        else nullcontext()
-    )
-
     # Let accelerator handle mixed precision
     with accelerator.autocast():
         if sample_weights is not None:
@@ -151,8 +142,7 @@ def update_policy(
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
     # Use accelerator's backward method
-    with sync_ctx:
-        accelerator.backward(loss)
+    accelerator.backward(loss)
 
     # Clip gradients if specified
     if grad_clip_norm > 0:
@@ -183,161 +173,6 @@ def update_policy(
     if torch.cuda.is_available():
         train_metrics.gpu_mem_gb = torch.cuda.max_memory_allocated() / (1024**3)
     return train_metrics, output_dict
-
-
-def _print_debug_text_predictions(policy: Any, batch: dict[str, Any], step: int, n_samples: int = 5) -> None:
-    """Forward the current batch and print head-argmax vs label per supervised position.
-
-    Opt-in via ``LEROBOT_DEBUG_PREDS_EVERY=<step_interval>``. Only the
-    policy types that expose ``debug_text_predictions`` participate
-    (currently PI052); others are silently skipped. Pretty-prints up to
-    ``n_samples`` samples from the current batch, showing the prompt,
-    every supervised position's (label, prediction, ✓/✗), and a
-    per-sample token-accuracy summary — the cheapest "is text training
-    actually learning anything" signal.
-    """
-    # Accelerator/DDP wraps the policy in a ``module`` attribute and
-    # doesn't proxy custom methods through, so a naive
-    # ``hasattr(policy, "debug_text_predictions")`` returns False on the
-    # wrapper — and the helper would silently no-op. Walk through any
-    # ``.module`` indirection (DDP, FSDP, ``accelerator.prepare`` wrappers)
-    # to reach the raw policy that actually defines the method.
-    inner = policy
-    while hasattr(inner, "module") and not hasattr(inner, "debug_text_predictions"):
-        inner = inner.module
-    if not hasattr(inner, "debug_text_predictions"):
-        logging.warning(
-            "LEROBOT_DEBUG_PREDS_EVERY set but policy %s has no "
-            "debug_text_predictions method — skipping dump.",
-            type(inner).__name__,
-        )
-        return
-    try:
-        debug = inner.debug_text_predictions(batch, max_samples=n_samples)
-    except Exception as exc:  # noqa: BLE001
-        logging.warning("debug_text_predictions failed: %s", exc, exc_info=True)
-        return
-    if not debug:
-        logging.warning(
-            "debug_text_predictions returned no supervised samples — current batch has no text labels."
-        )
-        return
-    policy = inner  # used below for select_message-style decoding parity
-
-    # Build a tokenizer for decoding — match training side exactly.
-    try:
-        from transformers import AutoTokenizer  # noqa: PLC0415
-
-        from lerobot.policies.pi052.text_processor_pi052 import (  # noqa: PLC0415
-            register_paligemma_loc_tokens,
-        )
-
-        tok_name = getattr(policy.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
-        tokenizer = register_paligemma_loc_tokens(AutoTokenizer.from_pretrained(tok_name))
-    except Exception as exc:  # noqa: BLE001
-        logging.warning("debug preds: tokenizer load failed: %s", exc)
-        return
-
-    ids = debug["input_ids"]
-    labels = debug["labels"]
-    preds = debug["predictions"]
-    attn = debug["attention_mask"]
-
-    n = ids.shape[0]
-    print(
-        f"\n========== STEP {step} DEBUG PREDICTIONS ({n} samples) ==========",
-        flush=True,
-    )
-    for s in range(n):
-        a = attn[s].tolist()
-        real = sum(a)
-        sid = ids[s].tolist()
-        sl = labels[s].tolist()
-        sp = preds[s].tolist()
-        prompt = tokenizer.decode(sid[:real], skip_special_tokens=False)
-        print(f"\n  --- sample {s + 1}/{n} ---", flush=True)
-        print(f"  prompt: {prompt!r}", flush=True)
-
-        # Ground-truth target (the contiguous supervised label span).
-        sup_ids = [int(sid[i]) for i in range(real) if sl[i] != -100]
-        if sup_ids:
-            print(
-                f"  target  (ground truth)        : {tokenizer.decode(sup_ids, skip_special_tokens=False)!r}",
-                flush=True,
-            )
-
-        # Training-side teacher-forced argmax on the same prompt+target.
-        n_sup = n_ok = 0
-        teacher_chars: list[int] = []
-        for i in range(1, real):
-            label = sl[i]
-            if label == -100:
-                continue
-            n_sup += 1
-            pred = int(sp[i - 1])
-            teacher_chars.append(pred)
-            if label == pred:
-                n_ok += 1
-        teacher_text = tokenizer.decode(teacher_chars, skip_special_tokens=False) if teacher_chars else ""
-        acc = n_ok / max(n_sup, 1)
-        print(
-            f"  training argmax (teacher-fed) : {teacher_text!r}   acc={n_ok}/{n_sup}={acc:.1%}",
-            flush=True,
-        )
-    print("=" * 60 + "\n", flush=True)
-
-
-def _build_vqa_oversample_weights(dataset: Any, target_fraction: float) -> "torch.Tensor | None":
-    """Build per-frame sampling weights that oversample VQA-annotated frames.
-
-    Scans the dataset's ``language_events`` column for frames carrying a
-    ``vqa``-style annotation and returns a weight tensor (length == total
-    dataset frames) such that, under multinomial sampling, VQA frames make up
-    roughly ``target_fraction`` of the training stream.
-
-    Returns ``None`` (⇒ fall back to uniform episode-aware sampling) when VQA
-    frames cannot be detected or there are none.
-    """
-    if not 0.0 < target_fraction < 1.0:
-        logging.warning(
-            "vqa_target_fraction must be in (0, 1); got %s — VQA oversampling disabled.",
-            target_fraction,
-        )
-        return None
-    hf = getattr(dataset, "hf_dataset", None)
-    if hf is None or "language_events" not in getattr(hf, "column_names", []):
-        logging.warning("Dataset has no `language_events` column — VQA oversampling disabled.")
-        return None
-
-    events_col = hf["language_events"]
-    n_frames = len(events_col)
-    is_vqa = torch.zeros(n_frames, dtype=torch.bool)
-    for i, rows in enumerate(events_col):
-        if rows and any((row or {}).get("style") == "vqa" for row in rows):
-            is_vqa[i] = True
-
-    n_vqa = int(is_vqa.sum())
-    if n_vqa == 0:
-        logging.warning("No `vqa` annotations found in the dataset — VQA oversampling disabled.")
-        return None
-    n_other = n_frames - n_vqa
-
-    # Solve target = (n_vqa·w) / (n_vqa·w + n_other) for the VQA weight w.
-    # Clamp to ≥ 1 so VQA frames are never *down*-weighted below uniform.
-    weight = (target_fraction * n_other) / ((1.0 - target_fraction) * max(n_vqa, 1))
-    weight = max(weight, 1.0)
-    weights = torch.ones(n_frames, dtype=torch.double)
-    weights[is_vqa] = weight
-    logging.info(
-        "VQA oversampling: %d/%d frames carry a `vqa` annotation (%.2f%%); "
-        "weighting them x%.2f to target ~%.0f%% of the training stream.",
-        n_vqa,
-        n_frames,
-        100.0 * n_vqa / n_frames,
-        weight,
-        100.0 * target_fraction,
-    )
-    return weights
 
 
 @parser.wrap()
@@ -632,29 +467,14 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         to_indices = dataset.meta.episodes["dataset_to_index"]
         seed = cfg.seed if cfg.seed is not None else 0
 
-        # When `vqa_target_fraction` is set, oversample VQA-annotated
-        # frames via a weighted sampler; otherwise plain episode-aware.
-        vqa_weights = None
-        if cfg.vqa_target_fraction is not None:
-            vqa_weights = _build_vqa_oversample_weights(dataset, cfg.vqa_target_fraction)
-        if vqa_weights is not None:
-            sampler = WeightedEpisodeAwareSampler(
-                from_indices,
-                to_indices,
-                vqa_weights,
-                episode_indices_to_use=dataset.episodes,
-                drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
-                seed=seed,
-            )
-        else:
-            sampler = EpisodeAwareSampler(
-                from_indices,
-                to_indices,
-                episode_indices_to_use=dataset.episodes,
-                drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
-                shuffle=True,
-                seed=seed,
-            )
+        sampler = EpisodeAwareSampler(
+            from_indices,
+            to_indices,
+            episode_indices_to_use=dataset.episodes,
+            drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
+            shuffle=True,
+            seed=seed,
+        )
         if cfg.resume and step > 0:
             # The resume offset depends on the (num_processes, batch_size) that produced `step`, so
             # use the values recorded in the checkpoint (falling back to the current ones for older
@@ -851,22 +671,13 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
 
-        # Optional periodic head-prediction dump for the LM head:
-        # ``LEROBOT_DEBUG_PREDS_EVERY=1000`` prints 5 samples + per-token
-        # (label, argmax, ✓/✗) every 1000 steps. Cheap diagnostic to see
-        # whether the text head is actually learning what we expect, vs
-        # collapsing to a fixed token. Refilling the recipe-sample dump
-        # budget at the same cadence also redumps the raw input shapes.
+        # Optional LM-head diagnostic (``LEROBOT_DEBUG_PREDS_EVERY=<steps>``): prints
+        # per-token (label, argmax) for a few samples to check the text head is learning.
         _debug_preds_every = int(os.environ.get("LEROBOT_DEBUG_PREDS_EVERY", "0"))
         if _debug_preds_every > 0 and step % _debug_preds_every == 0 and is_main_process:
-            try:
-                from lerobot.policies.pi052 import text_processor_pi052 as _tp  # noqa: PLC0415
+            from lerobot.policies.pi052.debug_utils import print_debug_text_predictions  # noqa: PLC0415
 
-                _tp._DUMPED_SO_FAR = 0
-                _tp._DUMP_BUDGET = max(_tp._DUMP_BUDGET, 5)
-            except Exception as exc:  # noqa: BLE001
-                logging.debug("Could not reset PI052 debug dump budget: %s", exc, exc_info=True)
-            _print_debug_text_predictions(policy, batch, step, n_samples=5)
+            print_debug_text_predictions(policy, batch, step, n_samples=5)
 
         if is_log_step:
             # Collective reduce must run on every rank, before the main-process gate below.
@@ -1043,9 +854,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             # weights too, to a sibling ``<repo_id>-ema`` repo, so both are
             # fully loadable and you can benchmark/deploy whichever is better.
             # Non-fatal: the live model is already up if this fails.
-            if ema is not None and not (
-                not cfg.is_reward_model_training and cfg.policy.use_peft
-            ):
+            if ema is not None and not (not cfg.is_reward_model_training and cfg.policy.use_peft):
                 ema_model = ema.ema_model
                 ema_repo_id = f"{active_cfg.repo_id}-ema"
                 orig_repo_id = ema_model.config.repo_id
