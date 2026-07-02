@@ -543,8 +543,17 @@ def make_policy(
         features = env_to_policy_features(env_cfg)
 
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
-    if not cfg.input_features:
-        cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
+    # Always derive input_features from the current dataset/env rather than preserving defaults that
+    # ship with a pretrained base model's config (e.g. LIBERO-style camera keys on pi0_fast). Keeping
+    # those stale keys breaks fine-tuning on a custom dataset whose observation keys differ, failing
+    # later with "All image features are missing from the batch" (see issue #3845).
+    input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
+    if rename_map:
+        # Use the keys produced by RenameObservationsProcessorStep at runtime so the config matches
+        # the post-rename batch. Only observation (input) keys are renamed; action (output) features
+        # keep their original names since that processor step never touches actions.
+        input_features = {rename_map.get(key, key): ft for key, ft in input_features.items()}
+    cfg.input_features = input_features
 
     # Store action feature names for relative_exclude_joints support
     if ds_meta is not None and hasattr(cfg, "action_feature_names"):
