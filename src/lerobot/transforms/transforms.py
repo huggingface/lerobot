@@ -41,7 +41,7 @@ class RandomSubsetApply(Transform):
 
     def __init__(
         self,
-        transforms: Sequence[Callable],
+        transforms: Sequence[Callable[..., Any]],
         p: list[float] | None = None,
         n_subset: int | None = None,
         random_order: bool = False,
@@ -50,7 +50,7 @@ class RandomSubsetApply(Transform):
         if not isinstance(transforms, Sequence):
             raise TypeError("Argument transforms should be a sequence of callables")
         if p is None:
-            p = [1] * len(transforms)
+            p = [1.0] * len(transforms)
         elif len(p) != len(transforms):
             raise ValueError(
                 f"Length of p doesn't match the number of transforms: {len(p)} != {len(transforms)}"
@@ -69,7 +69,7 @@ class RandomSubsetApply(Transform):
         self.n_subset = n_subset
         self.random_order = random_order
 
-        self.selected_transforms = None
+        self.selected_transforms: list[Callable[..., Any]] = []
 
     def forward(self, *inputs: Any) -> Any:
         needs_unpacking = len(inputs) > 1
@@ -119,7 +119,7 @@ class SharpnessJitter(Transform):
         super().__init__()
         self.sharpness = self._check_input(sharpness)
 
-    def _check_input(self, sharpness):
+    def _check_input(self, sharpness: float | Sequence[float]) -> tuple[float, float]:
         if isinstance(sharpness, (int | float)):
             if sharpness < 0:
                 raise ValueError("If sharpness is a single number, it must be non negative.")
@@ -215,7 +215,7 @@ class ImageTransformsConfig:
     )
 
 
-def make_transform_from_config(cfg: ImageTransformConfig):
+def make_transform_from_config(cfg: ImageTransformConfig) -> Transform:
     if cfg.type == "SharpnessJitter":
         return SharpnessJitter(**cfg.kwargs)
 
@@ -236,8 +236,8 @@ class ImageTransforms(Transform):
         super().__init__()
         self._cfg = cfg
 
-        self.weights = []
-        self.transforms = {}
+        self.weights: list[float] = []
+        self.transforms: dict[str, Transform] = {}
         for tf_name, tf_cfg in cfg.tfs.items():
             if tf_cfg.weight <= 0.0:
                 continue

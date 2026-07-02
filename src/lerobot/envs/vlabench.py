@@ -373,7 +373,7 @@ class VLABenchEnv(gym.Env):
 
         if action.shape[0] != 7:
             # Unknown layout — fall back to zero-pad so the sim doesn't crash.
-            padded = np.zeros(ctrl_dim, dtype=np.float64)
+            padded: np.ndarray = np.zeros(ctrl_dim, dtype=np.float64)
             padded[: min(action.shape[0], ctrl_dim)] = action[:ctrl_dim]
             return padded
 
