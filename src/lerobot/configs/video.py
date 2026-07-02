@@ -226,24 +226,24 @@ class VideoEncoderConfig:
             if encoder_threads is not None:
                 svtav1_parts.append(f"lp={encoder_threads}")
             if svtav1_parts:
-                opts["svtav1-params"] = ":".join(svtav1_parts)
+                set_if("svtav1-params", ":".join(svtav1_parts))
         elif self.vcodec in ("h264", "hevc"):
             set_if("crf", self.crf)
             set_if("preset", self.preset)
             if self.fast_decode:
-                opts["tune"] = "fastdecode"
+                set_if("tune", "fastdecode")
             set_if("threads", encoder_threads)
         elif self.vcodec == "libaom-av1":
             set_if("crf", self.crf)
             set_if("preset", self.preset)
             if encoder_threads is not None:
-                opts["threads"] = encoder_threads
-                opts["row-mt"] = 1
+                set_if("threads", encoder_threads)
+                set_if("row-mt", 1)
         elif self.vcodec in ("h264_videotoolbox", "hevc_videotoolbox"):
             if self.crf is not None:
-                opts["q:v"] = max(1, min(100, 100 - self.crf * 2))
+                set_if("q:v", max(1, min(100, 100 - self.crf * 2)))
         elif self.vcodec in ("h264_nvenc", "hevc_nvenc"):
-            opts["rc"] = 0
+            set_if("rc", 0)
             set_if("qp", self.crf)
             set_if("preset", self.preset)
         elif self.vcodec == "h264_vaapi":
