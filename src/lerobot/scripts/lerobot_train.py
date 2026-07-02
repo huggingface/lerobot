@@ -211,10 +211,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
         # Force the device to be CPU when the active config's device is set to CPU (works for both policy and reward model training).
         force_cpu = cfg.trainable_config.device == "cpu"
-        # Drive Accelerate's autocast from the policy dtype so `accelerator.autocast()`
-        # actually casts to bf16/fp16 when `--policy.dtype` requests it, and stays full
-        # precision for float32. Policies that don't expose a string `dtype` (e.g. those
-        # using torch_dtype/compute_dtype) fall back to Accelerate's launcher default.
+        # Drive Accelerate's autocast from policy.dtype (bf16/fp16 activate it; float32/absent -> launcher default).
         policy_dtype = getattr(cfg.trainable_config, "dtype", None)
         mixed_precision = {"bfloat16": "bf16", "float16": "fp16", "float32": "no"}.get(policy_dtype)
         accelerator = Accelerator(
