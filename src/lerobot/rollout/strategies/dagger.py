@@ -365,6 +365,7 @@ class DAggerStrategy(RolloutStrategy):
             return
 
         label = self._events.consume_episode_success()
+        logger.info("_stamp_episode_success: label=%s, buffer_len=%d", label, len(success_buf))
 
         if label:
             success_buf[-1] = np.array([True], dtype=bool)
