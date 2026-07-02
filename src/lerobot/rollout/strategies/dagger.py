@@ -536,6 +536,7 @@ class DAggerStrategy(RolloutStrategy):
                             engine.pause()
                             events.phase = DAggerPhase.PAUSED
                             self._return_to_initial_position(ctx.hardware)
+                            last_action = None
                             logger.info(
                                 "Episode saved — paused for environment reset. Press SPACE to start next episode."
                             )
