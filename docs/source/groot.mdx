@@ -77,12 +77,19 @@ To use GR00T N1.7:
 Here's a complete training command for finetuning the base GR00T model on your own dataset:
 
 ```bash
+# Set these for your run
+export BASE_MODEL=nvidia/GR00T-N1.7-3B
+export DATASET_ID=sreetz-nv/so101-clean-up-vials-into-rack-50_20260628_131121
+export REPO_ID=sreetz-nv/so101-clean-up-vials-into-rack-50-groot-n17-relact-bs64-20k-20260628_johnny_42
+export JOB_NAME=so101-clean-up-vials-into-rack-50-groot-n17-relact-bs64-20k-20260628_johnny_42
+export OUTPUT_DIR=outputs/train/$JOB_NAME
+
 uv run lerobot-train \
-  --dataset.repo_id=sreetz-nv/so101-clean-up-vials-into-rack-50_20260628_131121 \
+  --dataset.repo_id=$DATASET_ID \
   --dataset.image_transforms.enable=true \
   --policy.type=groot \
   --policy.device=cuda \
-  --policy.base_model_path=nvidia/GR00T-N1.7-3B \
+  --policy.base_model_path=$BASE_MODEL \
   --policy.embodiment_tag=new_embodiment \
   --policy.chunk_size=16 \
   --policy.n_action_steps=16 \
@@ -91,7 +98,7 @@ uv run lerobot-train \
   --policy.use_bf16=true \
   --policy.use_flash_attention=true \
   --policy.push_to_hub=true \
-  --policy.repo_id=sreetz-nv/so101-clean-up-vials-into-rack-50-groot-n17-relact-bs64-20k-20260628_johnny_42 \
+  --policy.repo_id=$REPO_ID \
   --seed=42 \
   --batch_size=64 \
   --steps=20000 \
@@ -100,8 +107,8 @@ uv run lerobot-train \
   --env_eval_freq=0 \
   --eval_steps=0 \
   --log_freq=100 \
-  --output_dir=outputs/train/sreetz-nv/so101-clean-up-vials-into-rack-50-groot-n17-relact-bs64-20k-20260628_johnny_42 \
-  --job_name=so101-clean-up-vials-into-rack-50-groot-n17-relact-bs64-20k-20260628_johnny_42
+  --output_dir=$OUTPUT_DIR \
+  --job_name=$JOB_NAME
 ```
 
 ## Performance Results
@@ -124,17 +131,15 @@ NVIDIA publishes GR00T N1.7 LIBERO checkpoints at [`nvidia/GR00T-N1.7-LIBERO`](h
 | LIBERO Goal    | `libero_goal`           |
 | LIBERO 10      | `libero_10`             |
 
-Preliminary LeRobot integration results:
+Preliminary LeRobot integration results (GR00T-LeRobot, `eval.n_episodes >= 50` per suite):
 
-| Suite          | Status | Success rate | n_episodes |
-| -------------- | ------ | -----------: | ---------: |
-| LIBERO Spatial | ✓      |         ~95% |         XX |
-| LIBERO Object  | ✓      |          XX% |         XX |
-| LIBERO Goal    | ✓      |          XX% |         XX |
-| LIBERO 10      | ✓      |          XX% |         XX |
-| **Average**    | ✓      |      **XX%** |     **XX** |
-
-Replace the `XX` placeholders with final eval artifacts before merge.
+| Suite                  | Success rate |
+| ---------------------- | -----------: |
+| LIBERO Spatial         |          94% |
+| LIBERO Object          |          98% |
+| LIBERO Goal            |          93% |
+| LIBERO 10 (Long)       |          90% |
+| **Average**            |   **93.75%** |
 
 Download the suite checkpoint locally, then point `--policy.base_model_path` at the downloaded subdirectory. `--policy.path` is reserved for LeRobot checkpoints that contain a LeRobot `config.json` with a `type` field.
 
@@ -162,8 +167,8 @@ Once you have trained your model using your parameters you can run inference in 
 uv run lerobot-rollout \
   --strategy.type=base \
   --inference.type=rtc \
-  --policy.path=outputs/train/sreetz-nv/so101-clean-up-vials-into-rack-50-groot-n17-relact-bs64-20k-20260628_johnny_42/checkpoints/020000/pretrained_model/ \
-  --policy.base_model_path=nvidia/GR00T-N1.7-3B \
+  --policy.path=$OUTPUT_DIR/checkpoints/020000/pretrained_model/ \
+  --policy.base_model_path=$BASE_MODEL \
   --robot.type=so101_follower \
   --robot.port=/dev/ttyACM0 \
   --robot.id=orange_andrew \
