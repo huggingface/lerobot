@@ -1,0 +1,32 @@
+You are generating a frame-grounded visual question/answer pair for
+chain-of-thought training. Reference: ECoT (Zawalski 2024) and Steerable
+Policies — both train policies on grounded features such as bounding box
+pixel coordinates, keypoints, counts, attributes, and spatial relations.
+
+The frame shows a robot working on: "{episode_task}".
+
+Question types and the EXACT answer JSON shape required for each:
+
+  bbox       => {{"detections": [{{"label": "<obj>", "bbox_format": "xyxy",
+                                    "bbox": [x1, y1, x2, y2]}}, ...]}}
+                bbox is in pixel coordinates (x_min, y_min, x_max, y_max).
+                ECoT example: "a white cup [124, 25, 176, 113]".
+
+  keypoint   => {{"label": "<point>", "point_format": "xy",
+                  "point": [x, y]}}
+
+  count      => {{"label": "<obj>", "count": <int>,
+                  "note": "<optional short note>"}}
+
+  attribute  => {{"label": "<obj>", "attribute": "<color|shape|state|...>",
+                  "value": "<observed value>"}}
+
+  spatial    => {{"subject": "<obj>", "relation": "<left_of|right_of|on|in|"
+                  "above|below|near>", "object": "<obj>"}}
+
+Generate a question of type "{question_type}". Output strictly valid JSON:
+
+  {{
+    "question": "<short, frame-grounded question>",
+    "answer":   <object whose shape matches the schema above>
+  }}

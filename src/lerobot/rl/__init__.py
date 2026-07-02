@@ -12,23 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Reinforcement learning modules.
+"""Reinforcement learning modules.
 
-Requires: ``pip install 'lerobot[hilserl]'``
-
-Available modules (import directly)::
-
-    from lerobot.rl.actor import ...
-    from lerobot.rl.learner import ...
-    from lerobot.rl.learner_service import ...
-    from lerobot.rl.buffer import ...
-    from lerobot.rl.eval_policy import ...
-    from lerobot.rl.gym_manipulator import ...
+Distributed actor / learner entry points (``actor``, ``learner``,
+``learner_service``) require ``pip install 'lerobot[hilserl]'``. Algorithms,
+buffer, data sources and trainer are gRPC-free and usable standalone.
 """
 
-from lerobot.utils.import_utils import require_package
+from .algorithms.base import RLAlgorithm as RLAlgorithm
+from .algorithms.configs import RLAlgorithmConfig as RLAlgorithmConfig, TrainingStats as TrainingStats
+from .algorithms.factory import (
+    make_algorithm as make_algorithm,
+    make_algorithm_config as make_algorithm_config,
+)
+from .algorithms.sac.configuration_sac import SACAlgorithmConfig as SACAlgorithmConfig
+from .buffer import ReplayBuffer as ReplayBuffer
+from .data_sources import DataMixer as DataMixer, OnlineOfflineMixer as OnlineOfflineMixer
+from .trainer import RLTrainer as RLTrainer
 
-require_package("grpcio", extra="hilserl", import_name="grpc")
-
-__all__: list[str] = []
+__all__ = [
+    "RLAlgorithm",
+    "RLAlgorithmConfig",
+    "TrainingStats",
+    "make_algorithm",
+    "make_algorithm_config",
+    "SACAlgorithmConfig",
+    "RLTrainer",
+    "ReplayBuffer",
+    "DataMixer",
+    "OnlineOfflineMixer",
+]
