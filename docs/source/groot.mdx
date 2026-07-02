@@ -150,16 +150,7 @@ lerobot-train \
   --dataset.image_transforms.tfs='{"brightness":{"weight":1.0,"type":"ColorJitter","kwargs":{"brightness":[0.7,1.3]}},"contrast":{"weight":1.0,"type":"ColorJitter","kwargs":{"contrast":[0.6,1.4]}},"saturation":{"weight":1.0,"type":"ColorJitter","kwargs":{"saturation":[0.5,1.5]}},"hue":{"weight":1.0,"type":"ColorJitter","kwargs":{"hue":[-0.08,0.08]}}}'
 ```
 
-### GR00T N1.7 LIBERO Checkpoints
-
-NVIDIA publishes GR00T N1.7 LIBERO checkpoints at [`nvidia/GR00T-N1.7-LIBERO`](https://huggingface.co/nvidia/GR00T-N1.7-LIBERO), with one subdirectory per LIBERO suite:
-
-| Suite          | Checkpoint subdirectory |
-| -------------- | ----------------------- |
-| LIBERO Spatial | `libero_spatial`        |
-| LIBERO Object  | `libero_object`         |
-| LIBERO Goal    | `libero_goal`           |
-| LIBERO 10      | `libero_10`             |
+### GR00T N1.7 LIBERO Results
 
 Preliminary LeRobot integration results (GR00T-LeRobot, `eval.n_episodes >= 50` per suite):
 
