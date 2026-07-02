@@ -17,7 +17,7 @@
 Policy-agnostic CLI over :class:`lerobot.runtime.LanguageConditionedRuntime`.
 A policy wires it up with :func:`run`, passing an adapter factory
 (``policy -> LanguageConditionedPolicyAdapter``); see
-``lerobot.scripts.lerobot_pi052_runtime`` for the PI052 entry point.
+``lerobot.scripts.lerobot_language_runtime`` for the entry point.
 
 Stdin is the user channel: type a task, then natural-language
 interjections. The runtime prints state changes (plan / subtask /
@@ -29,7 +29,7 @@ Examples
 Dry run on a Hub checkpoint, no robot connected — useful for sanity-
 checking text generation::
 
-    uv run lerobot-pi052-runtime \\
+    uv run lerobot-language-runtime \\
         --policy.path=<repo-or-dir> \\
         --no_robot \\
         --task="please clean the kitchen"
@@ -37,7 +37,7 @@ checking text generation::
 Same, but feed real frames from an annotated dataset so plan / subtask
 / memory generation runs against actual video + state::
 
-    uv run lerobot-pi052-runtime \\
+    uv run lerobot-language-runtime \\
         --policy.path=<repo-or-dir> \\
         --dataset.repo_id=<annotated-dataset> \\
         --dataset.episode=0 \\
@@ -46,7 +46,7 @@ Same, but feed real frames from an annotated dataset so plan / subtask
 
 With a real robot::
 
-    uv run lerobot-pi052-runtime \\
+    uv run lerobot-language-runtime \\
         --policy.path=... \\
         --robot.type=so101 --robot.port=/dev/tty.usbmodem...
 
@@ -63,6 +63,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from typing import Any
 
+from .adapter import GenerationConfig
 from .language_runtime import LanguageConditionedPolicyAdapter, LanguageConditionedRuntime
 from .repl import _emit
 
@@ -1201,36 +1202,26 @@ def _make_state_panel_renderer(
         dispatched = int(st.get("actions_dispatched") or 0)
         console.print(f"  [dim]queued actions: {queue_len}    dispatched: {dispatched}[/]")
 
-        # Overfit / memorisation diagnostics. The high-level steps
-        # surface the raw generation each time they fire (even when
-        # rejected as gibberish or unchanged), plus repeat/rejection
-        # counters. Rule of thumb:
-        #
-        #   * subtask repeat ≥ ~5 and queue_len cycles fully → model
-        #     can't move past current subtask (memorised one phase
-        #     of the task — classic overfit signature)
-        #   * subtask gibberish climbing → LM head collapsed to
-        #     chat-template fragments / one-token salads
-        #   * last raw differs from accepted → at least the LM is
-        #     varying, the gibberish filter is doing its job
-        raw_subtask = st.get("last_subtask_raw")
-        sub_rep = int(st.get("subtask_repeat_count") or 0)
-        sub_gib = int(st.get("subtask_gibberish_count") or 0)
-        sub_empty = int(st.get("subtask_empty_count") or 0)
-        if raw_subtask is not None or sub_rep or sub_gib or sub_empty:
-            raw_display = (raw_subtask or "(empty)")[:80]
-            color = "yellow" if (sub_rep >= 3 or sub_gib >= 3 or sub_empty >= 3) else "dim"
-            console.print(
-                f"  [{color}]subtask diag    repeat:{sub_rep}  "
-                f"gibberish:{sub_gib}  empty:{sub_empty}  "
-                f"last_raw: {raw_display!r}[/]"
-            )
-
-        # Same diagnostics for memory and plan when available.
-        mem_gib = int(st.get("memory_gibberish_count") or 0)
-        plan_gib = int(st.get("plan_gibberish_count") or 0)
-        if mem_gib or plan_gib:
-            console.print(f"  [dim]gen rejects     memory:{mem_gib}  plan:{plan_gib}[/]")
+        # Overfit / memorisation diagnostics from the adapter. High repeat
+        # + fully cycling queue ⇒ stuck on one subtask (memorised a phase);
+        # climbing gibberish ⇒ LM head collapsed to chat-template salads.
+        diag = getattr(runtime.policy_adapter, "diag", None)
+        if diag is not None:
+            raw_subtask = diag.last_raw.get("subtask")
+            sub_rep = int(diag.repeat)
+            sub_gib = int(diag.gibberish.get("subtask", 0))
+            sub_empty = int(diag.empty.get("subtask", 0))
+            if raw_subtask is not None or sub_rep or sub_gib or sub_empty:
+                raw_display = (raw_subtask or "(empty)")[:80]
+                color = "yellow" if (sub_rep >= 3 or sub_gib >= 3 or sub_empty >= 3) else "dim"
+                console.print(
+                    f"  [{color}]subtask diag    repeat:{sub_rep}  "
+                    f"gibberish:{sub_gib}  empty:{sub_empty}  "
+                    f"last_raw: {raw_display!r}[/]"
+                )
+            mem_gib = int(diag.gibberish.get("memory", 0))
+            if mem_gib:
+                console.print(f"  [dim]gen rejects     memory:{mem_gib}[/]")
         console.rule(style="cyan")
         # Runtime scrollback — log lines pushed from generation steps
         # (warnings, gibberish rejections, plan speech). Last N lines,
@@ -1294,16 +1285,18 @@ def _silence_noisy_loggers() -> None:
 def run(
     argv: list[str] | None = None,
     *,
-    adapter_factory: Callable[[Any], LanguageConditionedPolicyAdapter],
-    panel_label: str = "Runtime",
-    prog: str | None = None,
+    adapter_factory: Callable[[Any, GenerationConfig], LanguageConditionedPolicyAdapter] | None = None,
+    panel_label: str | None = None,
+    prog: str = "lerobot-language-runtime",
 ) -> int:
     """Run the interactive language-conditioned runtime CLI.
 
-    A policy wires this up by passing ``adapter_factory`` — a callable
-    that turns a loaded policy into a :class:`LanguageConditionedPolicyAdapter`
-    (typically the adapter class itself). ``panel_label`` names the state
-    panel; ``prog`` sets the argparse program name for ``--help``.
+    ``adapter_factory`` turns ``(policy, GenerationConfig)`` into a
+    :class:`LanguageConditionedPolicyAdapter` (typically the adapter class).
+    When ``None`` it is resolved from :mod:`lerobot.runtime.registry` by the
+    loaded policy's type, so a single ``lerobot-language-runtime`` entry
+    point serves every registered policy. ``panel_label`` defaults to the
+    policy type.
     """
     args = _parse_args(argv, prog=prog)
     logging.basicConfig(
@@ -1326,6 +1319,14 @@ def run(
     policy, preprocessor, postprocessor, ds_meta = _load_policy_and_preprocessor(
         args.policy_path, args.dataset_repo_id
     )
+
+    policy_type = getattr(policy.config, "type", None)
+    if adapter_factory is None:
+        from .registry import get_language_adapter_factory  # noqa: PLC0415
+
+        adapter_factory = get_language_adapter_factory(policy_type)
+    if panel_label is None:
+        panel_label = str(policy_type or "runtime").upper()
 
     # Bootstrap the canonical task from the dataset whenever one is
     # provided, so the interactive picker below can offer it as the
@@ -1406,8 +1407,18 @@ def run(
             augment=getattr(args, "dataset_augment_at_inference", False),
         )
 
+    # Text-generation knobs are fixed config, passed to the adapter at
+    # construction — not smuggled through per-tick runtime state. Lets the
+    # operator try e.g. ``--text_temperature=0.6 --subtask_chunks_per_gen=5``
+    # on an under-trained checkpoint without recompiling.
+    gen_config = GenerationConfig(
+        min_new_tokens=int(args.text_min_new_tokens or 0),
+        temperature=float(args.text_temperature or 0.0),
+        top_p=float(args.text_top_p or 1.0),
+        chunks_per_regen=max(1, int(args.subtask_chunks_per_gen or 1)),
+    )
     runtime = LanguageConditionedRuntime(
-        policy_adapter=adapter_factory(policy),
+        policy_adapter=adapter_factory(policy, gen_config),
         observation_provider=observation_provider,
         action_executor=robot_executor,
         # No background event collector — the REPL drives ticks
@@ -1419,20 +1430,6 @@ def run(
         ctrl_hz=args.ctrl_hz,
         high_level_hz=args.high_level_hz,
     )
-    # Stash text-gen knobs on the state dict so the high-level steps
-    # (which read state) can pick them up and forward them to
-    # policy.select_message. Letting the operator try
-    # ``--text_min_new_tokens=5 --text_temperature=0.6`` on an
-    # under-trained checkpoint without recompiling.
-    runtime.state["text_gen_min_new_tokens"] = int(getattr(args, "text_min_new_tokens", 0) or 0)
-    runtime.state["text_gen_temperature"] = float(getattr(args, "text_temperature", 0.0) or 0.0)
-    runtime.state["text_gen_top_p"] = float(getattr(args, "text_top_p", 1.0) or 1.0)
-    # Subtask throttle: the adapter updates language state only once every N
-    # action-chunk boundaries. Lets you run N action chunks per LM-head
-    # subtask gen (e.g. ``--subtask_chunks_per_gen=5`` ≈ 5 flow-matching
-    # chunks per subtask refresh) so the subtask doesn't churn while
-    # the previous one is still being executed.
-    runtime.state["subtask_chunks_per_gen"] = max(1, int(getattr(args, "subtask_chunks_per_gen", 1) or 1))
     # Apply the startup mode chosen above the task picker.
     runtime.state["mode"] = startup_mode
     if args.task:

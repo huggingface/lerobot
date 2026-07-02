@@ -16,7 +16,7 @@
 
 The runtime, REPL, and CLI are policy-agnostic and live in
 :mod:`lerobot.runtime`. PI052 supplies only :class:`PI052PolicyAdapter`;
-the ``lerobot-pi052-runtime`` entry point wires it into
+the ``lerobot-language-runtime`` entry point wires it into
 :func:`lerobot.runtime.cli.run`.
 """
 

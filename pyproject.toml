@@ -346,8 +346,8 @@ lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 lerobot-annotate="lerobot.scripts.lerobot_annotate:main"
 lerobot-rollout="lerobot.scripts.lerobot_rollout:main"
-# Interactive hierarchical-VLA runtime for PI052 (PaliGemma backbone).
-lerobot-pi052-runtime="lerobot.scripts.lerobot_pi052_runtime:main"
+# Interactive high/low-level runtime for language-conditioned policies (pi052, ...).
+lerobot-language-runtime="lerobot.scripts.lerobot_language_runtime:main"
 
 # ---------------- Tool Configurations ----------------
 

@@ -117,17 +117,20 @@ class RuntimeState:
 
 
 class LanguageConditionedPolicyAdapter(Protocol):
-    """Policy-specific bridge used by :class:`LanguageConditionedRuntime`."""
+    """The contract the runtime loop depends on.
+
+    :class:`lerobot.runtime.adapter.BaseLanguageAdapter` provides a
+    batteries-included implementation; a policy can satisfy this protocol
+    directly for full control.
+    """
 
     def select_action(self, observation: dict[str, Any], state: RuntimeState) -> Any: ...
 
-    def select_text(
-        self,
-        kind: str,
-        observation: dict[str, Any] | None,
-        state: RuntimeState,
-        user_text: str | None = None,
-    ) -> str: ...
+    def update_language_state(self, observation: dict[str, Any] | None, state: RuntimeState) -> None: ...
+
+    def handle_interjection(
+        self, user_text: str, observation: dict[str, Any] | None, state: RuntimeState
+    ) -> None: ...
 
 
 @dataclass
@@ -260,12 +263,9 @@ class LanguageConditionedRuntime:
             return
         if self.state.tick is None or not self._language_gate.due(self.state.tick, force=force):
             return
-        update = getattr(self.policy_adapter, "update_language_state", None)
-        if update is None:
-            return
         observation = self._current_observation()
         try:
-            update(observation, self.state)
+            self.policy_adapter.update_language_state(observation, self.state)
         except Exception as exc:  # noqa: BLE001
             logger.warning("language update failed: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG))
             self.state.log(f"  [warn] language update failed: {type(exc).__name__}: {exc}")
@@ -279,12 +279,7 @@ class LanguageConditionedRuntime:
         if not text:
             return
         observation = self._current_observation()
-        out = self.policy_adapter.select_text("interjection", observation, self.state, user_text=text)
-        if not out:
-            return
-        plan = getattr(self.policy_adapter, "plan_from_text", lambda value: value)(out)
-        if plan:
-            self.state.set_context("plan", plan, label="plan")
+        self.policy_adapter.handle_interjection(text, observation, self.state)
         self.state.extra["recent_interjection"] = None
 
     def maybe_enqueue_action_chunk(self, *, force: bool = False) -> None:

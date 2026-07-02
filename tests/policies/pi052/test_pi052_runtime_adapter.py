@@ -1,7 +1,8 @@
 from types import SimpleNamespace
 
-from lerobot.policies.pi052.inference.pi052_adapter import PI052PolicyAdapter, split_plan_and_say
+from lerobot.policies.pi052.inference.pi052_adapter import PI052PolicyAdapter
 from lerobot.runtime import RuntimeState
+from lerobot.runtime.adapter import split_plan_and_say
 
 
 def test_pi052_adapter_builds_recipe_prompts_from_runtime_state():
@@ -12,13 +13,13 @@ def test_pi052_adapter_builds_recipe_prompts_from_runtime_state():
         extra={"prior_subtask": "pick the cup"},
     )
 
-    assert adapter.messages_for("subtask", state) == [{"role": "user", "content": "clean the kitchen"}]
-    assert adapter.messages_for("memory", state) == [
+    assert adapter.build_messages("subtask", state) == [{"role": "user", "content": "clean the kitchen"}]
+    assert adapter.build_messages("memory", state) == [
         {"role": "user", "content": "clean the kitchen"},
         {"role": "assistant", "content": "Previous memory: cup moved"},
         {"role": "user", "content": "Completed subtask: pick the cup"},
     ]
-    assert adapter.messages_for("interjection", state, user_text="wait") == [
+    assert adapter.build_messages("interjection", state, user_text="wait") == [
         {"role": "user", "content": "clean the kitchen"},
         {"role": "assistant", "content": "Previous plan:\npick then place"},
         {"role": "user", "content": "wait"},
@@ -33,12 +34,12 @@ def test_pi052_adapter_strips_say_markers_from_plan_text():
     assert adapter.plan_from_text(text) == "Move to the sink."
 
 
-def test_pi052_runtime_cli_smoke_does_not_load_model(monkeypatch):
-    """The pi052 entry wires its adapter into the generic runtime CLI."""
+def test_language_runtime_cli_smoke_does_not_load_model(monkeypatch):
+    """The general entry resolves the pi052 adapter from the registry by policy type."""
     from lerobot.runtime import cli
-    from lerobot.scripts import lerobot_pi052_runtime
+    from lerobot.scripts import lerobot_language_runtime
 
-    fake_policy = SimpleNamespace(config=SimpleNamespace(device="cpu"))
+    fake_policy = SimpleNamespace(config=SimpleNamespace(device="cpu", type="pi052"))
 
     monkeypatch.setattr(
         cli,
@@ -48,5 +49,6 @@ def test_pi052_runtime_cli_smoke_does_not_load_model(monkeypatch):
     monkeypatch.setattr(cli, "_run_repl", lambda runtime, **kwargs: 0)
 
     assert (
-        lerobot_pi052_runtime.main(["--policy.path=fake", "--no_robot", "--task=clean", "--max_ticks=0"]) == 0
+        lerobot_language_runtime.main(["--policy.path=fake", "--no_robot", "--task=clean", "--max_ticks=0"])
+        == 0
     )

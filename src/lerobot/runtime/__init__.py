@@ -14,11 +14,13 @@
 
 """Policy-agnostic high/low-level runtime for language-conditioned policies.
 
-The tick loop, REPL, and interactive CLI here are policy-independent; a
-policy plugs in by implementing :class:`LanguageConditionedPolicyAdapter`
-and calling :func:`lerobot.runtime.cli.run` with an adapter factory.
+The tick loop, REPL, and interactive CLI here are policy-independent. A
+policy plugs in by subclassing :class:`BaseLanguageAdapter` (or satisfying
+:class:`LanguageConditionedPolicyAdapter` directly) and registering it in
+:mod:`lerobot.runtime.registry`; ``lerobot-language-runtime`` then serves it.
 """
 
+from .adapter import BaseLanguageAdapter, GenerationConfig, LanguageDiagnostics
 from .language_runtime import (
     LanguageConditionedPolicyAdapter,
     LanguageConditionedRuntime,
@@ -28,8 +30,11 @@ from .language_runtime import (
 )
 
 __all__ = [
+    "BaseLanguageAdapter",
+    "GenerationConfig",
     "LanguageConditionedPolicyAdapter",
     "LanguageConditionedRuntime",
+    "LanguageDiagnostics",
     "RuntimeState",
     "Tick",
     "TickClock",

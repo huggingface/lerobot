@@ -33,7 +33,7 @@ This is the dual-head co-training pattern from the paper:
 with α = 10.0 per § IV.D of arxiv:2504.16054. The π0.5 model splits
 inference into a text-prediction step followed by an action-prediction
 step, which the multi-rate runtime (``lerobot.runtime``, via the
-``lerobot-pi052-runtime`` CLI) drives at separate rates.
+``lerobot-language-runtime`` CLI) drives at separate rates.
 """
 
 from dataclasses import dataclass

@@ -7,20 +7,20 @@ from lerobot.runtime import (
 class FakeAdapter:
     def __init__(self):
         self.updated = False
-        self.text_calls = []
+        self.interjections = []
 
     def select_action(self, observation, state):
         assert observation == {"observation.state": 1}
         assert state.task == "clean"
         return ["a0", "a1"]
 
-    def select_text(self, kind, observation, state, user_text=None):
-        self.text_calls.append((kind, user_text))
-        return "new plan"
-
     def update_language_state(self, observation, state):
         self.updated = True
         state.set_context("subtask", "pick cup", label="subtask")
+
+    def handle_interjection(self, user_text, observation, state):
+        self.interjections.append(user_text)
+        state.set_context("plan", "new plan", label="plan")
 
 
 def test_runtime_tick_updates_language_enqueues_and_dispatches_action():
@@ -54,7 +54,7 @@ def test_runtime_handles_user_interjection():
 
     runtime.step_once()
 
-    assert ("interjection", "please say ok") in adapter.text_calls
+    assert "please say ok" in adapter.interjections
     assert runtime.state.language_context["plan"] == "new plan"
 
 

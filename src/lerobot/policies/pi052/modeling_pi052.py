@@ -18,7 +18,7 @@
 ``text_labels`` next to the flow loss (L = H(x, f_θ_text) + α·flow, α via
 ``config.flow_loss_weight``) and :meth:`select_message` for AR text
 generation. The multi-rate runtime in ``lerobot.policies.pi052.inference``
-(``lerobot-pi052-runtime`` CLI) drives ``predict_action_chunk`` +
+(``lerobot-language-runtime`` CLI) drives ``predict_action_chunk`` +
 ``select_message``. See :class:`PI052Config` for the knobs.
 """
 
@@ -2014,10 +2014,9 @@ class PI052Policy(PreTrainedPolicy):
         return out
 
     def _generate_low_level_subtask(self, obs_i: dict[str, Tensor], task: str, i: int) -> str:
-        from .inference.pi052_adapter import (  # noqa: PLC0415
-            _generate_with_policy,
-            looks_like_gibberish as _looks_like_gibberish,
-        )
+        from lerobot.runtime.adapter import looks_like_gibberish as _looks_like_gibberish  # noqa: PLC0415
+
+        from .inference.pi052_adapter import _generate_with_policy  # noqa: PLC0415
 
         msg = ""
         if task:
