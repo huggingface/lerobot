@@ -19,9 +19,11 @@ no real hardware is accessed. Only the queue-update mechanism is verified.
 
 from __future__ import annotations
 
+import pickle
 import time
 from queue import Queue
 
+import numpy as np
 import pytest
 import torch
 
@@ -233,6 +235,44 @@ def test_ready_to_send_observation_with_varying_threshold(robot_client, g_thresh
         robot_client.action_queue.put(act)
 
     assert robot_client._ready_to_send_observation() is expected
+
+
+def test_send_observation_compresses_configured_image_keys(robot_client):
+    """When image compression is enabled, outgoing observation payloads contain compressed images."""
+    from lerobot.async_inference.compression import CompressedImage
+    from lerobot.async_inference.helpers import TimedObservation
+    from lerobot.transport import services_pb2
+
+    class FakeStub:
+        def __init__(self):
+            self.chunks = None
+
+        def SendObservations(self, request_iterator):  # noqa: N802
+            self.chunks = list(request_iterator)
+            return services_pb2.Empty()
+
+    fake_stub = FakeStub()
+    robot_client.stub = fake_stub
+    robot_client.observation_image_keys = {"front"}
+    robot_client.config.observation_image_compression = "png"
+    robot_client.config.observation_image_compression_quality = 90
+
+    image = np.zeros((16, 16, 3), dtype=np.uint8)
+    obs = TimedObservation(
+        timestamp=time.time(),
+        timestep=3,
+        observation={"front": image, "motor_1.pos": 1.0},
+        must_go=True,
+    )
+
+    assert robot_client.send_observation(obs) is True
+
+    assert fake_stub.chunks is not None
+    payload = b"".join(chunk.data for chunk in fake_stub.chunks)
+    sent_obs = pickle.loads(payload)  # nosec B301
+    assert isinstance(sent_obs.get_observation()["front"], CompressedImage)
+    assert sent_obs.get_observation()["motor_1.pos"] == 1.0
+    assert obs.get_observation()["front"] is image
 
 
 # -----------------------------------------------------------------------------

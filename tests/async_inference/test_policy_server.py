@@ -17,8 +17,10 @@ Monkey-patch the `policy` attribute with a stub so that no real model inference 
 
 from __future__ import annotations
 
+import pickle
 import time
 
+import numpy as np
 import pytest
 import torch
 
@@ -168,6 +170,39 @@ def test_maybe_enqueue_observation_is_skipped(policy_server):
 
     assert policy_server._enqueue_observation(new_obs) is False
     assert policy_server.observation_queue.empty() is True
+
+
+def test_send_observations_decompresses_before_enqueue(policy_server):
+    from lerobot.async_inference.compression import compress_timed_observation
+    from lerobot.async_inference.helpers import TimedObservation
+    from lerobot.transport import services_pb2
+    from lerobot.transport.utils import send_bytes_in_chunks
+
+    class FakeContext:
+        def peer(self):
+            return "test-client"
+
+    image = np.zeros((16, 16, 3), dtype=np.uint8)
+    image[:, :, 1] = 128
+    obs = TimedObservation(
+        timestamp=time.time(),
+        timestep=7,
+        observation={"front": image, "joint1": 0.0},
+        must_go=True,
+    )
+    compressed_obs = compress_timed_observation(obs, {"front"}, "png", quality=90)
+    request_iterator = send_bytes_in_chunks(
+        pickle.dumps(compressed_obs),  # nosec
+        services_pb2.Observation,
+    )
+
+    response = policy_server.SendObservations(request_iterator, FakeContext())
+
+    assert isinstance(response, services_pb2.Empty)
+    queued_obs = policy_server.observation_queue.get_nowait()
+    assert queued_obs.get_timestep() == obs.get_timestep()
+    assert queued_obs.must_go is True
+    np.testing.assert_array_equal(queued_obs.get_observation()["front"], image)
 
 
 def test_obs_sanity_checks(policy_server):

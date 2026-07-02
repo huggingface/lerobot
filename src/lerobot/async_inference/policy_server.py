@@ -47,6 +47,7 @@ from lerobot.transport import (
 from lerobot.transport.utils import receive_bytes_in_chunks
 from lerobot.types import PolicyAction
 
+from .compression import compression_stats, decompress_timed_observation
 from .configs import PolicyServerConfig
 from .constants import SUPPORTED_POLICIES
 from .helpers import (
@@ -181,9 +182,17 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             request_iterator, None, self.shutdown_event, self.logger
         )  # blocking call while looping over request_iterator
         timed_observation = pickle.loads(received_bytes)  # nosec
+        stats = compression_stats(timed_observation.get_observation())
+        timed_observation = decompress_timed_observation(timed_observation)
         deserialize_time = time.perf_counter() - start_deserialize
 
         self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")
+        if stats.image_count > 0:
+            self.logger.debug(
+                f"Observation decompression: images={stats.image_count} | "
+                f"image bytes={stats.compressed_nbytes}->{stats.uncompressed_nbytes} | "
+                f"compressed ratio={stats.compression_ratio:.3f}"
+            )
 
         obs_timestep = timed_observation.get_timestep()
         obs_timestamp = timed_observation.get_timestamp()
