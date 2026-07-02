@@ -36,7 +36,9 @@ HW_VIDEO_CODECS = [
     "h264_vaapi",  # Linux Intel/AMD
     "h264_qsv",  # Intel Quick Sync
 ]
-VALID_VIDEO_CODECS: frozenset[str] = frozenset({"h264", "hevc", "libsvtav1", "auto", *HW_VIDEO_CODECS})
+VALID_VIDEO_CODECS: frozenset[str] = frozenset(
+    {"h264", "hevc", "libsvtav1", "libaom-av1", "auto", *HW_VIDEO_CODECS}
+)
 # Aliases for legacy video codec names.
 VIDEO_CODECS_ALIASES: dict[str, str] = {"av1": "libsvtav1"}
 
@@ -220,6 +222,12 @@ class VideoEncoderConfig:
             if self.fast_decode:
                 opts["tune"] = "fastdecode"
             set_if("threads", encoder_threads)
+        elif self.vcodec == "libaom-av1":
+            set_if("crf", self.crf)
+            set_if("preset", self.preset)
+            if encoder_threads is not None:
+                opts["threads"] = encoder_threads
+                opts["row-mt"] = 1
         elif self.vcodec in ("h264_videotoolbox", "hevc_videotoolbox"):
             if self.crf is not None:
                 opts["q:v"] = max(1, min(100, 100 - self.crf * 2))
