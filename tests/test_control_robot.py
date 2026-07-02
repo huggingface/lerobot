@@ -22,13 +22,72 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 pytest.importorskip("deepdiff", reason="deepdiff is required (install lerobot[hardware])")
 
 from lerobot.configs.dataset import DatasetRecordConfig
+from lerobot.configs.types import FeatureType
+from lerobot.robots.so_follower import SO101FollowerConfig
 from lerobot.scripts.lerobot_calibrate import CalibrateConfig, calibrate
 from lerobot.scripts.lerobot_record import RecordConfig, record
 from lerobot.scripts.lerobot_replay import DatasetReplayConfig, ReplayConfig, replay
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
+from lerobot.teleoperators.keyboard import KeyboardTeleopConfig
 from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
 from tests.mocks.mock_teleop import MockTeleopConfig
+
+_SO_OBSERVATION = {
+    "shoulder_pan.pos": 0.0,
+    "shoulder_lift.pos": 10.0,
+    "elbow_flex.pos": -20.0,
+    "wrist_flex.pos": 30.0,
+    "wrist_roll.pos": -40.0,
+    "gripper.pos": 50.0,
+}
+
+
+class _FakeSOFollower:
+    name = "so_follower"
+    action_features = {key: {"type": FeatureType.ACTION, "shape": (1,)} for key in _SO_OBSERVATION}
+
+    def __init__(self):
+        self.sent_actions = []
+        self._is_connected = False
+
+    @property
+    def is_connected(self):
+        return self._is_connected
+
+    def connect(self):
+        self._is_connected = True
+
+    def get_observation(self):
+        return _SO_OBSERVATION.copy()
+
+    def send_action(self, action):
+        self.sent_actions.append(action)
+        return action
+
+    def disconnect(self):
+        self._is_connected = False
+
+
+class _FakeKeyboardTeleop:
+    def __init__(self):
+        self._is_connected = False
+
+    @property
+    def is_connected(self):
+        return self._is_connected
+
+    def connect(self):
+        self._is_connected = True
+
+    def get_action(self):
+        return {}
+
+    def send_feedback(self, feedback):
+        pass
+
+    def disconnect(self):
+        self._is_connected = False
 
 
 def test_calibrate():
@@ -46,6 +105,29 @@ def test_teleoperate():
         teleop_time_s=0.1,
     )
     teleoperate(cfg)
+
+
+def test_teleoperate_keyboard_so_follower_uses_joint_processor():
+    robot = _FakeSOFollower()
+    teleop_device = _FakeKeyboardTeleop()
+    cfg = TeleoperateConfig(
+        robot=SO101FollowerConfig(port="/dev/null"),
+        teleop=KeyboardTeleopConfig(),
+        fps=1000,
+        teleop_time_s=0.001,
+    )
+
+    with (
+        patch("lerobot.scripts.lerobot_teleoperate.make_robot_from_config", return_value=robot),
+        patch(
+            "lerobot.scripts.lerobot_teleoperate.make_teleoperator_from_config", return_value=teleop_device
+        ),
+    ):
+        teleoperate(cfg)
+
+    assert robot.sent_actions
+    assert robot.sent_actions[0] == _SO_OBSERVATION
+    assert set(robot.sent_actions[0]) == set(_SO_OBSERVATION)
 
 
 def test_record_and_resume(tmp_path):

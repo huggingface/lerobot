@@ -386,7 +386,7 @@ def record(
         or robot_action_processor is None
         or robot_observation_processor is None
     ):
-        _t, _r, _o = make_default_processors()
+        _t, _r, _o = make_default_processors(cfg.teleop, cfg.robot)
         teleop_action_processor = teleop_action_processor or _t
         robot_action_processor = robot_action_processor or _r
         robot_observation_processor = robot_observation_processor or _o
