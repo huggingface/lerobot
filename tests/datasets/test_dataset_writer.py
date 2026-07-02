@@ -189,6 +189,34 @@ def test_save_multiple_episodes(tmp_path):
     assert dataset.meta.total_frames == total_frames
 
 
+def test_save_episode_with_zero_width_feature(tmp_path):
+    """save_episode() succeeds when a feature has a zero-width dimension (shape=(0,)).
+
+    Regression test for https://github.com/huggingface/lerobot/issues/3654: such a
+    feature previously crashed stats computation with
+    "ValueError: cannot reshape array of size 0 into shape (0)".
+    """
+    features = {
+        **SIMPLE_FEATURES,
+        "target": {"dtype": "float32", "shape": (0,), "names": None},
+    }
+    root = tmp_path / "ds"
+    dataset = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=features, root=root)
+    for _ in range(4):
+        dataset.add_frame(_make_frame(features))
+    dataset.save_episode()  # previously raised ValueError on the zero-width 'target' feature
+    dataset.finalize()
+
+    assert dataset.meta.total_episodes == 1
+    assert dataset.meta.total_frames == 4
+
+    # The zero-width feature round-trips back as an empty vector and is excluded from stats.
+    reloaded = LeRobotDataset(repo_id=DUMMY_REPO_ID, root=root)
+    target = np.asarray(reloaded[0]["target"])
+    assert target.shape == (0,)
+    assert "target" not in (reloaded.meta.stats or {})
+
+
 # ── clear / lifecycle ────────────────────────────────────────────────
 
 
