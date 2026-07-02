@@ -31,6 +31,7 @@ from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
+    RenameObservationsProcessorStep,
     batch_to_transition,
     policy_action_to_transition,
     transition_to_batch,
@@ -474,6 +475,14 @@ def make_pre_post_processors(
             )
         except Exception as e:
             raise ValueError(f"Processor for policy type '{policy_cfg.type}' is not implemented.") from e
+
+    rename_map = kwargs.get("rename_map")
+    if rename_map:
+        preprocessor, _ = processors
+        for step in preprocessor.steps:
+            if isinstance(step, RenameObservationsProcessorStep):
+                step.rename_map = rename_map
+                break
 
     return processors
 
