@@ -27,14 +27,14 @@ from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 from .configuration_evo1 import Evo1Config
-from .evo1_model import EVO1
+from .evo1_model import Evo1Model
 
 
-class EVO1Policy(PreTrainedPolicy):
+class Evo1Policy(PreTrainedPolicy):
     config_class = Evo1Config
     name = "evo1"
 
-    def __init__(self, config: Evo1Config, **kwargs):
+    def __init__(self, config: Evo1Config, *, vlm_hub_kwargs: dict | None = None, **kwargs):
         super().__init__(config)
         config.validate_features()
 
@@ -44,7 +44,7 @@ class EVO1Policy(PreTrainedPolicy):
             )
 
         self.config = config
-        self.model = EVO1(config)
+        self.model = Evo1Model(config, vlm_hub_kwargs=vlm_hub_kwargs)
         self.model.set_finetune_flags()
         self._keep_frozen_embedder_eval()
         self.reset()
@@ -67,6 +67,33 @@ class EVO1Policy(PreTrainedPolicy):
     ) -> T:
         if strict is None:
             strict = True
+        vlm_hub_kwargs = kwargs.pop("vlm_hub_kwargs", None)
+        if config is None:
+            config = PreTrainedConfig.from_pretrained(
+                pretrained_name_or_path=pretrained_name_or_path,
+                force_download=force_download,
+                resume_download=resume_download,
+                proxies=proxies,
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                revision=revision,
+                **kwargs,
+            )
+        if vlm_hub_kwargs is None:
+            # Forward the hub download options to the base-VLM download as well; `revision` is not
+            # forwarded because it identifies the policy repo, not the VLM repo.
+            vlm_hub_kwargs = {
+                key: value
+                for key, value in (
+                    ("token", token),
+                    ("cache_dir", cache_dir),
+                    ("local_files_only", local_files_only),
+                    ("proxies", proxies),
+                )
+                if value not in (None, False)
+            }
+        kwargs["vlm_hub_kwargs"] = vlm_hub_kwargs
         return super().from_pretrained(
             pretrained_name_or_path=pretrained_name_or_path,
             config=config,
@@ -97,16 +124,22 @@ class EVO1Policy(PreTrainedPolicy):
         return next(self.model.action_head.parameters()).dtype
 
     @property
-    def _training_compute_dtype(self) -> torch.dtype:
-        if str(self.config.device).startswith("cuda"):
-            return torch.bfloat16
-        return self._compute_dtype
+    def _device(self) -> torch.device:
+        # The device the policy actually lives on. Derived from the parameters rather than
+        # config.device so the policy keeps working after accelerate (or a plain .to()) moves it.
+        return next(self.model.action_head.parameters()).device
 
     @property
-    def _inference_compute_dtype(self) -> torch.dtype:
-        if str(self.config.device).startswith("cuda") and self.config.use_amp:
-            return torch.bfloat16
-        return self._compute_dtype
+    def _amp_enabled(self) -> bool:
+        return bool(self.config.use_amp) and self._device.type == "cuda"
+
+    def _maybe_autocast(self):
+        # EVO1 manages its own mixed precision: an explicit bf16 autocast that also overrides any
+        # outer autocast context (e.g. lerobot-eval's fp16 default), keeping train and eval
+        # numerics identical.
+        if self._amp_enabled:
+            return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        return nullcontext()
 
     def get_optim_params(self) -> list[dict]:
         decay, no_decay = [], []
@@ -168,23 +201,27 @@ class EVO1Policy(PreTrainedPolicy):
                 raise ValueError(
                     f"state_mask shape {tuple(explicit_mask.shape)} does not match state shape {(batch_size, state_dim)}"
                 )
+        device = self._device
         padded = torch.zeros(
             batch_size,
             self.config.max_state_dim,
             dtype=state.dtype,
-            device=self.config.device,
+            device=device,
         )
-        padded[:, :state_dim] = state.to(device=self.config.device)
+        padded[:, :state_dim] = state.to(device=device)
         mask = torch.zeros(
             batch_size,
             self.config.max_state_dim,
             dtype=torch.bool,
-            device=self.config.device,
+            device=device,
         )
         if explicit_mask is None:
             mask[:, :state_dim] = True
         else:
-            mask[:, :state_dim] = explicit_mask.to(device=self.config.device, dtype=torch.bool)
+            mask[:, :state_dim] = explicit_mask.to(device=device, dtype=torch.bool)
+        # Zero out masked state dims so an explicit state_mask actually affects the model input
+        # (the state encoder has no mask argument of its own).
+        padded = padded * mask.to(dtype=padded.dtype)
         return padded.to(dtype=self._compute_dtype), mask
 
     def _prepare_actions(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
@@ -220,25 +257,38 @@ class EVO1Policy(PreTrainedPolicy):
                     "action_mask shape "
                     f"{tuple(explicit_mask.shape)} does not match action shape {(batch_size, horizon, action_dim)}"
                 )
+        device = self._device
         padded = torch.zeros(
             batch_size,
             horizon,
             self.config.max_action_dim,
             dtype=action.dtype,
-            device=self.config.device,
+            device=device,
         )
-        padded[:, :, :action_dim] = action.to(device=self.config.device)
+        padded[:, :, :action_dim] = action.to(device=device)
         mask = torch.zeros(
             batch_size,
             horizon,
             self.config.max_action_dim,
             dtype=torch.bool,
-            device=self.config.device,
+            device=device,
         )
         if explicit_mask is None:
             mask[:, :, :action_dim] = True
         else:
-            mask[:, :, :action_dim] = explicit_mask.to(device=self.config.device, dtype=torch.bool)
+            mask[:, :, :action_dim] = explicit_mask.to(device=device, dtype=torch.bool)
+
+        # Timesteps beyond the episode end hold fabricated (repeated) actions; exclude them from
+        # the loss like the other chunked policies do.
+        action_is_pad = batch.get("action_is_pad")
+        if action_is_pad is not None:
+            if action_is_pad.shape != (batch_size, horizon):
+                raise ValueError(
+                    f"action_is_pad shape {tuple(action_is_pad.shape)} does not match "
+                    f"(batch_size, chunk_size)={(batch_size, horizon)}"
+                )
+            in_episode = ~action_is_pad.to(device=device, dtype=torch.bool)
+            mask = mask & in_episode.unsqueeze(-1)
         return padded.to(dtype=self._compute_dtype), mask
 
     def _prepare_inference_action_mask(self, batch_size: int) -> Tensor:
@@ -246,7 +296,7 @@ class EVO1Policy(PreTrainedPolicy):
             batch_size,
             self.config.max_action_dim,
             dtype=torch.bool,
-            device=self.config.device,
+            device=self._device,
         )
         mask[:, : self._env_action_dim] = True
         return mask
@@ -260,13 +310,13 @@ class EVO1Policy(PreTrainedPolicy):
                 (batch_size,),
                 self.config.default_embodiment_id,
                 dtype=torch.long,
-                device=self.config.device,
+                device=self._device,
             )
         if embodiment_ids.dim() == 0:
             embodiment_ids = embodiment_ids.unsqueeze(0)
         elif embodiment_ids.dim() > 1:
             embodiment_ids = embodiment_ids[:, -1]
-        return embodiment_ids.to(device=self.config.device, dtype=torch.long)
+        return embodiment_ids.to(device=self._device, dtype=torch.long)
 
     @property
     def _tracks_vlm_gradients(self) -> bool:
@@ -294,11 +344,24 @@ class EVO1Policy(PreTrainedPolicy):
             raise ValueError("EVO1 requires at least one visual observation feature.")
         camera_keys = list(camera_keys)[: self.config.max_views]
 
+        # Configured cameras may be absent from the batch up to the empty_cameras budget (e.g. the
+        # placeholder features added by validate_features); they become masked-out views that the
+        # embedder zero-pads. Any other absent camera is an error.
+        present_keys = [key for key in camera_keys if key in batch]
+        missing_keys = [key for key in camera_keys if key not in batch]
+        if len(missing_keys) > self.config.empty_cameras:
+            raise ValueError(
+                f"Missing camera features {missing_keys} in batch; at most "
+                f"empty_cameras={self.config.empty_cameras} may be absent."
+            )
+        if not present_keys:
+            raise ValueError("EVO1 requires at least one visual observation in the batch.")
+
         # Keep each present camera as a batched (B, C, H, W) tensor on its current (GPU) device.
         # Resizing/normalization and zero-padding of absent views happen batched inside the
         # embedder, so images never leave the device here (no per-sample .cpu() round-trip).
         camera_images: list[Tensor] = []
-        for camera_key in camera_keys:
+        for camera_key in present_keys:
             image = batch[camera_key]
             if image.dim() == 3:
                 # Promote an unbatched (C, H, W) frame so batch_size is read from a real batch dim.
@@ -323,13 +386,13 @@ class EVO1Policy(PreTrainedPolicy):
     def _compute_fused_tokens(
         self,
         prompts: list[str],
-        image_batches: list[list[Tensor]],
+        image_batches: list[Tensor],
         image_masks: Tensor,
-    ) -> Tensor:
+    ) -> tuple[Tensor, Tensor | None]:
         track_vlm_gradients = self._tracks_vlm_gradients
         grad_context = nullcontext() if track_vlm_gradients else torch.no_grad()
         with grad_context:
-            fused_tokens = self.model.get_vl_embeddings(
+            fused_tokens, context_mask = self.model.get_vl_embeddings(
                 images=image_batches,
                 image_mask=image_masks,
                 prompt=prompts,
@@ -338,7 +401,10 @@ class EVO1Policy(PreTrainedPolicy):
 
         if not track_vlm_gradients:
             fused_tokens = fused_tokens.detach()
-        return fused_tokens.to(device=self.config.device, dtype=self._compute_dtype)
+        fused_tokens = fused_tokens.to(device=self._device, dtype=self._compute_dtype)
+        if context_mask is not None:
+            context_mask = context_mask.to(device=self._device)
+        return fused_tokens, context_mask
 
     def _compute_masked_loss(
         self,
@@ -362,24 +428,27 @@ class EVO1Policy(PreTrainedPolicy):
         image_batches, image_masks = self._collect_image_batches(batch)
         states, _state_mask = self._prepare_state(batch)
         actions_gt, action_mask = self._prepare_actions(batch)
-        fused_tokens = self._compute_fused_tokens(prompts, image_batches, image_masks)
-        states = states.to(dtype=self._training_compute_dtype)
-        actions_gt = actions_gt.to(dtype=self._training_compute_dtype)
-        fused_tokens = fused_tokens.to(dtype=self._training_compute_dtype)
         embodiment_ids = self._get_embodiment_ids(batch, states.shape[0])
 
-        pred_velocity, noise = self.model(
-            fused_tokens,
-            state=states,
-            actions_gt=actions_gt,
-            action_mask=action_mask.to(device=self.config.device, dtype=self._compute_dtype),
-            embodiment_ids=embodiment_ids,
-        )
-        flat_action_mask = action_mask.view(action_mask.shape[0], -1).to(dtype=actions_gt.dtype)
+        with self._maybe_autocast():
+            fused_tokens, context_mask = self._compute_fused_tokens(prompts, image_batches, image_masks)
+            pred_velocity, noise = self.model(
+                fused_tokens,
+                state=states,
+                actions_gt=actions_gt,
+                action_mask=action_mask.to(device=self._device, dtype=self._compute_dtype),
+                embodiment_ids=embodiment_ids,
+                context_mask=context_mask,
+            )
+
+        # Compute the flow-matching regression loss in fp32, outside the autocast block.
+        pred_velocity = pred_velocity.float()
+        noise = noise.float()
+        flat_action_mask = action_mask.view(action_mask.shape[0], -1).to(dtype=torch.float32)
         # Flow-matching velocity target. Padded (masked-out) action dims are already zero on both sides
         # here (`actions_gt` is zero-padded in `_prepare_actions`, and `noise` is masked inside the head),
         # and the whole difference is multiplied by `flat_action_mask`, so padded dims contribute nothing.
-        target_velocity = (actions_gt - noise).view(actions_gt.shape[0], -1) * flat_action_mask
+        target_velocity = (actions_gt.float() - noise).view(actions_gt.shape[0], -1) * flat_action_mask
         loss = self._compute_masked_loss(pred_velocity, target_velocity, action_mask, reduction)
         loss_mean = loss.mean().item() if loss.ndim > 0 else loss.item()
         return loss, {
@@ -389,30 +458,30 @@ class EVO1Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+        if kwargs.get("inference_delay") is not None or kwargs.get("prev_chunk_left_over") is not None:
+            raise NotImplementedError(
+                "EVO1 does not implement real-time-chunking (RTC) inference; "
+                "use the synchronous inference backend."
+            )
         self.eval()
 
         prompts = self._normalize_task_batch(batch)
         image_batches, image_masks = self._collect_image_batches(batch)
         states, _state_mask = self._prepare_state(batch)
-        fused_tokens = self._compute_fused_tokens(prompts, image_batches, image_masks)
-        states = states.to(dtype=self._inference_compute_dtype)
-        fused_tokens = fused_tokens.to(dtype=self._inference_compute_dtype)
         embodiment_ids = self._get_embodiment_ids(batch, states.shape[0])
         action_mask = self._prepare_inference_action_mask(states.shape[0])
 
-        with (
-            torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-            if self.config.use_amp and str(self.config.device).startswith("cuda")
-            else nullcontext()
-        ):
+        with self._maybe_autocast():
+            fused_tokens, context_mask = self._compute_fused_tokens(prompts, image_batches, image_masks)
             actions = self.model(
                 fused_tokens,
                 state=states,
                 action_mask=action_mask,
                 embodiment_ids=embodiment_ids,
+                context_mask=context_mask,
             )
         actions = actions.view(states.shape[0], self.config.chunk_size, self.config.max_action_dim)
-        return actions
+        return actions.to(dtype=torch.float32)
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:

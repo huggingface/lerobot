@@ -12,7 +12,7 @@ The upstream EVO1 project is available at
 @misc{evo1,
   title = {EVO1},
   author = {{MINT-SJTU}},
-  year = {2026},
+  year = {2025},
   howpublished = {\url{https://github.com/MINT-SJTU/Evo-1}},
 }
 ```

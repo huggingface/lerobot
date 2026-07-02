@@ -15,42 +15,24 @@
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass, field
-
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LambdaLR
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import LRSchedulerConfig
+from lerobot.optim.schedulers import CosineAnnealingWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 logger = logging.getLogger(__name__)
-
-
-@LRSchedulerConfig.register_subclass("evo1_exact")
-@dataclass
-class Evo1SchedulerConfig(LRSchedulerConfig):
-    num_warmup_steps: int
-
-    def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
-        def lr_lambda(current_step: int) -> float:
-            if current_step < self.num_warmup_steps:
-                return current_step / max(1, self.num_warmup_steps)
-            progress = (current_step - self.num_warmup_steps) / max(
-                1, num_training_steps - self.num_warmup_steps
-            )
-            return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
-
-        return LambdaLR(optimizer, lr_lambda, -1)
 
 
 @PreTrainedConfig.register_subclass("evo1")
 @dataclass
 class Evo1Config(PreTrainedConfig):
     training_stage: str = "stage1"
+    # When True and the policy runs on CUDA, EVO1 wraps its own forward passes (training and
+    # inference) in a bfloat16 autocast block, so its numerics do not depend on the dtype of any
+    # outer autocast context opened by lerobot-train/lerobot-eval.
     use_amp: bool = True
 
     n_obs_steps: int = 1
@@ -93,6 +75,8 @@ class Evo1Config(PreTrainedConfig):
     dropout: float = 0.0
     num_inference_timesteps: int = 32
     num_categories: int = 1
+    # When True, the action head is conditioned on a single pooled VL token (the last non-padding
+    # token of the causal decoder) instead of the full fused token sequence.
     return_cls_only: bool = False
     enable_gradient_checkpointing: bool = True
     gradient_checkpointing_use_reentrant: bool = False
@@ -116,6 +100,8 @@ class Evo1Config(PreTrainedConfig):
     optimizer_grad_clip_norm: float = 1.0
 
     scheduler_warmup_steps: int = 300
+    # Deprecated, has no effect. Kept only so configs serialized by earlier EVO1 checkpoints
+    # (which stored this field) can still be parsed; draccus rejects unknown fields.
     drop_last: bool = True
 
     def __post_init__(self):
@@ -166,12 +152,12 @@ class Evo1Config(PreTrainedConfig):
                 flag is not None for flag in (self.finetune_language_model, self.finetune_vision_model)
             )
             if not has_explicit_branch_flags:
-                if self.finetune_vlm is None:
-                    self.finetune_vlm = True
-                if self.finetune_language_model is None:
-                    self.finetune_language_model = True
-                if self.finetune_vision_model is None:
-                    self.finetune_vision_model = True
+                # An explicit finetune_vlm decides both branches; otherwise stage2 defaults to a
+                # full-VLM finetune.
+                vlm_finetune = self.finetune_vlm if self.finetune_vlm is not None else True
+                self.finetune_vlm = vlm_finetune
+                self.finetune_language_model = vlm_finetune
+                self.finetune_vision_model = vlm_finetune
             elif self.finetune_vlm is None:
                 self.finetune_vlm = bool(self.finetune_language_model or self.finetune_vision_model)
             if self.finetune_action_head is None:
@@ -203,6 +189,11 @@ class Evo1Config(PreTrainedConfig):
             raise ValueError(
                 "EVO1 currently expects a square image_resolution because InternVL3 preprocessing "
                 f"uses a scalar image_size, got {self.image_resolution}."
+            )
+        if not 0 <= self.default_embodiment_id < self.num_categories:
+            raise ValueError(
+                f"default_embodiment_id ({self.default_embodiment_id}) must be in "
+                f"[0, num_categories={self.num_categories})"
             )
 
     def validate_features(self) -> None:
@@ -241,7 +232,7 @@ class Evo1Config(PreTrainedConfig):
         )
 
     def get_scheduler_preset(self):
-        return Evo1SchedulerConfig(
+        return CosineAnnealingWithWarmupSchedulerConfig(
             num_warmup_steps=self.scheduler_warmup_steps,
         )
 

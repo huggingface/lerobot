@@ -22,8 +22,8 @@ from .flow_matching import FlowmatchingActionHead
 from .internvl3_embedder import InternVL3Embedder
 
 
-class EVO1(nn.Module):
-    def __init__(self, config: Evo1Config):
+class Evo1Model(nn.Module):
+    def __init__(self, config: Evo1Config, vlm_hub_kwargs: dict | None = None):
         super().__init__()
         self.config = config
         self._device = config.device
@@ -46,6 +46,7 @@ class EVO1(nn.Module):
             max_text_length=config.max_text_length,
             enable_gradient_checkpointing=enable_gradient_checkpointing,
             gradient_checkpointing_use_reentrant=config.gradient_checkpointing_use_reentrant,
+            hub_kwargs=vlm_hub_kwargs,
         )
 
         action_head_type = config.action_head.lower()
@@ -79,12 +80,16 @@ class EVO1(nn.Module):
         image_mask: torch.Tensor,
         prompt: str | list[str] | None = None,
         return_cls_only: bool | None = None,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Fused VL embeddings from per-camera image batches.
 
         Args:
             images: list of per-camera tensors, each shaped ``(B, C, H, W)`` with values in ``[0, 1]``.
             image_mask: bool tensor ``(B, max_views)`` marking present views.
+
+        Returns:
+            ``(embeddings, valid_mask)``: the fused tokens and the bool mask of attendable context
+            positions (None when a single pooled token is returned).
         """
         if return_cls_only is None:
             return_cls_only = self.return_cls_only
@@ -117,19 +122,6 @@ class EVO1(nn.Module):
             return_cls_only=return_cls_only,
         )
 
-    def prepare_state(self, state_input: list | torch.Tensor) -> torch.Tensor:
-        if isinstance(state_input, list):
-            state_tensor = torch.tensor(state_input)
-        elif isinstance(state_input, torch.Tensor):
-            state_tensor = state_input
-        else:
-            raise TypeError(f"Unsupported state input type: {type(state_input)}")
-
-        if state_tensor.ndim == 1:
-            state_tensor = state_tensor.unsqueeze(0)
-
-        return state_tensor.to(self._device)
-
     def predict_action(
         self,
         fused_tokens: torch.Tensor,
@@ -137,6 +129,7 @@ class EVO1(nn.Module):
         actions_gt: torch.Tensor | None = None,
         action_mask: torch.Tensor | None = None,
         embodiment_ids: torch.Tensor | None = None,
+        context_mask: torch.Tensor | None = None,
     ):
         if actions_gt is None:
             return self.action_head.get_action(
@@ -144,6 +137,7 @@ class EVO1(nn.Module):
                 state=state,
                 action_mask=action_mask,
                 embodiment_id=embodiment_ids,
+                context_mask=context_mask,
             )
         return self.action_head(
             fused_tokens,
@@ -151,6 +145,7 @@ class EVO1(nn.Module):
             actions_gt=actions_gt,
             action_mask=action_mask,
             embodiment_id=embodiment_ids,
+            context_mask=context_mask,
         )
 
     def forward(
@@ -160,32 +155,34 @@ class EVO1(nn.Module):
         actions_gt: torch.Tensor | None = None,
         action_mask: torch.Tensor | None = None,
         embodiment_ids: torch.Tensor | None = None,
+        context_mask: torch.Tensor | None = None,
     ):
-        return self.predict_action(fused_tokens, state, actions_gt, action_mask, embodiment_ids)
+        return self.predict_action(fused_tokens, state, actions_gt, action_mask, embodiment_ids, context_mask)
 
     def _set_module_trainable(self, module: nn.Module, trainable: bool):
         for param in module.parameters():
             param.requires_grad = trainable
 
-    def set_finetune_flags(self):
-        finetune_vlm = bool(self.config.finetune_vlm)
-        finetune_language_model = bool(self.config.finetune_language_model)
-        finetune_vision_model = bool(self.config.finetune_vision_model)
-        has_explicit_branch_flags = any(
-            flag is not None
-            for flag in (self.config.finetune_language_model, self.config.finetune_vision_model)
-        )
+    def _vlm_submodule(self, name: str) -> nn.Module:
+        module = getattr(self.embedder.model, name, None)
+        if not isinstance(module, nn.Module):
+            raise AttributeError(
+                f"InternVL model {type(self.embedder.model).__name__} has no '{name}' submodule; "
+                "the native HF InternVL layout (language_model / vision_tower / "
+                "multi_modal_projector) is required to apply the EVO1 finetune flags."
+            )
+        return module
 
-        if has_explicit_branch_flags:
-            self._set_module_trainable(self.embedder, False)
-            if hasattr(self.embedder.model, "language_model"):
-                self._set_module_trainable(self.embedder.model.language_model, finetune_language_model)
-            if hasattr(self.embedder.model, "vision_model"):
-                self._set_module_trainable(self.embedder.model.vision_model, finetune_vision_model)
-            if hasattr(self.embedder.model, "mlp1"):
-                self._set_module_trainable(self.embedder.model.mlp1, finetune_vision_model)
-        elif not finetune_vlm:
-            self._set_module_trainable(self.embedder, False)
+    def set_finetune_flags(self):
+        # __post_init__ resolves every finetune flag to a concrete boolean, so branch-level flags
+        # are authoritative here. Freeze everything first, then re-enable the requested branches.
+        self._set_module_trainable(self.embedder, False)
+        self._set_module_trainable(
+            self._vlm_submodule("language_model"), bool(self.config.finetune_language_model)
+        )
+        finetune_vision = bool(self.config.finetune_vision_model)
+        self._set_module_trainable(self._vlm_submodule("vision_tower"), finetune_vision)
+        self._set_module_trainable(self._vlm_submodule("multi_modal_projector"), finetune_vision)
 
         if not self.config.finetune_action_head:
             self._set_module_trainable(self.action_head, False)

@@ -114,6 +114,7 @@ class InternVL3Embedder(nn.Module):
         max_text_length: int = 1024,
         enable_gradient_checkpointing: bool = True,
         gradient_checkpointing_use_reentrant: bool = False,
+        hub_kwargs: dict | None = None,
     ):
         super().__init__()
         self._requested_device = device
@@ -122,15 +123,17 @@ class InternVL3Embedder(nn.Module):
         self.max_text_length = max_text_length
         self.enable_gradient_checkpointing = bool(enable_gradient_checkpointing)
         self.gradient_checkpointing_use_reentrant = bool(gradient_checkpointing_use_reentrant)
+        hub_kwargs = hub_kwargs or {}
 
         require_package("transformers", extra="evo1")
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, **hub_kwargs)
         if isinstance(model_dtype, str):
             try:
                 model_dtype = getattr(torch, model_dtype)
             except AttributeError as exc:
                 raise ValueError(f"Unsupported EVO1 vlm_dtype '{model_dtype}'") from exc
+        self.model_dtype = model_dtype
 
         attn_implementation = "flash_attention_2" if (use_flash_attn and _flash_attn_available()) else "eager"
         if use_flash_attn and attn_implementation == "eager":
@@ -141,7 +144,19 @@ class InternVL3Embedder(nn.Module):
             torch_dtype=model_dtype,
             attn_implementation=attn_implementation,
             low_cpu_mem_usage=True,
+            **hub_kwargs,
         ).to(self._requested_device)
+
+        checkpoint_image_size = getattr(self.model.config.vision_config, "image_size", None)
+        if isinstance(checkpoint_image_size, (list, tuple)):
+            checkpoint_image_size = checkpoint_image_size[0]
+        if checkpoint_image_size is not None and int(checkpoint_image_size) != int(image_size):
+            raise ValueError(
+                f"EVO1 image_resolution ({image_size}) must match the InternVL checkpoint's native "
+                f"image size ({checkpoint_image_size}): the checkpoint's image_seq_length assumes "
+                "its native resolution, so other sizes would desync the image placeholder tokens "
+                "from the vision features."
+            )
 
         self.num_image_token = self.model.config.image_seq_length
 
@@ -230,13 +245,20 @@ class InternVL3Embedder(nn.Module):
         Args:
             camera_images: list of per-camera tensors, each shaped ``(B, C, H, W)`` in ``[0, 1]``.
             image_masks: bool tensor ``(B, max_views)`` marking present views.
+
+        Returns:
+            A ``(embeddings, valid_mask)`` tuple. With ``return_cls_only=False``, ``embeddings`` is
+            ``(B, L, H)`` and ``valid_mask`` is a ``(B, L)`` bool tensor marking tokens downstream
+            attention may attend to (padding and absent-view tokens are False). With
+            ``return_cls_only=True``, ``embeddings`` is the pooled ``(B, H)`` last-valid-token state
+            and ``valid_mask`` is None.
         """
         max_views = int(image_masks.shape[1])
         batch_size = int(image_masks.shape[0])
-        mean = torch.tensor(IMAGENET_MEAN, device=self.device, dtype=torch.bfloat16)
-        std = torch.tensor(IMAGENET_STD, device=self.device, dtype=torch.bfloat16)
+        mean = torch.tensor(IMAGENET_MEAN, device=self.device, dtype=self.model_dtype)
+        std = torch.tensor(IMAGENET_STD, device=self.device, dtype=self.model_dtype)
         pixel_values = _batched_pixel_values(
-            camera_images, max_views, self.image_size, mean, std, torch.bfloat16, self.device
+            camera_images, max_views, self.image_size, mean, std, self.model_dtype, self.device
         )
         # InternVL3 preprocessing uses a single tile per image (max_num=1).
         batch_num_tiles_list = [[1] * max_views for _ in range(batch_size)]
@@ -289,18 +311,30 @@ class InternVL3Embedder(nn.Module):
                 hidden_size = getattr(self.model.config.text_config, "hidden_size", None)
             if hidden_size is None:
                 raise RuntimeError("Unable to infer hidden size for empty InternVL3 batch.")
-            return torch.empty(0, hidden_size, device=self.device, dtype=torch.float32)
+            return torch.empty(0, hidden_size, device=self.device, dtype=torch.float32), None
 
         prompts = self._build_multimodal_prompts(batch_num_tiles_list, text_prompts)
 
         model_inputs = self.tokenizer(
             list(prompts),
             return_tensors="pt",
-            padding="max_length",
+            padding=True,
             truncation=True,
             max_length=self.max_text_length,
         ).to(self.device)
         input_ids = model_inputs["input_ids"]
+        if input_ids.shape[1] >= self.max_text_length:
+            # Truncation cuts from the right, so text is dropped before image placeholders — but a
+            # large max_views * image_seq_length budget can still eat into them. Fail loudly instead
+            # of letting the VLM crash on a placeholder/vision-feature count mismatch.
+            expected_image_tokens = self.num_image_token * sum(batch_num_tiles_list[0])
+            image_token_counts = (input_ids == self.img_context_token_id).sum(dim=1)
+            if not bool((image_token_counts == expected_image_tokens).all()):
+                raise ValueError(
+                    f"Prompt truncation at max_text_length={self.max_text_length} cut into the "
+                    f"image placeholder tokens ({expected_image_tokens} expected per sample). "
+                    "Increase max_text_length or reduce max_views."
+                )
         attention_mask = self._mask_absent_image_tokens(
             input_ids, model_inputs["attention_mask"], image_masks, batch_num_tiles_list
         )
@@ -313,7 +347,15 @@ class InternVL3Embedder(nn.Module):
             return_dict=True,
         )
         fused_hidden = outputs.hidden_states[-1].to(torch.float32)
-        return fused_hidden[:, 0, :] if return_cls_only else fused_hidden
+        valid_mask = attention_mask.to(torch.bool)
+        if return_cls_only:
+            # Right-padded causal decoder: the last valid token is the only one that has attended
+            # to the full image + text prompt.
+            positions = torch.arange(valid_mask.shape[1], device=valid_mask.device)
+            last_valid = (valid_mask.long() * positions).argmax(dim=1)
+            batch_index = torch.arange(fused_hidden.shape[0], device=fused_hidden.device)
+            return fused_hidden[batch_index, last_valid], None
+        return fused_hidden, valid_mask
 
     @property
     def device(self) -> torch.device:

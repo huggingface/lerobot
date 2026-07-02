@@ -169,9 +169,9 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
         return FastWAMPolicy
     elif name == "evo1":
-        from .evo1.modeling_evo1 import EVO1Policy
+        from .evo1.modeling_evo1 import Evo1Policy
 
-        return EVO1Policy
+        return Evo1Policy
     else:
         try:
             return _get_policy_cls_from_policy_name(name=name)

@@ -64,28 +64,6 @@ def test_processors_delegation():
     assert len(pre.steps) == 0
 
 
-def test_processors_delegation_supports_legacy_override_signature():
-    """External EnvConfig subclasses with the old get_env_processors() signature keep working."""
-    from lerobot.processor.pipeline import DataProcessorPipeline
-
-    @EnvConfig.register_subclass("_dispatch_legacy_proc_test")
-    @dataclass
-    class _Env(EnvConfig):
-        task: str = "x"
-        features: dict[str, PolicyFeature] = field(default_factory=dict)
-
-        @property
-        def gym_kwargs(self):
-            return {}
-
-        def get_env_processors(self):
-            return DataProcessorPipeline(steps=[]), DataProcessorPipeline(steps=[])
-
-    pre, post = make_env_pre_post_processors(_Env(), policy_cfg=object())
-    assert isinstance(pre, DataProcessorPipeline)
-    assert isinstance(post, DataProcessorPipeline)
-
-
 def test_libero_processors_are_policy_agnostic():
     cfg = LiberoEnv()
     pre, post = make_env_pre_post_processors(cfg, policy_cfg=object())
@@ -186,7 +164,7 @@ def test_custom_get_env_processors_override():
         def gym_kwargs(self):
             return {}
 
-        def get_env_processors(self, policy_cfg=None):
+        def get_env_processors(self):
             return DataProcessorPipeline(steps=[]), DataProcessorPipeline(steps=[])
 
     pre, post = _Env().get_env_processors()

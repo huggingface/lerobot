@@ -35,11 +35,29 @@ from lerobot.policies.evo1.processor_evo1 import (
     Evo1PadActionProcessorStep,
     Evo1PadStateProcessorStep,
     ensure_evo1_processor_steps,
+    evo1_batch_to_transition,
     make_evo1_pre_post_processors,
 )
 from lerobot.policies.factory import get_policy_class, make_policy_config
-from lerobot.processor import NormalizerProcessorStep, PolicyProcessorPipeline, UnnormalizerProcessorStep
-from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+from lerobot.processor import (
+    DeviceProcessorStep,
+    NormalizerProcessorStep,
+    PolicyProcessorPipeline,
+    UnnormalizerProcessorStep,
+)
+from lerobot.processor.converters import (
+    batch_to_transition,
+    policy_action_to_transition,
+    transition_to_batch,
+    transition_to_policy_action,
+)
+from lerobot.utils.constants import (
+    ACTION,
+    OBS_IMAGES,
+    OBS_STATE,
+    POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    POLICY_PREPROCESSOR_DEFAULT_NAME,
+)
 
 STATE_DIM = 4
 ACTION_DIM = 3
@@ -49,8 +67,8 @@ CHUNK_SIZE = 2
 EMBED_DIM = 8
 
 
-class DummyEVO1(nn.Module):
-    def __init__(self, config):
+class DummyEvo1Model(nn.Module):
+    def __init__(self, config, vlm_hub_kwargs=None):
         super().__init__()
         self.config = config
         self.embedder = nn.Dropout(p=0.0)
@@ -68,7 +86,9 @@ class DummyEVO1(nn.Module):
         self.embedder_training_calls.append(self.embedder.training)
         # images is a list of per-camera (B, C, H, W) tensors, so the batch dim is images[0].shape[0].
         batch_size = images[0].shape[0]
-        return torch.ones(batch_size, 4, EMBED_DIM, requires_grad=torch.is_grad_enabled())
+        tokens = torch.ones(batch_size, 4, EMBED_DIM, requires_grad=torch.is_grad_enabled())
+        valid_mask = torch.ones(batch_size, 4, dtype=torch.bool)
+        return tokens, valid_mask
 
     def forward(
         self,
@@ -77,6 +97,7 @@ class DummyEVO1(nn.Module):
         actions_gt=None,
         action_mask=None,
         embodiment_ids=None,
+        context_mask=None,
     ):
         batch_size = fused_tokens.shape[0]
         if actions_gt is None:
@@ -84,6 +105,31 @@ class DummyEVO1(nn.Module):
         pred_velocity = torch.zeros(batch_size, CHUNK_SIZE * MAX_ACTION_DIM)
         noise = torch.zeros_like(actions_gt)
         return pred_velocity, noise
+
+
+class ChunkCountingDummyModel(DummyEvo1Model):
+    """Emits per-step distinguishable actions so queue ordering and re-prediction are observable."""
+
+    def __init__(self, config, vlm_hub_kwargs=None):
+        super().__init__(config, vlm_hub_kwargs)
+        self.chunks_predicted = 0
+
+    def forward(
+        self,
+        fused_tokens,
+        state=None,
+        actions_gt=None,
+        action_mask=None,
+        embodiment_ids=None,
+        context_mask=None,
+    ):
+        if actions_gt is not None:
+            return super().forward(fused_tokens, state, actions_gt, action_mask, embodiment_ids, context_mask)
+        self.chunks_predicted += 1
+        batch_size = fused_tokens.shape[0]
+        step_values = torch.arange(CHUNK_SIZE, dtype=torch.float32) + 10.0 * self.chunks_predicted
+        chunk = step_values.repeat_interleave(MAX_ACTION_DIM).unsqueeze(0).repeat(batch_size, 1)
+        return chunk
 
 
 def make_config(training_stage="stage1", **kwargs):
@@ -138,6 +184,24 @@ def make_stats(state_dim=STATE_DIM, action_dim=ACTION_DIM):
     }
 
 
+def make_flowmatching_head(**overrides):
+    kwargs = {
+        "embed_dim": EMBED_DIM,
+        "hidden_dim": 16,
+        "action_dim": CHUNK_SIZE * ACTION_DIM,
+        "horizon": CHUNK_SIZE,
+        "per_action_dim": ACTION_DIM,
+        "num_heads": 2,
+        "num_layers": 1,
+        "num_inference_timesteps": 2,
+        "state_dim": STATE_DIM,
+        "state_hidden_dim": 16,
+        "num_categories": 1,
+    }
+    kwargs.update(overrides)
+    return FlowmatchingActionHead(**kwargs)
+
+
 def test_evo1_factory_registration():
     cfg = make_policy_config(
         "evo1",
@@ -151,7 +215,7 @@ def test_evo1_factory_registration():
     )
 
     assert isinstance(cfg, Evo1Config)
-    assert get_policy_class("evo1") is modeling_evo1.EVO1Policy
+    assert get_policy_class("evo1") is modeling_evo1.Evo1Policy
 
 
 def test_evo1_stage_defaults_and_consistency():
@@ -208,6 +272,19 @@ def test_evo1_stage_defaults_and_consistency():
     )
     assert explicit_off.finetune_action_head is False
 
+    # An explicit finetune_vlm=False without branch-level flags freezes both branches instead of
+    # raising an inconsistency error.
+    frozen_vlm = make_config(
+        training_stage="stage2",
+        apply_training_stage_defaults=False,
+        finetune_vlm=False,
+    )
+    assert (
+        frozen_vlm.finetune_vlm,
+        frozen_vlm.finetune_language_model,
+        frozen_vlm.finetune_vision_model,
+    ) == (False, False, False)
+
     try:
         make_config(
             training_stage="stage2",
@@ -226,6 +303,11 @@ def test_evo1_rejects_non_square_image_resolution():
         make_config(image_resolution=(448, 320))
 
 
+def test_evo1_rejects_out_of_range_default_embodiment_id():
+    with pytest.raises(ValueError, match="default_embodiment_id"):
+        make_config(default_embodiment_id=3, num_categories=2)
+
+
 def test_evo1_model_uses_image_resolution_and_trainable_checkpointing(monkeypatch):
     captured: dict = {}
 
@@ -238,14 +320,63 @@ def test_evo1_model_uses_image_resolution_and_trainable_checkpointing(monkeypatc
     monkeypatch.setattr(evo1_model, "InternVL3Embedder", SpyEmbedder)
 
     stage1 = make_config(training_stage="stage1", image_resolution=(224, 224))
-    evo1_model.EVO1(stage1)
+    evo1_model.Evo1Model(stage1)
     assert captured["image_size"] == 224
     # VLM is frozen in stage1, so gradient checkpointing is gated off.
     assert captured["enable_gradient_checkpointing"] is False
 
     stage2 = make_config(training_stage="stage2", image_resolution=(224, 224))
-    evo1_model.EVO1(stage2)
+    evo1_model.Evo1Model(stage2)
     assert captured["enable_gradient_checkpointing"] is True
+
+
+def test_set_finetune_flags_targets_native_hf_internvl_submodules(monkeypatch):
+    class FakeInternVLModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.language_model = nn.Linear(2, 2)
+            self.vision_tower = nn.Linear(2, 2)
+            self.multi_modal_projector = nn.Linear(2, 2)
+
+    class FakeEmbedder(nn.Module):
+        def __init__(self, **kwargs):
+            super().__init__()
+            self.model = FakeInternVLModel()
+
+    monkeypatch.setattr(evo1_model, "InternVL3Embedder", FakeEmbedder)
+
+    stage2_model = evo1_model.Evo1Model(make_config(training_stage="stage2"))
+    stage2_model.set_finetune_flags()
+    vlm = stage2_model.embedder.model
+    assert all(p.requires_grad for p in vlm.language_model.parameters())
+    assert all(p.requires_grad for p in vlm.vision_tower.parameters())
+    assert all(p.requires_grad for p in vlm.multi_modal_projector.parameters())
+    assert all(p.requires_grad for p in stage2_model.action_head.parameters())
+
+    stage1_model = evo1_model.Evo1Model(make_config(training_stage="stage1"))
+    stage1_model.set_finetune_flags()
+    vlm = stage1_model.embedder.model
+    assert not any(p.requires_grad for p in vlm.parameters())
+    assert all(p.requires_grad for p in stage1_model.action_head.parameters())
+
+
+def test_set_finetune_flags_fails_loudly_on_unknown_vlm_layout(monkeypatch):
+    class LegacyLayoutModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.language_model = nn.Linear(2, 2)
+            self.vision_model = nn.Linear(2, 2)  # trust_remote_code-era attribute name
+            self.mlp1 = nn.Linear(2, 2)
+
+    class FakeEmbedder(nn.Module):
+        def __init__(self, **kwargs):
+            super().__init__()
+            self.model = LegacyLayoutModel()
+
+    monkeypatch.setattr(evo1_model, "InternVL3Embedder", FakeEmbedder)
+    model = evo1_model.Evo1Model(make_config(training_stage="stage2"))
+    with pytest.raises(AttributeError, match="vision_tower"):
+        model.set_finetune_flags()
 
 
 def test_evo1_policy_processors_pad_state_crop_action_and_binarize_gripper():
@@ -300,8 +431,17 @@ def test_evo1_policy_processors_pad_state_crop_action_and_binarize_gripper():
     processed = postprocessor(action)
 
     assert processed.shape == (2, 7)
+    assert processed.dtype == torch.float32
     assert torch.allclose(processed[:, :6], action[:, :6])
     assert torch.equal(processed[:, 6], torch.tensor([1.0, -1.0]))
+
+
+def test_evo1_postprocessor_returns_float32_for_bf16_actions():
+    config = make_config()
+    _preprocessor, postprocessor = make_evo1_pre_post_processors(config, dataset_stats=make_stats())
+
+    processed = postprocessor(torch.zeros(2, MAX_ACTION_DIM, dtype=torch.bfloat16))
+    assert processed.dtype == torch.float32
 
 
 def test_evo1_legacy_processors_are_completed_before_normalization():
@@ -333,6 +473,7 @@ def test_evo1_legacy_processors_are_completed_before_normalization():
 
     preprocessor, postprocessor = ensure_evo1_processor_steps(config, legacy_pre, legacy_post)
 
+    assert preprocessor.to_transition is evo1_batch_to_transition
     assert isinstance(preprocessor.steps[0], Evo1PadStateProcessorStep)
     assert isinstance(preprocessor.steps[1], Evo1PadActionProcessorStep)
     assert isinstance(preprocessor.steps[2], NormalizerProcessorStep)
@@ -352,9 +493,51 @@ def test_evo1_legacy_processors_are_completed_before_normalization():
     assert sum(isinstance(step, Evo1ActionProcessorStep) for step in postprocessor.steps) == 1
 
 
+def test_evo1_processor_save_load_round_trip_applies_config_overrides(tmp_path):
+    train_config = make_config()
+    preprocessor, postprocessor = make_evo1_pre_post_processors(train_config, dataset_stats=make_stats())
+    preprocessor.save_pretrained(tmp_path)
+    postprocessor.save_pretrained(tmp_path)
+
+    loaded_pre = PolicyProcessorPipeline.from_pretrained(
+        tmp_path,
+        config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+        to_transition=batch_to_transition,
+        to_output=transition_to_batch,
+    )
+    loaded_post = PolicyProcessorPipeline.from_pretrained(
+        tmp_path,
+        config_filename=f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+        to_transition=policy_action_to_transition,
+        to_output=transition_to_policy_action,
+    )
+
+    # Simulate eval-time CLI overrides on a checkpoint that already serializes the EVO1 steps.
+    eval_config = make_config(binarize_gripper=True, postprocess_action_dim=ACTION_DIM)
+    loaded_pre, loaded_post = ensure_evo1_processor_steps(eval_config, loaded_pre, loaded_post)
+
+    assert loaded_pre.to_transition is evo1_batch_to_transition
+    action_step = next(step for step in loaded_post.steps if isinstance(step, Evo1ActionProcessorStep))
+    assert action_step.binarize_gripper is True
+    assert action_step.action_dim == ACTION_DIM
+    device_step = next(step for step in loaded_post.steps if isinstance(step, DeviceProcessorStep))
+    assert device_step.float_dtype == "float32"
+
+    # Non-observation extras (embodiment_id, ...) must survive the reloaded preprocessor.
+    processed = loaded_pre(
+        {
+            "task": "pick the block",
+            OBS_STATE: torch.zeros(STATE_DIM),
+            f"{OBS_IMAGES}.front": torch.rand(3, 16, 16),
+            "embodiment_id": torch.tensor([0]),
+        }
+    )
+    assert "embodiment_id" in processed
+
+
 def test_evo1_policy_forward_and_inference_use_batched_embedding(monkeypatch):
-    monkeypatch.setattr(modeling_evo1, "EVO1", DummyEVO1)
-    policy = modeling_evo1.EVO1Policy(make_config())
+    monkeypatch.setattr(modeling_evo1, "Evo1Model", DummyEvo1Model)
+    policy = modeling_evo1.Evo1Policy(make_config())
     preprocessor, _postprocessor = make_evo1_pre_post_processors(policy.config, dataset_stats=make_stats())
     training_batch = preprocessor(make_batch(include_action=True))
 
@@ -371,33 +554,100 @@ def test_evo1_policy_forward_and_inference_use_batched_embedding(monkeypatch):
 
     action_chunk = policy.predict_action_chunk(make_batch(include_action=False))
     assert action_chunk.shape == (2, CHUNK_SIZE, MAX_ACTION_DIM)
+    assert action_chunk.dtype == torch.float32
 
     policy.reset()
     selected = policy.select_action(make_batch(include_action=False))
     assert selected.shape == (2, MAX_ACTION_DIM)
 
 
+def test_evo1_forward_masks_padded_action_timesteps(monkeypatch):
+    monkeypatch.setattr(modeling_evo1, "Evo1Model", DummyEvo1Model)
+    policy = modeling_evo1.Evo1Policy(make_config())
+
+    batch = make_batch(include_action=True)
+    batch[ACTION] = torch.ones(2, CHUNK_SIZE, ACTION_DIM)
+    # Give the padded (past-episode-end) timestep a huge value: if it leaked into the loss, the
+    # loss would blow up far beyond 1.0.
+    batch[ACTION][:, -1, :] = 100.0
+    batch["action_is_pad"] = torch.zeros(2, CHUNK_SIZE, dtype=torch.bool)
+    batch["action_is_pad"][:, -1] = True
+
+    loss, metrics = policy.forward(batch)
+
+    # DummyEvo1Model predicts zero velocity and zero noise, so each active element contributes
+    # (0 - action)^2 = 1.0 for the in-episode ones-valued actions.
+    assert metrics["active_action_dims"] == ACTION_DIM * (CHUNK_SIZE - 1)
+    assert torch.isclose(loss, torch.tensor(1.0))
+
+
+def test_evo1_select_action_queue_orders_steps_and_repredicts(monkeypatch):
+    monkeypatch.setattr(modeling_evo1, "Evo1Model", ChunkCountingDummyModel)
+    policy = modeling_evo1.Evo1Policy(make_config(n_action_steps=CHUNK_SIZE))
+
+    batch = make_batch(include_action=False)
+    first = policy.select_action(batch)
+    second = policy.select_action(batch)
+    third = policy.select_action(batch)
+
+    # First chunk provides steps 10, 11 in order; the third call triggers a fresh prediction (20).
+    assert torch.all(first == 10.0)
+    assert torch.all(second == 11.0)
+    assert torch.all(third == 20.0)
+    assert policy.model.chunks_predicted == 2
+
+
+def test_evo1_predict_action_chunk_rejects_rtc_kwargs(monkeypatch):
+    monkeypatch.setattr(modeling_evo1, "Evo1Model", DummyEvo1Model)
+    policy = modeling_evo1.Evo1Policy(make_config())
+    with pytest.raises(NotImplementedError, match="RTC"):
+        policy.predict_action_chunk(make_batch(include_action=False), inference_delay=2)
+
+
+def test_evo1_missing_configured_camera_needs_empty_cameras_budget(monkeypatch):
+    monkeypatch.setattr(modeling_evo1, "Evo1Model", DummyEvo1Model)
+    batch = make_batch(include_action=False)  # only provides the front camera
+
+    two_camera_features = {
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(STATE_DIM,)),
+        f"{OBS_IMAGES}.front": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
+        f"{OBS_IMAGES}.wrist": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
+    }
+    strict_policy = modeling_evo1.Evo1Policy(make_config(input_features=dict(two_camera_features)))
+    with pytest.raises(ValueError, match="empty_cameras"):
+        strict_policy._collect_image_batches(batch)
+
+    # empty_cameras adds placeholder camera features that are never present in the batch; they
+    # become masked-out views instead of crashing with a KeyError.
+    padded_policy = modeling_evo1.Evo1Policy(make_config(empty_cameras=1))
+    assert len(padded_policy.config.image_features) == 2
+    camera_images, image_masks = padded_policy._collect_image_batches(batch)
+    assert len(camera_images) == 1
+    assert image_masks.tolist() == [[True, False], [True, False]]
+
+
 def test_stage1_frozen_vlm_embeddings_do_not_track_gradients(monkeypatch):
-    monkeypatch.setattr(modeling_evo1, "EVO1", DummyEVO1)
-    policy = modeling_evo1.EVO1Policy(make_config(training_stage="stage1"))
+    monkeypatch.setattr(modeling_evo1, "Evo1Model", DummyEvo1Model)
+    policy = modeling_evo1.Evo1Policy(make_config(training_stage="stage1"))
     policy.train()
 
     image_batches, image_masks = policy._collect_image_batches(make_batch(include_action=False))
-    fused_tokens = policy._compute_fused_tokens(["pick", "place"], image_batches, image_masks)
+    fused_tokens, context_mask = policy._compute_fused_tokens(["pick", "place"], image_batches, image_masks)
 
     assert policy.model.grad_enabled_calls == [False]
     assert policy.model.embedder_training_calls == [False]
     assert not fused_tokens.requires_grad
+    assert context_mask is not None
     assert policy.model.embedder.training is False
 
 
 def test_stage2_vlm_embeddings_track_gradients(monkeypatch):
-    monkeypatch.setattr(modeling_evo1, "EVO1", DummyEVO1)
-    policy = modeling_evo1.EVO1Policy(make_config(training_stage="stage2"))
+    monkeypatch.setattr(modeling_evo1, "Evo1Model", DummyEvo1Model)
+    policy = modeling_evo1.Evo1Policy(make_config(training_stage="stage2"))
     policy.train()
 
     image_batches, image_masks = policy._collect_image_batches(make_batch(include_action=False))
-    fused_tokens = policy._compute_fused_tokens(["pick", "place"], image_batches, image_masks)
+    fused_tokens, _context_mask = policy._compute_fused_tokens(["pick", "place"], image_batches, image_masks)
 
     assert policy.model.grad_enabled_calls == [True]
     assert policy.model.embedder_training_calls == [True]
@@ -407,8 +657,8 @@ def test_stage2_vlm_embeddings_track_gradients(monkeypatch):
 def test_collect_image_batches_handles_unbatched_chw(monkeypatch):
     # Regression for an issue where batch_size was read from shape[0] before normalizing
     # per-camera tensor dims, so an unbatched (C, H, W) input was treated as batch_size=C.
-    monkeypatch.setattr(modeling_evo1, "EVO1", DummyEVO1)
-    policy = modeling_evo1.EVO1Policy(make_config())
+    monkeypatch.setattr(modeling_evo1, "Evo1Model", DummyEvo1Model)
+    policy = modeling_evo1.Evo1Policy(make_config())
     batch = {
         OBS_STATE: torch.randn(1, STATE_DIM),
         f"{OBS_IMAGES}.front": torch.rand(3, 16, 16),
@@ -423,10 +673,26 @@ def test_collect_image_batches_handles_unbatched_chw(monkeypatch):
     assert image_masks.tolist() == [[True, False]]
 
 
+def test_evo1_state_mask_zeroes_masked_dims(monkeypatch):
+    monkeypatch.setattr(modeling_evo1, "Evo1Model", DummyEvo1Model)
+    policy = modeling_evo1.Evo1Policy(make_config())
+    batch = {
+        OBS_STATE: torch.ones(2, STATE_DIM),
+        "state_mask": torch.tensor([[True, True, False, False]] * 2),
+    }
+
+    states, mask = policy._prepare_state(batch)
+
+    assert torch.all(states[:, :2] == 1.0)
+    assert torch.all(states[:, 2:] == 0.0)
+    assert mask[:, :2].all()
+    assert not mask[:, 2:].any()
+
+
 def test_evo1_action_mask_accepts_chunk_size_one(monkeypatch):
-    monkeypatch.setattr(modeling_evo1, "EVO1", DummyEVO1)
+    monkeypatch.setattr(modeling_evo1, "Evo1Model", DummyEvo1Model)
     config = make_config(chunk_size=1, n_action_steps=1)
-    policy = modeling_evo1.EVO1Policy(config)
+    policy = modeling_evo1.Evo1Policy(config)
     batch = make_batch(include_action=True)
     batch[ACTION] = torch.randn(2, ACTION_DIM)
     batch["action_mask"] = torch.ones(2, ACTION_DIM, dtype=torch.bool)
@@ -440,19 +706,7 @@ def test_evo1_action_mask_accepts_chunk_size_one(monkeypatch):
 
 
 def test_flowmatching_state_encoder_for_horizon_one():
-    head = FlowmatchingActionHead(
-        embed_dim=EMBED_DIM,
-        hidden_dim=16,
-        action_dim=ACTION_DIM,
-        horizon=1,
-        per_action_dim=ACTION_DIM,
-        num_heads=2,
-        num_layers=1,
-        num_inference_timesteps=2,
-        state_dim=STATE_DIM,
-        state_hidden_dim=16,
-        num_categories=1,
-    )
+    head = make_flowmatching_head(action_dim=ACTION_DIM, horizon=1)
 
     assert head.state_encoder is not None
     pred_velocity, noise = head(
@@ -464,6 +718,71 @@ def test_flowmatching_state_encoder_for_horizon_one():
 
     assert pred_velocity.shape == (2, ACTION_DIM)
     assert noise.shape == (2, 1, ACTION_DIM)
+
+
+def test_flowmatching_get_action_real_path_respects_action_mask():
+    torch.manual_seed(0)
+    head = make_flowmatching_head()
+
+    action_mask = torch.zeros(2, ACTION_DIM, dtype=torch.bool)
+    action_mask[:, :2] = True
+    actions = head.get_action(
+        torch.randn(2, 4, EMBED_DIM),
+        state=torch.randn(2, STATE_DIM),
+        action_mask=action_mask,
+    )
+
+    assert actions.shape == (2, CHUNK_SIZE * ACTION_DIM)
+    assert torch.isfinite(actions).all()
+    action_seq = actions.view(2, CHUNK_SIZE, ACTION_DIM)
+    assert torch.all(action_seq[..., 2] == 0.0)
+
+
+def test_flowmatching_context_mask_blocks_masked_context_tokens():
+    head = make_flowmatching_head()
+    state = torch.randn(2, STATE_DIM)
+    action_mask = torch.ones(2, ACTION_DIM, dtype=torch.bool)
+    fused = torch.randn(2, 4, EMBED_DIM)
+    context_mask = torch.ones(2, 4, dtype=torch.bool)
+    context_mask[:, -1] = False
+    corrupted = fused.clone()
+    corrupted[:, -1] = 1e4
+
+    torch.manual_seed(0)
+    reference = head.get_action(fused, state=state, action_mask=action_mask, context_mask=context_mask)
+    torch.manual_seed(0)
+    with_garbage = head.get_action(corrupted, state=state, action_mask=action_mask, context_mask=context_mask)
+
+    assert torch.allclose(reference, with_garbage)
+
+
+def test_flowmatching_head_accepts_pooled_2d_context():
+    head = make_flowmatching_head()
+    pred_velocity, noise = head(
+        torch.randn(2, EMBED_DIM),  # pooled (B, E) context from return_cls_only
+        state=torch.randn(2, STATE_DIM),
+        actions_gt=torch.randn(2, CHUNK_SIZE, ACTION_DIM),
+        action_mask=torch.ones(2, CHUNK_SIZE, ACTION_DIM, dtype=torch.bool),
+    )
+    assert pred_velocity.shape == (2, CHUNK_SIZE * ACTION_DIM)
+
+    actions = head.get_action(
+        torch.randn(2, EMBED_DIM),
+        state=torch.randn(2, STATE_DIM),
+        action_mask=torch.ones(2, ACTION_DIM, dtype=torch.bool),
+    )
+    assert actions.shape == (2, CHUNK_SIZE * ACTION_DIM)
+
+
+def test_flowmatching_rejects_out_of_range_embodiment_ids():
+    head = make_flowmatching_head(num_categories=2)
+    with pytest.raises(ValueError, match="num_categories"):
+        head.get_action(
+            torch.randn(2, 4, EMBED_DIM),
+            state=torch.randn(2, STATE_DIM),
+            action_mask=torch.ones(2, ACTION_DIM, dtype=torch.bool),
+            embodiment_id=torch.tensor([0, 5]),
+        )
 
 
 def test_evo1_batched_pixel_values_shape_and_zero_padding():

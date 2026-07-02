@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import torch
@@ -101,9 +101,9 @@ class Evo1PadStateProcessorStep(ObservationProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         new_features = {ft: feats.copy() for ft, feats in features.items()}
-        state_feats = new_features.setdefault(FeatureType.STATE, {})
-        if OBS_STATE in state_feats:
-            state_feats[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(self.max_state_dim,))
+        obs_feats = new_features.setdefault(PipelineFeatureType.OBSERVATION, {})
+        if OBS_STATE in obs_feats:
+            obs_feats[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(self.max_state_dim,))
         return new_features
 
     def get_config(self) -> dict[str, Any]:
@@ -157,7 +157,7 @@ class Evo1PadActionProcessorStep(ProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         new_features = {ft: feats.copy() for ft, feats in features.items()}
-        action_feats = new_features.setdefault(FeatureType.ACTION, {})
+        action_feats = new_features.setdefault(PipelineFeatureType.ACTION, {})
         action_feats[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(self.max_action_dim,))
         return new_features
 
@@ -214,7 +214,7 @@ class Evo1ActionProcessorStep(PolicyActionProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         new_features = {ft: feats.copy() for ft, feats in features.items()}
-        action_feats = new_features.setdefault(FeatureType.ACTION, {})
+        action_feats = new_features.setdefault(PipelineFeatureType.ACTION, {})
         action_feats[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(self.action_dim,))
         return new_features
 
@@ -328,7 +328,17 @@ def ensure_evo1_processor_steps(
     preprocessor: PolicyProcessorPipeline,
     postprocessor: PolicyProcessorPipeline,
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
-    """Add EVO1 processor steps when loading older checkpoints that do not serialize them."""
+    """Reconcile checkpoint-loaded pipelines with the current EVO1 config.
+
+    Adds the EVO1 steps when loading older checkpoints that do not serialize them, restores the
+    EVO1 batch converter (converters are not serialized), and refreshes the config-driven step
+    parameters (padding widths, action cropping, gripper binarization) so CLI overrides at
+    load/eval time take effect on checkpoints that already serialize these steps.
+    """
+
+    # Pipelines reloaded from a checkpoint come back with the default batch converter, which drops
+    # non-observation extras (embodiment_id, state_mask, custom task fields) needed by EVO1.
+    preprocessor.to_transition = evo1_batch_to_transition
 
     has_state_padding = any(isinstance(step, Evo1PadStateProcessorStep) for step in preprocessor.steps)
     if not has_state_padding:
@@ -350,25 +360,44 @@ def ensure_evo1_processor_steps(
         steps.insert(insert_idx, Evo1PadActionProcessorStep(max_action_dim=config.max_action_dim))
         preprocessor.steps = steps
 
-    has_action_processor = any(isinstance(step, Evo1ActionProcessorStep) for step in postprocessor.steps)
-    if not has_action_processor:
-        steps = list(postprocessor.steps)
+    preprocessor.steps = [
+        replace(step, max_state_dim=config.max_state_dim)
+        if isinstance(step, Evo1PadStateProcessorStep)
+        else replace(step, max_action_dim=config.max_action_dim)
+        if isinstance(step, Evo1PadActionProcessorStep)
+        else step
+        for step in preprocessor.steps
+    ]
+
+    current_action_step = Evo1ActionProcessorStep(
+        action_dim=_evo1_action_dim(config),
+        binarize_gripper=config.binarize_gripper,
+        gripper_index=config.gripper_index,
+        gripper_threshold=config.gripper_threshold,
+        gripper_below_threshold_value=config.gripper_below_threshold_value,
+        gripper_above_threshold_value=config.gripper_above_threshold_value,
+    )
+    steps = list(postprocessor.steps)
+    action_step_idx = next(
+        (idx for idx, step in enumerate(steps) if isinstance(step, Evo1ActionProcessorStep)), None
+    )
+    if action_step_idx is None:
         insert_idx = next(
             (idx + 1 for idx, step in enumerate(steps) if isinstance(step, UnnormalizerProcessorStep)),
             0,
         )
-        steps.insert(
-            insert_idx,
-            Evo1ActionProcessorStep(
-                action_dim=_evo1_action_dim(config),
-                binarize_gripper=config.binarize_gripper,
-                gripper_index=config.gripper_index,
-                gripper_threshold=config.gripper_threshold,
-                gripper_below_threshold_value=config.gripper_below_threshold_value,
-                gripper_above_threshold_value=config.gripper_above_threshold_value,
-            ),
-        )
-        postprocessor.steps = steps
+        steps.insert(insert_idx, current_action_step)
+    else:
+        steps[action_step_idx] = current_action_step
+    # Actions must leave the postprocessor as float32 (numpy cannot represent bf16); older
+    # checkpoints serialized the device step without a float_dtype.
+    steps = [
+        replace(step, float_dtype="float32")
+        if isinstance(step, DeviceProcessorStep) and step.float_dtype is None
+        else step
+        for step in steps
+    ]
+    postprocessor.steps = steps
 
     _refresh_evo1_normalization_steps(config, preprocessor, postprocessor)
     return preprocessor, postprocessor
@@ -411,7 +440,8 @@ def make_evo1_pre_post_processors(
             gripper_below_threshold_value=config.gripper_below_threshold_value,
             gripper_above_threshold_value=config.gripper_above_threshold_value,
         ),
-        DeviceProcessorStep(device="cpu"),
+        # float32 so downstream numpy conversion works even when the policy computes in bf16.
+        DeviceProcessorStep(device="cpu", float_dtype="float32"),
     ]
 
     return (

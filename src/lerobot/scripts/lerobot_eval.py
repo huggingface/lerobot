@@ -283,7 +283,7 @@ def rollout(
             action = action_transition[ACTION]
 
             # Convert to CPU / numpy.
-            action_numpy: np.ndarray = action.detach().to(device="cpu", dtype=torch.float32).numpy()
+            action_numpy: np.ndarray = action.to("cpu").numpy()
             assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
             # Apply the next action.

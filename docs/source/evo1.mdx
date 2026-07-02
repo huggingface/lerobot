@@ -34,7 +34,7 @@ The broader EVO1 project may include additional training scripts and dataset too
 
 3. Install a `flash-attn` wheel only if it is compatible with your Python, PyTorch, CUDA, and GPU stack. EVO1 falls back to standard attention when `flash_attn` is not available, but reproducing the official LIBERO checkpoint conversion result below requires the same FlashAttention path used by the original EVO1 checkpoint.
 
-EVO1 uses InternVL3 through the Hugging Face `transformers` remote-code path, so the first run may download the configured VLM checkpoint unless `policy.vlm_model_name` points to a local model directory.
+EVO1 uses the native Hugging Face `transformers` InternVL implementation (no `trust_remote_code`), so `policy.vlm_model_name` must point to a natively converted checkpoint such as `OpenGVLab/InternVL3-1B-hf` (note the `-hf` suffix; the original `OpenGVLab/InternVL3-1B` repo requires remote code and cannot be loaded). The first run may download the configured VLM checkpoint unless `policy.vlm_model_name` points to a local model directory.
 
 ## Data Requirements
 
@@ -58,7 +58,7 @@ policy.type=evo1
 By default, a new EVO1 policy initializes its VLM from:
 
 ```python
-policy.vlm_model_name=OpenGVLab/InternVL3-1B
+policy.vlm_model_name=OpenGVLab/InternVL3-1B-hf
 ```
 
 Once a LeRobot-format EVO1 checkpoint is available, load it with:
@@ -84,7 +84,7 @@ lerobot-train \
   --dataset.repo_id=your_org/your_dataset \
   --policy.type=evo1 \
   --policy.training_stage=stage1 \
-  --policy.vlm_model_name=OpenGVLab/InternVL3-1B \
+  --policy.vlm_model_name=OpenGVLab/InternVL3-1B-hf \
   --policy.device=cuda \
   --policy.chunk_size=50 \
   --policy.n_action_steps=50 \
@@ -105,7 +105,7 @@ lerobot-train \
   --dataset.repo_id=your_org/your_dataset \
   --policy.path=./outputs/evo1_stage1/checkpoints/005000/pretrained_model \
   --policy.training_stage=stage2 \
-  --policy.vlm_model_name=OpenGVLab/InternVL3-1B \
+  --policy.vlm_model_name=OpenGVLab/InternVL3-1B-hf \
   --policy.device=cuda \
   --policy.chunk_size=50 \
   --policy.n_action_steps=50 \
@@ -125,23 +125,23 @@ every finetuning flag.
 
 ### Key Training Parameters
 
-| Parameter                                     | Default                  | Description                                                       |
-| --------------------------------------------- | ------------------------ | ----------------------------------------------------------------- |
-| `policy.vlm_model_name`                       | `OpenGVLab/InternVL3-1B` | InternVL3 checkpoint or local model directory                     |
-| `policy.training_stage`                       | `stage1`                 | `stage1` trains the action head; `stage2` finetunes VLM branches  |
-| `policy.apply_training_stage_defaults`        | `true`                   | Reapplies stage finetuning defaults after loading a checkpoint    |
-| `policy.vlm_num_layers`                       | `14`                     | Number of InternVL3 language layers kept for the policy           |
-| `policy.vlm_dtype`                            | `bfloat16`               | Requested VLM dtype                                               |
-| `policy.use_flash_attn`                       | `true`                   | Requests FlashAttention when installed; otherwise falls back      |
-| `policy.enable_gradient_checkpointing`        | `true`                   | Enables checkpointing on supported InternVL3 modules              |
-| `policy.gradient_checkpointing_use_reentrant` | `false`                  | Reentrant setting passed to gradient checkpointing when supported |
-| `policy.chunk_size`                           | `50`                     | Number of future actions predicted per chunk                      |
-| `policy.n_action_steps`                       | `50`                     | Number of actions consumed from a sampled chunk                   |
-| `policy.max_state_dim`                        | `24`                     | State padding dimension                                           |
-| `policy.max_action_dim`                       | `24`                     | Action padding dimension                                          |
-| `policy.postprocess_action_dim`               | `null`                   | Optional action dimension returned after EVO1 postprocessing      |
-| `policy.binarize_gripper`                     | `false`                  | Binarizes the postprocessed gripper channel for LIBERO-style eval |
-| `policy.task_field`                           | `task`                   | Batch field used as the language prompt                           |
+| Parameter                                     | Default                     | Description                                                       |
+| --------------------------------------------- | --------------------------- | ----------------------------------------------------------------- |
+| `policy.vlm_model_name`                       | `OpenGVLab/InternVL3-1B-hf` | Natively converted InternVL3 checkpoint or local model directory  |
+| `policy.training_stage`                       | `stage1`                    | `stage1` trains the action head; `stage2` finetunes VLM branches  |
+| `policy.apply_training_stage_defaults`        | `true`                      | Reapplies stage finetuning defaults after loading a checkpoint    |
+| `policy.vlm_num_layers`                       | `14`                        | Number of InternVL3 language layers kept for the policy           |
+| `policy.vlm_dtype`                            | `bfloat16`                  | Requested VLM dtype                                               |
+| `policy.use_flash_attn`                       | `true`                      | Requests FlashAttention when installed; otherwise falls back      |
+| `policy.enable_gradient_checkpointing`        | `true`                      | Enables checkpointing on supported InternVL3 modules              |
+| `policy.gradient_checkpointing_use_reentrant` | `false`                     | Reentrant setting passed to gradient checkpointing when supported |
+| `policy.chunk_size`                           | `50`                        | Number of future actions predicted per chunk                      |
+| `policy.n_action_steps`                       | `50`                        | Number of actions consumed from a sampled chunk                   |
+| `policy.max_state_dim`                        | `24`                        | State padding dimension                                           |
+| `policy.max_action_dim`                       | `24`                        | Action padding dimension                                          |
+| `policy.postprocess_action_dim`               | `null`                      | Optional action dimension returned after EVO1 postprocessing      |
+| `policy.binarize_gripper`                     | `false`                     | Binarizes the postprocessed gripper channel for LIBERO-style eval |
+| `policy.task_field`                           | `task`                      | Batch field used as the language prompt                           |
 
 ## Results
 
@@ -150,6 +150,11 @@ every finetuning flag.
 The checkpoint [javadcc/evo1-libero-lerobot](https://huggingface.co/javadcc/evo1-libero-lerobot)
 is the LeRobot-format conversion of the official EVO1 LIBERO checkpoint. The conversion was checked against
 the official EVO1 checkpoint with the same LIBERO Object initial states and action postprocessing.
+
+> [!NOTE]
+> This checkpoint is currently hosted in a community namespace and the upstream-to-LeRobot weight
+> conversion script is not part of this integration; a `lerobot`-hosted copy with a pinned revision
+> and the conversion tooling are planned follow-ups.
 
 | Checkpoint                   | Suite           | Episodes         | Success Rate |
 | ---------------------------- | --------------- | ---------------- | ------------ |
@@ -171,7 +176,7 @@ FlashAttention, and set the LIBERO action postprocessing flags:
 ```bash
 lerobot-eval \
   --policy.path=javadcc/evo1-libero-lerobot \
-  --policy.vlm_model_name=OpenGVLab/InternVL3-1B \
+  --policy.vlm_model_name=OpenGVLab/InternVL3-1B-hf \
   --policy.device=cuda \
   --policy.use_flash_attn=true \
   --policy.n_action_steps=14 \
@@ -189,7 +194,7 @@ lerobot-eval \
 ## References
 
 - [EVO1 repository](https://github.com/MINT-SJTU/Evo-1)
-- [InternVL3-1B](https://huggingface.co/OpenGVLab/InternVL3-1B)
+- [InternVL3-1B-hf](https://huggingface.co/OpenGVLab/InternVL3-1B-hf)
 
 ## License
 
