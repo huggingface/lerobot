@@ -126,7 +126,7 @@ import time
 from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 from lerobot.cameras.opencv import OpenCVCameraConfig
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, shutdown_rerun
+from lerobot.utils.visualization_utils import init_visualization, log_visualization_data, shutdown_visualization
 
 robot_config = SO101FollowerConfig(
     port="/dev/tty.usbmodem5AB90687491",
@@ -142,7 +142,7 @@ teleop_config = SO101LeaderConfig(
     id="my_leader_arm",
 )
 
-init_rerun(session_name="teleoperation")
+init_visualization("rerun", session_name="teleoperation")  # pass "foxglove" to stream to Foxglove instead
 
 robot = SO101Follower(robot_config)
 teleop_device = SO101Leader(teleop_config)
@@ -158,7 +158,7 @@ while True:
     observation = robot.get_observation()
     action = teleop_device.get_action()
     robot.send_action(action)
-    log_rerun_data(observation=observation, action=action)
+    log_visualization_data("rerun", observation=observation, action=action)
 
     elapsed_time = time.perf_counter() - start_time
     sleep_time = TIME_PER_FRAME - elapsed_time
@@ -223,7 +223,7 @@ from lerobot.teleoperators.so_leader.config_so_leader import SO101LeaderConfig
 from lerobot.teleoperators.so_leader.so_leader import SO101Leader
 from lerobot.common.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import init_rerun
+from lerobot.utils.visualization_utils import init_visualization
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.processor import make_default_processors
 
@@ -270,7 +270,7 @@ def main():
 
     # Initialize the keyboard listener and rerun visualization
     _, events = init_keyboard_listener()
-    init_rerun(session_name="recording")
+    init_visualization("rerun", session_name="recording")
 
     # Connect the robot and teleoperator
     robot.connect()
