@@ -36,11 +36,6 @@ _LOC_TOKENIZER_CACHE: dict[str, Any] = {}
 class PI052PolicyAdapter(BaseLanguageAdapter):
     """Runtime bridge for PI052 policies."""
 
-    # PaliGemma's ``<locDDDD>`` prior dominates the first token on a small
-    # text-CE budget; suppress it for prose kinds (VQA would keep it, but
-    # the runtime no longer does interactive VQA).
-    LOC_SUPPRESS_KINDS = frozenset({"subtask", "memory", "interjection"})
-
     def select_action(self, observation: dict[str, Any], state: RuntimeState) -> Any:
         subtask = state.language_context.get("subtask") or state.task or ""
         text_batch = _build_text_batch(
@@ -72,7 +67,7 @@ class PI052PolicyAdapter(BaseLanguageAdapter):
             min_new_tokens=self.gen.min_new_tokens,
             temperature=self.gen.temperature,
             top_p=self.gen.top_p,
-            suppress_loc_tokens=kind in self.LOC_SUPPRESS_KINDS,
+            suppress_loc_tokens=True,  # all runtime text is prose; never emit <loc>
         )
 
     def build_messages(
