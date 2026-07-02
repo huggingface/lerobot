@@ -1,0 +1,15 @@
+{
+  "benchmark": "LeRobot",
+  "task_name": "",
+  "seed": null,
+  "dataset_source": "",
+  "dataset_repo_id": "",
+  "dataset_revision": "",
+  "episode_index_or_split": "",
+  "robot_type": "",
+  "policy_type": "",
+  "checkpoint_path": "",
+  "replay_command": "",
+  "output_artifact_directory": "",
+  "notes": ""
+}
