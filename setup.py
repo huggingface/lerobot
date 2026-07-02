@@ -69,4 +69,7 @@ def read_long_description() -> str:
 setup(
     long_description=read_long_description(),
     long_description_content_type="text/markdown",
+    install_requires=[
+        "transformers>=4.49,<6",
+    ],
 )
