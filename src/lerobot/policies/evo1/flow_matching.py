@@ -16,18 +16,11 @@ from __future__ import annotations
 
 import logging
 import math
-from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
 
 logger = logging.getLogger(__name__)
-
-
-def _cfgget(config, key: str, default=None):
-    if isinstance(config, dict):
-        return config.get(key, default)
-    return getattr(config, key, default)
 
 
 class SinusoidalPositionalEncoding(nn.Module):
@@ -171,7 +164,6 @@ class BasicTransformerBlock(nn.Module):
 class FlowmatchingActionHead(nn.Module):
     def __init__(
         self,
-        config=None,
         embed_dim: int = 896,
         hidden_dim: int = 1024,
         action_dim: int = 16 * 7,
@@ -182,40 +174,17 @@ class FlowmatchingActionHead(nn.Module):
         dropout: float = 0.0,
         num_inference_timesteps: int = 20,
         num_categories: int = 1,
+        state_dim: int | None = None,
+        state_hidden_dim: int | None = None,
     ):
         super().__init__()
-
-        if config is not None:
-            embed_dim = _cfgget(config, "embed_dim", embed_dim)
-            hidden_dim = _cfgget(config, "hidden_dim", hidden_dim)
-            action_dim = _cfgget(config, "action_dim", action_dim)
-            horizon = _cfgget(config, "horizon", horizon)
-            per_action_dim = _cfgget(config, "per_action_dim", per_action_dim)
-            num_heads = _cfgget(config, "num_heads", num_heads)
-            num_layers = _cfgget(config, "num_layers", num_layers)
-            dropout = _cfgget(config, "dropout", dropout)
-            num_inference_timesteps = _cfgget(config, "num_inference_timesteps", num_inference_timesteps)
-            num_categories = _cfgget(config, "num_categories", num_categories)
-            self.config = config
-        else:
-            self.config = SimpleNamespace(
-                embed_dim=embed_dim,
-                hidden_dim=hidden_dim,
-                action_dim=action_dim,
-                horizon=horizon,
-                per_action_dim=per_action_dim,
-                num_heads=num_heads,
-                num_layers=num_layers,
-                dropout=dropout,
-                num_inference_timesteps=num_inference_timesteps,
-                num_categories=num_categories,
-            )
 
         logger.info("FlowmatchingActionHead num_inference_timesteps=%s", num_inference_timesteps)
         self.embed_dim = embed_dim
         self.horizon = horizon
-        self.per_action_dim = _cfgget(self.config, "per_action_dim", per_action_dim)
-        self.action_dim = _cfgget(self.config, "action_dim", action_dim)
+        self.per_action_dim = per_action_dim
+        self.action_dim = action_dim
+        self.num_inference_timesteps = num_inference_timesteps
 
         self.time_pos_enc = SinusoidalPositionalEncoding(embed_dim, max_len=1000)
         self.transformer_blocks = nn.ModuleList(
@@ -239,9 +208,8 @@ class FlowmatchingActionHead(nn.Module):
         )
 
         self.state_encoder = None
-        state_dim = _cfgget(self.config, "state_dim")
         if state_dim is not None:
-            state_hidden = _cfgget(self.config, "state_hidden_dim", embed_dim)
+            state_hidden = state_hidden_dim if state_hidden_dim is not None else embed_dim
             self.state_encoder = CategorySpecificMLP(
                 input_dim=state_dim,
                 hidden_dim=state_hidden,
@@ -390,8 +358,8 @@ class FlowmatchingActionHead(nn.Module):
             state_emb = self.state_encoder(state, embodiment_id).unsqueeze(1)
             context_tokens = torch.cat([context_tokens, state_emb], dim=1)
 
-        action_dim_total = _cfgget(self.config, "action_dim", self.action_dim)
-        per_action_dim = _cfgget(self.config, "per_action_dim", action_dim_total // max(self.horizon, 1))
+        action_dim_total = self.action_dim
+        per_action_dim = self.per_action_dim
 
         action = torch.rand(batch_size, action_dim_total, device=device, dtype=context_tokens.dtype) * 2 - 1
         action_seq = (
@@ -411,7 +379,7 @@ class FlowmatchingActionHead(nn.Module):
         target_dtype = self.dtype
         context_tokens = context_tokens.to(dtype=target_dtype)
 
-        num_steps = int(_cfgget(self.config, "num_inference_timesteps", 32))
+        num_steps = int(self.num_inference_timesteps)
         if num_steps <= 0:
             raise ValueError(f"num_inference_timesteps must be positive, got {num_steps}")
         dt = 1.0 / num_steps

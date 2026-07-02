@@ -20,6 +20,7 @@ import pytest
 import torch
 from torch import nn
 
+import lerobot.policies.evo1.evo1_model as evo1_model
 import lerobot.policies.evo1.modeling_evo1 as modeling_evo1
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.evo1.configuration_evo1 import Evo1Config
@@ -225,17 +226,26 @@ def test_evo1_rejects_non_square_image_resolution():
         make_config(image_resolution=(448, 320))
 
 
-def test_evo1_build_model_config_uses_image_resolution_and_trainable_checkpointing():
-    stage1 = make_config(training_stage="stage1", image_resolution=(224, 224))
-    stage1_model_config = modeling_evo1.EVO1Policy._build_model_config(stage1)
+def test_evo1_model_uses_image_resolution_and_trainable_checkpointing(monkeypatch):
+    captured: dict = {}
 
-    assert stage1_model_config["image_size"] == 224
-    assert stage1_model_config["enable_gradient_checkpointing"] is False
+    class SpyEmbedder(nn.Module):
+        def __init__(self, **kwargs):
+            super().__init__()
+            captured.clear()
+            captured.update(kwargs)
+
+    monkeypatch.setattr(evo1_model, "InternVL3Embedder", SpyEmbedder)
+
+    stage1 = make_config(training_stage="stage1", image_resolution=(224, 224))
+    evo1_model.EVO1(stage1)
+    assert captured["image_size"] == 224
+    # VLM is frozen in stage1, so gradient checkpointing is gated off.
+    assert captured["enable_gradient_checkpointing"] is False
 
     stage2 = make_config(training_stage="stage2", image_resolution=(224, 224))
-    stage2_model_config = modeling_evo1.EVO1Policy._build_model_config(stage2)
-
-    assert stage2_model_config["enable_gradient_checkpointing"] is True
+    evo1_model.EVO1(stage2)
+    assert captured["enable_gradient_checkpointing"] is True
 
 
 def test_evo1_policy_processors_pad_state_crop_action_and_binarize_gripper():
@@ -429,21 +439,19 @@ def test_evo1_action_mask_accepts_chunk_size_one(monkeypatch):
     assert not action_mask[:, :, ACTION_DIM:].any()
 
 
-def test_flowmatching_dict_config_enables_state_encoder_for_horizon_one():
+def test_flowmatching_state_encoder_for_horizon_one():
     head = FlowmatchingActionHead(
-        config={
-            "embed_dim": EMBED_DIM,
-            "hidden_dim": 16,
-            "action_dim": ACTION_DIM,
-            "horizon": 1,
-            "per_action_dim": ACTION_DIM,
-            "num_heads": 2,
-            "num_layers": 1,
-            "num_inference_timesteps": 2,
-            "state_dim": STATE_DIM,
-            "state_hidden_dim": 16,
-            "num_categories": 1,
-        }
+        embed_dim=EMBED_DIM,
+        hidden_dim=16,
+        action_dim=ACTION_DIM,
+        horizon=1,
+        per_action_dim=ACTION_DIM,
+        num_heads=2,
+        num_layers=1,
+        num_inference_timesteps=2,
+        state_dim=STATE_DIM,
+        state_hidden_dim=16,
+        num_categories=1,
     )
 
     assert head.state_encoder is not None

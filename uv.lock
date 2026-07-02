@@ -2875,7 +2875,6 @@ all = [
     { name = "scikit-image" },
     { name = "scipy" },
     { name = "teleop" },
-    { name = "timm" },
     { name = "torchcodec", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
     { name = "torchdiffeq" },
     { name = "transformers" },
@@ -2980,7 +2979,6 @@ evaluation = [
     { name = "av" },
 ]
 evo1 = [
-    { name = "timm" },
     { name = "transformers" },
 ]
 fastwam = [
@@ -3371,7 +3369,6 @@ requires-dist = [
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'wallx'" },
     { name = "lerobot", extras = ["smolvla"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["test"], marker = "extra == 'all'" },
-    { name = "lerobot", extras = ["timm-dep"], marker = "extra == 'evo1'" },
     { name = "lerobot", extras = ["timm-dep"], marker = "extra == 'groot'" },
     { name = "lerobot", extras = ["topreward"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["training"], marker = "extra == 'all'" },

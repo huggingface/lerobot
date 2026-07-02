@@ -111,6 +111,7 @@ class InternVL3Embedder(nn.Module):
         num_language_layers: int | None = 14,
         model_dtype: str | torch.dtype = "bfloat16",
         use_flash_attn: bool = True,
+        max_text_length: int = 1024,
         enable_gradient_checkpointing: bool = True,
         gradient_checkpointing_use_reentrant: bool = False,
     ):
@@ -118,7 +119,7 @@ class InternVL3Embedder(nn.Module):
         self._requested_device = device
         self.image_size = image_size
         self.num_language_layers = num_language_layers
-        self.max_text_length = 1024
+        self.max_text_length = max_text_length
         self.enable_gradient_checkpointing = bool(enable_gradient_checkpointing)
         self.gradient_checkpointing_use_reentrant = bool(gradient_checkpointing_use_reentrant)
 

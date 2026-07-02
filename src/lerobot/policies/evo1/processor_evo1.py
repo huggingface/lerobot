@@ -21,7 +21,6 @@ from typing import Any
 import torch
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.policies.evo1.configuration_evo1 import Evo1Config
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -53,6 +52,8 @@ from lerobot.utils.constants import (
     REWARD,
     TRUNCATED,
 )
+
+from .configuration_evo1 import Evo1Config
 
 
 def evo1_batch_to_transition(batch: dict[str, Any]):

@@ -23,10 +23,11 @@ import torch
 from torch import Tensor
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.evo1.configuration_evo1 import Evo1Config
-from lerobot.policies.evo1.evo1_model import EVO1
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+
+from .configuration_evo1 import Evo1Config
+from .evo1_model import EVO1
 
 
 class EVO1Policy(PreTrainedPolicy):
@@ -43,7 +44,7 @@ class EVO1Policy(PreTrainedPolicy):
             )
 
         self.config = config
-        self.model = EVO1(self._build_model_config(config))
+        self.model = EVO1(config)
         self.model.set_finetune_flags()
         self._keep_frozen_embedder_eval()
         self.reset()
@@ -79,37 +80,6 @@ class EVO1Policy(PreTrainedPolicy):
             strict=strict,
             **kwargs,
         )
-
-    @staticmethod
-    def _build_model_config(config: Evo1Config) -> dict:
-        return {
-            "device": config.device,
-            "return_cls_only": config.return_cls_only,
-            "vlm_name": config.vlm_model_name,
-            "image_size": int(config.image_resolution[0]),
-            "vlm_num_layers": config.vlm_num_layers,
-            "vlm_dtype": config.vlm_dtype,
-            "use_flash_attn": config.use_flash_attn,
-            "action_head": config.action_head,
-            "action_horizon": config.chunk_size,
-            "per_action_dim": config.max_action_dim,
-            "state_dim": config.max_state_dim,
-            "embed_dim": config.embed_dim,
-            "hidden_dim": config.hidden_dim,
-            "state_hidden_dim": config.state_hidden_dim,
-            "num_heads": config.num_heads,
-            "num_layers": config.num_layers,
-            "dropout": config.dropout,
-            "num_inference_timesteps": config.num_inference_timesteps,
-            "num_categories": config.num_categories,
-            "enable_gradient_checkpointing": config.enable_gradient_checkpointing
-            and bool(config.finetune_vlm or config.finetune_language_model or config.finetune_vision_model),
-            "gradient_checkpointing_use_reentrant": config.gradient_checkpointing_use_reentrant,
-            "finetune_vlm": config.finetune_vlm,
-            "finetune_language_model": config.finetune_language_model,
-            "finetune_vision_model": config.finetune_vision_model,
-            "finetune_action_head": config.finetune_action_head,
-        }
 
     @property
     def _camera_keys(self) -> list[str]:
@@ -406,6 +376,9 @@ class EVO1Policy(PreTrainedPolicy):
             embodiment_ids=embodiment_ids,
         )
         flat_action_mask = action_mask.view(action_mask.shape[0], -1).to(dtype=actions_gt.dtype)
+        # Flow-matching velocity target. Padded (masked-out) action dims are already zero on both sides
+        # here (`actions_gt` is zero-padded in `_prepare_actions`, and `noise` is masked inside the head),
+        # and the whole difference is multiplied by `flat_action_mask`, so padded dims contribute nothing.
         target_velocity = (actions_gt - noise).view(actions_gt.shape[0], -1) * flat_action_mask
         loss = self._compute_masked_loss(pred_velocity, target_velocity, action_mask, reduction)
         loss_mean = loss.mean().item() if loss.ndim > 0 else loss.item()
@@ -447,4 +420,7 @@ class EVO1Policy(PreTrainedPolicy):
         if len(self._action_queue) == 0:
             action_chunk = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
             self._action_queue.extend(action_chunk.transpose(0, 1))
+        # Returns one step of shape (B, max_action_dim): actions are emitted at the padded max_action_dim
+        # width and cropped to the real action dim downstream by the postprocessor (Evo1ActionProcessorStep).
+        # Callers that bypass the postprocessor receive the padded width.
         return self._action_queue.popleft()

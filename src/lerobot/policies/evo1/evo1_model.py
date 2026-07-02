@@ -14,62 +14,64 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import torch
 import torch.nn as nn
 
+from .configuration_evo1 import Evo1Config
 from .flow_matching import FlowmatchingActionHead
 from .internvl3_embedder import InternVL3Embedder
 
 
-def _cfgget(config: Any, key: str, default=None):
-    if isinstance(config, dict):
-        return config.get(key, default)
-    return getattr(config, key, default)
-
-
 class EVO1(nn.Module):
-    def __init__(self, config: dict):
+    def __init__(self, config: Evo1Config):
         super().__init__()
         self.config = config
-        self._device = _cfgget(config, "device", "cuda")
-        self.return_cls_only = _cfgget(config, "return_cls_only", False)
-        vlm_name = _cfgget(config, "vlm_name", "OpenGVLab/InternVL3-1B")
-        image_size = _cfgget(config, "image_size", 448)
-        if image_size is None:
-            image_resolution = _cfgget(config, "image_resolution", (448, 448))
-            image_size = int(image_resolution[0])
+        self._device = config.device
+        self.return_cls_only = config.return_cls_only
+
+        # Gradient checkpointing only pays off when the VLM is actually being trained; keep it off
+        # whenever every VLM branch is frozen so the frozen forward stays cheap.
+        tracks_vlm_gradients = bool(
+            config.finetune_vlm or config.finetune_language_model or config.finetune_vision_model
+        )
+        enable_gradient_checkpointing = config.enable_gradient_checkpointing and tracks_vlm_gradients
 
         self.embedder = InternVL3Embedder(
-            model_name=vlm_name,
-            image_size=image_size,
+            model_name=config.vlm_model_name,
+            image_size=int(config.image_resolution[0]),
             device=self._device,
-            num_language_layers=_cfgget(config, "vlm_num_layers", 14),
-            model_dtype=_cfgget(config, "vlm_dtype", "bfloat16"),
-            use_flash_attn=_cfgget(config, "use_flash_attn", True),
-            enable_gradient_checkpointing=_cfgget(config, "enable_gradient_checkpointing", True),
-            gradient_checkpointing_use_reentrant=_cfgget(
-                config, "gradient_checkpointing_use_reentrant", False
-            ),
+            num_language_layers=config.vlm_num_layers,
+            model_dtype=config.vlm_dtype,
+            use_flash_attn=config.use_flash_attn,
+            max_text_length=config.max_text_length,
+            enable_gradient_checkpointing=enable_gradient_checkpointing,
+            gradient_checkpointing_use_reentrant=config.gradient_checkpointing_use_reentrant,
         )
 
-        action_head_type = _cfgget(config, "action_head", "flowmatching").lower()
+        action_head_type = config.action_head.lower()
         if action_head_type != "flowmatching":
             raise NotImplementedError(f"Unknown action_head: {action_head_type}")
 
-        horizon = _cfgget(config, "action_horizon", _cfgget(config, "horizon", 16))
-        per_action_dim = _cfgget(config, "per_action_dim", 7)
+        horizon = config.chunk_size
+        per_action_dim = config.max_action_dim
         action_dim = horizon * per_action_dim
-
-        if isinstance(config, dict):
-            config["horizon"] = horizon
-            config["per_action_dim"] = per_action_dim
-            config["action_dim"] = action_dim
 
         self.horizon = horizon
         self.per_action_dim = per_action_dim
-        self.action_head = FlowmatchingActionHead(config=config).to(self._device)
+        self.action_head = FlowmatchingActionHead(
+            embed_dim=config.embed_dim,
+            hidden_dim=config.hidden_dim,
+            action_dim=action_dim,
+            horizon=horizon,
+            per_action_dim=per_action_dim,
+            num_heads=config.num_heads,
+            num_layers=config.num_layers,
+            dropout=config.dropout,
+            num_inference_timesteps=config.num_inference_timesteps,
+            num_categories=config.num_categories,
+            state_dim=config.max_state_dim,
+            state_hidden_dim=config.state_hidden_dim,
+        ).to(self._device)
 
     def get_vl_embeddings(
         self,
@@ -166,15 +168,13 @@ class EVO1(nn.Module):
             param.requires_grad = trainable
 
     def set_finetune_flags(self):
-        finetune_vlm = _cfgget(self.config, "finetune_vlm", False)
-        finetune_language_model = _cfgget(self.config, "finetune_language_model", False)
-        finetune_vision_model = _cfgget(self.config, "finetune_vision_model", False)
+        finetune_vlm = bool(self.config.finetune_vlm)
+        finetune_language_model = bool(self.config.finetune_language_model)
+        finetune_vision_model = bool(self.config.finetune_vision_model)
         has_explicit_branch_flags = any(
-            flag is not None for flag in (finetune_language_model, finetune_vision_model)
+            flag is not None
+            for flag in (self.config.finetune_language_model, self.config.finetune_vision_model)
         )
-        finetune_language_model = bool(finetune_language_model)
-        finetune_vision_model = bool(finetune_vision_model)
-        finetune_vlm = bool(finetune_vlm)
 
         if has_explicit_branch_flags:
             self._set_module_trainable(self.embedder, False)
@@ -187,5 +187,5 @@ class EVO1(nn.Module):
         elif not finetune_vlm:
             self._set_module_trainable(self.embedder, False)
 
-        if not _cfgget(self.config, "finetune_action_head", False):
+        if not self.config.finetune_action_head:
             self._set_module_trainable(self.action_head, False)

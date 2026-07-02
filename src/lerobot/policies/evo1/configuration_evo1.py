@@ -80,6 +80,9 @@ class Evo1Config(PreTrainedConfig):
     vlm_model_name: str = "OpenGVLab/InternVL3-1B-hf"
     vlm_num_layers: int | None = 14
     vlm_dtype: str = "bfloat16"
+    # Max token length for tokenizing the (image placeholders + instruction) prompt. Prompts longer
+    # than this are right-truncated, so raise it for tasks with long language instructions or many views.
+    max_text_length: int = 1024
     use_flash_attn: bool = True
     action_head: str = "flowmatching"
     embed_dim: int = 896
