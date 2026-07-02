@@ -77,13 +77,6 @@ To use GR00T N1.7:
 Here's a complete training command for finetuning the base GR00T model on your own dataset:
 
 ```bash
-# Set these for your run
-export BASE_MODEL=nvidia/GR00T-N1.7-3B
-export DATASET_ID=sreetz-nv/so101-clean-up-vials-into-rack-50_20260628_131121
-export REPO_ID=sreetz-nv/so101-clean-up-vials-into-rack-50-groot-n17-relact-bs64-20k-20260628_johnny_42
-export JOB_NAME=so101-clean-up-vials-into-rack-50-groot-n17-relact-bs64-20k-20260628_johnny_42
-export OUTPUT_DIR=outputs/train/$JOB_NAME
-
 uv run lerobot-train \
   --dataset.repo_id=$DATASET_ID \
   --dataset.image_transforms.enable=true \
