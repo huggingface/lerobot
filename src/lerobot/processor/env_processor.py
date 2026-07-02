@@ -78,6 +78,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
             state = state.float()
             if state.dim() == 1:
                 state = state.unsqueeze(0)
+
             processed_obs[OBS_STATE] = state
         return processed_obs
 

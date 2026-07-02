@@ -282,9 +282,9 @@ def rollout(
             action_transition = env_postprocessor(action_transition)
             action = action_transition[ACTION]
 
-        # Convert to CPU / numpy.
-        action_numpy = _action_to_env_numpy(action)
-        assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
+            # Convert to CPU / numpy.
+            action_numpy = _action_to_env_numpy(action)
+            assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
             # Apply the next action.
             observation, reward, terminated, truncated, info = env.step(action_numpy)
