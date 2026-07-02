@@ -101,6 +101,11 @@ class TrainPipelineConfig(HubMixin):
     batch_size: int = 8
     prefetch_factor: int = 4
     persistent_workers: bool = True
+    # DataLoader worker start method. "spawn" is safer than "fork" with
+    # non-fork-safe libs (PyAV / torchcodec / ffmpeg — see #2488), but
+    # adds some worker-startup time per run since workers re-import
+    # modules instead of inheriting parent state.
+    dataloader_multiprocessing_context: str = "spawn"
     steps: int = 100_000
     # Run policy in the simulation environment every N steps to measure reward/success (0 = disabled).
     env_eval_freq: int = 20_000
