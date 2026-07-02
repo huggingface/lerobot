@@ -39,6 +39,7 @@ from PIL import Image
 
 from lerobot.cameras import ColorMode
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+from lerobot.cameras.orbbec import OrbbecCamera, OrbbecCameraConfig
 from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
 
 logger = logging.getLogger(__name__)
@@ -86,12 +87,34 @@ def find_all_realsense_cameras() -> list[dict[str, Any]]:
     return all_realsense_cameras_info
 
 
+def find_all_orbbec_cameras() -> list[dict[str, Any]]:
+    """
+    Finds all available Orbbec cameras plugged into the system.
+
+    Returns:
+        A list of all available Orbbec cameras with their metadata.
+    """
+    all_orbbec_cameras_info: list[dict[str, Any]] = []
+    logger.info("Searching for Orbbec cameras...")
+    try:
+        orbbec_cameras = OrbbecCamera.find_cameras()
+        for cam_info in orbbec_cameras:
+            all_orbbec_cameras_info.append(cam_info)
+        logger.info(f"Found {len(orbbec_cameras)} Orbbec cameras.")
+    except ImportError:
+        logger.warning("Skipping Orbbec camera search: pyorbbecsdk library not found or not importable.")
+    except Exception as e:
+        logger.error(f"Error finding Orbbec cameras: {e}")
+
+    return all_orbbec_cameras_info
+
+
 def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[str, Any]]:
     """
     Finds available cameras based on an optional filter and prints their information.
 
     Args:
-        camera_type_filter: Optional string to filter cameras ("realsense" or "opencv").
+        camera_type_filter: Optional string to filter cameras ("realsense", "opencv", or "orbbec").
                             If None, lists all cameras.
 
     Returns:
@@ -106,12 +129,14 @@ def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[s
         all_cameras_info.extend(find_all_opencv_cameras())
     if camera_type_filter is None or camera_type_filter == "realsense":
         all_cameras_info.extend(find_all_realsense_cameras())
+    if camera_type_filter is None or camera_type_filter == "orbbec":
+        all_cameras_info.extend(find_all_orbbec_cameras())
 
     if not all_cameras_info:
         if camera_type_filter:
             logger.warning(f"No {camera_type_filter} cameras were detected.")
         else:
-            logger.warning("No cameras (OpenCV or RealSense) were detected.")
+            logger.warning("No cameras (OpenCV, RealSense or Orbbec) were detected.")
     else:
         print("\n--- Detected Cameras ---")
         for i, cam_info in enumerate(all_cameras_info):
@@ -172,6 +197,12 @@ def create_camera_instance(cam_meta: dict[str, Any]) -> dict[str, Any] | None:
                 color_mode=ColorMode.RGB,
             )
             instance = RealSenseCamera(rs_config)
+        elif cam_type == "Orbbec":
+            orbbec_config = OrbbecCameraConfig(
+                serial_number_or_name=cam_id,
+                color_mode=ColorMode.RGB,
+            )
+            instance = OrbbecCamera(orbbec_config)
         else:
             logger.warning(f"Unknown camera type: {cam_type} for ID {cam_id}. Skipping.")
             return None
@@ -237,7 +268,7 @@ def save_images_from_all_cameras(
     Args:
         output_dir: Directory to save images.
         record_time_s: Duration in seconds to record images.
-        camera_type: Optional string to filter cameras ("realsense" or "opencv").
+        camera_type: Optional string to filter cameras ("realsense", "opencv", or "orbbec").
                             If None, uses all detected cameras.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -294,8 +325,8 @@ def main():
         type=str,
         nargs="?",
         default=None,
-        choices=["realsense", "opencv"],
-        help="Specify camera type to capture from (e.g., 'realsense', 'opencv'). Captures from all if omitted.",
+        choices=["realsense", "opencv", "orbbec"],
+        help="Specify camera type to capture from (e.g., 'realsense', 'opencv', 'orbbec'). Captures from all if omitted.",
     )
     parser.add_argument(
         "--output-dir",

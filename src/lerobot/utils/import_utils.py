@@ -122,6 +122,7 @@ _unitree_sdk_available = is_package_available("unitree-sdk2py", "unitree_sdk2py"
 _pyrealsense2_available = is_package_available("pyrealsense2") or is_package_available(
     "pyrealsense2-macosx", import_name="pyrealsense2"
 )
+_pyorbbecsdk_available = is_package_available("pyorbbecsdk2", import_name="pyorbbecsdk")
 _zmq_available = is_package_available("pyzmq", import_name="zmq")
 _hebi_available = is_package_available("hebi-py", import_name="hebi")
 _teleop_available = is_package_available("teleop")
