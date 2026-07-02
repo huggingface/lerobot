@@ -556,11 +556,13 @@ class DAggerStrategy(RolloutStrategy):
                 logger.info("DAgger continuous control loop ended — pausing engine")
                 engine.pause()
                 with contextlib.suppress(Exception):
-                    with self._episode_lock:
-                        self._stamp_episode_success(dataset)
-                        dataset.save_episode()
-                    self._needs_push.set()
-                    logger.info("Final in-progress episode saved")
+                    buf = dataset.writer.episode_buffer
+                    if buf and any(len(v) > 0 for v in buf.values() if isinstance(v, list)):
+                        with self._episode_lock:
+                            self._stamp_episode_success(dataset)
+                            dataset.save_episode()
+                        self._needs_push.set()
+                        logger.info("Final in-progress episode saved")
 
     # ------------------------------------------------------------------
     # Corrections-only mode (record_autonomous=False)
@@ -708,11 +710,13 @@ class DAggerStrategy(RolloutStrategy):
                 logger.info("DAgger corrections-only loop ended — pausing engine")
                 engine.pause()
                 with contextlib.suppress(Exception):
-                    with self._episode_lock:
-                        self._stamp_episode_success(dataset)
-                        dataset.save_episode()
-                    self._needs_push.set()
-                    logger.info("Final in-progress episode saved")
+                    buf = dataset.writer.episode_buffer
+                    if buf and any(len(v) > 0 for v in buf.values() if isinstance(v, list)):
+                        with self._episode_lock:
+                            self._stamp_episode_success(dataset)
+                            dataset.save_episode()
+                        self._needs_push.set()
+                        logger.info("Final in-progress episode saved")
 
     # ------------------------------------------------------------------
     # State-machine transition side-effects
