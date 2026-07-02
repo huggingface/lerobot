@@ -1,0 +1,114 @@
+# 重新命名映射表與空白相機
+
+當您使用機器人策略進行訓練、評估或錄製時，您的**資料集**或**環境**提供的觀測資料使用一組鍵名（例如 `observation.images.front`、`observation.images.eagle`），而您的**策略**則期望另一組鍵名（例如 `observation.images.image`、`observation.images.image2`）。**重新命名映射表**可以在不修改策略或資料來源的情況下橋接這個差異。
+
+> **適用範圍：**重新命名對應表僅重新命名**觀測**鍵（影像與狀態）。動作鍵不受影響。
+
+## 為什麼觀測鍵名不一定匹配
+
+策略有一組固定的**輸入特徵名稱**，內建於其預訓練設定中。例如：
+
+- [pi0fast-libero](https://huggingface.co/lerobot/pi0fast-libero) 需要 `observation.images.base_0_rgb` 與 `observation.images.left_wrist_0_rgb`。
+- [xvla-base](https://huggingface.co/lerobot/xvla-base) 需要 `observation.images.image`、`observation.images.image2` 以及 `observation.images.image3`。
+
+您的資料集可能使用完全不同的名稱（例如 `observation.images.front`、`observation.images.eagle`、`observation.images.glove`），而您的評估環境可能又使用另一組名稱。與其編輯策略設定或重新命名資料集中的欄位，您可以傳入一個**重新命名對應表**：一個 JSON 字典，將來源鍵映射到策略期望的鍵。重新命名在預處理管線中進行，因此策略始終看到它所期望的鍵名。
+
+## 使用重新命名映射表
+
+在命令列中以 JSON 字串傳入映射。慣例格式如下：
+
+```
+--rename_map='{"source_key": "policy_key", ...}'
+```
+
+其中 **source_key** 是資料集或環境提供的鍵名，而 **policy_key** 是策略期望的鍵名。
+
+只有列出的鍵會被重新命名；其餘所有鍵不變地直接傳遞。條目的順序無關緊要。
+
+支援的策略：**PI0**、**PI05**、**PI0Fast**、**SmolVLA** 和 **XVLA**。
+
+### 訓練
+
+假設您在一個資料集上微調 [lerobot/xvla-base](https://huggingface.co/lerobot/xvla-base)，該資料集的影像在 `observation.images.front`、`observation.images.eagle` 和 `observation.images.glove` 下。XVLA 期望 `observation.images.image`、`observation.images.image2` 和 `observation.images.image3`：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=YOUR_DATASET \
+  --output_dir=./outputs/xvla_training \
+  --job_name=xvla_training \
+  --policy.path="lerobot/xvla-base" \
+  --policy.repo_id="HF_USER/xvla-your-robot" \
+  --policy.dtype=bfloat16 \
+  --policy.action_mode=auto \
+  --steps=20000 \
+  --policy.device=cuda \
+  --policy.freeze_vision_encoder=false \
+  --policy.freeze_language_encoder=false \
+  --policy.train_policy_transformer=true \
+  --policy.train_soft_prompts=true \
+  --rename_map='{"observation.images.front": "observation.images.image", "observation.images.eagle": "observation.images.image2", "observation.images.glove": "observation.images.image3"}'
+```
+
+### 評估
+
+一個策略期望 `observation.images.base_0_rgb` 和 `observation.images.left_wrist_0_rgb`（例如 [pi0fast-libero](https://huggingface.co/lerobot/pi0fast-libero)），但 LIBERO 環境回傳的是 `observation.images.image` 和 `observation.images.image2`：
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/pi0fast-libero \
+  --env.type=libero \
+  ... \
+  --rename_map='{"observation.images.image": "observation.images.base_0_rgb", "observation.images.image2": "observation.images.left_wrist_0_rgb"}'
+```
+
+### 錄製
+
+`lerobot-record` 也支援重新命名映射表，嵌套在資料集的配置下：
+
+```bash
+lerobot-record \ # 執行推論時
+  --policy.path="<user>/smolVLA_finetuned" \
+  ... \
+  --dataset.rename_map='{"observation.images.glove2": "observation.images.image"}'
+```
+
+替代方案：直接編輯策略配置
+
+如果您總是使用相同的資料集或環境，您可以**編輯策略的 `config.json`**，使其觀測鍵名與您的資料來源匹配。這樣就不需要重新命名映射表。
+
+取捨在於：修改策略設定會將其綁定到單一資料來源。重新命名對應表則讓一個策略可以跨多個資料集和環境使用。
+
+## 空白相機：視角數少於策略期望的數量
+
+有些策略針對固定數量的影像輸入而建構。如果您的資料集擁有較少的相機，您可以在策略設定中設定 **`empty_cameras`**，而不需要修改模型架構。
+
+### 運作原理
+
+設定 `empty_cameras=N` 會在策略設定中新增 N 個佔位影像特徵，命名為：
+
+```
+observation.images.empty_camera_0
+observation.images.empty_camera_1
+...
+```
+
+在執行時，這些鍵在批次中沒有對應的資料。策略會以遮罩的虛擬張量填充它們（對於基於 SigLIP 的視覺編碼器，以 `-1` 填充，注意力遮罩設為零），因此額外的影像插槽在訓練和推論期間實際上會被忽略。
+
+### 範例
+
+XVLA-base 有三個視覺輸入，預設 `empty_cameras=0`。您的資料集只有兩個相機：
+
+1. 設定 `--policy.empty_cameras=1`。
+2. 配置會新增第三個鍵：`observation.images.empty_camera_0`。
+3. 照常使用重新命名映射表對應您的兩個實際相機。
+4. 第三個插槽會被遮罩掉——您的資料集中不需要假影像。
+
+## 快速參考
+
+| 目標                          | 做法                                                                 |
+| ----------------------------- | -------------------------------------------------------------------- |
+| 資料集鍵名 ≠ 策略鍵名         | `--rename_map='{"dataset_key": "policy_key", ...}'`                  |
+| 環境鍵名 ≠ 策略鍵名（評估時） | `--rename_map='{"env_key": "policy_key", ...}'`                      |
+| 錄製時使用不同鍵名（推論時）  | `--dataset.rename_map='{"source_key": "policy_key", ...}'`           |
+| 相機數量少於策略期望          | `--policy.empty_cameras=N`（PI0、PI05、PI0Fast、SmolVLA、XVLA 支援） |
+| 避免傳入重新命名對應表        | 編輯策略的 `config.json`，使其鍵名與您的資料來源匹配                 |

@@ -1,0 +1,20 @@
+- sections:
+  - local: il_robots
+    title: 機器人的模仿學習
+  - local: bring_your_own_policies
+    title: 自備策略
+  - local: integrate_hardware
+    title: 自備硬體
+  - local: hilserl
+    title: 使用強化學習訓練機器人
+  - local: hilserl_sim
+    title: 在模擬環境中訓練強化學習
+  - local: multi_gpu_training
+    title: 多 GPU 訓練
+  - local: hil_data_collection
+    title: 人在迴圈中的資料收集
+  - local: peft_training
+    title: 使用 PEFT 訓練（例如 LoRA）
+  - local: rename_map
+    title: 使用重新命名映射與空攝影機
+  title: "教學"
