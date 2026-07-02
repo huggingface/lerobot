@@ -92,6 +92,9 @@ class OpenCVCamera(Camera):
         ```
     """
 
+    width: int | None
+    height: int | None
+
     def __init__(self, config: OpenCVCameraConfig):
         """
         Initializes the OpenCVCamera instance.
@@ -219,7 +222,7 @@ class OpenCVCamera(Camera):
             self._validate_width_and_height()
 
         if self.fps is None:
-            self.fps = self.videocapture.get(cv2.CAP_PROP_FPS)
+            self.fps = int(self.videocapture.get(cv2.CAP_PROP_FPS))
         else:
             self._validate_fps()
 
@@ -246,7 +249,7 @@ class OpenCVCamera(Camera):
     def _validate_fourcc(self) -> None:
         """Validates and sets the camera's FOURCC code."""
 
-        fourcc_code = cv2.VideoWriter_fourcc(*self.config.fourcc)
+        fourcc_code = cv2.VideoWriter_fourcc(*self.config.fourcc)  # type: ignore[attr-defined,misc]  # opencv-python stubs omit VideoWriter_fourcc; runtime attribute is valid
 
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
