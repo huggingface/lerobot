@@ -185,19 +185,15 @@ class XVLAModel(nn.Module):
         image_features = valid_feats.new_zeros((batch_size * num_views, tokens_per_view, hidden_dim))
         image_features[flat_mask] = valid_feats
         image_features = image_features.view(batch_size, num_views, tokens_per_view, hidden_dim)
-        inputs_embeds = self.vlm.get_input_embeddings()(input_ids)
-        merged_embeds, attention_mask = self.vlm._merge_input_ids_with_image_features(
-            image_features[:, 0],
-            inputs_embeds,
-        )
-
-        enc_out = self.vlm.language_model.model.encoder(
-            attention_mask=attention_mask,
-            inputs_embeds=merged_embeds,
-        )[0]
-
+        # PATCH: use pooled image features directly instead of full language encoder output.
+        # Original code merged image+text and ran Florence2 language encoder, producing
+        # 1074+ tokens which exceeds the transformer max_len_seq=512.
+        # _encode_image returns pooled features (50 tokens/view via spatial+temporal avg pool).
+        # Total sequence: 50 (vlm) + 100 (aux) + 30 (action) + 32 (soft prompts) = 212.
+        # See: https://github.com/huggingface/lerobot/issues/2655
+        vlm_features = image_features[:, 0]  # [B, 50, D] pooled primary view
         aux_visual_inputs = image_features[:, 1:].reshape(batch_size, -1, hidden_dim)
-        return {"vlm_features": enc_out, "aux_visual_inputs": aux_visual_inputs}
+        return {"vlm_features": vlm_features, "aux_visual_inputs": aux_visual_inputs}
 
     def forward(
         self,
