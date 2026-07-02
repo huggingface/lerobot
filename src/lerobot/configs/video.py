@@ -22,6 +22,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Self
 
+import numpy as np
+
 from lerobot.utils.import_utils import require_package
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,15 @@ DEFAULT_DEPTH_PIX_FMT: str = "gray12le"
 DEPTH_METER_UNIT: str = "m"
 DEPTH_MILLIMETER_UNIT: str = "mm"
 DEFAULT_DEPTH_UNIT: str = DEPTH_MILLIMETER_UNIT
+
+
+def infer_depth_unit(dtype: np.dtype | type) -> str:
+    """Infer the physical unit of raw depth frames from their dtype.
+
+    Floating-point frames are assumed to be in metres, integer frames in millimetres.
+    """
+    return DEPTH_METER_UNIT if np.issubdtype(np.dtype(dtype), np.floating) else DEPTH_MILLIMETER_UNIT
+
 
 # Depth-specific tuning fields persisted under ``features[*]["info"]`` as ``video.<name>``.
 DEPTH_ENCODER_INFO_FIELD_NAMES: frozenset[str] = frozenset({"depth_min", "depth_max", "shift", "use_log"})

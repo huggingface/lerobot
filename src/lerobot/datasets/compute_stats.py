@@ -509,7 +509,7 @@ def compute_episode_stats(
         For 'image'/'video' features, stats are computed per channel and kept with a
         leading channel axis (e.g. shape (3, 1, 1) for RGB). RGB stats are divided by
         255 to land in [0, 1]; depth maps (features flagged with ``is_depth_map``) skip
-        this rescaling and remain in their stored units.
+        this rescaling and remain in their stored units (stored in ``depth_unit``).
     """
     if quantile_list is None:
         quantile_list = DEFAULT_QUANTILES
