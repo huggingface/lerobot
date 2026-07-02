@@ -77,6 +77,8 @@ To use GR00T N1.7:
 Here's a complete training command for finetuning the base GR00T model on your own dataset:
 
 ```bash
+export BASE_MODEL=nvidia/GR00T-N1.7-3B
+
 uv run lerobot-train \
   --dataset.repo_id=$DATASET_ID \
   --dataset.image_transforms.enable=true \
