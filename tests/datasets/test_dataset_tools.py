@@ -859,6 +859,22 @@ def test_merge_preserves_stats(sample_dataset, tmp_path, empty_lerobot_dataset_f
         assert "mean" in merged.meta.stats[feature]
         assert "std" in merged.meta.stats[feature]
 
+    # episode_index.max must equal total_episodes - 1 (= 7), not max(4, 2) = 4
+    expected_episode_max = merged.meta.total_episodes - 1
+    actual_episode_max = int(merged.meta.stats["episode_index"]["max"].item())
+    assert actual_episode_max == expected_episode_max, (
+        f"episode_index.max in stats ({actual_episode_max}) != total_episodes - 1 ({expected_episode_max}). "
+        "Stats were aggregated from per-dataset maxima without accounting for the episode index offset."
+    )
+
+    # index.max must equal total_frames - 1 (= 79), not max(49, 29) = 49
+    expected_index_max = merged.meta.total_frames - 1
+    actual_index_max = int(merged.meta.stats["index"]["max"].item())
+    assert actual_index_max == expected_index_max, (
+        f"index.max in stats ({actual_index_max}) != total_frames - 1 ({expected_index_max}). "
+        "Stats were aggregated from per-dataset maxima without accounting for the frame index offset."
+    )
+
 
 def test_add_features_preserves_existing_stats(sample_dataset, tmp_path):
     """Test that adding a feature preserves existing stats."""
