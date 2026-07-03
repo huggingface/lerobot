@@ -220,11 +220,10 @@ groot = [
     "lerobot[transformers-dep]",
     "lerobot[peft-dep]",
     "lerobot[diffusers-dep]",
+    "lerobot[dataset]", # NOTE: processor_groot builds a LeRobotDataset for relative-action training stats
     "dm-tree>=0.1.8,<1.0.0",
     "lerobot[timm-dep]",
     "decord>=0.6.0,<1.0.0; (platform_machine == 'AMD64' or platform_machine == 'x86_64')",
-    "ninja>=1.11.1,<2.0.0",
-    "flash-attn>=2.5.9,<3.0.0 ; sys_platform != 'darwin'"
 ]
 sarm = ["lerobot[transformers-dep]", "pydantic>=2.0.0,<3.0.0", "faker>=33.0.0,<35.0.0", "lerobot[matplotlib-dep]", "lerobot[qwen-vl-utils-dep]"]
 robometer = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]", "lerobot[peft-dep]"]
@@ -238,6 +237,7 @@ fastwam = [
 evo1 = ["lerobot[transformers-dep]"]
 hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.14,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]
+lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[accelerate-dep]"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
@@ -316,11 +316,12 @@ all = [
     "lerobot[molmoact2]",
     "lerobot[smolvla]",
     "lerobot[fastwam]",
-    # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
+    "lerobot[groot]",
     "lerobot[xvla]",
     "lerobot[evo1]",
     "lerobot[hilserl]",
     "lerobot[vla_jepa]",
+    "lerobot[lingbot_va]",
     "lerobot[async]",
     "lerobot[dev]",
     "lerobot[test]",
