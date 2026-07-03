@@ -125,6 +125,7 @@ hardware = [
 ]
 viz = [
     "rerun-sdk>=0.24.0,<0.34.0",
+    "foxglove-sdk>=0.25.1,<0.26.0",
 ]
 # ── User-facing composite extras (map to CLI scripts) ─────
 # lerobot-record, lerobot-replay, lerobot-calibrate, lerobot-teleoperate, etc.
@@ -229,8 +230,13 @@ robometer = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]", "lerobot
 topreward = ["lerobot[transformers-dep]"]
 xvla = ["lerobot[transformers-dep]"]
 eo1 = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]"]
+fastwam = [
+    "lerobot[transformers-dep]",
+    "lerobot[diffusers-dep]",
+]
 hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.14,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]
+lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[accelerate-dep]"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
@@ -308,10 +314,12 @@ all = [
     "lerobot[pi]",
     "lerobot[molmoact2]",
     "lerobot[smolvla]",
+    "lerobot[fastwam]",
     # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
     "lerobot[xvla]",
     "lerobot[hilserl]",
     "lerobot[vla_jepa]",
+    "lerobot[lingbot_va]",
     "lerobot[async]",
     "lerobot[dev]",
     "lerobot[test]",
@@ -444,7 +452,8 @@ default.extend-ignore-identifiers-re = [
     "is_compileable",
     "ROBOTIS",
     "OT_VALUE",
-    "VanderBilt"
+    "VanderBilt",
+    "seperated_timestep",
 ]
 
 # TODO: Uncomment when ready to use

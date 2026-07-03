@@ -211,8 +211,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
         # Force the device to be CPU when the active config's device is set to CPU (works for both policy and reward model training).
         force_cpu = cfg.trainable_config.device == "cpu"
+        # Drive Accelerate's autocast from policy.dtype (bf16/fp16 activate it; float32/absent -> launcher default).
+        policy_dtype = getattr(cfg.trainable_config, "dtype", None)
+        mixed_precision = {"bfloat16": "bf16", "float16": "fp16", "float32": "no"}.get(policy_dtype)
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,
+            mixed_precision=mixed_precision,
             kwargs_handlers=[ddp_kwargs],
             cpu=force_cpu,
         )
@@ -736,9 +740,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             unwrapped_model = accelerator.unwrap_model(policy)
             # PEFT only applies when training a policy — reward models use the plain path.
             if not cfg.is_reward_model_training and cfg.policy.use_peft:
-                unwrapped_model.push_model_to_hub(cfg, peft_model=unwrapped_model)
+                unwrapped_model.push_model_to_hub(cfg, peft_model=unwrapped_model, dataset_meta=dataset.meta)
             else:
-                unwrapped_model.push_model_to_hub(cfg, state_dict=model_state_dict)
+                unwrapped_model.push_model_to_hub(cfg, state_dict=model_state_dict, dataset_meta=dataset.meta)
             preprocessor.push_to_hub(active_cfg.repo_id)
             postprocessor.push_to_hub(active_cfg.repo_id)
 

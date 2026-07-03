@@ -83,6 +83,28 @@ class VQBeTSchedulerConfig(LRSchedulerConfig):
         return LambdaLR(optimizer, lr_lambda, -1)
 
 
+@LRSchedulerConfig.register_subclass("constant_with_warmup")
+@dataclass
+class ConstantWithWarmupSchedulerConfig(LRSchedulerConfig):
+    """Linear warmup followed by a constant learning rate.
+
+    Mirrors the ``warmup_constant_lambda`` used by LingBot-VA (upstream ``wan_va/train.py``):
+    the LR ramps linearly from 0 to the peak over ``num_warmup_steps`` steps, then stays flat.
+    """
+
+    num_warmup_steps: int = 1000
+
+    def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
+        warmup_steps = self.num_warmup_steps or 0
+
+        def lr_lambda(current_step):
+            if current_step < warmup_steps:
+                return float(current_step) / float(max(1, warmup_steps))
+            return 1.0
+
+        return LambdaLR(optimizer, lr_lambda, -1)
+
+
 @LRSchedulerConfig.register_subclass("cosine_decay_with_warmup")
 @dataclass
 class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):

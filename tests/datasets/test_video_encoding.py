@@ -345,7 +345,9 @@ class TestExtraOptions:
         opts = cfg.get_codec_options()
         assert opts["qp"] == 20
         assert isinstance(opts["qp"], int)
-        assert cfg.get_codec_options(as_strings=True)["qp"] == "20"
+        str_opts = cfg.get_codec_options(as_strings=True)
+        assert str_opts["qp"] == "20"
+        assert all(isinstance(v, str) for v in str_opts.values())
 
     @require_libsvtav1
     def test_structured_fields_win_on_collision(self):
