@@ -211,13 +211,13 @@ uv run lerobot-rollout \
   --device=cuda \
   --display_data=true \
   --inference.type=rtc \
-  --inference.rtc.enabled=false \
+  --inference.rtc.enabled=True \ # set to False if it causes inference instability
   --inference.rtc.execution_horizon=8 \
   --inference.queue_threshold=0
 ```
 
 > [!NOTE]
-> Value of `inference.queue_threshold` should not exeed 0.5 to ensure stable inference.
+> Value of `inference.queue_threshold` should not exceed 5 to ensure stable inference.
 
 ## License
 
