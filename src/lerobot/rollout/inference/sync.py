@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import logging
-from contextlib import nullcontext
 from copy import copy
 
 import torch
@@ -25,6 +24,7 @@ import torch
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
 from lerobot.processor import PolicyProcessorPipeline
+from lerobot.utils.device_utils import get_safe_autocast_context
 
 from .base import InferenceEngine
 
@@ -102,11 +102,7 @@ class SyncInferenceEngine(InferenceEngine):
         # ``obs_frame`` fresh per tick via ``build_dataset_frame``, so the
         # tensor/array values are not shared with any other reader.
         observation = copy(obs_frame)
-        autocast_ctx = (
-            torch.autocast(device_type=self._device.type)
-            if self._device.type == "cuda" and self._policy.config.use_amp
-            else nullcontext()
-        )
+        autocast_ctx = get_safe_autocast_context(self._device, enabled=self._policy.config.use_amp)
         with torch.inference_mode(), autocast_ctx:
             observation = prepare_observation_for_inference(
                 observation, self._device, self._task, self._robot_type

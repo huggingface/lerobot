@@ -26,6 +26,7 @@ from torch import Tensor, nn
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.device_utils import get_safe_autocast_context
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -183,7 +184,7 @@ class VLAJEPAModel(nn.Module):
             action_idx = action_mask.nonzero(as_tuple=True)
 
         device_type = next(self.parameters()).device.type
-        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+        with get_safe_autocast_context(device_type, dtype=torch.bfloat16):
             last_hidden = self._qwen_last_decoder_hidden(qwen_inputs)  # [B, seq_len, H]
             b, _, h = last_hidden.shape
             embodied_action_tokens = last_hidden[embodied_idx[0], embodied_idx[1], :].view(b, -1, h)
@@ -250,7 +251,7 @@ class VLAJEPAModel(nn.Module):
     ) -> Tensor:
         """Flow-matching action-head loss, repeated over `repeated_diffusion_steps`."""
         device_type = next(self.parameters()).device.type
-        with torch.autocast(device_type=device_type, dtype=torch.float32):
+        with get_safe_autocast_context(device_type, dtype=torch.float32):
             r = self.config.repeated_diffusion_steps
             horizon = self.config.chunk_size
             actions_target = actions[:, -horizon:, :].to(torch.float32).repeat(r, 1, 1)

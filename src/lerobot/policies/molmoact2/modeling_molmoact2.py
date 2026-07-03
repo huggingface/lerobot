@@ -31,7 +31,6 @@ import logging
 import os
 import types
 from collections import deque
-from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -43,6 +42,7 @@ from torch.distributions import Beta
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
+from lerobot.utils.device_utils import get_safe_autocast_context
 from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
 
 from ..rtc.modeling_rtc import RTCProcessor
@@ -1644,10 +1644,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 device=device,
             )
         action_dim = self._output_action_dim(batch)
-        autocast_context = (
-            torch.autocast(device_type=device.type, dtype=model_dtype)
-            if device.type in {"cuda", "cpu"} and model_dtype in {torch.bfloat16, torch.float16}
-            else nullcontext()
+        autocast_context = get_safe_autocast_context(
+            device, dtype=model_dtype, enabled=model_dtype in {torch.bfloat16, torch.float16}
         )
         with autocast_context:
             if inference_action_mode == "discrete":
