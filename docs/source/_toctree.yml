@@ -74,7 +74,7 @@
   - local: fastwam
     title: FastWAM
   - local: groot
-    title: NVIDIA GR00T N1.5
+    title: NVIDIA GR00T
   - local: xvla
     title: X-VLA
   - local: multi_task_dit
