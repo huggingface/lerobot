@@ -36,6 +36,9 @@ Hugging Face Models:
 - GR00T N1.7: https://huggingface.co/nvidia/GR00T-N1.7-3B
 - GR00T N1.7 LIBERO checkpoints: https://huggingface.co/nvidia/GR00T-N1.7-LIBERO
 
+<details>
+<summary><b>Original-vs-LeRobot parity test</b></summary>
+
 ## Original-vs-LeRobot parity test
 
 `tests/policies/groot/test_groot_vs_original.py` verifies this LeRobot
@@ -131,3 +134,5 @@ when the checkpoint / artifacts are absent.
 | `GROOT_N1_7_LIBERO_CKPT`                  | auto (HF cache)                  | override checkpoint dir               |
 | `GROOT_PARITY_DEVICE`                     | `cuda` if available              | `cpu` or `cuda`                       |
 | `GROOT_PARITY_ATOL` / `GROOT_PARITY_RTOL` | `1e-3`                           | comparison tolerance                  |
+
+</details>
