@@ -34,6 +34,7 @@ from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConf
 from lerobot.annotations.steerable_pipeline.executor import Executor
 from lerobot.annotations.steerable_pipeline.frames import make_frame_provider
 from lerobot.annotations.steerable_pipeline.modules import (
+    AdvantageModule,
     GeneralVqaModule,
     InterjectionsAndSpeechModule,
     PlanSubtasksMemoryModule,
@@ -63,17 +64,23 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
     root = _resolve_root(cfg)
     logger.info("annotate: root=%s", root)
 
-    vlm = make_vlm_client(cfg.vlm)
-    frame_provider = make_frame_provider(root, camera_key=cfg.vlm.camera_key, video_backend=cfg.video_backend)
+    needs_vlm = cfg.plan.enabled or cfg.interjections.enabled or cfg.vqa.enabled
+    vlm = make_vlm_client(cfg.vlm) if needs_vlm else None
+    frame_provider = (
+        make_frame_provider(root, camera_key=cfg.vlm.camera_key, video_backend=cfg.video_backend)
+        if needs_vlm
+        else None
+    )
     # Surface the resolved cameras up front so a silent vqa-module no-op
     # is obvious in job output rather than discovered post-hoc by counting
     # parquet rows.
-    cam_keys = list(getattr(frame_provider, "camera_keys", []) or [])
-    logger.info(
-        "annotate: frame_provider default camera=%r, all cameras=%s",
-        getattr(frame_provider, "camera_key", None),
-        cam_keys,
-    )
+    cam_keys = list(getattr(frame_provider, "camera_keys", []) or []) if frame_provider else []
+    if frame_provider:
+        logger.info(
+            "annotate: frame_provider default camera=%r, all cameras=%s",
+            getattr(frame_provider, "camera_key", None),
+            cam_keys,
+        )
     if cfg.vqa.enabled and not cam_keys:
         logger.warning(
             "annotate: the vqa module is enabled but no cameras were "
@@ -81,14 +88,27 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
             "meta/info.json for observation.images.* features, or pass "
             "--vlm.camera_key=<key> to seed the cameras list."
         )
-    plan = PlanSubtasksMemoryModule(vlm=vlm, config=cfg.plan, frame_provider=frame_provider)
-    interjections = InterjectionsAndSpeechModule(
-        vlm=vlm, config=cfg.interjections, seed=cfg.seed, frame_provider=frame_provider
+    plan = (
+        PlanSubtasksMemoryModule(vlm=vlm, config=cfg.plan, frame_provider=frame_provider)
+        if needs_vlm
+        else None
     )
-    vqa = GeneralVqaModule(vlm=vlm, config=cfg.vqa, seed=cfg.seed, frame_provider=frame_provider)
+    interjections = (
+        InterjectionsAndSpeechModule(
+            vlm=vlm, config=cfg.interjections, seed=cfg.seed, frame_provider=frame_provider
+        )
+        if needs_vlm
+        else None
+    )
+    vqa = (
+        GeneralVqaModule(vlm=vlm, config=cfg.vqa, seed=cfg.seed, frame_provider=frame_provider)
+        if needs_vlm
+        else None
+    )
+    advantage = AdvantageModule(config=cfg.advantage)
     writer = LanguageColumnsWriter()
     validator = StagingValidator(
-        dataset_camera_keys=tuple(getattr(frame_provider, "camera_keys", []) or []) or None,
+        dataset_camera_keys=tuple(cam_keys) or None,
     )
 
     executor = Executor(
@@ -96,6 +116,7 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
         plan=plan,
         interjections=interjections,
         vqa=vqa,
+        advantage=advantage,
         writer=writer,
         validator=validator,
     )

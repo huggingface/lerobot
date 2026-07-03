@@ -15,19 +15,23 @@
 # limitations under the License.
 """In-process executor that runs the annotation phases.
 
-The executor runs **six phases** in dependency order:
+The executor runs **seven phases** in dependency order:
 
     phase 1: ``plan`` module (plan + subtasks + memory)
     phase 2: ``interjections`` module (interjections + speech)
     phase 3: ``plan`` plan-update pass — re-runs plan emission at every
              interjection timestamp produced by phase 2
     phase 4: ``vqa`` module (VQA)
-    phase 5: validator
-    phase 6: writer
+    phase 5: ``advantage`` module (advantage scoring via frozen VF)
+    phase 6: validator
+    phase 7: writer
 
 Phase 3 is why the ``plan`` module must be re-entered after the
 ``interjections`` module — to refresh ``plan`` rows at interjection
 timestamps.
+
+Phase 5 (advantage) does not depend on the VLM modules, it uses a frozen
+distributional value function to compute per-frame advantage indicators.
 
 Distributed execution is provided by Hugging Face Jobs (see
 ``examples/annotations/run_hf_job.py``); the runner inside the job
@@ -74,7 +78,7 @@ class PipelineRunSummary:
 
 @dataclass
 class Executor:
-    """Run all six phases over a dataset root in-process.
+    """Run all seven phases over a dataset root in-process.
 
     Episode-level concurrency comes from ``ExecutorConfig.episode_parallelism``
     (a thread pool); cluster-level concurrency comes from running this
@@ -86,6 +90,7 @@ class Executor:
     plan: Any  # PlanSubtasksMemoryModule
     interjections: Any  # InterjectionsAndSpeechModule
     vqa: Any  # GeneralVqaModule
+    advantage: Any  # AdvantageModule
     writer: LanguageColumnsWriter
     validator: StagingValidator
 
@@ -112,6 +117,8 @@ class Executor:
         phases.append(self._run_plan_update_phase(records, staging_dir))
         # Phase 4: ``vqa`` module (VQA)
         phases.append(self._run_module_phase("vqa", records, staging_dir, self.vqa))
+        # Phase 5: ``advantage`` module (advantage scoring via frozen VF)
+        phases.append(self._run_module_phase("advantage", records, staging_dir, self.advantage))
 
         print("[annotate] running validator...", flush=True)
         report = self.validator.validate(records, staging_dir)
@@ -179,7 +186,7 @@ class Executor:
         staging_dir: Path,
         module: Any,
     ) -> PhaseResult:
-        if not module.enabled:
+        if module is None or not module.enabled:
             print(f"[annotate] phase={name} skipped (module disabled)", flush=True)
             return PhaseResult(name=name, episodes_processed=0, episodes_skipped=len(records))
         n = len(records)
@@ -231,7 +238,7 @@ class Executor:
         ``plan`` module with the interjection timestamps so its existing
         prompt path is reused.
         """
-        if not self.plan.enabled or not self.interjections.enabled:
+        if not self.plan or not self.plan.enabled or not self.interjections or not self.interjections.enabled:
             return PhaseResult(name="plan_update", episodes_processed=0, episodes_skipped=len(records))
         processed = 0
         for record in records:

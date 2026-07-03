@@ -1,0 +1,28 @@
+# RECAP advantage recipe for MolmoAct2.
+#
+# Renders task + advantage into the task field as "<task> Advantage: <value>".
+# MolmoAct2PackInputsProcessorStep parses this, extracts the advantage value,
+# and places it AFTER the full user prompt but BEFORE action tokens — matching
+# the RECAP paper (Section V-B): "The advantage indicator appears in the training
+# sequence after ˆℓ but before the actions, such that only the action
+# log-likelihoods are affected."
+#
+# Final prompt layout:
+#   <images><|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\nAdvantage: positive. <action_output>...
+#
+# When advantage is absent (CFG dropout), if_present guard skips this message
+# and RenderedMessagesToTaskStep leaves the task unchanged — no advantage clause.
+
+bindings:
+  advantage: "active_at(t, style=advantage)"
+
+messages:
+  - role: user
+    content: "${task} Advantage: ${advantage}"
+    stream: high_level
+    if_present: advantage
+
+  - role: assistant
+    content: ""
+    stream: low_level
+    target: true

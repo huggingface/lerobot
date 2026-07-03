@@ -28,9 +28,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
+from lerobot.annotations.steerable_pipeline.config import AdvantageConfig, AnnotationPipelineConfig
 from lerobot.annotations.steerable_pipeline.executor import Executor
 from lerobot.annotations.steerable_pipeline.modules import (
+    AdvantageModule,
     GeneralVqaModule,
     InterjectionsAndSpeechModule,
     PlanSubtasksMemoryModule,
@@ -85,6 +86,7 @@ def main() -> int:
             plan=PlanSubtasksMemoryModule(vlm=vlm, config=cfg.plan),
             interjections=InterjectionsAndSpeechModule(vlm=vlm, config=cfg.interjections, seed=cfg.seed),
             vqa=GeneralVqaModule(vlm=vlm, config=cfg.vqa, seed=cfg.seed),
+            advantage=AdvantageModule(config=AdvantageConfig(enabled=False)),
             writer=LanguageColumnsWriter(),
             validator=StagingValidator(),
         )

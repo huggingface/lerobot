@@ -73,6 +73,19 @@ class MolmoAct2Config(PreTrainedConfig):
     num_inference_steps: int | None = None
     mask_action_dim_padding: bool = True
     enable_inference_cuda_graph: bool = True
+
+    # Language conditioning (e.g. RECAP advantage). When set, RenderMessagesStep
+    # resolves language_persistent rows via the recipe YAML. Same mechanism as PI05.
+    recipe_path: str | None = None
+
+    # Inference-time advantage indicator (e.g. "Advantage: positive. ").
+    # Used during rollout when no language_persistent data is available.
+    # Placed after the user prompt, before action tokens.
+    advantage_prefix: str = ""
+
+    # Classifier-Free Guidance (CFG) scale for inference (RECAP Eq. 13).
+    # 1.0 = no guidance. >1.0 = dual-path: v = v_uncond + beta * (v_cond - v_uncond)
+    cfg_beta: float = 1.0
     # MolmoAct2-local eval option. When enabled, stochastic continuous action
     # generation uses a rollout-local generator derived from eval_seed.
     per_episode_seed: bool = False

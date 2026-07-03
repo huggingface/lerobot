@@ -170,6 +170,51 @@ class ExecutorConfig:
 
 
 @dataclass
+class AdvantageConfig:
+    """``advantage`` module: RECAP advantage scoring via frozen value function."""
+
+    enabled: bool = True
+
+    # Constant advantage label for all frames (e.g. "positive" for SFT iteration 0).
+    # Skips VF inference, dropout still applies for CFG.
+    constant_value: str | None = None
+
+    # Trained value function checkpoint (local path or Hub repo ID).
+    # Ignored when constant_value is set.
+    value_function_path: str = ""
+
+    # Device to run the value function on.
+    device: str = "cuda"
+
+    # N-step lookahead for advantage estimation.
+    # None = MC (N=T): A_t = R_t - V(s_t), using mc_return from dataset.
+    # 50 = fine-tuning mode: A_t = Σ r_{t:t+N} + V(s_{t+N}) - V(s_t).
+    n_step: int | None = None
+
+    # Per-task percentile for binarization threshold ε_ℓ.
+    # Actions with advantage > ε_ℓ get I_t = True (positive).
+    threshold_percentile: float = 0.3
+
+    # Fraction of frames to randomly omit advantage labels (enables CFG).
+    dropout_rate: float = 0.3
+
+    # Force I_t = True for frames marked as human interventions.
+    force_positive_on_intervention: bool = True
+
+    # Column name in dataset for intervention flag.
+    intervention_key: str = "intervention"
+
+    # Column name for pre-computed MC returns (from lerobot-compute-returns).
+    mc_return_key: str = "mc_return"
+
+    # Batch size for value function inference.
+    batch_size: int = 32
+
+    # Random seed for dropout reproducibility.
+    seed: int = 1729
+
+
+@dataclass
 class AnnotationPipelineConfig:
     """Top-level config for ``lerobot-annotate`` (rewrites data shards in place)."""
 
@@ -190,6 +235,7 @@ class AnnotationPipelineConfig:
     plan: PlanConfig = field(default_factory=PlanConfig)
     interjections: InterjectionsConfig = field(default_factory=InterjectionsConfig)
     vqa: VqaConfig = field(default_factory=VqaConfig)
+    advantage: AdvantageConfig = field(default_factory=AdvantageConfig)
 
     vlm: VlmConfig = field(default_factory=VlmConfig)
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)

@@ -87,6 +87,17 @@ class PI05Config(PreTrainedConfig):
     freeze_vision_encoder: bool = False  # Freeze only the vision encoder
     train_expert_only: bool = False  # Freeze entire VLM, train only action expert and projections
 
+    # Language conditioning (e.g. RECAP advantage). When set, RenderMessagesStep
+    # is inserted into the preprocessor to resolve language_persistent rows via
+    # the recipe YAML before prompt construction.
+    recipe_path: str | None = None
+
+    # Classifier-Free Guidance (CFG) scale for inference (Eq. 13 in RECAP paper).
+    # 1.0 = no guidance (default). >1.0 enables dual-path denoising where:
+    #   v = v_uncond + cfg_beta * (v_cond - v_uncond)
+    # VLM runs twice (cond + uncond prompts), action expert runs 2x per step.
+    cfg_beta: float = 1.0
+
     # Optimizer settings: see openpi `AdamW`
     optimizer_lr: float = 2.5e-5  # see openpi `CosineDecaySchedule: peak_lr`
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
