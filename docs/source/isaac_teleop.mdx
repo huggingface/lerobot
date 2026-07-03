@@ -246,7 +246,7 @@ into the LeRobot cache (`HF_LEROBOT_HOME/robot-urdfs/so101/`) and reuses it afte
 separate download step :
 
 ```bash
-python teleoperate.py --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
+python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
     --robot.id=so101_follower_arm --teleop.type=xr_controller
 ```
 
@@ -260,11 +260,12 @@ commanded only while the clutch is engaged.
 
 **Customizing the reset pose.** The reset pose ships as a built-in default (a comfortable mid-range
 pose) and works out of the box — you do **not** need to record anything. To tailor it to your setup,
-back-drive the arm to the pose you want and run `python override_reset_pose.py --id <robot.id>`
-(in the example folder); it writes the current joints to a per-arm file in the LeRobot cache
+back-drive the arm to the pose you want and run
+`python -m examples.isaac_teleop_to_so101.override_reset_pose --id <robot.id>`; it writes the
+current joints to a per-arm file in the LeRobot cache
 (`HF_LEROBOT_HOME/reset_poses/<robot.name>/<robot.id>.json`, keyed like calibration), which then takes
 priority over the built-in default on the next run. Because it lives in the user-local cache (not
-the repo), your override stays on your machine, and both `teleoperate.py` and `record.py` honor it
+the repo), your override stays on your machine, and both `teleoperate` and `record` honor it
 when launched with the same `--robot.id`.
 
 The other device, `--teleop.type=so101_leader`, mirrors the follower 1:1 from a back-drivable
@@ -283,7 +284,7 @@ Point `--teleop.port` at the physical leader's serial port and `--launch_plugin`
 binary to have the script spawn it after CloudXR is up:
 
 ```bash
-python teleoperate.py --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
+python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
     --robot.id=so101_follower_arm --teleop.type=so101_leader \
     --teleop.port=/dev/ttyACM1 --teleop.id=so101_leader_arm \
     --launch_plugin=/code/Teleop/install/plugins/so101_leader/so101_leader_plugin
@@ -295,7 +296,7 @@ set, the plugin's tick→radian calibration is inferred from `--teleop.id` and p
 as its third positional arg — the LeRobot-format JSON at
 `HF_LEROBOT_CALIBRATION/teleoperators/so_leader/<id>.json`, the same file the serial SO-101 leader
 uses (`lerobot-calibrate --teleop.type=so101_leader --teleop.id=<id>`). If it is missing the script
-warns and the plugin uses built-in defaults. Run `python teleoperate.py --help` for all flags. Its
+warns and the plugin uses built-in defaults. Run `python -m examples.isaac_teleop_to_so101.teleoperate --help` for all flags. Its
 startup safety contract: by default the follower is
 slewed to the leader's first reading over `--align_duration` seconds (`--align=false` to skip) so
 the arm does not snap when the mirror begins, and while the leader stream is stale the follower is

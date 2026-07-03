@@ -22,11 +22,11 @@ Isaac Teleop input device. The CLI is ``lerobot-teleoperate``-style (draccus): a
 device (``xr_controller`` | ``so101_leader``)::
 
     # XR (VR) controller: clutch + soft-orientation IK
-    python teleoperate.py --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
+    python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
         --robot.id=so101_follower_arm --teleop.type=xr_controller
 
     # SO-101 leader arm: 1:1 joint mirror (real leader on /dev/ttyACM1)
-    python teleoperate.py --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
+    python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
         --robot.id=so101_follower_arm --teleop.type=so101_leader \
         --teleop.port=/dev/ttyACM1 --teleop.id=so101_leader_arm \
         --launch_plugin=/code/Teleop/install/plugins/so101_leader/so101_leader_plugin
@@ -46,10 +46,8 @@ architecture. ``record.py`` runs this same control loop while also saving a LeRo
 Requires the ``isaac-teleop`` extra (``isaacteleop``) and an OpenXR runtime.
 """
 
-import sys
 import time
 from dataclasses import dataclass
-from pathlib import Path
 
 from lerobot.configs import parser
 from lerobot.robots import RobotConfig
@@ -57,10 +55,7 @@ from lerobot.robots.so_follower import SOFollowerConfig  # noqa: F401  (register
 from lerobot.teleoperators.isaac_teleop import IsaacTeleopConfig
 from lerobot.utils.robot_utils import precise_sleep
 
-# common.py lives in the same directory; add it to the path so it is importable when this
-# script is run directly (python teleoperate.py ...).
-sys.path.insert(0, str(Path(__file__).parent))
-from common import (  # noqa: E402
+from .common import (
     ALIGN_DURATION_S,
     FPS,
     RESET_DURATION_S,

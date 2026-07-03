@@ -161,6 +161,7 @@ MAX_EE_STEP_M = 0.1
 # this up to favor orientation over position, down (or 0.0) for position-only.
 IK_ORIENTATION_WEIGHT = 0.01
 
+
 def _ensure_so101_urdf() -> str:
     """Return the cached SO-101 URDF path, fetching the whole ``so101`` folder (URDF + meshes) from the public ``lerobot/robot-urdfs`` HF bucket into the LeRobot cache on first use and reusing it after."""
     dest_dir = HF_LEROBOT_HOME / "robot-urdfs" / "so101"
@@ -170,6 +171,7 @@ def _ensure_so101_urdf() -> str:
 
         sync_bucket("hf://buckets/lerobot/robot-urdfs/so101", str(dest_dir), quiet=True)
     return str(urdf_path)
+
 
 # Default duration [s] for the startup reset-to-origin slew.
 RESET_DURATION_S = 5.0

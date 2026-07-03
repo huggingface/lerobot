@@ -24,23 +24,19 @@ it as the reset target instead of the hardcoded defaults.
 Usage::
 
     # 1. Move arm to desired reset pose by hand
-    python override_reset_pose.py [--port /dev/ttyACM0] [--id so101_follower_arm]
+    python -m examples.isaac_teleop_to_so101.override_reset_pose [--port /dev/ttyACM0] [--id so101_follower_arm]
 
     # 2. Launch teleop with the SAME --robot.id — it will now reset to this pose on startup
-    python teleoperate.py --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm --teleop.type=xr_controller
+    python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm --teleop.type=xr_controller
 """
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
 
-# common.py lives in the same directory; add it to the path so it is importable when this
-# script is run directly (python override_reset_pose.py ...).
-sys.path.insert(0, str(Path(__file__).parent))
-from common import RESET_POSE_FILE  # noqa: E402
+from .common import RESET_POSE_FILE
 
 
 def parse_args():

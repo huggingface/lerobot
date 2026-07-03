@@ -26,7 +26,7 @@ joint commands are both sent to the follower AND saved to a LeRobot dataset.
 Usage::
 
     # XR (VR) controller: clutch + soft-orientation IK
-    python record.py \\
+    python -m examples.isaac_teleop_to_so101.record \\
         --robot.type=so101_follower \\
         --robot.port=/dev/ttyACM0 \\
         --robot.id=so101_follower_arm \\
@@ -39,7 +39,7 @@ Usage::
         --dataset.reset_time_s=5
 
     # SO-101 leader arm: 1:1 joint mirror (real leader on /dev/ttyACM1)
-    python record.py \\
+    python -m examples.isaac_teleop_to_so101.record \\
         --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm \\
         --teleop.type=so101_leader --teleop.port=/dev/ttyACM1 --teleop.id=so101_leader_arm \\
         --launch_plugin=/path/to/IsaacTeleop/install/plugins/so101_leader/so101_leader_plugin \\
@@ -62,22 +62,9 @@ frames), matching ``lerobot-record`` behaviour.
 """
 
 import logging
-import sys
 import time
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from pprint import pformat
-
-# common.py lives in the same directory; add it to the path so it is importable.
-sys.path.insert(0, str(Path(__file__).parent))
-from common import (  # noqa: E402
-    ALIGN_DURATION_S,
-    RESET_DURATION_S,
-    Device,
-    build_device,
-    hold_action,
-    init_keyboard_listener,
-)
 
 from lerobot.cameras import CameraConfig  # noqa: F401
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
@@ -99,6 +86,15 @@ from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging
+
+from .common import (
+    ALIGN_DURATION_S,
+    RESET_DURATION_S,
+    Device,
+    build_device,
+    hold_action,
+    init_keyboard_listener,
+)
 
 
 @dataclass
