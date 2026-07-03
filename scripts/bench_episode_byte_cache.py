@@ -70,7 +70,20 @@ def parse_args() -> argparse.Namespace:
         help="Limit manifest construction to the first N episodes for local smoke tests.",
     )
     parser.add_argument("--pool-size", type=int, default=16)
-    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=8,
+        help="Concurrent camera-fetch jobs. Total connections ~= workers x range-subranges; "
+        "the HF bucket path saturates around 64 connections per host, so keep the product near 64.",
+    )
+    parser.add_argument(
+        "--range-subranges",
+        type=int,
+        default=1,
+        help="Split each camera byte-range GET into N concurrent sub-range GETs (native-http only). "
+        "Divides per-episode latency by ~N under the per-host throughput ceiling.",
+    )
     parser.add_argument(
         "--native-http-connections",
         type=int,
@@ -392,9 +405,18 @@ def run_pool_stream_simulation(
     decoded_samples: list[tuple[int, float]] = []
     start = time.perf_counter()
 
+    deferred_swaps = 0
+
     def consume_ready_replacement() -> bool:
-        nonlocal refill_wait_s, replacement_count
+        nonlocal refill_wait_s, replacement_count, deferred_swaps
         if not pending:
+            return False
+        # Non-blocking: only swap when the head replacement is fully resident. Blocking here
+        # stalls the training hot path on remote fetch latency (head-of-line); deferring lets
+        # the fetch pipeline (capacity ~2x demand) catch up while training continues on the
+        # current pool. The replacement debt is repaid on subsequent batches.
+        if not cache.is_ready(pending[0]):
+            deferred_swaps += 1
             return False
         new_ep = pending.pop(0)
         wait_start = time.perf_counter()
@@ -463,6 +485,7 @@ def run_pool_stream_simulation(
         "deadline_miss_s": deadline_miss_s,
         "replacements": float(replacement_count),
         "replacement_episodes_s": replacement_count / elapsed if elapsed > 0 else 0.0,
+        "deferred_swaps": float(deferred_swaps),
         "samples_per_episode": float(samples_per_episode),
         "prefetch_episodes": float(prefetch_episodes),
         "batch_size": float(batch_size),
@@ -722,6 +745,7 @@ def run_fetch_pool(
         native_http_connections=args.native_http_connections,
         native_http_timeout=args.native_http_timeout,
         native_http_retries=args.native_http_retries,
+        native_http_subranges=args.range_subranges,
         open_decoders=False,
     ) as cache:
         elapsed = _fill_cache(cache, episodes, progress_interval=args.progress_interval)

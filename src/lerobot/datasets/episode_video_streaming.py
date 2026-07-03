@@ -366,11 +366,24 @@ class NativeHTTPRangeFetcher:
         max_connections: int = 32,
         timeout: float = 60.0,
         max_retries: int = 4,
+        subrange_parts: int = 1,
+        subrange_min_bytes: int = 8 * 1024 * 1024,
     ):
         self.data_root = str(data_root).rstrip("/")
         if not self.data_root.startswith("hf://"):
             raise ValueError("NativeHTTPRangeFetcher only supports hf:// roots")
         self.max_retries = max_retries
+        # Sub-range parallelism: split one large GET into `subrange_parts` concurrent GETs.
+        # Under a per-host throughput ceiling this adds no aggregate bandwidth, but divides
+        # per-request latency by ~parts - keep (in-flight jobs x parts) near the ceiling's
+        # connection sweet spot (~64 on the observed HF bucket path) rather than raising both.
+        self.subrange_parts = max(1, subrange_parts)
+        self.subrange_min_bytes = max(1, subrange_min_bytes)
+        self._subrange_pool = (
+            ThreadPoolExecutor(max_workers=max_connections, thread_name_prefix="subrange")
+            if self.subrange_parts > 1
+            else None
+        )
         self.api = HfApi()
         self.fs: HfFileSystem | None = None
         self._bucket_id: str | None = None
@@ -526,6 +539,21 @@ class NativeHTTPRangeFetcher:
             response.close()
 
     def read_range(self, relative_path: str, offset: int, length: int) -> bytes:
+        parts = self.subrange_parts
+        if self._subrange_pool is None or parts <= 1 or length < 2 * self.subrange_min_bytes:
+            return self._read_range_single(relative_path, offset, length)
+        parts = min(parts, max(1, length // self.subrange_min_bytes))
+        if parts <= 1:
+            return self._read_range_single(relative_path, offset, length)
+        step = (length + parts - 1) // parts
+        spans = [(offset + i * step, min(step, length - i * step)) for i in range(parts)]
+        futures = [
+            self._subrange_pool.submit(self._read_range_single, relative_path, span_off, span_len)
+            for span_off, span_len in spans
+        ]
+        return b"".join(future.result() for future in futures)
+
+    def _read_range_single(self, relative_path: str, offset: int, length: int) -> bytes:
         resolve_start = time.perf_counter()
         resolved = self._resolve_url(relative_path)
         source = self._source_url(relative_path)
@@ -693,6 +721,8 @@ class NativeHTTPRangeFetcher:
             return dict(self._timing_totals)
 
     def close(self) -> None:
+        if self._subrange_pool is not None:
+            self._subrange_pool.shutdown(wait=False, cancel_futures=True)
         self.client.close()
 
 
@@ -704,6 +734,7 @@ def make_range_fetcher(
     native_http_connections: int | None = None,
     native_http_timeout: float = 60.0,
     native_http_retries: int = 4,
+    native_http_subranges: int = 1,
 ):
     if range_backend == "fsspec":
         return ThreadLocalRangeFetcher(data_root)
@@ -714,6 +745,7 @@ def make_range_fetcher(
             max_connections=max_connections,
             timeout=native_http_timeout,
             max_retries=native_http_retries,
+            subrange_parts=native_http_subranges,
         )
     raise ValueError(f"Unknown range backend: {range_backend}")
 
@@ -961,6 +993,7 @@ class EpisodeByteCache:
         native_http_connections: int | None = None,
         native_http_timeout: float = 60.0,
         native_http_retries: int = 4,
+        native_http_subranges: int = 1,
         open_decoders: bool = True,
     ):
         self.manifest = manifest
@@ -971,6 +1004,7 @@ class EpisodeByteCache:
             native_http_connections=native_http_connections,
             native_http_timeout=native_http_timeout,
             native_http_retries=native_http_retries,
+            native_http_subranges=native_http_subranges,
         )
         self.byte_budget = byte_budget
         self.open_decoders = open_decoders
@@ -1008,6 +1042,22 @@ class EpisodeByteCache:
     def ensure_ready(self, episode_index: int) -> None:
         for camera_key in self.manifest.video_keys:
             self.get_bytes(episode_index, camera_key)
+
+    def is_ready(self, episode_index: int) -> bool:
+        """Non-blocking: True when every camera of the episode is fetched (cached or future done).
+
+        Lets a consumer swap in replacements only when they are already resident, instead of
+        blocking the training hot path on a remote fetch (head-of-line stall).
+        """
+        for camera_key in self.manifest.video_keys:
+            key = (episode_index, camera_key)
+            with self._lock:
+                if key in self._cache:
+                    continue
+                future = self._futures.get(key)
+            if future is None or not future.done():
+                return False
+        return True
 
     def get_bytes(self, episode_index: int, camera_key: str) -> bytes:
         return self._get_entry(episode_index, camera_key)["bytes"]
