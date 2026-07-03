@@ -592,9 +592,15 @@ def build_device(cfg: LoopConfig) -> tuple:
     if cfg.teleop.cloudxr_env_file is None:
         cfg.teleop.cloudxr_env_file = CLOUDXR_ENV_FILE
 
-    # so_follower registers the same follower class under both "so100_follower" and
-    # "so101_follower"; here it is configured for SO-101 (see the so101_new_calib.urdf the xr
-    # device loads). The degree-based pipeline relies on --robot.use_degrees (default True).
+    # SO-101/SO-100 only (both share the SO-101 URDF), reject other followers.
+    supported_robots = {"so101_follower", "so100_follower"}
+    if cfg.robot.type not in supported_robots:
+        raise ValueError(
+            f"This example only supports SO-101/SO-100 followers ({sorted(supported_robots)}), "
+            f"but got --robot.type={cfg.robot.type}."
+        )
+
+    # The degree-based pipeline relies on --robot.use_degrees (default True).
     robot = make_robot_from_config(cfg.robot)
     # Connect the follower FIRST so the startup slew and clutch-home seed can use live joint
     # readings.
