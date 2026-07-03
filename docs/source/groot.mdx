@@ -43,25 +43,6 @@ For a source checkout:
 pip install -e ".[groot]"
 ```
 
-### Optional: Flash Attention acceleration
-
-Flash Attention is a purely optional performance optimization. **LeRobot neither installs nor requires it**, and setting it up is up to the user as it has environment-specific build requirements (a matching PyTorch/CUDA toolchain). To enable it:
-
-1. Install a `flash-attn` build matching your PyTorch/CUDA environment (see the [Flash Attention project](https://github.com/Dao-AILab/flash-attention)):
-
-```bash
-# Check https://pytorch.org/get-started/locally/ for the right CUDA wheel index for your system.
-pip install "torch>=2.7,<2.12.0" "torchvision>=0.22.0,<0.27.0" \
-  --index-url https://download.pytorch.org/whl/cu128
-pip install "ninja>=1.11.1,<2.0.0" "packaging>=24.2,<26.0"
-pip install "flash-attn>=2.5.9,<3.0.0" --no-build-isolation
-python -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} imported successfully')"
-```
-
-2. Install lerobot with the groot extra.
-
-3. Opt in by passing `--policy.use_flash_attention=true` when training/evaluating GR00T. If the kernel is missing or fails to import, the backbone transparently falls back to SDPA.
-
 ## Usage
 
 To use GR00T N1.7:
@@ -76,26 +57,49 @@ To use GR00T N1.7:
 
 Here's a complete training command for finetuning the base GR00T model on your own dataset:
 
+This command is using the `new_embodiment` flag, which is used for the SO-101 robot, [read more about how GR00T handles different embodiments.](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/policy.md#--embodiment-tag).
+
 ```bash
-# Using a multi-GPU setup
-accelerate launch \
-  --multi_gpu \
-  --num_processes=$NUM_GPUS \
-  $(which lerobot-train) \
-  --output_dir=$OUTPUT_DIR \
-  --save_checkpoint=true \
-  --batch_size=$BATCH_SIZE \
-  --steps=$NUM_STEPS \
-  --save_freq=$SAVE_FREQ \
-  --log_freq=$LOG_FREQ \
-  --policy.push_to_hub=true \
+# install extra deps for training
+pip install "lerobot[training]"
+
+hf auth login
+wandb login
+
+export DATASET_NAME=your_data_set
+export HF_USER=your_hf_username
+export DATASET=$HF_USER/$DATASET_NAME
+export REPO_ID="${DATASET}_GR00T17" #this is the model that will be uploaded to huggingface
+export OUTPUT_DIR=outputs/train/$REPO_ID
+
+lerobot-train \
+  --dataset.repo_id=$DATASET \
+  --dataset.image_transforms.enable=true \
   --policy.type=groot \
+  --policy.device=cuda \
+  --policy.base_model_path=nvidia/GR00T-N1.7-3B \
+  --policy.embodiment_tag=new_embodiment \
+  --policy.chunk_size=16 \
+  --policy.n_action_steps=16 \
+  --policy.use_relative_actions=true \
+  --policy.relative_exclude_joints='["gripper"]' \
+  --policy.use_bf16=true \
+  --policy.push_to_hub=true \
   --policy.repo_id=$REPO_ID \
-  --policy.tune_diffusion_model=false \
-  --dataset.repo_id=$DATASET_ID \
+  --seed=42 \
+  --batch_size=64 \
+  --steps=20000 \
+  --save_checkpoint=true \
+  --save_freq=5000 \
+  --use_policy_training_preset=true \
+  --env_eval_freq=0 \
+  --eval_steps=0 \
+  --log_freq=10 \
+  --output_dir=$OUTPUT_DIR \
+  --job_name=$DATASET \
   --wandb.enable=true \
-  --wandb.disable_artifact=true \
-  --job_name=$JOB_NAME
+  --wandb.disable_artifact=true
+
 ```
 
 ## Performance Results
@@ -107,39 +111,59 @@ accelerate launch \
 
 GR00T N1.7 has demonstrated strong performance on the LIBERO benchmark suite. To reproduce LeRobot results, follow the instructions in the [LIBERO](./libero) section.
 
-### GR00T N1.7 LIBERO Checkpoints
+### Train on LIBERO
 
-NVIDIA publishes GR00T N1.7 LIBERO checkpoints at [`nvidia/GR00T-N1.7-LIBERO`](https://huggingface.co/nvidia/GR00T-N1.7-LIBERO), with one subdirectory per LIBERO suite:
-
-| Suite          | Checkpoint subdirectory |
-| -------------- | ----------------------- |
-| LIBERO Spatial | `libero_spatial`        |
-| LIBERO Object  | `libero_object`         |
-| LIBERO Goal    | `libero_goal`           |
-| LIBERO 10      | `libero_10`             |
-
-Preliminary LeRobot integration results:
-
-| Suite          | Status | Success rate | n_episodes |
-| -------------- | ------ | -----------: | ---------: |
-| LIBERO Spatial | ✓      |         ~95% |         XX |
-| LIBERO Object  | ✓      |          XX% |         XX |
-| LIBERO Goal    | ✓      |          XX% |         XX |
-| LIBERO 10      | ✓      |          XX% |         XX |
-| **Average**    | ✓      |      **XX%** |     **XX** |
-
-Replace the `XX` placeholders with final eval artifacts before merge.
-
-Download the suite checkpoint locally, then point `--policy.base_model_path` at the downloaded subdirectory. `--policy.path` is reserved for LeRobot checkpoints that contain a LeRobot `config.json` with a `type` field.
+Example training command for a LIBERO suite (here `libero_spatial`):
 
 ```bash
-hf download nvidia/GR00T-N1.7-LIBERO \
-  --include "libero_spatial/*" \
-  --local-dir ./GR00T-N1.7-LIBERO
+lerobot-train \
+  --dataset.repo_id=IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot \
+  --dataset.root=/datasets/libero_spatial \
+  --dataset.revision=main \
+  --dataset.video_backend=pyav \
+  --policy.type=groot \
+  --policy.base_model_path=nvidia/GR00T-N1.7-3B \
+  --policy.embodiment_tag=libero_sim \
+  --policy.push_to_hub=false \
+  --policy.max_steps=20000 \
+  --batch_size=320 \
+  --steps=20000 \
+  --save_freq=2000 \
+  --env_eval_freq=0 \
+  --eval_steps=0 \
+  --log_freq=10 \
+  --wandb.enable=true \
+  --wandb.project=lerobot \
+  --wandb.mode=online \
+  --wandb.disable_artifact=true \
+  --num_workers=4 \
+  --prefetch_factor=2 \
+  --persistent_workers=true \
+  --output_dir=$OUTPUT_DIR \
+  --job_name=$JOB_NAME \
+  --dataset.image_transforms.enable=true \
+  --dataset.image_transforms.max_num_transforms=4 \
+  --dataset.image_transforms.tfs='{"brightness":{"weight":1.0,"type":"ColorJitter","kwargs":{"brightness":[0.7,1.3]}},"contrast":{"weight":1.0,"type":"ColorJitter","kwargs":{"contrast":[0.6,1.4]}},"saturation":{"weight":1.0,"type":"ColorJitter","kwargs":{"saturation":[0.5,1.5]}},"hue":{"weight":1.0,"type":"ColorJitter","kwargs":{"hue":[-0.08,0.08]}}}'
+```
+
+### GR00T N1.7 LIBERO Results
+
+Preliminary LeRobot integration results (GR00T-LeRobot, `eval.n_episodes >= 50` per suite):
+
+| Suite                  | Success rate |
+| ---------------------- | -----------: |
+| LIBERO Spatial         |          94% |
+| LIBERO Object          |          98% |
+| LIBERO Goal            |          93% |
+| LIBERO 10 (Long)       |          90% |
+| **Average**            |   **93.75%** |
+
+```bash
+export MODEL_ID=your_trained_model_on_huggingface
 
 lerobot-eval \
   --policy.type=groot \
-  --policy.base_model_path=./GR00T-N1.7-LIBERO/libero_spatial \
+  --policy.base_model_path=$MODEL_ID \
   --policy.embodiment_tag=libero_sim \
   --env.type=libero \
   --env.task=libero_spatial \
@@ -153,25 +177,36 @@ Use `eval.n_episodes >= 50` per suite when reporting success rates.
 Once you have trained your model using your parameters you can run inference in your downstream task. Follow the instructions in [Policy Deployment (lerobot-rollout)](./inference). For example:
 
 ```bash
-lerobot-rollout\
-  --strategy.type=sentry \
-  --strategy.upload_every_n_episodes=5 \
-  --robot.type=bi_so_follower \
-  --robot.left_arm_port=/dev/ttyACM1 \
-  --robot.right_arm_port=/dev/ttyACM0 \
-  --robot.id=bimanual_follower \
-  --robot.cameras='{ right: {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
-    left: {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30},
-    top: {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 30},
-  }' \
+# install extra deps for roullout and real hardware
+pip install "lerobot[feetech,viz]"
+
+export MODEL_ID=your_trained_model_on_huggingface
+
+# make sure that camera index matches your setup! 
+# find index using `uv run lerobot-find-cameras opencv`
+WRIST_CAM='wrist: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30, fourcc: "MJPG"}'
+FRONT_CAM='front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, fourcc: "MJPG"}'
+export ROBOT_CAMERAS="{ $WRIST_CAM, $FRONT_CAM }"
+export ROBOT_ID=follower_robot
+export ROBOT_PORT=/dev/ttyACM0
+
+uv run lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=$MODEL_ID \
+  --policy.base_model_path=nvidia/GR00T-N1.7-3B \
+  --policy.n_action_steps=8 \
+  --robot.type=so101_follower \
+  --robot.port=$ROBOT_PORT \
+  --robot.id=$ROBOT_ID \
+  --robot.cameras="$ROBOT_CAMERAS" \
+  --task="place the vial in the rack" \
+  --duration=60 \
+  --device=cuda \
   --display_data=true \
-  --dataset.repo_id=<user>/eval_groot-bimanual  \
-  --dataset.single_task="Grab and handover the red cube to the other arm" \
-  --dataset.streaming_encoding=true \
-  --dataset.encoder_threads=2 \
-  # --dataset.rgb_encoder.vcodec=auto \
-  --policy.path=<user>/groot-bimanual \ # your trained model
-  --duration=600
+  --inference.type=rtc \
+  --inference.rtc.enabled=false \
+  --inference.rtc.execution_horizon=8 \
+  --inference.queue_threshold=0
 ```
 
 ## License
