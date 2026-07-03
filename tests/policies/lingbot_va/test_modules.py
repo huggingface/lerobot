@@ -23,11 +23,8 @@ import torch
 
 pytest.importorskip("diffusers")  # the model code lives in modeling_lingbot_va, which imports diffusers
 
-from lerobot.policies.lingbot_va.modeling_lingbot_va import (  # noqa: E402
-    FlowMatchScheduler,
-    data_seq_to_patch,
-    get_mesh_id,
-)
+from lerobot.policies.lingbot_va.modeling_lingbot_va import FlowMatchScheduler
+from lerobot.policies.lingbot_va.utils import data_seq_to_patch, get_mesh_id
 
 
 def test_flow_match_scheduler_timesteps_monotone_decreasing() -> None:
