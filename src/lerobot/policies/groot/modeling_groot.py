@@ -55,7 +55,7 @@ from .groot_n1_7 import GR00TN17, _tie_unused_qwen_lm_head
 if TYPE_CHECKING or _transformers_available:
     from transformers.trainer_pt_utils import get_parameter_names
 else:
-    get_parameter_names = lambda fn: fn  # noqa: E731
+    get_parameter_names = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -321,9 +321,9 @@ class GrootPolicy(PreTrainedPolicy):
         return max(1, min(horizons))
 
     def _filter_groot_inputs(self, batch: dict[str, Tensor], *, include_action: bool) -> dict[str, Tensor]:
-        allowed_base = {"state", "state_mask", "embodiment_id"}
+        allowed_base = {"state", "state_mask", "action_mask", "embodiment_id"}
         if include_action:
-            allowed_base.update({"action", "action_mask"})
+            allowed_base.add("action")
 
         allowed_base.update(
             {
@@ -336,7 +336,6 @@ class GrootPolicy(PreTrainedPolicy):
                 "video_grid_thw",
             }
         )
-        allowed_base.add("action_mask")
 
         return {
             k: v for k, v in batch.items() if k in allowed_base and not (k.startswith("next.") or k == "info")

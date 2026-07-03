@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import importlib
 import logging
 from contextlib import suppress
 from copy import deepcopy
@@ -750,6 +749,8 @@ def _is_cosmos_reason2_backbone(model_name: str) -> bool:
 
 
 def _cosmos_reason2_qwen3_vl_config() -> PretrainedConfig:
+    """Hard-coded copy of the nvidia/Cosmos-Reason2-2B config.json (a Qwen3-VL-2B-Instruct layout)."""
+
     return Qwen3VLConfig(
         image_token_id=151655,
         video_token_id=151656,
@@ -849,10 +850,7 @@ class GR00TN17(PreTrainedModel):
         self.post_init()
 
     def prepare_input(self, inputs: dict[str, Any]) -> tuple[BatchFeature, BatchFeature]:
-        global tree
-        if tree is None:
-            require_package("dm-tree", extra="groot", import_name="tree")
-            tree = importlib.import_module("tree")
+        require_package("dm-tree", extra="groot", import_name="tree")
         backbone_inputs = self.backbone.prepare_input(inputs)
         action_inputs = self.action_head.prepare_input(inputs)
 

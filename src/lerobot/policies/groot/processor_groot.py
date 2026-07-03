@@ -1071,6 +1071,16 @@ def _build_n1_7_relative_action_processor_assets(
             "delta_indices": [0],
         }
 
+    if config.chunk_size > action_horizon:
+        logging.warning(
+            "GrootConfig.chunk_size=%d exceeds the relative-action stats horizon %d; clamping the "
+            "valid action horizon to %d. The GR00T N1.7 action head decodes at most the horizon "
+            "baked into the relative-action statistics.",
+            config.chunk_size,
+            action_horizon,
+            action_horizon,
+        )
+
     use_percentiles = _grouped_stats_support_percentiles(raw_stats, modality_config, use_relative_action=True)
     flat_stats = {
         OBS_STATE: flatten_n1_7_modality_stats(
