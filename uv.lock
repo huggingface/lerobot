@@ -3058,6 +3058,7 @@ libero = [
     { name = "transformers" },
 ]
 lingbot-va = [
+    { name = "accelerate" },
     { name = "diffusers" },
     { name = "transformers" },
 ]
@@ -3269,6 +3270,7 @@ requires-dist = [
     { name = "ipykernel", marker = "extra == 'notebook'", specifier = ">=6.0.0,<7.0.0" },
     { name = "jsonlines", marker = "extra == 'dataset'", specifier = ">=4.0.0,<5.0.0" },
     { name = "jupyter", marker = "extra == 'notebook'", specifier = ">=1.0.0,<2.0.0" },
+    { name = "lerobot", extras = ["accelerate-dep"], marker = "extra == 'lingbot-va'" },
     { name = "lerobot", extras = ["accelerate-dep"], marker = "extra == 'smolvla'" },
     { name = "lerobot", extras = ["accelerate-dep"], marker = "extra == 'training'" },
     { name = "lerobot", extras = ["aloha"], marker = "extra == 'all'" },

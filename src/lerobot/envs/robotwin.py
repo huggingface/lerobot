@@ -132,6 +132,9 @@ def _generate_robotwin_official_instruction(task_name: str, env: Any) -> str:
         return fallback
 
     try:
+        # Part of the robotwin simulator repo, this is being pulled by the docker image running robotwin
+        # see https://github.com/RoboTwin-Platform/RoboTwin/tree/main/description
+        # Used to generate the official instructions
         from description.utils.generate_episode_instructions import generate_episode_descriptions
     except Exception:
         logger.warning(
