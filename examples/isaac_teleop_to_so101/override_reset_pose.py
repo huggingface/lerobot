@@ -52,12 +52,13 @@ def main():
     args = parse_args()
     robot = SO100Follower(SO100FollowerConfig(port=args.port, id=args.id, use_degrees=True))
     robot.connect()
-
-    obs = robot.get_observation()
-    motor_names = list(robot.bus.motors.keys())
-    pose = {name: float(obs[f"{name}.pos"]) for name in motor_names}
-
-    robot.disconnect()
+    # Always disconnect the follower so a failure never leaks the serial connection.
+    try:
+        obs = robot.get_observation()
+        motor_names = list(robot.bus.motors.keys())
+        pose = {name: float(obs[f"{name}.pos"]) for name in motor_names}
+    finally:
+        robot.disconnect()
 
     print("Current joint positions:")
     for name, val in pose.items():
