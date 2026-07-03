@@ -27,11 +27,18 @@ import gymnasium as gym
 import numpy as np
 import torch
 from gymnasium import spaces
-from scipy.spatial.transform import Rotation
 
 from lerobot.types import RobotObservation
+from lerobot.utils.import_utils import _scipy_available
 
 from .utils import _LazyAsyncVectorEnv
+
+# scipy is only used for end-effector-pose composition (``--env.action_mode=ee``); guard it so this
+# module (and its base-env unit tests, which mock the RoboTwin runtime) imports without scipy installed.
+if _scipy_available:
+    from scipy.spatial.transform import Rotation
+else:
+    Rotation = None
 
 logger = logging.getLogger(__name__)
 
