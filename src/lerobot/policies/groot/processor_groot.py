@@ -100,6 +100,10 @@ from .utils import (
     stat_dim_from_entry,
 )
 
+# Native GR00T N1.7 action horizon: checkpoints are trained to predict 40-step
+# action chunks, so processor-side horizons are capped at this value.
+N1_7_NATIVE_ACTION_HORIZON = 40
+
 N1_7_EMBODIMENT_MAPPING = {
     "oxe_droid_relative_eef_relative_joint": 24,
     "xdof_relative_eef_relative_joint": 27,
@@ -823,6 +827,17 @@ def _make_relative_action_training_stats(
     return stats
 
 
+def _relative_stats_action_horizon(action_stats: dict[str, Any]) -> int | None:
+    """Return the chunk horizon of horizon-preserving relative action stats, if any."""
+    for stat_name in ("min", "max", "mean", "std", "q01", "q99"):
+        value = action_stats.get(stat_name)
+        if value is None:
+            continue
+        tensor = torch.as_tensor(value)
+        return tensor.shape[0] if tensor.ndim >= 2 else None
+    return None
+
+
 def _stats_preserve_action_horizon(stats: dict[str, dict[str, Any]] | None) -> bool:
     if not stats or ACTION not in stats:
         return False
@@ -846,7 +861,10 @@ def _make_relative_action_training_stats_from_dataset_meta(
 
     require_package("datasets", extra="groot")
 
-    delta_timestamps = {ACTION: [index / fps for index in config.action_delta_indices]}
+    # Relative stats are computed per chunk timestep at the native N1.7 horizon, so the
+    # stats dataset must yield native-length action windows even when config.chunk_size
+    # executes fewer steps.
+    delta_timestamps = {ACTION: [index / fps for index in range(N1_7_NATIVE_ACTION_HORIZON)]}
     dataset = LeRobotDataset(
         repo_id,
         root=root,
@@ -1030,7 +1048,12 @@ def _build_n1_7_relative_action_processor_assets(
         }
         for group in groups
     ]
-    action_horizon = min(config.chunk_size, 40)
+    # Horizon-preserving relative stats are computed per chunk timestep at the native
+    # chunk length of the dataset samples, so they dictate the processor horizon even
+    # when config.chunk_size asks for fewer executed steps.
+    action_horizon = _relative_stats_action_horizon(relative_action_stats) or min(
+        config.chunk_size, N1_7_NATIVE_ACTION_HORIZON
+    )
     modality_config: dict[str, Any] = {
         "state": {"modality_keys": [group.key for group in groups]},
         "action": {
@@ -1074,7 +1097,7 @@ def _build_n1_7_relative_action_processor_assets(
         if base_assets is not None
         else dict(N1_7_EMBODIMENT_MAPPING),
         formalize_language=base_assets.formalize_language if base_assets is not None else True,
-        valid_action_horizon=action_horizon,
+        valid_action_horizon=min(config.chunk_size, action_horizon),
         max_action_horizon=action_horizon,
         video_horizon=base_assets.video_horizon if base_assets is not None else None,
         use_percentiles=use_percentiles,
@@ -1152,7 +1175,7 @@ def make_groot_pre_post_processors(
     action_horizon = (
         checkpoint_assets.max_action_horizon
         if checkpoint_assets is not None and checkpoint_assets.max_action_horizon is not None
-        else min(config.chunk_size, 40)
+        else min(config.chunk_size, N1_7_NATIVE_ACTION_HORIZON)
     )
     valid_action_horizon = (
         checkpoint_assets.valid_action_horizon
@@ -1501,8 +1524,8 @@ class GrootN17PackInputsStep(ProcessorStep):
     """
 
     state_horizon: int = 1
-    action_horizon: int = 40
-    valid_action_horizon: int = 40
+    action_horizon: int = N1_7_NATIVE_ACTION_HORIZON
+    valid_action_horizon: int = N1_7_NATIVE_ACTION_HORIZON
     video_horizon: int | None = None
     max_state_dim: int = 132
     max_action_dim: int = 132
