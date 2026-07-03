@@ -224,6 +224,7 @@ def build_dataset(scenario: str, args: argparse.Namespace):
         episode_pool_size=args.episode_pool_size,
         max_buffer_input_shards=args.max_buffer_input_shards,
         video_decoder_cache_size=args.video_decoder_cache_size,
+        video_fetch_workers=args.video_fetch_workers,
         tolerance_s=1e-3,
         # Throughput benchmark: don't gate on the one-row-group-per-episode invariant (a public
         # dataset may be collapsed); reshard() still yields per-episode shards where it holds.
@@ -493,6 +494,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--partition_index", type=int, default=0)
     p.add_argument(
         "--max_episodes", type=int, default=512, help="Cap mmap_local episodes to the local share."
+    )
+    p.add_argument(
+        "--video_fetch_workers",
+        type=int,
+        default=16,
+        help="Concurrent byte-range fetch threads per consumer (the fetch-throughput knob; was 4).",
     )
     p.add_argument("--batch_size", type=int, default=64)
     p.add_argument("--num_workers", type=int, default=8)
