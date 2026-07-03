@@ -18,7 +18,6 @@ from __future__ import annotations
 # Utilities
 ########################################################################################
 import time
-from contextlib import nullcontext
 from copy import copy
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +25,7 @@ import numpy as np
 import torch
 
 from lerobot.policies import PreTrainedPolicy, prepare_observation_for_inference
+from lerobot.utils.device_utils import get_safe_autocast_context
 from lerobot.utils.import_utils import _deepdiff_available, require_package
 
 if TYPE_CHECKING or _deepdiff_available:
@@ -76,7 +76,7 @@ def predict_action(
     observation = copy(observation)
     with (
         torch.inference_mode(),
-        torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
+        get_safe_autocast_context(device, enabled=use_amp),
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         observation = prepare_observation_for_inference(observation, device, task, robot_type)
