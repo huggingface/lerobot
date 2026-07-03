@@ -76,34 +76,49 @@ To use GR00T N1.7:
 
 Here's a complete training command for finetuning the base GR00T model on your own dataset:
 
-```bash
-export BASE_MODEL=nvidia/GR00T-N1.7-3B
+This command is using the `new_embodiment` flag, which is used for the SO-101 robot, [read more about how GR00T handles different embodiments.](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/policy.md#--embodiment-tag).
 
-uv run lerobot-train \
-  --dataset.repo_id=sreetz-nv/so101-clean-up-vials-into-rack-50_20260628_131121 \
+```bash
+# install extra deps for training
+pip install "lerobot[training]"
+
+hf auth login
+wandb login
+
+export DATASET_NAME=your_data_set
+export HF_USER=your_hf_username
+export DATASET=$HF_USER/$DATASET_NAME
+export REPO_ID="${DATASET}_GR00T17" #this is the model that will be uploaded to huggingface
+export OUTPUT_DIR=outputs/train/$REPO_ID
+
+lerobot-train \
+  --dataset.repo_id=$DATASET \
   --dataset.image_transforms.enable=true \
   --policy.type=groot \
   --policy.device=cuda \
-  --policy.base_model_path=$BASE_MODEL \
+  --policy.base_model_path=nvidia/GR00T-N1.7-3B \
   --policy.embodiment_tag=new_embodiment \
   --policy.chunk_size=16 \
   --policy.n_action_steps=16 \
   --policy.use_relative_actions=true \
   --policy.relative_exclude_joints='["gripper"]' \
   --policy.use_bf16=true \
-  --policy.use_flash_attention=true \
   --policy.push_to_hub=true \
-  --policy.repo_id=sreetz-nv/so101-clean-up-vials-into-rack-50-groot-n17-relact-bs64-20k-20260628_johnny_42 \
+  --policy.repo_id=$REPO_ID \
   --seed=42 \
   --batch_size=64 \
   --steps=20000 \
   --save_checkpoint=true \
+  --save_freq=5000 \
   --use_policy_training_preset=true \
   --env_eval_freq=0 \
   --eval_steps=0 \
-  --log_freq=100 \
+  --log_freq=10 \
   --output_dir=$OUTPUT_DIR \
-  --job_name=$JOB_NAME
+  --job_name=$DATASET \
+  --wandb.enable=true \
+  --wandb.disable_artifact=true
+
 ```
 
 ## Performance Results
@@ -179,23 +194,36 @@ Use `eval.n_episodes >= 50` per suite when reporting success rates.
 Once you have trained your model using your parameters you can run inference in your downstream task. Follow the instructions in [Policy Deployment (lerobot-rollout)](./inference). For example:
 
 ```bash
+# install extra deps for roullout and real hardware
+pip install "lerobot[feetech,viz]"
+
+export MODEL_ID=your_trained_model_on_huggingface
+
+# make sure that camera index matches your setup! 
+# find index using `uv run lerobot-find-cameras opencv`
+WRIST_CAM='wrist: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30, fourcc: "MJPG"}'
+FRONT_CAM='front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, fourcc: "MJPG"}'
+export ROBOT_CAMERAS="{ $WRIST_CAM, $FRONT_CAM }"
+export ROBOT_ID=follower_robot
+export ROBOT_PORT=/dev/ttyACM0
+
 uv run lerobot-rollout \
   --strategy.type=base \
-  --inference.type=rtc \
-  --policy.path=$OUTPUT_DIR/checkpoints/020000/pretrained_model/ \
-  --policy.base_model_path=$BASE_MODEL \
+  --policy.path=$MODEL_ID \
+  --policy.base_model_path=nvidia/GR00T-N1.7-3B \
+  --policy.n_action_steps=8 \
   --robot.type=so101_follower \
-  --robot.port=/dev/ttyACM0 \
-  --robot.id=orange_andrew \
-  --robot.cameras='{ wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, fourcc: "MJPG"}, front: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30, fourcc: "MJPG"} }' \
+  --robot.port=$ROBOT_PORT \
+  --robot.id=$ROBOT_ID \
+  --robot.cameras="$ROBOT_CAMERAS" \
   --task="place the vial in the rack" \
   --duration=60 \
   --device=cuda \
   --display_data=true \
+  --inference.type=rtc \
   --inference.rtc.enabled=false \
   --inference.rtc.execution_horizon=8 \
-  --inference.queue_threshold=0 \
-  --policy.n_action_steps=8
+  --inference.queue_threshold=0
 ```
 
 ## License
