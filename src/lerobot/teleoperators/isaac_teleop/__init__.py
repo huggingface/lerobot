@@ -16,12 +16,8 @@
 
 """NVIDIA Isaac Teleop teleoperators for LeRobot.
 
-Isaac Teleop is a multi-modal teleoperation framework. Each input device is a
-:class:`IsaacTeleopTeleoperator` subclass: :class:`XRController` (XR/VR
-controller) and :class:`SO101LeaderArm` (a back-drivable SO-101 leader arm on
-the generic joint-space device path) ship today; Manus gloves, hand tracking,
-and full-body tracking are the natural next devices (add a ``teleop_<device>.py``
-+ device config).
+Each input device is an :class:`IsaacTeleopTeleoperator` subclass: :class:`XRController`
+(XR/VR controller) and :class:`SO101LeaderArm` (back-drivable SO-101 leader arm) ship today.
 """
 
 from .base import IsaacTeleopTeleoperator

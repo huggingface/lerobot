@@ -16,12 +16,9 @@
 
 """Record a LeRobot dataset via NVIDIA Isaac Teleop -> SO-101.
 
-Mirrors ``lerobot-record`` but drives the follower with an Isaac Teleop device from
-``teleoperate.py`` instead of a serial leader arm.  ``--teleop.type`` selects the device
-(``xr_controller`` | ``so101_leader``), exactly as in ``teleoperate.py``: the XR controller
-outputs a raw grip pose that the Clutch + soft-orientation IK pipeline turns into joint
-commands, while the SO-101 leader streams joint angles mirrored 1:1.  Either way the resulting
-joint commands are both sent to the follower AND saved to a LeRobot dataset.
+Runs ``teleoperate.py``'s control loop while also saving each frame to a LeRobot dataset.
+``--teleop.type`` selects the device (``xr_controller`` | ``so101_leader``) as in
+``teleoperate.py``.
 
 Usage::
 
@@ -46,19 +43,10 @@ Usage::
         --dataset.repo_id=<hf_user>/<dataset_name> --dataset.single_task="Pick up the cube" \\
         --dataset.num_episodes=3 --dataset.episode_time_s=20 --dataset.reset_time_s=5
 
-The loop/launch knobs are tagged ``[xr]`` / ``[leader]`` below and mirror ``teleoperate.py``
-(``--reset_to_origin`` / ``--reset_duration`` for XR; ``--launch_plugin`` / ``--align`` /
-``--align_duration`` for the leader); a knob is ignored for the other device.
+The loop/launch knobs mirror ``teleoperate.py`` (tagged ``[xr]`` / ``[leader]`` below).
 
-Keyboard shortcuts during recording:
-  Right arrow  →  end episode early and save it
-  Left arrow   ←  discard the current take and re-record
-  Escape       →  stop after the current episode (saves completed episodes)
-
-For the XR controller, squeeze the grip past ``--teleop.clutch_threshold`` (default 0.5) to
-engage the clutch and move the arm; while disengaged the arm holds its pose.  For the leader,
-back-drive the leader arm to move the follower.  All frames are recorded (including hold
-frames), matching ``lerobot-record`` behaviour.
+Keyboard shortcuts: Right/n = end episode early and save, Left/r = discard + re-record,
+Esc/q = stop after the current episode. All frames are recorded (including hold frames).
 """
 
 import logging
@@ -101,11 +89,9 @@ from .common import (
 class RecordConfig:
     """CLI config for Isaac Teleop -> SO-101 dataset recording.
 
-    ``--teleop.type`` selects the Isaac input device (``xr_controller`` | ``so101_leader``)
-    and ``--teleop.*`` its knobs (e.g. ``--teleop.clutch_threshold``); ``--robot.*`` configures
-    the SO-101 follower; ``--dataset.*`` the recording.  The loop/launch knobs below carry the
-    same ``[xr]`` / ``[leader]`` tags as ``teleoperate.py`` (a knob is ignored for the other
-    device).  Use ``--flag=false`` for booleans (draccus style, no ``--no-*`` form).
+    ``--robot.*`` / ``--teleop.*`` / ``--dataset.*`` configure the follower, device, and
+    recording; the loop/launch knobs below carry the same ``[xr]`` / ``[leader]`` tags as
+    ``teleoperate.py``. Use ``--flag=false`` for booleans (draccus style).
     """
 
     robot: RobotConfig

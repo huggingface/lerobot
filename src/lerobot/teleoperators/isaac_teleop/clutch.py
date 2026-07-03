@@ -16,15 +16,9 @@
 
 """Engage-relative clutch for the XR -> SO-101 teleop loop.
 
-The clutch turns the raw controller grip pose into an absolute base-frame EE
-target so the owning loop's XR device can stay a thin raw-pose reader (see
-``examples/isaac_teleop_to_so101/common.py``). It is the pure-math counterpart to
-Isaac Teleop's ``SO101ClutchRetargeter``, lifted here so it can be unit-tested
-without the XR runtime.
-
-Like ``xr_controller_processor``, this module does **not** import ``isaacteleop``
-(only ``numpy`` + the local ``Rotation`` helper), so it can be unit-tested without
-the XR runtime.
+Turns the raw controller grip pose into an absolute base-frame EE target, so the XR
+device can stay a thin raw-pose reader. Pure numpy + the local ``Rotation`` helper (no
+``isaacteleop``), so it is unit-testable without the XR runtime.
 """
 
 from __future__ import annotations
@@ -37,35 +31,26 @@ from lerobot.utils.rotation import Rotation
 class Clutch:
     """Engage-relative clutch for both position AND orientation.
 
-    Mirrors Isaac Teleop's ``SO101ClutchRetargeter`` but lives outside the device
-    so it can stay a thin raw-pose reader. Clutching is the same idea for both
-    channels — latch an origin on engage, then track the base-frame delta from it —
-    applied independently to position and orientation. State:
+    Latch an origin on engage, then track the base-frame delta from it, applied
+    independently to position and orientation. State:
 
-    - ``_last_commanded_pos`` / ``_last_commanded_rot``: the EE pose the loop last
-      commanded; held while disengaged so the arm freezes where it was left.
-    - ``_home_pos`` / ``_home_rot``: latched on the engage edge — the EE pose the
-      per-frame delta is applied to.
-    - ``_origin_pos`` / ``_origin_rot``: latched on the engage edge — the controller
-      pose the per-frame delta is measured against.
+    - ``_last_commanded_pos`` / ``_last_commanded_rot``: last commanded EE pose; held
+      while disengaged so the arm freezes where it was left.
+    - ``_home_pos`` / ``_home_rot``: latched on engage — the EE pose the delta applies to.
+    - ``_origin_pos`` / ``_origin_rot``: latched on engage — the controller pose the delta
+      is measured against.
 
     Each engaged frame :meth:`rebase` returns::
 
         pos = home_pos + (grip_pos - origin_pos)  # 1:1 controller -> EE translation
         rot = (R_ctrl @ R_origin ^ -1) @ R_home  # base-frame delta, left-composed
 
-    On the engage edge ``grip_pos == origin_pos`` and ``R_ctrl == R_origin``, so the
-    output is exactly the home pose (== the last commanded pose), i.e. no teleport in
-    position OR orientation. The orientation delta is expressed in the base frame
-    (left multiply), so rotating the hand 30° about base Z rotates the EE 30° about
-    base Z — matching the position convention the operator sees in the room. A
-    mid-task re-clutch latches a fresh home/origin, so the EE resumes from where it
-    was left and tracks the new delta.
+    On the engage edge the output is exactly the home pose (no teleport). The orientation
+    delta is left-composed (base frame), so hand rotation about base Z maps to EE rotation
+    about base Z. A re-clutch latches a fresh home/origin.
 
-    NOTE: ``_home_rot`` is the last *commanded* orientation, not the achieved one. On
-    the 5-DOF SO-101 the arm cannot fully realize an arbitrary orientation, so the
-    commanded and achieved wrist orientation differ — but the commanded signal is
-    continuous across a re-clutch, so there is still no jump.
+    NOTE: ``_home_rot`` is the last *commanded* orientation; the 5-DOF SO-101 cannot fully
+    realize it, but the commanded signal stays continuous across a re-clutch (no jump).
     """
 
     def __init__(self, home_base_T_ee: np.ndarray):  # noqa: N803

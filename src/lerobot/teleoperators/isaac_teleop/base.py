@@ -16,27 +16,17 @@
 
 """Shared base for NVIDIA Isaac Teleop-backed LeRobot teleoperators.
 
-NVIDIA Isaac Teleop is a multi-modal teleoperation framework: a single
-``TeleopSession`` can be driven by XR controllers, hand tracking, full-body
-tracking, Manus gloves, foot pedals, and more. Each input modality is exposed
-to LeRobot as its own :class:`Teleoperator` subclass living in its own
-``teleop_<device>.py`` module (e.g. ``teleop_xr_controller`` today, ``teleop_manus``,
-``teleop_hands`` later).
+Isaac Teleop is a multi-modal framework: a single ``TeleopSession`` can be driven by
+XR controllers, hand tracking, Manus gloves, etc. Each modality is a
+:class:`Teleoperator` subclass in its own ``teleop_<device>.py``.
 
-:class:`IsaacTeleopTeleoperator` factors out everything those device
-teleoperators share — the ``TeleopSession`` lifecycle (connect / disconnect),
-the per-step staleness/worker-health guard, and the no-op calibration that
-tracking devices need. A concrete device only has to:
+:class:`IsaacTeleopTeleoperator` owns what those devices share — the session
+lifecycle, the per-step staleness/worker-health guard, and the no-op calibration
+tracking devices need. A concrete device implements :meth:`_build_pipeline` (its
+retargeting graph) and :meth:`get_action` (usually via :meth:`_step`).
 
-1. implement :meth:`_build_pipeline` to wire its Isaac Teleop retargeting graph
-   (source nodes + retargeters) for its modality, and
-2. implement :meth:`get_action` (and :attr:`action_features`), typically by
-   calling :meth:`_step` and unpacking the modality-specific outputs.
-
-The ``isaacteleop`` package is an optional, separately distributed NVIDIA
-dependency (the ``isaac-teleop`` extra). All imports of it are deferred to
-:meth:`connect` so this module — and the device processors — can be imported
-and unit-tested without it installed.
+``isaacteleop`` is an optional NVIDIA dependency (the ``isaac-teleop`` extra); all
+imports of it are deferred to :meth:`connect` so this module imports without it.
 """
 
 from __future__ import annotations
@@ -59,19 +49,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Gripper closedness [0, 1] -> SO-101 follower motor units [0, 100] (RANGE_0_100; the
-# follower calibrates 100 = fully OPEN, 0 = fully CLOSED). Shared by the XR processor and the
-# leader device, which both invert closedness via ``pos = (1 - c) * _GRIPPER_MOTOR_SCALE``.
+# Gripper closedness [0, 1] -> SO-101 follower motor units [0, 100] (RANGE_0_100, 100 = OPEN).
+# Shared by the XR processor and leader device, which invert via ``pos = (1 - c) * SCALE``.
 _GRIPPER_MOTOR_SCALE = 100.0
 
 
 class IsaacTeleopTeleoperator(Teleoperator):
     """Abstract base for teleoperators backed by an Isaac Teleop ``TeleopSession``.
 
-    Owns the session lifecycle and the per-step health guard shared by every
-    Isaac Teleop input device. Subclasses supply the device-specific pipeline
-    via :meth:`_build_pipeline` and the device-specific action unpacking via
-    :meth:`get_action`. See the module docstring for the device pattern.
+    Owns the session lifecycle and the per-step health guard; subclasses supply
+    :meth:`_build_pipeline` and :meth:`get_action`.
     """
 
     config_class = IsaacTeleopConfig
@@ -88,12 +75,9 @@ class IsaacTeleopTeleoperator(Teleoperator):
 
     @abc.abstractmethod
     def _build_pipeline(self) -> GraphExecutable:
-        """Build this device's Isaac Teleop retargeting pipeline.
-
-        Returns the ``GraphExecutable`` (e.g. an ``OutputCombiner``) passed to
-        ``TeleopSessionConfig.pipeline``. The base class calls this exactly once
-        during :meth:`connect`. The returned pipeline's output keys must match
-        what this device's :meth:`get_action` unpacks.
+        """Build this device's retargeting pipeline (the ``GraphExecutable`` for
+        ``TeleopSessionConfig.pipeline``). Called once in :meth:`connect`; its output
+        keys must match what :meth:`get_action` unpacks.
         """
         raise NotImplementedError
 
@@ -116,17 +100,12 @@ class IsaacTeleopTeleoperator(Teleoperator):
         pass
 
     def connect(self, calibrate: bool = True) -> None:
-        """Start the CloudXR runtime (unless opted out) and open the Isaac Teleop session.
+        """Auto-launch the CloudXR runtime (unless opted out) and open the session.
 
-        By default this auto-launches the NVIDIA CloudXR runtime so operators no
-        longer need to run ``python -m isaacteleop.cloudxr`` and ``source
-        cloudxr.env`` by hand. The CloudXR launch is a blocking call that can take
-        ~30s, and on the very first run it prompts on stdin to accept the NVIDIA
-        CloudXR EULA (run ``python -m isaacteleop.cloudxr --accept-eula`` once to
-        bootstrap a headless machine). Opt out of the auto-launch — when CloudXR is
-        already running externally — by setting ``config.auto_launch_cloudxr=False``
-        or exporting ``LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1`` (the env var takes
-        precedence over the config field).
+        The CloudXR launch blocks ~30s and, on the first run, prompts on stdin for the
+        EULA (accept once via ``python -m isaacteleop.cloudxr --accept-eula``). Opt out
+        when CloudXR runs externally via ``config.auto_launch_cloudxr=False`` or
+        ``LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1`` (env var wins).
         """
         if self._session is not None:
             raise RuntimeError("Already connected. Call disconnect() first.")
@@ -166,16 +145,12 @@ class IsaacTeleopTeleoperator(Teleoperator):
     # ------------------------------------------------------------------
 
     def _ensure_cloudxr_runtime(self) -> None:
-        """Auto-launch the CloudXR runtime once, unless the operator opted out.
+        """Auto-launch the CloudXR runtime once, unless opted out.
 
-        Idempotent: a no-op once the launcher is up. The
-        ``LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH`` env var is checked first and takes
-        precedence over ``config.auto_launch_cloudxr``; when either opts out we
-        assume CloudXR is already running / externally owned. This mirrors Isaac
-        Lab's auto-launch (whose env var is ``ISAACLAB_CXR_SKIP_AUTOLAUNCH``); the
-        two knobs are independent. Constructing :class:`CloudXRLauncher` mutates
-        the current process environment (``XR_RUNTIME_JSON`` etc.) and blocks until
-        the runtime is ready or raises :class:`RuntimeError`.
+        Idempotent (no-op once the launcher is up). ``LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH``
+        is checked first and wins over ``config.auto_launch_cloudxr``. Constructing
+        :class:`CloudXRLauncher` mutates the process env (``XR_RUNTIME_JSON`` etc.) and
+        blocks until the runtime is ready or raises :class:`RuntimeError`.
         """
         if self._cloudxr_launcher is not None:
             return
@@ -196,8 +171,6 @@ class IsaacTeleopTeleoperator(Teleoperator):
 
         logger.info("Launching CloudXR runtime (first run may prompt for EULA and take ~30s)...")
 
-        # isaacteleop stays lazy (optional dep; keeps this module importable without it);
-        # Path is stdlib, so it lives at module scope.
         from isaacteleop.cloudxr import CloudXRLauncher
 
         self._cloudxr_launcher = CloudXRLauncher(
@@ -209,9 +182,9 @@ class IsaacTeleopTeleoperator(Teleoperator):
     def _stop_cloudxr_runtime(self) -> None:
         """Stop the auto-launched CloudXR runtime, if any.
 
-        On a clean stop the handle is nulled. On a :class:`RuntimeError` (the
-        runtime could not be terminated) the handle is RETAINED — the launcher's
-        own ``atexit`` hook owns the retry — and a warning is logged.
+        Clean stop nulls the handle. On :class:`RuntimeError` the handle is RETAINED so
+        the launcher's ``atexit`` hook owns the retry — a later :meth:`connect` then
+        treats the retained runtime as still up and will not relaunch.
         """
         if self._cloudxr_launcher is None:
             return
@@ -219,10 +192,6 @@ class IsaacTeleopTeleoperator(Teleoperator):
             self._cloudxr_launcher.stop()
         except RuntimeError:
             logger.warning("CloudXR runtime could not be terminated; handle retained for atexit cleanup")
-            # handle retained — the launcher's own atexit hook owns the retry.
-            # Consequence: a later connect() -> _ensure_cloudxr_runtime() sees the
-            # retained handle, early-returns, and will NOT relaunch (treats the
-            # retained runtime as still up).
         else:
             self._cloudxr_launcher = None
             logger.info("CloudXR runtime stopped")
@@ -237,10 +206,8 @@ class IsaacTeleopTeleoperator(Teleoperator):
     def _running_events(self) -> ExecutionEvents:
         """Constant ``RUNNING`` ``ExecutionEvents`` for a device with no clutch lifecycle.
 
-        Devices without a clutch/retargeter lifecycle to gate drive the session always
-        ``RUNNING`` to keep their stream flowing; ``reset`` is left ``False`` (per-episode
-        reset wiring is deferred). A clutched device that needs a real lifecycle should build
-        its own ``ExecutionEvents`` instead of calling this.
+        Keeps the stream flowing; ``reset`` stays ``False``. A clutched device that needs
+        a real lifecycle should build its own ``ExecutionEvents`` instead.
         """
         from isaacteleop.retargeting_engine.interface import ExecutionEvents, ExecutionState
 
@@ -254,23 +221,16 @@ class IsaacTeleopTeleoperator(Teleoperator):
     ) -> RetargeterIO:
         """Step the session once and return the raw pipeline outputs.
 
-        Applies the shared staleness / worker-health guard: re-raises a
-        retargeting-worker exception and warns on a dropped/stale frame. Device
-        subclasses call this from :meth:`get_action` and unpack the result.
+        Applies the shared guard: re-raises a retargeting-worker exception and warns on a
+        stale frame. Subclasses call this from :meth:`get_action`.
 
         Args:
-            execution_events: The Isaac Teleop ``ExecutionEvents`` (Play/Stop +
-                per-episode reset) driving the session's lifecycle this frame.
-                **Devices with a lifecycle (clutch) MUST pass this every frame.**
-                When ``None``, ``TeleopSession.step`` (with no control pipeline)
-                AUTO-FIRES ``RUNNING`` — the clutch latches immediately and never
-                stops, which is a bug for any clutched device. Pass an explicit
-                ``ExecutionEvents`` derived from the device's enable signal.
-            external_inputs: Per-step constant/streamed inputs (e.g. a static
-                ``base_T_anchor`` transform), in the
-                ``{leaf_node_name: {output_port_name: TensorGroup}}`` shape
-                ``TeleopSession.step`` expects (keyed by the external leaf node
-                name and its output PORT name, NOT a numeric slot).
+            execution_events: The ``ExecutionEvents`` driving the session this frame.
+                Devices with a lifecycle (clutch) MUST pass this every frame — when
+                ``None``, ``TeleopSession.step`` auto-fires ``RUNNING`` (the clutch would
+                latch immediately and never stop).
+            external_inputs: Per-step inputs (e.g. a static ``base_T_anchor``) in the
+                ``{leaf_node_name: {output_port_name: TensorGroup}}`` shape ``step`` expects.
 
         Raises:
             RuntimeError: If not connected, or if the retargeting worker raised.
@@ -283,8 +243,6 @@ class IsaacTeleopTeleoperator(Teleoperator):
             external_inputs=external_inputs,
         )
 
-        # ``last_step_info`` exposes whether the retargeting worker raised and
-        # how old the returned frame is.
         info = self._session.last_step_info
         if info is not None:
             if info.worker_exception is not None:

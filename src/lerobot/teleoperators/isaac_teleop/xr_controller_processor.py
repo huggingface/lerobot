@@ -16,13 +16,9 @@
 
 """Processor step that maps XR controller actions to robot EE targets.
 
-Analogous to ``MapPhoneActionToRobotAction`` in
-``lerobot/teleoperators/phone/phone_processor.py``, this step bridges
-:meth:`XRController.get_action` output to the input contract of the downstream
-closed-loop IK pipeline (``EEBoundsAndSafety`` -> ``InverseKinematicsEEToJoints``).
-
-This module does **not** import ``isaacteleop`` (only the local ``_GRIPPER_MOTOR_SCALE``
-from ``base``), so it can be unit-tested without the XR runtime.
+Analogous to ``MapPhoneActionToRobotAction``, this bridges the clutch-rebased EE pose to
+the IK pipeline's input contract (``EEBoundsAndSafety`` -> ``InverseKinematicsEEToJoints``).
+Pure (no ``isaacteleop``), so it is unit-testable without the XR runtime.
 """
 
 from __future__ import annotations
@@ -42,33 +38,16 @@ from .base import _GRIPPER_MOTOR_SCALE
 class MapXRControllerActionToRobotAction(RobotActionProcessorStep):
     """Maps an absolute base-frame EE pose + gripper closedness to the IK input contract.
 
-    A pure, stateless per-frame rename with no clutch logic of its own: the owning
-    loop owns the clutch (latches the engage origin and rebases the controller
-    delta onto the EE), so the ``ee_pose`` reaching this step is the already-rebased
-    *absolute* base-frame target. Each frame it:
+    Pure, stateless rename (the owning loop's clutch already produced the absolute base-frame
+    target). Each frame it writes:
 
-    - writes ``ee.x/y/z = ee_pose[:3]`` (the absolute base-frame position target);
-    - writes ``ee.wx/wy/wz`` = the rotvec of the absolute base-frame orientation
-      target ``ee_pose[3:7]`` (the controller grip quaternion, already clutch-rebased
-      upstream). ``InverseKinematicsEEToJoints`` reads these as a rotvec orientation
-      target; with a small ``orientation_weight`` the 5-DOF SO-101 tracks it softly
-      (position dominates). All six ``ee.*`` components must be present for the IK
-      step to accept the action;
-    - writes ``ee.gripper_pos = (1 - closedness) * _GRIPPER_MOTOR_SCALE`` (absolute jaw
-      target in motor units ``[0, 100]``, RANGE_0_100; the SO-101 calibrates 100=open,
-      0=closed, so closedness is inverted here), passed straight through to
-      ``gripper.pos`` by the IK step.
+    - ``ee.x/y/z`` = ``ee_pose[:3]`` (position [m]);
+    - ``ee.wx/wy/wz`` = rotvec of ``ee_pose[3:7]`` (orientation; the IK tracks it softly at a
+      small ``orientation_weight`` on the 5-DOF SO-101);
+    - ``ee.gripper_pos`` = ``(1 - closedness) * _GRIPPER_MOTOR_SCALE`` (jaw target [0, 100],
+      RANGE_0_100 where 100 = open, so closedness is inverted).
 
-    Input keys (from the owning loop's clutch):
-        - ``ee_pose``: ``np.ndarray`` shape ``(7,)`` — ``[x,y,z,qx,qy,qz,qw]`` (base frame),
-          the clutch-rebased absolute position + orientation target.
-        - ``closedness``: ``float`` — jaw closedness in ``[0, 1]`` (0=open, 1=closed).
-
-    Output keys:
-        - ``ee.x``, ``ee.y``, ``ee.z``: ``float`` — absolute base-frame position target [m].
-        - ``ee.wx``, ``ee.wy``, ``ee.wz``: ``float`` — absolute base-frame orientation
-          target as a rotvec [rad].
-        - ``ee.gripper_pos``: ``float`` — absolute jaw target in motor units ``[0, 100]``.
+    Input keys: ``ee_pose`` ``(7,)`` ``[x,y,z,qx,qy,qz,qw]``, ``closedness`` float in [0, 1].
     """
 
     def action(self, action: RobotAction) -> RobotAction:

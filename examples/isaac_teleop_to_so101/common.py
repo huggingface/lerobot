@@ -16,27 +16,17 @@
 
 """Shared device + control-loop infrastructure for the Isaac Teleop -> SO-101 examples.
 
-Consumed by ``teleoperate.py`` (drive the arm live) and ``record.py`` (drive + save a
-LeRobot dataset). Both build a per-device :class:`Device` bundle here and run the same
-branchless loop: read -> (maybe command) -> hold-when-idle -> sleep. :func:`build_device`
-connects the SO-101 follower, dispatches on ``--teleop.type`` (``xr_controller`` |
-``so101_leader``) to the matching ``setup_*``, and runs its pre-loop ``startup``.
+Consumed by ``teleoperate.py`` and ``record.py``, which both build a per-device
+:class:`Device` bundle and run the same loop: read -> (maybe command) -> hold-when-idle ->
+sleep. A :class:`Device` bundles three closures: ``compute(obs) -> RobotAction | None``
+(``None`` = hold at the measured pose while idle), ``startup``, and ``cleanup``. The devices:
 
-A :class:`Device` bundles three closures: ``compute(obs) -> RobotAction | None`` (the
-per-frame action, or ``None`` to hold at the measured pose when the device is idle — XR
-clutch disengaged or leader stream stale), ``startup`` (pre-loop slew / warm-up), and
-``cleanup`` (reap / disconnect). The two devices:
-
-* ``xr_controller`` — a thin :class:`XRController` reader whose raw grip pose an in-loop
+* ``xr_controller`` — a thin :class:`XRController` whose raw grip pose an in-loop
   :class:`Clutch` turns into an EE target for LeRobot's Cartesian IK pipeline.
-* ``so101_leader`` — a back-drivable SO-101 leader arm mirrored 1:1 into the follower
-  (no clutch, no IK).
+* ``so101_leader`` — a back-drivable leader arm mirrored 1:1 into the follower.
 
-Requires the ``isaac-teleop`` extra (``isaacteleop``) and an OpenXR runtime.
-
-The user-facing guide — pipeline diagrams, the clutch/engage model, the startup safety
-contracts, and the ``so101_leader`` plugin setup — is ``docs/source/isaac_teleop.mdx``;
-this docstring only orients a reader of the source.
+Requires the ``isaac-teleop`` extra and an OpenXR runtime. User-facing guide:
+``docs/source/isaac_teleop.mdx``.
 """
 
 import json
@@ -48,6 +38,7 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 from typing import Protocol
 
@@ -77,20 +68,18 @@ from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, HF_LEROBOT_HOME, TELEOPERATORS
 from lerobot.utils.robot_utils import precise_sleep
 
+# Fixed rate [Hz] for the teleoperate loop and the pre-loop slews / connect-wait poll sleeps.
 FPS = 30
 
-# CloudXR device-profile env file passed to the launcher (see default.env next to this
-# script). Resolved absolutely so it loads regardless of the working dir. Shared by both
-# devices.
-CLOUDXR_ENV_FILE = str(Path(__file__).parent / "default.env")
+# CloudXR device-profile env file passed to the launcher (see default.env in this package).
+CLOUDXR_ENV_FILE = str(files(__package__) / "default.env")
 
 
 class LoopConfig(Protocol):
-    """Structural type for the loop/launch knobs ``build_device`` + the ``setup_*`` read.
+    """Structural type for the loop/launch knobs ``build_device`` and the ``setup_*`` read.
 
-    Both ``TeleoperateConfig`` and ``RecordConfig`` satisfy this (a knob is ignored for the
-    device it does not apply to); typing against the Protocol keeps ``common`` decoupled from
-    either entry point's concrete config.
+    Both ``TeleoperateConfig`` and ``RecordConfig`` satisfy it, keeping ``common`` decoupled
+    from either entry point's concrete config.
     """
 
     teleop: IsaacTeleopConfig
@@ -102,9 +91,8 @@ class LoopConfig(Protocol):
     align_duration: float
 
 
-# A per-device bundle returned by setup_xr / setup_leader and consumed by the one shared
-# loop. ``compute(obs) -> RobotAction | None`` returns None to mean "idle -> hold at the
-# measured pose"; ``startup`` runs the pre-loop slew/warm-up; ``cleanup`` reaps/disconnects.
+# Per-device bundle consumed by the shared loop. ``compute`` returns None to mean
+# "idle -> hold at the measured pose"; ``startup`` warms up; ``cleanup`` reaps/disconnects.
 @dataclass(frozen=True)
 class Device:
     compute: Callable[[RobotObservation | None], RobotAction | None]
@@ -125,11 +113,8 @@ def slew(
 ) -> None:
     """Linearly slew all joints from their current measured pose toward a target.
 
-    ``target_fn`` is called EACH step and returns the per-joint target in motor units.
-    XR passes a constant closure (the fixed reset pose); the leader passes a LIVE re-read
-    (``lambda: leader_now``) so at ``alpha == 1`` the follower lands on the leader's
-    *current* pose and the handoff to the 1:1 mirror is continuous even if the operator
-    keeps moving the leader during the ramp.
+    ``target_fn`` is called EACH step, so the leader can pass a live re-read (landing on its
+    current pose at ``alpha == 1`` for a continuous handoff) while XR passes a constant.
     """
     obs = robot.get_observation()
     start = {name: float(obs[f"{name}.pos"]) for name in motor_names}
@@ -146,24 +131,19 @@ def slew(
 # XR controller device
 # ============================================================================
 
-# Per-frame EE rate limit [m]. EEBoundsAndSafety (raise_on_jump=False below) clamps
-# any per-frame position change above this instead of raising, so MAX_EE_STEP_M is a
-# safety rate limit, not a crash threshold: at FPS=30, 0.1 m/frame caps EE speed at
-# ~3 m/s, which deliberate teleop rarely exceeds while still absorbing controller
-# tracking glitches as a single slow frame. (Only the per-frame change is bounded;
-# the absolute target can still be far — that is what end_effector_bounds clips.)
+# Per-frame EE rate limit [m]. With raise_on_jump=False, EEBoundsAndSafety clamps an
+# over-limit step instead of raising, absorbing a tracking glitch as one slow frame. At
+# FPS=30, 0.1 m/frame caps EE speed at ~3 m/s. (end_effector_bounds clips the absolute target.)
 MAX_EE_STEP_M = 0.1
 
-# Orientation weight for the IK. Small but nonzero: the controller's (clutch-rebased)
-# orientation is fed to the solver as a soft target so the wrist follows the hand,
-# but position still dominates. The SO-101 is 5-DOF and CANNOT realize an arbitrary
-# 3-DOF orientation, so the wrist tracks orientation only partially by design — turn
-# this up to favor orientation over position, down (or 0.0) for position-only.
+# Soft-orientation IK weight: small but nonzero so the wrist follows the hand while position
+# dominates (the 5-DOF SO-101 cannot realize an arbitrary orientation). 0.0 = position-only.
 IK_ORIENTATION_WEIGHT = 0.01
 
 
 def _ensure_so101_urdf() -> str:
-    """Return the cached SO-101 URDF path, fetching the whole ``so101`` folder (URDF + meshes) from the public ``lerobot/robot-urdfs`` HF bucket into the LeRobot cache on first use and reusing it after."""
+    """Return the cached SO-101 URDF path, fetching the ``so101`` folder (URDF + meshes) from
+    the public ``lerobot/robot-urdfs`` HF bucket into the LeRobot cache on first use."""
     dest_dir = HF_LEROBOT_HOME / "robot-urdfs" / "so101"
     urdf_path = dest_dir / "so101_new_calib.urdf"
     if not urdf_path.exists():
@@ -179,12 +159,9 @@ RESET_DURATION_S = 5.0
 # Optional cached file written by override_reset_pose.py. When present it takes priority over RESET_ORIGIN_DEG.
 RESET_POSE_FILE = str(HF_LEROBOT_HOME / "reset_poses" / "{robot_name}" / "{robot_id}.json")
 
-# Reset target in each motor's native units (arm joints in degrees, gripper in
-# MotorNormMode.RANGE_0_100 where 100 = fully open, 0 = fully closed). These are an
-# empirically recorded comfortable pose (elbow/wrist bent) that avoids the boundary
-# singularity of a fully-extended 5-DOF arm; they assume standard calibration where
-# 0° = URDF 0 rad (homing pose). Override per-setup by back-driving the arm and running
-# override_reset_pose.py, which writes the per-arm reset pose file (it takes priority over these).
+# Reset target in each motor's native units (arm joints in degrees, gripper RANGE_0_100,
+# 100 = open). An empirically comfortable pose (elbow/wrist bent) avoiding the singularity of
+# a fully-extended arm; assumes standard calibration. Override per-arm via override_reset_pose.py.
 RESET_ORIGIN_DEG: dict[str, float] = {
     "shoulder_pan": -4.0,
     "shoulder_lift": -103.0,
@@ -204,8 +181,9 @@ def _load_reset_target(reset_pose_file: Path, motor_names: list[str]) -> dict[st
     return {name: RESET_ORIGIN_DEG.get(name, 0.0) for name in motor_names}
 
 
-# CloudXR web client URL + the WSS-proxy/cert port (Isaac Teleop quick start, step 5).
+# CloudXR web client URL opened in the headset (Isaac Teleop quick start, step 5).
 _CLOUDXR_WEB_CLIENT_URL = "https://nvidia.github.io/IsaacTeleop/client"
+# WSS-proxy / self-signed-cert port the operator accepts in-browser before connecting.
 _CLOUDXR_WSS_PORT = 48322
 # How often to re-print the connection hint while waiting for the headset [s].
 _XR_CONNECT_REMINDER_S = 15.0
@@ -216,11 +194,8 @@ _SKIP_IFACE_PREFIXES = ("docker", "br-", "veth", "virbr", "l4tbr")
 
 
 def _primary_ipv4() -> str | None:
-    """The workstation's primary outbound IPv4 (the default-route interface).
-
-    Standard UDP-socket trick: ``connect()`` on a datagram socket selects the egress
-    interface WITHOUT sending any packets, then ``getsockname()`` reports its IP.
-    """
+    """The workstation's primary outbound IPv4, via the UDP-socket trick (``connect()`` on a
+    datagram socket selects the egress interface without sending packets)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("8.8.8.8", 80))
@@ -234,10 +209,9 @@ def _primary_ipv4() -> str | None:
 def _candidate_ipv4s() -> list[tuple[str, str]]:
     """Return ``[(interface, ipv4), ...]`` the headset might reach this workstation at.
 
-    Lists each interface's IPv4 (via ``psutil`` when available), dropping loopback
-    (127.x) and link-local (169.254.x) addresses plus virtual/bridge/USB-gadget
-    interfaces (see ``_SKIP_IFACE_PREFIXES``), with the primary outbound interface
-    first. Falls back to just the primary IP when ``psutil`` is unavailable.
+    Lists each interface's IPv4 via ``psutil`` (dropping loopback, link-local, and the
+    virtual/bridge interfaces in ``_SKIP_IFACE_PREFIXES``), primary outbound first. Falls
+    back to just the primary IP when ``psutil`` is unavailable.
     """
     primary = _primary_ipv4()
     found: list[tuple[str, str]] = []
@@ -280,12 +254,8 @@ def _print_xr_connect_help() -> None:
 
 
 def _wait_for_xr_controller(teleop_device: XRController) -> None:
-    """Block until the XR controller is tracked (headset connected + controllers live).
-
-    Prints connection instructions, then polls ``get_action()`` until
-    :attr:`XRController.is_tracking`, re-printing a reminder every
-    ``_XR_CONNECT_REMINDER_S`` seconds. User-paced; ``Ctrl-C`` aborts (no hard timeout —
-    donning a headset and connecting is operator-driven). Mirrors :func:`_wait_for_leader`.
+    """Block until the XR controller is tracked, polling ``get_action()`` and re-printing a
+    reminder every ``_XR_CONNECT_REMINDER_S``. User-paced; ``Ctrl-C`` aborts (no hard timeout).
     """
     _print_xr_connect_help()
     print("Waiting for the headset controllers to start streaming…  (Ctrl-C to abort)")
@@ -312,34 +282,20 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
     teleop_config = cfg.teleop  # XRControllerConfig (selected via --teleop.type=xr_controller)
     teleop_device = XRController(teleop_config)
 
-    # Post-processing: rebased EE pose action -> joint action. The clutch (below)
-    # turns the raw controller grip pose into an absolute base-frame ee_pose; these
-    # steps map it to joint targets.
+    # The clutch (below) turns the raw grip pose into an absolute base-frame ee_pose; this
+    # pipeline maps it to joint targets: rename -> bounds/rate-limit -> IK.
     xr_to_robot_joints_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
         steps=[
-            # Stateless rename: ee.x/y/z = the clutch's absolute base-frame position,
-            # ee.wx/wy/wz = the clutch's absolute base-frame orientation rotvec (fed to the
-            # IK at IK_ORIENTATION_WEIGHT), ee.gripper_pos = (1 - closedness) * 100.
             MapXRControllerActionToRobotAction(),
-            # Clip to the workspace + RATE-LIMIT each frame. raise_on_jump=False:
-            # an over-limit step (e.g. a transient XR controller tracking glitch)
-            # is clamped to MAX_EE_STEP_M and warned, NOT raised -- a crash mid-loop
-            # would leave the arm uncontrolled. A glitch is absorbed as one slow
-            # frame; a target that is *persistently* out of reach will warn every
-            # frame (investigate base_T_anchor, not this clamp).
-            # Workspace clip: the z floor is 0.0 (the table plane) so a stray target
-            # cannot drive the EE below the table; x/y stay at the loose [-1,1]m box.
+            # raise_on_jump=False: an over-limit step (e.g. a tracking glitch) is clamped +
+            # warned instead of raised, since a crash mid-loop would leave the arm uncontrolled.
+            # z floor 0.0 keeps a stray target above the table; x/y stay at a loose [-1,1]m box.
             EEBoundsAndSafety(
                 end_effector_bounds={"min": [-1.0, -1.0, 0.0], "max": [1.0, 1.0, 1.0]},
                 max_ee_step_m=MAX_EE_STEP_M,
                 raise_on_jump=False,
             ),
-            # Soft-orientation IK (orientation_weight=IK_ORIENTATION_WEIGHT): the
-            # clutch-rebased controller orientation is fed as a target so the wrist
-            # follows the hand, but the weight is small so position dominates — the
-            # SO-101 is 5-DOF and cannot realize an arbitrary 3-DOF orientation.
-            # initial_guess_current_joints=False: warm-start each solve from the
-            # PREVIOUS IK solution rather than re-seeding from the measured joints, so
+            # initial_guess_current_joints=False: warm-start from the previous IK solution so
             # the joint trajectory stays continuous frame-to-frame.
             InverseKinematicsEEToJoints(
                 kinematics=kinematics_solver,
@@ -359,9 +315,8 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
 
     def startup() -> None:
         nonlocal clutch
-        # Bring up CloudXR + the OpenXR session FIRST, then wait for the operator to don
-        # the headset and connect BEFORE moving the arm — so the reset slew happens while
-        # they are watching in VR (mirrors the leader waiting for its plugin to stream).
+        # Connect and wait for the operator to don the headset BEFORE moving the arm, so the
+        # reset slew happens while they are watching in VR.
         teleop_device.connect()
         if not teleop_device.is_connected:
             raise ValueError("Teleop is not connected!")
@@ -376,9 +331,8 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
             slew(robot, motor_names, lambda: target, cfg.reset_duration)
             print("Reset complete.")
 
-        # Seed the clutch home from the arm's MEASURED pose (FK of the joints read right
-        # after the slew, or right now under --reset_to_origin=false). Runs UNCONDITIONALLY
-        # so the first engage is jump-free either way.
+        # Seed the clutch home from the arm's measured pose (FK of the current joints) so the
+        # first engage is jump-free, whether or not a reset slew ran.
         obs0 = robot.get_observation()
         q_measured_deg = np.array([float(obs0[f"{name}.pos"]) for name in motor_names], dtype=float)
         home_base_T_ee = kinematics_solver.forward_kinematics(q_measured_deg)  # noqa: N806
@@ -403,15 +357,12 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
             clutch.engage(grip_pos, grip_quat)
         prev_enabled = enabled
 
-        # SAFETY GATE: command the robot ONLY while the clutch is engaged. While
-        # disengaged, return None so the shared loop re-sends the MEASURED joints (an
-        # explicit hold) — launching the script (clutch released) never moves the arm,
-        # and releasing the clutch mid-session freezes it in place.
+        # SAFETY GATE: command the robot ONLY while the clutch is engaged; otherwise return
+        # None so the loop holds the measured joints (releasing the clutch freezes the arm).
         if not enabled:
             return None
 
-        # Rebase the raw grip pose (position AND orientation) onto the EE, then run the
-        # post-processing pipeline (rename -> bounds -> IK). closedness from the trigger.
+        # Rebase the raw grip pose onto the EE, then run the pipeline. closedness = trigger.
         ee_pos, ee_quat = clutch.rebase(grip_pos, grip_quat)
         ee_action = {
             "ee_pose": np.concatenate([ee_pos, ee_quat]).astype(np.float32),
@@ -432,22 +383,17 @@ ALIGN_DURATION_S = 3.0
 # How long to wait for the leader plugin to start streaming before aligning / looping.
 LEADER_WARMUP_TIMEOUT_S = 20.0
 
-# Calibration subdir under HF_LEROBOT_CALIBRATION/teleoperators/. The plugin (NOT the LeRobot
-# device) converts the leader's servo ticks to radians, so it needs the SAME tick->radian
-# calibration the serial SO-101 leader uses. lerobot-calibrate stores that under the serial
-# leader's name -- SO101Leader.name == "so_leader" (the shared SO-100/SO-101 leader dir) -- so the
-# Isaac flow reuses that file rather than maintaining its own under the device's own name.
+# The plugin converts the leader's servo ticks to radians, so it reuses the serial SO-101
+# leader's calibration, stored by lerobot-calibrate under SO101Leader.name == "so_leader".
 SO_LEADER_CALIBRATION_NAME = "so_leader"
 
 
 def _leader_calibration_path(cfg: LoopConfig) -> Path | None:
-    """Infer the LeRobot-format calibration JSON the launched plugin should read, or None.
+    """Infer the calibration JSON the launched plugin should read, or None.
 
-    Path convention (mirrors the serial SO-101 leader): ``HF_LEROBOT_CALIBRATION /
-    teleoperators / so_leader / {--teleop.id}.json`` (or ``--teleop.calibration_dir`` if set).
-    Returns the path only when it exists; otherwise returns None so the plugin falls back to
-    its built-in defaults, warning when an id was given but no file was found. With no
-    ``--teleop.id`` the path cannot be inferred (returns None silently).
+    Path convention: ``HF_LEROBOT_CALIBRATION / teleoperators / so_leader / {--teleop.id}.json``
+    (or ``--teleop.calibration_dir`` if set). Returns None (plugin falls back to defaults) when
+    it does not exist, warning if an id was given, or when no ``--teleop.id`` is set.
     """
     if not cfg.teleop.id:
         return None
@@ -497,8 +443,7 @@ def _maybe_launch_plugin(cfg: LoopConfig) -> subprocess.Popen | None:
     backend = f"leader on {leader_port}" if leader_port else "synthetic trajectory"
     print(f"launching plugin: {cfg.launch_plugin} ({backend})")
     # Positional args: [device_path] [collection_id] [calibration_file]. Empty device_path ->
-    # synthetic backend. The calibration is the leader's tick->radian map; only real hardware
-    # needs it, so it is inferred (from --teleop.id) and appended only when a port is set.
+    # synthetic backend. Calibration (only real hardware needs it) is appended when a port is set.
     argv = [cfg.launch_plugin, leader_port, cfg.teleop.collection_id]
     if leader_port:
         calib_path = _leader_calibration_path(cfg)
@@ -534,9 +479,8 @@ def setup_leader(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
         if cfg.align:
             print(f"Aligning follower to leader over {cfg.align_duration:.1f}s…")
 
-            # Re-read the LIVE leader pose ONCE per step (slew calls this each step) so
-            # alpha=1 lands on the leader's current pose; reading once per step keeps every
-            # joint of the target from a single coherent frame.
+            # Re-read the live leader pose once per step so alpha=1 lands on its current pose
+            # from a single coherent frame.
             def _leader_target() -> dict[str, float]:
                 leader_now = teleop.get_action()
                 return {name: float(leader_now[f"{name}.pos"]) for name in motor_names}
@@ -550,9 +494,8 @@ def setup_leader(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
 
     def compute(robot_obs: RobotObservation | None) -> RobotAction | None:
         leader_action = teleop.get_action()
-        # Hold the follower at its measured pose when the leader drops out (stale stream),
-        # rather than commanding a held-last (possibly old) target: return None so the shared
-        # loop re-sends the measured joints.
+        # Hold the follower at its measured pose when the leader drops out (stale stream)
+        # rather than commanding a possibly-old target.
         if not teleop.is_tracking:
             return None
         return leader_action
@@ -577,15 +520,9 @@ def setup_leader(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
 def build_device(cfg: LoopConfig) -> tuple:
     """Connect the follower, build the selected Isaac device, and run its pre-loop startup.
 
-    Shared by ``teleoperate.py`` and ``record.py``. Defaults the CloudXR profile, connects the
-    follower FIRST (so the startup slew / clutch-home seed can read live joints), dispatches on
-    ``--teleop.type`` (``so101_leader`` -> :func:`setup_leader`, else :func:`setup_xr`), then
-    runs ``device.startup()`` (XR reset slew / leader align + warm-up) BEFORE returning —
-    matching the original order, where startup runs before any dataset creation in ``record.py``.
-
-    On success returns ``(robot, device, motor_names)`` with the follower connected and the
-    device warmed up. If any step after ``connect()`` fails (or is interrupted), the follower
-    is disconnected before the error propagates, so a failed setup never leaks the connection.
+    Connects the follower FIRST (so the startup slew / clutch-home seed can read live joints),
+    dispatches on ``--teleop.type``, then runs ``device.startup()`` before returning. On any
+    failure after ``connect()`` the follower is disconnected so the connection never leaks.
 
     Returns ``(robot, device, motor_names)``.
     """
@@ -604,20 +541,15 @@ def build_device(cfg: LoopConfig) -> tuple:
 
     # The degree-based pipeline relies on --robot.use_degrees (default True).
     robot = make_robot_from_config(cfg.robot)
-    # Connect the follower FIRST so the startup slew and clutch-home seed can use live joint
-    # readings.
+    # Connect FIRST so the startup slew and clutch-home seed can read live joints.
     robot.connect()
-    # Everything after connect() can fail (device setup, the ~30s CloudXR startup, or a
-    # Ctrl-C while donning the headset). build_device runs OUTSIDE the callers' try/finally,
-    # so on any failure disconnect the follower here — otherwise the connection leaks.
+    # Everything after connect() can fail; this runs outside the callers' try/finally, so
+    # disconnect the follower on any failure to avoid leaking the connection.
     device: Device | None = None
     try:
-        # Joint names in action order. Robot-agnostic: every LeRobot robot advertises its
-        # motors as ``{name}.pos`` action features, so this works without assuming a ``.bus``
-        # (letting non-bus robots plug in as the integration grows beyond the SO-101).
+        # Joint names in action order, read from {name}.pos action features (robot-agnostic).
         motor_names = [key.removesuffix(".pos") for key in robot.action_features if key.endswith(".pos")]
 
-        # Dispatch on the parsed device config type (the registry only yields these two).
         if isinstance(cfg.teleop, SO101LeaderArmConfig):
             device = setup_leader(cfg, robot, motor_names)
         else:
@@ -625,8 +557,7 @@ def build_device(cfg: LoopConfig) -> tuple:
 
         device.startup()
     except BaseException:
-        # Reap a partially-started teleop device (half-open session / spawned plugin) if it
-        # got that far, then always disconnect the follower before propagating.
+        # Reap a partially-started device, then always disconnect the follower.
         if device is not None:
             with suppress(Exception):
                 device.cleanup()
@@ -642,24 +573,14 @@ def build_device(cfg: LoopConfig) -> tuple:
 
 
 def init_keyboard_listener():
-    """``(listener, events)`` for the recording shortcuts — terminal-first (SSH-friendly).
+    """Recording shortcuts, terminal-first so they work over SSH.
 
-    This example is normally driven from a terminal, often over SSH, with the arm/headset
-    in front of the operator rather than the workstation's console. Upstream's
-    ``init_keyboard_listener`` prefers pynput's GLOBAL listener whenever a local X display
-    is present (``DISPLAY`` set, non-Wayland) — but that captures the workstation console,
-    not the SSH terminal, so the shortcuts silently do nothing over SSH. So whenever stdin
-    is a TTY we use upstream's stdlib :class:`TerminalKeyListener` directly (it reads the
-    controlling terminal, restores it on exit, and decodes the same keys). With no TTY
-    (GUI launch / piped) we defer to upstream, which selects pynput or a headless no-op.
-
-    Controls (both backends): Right / ``n`` end the episode early, Left / ``r`` re-record,
-    Esc / ``q`` stop recording. Returns ``(listener, events)`` where ``listener`` has
-    ``.stop()`` (or is ``None`` when headless) and ``events`` holds the ``exit_early`` /
-    ``rerecord_episode`` / ``stop_recording`` flags the key presses set.
+    Whenever stdin is a TTY we use the stdlib :class:`TerminalKeyListener` directly rather
+    than upstream's pynput-first :func:`init_keyboard_listener`, whose global listener would
+    capture the workstation console instead of this (often SSH) terminal. With no TTY we defer
+    to upstream (pynput on a GUI, else headless no-op).
     """
     if not (sys.stdin is not None and sys.stdin.isatty()):
-        # No controlling terminal: defer to upstream (pynput on a GUI, else headless no-op).
         from lerobot.utils.keyboard_input import init_keyboard_listener as _upstream
 
         return _upstream()
@@ -668,8 +589,8 @@ def init_keyboard_listener():
 
     events = {"exit_early": False, "rerecord_episode": False, "stop_recording": False}
 
-    # Same key -> control mapping upstream's init uses; n/r/q are the arrow/Esc equivalents
-    # that survive laggy SSH/VNC links where escape sequences can split.
+    # n/r/q are the arrow/Esc equivalents that survive escape-sequence splitting over laggy
+    # SSH/VNC links. Case-insensitive so Shift+letter still works.
     def on_key(name: str) -> None:
         key = name.lower()
         if key in ("right", "n"):

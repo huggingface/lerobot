@@ -16,40 +16,19 @@
 
 """SO-101 leader-arm device for NVIDIA Isaac Teleop, exposed to LeRobot.
 
-``SO101LeaderArm`` is the second concrete :class:`IsaacTeleopTeleoperator` device
-(after :class:`~lerobot.teleoperators.isaac_teleop.teleop_xr_controller.XRController`)
-and the first on Isaac Teleop's *generic joint-space device* path. The leader is a
-back-drivable SO-101 arm whose six joint angles are streamed as a ``JointStateOutput``
-FlatBuffer by the native ``so101_leader`` plugin over the OpenXR tensor transport; this
-device reads them each frame via a ``JointStateSource`` and converts them into
-follower-ready ``{joint}.pos`` values.
+The leader is a back-drivable SO-101 whose six joint angles are streamed (in radians) by
+the native ``so101_leader`` plugin; this device reads them via a ``JointStateSource`` and
+converts them into follower-ready ``{joint}.pos``. Same kinematics as the follower, so it
+needs no retargeting — a 1:1 joint mirror, direct joint drive.
 
-Unlike the XR controller (raw grip pose -> clutch -> IK in the owning loop), a same-
-kinematics leader needs **no** retargeting: the leader and follower share the SO-101
-geometry, so the action is a 1:1 joint mirror -- exactly the ``--mode joint`` path of
-``Teleop/examples/teleop/python/joint_space_device_example.py``, but emitted in the
-follower's native units instead of an Isaac Lab radian action. This makes the device a
-drop-in joint-space leader: :meth:`get_action` returns ``{joint}.pos`` ready for
-``robot.send_action`` (direct joint drive, like ``lerobot-teleoperate`` with the serial
-``so101_leader``), so no LeRobot-side ``JointStateRetargeter`` / ``TensorReorderer`` /
-processor pipeline is needed. See the ``leader`` subcommand of
-``examples/isaac_teleop_to_so101/teleoperate.py``.
+Units (converted in the device so the output is always follower-valid):
 
-Units (the conversion lives in the device so its output is always follower-valid -- there
-is no raw-radians intermediate a caller could accidentally send to the follower):
+* arm joints: ``rad2deg`` — correct only if the leader's calibrated zero and the follower's
+  homing map to the same physical zero (the standard same-hardware assumption).
+* gripper: normalized from ``[gripper_open_rad, gripper_close_rad]`` to RANGE_0_100.
 
-* arm joints: ``deg = rad2deg(rad)``. Correct only if the leader's calibrated zero
-  (``home_ticks``) and the follower's homing map to the same physical zero -- the standard
-  same-hardware leader/follower assumption (the plugin README notes it "reproduces LeRobot's
-  joint angles in radians rather than degrees"). Cannot be verified from here.
-* gripper: normalized from ``[gripper_open_rad, gripper_close_rad]`` to the follower's
-  RANGE_0_100 jaw target (100 = open, 0 = closed), matching the SO-101 follower calibration
-  used by ``MapXRControllerActionToRobotAction``.
-
-The ``isaacteleop`` package is an optional, separately distributed NVIDIA dependency (the
-``isaac-teleop`` extra); all imports of it are deferred so this module -- and the pure
-:func:`leader_joints_to_robot_action` converter (unit-tested without the XR runtime) -- can
-be imported without it.
+``isaacteleop`` imports are deferred so this module — and the pure
+:func:`leader_joints_to_robot_action` converter — import without it.
 """
 
 from __future__ import annotations
@@ -61,12 +40,9 @@ from lerobot.types import RobotAction
 from .base import _GRIPPER_MOTOR_SCALE, IsaacTeleopTeleoperator
 from .config_isaac_teleop import SO101LeaderArmConfig
 
-# Canonical SO-101 DOF names and order. Matches the ``so101_leader`` plugin's stream
-# (``JointStateOutput.joints[*].name``) and the SO-101 follower's motor order; passed to the
-# ``JointStateSource`` as its output layout and used as the emitted action order. The source
-# maps the incoming stream to this layout BY NAME, and :func:`_joints_group_to_rad` reads it
-# back by the group's own per-slot names (not by this list's index), so a layout mismatch
-# cannot silently mislabel a DOF.
+# Canonical SO-101 DOF names and order — matches the plugin stream and the follower's motor
+# order. Passed to the ``JointStateSource`` as its output layout; the source maps by name and
+# :func:`_joints_group_to_rad` reads back by name, so a layout mismatch can't mislabel a DOF.
 SO101_LEADER_JOINTS = [
     "shoulder_pan",
     "shoulder_lift",
@@ -86,20 +62,10 @@ def leader_joints_to_robot_action(
 ) -> RobotAction:
     """Convert streamed leader joint angles [rad] to follower-ready ``{joint}.pos``.
 
-    Pure (no ``isaacteleop``, no I/O), so the unit math is unit-testable without the XR
-    runtime. Iteration follows ``joints_rad`` insertion order, so pass it in
-    :data:`SO101_LEADER_JOINTS` order for a stable action layout.
-
-    Args:
-        joints_rad: ``{joint_name: angle [rad]}`` for every SO-101 DOF (gripper included).
-        gripper_joint: Which key in ``joints_rad`` is the gripper (RANGE_0_100 target);
-            every other joint is converted ``rad2deg``.
-        gripper_open_rad: Leader gripper angle [rad] mapped to jaw 100 (fully open).
-        gripper_close_rad: Leader gripper angle [rad] mapped to jaw 0 (fully closed).
-
-    Returns:
-        ``{f"{joint}.pos": value}`` -- arm joints in degrees, gripper in RANGE_0_100
-        (clipped to ``[0, 100]``) -- directly sendable to an SO-101 follower.
+    Pure (no ``isaacteleop``, no I/O). Iteration follows ``joints_rad`` insertion order, so
+    pass it in :data:`SO101_LEADER_JOINTS` order for a stable layout. Arm joints are
+    converted ``rad2deg``; ``gripper_joint`` is normalized from
+    ``[gripper_open_rad, gripper_close_rad]`` to RANGE_0_100 (clipped).
     """
     action: RobotAction = {}
     span = gripper_close_rad - gripper_open_rad
@@ -117,14 +83,9 @@ def leader_joints_to_robot_action(
 def _joints_group_to_rad(joints) -> dict[str, float]:
     """Read a ``JointStateSource`` output group into ``{joint_name: angle [rad]}``.
 
-    Pure (no ``isaacteleop`` import; duck-typed on the group), so it is unit-testable without
-    the XR runtime. The group is positional (an integer-indexed ``TensorGroup``, no string
-    keys), but every slot carries its declared joint name in ``group.group_type.types``. We
-    label each value by THAT name rather than by a positional :data:`SO101_LEADER_JOINTS`
-    index: the source maps the incoming stream to its ``joint_names`` layout by name, so
-    keying off the group's own names means a source/layout mismatch surfaces as a wrong or
-    missing joint key here (caught upstream) instead of silently mirroring the wrong DOF onto
-    the follower.
+    Pure (duck-typed on the group). The group is positional but each slot carries its joint
+    name in ``group.group_type.types``; we key off those names (not a positional index) so a
+    layout mismatch surfaces as a wrong/missing key here rather than a mislabeled DOF.
     """
     names = [t.name for t in joints.group_type.types]
     return {name: float(joints[i]) for i, name in enumerate(names)}
@@ -133,16 +94,9 @@ def _joints_group_to_rad(joints) -> dict[str, float]:
 class SO101LeaderArm(IsaacTeleopTeleoperator):
     """SO-101 leader-arm teleoperator (joint-space), direct joint mirror to the follower.
 
-    Wraps a single Isaac Teleop ``JointStateSource`` on ``config.collection_id`` (fed by the
-    native ``so101_leader`` plugin) and reads the six joint angles off it each frame. There
-    is no retargeter and no clutch: :meth:`get_action` returns the leader joints converted
-    to the follower's units (arm: degrees, gripper: RANGE_0_100), ready for
-    ``robot.send_action``.
-
-    When the leader is not streaming this frame (``JointStateSource`` reports the optional
-    output absent), :meth:`get_action` returns the last-known joints (held-last) and
-    :attr:`is_tracking` is ``False`` -- the owning loop should hold the follower at its
-    measured pose rather than command a stale target.
+    Reads the six joint angles off a single ``JointStateSource`` each frame; no retargeter,
+    no clutch. When the leader is not streaming, :meth:`get_action` returns the held-last
+    joints and :attr:`is_tracking` is ``False`` so the owning loop can hold the follower.
     """
 
     config_class = SO101LeaderArmConfig
@@ -162,17 +116,8 @@ class SO101LeaderArm(IsaacTeleopTeleoperator):
     # ------------------------------------------------------------------
 
     def _build_pipeline(self):
-        """Build the joint-mirror pipeline: a single ``JointStateSource`` leaf.
-
-        ::
-
-            JointStateSource(collection_id) ── joints (name-keyed FloatType per DOF)
-
-        The source converts the raw ``JointStateOutput`` FlatBuffer into a name-keyed group
-        of joint positions; ``TeleopSession`` auto-discovers its ``JointStateTracker`` from
-        this pipeline leaf. No retargeter is wired: the leader<->follower share the SO-101
-        kinematics, so :meth:`get_action` does the unit conversion directly.
-        """
+        """Build the joint-mirror pipeline: a single ``JointStateSource`` leaf that converts
+        the raw stream into a name-keyed joint group. No retargeter (shared kinematics)."""
         from isaacteleop.retargeting_engine.deviceio_source_nodes import JointStateSource
         from isaacteleop.retargeting_engine.interface import OutputCombiner
 
@@ -209,15 +154,8 @@ class SO101LeaderArm(IsaacTeleopTeleoperator):
     def get_action(self) -> RobotAction:
         """Step the session and return the leader joints as follower-ready ``{joint}.pos``.
 
-        Steps the session ``RUNNING`` (no clutch lifecycle to gate) and reads the name-keyed
-        joint group off the ``JointStateSource``. When the leader is streaming, the live
-        angles are cached and converted; when it is not (optional output absent, or an
-        unexpected read failure), the last-known angles are reused and :attr:`is_tracking`
-        is set ``False`` so the owning loop can hold the follower.
-
-        Returns:
-            ``{f"{joint}.pos": value}`` -- arm joints in degrees, gripper in RANGE_0_100 --
-            for all six SO-101 DOFs (see :func:`leader_joints_to_robot_action`).
+        When the leader is streaming, the live angles are cached and converted; otherwise the
+        held-last angles are reused and :attr:`is_tracking` is set ``False``.
         """
         result = self._step(execution_events=self._running_events())
 

@@ -16,34 +16,23 @@
 
 """Teleoperate an SO-101 follower arm via NVIDIA Isaac Teleop.
 
-This mirrors ``examples/phone_to_so100/teleoperate.py`` but swaps the phone for an
-Isaac Teleop input device. The CLI is ``lerobot-teleoperate``-style (draccus): a follower
-``--robot.*`` and an input ``--teleop.*``, where ``--teleop.type`` selects the Isaac
-device (``xr_controller`` | ``so101_leader``)::
+``lerobot-teleoperate``-style CLI (draccus): ``--teleop.type`` selects the Isaac device
+(``xr_controller`` | ``so101_leader``), ``--robot.*`` the follower::
 
     # XR (VR) controller: clutch + soft-orientation IK
-    python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
-        --robot.id=so101_follower_arm --teleop.type=xr_controller
+    python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower \
+        --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm --teleop.type=xr_controller
 
     # SO-101 leader arm: 1:1 joint mirror (real leader on /dev/ttyACM1)
-    python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
-        --robot.id=so101_follower_arm --teleop.type=so101_leader \
+    python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower \
+        --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm --teleop.type=so101_leader \
         --teleop.port=/dev/ttyACM1 --teleop.id=so101_leader_arm \
         --launch_plugin=/code/Teleop/install/plugins/so101_leader/so101_leader_plugin
 
-``--teleop.type`` resolves against the Isaac Teleop device registry (its own draccus
-choice registry, see :class:`IsaacTeleopConfig`), so ``so101_leader`` here is the Isaac
-leader, distinct from the serial ``so101_leader`` of ``lerobot-teleoperate``. Device
-config knobs are ``--teleop.*`` (e.g. ``--teleop.clutch_threshold``,
-``--teleop.collection_id``, ``--teleop.auto_launch_cloudxr=false``); loop knobs
-(``--reset_to_origin=false``, ``--align=false``, ``--launch_plugin``) are top-level.
-draccus uses ``--flag=false`` for booleans (no ``--no-*`` form).
-
-The per-device pipelines, clutch/IK/align internals, and the reset-pose behavior all live
-in ``common.py`` (shared with ``record.py``); see its module docstring for the full
-architecture. ``record.py`` runs this same control loop while also saving a LeRobot dataset.
-
-Requires the ``isaac-teleop`` extra (``isaacteleop``) and an OpenXR runtime.
+``--teleop.type`` resolves against the Isaac device registry (see :class:`IsaacTeleopConfig`),
+distinct from the serial ``so101_leader``. The pipelines, clutch/IK/align internals, and
+reset-pose behavior live in ``common.py``. Requires the ``isaac-teleop`` extra and an OpenXR
+runtime.
 """
 
 import time
@@ -66,13 +55,11 @@ from .common import (
 
 @dataclass
 class TeleoperateConfig:
-    """``lerobot-teleoperate``-style CLI for the unified Isaac Teleop -> SO-101 example.
+    """``lerobot-teleoperate``-style CLI for the Isaac Teleop -> SO-101 example.
 
-    ``--teleop.type`` selects the Isaac input device and ``--teleop.*`` its config knobs;
-    ``--robot.*`` configures the SO-101 follower. The fields below are the loop/launch knobs
-    that are not part of either device's config (``--flag=false`` for the booleans). The
-    ``[xr]`` / ``[leader]`` tags mark which device a knob applies to; a knob is ignored for
-    the other device.
+    The fields below are the loop/launch knobs (not part of either device's config); the
+    ``[xr]`` / ``[leader]`` tags mark which device a knob applies to. Use ``--flag=false``
+    for booleans (draccus style).
     """
 
     # Isaac Teleop input device + its knobs (--teleop.type=xr_controller|so101_leader,

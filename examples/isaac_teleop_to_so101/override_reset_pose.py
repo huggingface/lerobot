@@ -16,10 +16,9 @@
 
 """Save the current SO-101 joint positions as the reset-origin pose (override).
 
-Move the arm to the desired reset/home position by hand (torque off), then run
-this script.  It reads the current joint positions and writes them to a per-arm file in the LeRobot cache.
-``teleoperate.py`` / ``record.py`` load that file on startup (matched by ``--robot.id``) and use
-it as the reset target instead of the hardcoded defaults.
+Move the arm to the desired reset pose by hand (torque off), then run this script to write
+those joints to a per-arm file in the LeRobot cache. ``teleoperate.py`` / ``record.py`` load
+it on startup (matched by ``--robot.id``) as the reset target instead of the defaults.
 
 Usage::
 
