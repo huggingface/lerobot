@@ -261,7 +261,7 @@ class AdvantageModule:
 
     def _run_constant_mode(self, record: EpisodeRecord, staging: EpisodeStaging) -> None:
         """Emit a fixed advantage value for every frame (with dropout for CFG)."""
-        num_frames = record.num_frames
+        num_frames = len(record.frame_timestamps)
         rng = np.random.default_rng(seed=self.config.seed + record.episode_index)
 
         rows: list[dict[str, Any]] = []
@@ -269,14 +269,12 @@ class AdvantageModule:
             if rng.random() < self.config.dropout_rate:
                 continue
 
-            timestamp = float(record.frame_timestamps[t]) if t < len(record.frame_timestamps) else 0.0
-
             rows.append(
                 {
                     "role": "user",
                     "content": self.config.constant_value,
                     "style": "advantage",
-                    "timestamp": timestamp,
+                    "timestamp": float(record.frame_timestamps[t]),
                     "camera": None,
                     "tool_calls": None,
                 }
