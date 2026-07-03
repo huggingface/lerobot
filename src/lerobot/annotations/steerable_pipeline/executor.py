@@ -186,7 +186,7 @@ class Executor:
         staging_dir: Path,
         module: Any,
     ) -> PhaseResult:
-        if not module.enabled:
+        if module is None or not module.enabled:
             print(f"[annotate] phase={name} skipped (module disabled)", flush=True)
             return PhaseResult(name=name, episodes_processed=0, episodes_skipped=len(records))
         n = len(records)
@@ -238,7 +238,7 @@ class Executor:
         ``plan`` module with the interjection timestamps so its existing
         prompt path is reused.
         """
-        if not self.plan.enabled or not self.interjections.enabled:
+        if not self.plan or not self.plan.enabled or not self.interjections or not self.interjections.enabled:
             return PhaseResult(name="plan_update", episodes_processed=0, episodes_skipped=len(records))
         processed = 0
         for record in records:
