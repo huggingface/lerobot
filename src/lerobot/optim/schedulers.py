@@ -105,6 +105,28 @@ class ConstantWithWarmupSchedulerConfig(LRSchedulerConfig):
         return LambdaLR(optimizer, lr_lambda, -1)
 
 
+@LRSchedulerConfig.register_subclass("cosine_annealing_with_warmup")
+@dataclass
+class CosineAnnealingWithWarmupSchedulerConfig(LRSchedulerConfig):
+    """Linear warmup followed by cosine annealing from the peak LR to zero.
+
+    Used by EVO1; the annealing phase always spans the remaining training steps.
+    """
+
+    num_warmup_steps: int
+
+    def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
+        def lr_lambda(current_step: int) -> float:
+            if current_step < self.num_warmup_steps:
+                return current_step / max(1, self.num_warmup_steps)
+            progress = (current_step - self.num_warmup_steps) / max(
+                1, num_training_steps - self.num_warmup_steps
+            )
+            return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+
+        return LambdaLR(optimizer, lr_lambda, -1)
+
+
 @LRSchedulerConfig.register_subclass("cosine_decay_with_warmup")
 @dataclass
 class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):

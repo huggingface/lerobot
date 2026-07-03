@@ -73,6 +73,8 @@
     title: LingBot-VA
   - local: fastwam
     title: FastWAM
+  - local: evo1
+    title: EVO1
   - local: groot
     title: NVIDIA GR00T
   - local: xvla
