@@ -175,7 +175,12 @@ class AdvantageConfig:
 
     enabled: bool = True
 
-    # Path or Hub repo ID of the trained distributional value function checkpoint.
+    # Constant advantage label for all frames (e.g. "positive" for SFT iteration 0).
+    # Skips VF inference, dropout still applies for CFG.
+    constant_value: str | None = None
+
+    # Trained value function checkpoint (local path or Hub repo ID).
+    # Ignored when constant_value is set.
     value_function_path: str = ""
 
     # Device to run the value function on.
@@ -204,6 +209,9 @@ class AdvantageConfig:
 
     # Batch size for value function inference.
     batch_size: int = 32
+
+    # Random seed for dropout reproducibility.
+    seed: int = 1729
 
 
 @dataclass

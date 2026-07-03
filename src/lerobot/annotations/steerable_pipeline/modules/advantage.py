@@ -206,8 +206,12 @@ class AdvantageModule:
 
     def run_episode(self, record: EpisodeRecord, staging: EpisodeStaging) -> None:
         """Score one episode and write advantage rows to staging."""
+        if self.config.constant_value:
+            self._run_constant_mode(record, staging)
+            return
+
         if not self.config.value_function_path:
-            logger.warning("No value_function_path configured; skipping advantage scoring.")
+            logger.warning("No value_function_path or constant_value configured; skipping advantage scoring.")
             return
 
         advantages, intervention_mask = self.compute_advantages_for_episode(record)
@@ -215,7 +219,7 @@ class AdvantageModule:
 
         threshold = self._compute_threshold(advantages, intervention_mask)
 
-        rng = np.random.default_rng(seed=hash((record.episode_index, 42)) & 0xFFFFFFFF)
+        rng = np.random.default_rng(seed=self.config.seed + record.episode_index)
 
         rows: list[dict[str, Any]] = []
         for t in range(num_frames):
@@ -253,6 +257,39 @@ class AdvantageModule:
             threshold,
             sum(1 for r in rows if r["content"] == "positive"),
             sum(1 for r in rows if r["content"] == "negative"),
+        )
+
+    def _run_constant_mode(self, record: EpisodeRecord, staging: EpisodeStaging) -> None:
+        """Emit a fixed advantage value for every frame (with dropout for CFG)."""
+        num_frames = record.num_frames
+        rng = np.random.default_rng(seed=self.config.seed + record.episode_index)
+
+        rows: list[dict[str, Any]] = []
+        for t in range(num_frames):
+            if rng.random() < self.config.dropout_rate:
+                continue
+
+            timestamp = float(record.frame_timestamps[t]) if t < len(record.frame_timestamps) else 0.0
+
+            rows.append(
+                {
+                    "role": "user",
+                    "content": self.config.constant_value,
+                    "style": "advantage",
+                    "timestamp": timestamp,
+                    "camera": None,
+                    "tool_calls": None,
+                }
+            )
+
+        staging.write("advantage", rows)
+        logger.debug(
+            "Episode %d: %d/%d frames labeled constant '%s' (dropout=%.2f)",
+            record.episode_index,
+            len(rows),
+            num_frames,
+            self.config.constant_value,
+            self.config.dropout_rate,
         )
 
     def _compute_threshold(self, advantages: np.ndarray, intervention_mask: np.ndarray) -> float:
