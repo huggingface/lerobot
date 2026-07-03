@@ -39,11 +39,11 @@ from lerobot.policies.groot.configuration_groot import (
 )
 from lerobot.policies.groot.modeling_groot import GrootPolicy
 from lerobot.policies.groot.processor_groot import (
+    N1_7_NATIVE_ACTION_HORIZON,
     GrootActionUnpackUnnormalizeStep,
     GrootN17ActionDecodeStep,
     GrootN17PackInputsStep,
     GrootN17VLMEncodeStep,
-    N1_7_NATIVE_ACTION_HORIZON,
     _make_relative_action_training_stats,
     _transform_n1_7_image_for_vlm_albumentations,
     _transform_n1_7_image_for_vlm_torch,

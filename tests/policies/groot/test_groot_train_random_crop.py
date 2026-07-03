@@ -37,21 +37,26 @@ from lerobot.policies.groot.processor_groot import (
 
 def _structured_image(h=480, w=640):
     yy, xx = np.mgrid[0:h, 0:w]
-    return np.stack(
-        [(xx * 255 / w), (yy * 255 / h), ((xx + yy) * 255 / (h + w))], axis=-1
-    ).astype(np.uint8)
+    return np.stack([(xx * 255 / w), (yy * 255 / h), ((xx + yy) * 255 / (h + w))], axis=-1).astype(np.uint8)
 
 
 def test_crop_position_none_is_bitexact_center_crop():
     """crop_position=None must remain byte-identical to the pre-change eval path."""
     img = _structured_image()
     ref = _transform_n1_7_image_for_vlm_albumentations(
-        img, image_crop_size=None, image_target_size=[256, 256],
-        shortest_image_edge=256, crop_fraction=0.95,
+        img,
+        image_crop_size=None,
+        image_target_size=[256, 256],
+        shortest_image_edge=256,
+        crop_fraction=0.95,
     )
     out = _transform_n1_7_image_for_vlm_albumentations(
-        img, image_crop_size=None, image_target_size=[256, 256],
-        shortest_image_edge=256, crop_fraction=0.95, crop_position=None,
+        img,
+        image_crop_size=None,
+        image_target_size=[256, 256],
+        shortest_image_edge=256,
+        crop_fraction=0.95,
+        crop_position=None,
     )
     np.testing.assert_array_equal(ref, out)
 
@@ -59,12 +64,20 @@ def test_crop_position_none_is_bitexact_center_crop():
 def test_crop_position_center_matches_center_crop():
     img = _structured_image()
     center = _transform_n1_7_image_for_vlm_albumentations(
-        img, image_crop_size=None, image_target_size=[256, 256],
-        shortest_image_edge=256, crop_fraction=0.95, crop_position=None,
+        img,
+        image_crop_size=None,
+        image_target_size=[256, 256],
+        shortest_image_edge=256,
+        crop_fraction=0.95,
+        crop_position=None,
     )
     explicit = _transform_n1_7_image_for_vlm_albumentations(
-        img, image_crop_size=None, image_target_size=[256, 256],
-        shortest_image_edge=256, crop_fraction=0.95, crop_position=(0.5, 0.5),
+        img,
+        image_crop_size=None,
+        image_target_size=[256, 256],
+        shortest_image_edge=256,
+        crop_fraction=0.95,
+        crop_position=(0.5, 0.5),
     )
     # int-floor center vs rounded positional center may differ by <=1 px of grid
     assert center.shape == explicit.shape

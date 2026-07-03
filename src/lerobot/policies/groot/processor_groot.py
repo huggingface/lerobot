@@ -464,7 +464,7 @@ def _set_groot_preprocessor_training(
     """
     for step in preprocessor.steps:
         if is_dataclass(step) and any(f.name == "training" for f in fields(step)):
-            setattr(step, "training", training)
+            step.training = training
 
 
 def make_groot_pre_post_processors_from_pretrained(
