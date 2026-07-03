@@ -325,6 +325,12 @@ class GrootConfig(PreTrainedConfig):
     # Set to True only after installing a flash-attn build matching your torch/CUDA env.
     use_flash_attention: bool = False
 
+    # Optional OSS-compatible train-time image color jitter. Values are non-negative magnitudes for
+    # brightness, contrast, saturation, and hue (hue <= 0.5), e.g.
+    # {"brightness": 0.3, "contrast": 0.4, "saturation": 0.5, "hue": 0.08}.
+    # The GR00T preprocessor samples once per sample and replays across all timesteps/camera views.
+    color_jitter_params: dict[str, float] | None = None
+
     # Enable GR00T-style state-relative action chunks (action chunk expressed relative to the current
     # observation state).
     use_relative_actions: bool = False
