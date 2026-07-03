@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+from contextlib import AbstractContextManager, nullcontext
 
 import torch
 
@@ -107,3 +108,25 @@ def is_amp_available(device: str):
         return False
     else:
         raise ValueError(f"Unknown device '{device}.")
+
+
+def get_safe_autocast_context(
+    device: str | torch.device,
+    *,
+    dtype: torch.dtype | None = None,
+    enabled: bool = True,
+) -> AbstractContextManager:
+    """Return a ``torch.autocast`` context, or a no-op when AMP is unsupported on ``device``.
+
+    Autocast is only entered on devices that support AMP (cuda, xpu, cpu); on mps and any
+    unknown device this falls back to ``nullcontext()`` so callers can request autocast
+    unconditionally without breaking on unsupported backends.
+    """
+    device_type = device.type if isinstance(device, torch.device) else str(device).split(":", 1)[0]
+    try:
+        amp_ok = is_amp_available(device_type)
+    except ValueError:
+        amp_ok = False
+    if not enabled or not amp_ok:
+        return nullcontext()
+    return torch.autocast(device_type=device_type, dtype=dtype)

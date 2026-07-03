@@ -56,7 +56,6 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Callable
-from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import asdict
 from functools import partial
@@ -86,7 +85,7 @@ from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_proces
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.types import PolicyAction
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
-from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.device_utils import get_safe_autocast_context, get_safe_torch_device
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
@@ -698,7 +697,7 @@ def eval_main(cfg: EvalPipelineConfig):
     max_episodes_rendered = 0 if cfg.eval.recording else 10
     videos_dir = None if cfg.eval.recording else Path(cfg.output_dir) / "videos"
 
-    with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
+    with torch.no_grad(), get_safe_autocast_context(device, enabled=cfg.policy.use_amp):
         info = eval_policy_all(
             envs=envs,
             policy=policy,

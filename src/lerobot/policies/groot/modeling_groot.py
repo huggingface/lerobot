@@ -43,6 +43,7 @@ from torch import Tensor
 
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_IMAGES
+from lerobot.utils.device_utils import get_safe_autocast_context
 from lerobot.utils.import_utils import require_package
 
 from ..pretrained import PreTrainedPolicy
@@ -243,7 +244,7 @@ class GrootPolicy(PreTrainedPolicy):
 
         # Run GR00T forward under bf16 autocast when enabled to reduce activation memory
         # Rationale: Matches original GR00T finetuning (bf16 compute, fp32 params) and avoids fp32 upcasts.
-        with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=self.config.use_bf16):
+        with get_safe_autocast_context(device, dtype=torch.bfloat16, enabled=self.config.use_bf16):
             outputs = self._groot_model.forward(groot_inputs)
 
         # Isaac-GR00T returns a BatchFeature; loss key is typically 'loss'
@@ -275,7 +276,7 @@ class GrootPolicy(PreTrainedPolicy):
         device = next(self.parameters()).device
 
         # Use bf16 autocast for inference to keep memory low and match backbone dtype
-        with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=self.config.use_bf16):
+        with get_safe_autocast_context(device, dtype=torch.bfloat16, enabled=self.config.use_bf16):
             outputs = self._groot_model.get_action(groot_inputs)
 
         actions = outputs.get("action_pred")
