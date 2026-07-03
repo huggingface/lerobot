@@ -239,15 +239,13 @@ runtime on exit/Ctrl-C.
 
 The example assumes you configured your robot (SO‑101 follower) and set the correct serial port.
 
-You also need the **robot URDF (and its meshes) in the example folder**. The example loads
-`./SO101/so101_new_calib.urdf` relative to its own directory, so run the example from there. A
-helper script downloads the URDF and the meshes it references from the
-[SO‑ARM100 repo](https://github.com/TheRobotStudio/SO-ARM100/tree/main/Simulation/SO101) into
-`examples/isaac_teleop_to_so101/SO101/`:
+The **robot URDF and its meshes are fetched automatically** on first run: the XR device downloads
+the SO-101 URDF from the
+[`lerobot/robot-urdfs` Hugging Face bucket](https://huggingface.co/buckets/lerobot/robot-urdfs/tree/so101)
+into the LeRobot cache (`HF_LEROBOT_HOME/robot-urdfs/so101/`) and reuses it after, so there is no
+separate download step :
 
 ```bash
-cd examples/isaac_teleop_to_so101
-python download_assets.py    # fetches SO101/so101_new_calib.urdf + assets/*.stl
 python teleoperate.py --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
     --robot.id=so101_follower_arm --teleop.type=xr_controller
 ```
@@ -303,10 +301,9 @@ slewed to the leader's first reading over `--align_duration` seconds (`--align=f
 the arm does not snap when the mirror begins, and while the leader stream is stale the follower is
 held at its measured pose.
 
-`download_assets.py` uses only the standard library (no extra dependencies) and skips files
-already present; pass `--force` to re‑download. If you prefer, you can instead copy the `SO101`
-folder from the SO‑ARM100 repo into `examples/isaac_teleop_to_so101/` by hand — the script just
-automates that, fetching only the meshes the URDF actually references.
+The URDF fetch uses `huggingface_hub` (already a LeRobot dependency) against the public
+`lerobot/robot-urdfs` bucket, so it needs no login. It is cached under
+`HF_LEROBOT_HOME/robot-urdfs/so101/`; delete that folder to force a re‑download.
 
 Then, in your headset: squeeze and hold the grip to engage, move the controller to drive the
 arm, twist/tilt it to orient the wrist, and press the trigger to close the gripper

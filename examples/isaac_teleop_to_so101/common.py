@@ -161,6 +161,16 @@ MAX_EE_STEP_M = 0.1
 # this up to favor orientation over position, down (or 0.0) for position-only.
 IK_ORIENTATION_WEIGHT = 0.01
 
+def _ensure_so101_urdf() -> str:
+    """Return the cached SO-101 URDF path, fetching the whole ``so101`` folder (URDF + meshes) from the public ``lerobot/robot-urdfs`` HF bucket into the LeRobot cache on first use and reusing it after."""
+    dest_dir = HF_LEROBOT_HOME / "robot-urdfs" / "so101"
+    urdf_path = dest_dir / "so101_new_calib.urdf"
+    if not urdf_path.exists():
+        from huggingface_hub import sync_bucket
+
+        sync_bucket("hf://buckets/lerobot/robot-urdfs/so101", str(dest_dir), quiet=True)
+    return str(urdf_path)
+
 # Default duration [s] for the startup reset-to-origin slew.
 RESET_DURATION_S = 5.0
 
@@ -291,12 +301,8 @@ def _wait_for_xr_controller(teleop_device: XRController) -> None:
 
 def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
     """Build the XR controller device bundle (clutch + soft-orientation IK pipeline)."""
-    # Loads ./SO101/so101_new_calib.urdf relative to this folder. Run
-    # `python download_assets.py` from this directory first to fetch the URDF and
-    # its meshes from the SO-ARM100 repo:
-    # https://github.com/TheRobotStudio/SO-ARM100/tree/main/Simulation/SO101
     kinematics_solver = RobotKinematics(
-        urdf_path="./SO101/so101_new_calib.urdf",
+        urdf_path=_ensure_so101_urdf(),
         target_frame_name="gripper_frame_link",
         joint_names=motor_names,
     )
