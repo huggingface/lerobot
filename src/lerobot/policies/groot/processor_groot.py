@@ -1245,8 +1245,6 @@ def make_groot_pre_post_processors(
         crop_fraction = None
     use_albumentations = checkpoint_assets.use_albumentations if checkpoint_assets is not None else False
     letter_box_transform = checkpoint_assets.letter_box_transform if checkpoint_assets is not None else False
-    color_jitter_params = config.color_jitter_params
-    use_albumentations = use_albumentations or color_jitter_params is not None
 
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
@@ -1258,7 +1256,6 @@ def make_groot_pre_post_processors(
             image_target_size=image_target_size,
             shortest_image_edge=shortest_image_edge,
             crop_fraction=crop_fraction,
-            color_jitter_params=color_jitter_params,
             use_albumentations=use_albumentations,
             letter_box_transform=letter_box_transform,
             training=dataset_meta is not None,
@@ -1362,105 +1359,6 @@ def _align_video_horizon(video: np.ndarray, horizon: int | None) -> np.ndarray:
         return video[:, -horizon:]
     pad = np.repeat(video[:, :1], horizon - current, axis=1)
     return np.concatenate([pad, video], axis=1)
-
-
-def _sample_n1_7_color_jitter_params(magnitudes: dict[str, float]) -> dict[str, Any]:
-    """Sample parameters with the same ranges and RNG order as OSS A.ColorJitter."""
-
-    supported = {"brightness", "contrast", "saturation", "hue"}
-    unknown = set(magnitudes) - supported
-    if unknown:
-        raise ValueError(f"Unsupported GR00T color jitter parameters: {sorted(unknown)}")
-
-    parsed: dict[str, float] = {}
-    for name in supported:
-        value = magnitudes.get(name, 0.0)
-        if isinstance(value, bool):
-            raise TypeError(f"GR00T color jitter '{name}' must be a float, got bool")
-        try:
-            amount = float(value)
-        except (TypeError, ValueError) as exc:
-            raise TypeError(f"GR00T color jitter '{name}' must be a float, got {value!r}") from exc
-        if not np.isfinite(amount) or amount < 0:
-            raise ValueError(f"GR00T color jitter '{name}' must be finite and non-negative, got {amount}")
-        if name == "hue" and amount > 0.5:
-            raise ValueError(f"GR00T color jitter 'hue' must be <= 0.5, got {amount}")
-        parsed[name] = amount
-
-    brightness = parsed["brightness"]
-    contrast = parsed["contrast"]
-    saturation = parsed["saturation"]
-    hue = parsed["hue"]
-    sampled = {
-        "brightness": random.uniform(max(0.0, 1.0 - brightness), 1.0 + brightness),
-        "contrast": random.uniform(max(0.0, 1.0 - contrast), 1.0 + contrast),
-        "saturation": random.uniform(max(0.0, 1.0 - saturation), 1.0 + saturation),
-        "hue": random.uniform(-hue, hue),
-    }
-    order = np.arange(4)
-    # Albumentations 1.4.18 creates a NumPy RandomState from one Python-random
-    # seed for its operation shuffle. Reproduce that sequence without importing it.
-    np.random.RandomState(random.randint(0, (1 << 32) - 1)).shuffle(order)
-    sampled["order"] = order.tolist()
-    return sampled
-
-
-def _n1_7_color_jitter_lut(image: np.ndarray, factor: float, value: float = 0.0) -> np.ndarray:
-    lut = np.arange(256, dtype=np.float32) * factor + value
-    return cv2.LUT(image, np.clip(lut, 0, 255).astype(np.uint8))
-
-
-def _apply_n1_7_color_jitter(image: np.ndarray, params: dict[str, Any]) -> np.ndarray:
-    """Apply sampled OSS ColorJitter parameters to one HWC RGB uint8 image."""
-
-    image = np.asarray(image)
-    if image.dtype != np.uint8 or image.ndim != 3 or image.shape[-1] != 3:
-        raise ValueError(
-            "GR00T OpenCV color jitter expects an HWC RGB uint8 image, "
-            f"got shape={image.shape}, dtype={image.dtype}"
-        )
-    if not image.flags.c_contiguous:
-        image = np.ascontiguousarray(image)
-
-    def adjust_brightness(frame: np.ndarray, factor: float) -> np.ndarray:
-        if factor == 0:
-            return np.zeros_like(frame)
-        if factor == 1:
-            return frame
-        return _n1_7_color_jitter_lut(frame, factor)
-
-    def adjust_contrast(frame: np.ndarray, factor: float) -> np.ndarray:
-        if factor == 1:
-            return frame
-        mean = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY).mean()
-        if factor == 0:
-            return np.full_like(frame, int(mean + 0.5), dtype=frame.dtype)
-        return _n1_7_color_jitter_lut(frame, factor, mean * (1 - factor))
-
-    def adjust_saturation(frame: np.ndarray, factor: float) -> np.ndarray:
-        if factor == 1:
-            return frame
-        grayscale = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        grayscale = cv2.cvtColor(grayscale, cv2.COLOR_GRAY2RGB)
-        if factor == 0:
-            return grayscale
-        adjusted = cv2.addWeighted(frame, factor, grayscale, 1 - factor, gamma=0)
-        return np.clip(adjusted, 0, 255).astype(frame.dtype)
-
-    def adjust_hue(frame: np.ndarray, factor: float) -> np.ndarray:
-        if factor == 0:
-            return frame
-        hsv = cv2.cvtColor(frame, cv2.COLOR_RGB2HSV)
-        lut = np.arange(256, dtype=np.int16)
-        lut = np.mod(lut + 180 * factor, 180).astype(np.uint8)
-        hsv[..., 0] = cv2.LUT(hsv[..., 0], lut)
-        return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
-
-    transforms = (adjust_brightness, adjust_contrast, adjust_saturation, adjust_hue)
-    factors = (params["brightness"], params["contrast"], params["saturation"], params["hue"])
-    for index in params["order"]:
-        image = transforms[index](image, factors[index])
-    return image
 
 
 def _build_n1_7_processor(model_name: str = GROOT_N1_7_BACKBONE_MODEL) -> ProcessorMixin:
@@ -2153,7 +2051,6 @@ class GrootN17VLMEncodeStep(ProcessorStep):
     image_target_size: list[int] | None = None
     shortest_image_edge: int | None = None
     crop_fraction: float | None = None
-    color_jitter_params: dict[str, float] | None = None
     use_albumentations: bool = False
     letter_box_transform: bool = False
     # Runtime-only train/eval mode: True enables Isaac's train-time random crop
@@ -2194,22 +2091,16 @@ class GrootN17VLMEncodeStep(ProcessorStep):
         """
         if self.use_albumentations:
             video_np = np.asarray(video)
-            train_augmentation = self.training and torch.is_grad_enabled()
+            train_crop = self.training and torch.is_grad_enabled()
             sample_images: list[list[Any]] = []
             for batch_idx in range(batch_size):
                 # Isaac-GR00T samples ONE crop window per sample and replays it
                 # across every (timestep, view) frame of that sample, keeping
                 # cross-view geometry consistent. Eval keeps the center crop.
-                crop_position = (random.random(), random.random()) if train_augmentation else None
-                jitter_params = (
-                    _sample_n1_7_color_jitter_params(self.color_jitter_params)
-                    if train_augmentation and self.color_jitter_params is not None
-                    else None
-                )
-                frames: list[np.ndarray] = []
-                for timestep in range(video_np.shape[1]):
-                    for view_idx in range(video_np.shape[2]):
-                        frame = _transform_n1_7_image_for_vlm_albumentations(
+                crop_position = (random.random(), random.random()) if train_crop else None
+                sample_images.append(
+                    [
+                        _transform_n1_7_image_for_vlm_albumentations(
                             video_np[batch_idx, timestep, view_idx],
                             image_crop_size=self.image_crop_size,
                             image_target_size=self.image_target_size,
@@ -2218,10 +2109,10 @@ class GrootN17VLMEncodeStep(ProcessorStep):
                             letter_box_transform=self.letter_box_transform,
                             crop_position=crop_position,
                         )
-                        if jitter_params is not None:
-                            frame = _apply_n1_7_color_jitter(frame, jitter_params)
-                        frames.append(frame)
-                sample_images.append(frames)
+                        for timestep in range(video_np.shape[1])
+                        for view_idx in range(video_np.shape[2])
+                    ]
+                )
             return sample_images
 
         video_t = video if torch.is_tensor(video) else torch.from_numpy(np.ascontiguousarray(video))
@@ -2314,7 +2205,6 @@ class GrootN17VLMEncodeStep(ProcessorStep):
             "image_target_size": self.image_target_size,
             "shortest_image_edge": self.shortest_image_edge,
             "crop_fraction": self.crop_fraction,
-            "color_jitter_params": self.color_jitter_params,
             "use_albumentations": self.use_albumentations,
             "letter_box_transform": self.letter_box_transform,
             "device": self.device,
