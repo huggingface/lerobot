@@ -79,13 +79,6 @@ def parse_args() -> argparse.Namespace:
         "the HF bucket path saturates around 64 connections per host, so keep the product near 64.",
     )
     parser.add_argument(
-        "--coverage",
-        choices=["sampled", "exact"],
-        default="sampled",
-        help="sampled: with-replacement random draws (no epoch guarantee). exact: every frame of "
-        "every shard episode decoded exactly once per epoch (deterministic, pool-bounded).",
-    )
-    parser.add_argument(
         "--range-subranges",
         type=int,
         default=1,
@@ -131,7 +124,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--target-samples-s", type=float, default=500.0)
     parser.add_argument("--stream-samples", type=int, default=4096)
-    parser.add_argument("--pool-samples-per-episode", type=int, default=160)
+    parser.add_argument(
+        "--pool-samples-per-episode",
+        type=int,
+        default=256,
+        help="Deprecated / ignored: streaming is always exact-coverage now (an episode is evicted "
+        "only when all its frames have been emitted). Kept so existing commands still parse.",
+    )
     parser.add_argument("--stream-prefetch-episodes", type=int, default=16)
     parser.add_argument("--decode-workers", type=int, default=1)
     parser.add_argument("--prefetch-ahead", type=int, default=8)
@@ -372,8 +371,7 @@ def run_exact_coverage_stream(
 ) -> dict[str, float]:
     """Streaming keep-up with EXACT, exactly-once frame coverage (a real epoch).
 
-    Unlike run_pool_stream_simulation (with-replacement sampling, no coverage guarantee), this
-    drives the resident pool from ExactCoveragePool: every frame of every shard episode is decoded
+    Drives the resident pool from ExactCoveragePool: every frame of every shard episode is decoded
     exactly once, at most ``pool_size`` episodes resident, deterministic from ``seed``. Episodes are
     prefetched ``prefetch_ahead`` beyond the sampling frontier so a freshly admitted episode's bytes
     are already resident when it becomes eligible to be drawn.
@@ -481,159 +479,6 @@ def run_exact_coverage_stream(
     }
     result.update(
         {f"stream_{k}": v for k, v in _sampling_randomness(decoded_samples, batch_size=batch_size).items()}
-    )
-    return result
-
-
-def run_pool_stream_simulation(
-    cache: EpisodeByteCache,
-    resident_episodes: Sequence[int],
-    *,
-    dataset_episode_count: int,
-    num_episodes: int,
-    sample_count: int,
-    target_samples_s: float,
-    samples_per_episode: int,
-    prefetch_episodes: int,
-    shard_count: int,
-    shard_index: int,
-    shard_seed: int,
-    batch_size: int,
-    decode_workers: int,
-    seed: int,
-) -> dict[str, float]:
-    rng = random.Random(seed)
-    resident = list(resident_episodes)
-    resident_set = set(resident)
-    candidates = [
-        ep
-        for ep in _episode_shard(
-            dataset_episode_count,
-            num_episodes,
-            shard_seed,
-            shard_count=shard_count,
-            shard_index=shard_index,
-        )
-        if ep not in resident_set
-    ]
-    replacements = iter(candidates)
-    pending: list[int] = []
-
-    def schedule_one() -> bool:
-        try:
-            ep = next(replacements)
-        except StopIteration:
-            return False
-        cache.submit_prefetch(ep)
-        pending.append(ep)
-        return True
-
-    for _ in range(prefetch_episodes):
-        if not schedule_one():
-            break
-
-    locks = _decoder_locks(cache.manifest, resident)
-    batch_size = max(1, batch_size)
-    refill_wait_s = 0.0
-    deadline_miss_s = 0.0
-    replacement_count = 0
-    decoded_samples: list[tuple[int, float]] = []
-    start = time.perf_counter()
-
-    deferred_swaps = 0
-
-    def consume_ready_replacement() -> bool:
-        nonlocal refill_wait_s, replacement_count, deferred_swaps
-        if not pending:
-            return False
-        # Non-blocking: only swap when the head replacement is fully resident. Blocking here
-        # stalls the training hot path on remote fetch latency (head-of-line); deferring lets
-        # the fetch pipeline (capacity ~2x demand) catch up while training continues on the
-        # current pool. The replacement debt is repaid on subsequent batches.
-        if not cache.is_ready(pending[0]):
-            deferred_swaps += 1
-            return False
-        new_ep = pending.pop(0)
-        wait_start = time.perf_counter()
-        cache.ensure_ready(new_ep)
-        _open_resident_decoders(cache, [new_ep], decode_workers=decode_workers)
-        for camera_key in cache.manifest.video_keys:
-            locks[(new_ep, camera_key)] = threading.Lock()
-        refill_wait_s += time.perf_counter() - wait_start
-        old_ep = resident.pop(0)
-        resident_set.discard(old_ep)
-        resident.append(new_ep)
-        resident_set.add(new_ep)
-        replacement_count += 1
-        schedule_one()
-        return True
-
-    def decode_batch(batch: list[tuple[int, float]], pool: ThreadPoolExecutor | None) -> None:
-        if pool is None:
-            for ep, relative_t in batch:
-                _decode_training_sample(cache, ep, relative_t, locks)
-            return
-        futures = [
-            pool.submit(_decode_training_sample, cache, ep, relative_t, locks) for ep, relative_t in batch
-        ]
-        for future in futures:
-            future.result()
-
-    samples_done = 0
-    decode_pool = ThreadPoolExecutor(max_workers=decode_workers) if decode_workers > 1 else None
-    try:
-        while samples_done < sample_count:
-            batch_start = time.perf_counter()
-
-            if samples_per_episode > 0:
-                target_replacements = samples_done // samples_per_episode
-                while replacement_count < target_replacements and consume_ready_replacement():
-                    pass
-
-            current_batch_size = min(batch_size, sample_count - samples_done)
-            batch = [(rng.choice(resident), rng.random()) for _ in range(current_batch_size)]
-            decode_batch(batch, decode_pool)
-            decoded_samples.extend(batch)
-            samples_done += current_batch_size
-
-            if samples_per_episode > 0:
-                target_replacements = samples_done // samples_per_episode
-                while replacement_count < target_replacements and consume_ready_replacement():
-                    pass
-
-            target_batch_s = current_batch_size / target_samples_s if target_samples_s > 0 else 0.0
-            batch_elapsed = time.perf_counter() - batch_start
-            if target_batch_s > 0 and batch_elapsed < target_batch_s:
-                time.sleep(target_batch_s - batch_elapsed)
-            elif target_batch_s > 0:
-                deadline_miss_s += batch_elapsed - target_batch_s
-    finally:
-        if decode_pool is not None:
-            decode_pool.shutdown(wait=True)
-
-    elapsed = time.perf_counter() - start
-    result = {
-        "target_samples_s": target_samples_s,
-        "actual_samples_s": sample_count / elapsed if elapsed > 0 else float("inf"),
-        "stream_wall_s": elapsed,
-        "refill_wait_s": refill_wait_s,
-        "deadline_miss_s": deadline_miss_s,
-        "replacements": float(replacement_count),
-        "replacement_episodes_s": replacement_count / elapsed if elapsed > 0 else 0.0,
-        "deferred_swaps": float(deferred_swaps),
-        "samples_per_episode": float(samples_per_episode),
-        "prefetch_episodes": float(prefetch_episodes),
-        "batch_size": float(batch_size),
-        "decode_workers": float(decode_workers),
-        "kept_up": 1.0
-        if sample_count / elapsed >= target_samples_s * 0.98 and deadline_miss_s < elapsed * 0.02
-        else 0.0,
-    }
-    result.update(
-        {
-            f"stream_{key}": value
-            for key, value in _sampling_randomness(decoded_samples, batch_size=batch_size).items()
-        }
     )
     return result
 
@@ -898,45 +743,26 @@ def run_fetch_pool(
                 seed=args.seed + 3,
             )
             _log(
-                f"pool_stream: consuming {args.target_samples_s:.1f} samples/s while prefetching replacements"
+                f"pool_stream: exact coverage, consuming {args.target_samples_s:.1f} samples/s while prefetching ahead"
             )
-            if args.coverage == "exact":
-                _log("pool_stream: EXACT coverage (every frame once) while prefetching ahead")
-                shard_episodes = _episode_shard(
-                    dataset_episode_count,
-                    benchmark_episode_count,
-                    args.seed,
-                    shard_count=args.distributed_shard_count,
-                    shard_index=args.distributed_shard_index,
-                )
-                stream_sim = run_exact_coverage_stream(
-                    cache,
-                    shard_episodes,
-                    pool_size=len(episodes),
-                    sample_count=args.stream_samples,
-                    target_samples_s=args.target_samples_s,
-                    prefetch_ahead=args.stream_prefetch_episodes,
-                    batch_size=args.batch_size,
-                    decode_workers=args.decode_workers,
-                    seed=args.seed + 5,
-                )
-            else:
-                stream_sim = run_pool_stream_simulation(
-                    cache,
-                    episodes,
-                    dataset_episode_count=dataset_episode_count,
-                    num_episodes=benchmark_episode_count,
-                    sample_count=args.stream_samples,
-                    target_samples_s=args.target_samples_s,
-                    samples_per_episode=args.pool_samples_per_episode,
-                    prefetch_episodes=args.stream_prefetch_episodes,
-                    shard_count=args.distributed_shard_count,
-                    shard_index=args.distributed_shard_index,
-                    shard_seed=args.seed,
-                    batch_size=args.batch_size,
-                    decode_workers=args.decode_workers,
-                    seed=args.seed + 4,
-                )
+            shard_episodes = _episode_shard(
+                dataset_episode_count,
+                benchmark_episode_count,
+                args.seed,
+                shard_count=args.distributed_shard_count,
+                shard_index=args.distributed_shard_index,
+            )
+            stream_sim = run_exact_coverage_stream(
+                cache,
+                shard_episodes,
+                pool_size=len(episodes),
+                sample_count=args.stream_samples,
+                target_samples_s=args.target_samples_s,
+                prefetch_ahead=args.stream_prefetch_episodes,
+                batch_size=args.batch_size,
+                decode_workers=args.decode_workers,
+                seed=args.seed + 5,
+            )
     byte_count = _bytes_for(manifest, episodes)
     episode_mb = byte_count / len(episodes) / 1024**2
     job_count = max(timings["jobs"], 1.0)

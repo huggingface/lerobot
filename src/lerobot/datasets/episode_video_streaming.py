@@ -984,7 +984,7 @@ class EpisodeVideoManifest:
 class ExactCoveragePool:
     """Deterministic, exactly-once frame coverage over a byte-cache episode pool.
 
-    The sampled/with-replacement pool (``run_pool_stream_simulation``) never guarantees a full
+    A with-replacement pool never guarantees a full
     epoch: frames are drawn randomly and episodes rotate on a fixed cadence. This planner instead
     enumerates *every frame of every episode exactly once per epoch* while keeping at most
     ``pool_size`` episodes resident, so batch mixing stays high but coverage is complete and
