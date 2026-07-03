@@ -27,18 +27,17 @@ import logging
 import os
 from collections import deque
 from pathlib import Path
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import torch
 from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
 from torch import Tensor
-from transformers.trainer_pt_utils import get_parameter_names
 
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_IMAGES
-from lerobot.utils.import_utils import require_package
+from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..pretrained import PreTrainedPolicy
 from ..utils import get_device_from_parameters
@@ -52,6 +51,11 @@ from .configuration_groot import (
     infer_groot_n1_7_action_horizon,
 )
 from .groot_n1_7 import GR00TN17, _tie_unused_qwen_lm_head
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers.trainer_pt_utils import get_parameter_names
+else:
+    get_parameter_names = lambda fn: fn  # noqa: E731
 
 logger = logging.getLogger(__name__)
 

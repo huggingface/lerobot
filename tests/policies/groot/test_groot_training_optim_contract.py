@@ -50,6 +50,7 @@ def test_groot_n1_7_sampler_excludes_incomplete_action_tails():
 
 
 def test_groot_n1_7_scheduler_matches_isaac_hf_cosine_contract():
+    pytest.importorskip("diffusers", reason="the scheduler preset requires the `groot` extra (diffusers)")
     config = GrootConfig(max_steps=20_000)
     scheduler_config = config.get_scheduler_preset()
 
@@ -103,6 +104,9 @@ def test_groot_n1_7_ties_unused_qwen_lm_head_to_frozen_input_embeddings():
 
 
 def test_groot_n1_7_optimizer_groups_match_transformers_weight_decay_rules():
+    pytest.importorskip(
+        "transformers", reason="weight-decay grouping requires the `groot` extra (transformers)"
+    )
     module = torch.nn.Module()
     module.linear = torch.nn.Linear(3, 2)
     module.norm = torch.nn.LayerNorm(2)
