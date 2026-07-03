@@ -135,6 +135,7 @@ lerobot-train \
   --policy.base_model_path=nvidia/GR00T-N1.7-3B \
   --policy.embodiment_tag=libero_sim \
   --policy.push_to_hub=false \
+  --policy.use_relative_actions=false \
   --policy.max_steps=20000 \
   --batch_size=320 \
   --steps=20000 \
@@ -152,6 +153,8 @@ lerobot-train \
   --output_dir=$OUTPUT_DIR \
   --job_name=$JOB_NAME
 ```
+
+This will follow the recipe found [here](https://github.com/NVIDIA/Isaac-GR00T/blob/main/examples/LIBERO/README.md).
 
 ### GR00T N1.7 LIBERO Results
 
