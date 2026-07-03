@@ -359,6 +359,7 @@ def _build_robot_text(
     add_setup_tokens: bool,
     add_control_tokens: bool,
     num_images: int,
+    advantage: str = "",
 ) -> str:
     setup_text = _wrap_setup_text(setup_type, add_setup_tokens=add_setup_tokens)
     control_text = _wrap_control_text(control_mode, add_control_tokens=add_control_tokens)
@@ -375,7 +376,10 @@ def _build_robot_text(
         image_prefix = "<|image|>"
     else:
         image_prefix = "".join(f"Image {idx + 1}<|image|>" for idx in range(num_images))
-    return f"{image_prefix}<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n{ACTION_OUTPUT_TOKEN}"
+    # Per RECAP paper (Section V-B): advantage indicator goes after context,
+    # before actions, so only action log-likelihoods are affected.
+    advantage_clause = f"Advantage: {advantage}. " if advantage else ""
+    return f"{image_prefix}<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n{advantage_clause}{ACTION_OUTPUT_TOKEN}"
 
 
 def _as_text_list(value: Any, batch_size: int) -> list[str]:
@@ -695,6 +699,39 @@ class MolmoAct2ClampNormalizedProcessorStep(ProcessorStep):
         return features
 
 
+@ProcessorStepRegistry.register(name="molmoact2_normalize_task")
+@dataclass
+class MolmoAct2NormalizeTaskStep(ProcessorStep):
+    """Normalize the task text in complementary_data before recipe rendering.
+
+    Ensures ${task} in recipe templates gets the same normalized form that
+    MolmoAct2PackInputsProcessorStep would produce, so training prompts
+    match inference prompts.
+    """
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if not isinstance(complementary, dict):
+            return transition
+        task = complementary.get("task")
+        if task is None:
+            return transition
+
+        transition = transition.copy()
+        complementary = dict(complementary)
+        if isinstance(task, str):
+            complementary["task"] = _normalize_question_text(task)
+        elif isinstance(task, list):
+            complementary["task"] = [_normalize_question_text(t) for t in task]
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
 @ProcessorStepRegistry.register(name="molmoact2_pack_inputs")
 @dataclass
 class MolmoAct2PackInputsProcessorStep(ProcessorStep):
@@ -715,6 +752,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     chunk_size: int = 30
     max_action_dim: int = 32
     env_action_dim: int | None = None
+    # RECAP: advantage indicator for inference (e.g. "Advantage: positive. ")
+    advantage_prefix: str = ""
 
     def __post_init__(self) -> None:
         require_package("transformers", extra="molmoact2")
@@ -757,6 +796,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "chunk_size": self.chunk_size,
             "max_action_dim": self.max_action_dim,
             "env_action_dim": self.env_action_dim,
+            "advantage_prefix": self.advantage_prefix,
         }
 
     def _resolve_max_sequence_length(
@@ -919,8 +959,40 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         if task_source is None:
             task_source = complementary.get("language_instruction")
         tasks = _as_text_list(task_source, batch_size)
-        if self.normalize_language:
-            tasks = [_normalize_question_text(task) for task in tasks]
+
+        # Resolve the advantage indicator. Per RECAP paper (Section V-B), it goes
+        # after all context but before actions — handled by _build_robot_text.
+        # Source priority: recipe-rendered "advantage" key > config advantage_prefix.
+        advantages: list[str] = []
+        recipe_rendered = "base_task" in complementary
+        if recipe_rendered:
+            # Recipe rendered the task as "<task> Advantage: <value>".
+            # Extract the advantage value and restore the clean task.
+            clean_tasks: list[str] = []
+            for t in tasks:
+                if " Advantage: " in t:
+                    split_idx = t.rindex(" Advantage: ")
+                    clean_task = t[:split_idx]
+                    adv = t[split_idx + len(" Advantage: ") :]
+                    advantages.append(adv)
+                    clean_tasks.append(clean_task)
+                else:
+                    advantages.append("")
+                    clean_tasks.append(t)
+            tasks = clean_tasks
+        else:
+            if self.normalize_language:
+                tasks = [_normalize_question_text(task) for task in tasks]
+            if self.advantage_prefix:
+                # Extract just the value from prefix like "Advantage: positive. "
+                prefix = self.advantage_prefix.strip()
+                if prefix.startswith("Advantage:"):
+                    adv_val = prefix[len("Advantage:") :].strip().rstrip(".")
+                else:
+                    adv_val = prefix
+                advantages = [adv_val] * batch_size
+            else:
+                advantages = [""] * batch_size
         complementary["task"] = tasks
 
         action_padded = None
@@ -953,6 +1025,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 add_setup_tokens=self.add_setup_tokens,
                 add_control_tokens=self.add_control_tokens,
                 num_images=len(images),
+                advantage=advantages[batch_idx],
             )
             prompt_texts.append(prompt)
             if build_action_labels:
@@ -1164,27 +1237,47 @@ def make_molmoact2_pre_post_processors(
             stats=masked_dataset_stats,
         ),
         MolmoAct2ClampNormalizedProcessorStep(normalization_masks=normalization_masks),
-        MolmoAct2PackInputsProcessorStep(
-            checkpoint_path=config.checkpoint_path,
-            checkpoint_revision=config.checkpoint_revision,
-            checkpoint_force_download=config.checkpoint_force_download,
-            action_mode=config.action_mode,
-            discrete_action_tokenizer=config.discrete_action_tokenizer,
-            image_keys=image_keys,
-            allow_image_key_fallback=not bool(config.image_keys),
-            setup_type=setup_type,
-            control_mode=control_mode,
-            normalize_language=config.normalize_language,
-            add_setup_tokens=config.add_setup_tokens,
-            add_control_tokens=config.add_control_tokens,
-            num_state_tokens=config.num_state_tokens,
-            max_sequence_length=config.max_sequence_length,
-            chunk_size=chunk_size,
-            max_action_dim=config.expected_max_action_dim,
-            env_action_dim=env_action_dim,
-        ),
-        DeviceProcessorStep(device=config.device),
     ]
+
+    # Insert language rendering steps when a recipe is configured (e.g. RECAP advantage)
+    if config.recipe_path is not None:
+        from lerobot.configs.recipe import load_recipe
+        from lerobot.processor.render_messages_processor import RenderMessagesStep
+        from lerobot.processor.rendered_messages_to_task import RenderedMessagesToTaskStep
+
+        recipe = load_recipe(config.recipe_path)
+        # Normalize task text before recipe uses ${task}, ensuring consistency
+        # between training (recipe-rendered) and inference (advantage_prefix).
+        if config.normalize_language:
+            input_steps.append(MolmoAct2NormalizeTaskStep())
+        input_steps.append(RenderMessagesStep(recipe=recipe))
+        input_steps.append(RenderedMessagesToTaskStep())
+
+    input_steps.extend(
+        [
+            MolmoAct2PackInputsProcessorStep(
+                checkpoint_path=config.checkpoint_path,
+                checkpoint_revision=config.checkpoint_revision,
+                checkpoint_force_download=config.checkpoint_force_download,
+                action_mode=config.action_mode,
+                discrete_action_tokenizer=config.discrete_action_tokenizer,
+                image_keys=image_keys,
+                allow_image_key_fallback=not bool(config.image_keys),
+                setup_type=setup_type,
+                control_mode=control_mode,
+                normalize_language=config.normalize_language,
+                add_setup_tokens=config.add_setup_tokens,
+                add_control_tokens=config.add_control_tokens,
+                num_state_tokens=config.num_state_tokens,
+                max_sequence_length=config.max_sequence_length,
+                chunk_size=chunk_size,
+                max_action_dim=config.expected_max_action_dim,
+                env_action_dim=env_action_dim,
+                advantage_prefix=config.advantage_prefix,
+            ),
+            DeviceProcessorStep(device=config.device),
+        ]
+    )
 
     output_steps: list[ProcessorStep] = [
         MolmoAct2ClampActionProcessorStep(),
