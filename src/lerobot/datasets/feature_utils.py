@@ -67,7 +67,7 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
         elif ft["shape"] == (1,):
             hf_features[key] = datasets.Value(dtype=ft["dtype"])
         elif len(ft["shape"]) == 1:
-            # pyarrow rejects fixed_size_list[0], so use a variable length list instead
+            # pyarrow rejects fixed-size lists of length 0, so use a variable length list instead
             length = ft["shape"][0] if ft["shape"][0] > 0 else -1
             hf_features[key] = datasets.Sequence(length=length, feature=datasets.Value(dtype=ft["dtype"]))
         elif len(ft["shape"]) == 2:

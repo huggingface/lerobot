@@ -689,7 +689,7 @@ def test_compute_episode_stats_string_features_skipped():
 
 
 def test_compute_episode_stats_zero_width_features_skipped(caplog):
-    """Test that features with a zero-width dim (e.g. shape=(0,)) are skipped with a warning."""
+    """Test that features with a zero-width dim (e.g. shape=(0,)) are skipped with a debug log."""
     episode_data = {
         "empty": np.zeros((100, 0), dtype=np.float32),  # Zero-width feature
         "action": np.random.normal(0, 1, (100, 5)),
@@ -699,10 +699,10 @@ def test_compute_episode_stats_zero_width_features_skipped(caplog):
         "action": {"dtype": "float32", "shape": (5,)},
     }
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.DEBUG):
         stats = compute_episode_stats(episode_data, features)
 
-    # Zero-width features should be skipped with a warning, others computed as usual
+    # Zero-width features should be skipped with a debug log, others computed as usual
     assert "empty" not in stats
     assert "empty" in caplog.text
     assert "action" in stats
