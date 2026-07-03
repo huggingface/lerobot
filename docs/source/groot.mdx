@@ -79,31 +79,6 @@ Here's a complete training command for finetuning the base GR00T model on your o
 This command is using the `new_embodiment` flag, which is used for the SO-101 robot, [read more about how GR00T handles different embodiments.](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/policy.md#--embodiment-tag).
 
 ```bash
-lerobot-train \
-    --dataset.repo_id=my-so101-dataset \
-    --dataset.revision=main \
-    --dataset.video_backend=pyav \
-    --policy.type=groot \
-    --policy.base_model_path=nvidia/GR00T-N1.7-3B \
-    --policy.embodiment_tag=new_embodiment \
-    --policy.chunk_size=16 \
-    --policy.n_action_steps=16 \
-    --policy.use_relative_actions=true \
-    --policy.max_steps=20000 \
-    --batch_size=320 \
-    --steps=20000 \
-    --save_freq=2000 \
-    --env_eval_freq=0 \
-    --eval_steps=0 \
-    --log_freq=10 \
-    --num_workers=4 \
-    --prefetch_factor=2 \
-    --persistent_workers=true \
-    --output_dir=outputs/train \
-    --job_name=groot-n17-so101-my-env
-```
-
-```bash
 # install extra deps for training
 pip install "lerobot[training]"
 
