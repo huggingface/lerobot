@@ -17,29 +17,30 @@
 """Save the current SO-101 joint positions as the reset-origin pose (override).
 
 Move the arm to the desired reset/home position by hand (torque off), then run
-this script.  It reads the current joint positions and writes them to
-``reset_pose.json`` next to this file.  ``teleoperate.py`` / ``record.py`` load that file
-on startup and use it as the reset target instead of the hardcoded defaults.
+this script.  It reads the current joint positions and writes them to a per-arm file in the LeRobot cache.
+``teleoperate.py`` / ``record.py`` load that file on startup (matched by ``--robot.id``) and use
+it as the reset target instead of the hardcoded defaults.
 
 Usage::
 
     # 1. Move arm to desired reset pose by hand
     python override_reset_pose.py [--port /dev/ttyACM0] [--id so101_follower_arm]
 
-    # 2. Inspect the saved values
-    cat reset_pose.json
-
-    # 3. Launch teleop — it will now reset to this pose on startup
-    python teleoperate.py --robot.type=so101_follower --robot.port=/dev/ttyACM0 --teleop.type=xr_controller
+    # 2. Launch teleop with the SAME --robot.id — it will now reset to this pose on startup
+    python teleoperate.py --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm --teleop.type=xr_controller
 """
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
 
-RESET_POSE_FILE = Path(__file__).parent / "reset_pose.json"
+# common.py lives in the same directory; add it to the path so it is importable when this
+# script is run directly (python override_reset_pose.py ...).
+sys.path.insert(0, str(Path(__file__).parent))
+from common import RESET_POSE_FILE  # noqa: E402
 
 
 def parse_args():
@@ -66,8 +67,10 @@ def main():
     for name, val in pose.items():
         print(f"  {name:20s}: {val:.2f}")
 
-    RESET_POSE_FILE.write_text(json.dumps(pose, indent=2))
-    print(f"\nSaved to {RESET_POSE_FILE}")
+    reset_pose_file = Path(RESET_POSE_FILE.format(robot_name=robot.name, robot_id=robot.id))
+    reset_pose_file.parent.mkdir(parents=True, exist_ok=True)
+    reset_pose_file.write_text(json.dumps(pose, indent=2))
+    print(f"\nSaved to {reset_pose_file}")
 
 
 if __name__ == "__main__":

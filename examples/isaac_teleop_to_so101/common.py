@@ -74,7 +74,7 @@ from lerobot.teleoperators.isaac_teleop import (
     XRController,
 )
 from lerobot.types import RobotAction, RobotObservation
-from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
+from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, HF_LEROBOT_HOME, TELEOPERATORS
 from lerobot.utils.robot_utils import precise_sleep
 
 FPS = 30
@@ -164,16 +164,15 @@ IK_ORIENTATION_WEIGHT = 0.01
 # Default duration [s] for the startup reset-to-origin slew.
 RESET_DURATION_S = 5.0
 
-# Optional file written by override_reset_pose.py. When present its values take priority
-# over RESET_ORIGIN_DEG.
-RESET_POSE_FILE = Path(__file__).parent / "reset_pose.json"
+# Optional cached file written by override_reset_pose.py. When present it takes priority over RESET_ORIGIN_DEG.
+RESET_POSE_FILE = str(HF_LEROBOT_HOME / "reset_poses" / "{robot_name}" / "{robot_id}.json")
 
 # Reset target in each motor's native units (arm joints in degrees, gripper in
 # MotorNormMode.RANGE_0_100 where 100 = fully open, 0 = fully closed). These are an
 # empirically recorded comfortable pose (elbow/wrist bent) that avoids the boundary
 # singularity of a fully-extended 5-DOF arm; they assume standard calibration where
 # 0° = URDF 0 rad (homing pose). Override per-setup by back-driving the arm and running
-# override_reset_pose.py, which writes reset_pose.json (it takes priority over these).
+# override_reset_pose.py, which writes the per-arm reset pose file (it takes priority over these).
 RESET_ORIGIN_DEG: dict[str, float] = {
     "shoulder_pan": -4.0,
     "shoulder_lift": -103.0,
@@ -184,10 +183,10 @@ RESET_ORIGIN_DEG: dict[str, float] = {
 }
 
 
-def _load_reset_target(motor_names: list[str]) -> dict[str, float]:
-    """Return reset targets: reset_pose.json if present, else RESET_ORIGIN_DEG."""
-    if RESET_POSE_FILE.exists():
-        saved = json.loads(RESET_POSE_FILE.read_text())
+def _load_reset_target(reset_pose_file: Path, motor_names: list[str]) -> dict[str, float]:
+    """Return reset targets: the saved reset pose if present, else RESET_ORIGIN_DEG."""
+    if reset_pose_file.exists():
+        saved = json.loads(reset_pose_file.read_text())
         # Fill any missing motors from the fallback dict.
         return {name: float(saved.get(name, RESET_ORIGIN_DEG.get(name, 0.0))) for name in motor_names}
     return {name: RESET_ORIGIN_DEG.get(name, 0.0) for name in motor_names}
@@ -361,8 +360,9 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
         _wait_for_xr_controller(teleop_device)
 
         if cfg.reset_to_origin:
-            target = _load_reset_target(motor_names)
-            source = "reset_pose.json" if RESET_POSE_FILE.exists() else "hardcoded defaults"
+            reset_pose_file = Path(RESET_POSE_FILE.format(robot_name=robot.name, robot_id=robot.id))
+            target = _load_reset_target(reset_pose_file, motor_names)
+            source = str(reset_pose_file) if reset_pose_file.exists() else "hardcoded defaults"
             print(f"Reset target source: {source}")
             print(f"Resetting to origin over {cfg.reset_duration:.1f} s…")
             slew(robot, motor_names, lambda: target, cfg.reset_duration)

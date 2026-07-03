@@ -262,10 +262,12 @@ commanded only while the clutch is engaged.
 
 **Customizing the reset pose.** The reset pose ships as a built-in default (a comfortable mid-range
 pose) and works out of the box — you do **not** need to record anything. To tailor it to your setup,
-back-drive the arm to the pose you want and run `python override_reset_pose.py` (in the example
-folder); it writes the current joints to `reset_pose.json`, which then takes priority over the
-built-in default on the next run. That file is git-ignored (user-local), so your override stays on
-your machine, and both `teleoperate.py` and `record.py` honor it.
+back-drive the arm to the pose you want and run `python override_reset_pose.py --id <robot.id>`
+(in the example folder); it writes the current joints to a per-arm file in the LeRobot cache
+(`HF_LEROBOT_HOME/reset_poses/<robot.name>/<robot.id>.json`, keyed like calibration), which then takes
+priority over the built-in default on the next run. Because it lives in the user-local cache (not
+the repo), your override stays on your machine, and both `teleoperate.py` and `record.py` honor it
+when launched with the same `--robot.id`.
 
 The other device, `--teleop.type=so101_leader`, mirrors the follower 1:1 from a back-drivable
 SO-101 _leader arm_ whose joints are streamed by Isaac Teleop's native `so101_leader` plugin (no
