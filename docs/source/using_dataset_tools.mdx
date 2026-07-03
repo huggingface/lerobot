@@ -265,6 +265,8 @@ lerobot-dataset-viz \
 
 Once executed, the tool opens `rerun.io` and displays the camera streams, robot states, and actions for the selected episode.
 
+To use [Foxglove](https://foxglove.dev) instead of Rerun, install the extra add `--display-mode foxglove`. This starts a WebSocket server (connect the Foxglove app to `ws://127.0.0.1:8765`) that serves the episode as a seekable timeline you can play/pause and scrub.
+
 For advanced usage—including visualizing datasets stored on a remote server—run:
 
 ```bash
