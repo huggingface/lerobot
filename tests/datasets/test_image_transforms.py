@@ -14,10 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import hashlib
-import random
-
-import numpy as np
 import pytest
 import torch
 from packaging import version
@@ -35,7 +31,6 @@ from lerobot.transforms import (
     ImageTransformConfig,
     ImageTransforms,
     ImageTransformsConfig,
-    OpenCVColorJitter,
     RandomSubsetApply,
     SharpnessJitter,
     make_transform_from_config,
@@ -395,98 +390,6 @@ def test_sharpness_jitter_invalid_range_min_negative():
 def test_sharpness_jitter_invalid_range_max_smaller():
     with pytest.raises(ValueError):
         SharpnessJitter((2.0, 0.1))
-
-
-OSS_COLOR_JITTER_MAGNITUDES = {
-    "brightness": 0.3,
-    "contrast": 0.4,
-    "saturation": 0.5,
-    "hue": 0.08,
-}
-OSS_COLOR_JITTER_PARAMS = {
-    "brightness": 1.0706517141708825,
-    "contrast": 1.0266124588840007,
-    "saturation": 0.8658483592493755,
-    "hue": 0.01372597662436345,
-    "order": [0, 3, 1, 2],
-}
-OSS_COLOR_JITTER_OUTPUT_SHA256 = "27775d8567ebb38f764821f789c57e19247b8d35d19abd3be4f65d76f493b663"
-
-
-def _make_oss_color_jitter_input() -> torch.Tensor:
-    shape = (2, 3, 37, 53)
-    values = np.arange(np.prod(shape), dtype=np.int64)
-    return torch.from_numpy(((values * 37 + 11) % 256).astype(np.uint8).reshape(shape))
-
-
-def test_opencv_color_jitter_sampling_matches_oss_seed_sequence():
-    transform = OpenCVColorJitter(**OSS_COLOR_JITTER_MAGNITUDES)
-    random.seed(1337)
-
-    assert transform.make_params([]) == OSS_COLOR_JITTER_PARAMS
-
-
-def test_opencv_color_jitter_matches_oss_golden_hash_and_preserves_layout():
-    images = _make_oss_color_jitter_input()
-    transform = OpenCVColorJitter(**OSS_COLOR_JITTER_MAGNITUDES)
-    random.seed(1337)
-
-    actual = transform(images)
-
-    assert actual.shape == images.shape
-    assert actual.dtype == torch.uint8
-    assert actual.is_contiguous()
-    assert hashlib.sha256(actual.numpy().tobytes()).hexdigest() == OSS_COLOR_JITTER_OUTPUT_SHA256
-
-
-def test_opencv_color_jitter_reuses_one_sample_across_temporal_frames():
-    image = _make_oss_color_jitter_input()[:1]
-    images = image.repeat(2, 1, 1, 1)
-    transform = OpenCVColorJitter(**OSS_COLOR_JITTER_MAGNITUDES)
-    random.seed(1337)
-
-    first, second = transform(images)
-
-    torch.testing.assert_close(first, second)
-
-
-def test_opencv_color_jitter_is_available_from_image_transform_config():
-    cfg = ImageTransformsConfig(
-        enable=True,
-        max_num_transforms=1,
-        tfs={
-            "color_jitter": ImageTransformConfig(
-                type="OpenCVColorJitter",
-                kwargs=OSS_COLOR_JITTER_MAGNITUDES,
-            )
-        },
-    )
-
-    transform = ImageTransforms(cfg)
-
-    assert isinstance(transform.transforms["color_jitter"], OpenCVColorJitter)
-
-
-@pytest.mark.parametrize(
-    "kwargs,match",
-    [
-        ({"brightness": -0.1}, "brightness"),
-        ({"contrast": float("inf")}, "contrast"),
-        ({"hue": 0.6}, "hue"),
-    ],
-)
-def test_opencv_color_jitter_rejects_invalid_magnitudes(kwargs, match):
-    with pytest.raises(ValueError, match=match):
-        OpenCVColorJitter(**kwargs)
-
-
-def test_opencv_color_jitter_requires_cpu_chw_rgb_uint8():
-    transform = OpenCVColorJitter()
-
-    with pytest.raises(ValueError, match="uint8"):
-        transform(torch.zeros(3, 8, 8))
-    with pytest.raises(ValueError, match="CHW RGB"):
-        transform(torch.zeros(1, 8, 8, dtype=torch.uint8))
 
 
 def test_make_transform_from_config_with_v2_resize(img_tensor_factory):

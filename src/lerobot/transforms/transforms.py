@@ -14,13 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import collections
-import random
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-import cv2
-import numpy as np
 import torch
 from torchvision.transforms import v2
 from torchvision.transforms.v2 import (
@@ -222,16 +219,13 @@ def make_transform_from_config(cfg: ImageTransformConfig):
     if cfg.type == "SharpnessJitter":
         return SharpnessJitter(**cfg.kwargs)
 
-    if cfg.type == "OpenCVColorJitter":
-        return OpenCVColorJitter(**cfg.kwargs)
-
     transform_cls = getattr(v2, cfg.type, None)
     if isinstance(transform_cls, type) and issubclass(transform_cls, Transform):
         return transform_cls(**cfg.kwargs)
 
     raise ValueError(
         f"Transform '{cfg.type}' is not valid. It must be a class in "
-        "torchvision.transforms.v2 or one of: 'OpenCVColorJitter', 'SharpnessJitter'."
+        f"torchvision.transforms.v2 or 'SharpnessJitter'."
     )
 
 
@@ -264,148 +258,3 @@ class ImageTransforms(Transform):
 
     def forward(self, *inputs: Any) -> Any:
         return self.tf(*inputs)
-
-
-class OpenCVColorJitter(Transform):
-    """Apply Isaac-GR00T/Albumentations-compatible color jitter with OpenCV.
-
-    The four arguments are non-negative jitter magnitudes. Brightness,
-    contrast, and saturation factors are sampled uniformly from
-    ``[max(0, 1 - magnitude), 1 + magnitude]``; hue is sampled uniformly from
-    ``[-hue, hue]`` and must not exceed ``0.5``.
-
-    A single set of factors and one random operation order are sampled per
-    call and applied across every frame in the input. Inputs must be CPU
-    ``torch.uint8`` tensors shaped ``(..., 3, H, W)``. This keeps temporal
-    frames photometrically consistent while retaining the byte-level behavior
-    of Albumentations 1.4.18 on RGB uint8 images.
-    """
-
-    def __init__(
-        self,
-        brightness: float = 0.0,
-        contrast: float = 0.0,
-        saturation: float = 0.0,
-        hue: float = 0.0,
-    ) -> None:
-        super().__init__()
-        self.brightness = self._check_magnitude("brightness", brightness)
-        self.contrast = self._check_magnitude("contrast", contrast)
-        self.saturation = self._check_magnitude("saturation", saturation)
-        self.hue = self._check_magnitude("hue", hue, maximum=0.5)
-
-    @staticmethod
-    def _check_magnitude(name: str, value: float, maximum: float | None = None) -> float:
-        try:
-            amount = float(value)
-        except (TypeError, ValueError) as exc:
-            raise TypeError(f"OpenCVColorJitter {name} must be a float, got {value!r}") from exc
-        if not np.isfinite(amount) or amount < 0:
-            raise ValueError(f"OpenCVColorJitter {name} must be finite and non-negative, got {amount}")
-        if maximum is not None and amount > maximum:
-            raise ValueError(f"OpenCVColorJitter {name} must be <= {maximum}, got {amount}")
-        return amount
-
-    def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
-        del flat_inputs
-        params: dict[str, Any] = {
-            "brightness": random.uniform(max(0.0, 1.0 - self.brightness), 1.0 + self.brightness),
-            "contrast": random.uniform(max(0.0, 1.0 - self.contrast), 1.0 + self.contrast),
-            "saturation": random.uniform(max(0.0, 1.0 - self.saturation), 1.0 + self.saturation),
-            "hue": random.uniform(-self.hue, self.hue),
-        }
-        order = np.arange(4)
-        # Albumentations 1.4.18 seeds a NumPy RandomState from Python random
-        # before shuffling the operation order. Preserve that exact sequence.
-        np.random.RandomState(random.randint(0, (1 << 32) - 1)).shuffle(order)
-        params["order"] = order.tolist()
-        return params
-
-    @staticmethod
-    def _lut(image: np.ndarray, factor: float, value: float = 0.0) -> np.ndarray:
-        lut = np.arange(256, dtype=np.float32) * factor + value
-        return cv2.LUT(image, np.clip(lut, 0, 255).astype(np.uint8))
-
-    @classmethod
-    def apply_rgb_image(cls, image: np.ndarray, params: dict[str, Any]) -> np.ndarray:
-        """Apply already-sampled parameters to one HWC RGB uint8 image."""
-
-        image = np.asarray(image)
-        if image.dtype != np.uint8 or image.ndim != 3 or image.shape[-1] != 3:
-            raise ValueError(
-                "OpenCVColorJitter expects an HWC RGB uint8 image, "
-                f"got shape={image.shape}, dtype={image.dtype}"
-            )
-        if not image.flags.c_contiguous:
-            image = np.ascontiguousarray(image)
-
-        def adjust_brightness(frame: np.ndarray, factor: float) -> np.ndarray:
-            if factor == 0:
-                return np.zeros_like(frame)
-            if factor == 1:
-                return frame
-            return cls._lut(frame, factor)
-
-        def adjust_contrast(frame: np.ndarray, factor: float) -> np.ndarray:
-            if factor == 1:
-                return frame
-            mean = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY).mean()
-            if factor == 0:
-                return np.full_like(frame, int(mean + 0.5), dtype=frame.dtype)
-            return cls._lut(frame, factor, mean * (1 - factor))
-
-        def adjust_saturation(frame: np.ndarray, factor: float) -> np.ndarray:
-            if factor == 1:
-                return frame
-            grayscale = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-            grayscale = cv2.cvtColor(grayscale, cv2.COLOR_GRAY2RGB)
-            if factor == 0:
-                return grayscale
-            adjusted = cv2.addWeighted(frame, factor, grayscale, 1 - factor, gamma=0)
-            return np.clip(adjusted, 0, 255).astype(frame.dtype)
-
-        def adjust_hue(frame: np.ndarray, factor: float) -> np.ndarray:
-            if factor == 0:
-                return frame
-            hsv = cv2.cvtColor(frame, cv2.COLOR_RGB2HSV)
-            lut = np.arange(256, dtype=np.int16)
-            lut = np.mod(lut + 180 * factor, 180).astype(np.uint8)
-            hsv[..., 0] = cv2.LUT(hsv[..., 0], lut)
-            return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
-
-        transforms = (adjust_brightness, adjust_contrast, adjust_saturation, adjust_hue)
-        factors = (
-            params["brightness"],
-            params["contrast"],
-            params["saturation"],
-            params["hue"],
-        )
-        for index in params["order"]:
-            image = transforms[index](image, factors[index])
-        return image
-
-    def transform(self, inpt: Any, params: dict[str, Any]) -> torch.Tensor:
-        if not torch.is_tensor(inpt):
-            raise TypeError(f"OpenCVColorJitter expects torch.Tensor inputs, got {type(inpt).__name__}")
-        if inpt.device.type != "cpu":
-            raise ValueError(f"OpenCVColorJitter expects CPU tensors, got device={inpt.device}")
-        if inpt.dtype != torch.uint8:
-            raise ValueError(f"OpenCVColorJitter expects uint8 tensors, got dtype={inpt.dtype}")
-        if inpt.ndim < 3 or inpt.shape[-3] != 3:
-            raise ValueError(
-                "OpenCVColorJitter expects CHW RGB tensors shaped (..., 3, H, W), "
-                f"got shape={tuple(inpt.shape)}"
-            )
-        if inpt.numel() == 0:
-            return inpt.clone()
-
-        height, width = inpt.shape[-2:]
-        frames = inpt.detach().contiguous().reshape(-1, 3, height, width).permute(0, 2, 3, 1).numpy()
-        transformed = np.stack([self.apply_rgb_image(frame, params) for frame in frames])
-        return torch.from_numpy(transformed).permute(0, 3, 1, 2).reshape(inpt.shape).contiguous()
-
-    def extra_repr(self) -> str:
-        return (
-            f"brightness={self.brightness}, contrast={self.contrast}, "
-            f"saturation={self.saturation}, hue={self.hue}"
-        )
