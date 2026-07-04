@@ -55,6 +55,7 @@ from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.jobs import submit_to_hf
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
+from lerobot.processor import ImageInputFormat, PolicyProcessorPipeline
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -69,6 +70,21 @@ from lerobot.utils.utils import (
 )
 
 from .lerobot_eval import eval_policy_all
+
+
+def prepare_images_for_policy(
+    batch: dict[str, Any],
+    camera_keys: list[str],
+    preprocessor: PolicyProcessorPipeline,
+) -> None:
+    """Adapt worker-produced images to the policy preprocessor's raw input contract."""
+
+    if preprocessor.input_image_format is ImageInputFormat.UINT8_0_255:
+        return
+
+    for cam_key in camera_keys:
+        if cam_key in batch and batch[cam_key].dtype == torch.uint8:
+            batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
 
 
 def update_policy(
@@ -566,9 +582,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
-        for cam_key in dataset.meta.camera_keys:
-            if cam_key in batch and batch[cam_key].dtype == torch.uint8:
-                batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
+        prepare_images_for_policy(batch, dataset.meta.camera_keys, preprocessor)
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
@@ -621,9 +635,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             n_eval_batches = 0
             with torch.no_grad(), accelerator.autocast():
                 for eval_batch in eval_dataloader:
-                    for cam_key in dataset.meta.camera_keys:
-                        if cam_key in eval_batch and eval_batch[cam_key].dtype == torch.uint8:
-                            eval_batch[cam_key] = eval_batch[cam_key].to(dtype=torch.float32) / 255.0
+                    prepare_images_for_policy(eval_batch, dataset.meta.camera_keys, preprocessor)
                     eval_batch = preprocessor(eval_batch)
                     loss, _ = policy.forward(eval_batch)
                     eval_loss_sum += loss.item()

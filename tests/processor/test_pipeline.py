@@ -33,6 +33,7 @@ from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_featur
 from lerobot.processor import (
     DataProcessorPipeline,
     EnvTransition,
+    ImageInputFormat,
     ProcessorStep,
     ProcessorStepRegistry,
     TransitionKey,
@@ -602,6 +603,20 @@ def test_save_and_load_pretrained():
         # Check that counter was restored from config
         assert loaded_pipeline.steps[0].counter == 5
         assert loaded_pipeline.steps[1].counter == 10
+
+
+def test_input_image_format_is_backward_compatible_and_serialized():
+    legacy_pipeline = DataProcessorPipeline.from_config({"steps": []})
+    assert legacy_pipeline.input_image_format is ImageInputFormat.FLOAT32_0_1
+
+    pipeline = DataProcessorPipeline(
+        [],
+        input_image_format=ImageInputFormat.UINT8_0_255,
+    )
+    loaded_pipeline = DataProcessorPipeline.from_config(pipeline.get_config())
+
+    assert pipeline.get_config()["input_image_format"] == "uint8_0_255"
+    assert loaded_pipeline.input_image_format is ImageInputFormat.UINT8_0_255
 
 
 def test_step_without_optional_methods():

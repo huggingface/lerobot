@@ -51,6 +51,7 @@ from lerobot.policies.groot.processor_groot import (
 )
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
+    ImageInputFormat,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
 )
@@ -1234,11 +1235,14 @@ def test_groot_n1_7_pack_inputs_orders_video_by_checkpoint_modality_keys():
         normalize_min_max=False,
         video_modality_keys=["image", "wrist_image"],
     )
+    extra = torch.full((1, 3, 2, 2), 33, dtype=torch.uint8)
+    wrist = torch.full((1, 3, 2, 2), 22, dtype=torch.uint8)
+    front = torch.full((1, 3, 2, 2), 11, dtype=torch.uint8)
     transition = {
         TransitionKey.OBSERVATION: {
-            f"{OBS_IMAGES}.zz_extra": torch.full((1, 3, 2, 2), 33, dtype=torch.uint8),
-            f"{OBS_IMAGES}.image2": torch.full((1, 3, 2, 2), 22, dtype=torch.uint8),
-            f"{OBS_IMAGES}.image": torch.full((1, 3, 2, 2), 11, dtype=torch.uint8),
+            f"{OBS_IMAGES}.zz_extra": extra,
+            f"{OBS_IMAGES}.image2": wrist,
+            f"{OBS_IMAGES}.image": front,
             OBS_STATE: torch.zeros(1, 8),
         },
         TransitionKey.COMPLEMENTARY_DATA: {"task": ["Move"]},
@@ -1247,12 +1251,51 @@ def test_groot_n1_7_pack_inputs_orders_video_by_checkpoint_modality_keys():
     output = step(transition)
 
     video = output[TransitionKey.OBSERVATION]["video"]
-    assert video.shape == (1, 1, 2, 2, 2, 3)
-    assert np.unique(video[0, 0, 0]).tolist() == [11]
-    assert np.unique(video[0, 0, 1]).tolist() == [22]
+    assert len(video.cameras) == 2
+    assert video.cameras[0].shape == (1, 1, 3, 2, 2)
+    assert video.cameras[0].data_ptr() == front.data_ptr()
+    assert video.cameras[1].data_ptr() == wrist.data_ptr()
+    assert torch.unique(video.cameras[0]).tolist() == [11]
+    assert torch.unique(video.cameras[1]).tolist() == [22]
     assert f"{OBS_IMAGES}.zz_extra" not in output[TransitionKey.OBSERVATION]
     assert f"{OBS_IMAGES}.image" not in output[TransitionKey.OBSERVATION]
     assert f"{OBS_IMAGES}.image2" not in output[TransitionKey.OBSERVATION]
+
+
+def test_groot_n1_7_tensor_video_path_matches_legacy_numpy_bytes():
+    camera_a = torch.arange(2 * 2 * 3 * 4 * 5, dtype=torch.uint8).reshape(2, 2, 3, 4, 5)
+    camera_b = (camera_a.to(torch.int16) * 3 % 251).to(torch.uint8)
+    pack_step = GrootN17PackInputsStep(
+        normalize_min_max=False,
+        video_modality_keys=["image", "wrist_image"],
+    )
+    packed = pack_step(
+        {
+            TransitionKey.OBSERVATION: {
+                f"{OBS_IMAGES}.image": camera_a,
+                f"{OBS_IMAGES}.image2": camera_b,
+            },
+            TransitionKey.COMPLEMENTARY_DATA: {"task": ["a", "b"]},
+        }
+    )
+    video = packed[TransitionKey.OBSERVATION]["video"]
+    legacy_video = np.stack(
+        [
+            camera_a.permute(0, 1, 3, 4, 2).numpy(),
+            camera_b.permute(0, 1, 3, 4, 2).numpy(),
+        ],
+        axis=2,
+    )
+    encode_step = GrootN17VLMEncodeStep()
+
+    tensor_frames = encode_step._build_sample_images(video, batch_size=2, target_device=None)
+    legacy_frames = encode_step._build_sample_images(legacy_video, batch_size=2, target_device=None)
+
+    assert len(tensor_frames) == len(legacy_frames) == 2
+    for tensor_sample, legacy_sample in zip(tensor_frames, legacy_frames, strict=True):
+        assert len(tensor_sample) == len(legacy_sample) == 4
+        for tensor_frame, legacy_frame in zip(tensor_sample, legacy_sample, strict=True):
+            torch.testing.assert_close(tensor_frame, legacy_frame, rtol=0, atol=0)
 
 
 def test_groot_n1_7_postprocessor_clips_normalized_action_before_unnormalizing():
@@ -1664,6 +1707,7 @@ def test_groot_n1_7_processors_are_registered_lazily_without_external_gr00t():
     preprocessor, _ = make_groot_pre_post_processors(config)
     step_types = {type(step) for step in preprocessor.steps}
 
+    assert preprocessor.input_image_format is ImageInputFormat.UINT8_0_255
     assert GrootN17PackInputsStep in step_types
     assert GrootN17VLMEncodeStep in step_types
     assert "gr00t" not in sys.modules

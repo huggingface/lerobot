@@ -25,7 +25,6 @@ import cv2
 import numpy as np
 import torch
 import torchvision.transforms.v2.functional as tv_functional
-from einops import rearrange
 from torchvision.transforms import InterpolationMode
 
 from lerobot.utils.import_utils import _datasets_available, _transformers_available, require_package
@@ -54,6 +53,7 @@ from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
+    ImageInputFormat,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
@@ -551,6 +551,10 @@ def _load_groot_processor_pipelines(
         to_transition=policy_action_to_transition,
         to_output=transition_to_policy_action,
     )
+    # Older serialized GR00T pipelines predate the raw-image contract. GR00T's
+    # packer consumes worker-produced uint8 directly, so upgrade them at load
+    # time rather than falling back to the global float compatibility default.
+    preprocessor.input_image_format = ImageInputFormat.UINT8_0_255
     return preprocessor, postprocessor
 
 
@@ -1323,6 +1327,7 @@ def make_groot_pre_post_processors(
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=input_steps,
             name=POLICY_PREPROCESSOR_DEFAULT_NAME,
+            input_image_format=ImageInputFormat.UINT8_0_255,
         ),
         PolicyProcessorPipeline[PolicyAction, PolicyAction](
             steps=output_steps,
@@ -1336,19 +1341,51 @@ def make_groot_pre_post_processors(
 # GR00T specific processor steps
 
 
-def _to_uint8_np_bthwc(img_t: torch.Tensor) -> np.ndarray:
-    # img_t: (B, C, H, W) or (B, T, C, H, W), float in [0,1] or uint8
-    if img_t.dtype.is_floating_point:
-        img_t = (img_t.clamp(0, 1) * 255.0).to(torch.uint8)
-    if img_t.dim() == 4:
-        return rearrange(img_t.cpu().numpy(), "b c h w -> b 1 h w c")
-    if img_t.dim() == 5:
-        return rearrange(img_t.cpu().numpy(), "b t c h w -> b t h w c")
-    raise ValueError(f"Expected image tensor shape (B, C, H, W) or (B, T, C, H, W), got {tuple(img_t.shape)}")
+@dataclass(frozen=True)
+class _GrootN17VideoBatch:
+    """Ordered camera tensors kept in LeRobot's native (B, T, C, H, W) layout."""
+
+    cameras: tuple[torch.Tensor, ...]
+
+    def __post_init__(self) -> None:
+        if not self.cameras:
+            raise ValueError("GR00T N1.7 video batches require at least one camera.")
+        first_shape = self.cameras[0].shape
+        for camera in self.cameras:
+            if camera.ndim != 5:
+                raise ValueError(
+                    f"GR00T N1.7 camera tensors must have shape (B, T, C, H, W), got {tuple(camera.shape)}."
+                )
+            if camera.shape[:3] != first_shape[:3]:
+                raise ValueError(
+                    "GR00T N1.7 camera tensors must share batch, horizon, and channel dimensions, "
+                    f"got {tuple(first_shape[:3])} and {tuple(camera.shape[:3])}."
+                )
+
+    @property
+    def batch_size(self) -> int:
+        return int(self.cameras[0].shape[0])
+
+    @property
+    def horizon(self) -> int:
+        return int(self.cameras[0].shape[1])
 
 
-def _align_video_horizon(video: np.ndarray, horizon: int | None) -> np.ndarray:
-    """Match the checkpoint video horizon by truncating or left-padding frames."""
+def _as_video_tensor_btchw(image: Any) -> torch.Tensor:
+    """Preserve a LeRobot image tensor while making its time dimension explicit."""
+
+    image_t = image if isinstance(image, torch.Tensor) else torch.as_tensor(image)
+    if image_t.ndim == 4:
+        return image_t.unsqueeze(1)
+    if image_t.ndim == 5:
+        return image_t
+    raise ValueError(
+        f"Expected image tensor shape (B, C, H, W) or (B, T, C, H, W), got {tuple(image_t.shape)}."
+    )
+
+
+def _align_video_horizon_tensor(video: torch.Tensor, horizon: int | None) -> torch.Tensor:
+    """Match the checkpoint video horizon without changing dtype or tensor layout."""
 
     if horizon is None or horizon <= 0:
         return video
@@ -1357,8 +1394,21 @@ def _align_video_horizon(video: np.ndarray, horizon: int | None) -> np.ndarray:
         return video
     if current > horizon:
         return video[:, -horizon:]
-    pad = np.repeat(video[:, :1], horizon - current, axis=1)
-    return np.concatenate([pad, video], axis=1)
+    pad = video[:, :1].expand(-1, horizon - current, -1, -1, -1)
+    return torch.cat([pad, video], dim=1)
+
+
+def _uint8_image_tensor(image: torch.Tensor) -> torch.Tensor:
+    if image.dtype.is_floating_point:
+        return (image.clamp(0, 1) * 255.0).to(torch.uint8)
+    if image.dtype != torch.uint8:
+        return image.to(torch.uint8)
+    return image
+
+
+def _uint8_image_numpy_hwc(image: torch.Tensor) -> np.ndarray:
+    image = _uint8_image_tensor(image).detach().cpu()
+    return image.permute(1, 2, 0).contiguous().numpy()
 
 
 def _build_n1_7_processor(model_name: str = GROOT_N1_7_BACKBONE_MODEL) -> ProcessorMixin:
@@ -1845,17 +1895,28 @@ class GrootN17PackInputsStep(ProcessorStep):
                 self._last_raw_state = grouped
 
         img_keys = self._ordered_image_keys(obs)
+        packed_video: _GrootN17VideoBatch | None = None
         if img_keys:
-            cams = [_align_video_horizon(_to_uint8_np_bthwc(obs[k]), self.video_horizon) for k in img_keys]
-            video = np.stack(cams, axis=2)  # (B, T, V, H, W, C)
-            obs["video"] = video
+            cameras = tuple(
+                _align_video_horizon_tensor(_as_video_tensor_btchw(obs[key]), self.video_horizon)
+                for key in img_keys
+            )
+            # Keep the pinned worker tensors in their native channels-first
+            # representation. The VLM step transfers each view directly and
+            # never creates a CPU NumPy/HWC staging buffer.
+            packed_video = _GrootN17VideoBatch(cameras)
+            obs["video"] = packed_video
             image_keys_to_remove = [key for key in obs if key.startswith(OBS_IMAGES)]
             if OBS_IMAGE in obs:
                 image_keys_to_remove.append(OBS_IMAGE)
             for k in image_keys_to_remove:
                 obs.pop(k, None)
 
-        bsz, _device = infer_n1_7_batch_size_and_device(obs, transition.get(TransitionKey.ACTION))
+        if packed_video is not None:
+            bsz = packed_video.batch_size
+            _device = packed_video.cameras[0].device
+        else:
+            bsz, _device = infer_n1_7_batch_size_and_device(obs, transition.get(TransitionKey.ACTION))
         comp["language"] = prepare_n1_7_language_batch(
             comp.get(self.language_key),
             bsz,
@@ -2090,6 +2151,28 @@ class GrootN17VLMEncodeStep(ProcessorStep):
         ``target_device`` when set) for the torchvision-backed Qwen processor.
         """
         if self.use_albumentations:
+            if isinstance(video, _GrootN17VideoBatch):
+                train_crop = self.training and torch.is_grad_enabled()
+                sample_images: list[list[Any]] = []
+                for batch_idx in range(batch_size):
+                    crop_position = (random.random(), random.random()) if train_crop else None
+                    sample_images.append(
+                        [
+                            _transform_n1_7_image_for_vlm_albumentations(
+                                _uint8_image_numpy_hwc(video.cameras[view_idx][batch_idx, timestep]),
+                                image_crop_size=self.image_crop_size,
+                                image_target_size=self.image_target_size,
+                                shortest_image_edge=self.shortest_image_edge,
+                                crop_fraction=self.crop_fraction,
+                                letter_box_transform=self.letter_box_transform,
+                                crop_position=crop_position,
+                            )
+                            for timestep in range(video.horizon)
+                            for view_idx in range(len(video.cameras))
+                        ]
+                    )
+                return sample_images
+
             video_np = np.asarray(video)
             train_crop = self.training and torch.is_grad_enabled()
             sample_images: list[list[Any]] = []
@@ -2114,6 +2197,36 @@ class GrootN17VLMEncodeStep(ProcessorStep):
                     ]
                 )
             return sample_images
+
+        if isinstance(video, _GrootN17VideoBatch):
+            cameras: list[torch.Tensor] = []
+            for camera in video.cameras:
+                camera_t = camera
+                if target_device is not None and camera_t.device != target_device:
+                    camera_t = camera_t.to(
+                        target_device,
+                        non_blocking=(target_device.type == "cuda"),
+                    )
+                # Float observations from direct/inference callers remain
+                # supported, but conversion happens after transfer. Training's
+                # registered uint8 contract takes this branch as a no-op.
+                cameras.append(_uint8_image_tensor(camera_t))
+
+            return [
+                [
+                    _transform_n1_7_image_for_vlm_torch(
+                        cameras[view_idx][batch_idx, timestep],
+                        image_crop_size=self.image_crop_size,
+                        image_target_size=self.image_target_size,
+                        shortest_image_edge=self.shortest_image_edge,
+                        crop_fraction=self.crop_fraction,
+                        letter_box_transform=self.letter_box_transform,
+                    )
+                    for timestep in range(video.horizon)
+                    for view_idx in range(len(cameras))
+                ]
+                for batch_idx in range(batch_size)
+            ]
 
         video_t = video if torch.is_tensor(video) else torch.from_numpy(np.ascontiguousarray(video))
         # (B, T, V, H, W, C) uint8 -> (B, T, V, C, H, W)
@@ -2147,7 +2260,7 @@ class GrootN17VLMEncodeStep(ProcessorStep):
         if video is None:
             return transition
 
-        batch_size = int(video.shape[0])
+        batch_size = video.batch_size if isinstance(video, _GrootN17VideoBatch) else int(video.shape[0])
         languages = prepare_n1_7_language_batch(
             comp.get("language"),
             batch_size,

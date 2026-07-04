@@ -37,6 +37,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, TypedDict, TypeVar, cast
 
@@ -54,6 +55,18 @@ from .converters import batch_to_transition, create_transition, transition_to_ba
 # Generic type variables for pipeline input and output.
 TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
+
+
+class ImageInputFormat(StrEnum):
+    """Raw image representation expected by a policy preprocessor.
+
+    Dataset workers use uint8 images for compact IPC. The training loop uses
+    this contract to preserve uint8 for preprocessors that consume it directly,
+    while retaining the historical float32 [0, 1] input for existing policies.
+    """
+
+    FLOAT32_0_1 = "float32_0_1"
+    UINT8_0_255 = "uint8_0_255"
 
 
 class ProcessorStepRegistry:
@@ -270,6 +283,11 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
     steps: Sequence[ProcessorStep] = field(default_factory=list)
     name: str = "DataProcessorPipeline"
 
+    # This describes the raw images accepted before ``to_transition`` and the
+    # first processor step. It is primarily meaningful for policy preprocessors;
+    # the float default keeps existing and third-party pipelines compatible.
+    input_image_format: ImageInputFormat = ImageInputFormat.FLOAT32_0_1
+
     to_transition: Callable[[TInput], EnvTransition] = field(
         default_factory=lambda: cast(Callable[[TInput], EnvTransition], batch_to_transition), repr=False
     )
@@ -437,6 +455,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         sanitized_name = self._get_sanitized_name()
         pipeline_config: dict[str, Any] = {
             "name": self.name,
+            "input_image_format": self.input_image_format.value,
             "steps": [],
         }
 
@@ -741,6 +760,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         pipeline = cls(
             steps=steps,
             name=loaded_config.get("name", "DataProcessorPipeline"),
+            input_image_format=loaded_config.get("input_image_format", ImageInputFormat.FLOAT32_0_1),
             to_transition=to_transition or cast(Callable[[TInput], EnvTransition], batch_to_transition),
             to_output=to_output or cast(Callable[[EnvTransition], TOutput], transition_to_batch),
         )
@@ -777,6 +797,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         pipeline = cls(
             steps=steps,
             name=config.get("name", "DataProcessorPipeline"),
+            input_image_format=config.get("input_image_format", ImageInputFormat.FLOAT32_0_1),
             to_transition=to_transition or cast(Callable[[TInput], EnvTransition], batch_to_transition),
             to_output=to_output or cast(Callable[[EnvTransition], TOutput], transition_to_batch),
         )
@@ -1533,6 +1554,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
     def __post_init__(self):
         """Validates that all provided steps are instances of `ProcessorStep`."""
+        self.input_image_format = ImageInputFormat(self.input_image_format)
         for i, step in enumerate(self.steps):
             if not isinstance(step, ProcessorStep):
                 raise TypeError(f"Step {i} ({type(step).__name__}) must inherit from ProcessorStep")
