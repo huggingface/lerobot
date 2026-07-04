@@ -179,7 +179,10 @@ def warp_token_grid_by_flow(
     coords = torch.stack([samp_x, samp_y], dim=-1).unsqueeze(0).expand(bsz, -1, -1, -1)
 
     warped = F.grid_sample(feat, coords, mode="bilinear", padding_mode="border", align_corners=True)
-    warped = warped.permute(0, 2, 3, 1)  # (B, gh, gw, D)
+    # permute leaves D as the non-unit-stride dim; downstream policy code (e.g. the
+    # SmolVLM connector's pixel_shuffle) calls .view() on these tokens and expects
+    # a standard contiguous layout.
+    warped = warped.permute(0, 2, 3, 1).contiguous()  # (B, gh, gw, D)
 
     if motion_mask is not None:
         mm = torch.as_tensor(motion_mask, dtype=torch.bool, device=feat.device)
