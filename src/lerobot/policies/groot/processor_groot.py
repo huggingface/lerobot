@@ -1341,36 +1341,6 @@ def make_groot_pre_post_processors(
 # GR00T specific processor steps
 
 
-@dataclass(frozen=True)
-class _GrootN17VideoBatch:
-    """Ordered camera tensors kept in LeRobot's native (B, T, C, H, W) layout."""
-
-    cameras: tuple[torch.Tensor, ...]
-
-    def __post_init__(self) -> None:
-        if not self.cameras:
-            raise ValueError("GR00T N1.7 video batches require at least one camera.")
-        first_shape = self.cameras[0].shape
-        for camera in self.cameras:
-            if camera.ndim != 5:
-                raise ValueError(
-                    f"GR00T N1.7 camera tensors must have shape (B, T, C, H, W), got {tuple(camera.shape)}."
-                )
-            if camera.shape[:3] != first_shape[:3]:
-                raise ValueError(
-                    "GR00T N1.7 camera tensors must share batch, horizon, and channel dimensions, "
-                    f"got {tuple(first_shape[:3])} and {tuple(camera.shape[:3])}."
-                )
-
-    @property
-    def batch_size(self) -> int:
-        return int(self.cameras[0].shape[0])
-
-    @property
-    def horizon(self) -> int:
-        return int(self.cameras[0].shape[1])
-
-
 def _as_video_tensor_btchw(image: Any) -> torch.Tensor:
     """Preserve a LeRobot image tensor while making its time dimension explicit."""
 
@@ -1382,6 +1352,40 @@ def _as_video_tensor_btchw(image: Any) -> torch.Tensor:
     raise ValueError(
         f"Expected image tensor shape (B, C, H, W) or (B, T, C, H, W), got {tuple(image_t.shape)}."
     )
+
+
+def _video_cameras_btchw(video: Any) -> tuple[torch.Tensor, ...]:
+    """Return ordered cameras in LeRobot's native (B, T, C, H, W) layout.
+
+    New pipelines pass a tuple of worker-produced camera tensors. The ndarray
+    adapter keeps serialized pipelines and direct callers using the former
+    (B, T, V, H, W, C) representation compatible without duplicating the
+    downstream image path.
+    """
+
+    if isinstance(video, (list, tuple)):
+        cameras = tuple(_as_video_tensor_btchw(camera) for camera in video)
+    else:
+        video_t = video if torch.is_tensor(video) else torch.from_numpy(np.ascontiguousarray(video))
+        if video_t.ndim != 6:
+            raise ValueError(
+                "Expected video as ordered camera tensors or shape (B, T, V, H, W, C), "
+                f"got {tuple(video_t.shape)}."
+            )
+        cameras = tuple(
+            video_t[:, :, view_idx].permute(0, 1, 4, 2, 3) for view_idx in range(video_t.shape[2])
+        )
+
+    if not cameras:
+        raise ValueError("GR00T N1.7 video batches require at least one camera.")
+    expected_shape = cameras[0].shape[:3]
+    for camera in cameras:
+        if camera.ndim != 5 or camera.shape[:3] != expected_shape:
+            raise ValueError(
+                "GR00T N1.7 cameras must share (B, T, C) dimensions in (B, T, C, H, W) layout; "
+                f"expected {tuple(expected_shape)}, got {tuple(camera.shape)}."
+            )
+    return cameras
 
 
 def _align_video_horizon_tensor(video: torch.Tensor, horizon: int | None) -> torch.Tensor:
@@ -1895,28 +1899,26 @@ class GrootN17PackInputsStep(ProcessorStep):
                 self._last_raw_state = grouped
 
         img_keys = self._ordered_image_keys(obs)
-        packed_video: _GrootN17VideoBatch | None = None
+        packed_cameras: tuple[torch.Tensor, ...] = ()
         if img_keys:
-            cameras = tuple(
+            packed_cameras = tuple(
                 _align_video_horizon_tensor(_as_video_tensor_btchw(obs[key]), self.video_horizon)
                 for key in img_keys
             )
             # Keep the pinned worker tensors in their native channels-first
             # representation. The VLM step transfers each view directly and
             # never creates a CPU NumPy/HWC staging buffer.
-            packed_video = _GrootN17VideoBatch(cameras)
-            obs["video"] = packed_video
+            obs["video"] = packed_cameras
             image_keys_to_remove = [key for key in obs if key.startswith(OBS_IMAGES)]
             if OBS_IMAGE in obs:
                 image_keys_to_remove.append(OBS_IMAGE)
             for k in image_keys_to_remove:
                 obs.pop(k, None)
 
-        if packed_video is not None:
-            bsz = packed_video.batch_size
-            _device = packed_video.cameras[0].device
+        if packed_cameras:
+            bsz = packed_cameras[0].shape[0]
         else:
-            bsz, _device = infer_n1_7_batch_size_and_device(obs, transition.get(TransitionKey.ACTION))
+            bsz, _ = infer_n1_7_batch_size_and_device(obs, transition.get(TransitionKey.ACTION))
         comp["language"] = prepare_n1_7_language_batch(
             comp.get(self.language_key),
             bsz,
@@ -2096,9 +2098,9 @@ class GrootN17PackInputsStep(ProcessorStep):
 class GrootN17VLMEncodeStep(ProcessorStep):
     """Tokenize N1.7's packed video-language prompt with the Qwen3-VL processor.
 
-    The packed video has shape ``(B, T, V, H, W, C)``. Each frame/view becomes
-    an image item in the same chat message so the resulting image tokens match
-    the temporal VLM packing used by Isaac-GR00T.
+    The packed video is an ordered tuple of ``(B, T, C, H, W)`` camera tensors.
+    Each frame/view becomes an image item in the same chat message so the
+    resulting image tokens match the temporal VLM packing used by Isaac-GR00T.
 
     Images are handed to the torchvision-backed Qwen3-VL processor as ``(C, H, W)``
     uint8 tensors (no per-frame PIL roundtrip), and, when ``device`` resolves to a
@@ -2141,39 +2143,18 @@ class GrootN17VLMEncodeStep(ProcessorStep):
             # the CPU path, which is bit-identical, instead of crashing.
             return None
 
-    def _build_sample_images(
-        self, video: Any, batch_size: int, target_device: torch.device | None
-    ) -> list[list[Any]]:
+    def _build_sample_images(self, video: Any, target_device: torch.device | None) -> list[list[Any]]:
         """Return, per batch item, its ordered ``(timestep, view)`` frames.
 
         ``use_albumentations`` keeps the legacy per-frame cv2/INTER_AREA transform;
         otherwise frames are ``(C, H, W)`` uint8 tensors (moved to
         ``target_device`` when set) for the torchvision-backed Qwen processor.
         """
-        if self.use_albumentations:
-            if isinstance(video, _GrootN17VideoBatch):
-                train_crop = self.training and torch.is_grad_enabled()
-                sample_images: list[list[Any]] = []
-                for batch_idx in range(batch_size):
-                    crop_position = (random.random(), random.random()) if train_crop else None
-                    sample_images.append(
-                        [
-                            _transform_n1_7_image_for_vlm_albumentations(
-                                _uint8_image_numpy_hwc(video.cameras[view_idx][batch_idx, timestep]),
-                                image_crop_size=self.image_crop_size,
-                                image_target_size=self.image_target_size,
-                                shortest_image_edge=self.shortest_image_edge,
-                                crop_fraction=self.crop_fraction,
-                                letter_box_transform=self.letter_box_transform,
-                                crop_position=crop_position,
-                            )
-                            for timestep in range(video.horizon)
-                            for view_idx in range(len(video.cameras))
-                        ]
-                    )
-                return sample_images
+        cameras = _video_cameras_btchw(video)
+        batch_size = cameras[0].shape[0]
+        horizon = cameras[0].shape[1]
 
-            video_np = np.asarray(video)
+        if self.use_albumentations:
             train_crop = self.training and torch.is_grad_enabled()
             sample_images: list[list[Any]] = []
             for batch_idx in range(batch_size):
@@ -2184,7 +2165,7 @@ class GrootN17VLMEncodeStep(ProcessorStep):
                 sample_images.append(
                     [
                         _transform_n1_7_image_for_vlm_albumentations(
-                            video_np[batch_idx, timestep, view_idx],
+                            _uint8_image_numpy_hwc(cameras[view_idx][batch_idx, timestep]),
                             image_crop_size=self.image_crop_size,
                             image_target_size=self.image_target_size,
                             shortest_image_edge=self.shortest_image_edge,
@@ -2192,66 +2173,35 @@ class GrootN17VLMEncodeStep(ProcessorStep):
                             letter_box_transform=self.letter_box_transform,
                             crop_position=crop_position,
                         )
-                        for timestep in range(video_np.shape[1])
-                        for view_idx in range(video_np.shape[2])
+                        for timestep in range(horizon)
+                        for view_idx in range(len(cameras))
                     ]
                 )
             return sample_images
 
-        if isinstance(video, _GrootN17VideoBatch):
-            cameras: list[torch.Tensor] = []
-            for camera in video.cameras:
-                camera_t = camera
-                if target_device is not None and camera_t.device != target_device:
-                    camera_t = camera_t.to(
-                        target_device,
-                        non_blocking=(target_device.type == "cuda"),
-                    )
-                # Float observations from direct/inference callers remain
-                # supported, but conversion happens after transfer. Training's
-                # registered uint8 contract takes this branch as a no-op.
-                cameras.append(_uint8_image_tensor(camera_t))
+        prepared_cameras: list[torch.Tensor] = []
+        for camera in cameras:
+            if target_device is not None and camera.device != target_device:
+                camera = camera.to(target_device, non_blocking=(target_device.type == "cuda"))
+            # Float observations from direct/inference callers remain supported,
+            # but conversion happens after transfer. Training uint8 is a no-op.
+            prepared_cameras.append(_uint8_image_tensor(camera))
 
-            return [
-                [
-                    _transform_n1_7_image_for_vlm_torch(
-                        cameras[view_idx][batch_idx, timestep],
-                        image_crop_size=self.image_crop_size,
-                        image_target_size=self.image_target_size,
-                        shortest_image_edge=self.shortest_image_edge,
-                        crop_fraction=self.crop_fraction,
-                        letter_box_transform=self.letter_box_transform,
-                    )
-                    for timestep in range(video.horizon)
-                    for view_idx in range(len(cameras))
-                ]
-                for batch_idx in range(batch_size)
+        return [
+            [
+                _transform_n1_7_image_for_vlm_torch(
+                    prepared_cameras[view_idx][batch_idx, timestep],
+                    image_crop_size=self.image_crop_size,
+                    image_target_size=self.image_target_size,
+                    shortest_image_edge=self.shortest_image_edge,
+                    crop_fraction=self.crop_fraction,
+                    letter_box_transform=self.letter_box_transform,
+                )
+                for timestep in range(horizon)
+                for view_idx in range(len(prepared_cameras))
             ]
-
-        video_t = video if torch.is_tensor(video) else torch.from_numpy(np.ascontiguousarray(video))
-        # (B, T, V, H, W, C) uint8 -> (B, T, V, C, H, W)
-        video_t = video_t.permute(0, 1, 2, 5, 3, 4).contiguous()
-        if target_device is not None and video_t.device != target_device:
-            video_t = video_t.to(target_device, non_blocking=(target_device.type == "cuda"))
-
-        frames_per_sample: list[list[Any]] = []
-        for batch_idx in range(batch_size):
-            sample = video_t[batch_idx]  # (T, V, C, H, W)
-            frames_per_sample.append(
-                [
-                    _transform_n1_7_image_for_vlm_torch(
-                        sample[timestep, view_idx],
-                        image_crop_size=self.image_crop_size,
-                        image_target_size=self.image_target_size,
-                        shortest_image_edge=self.shortest_image_edge,
-                        crop_fraction=self.crop_fraction,
-                        letter_box_transform=self.letter_box_transform,
-                    )
-                    for timestep in range(sample.shape[0])
-                    for view_idx in range(sample.shape[1])
-                ]
-            )
-        return frames_per_sample
+            for batch_idx in range(batch_size)
+        ]
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         obs = transition.get(TransitionKey.OBSERVATION, {}) or {}
@@ -2260,15 +2210,14 @@ class GrootN17VLMEncodeStep(ProcessorStep):
         if video is None:
             return transition
 
-        batch_size = video.batch_size if isinstance(video, _GrootN17VideoBatch) else int(video.shape[0])
+        target_device = self._target_device()
+        sample_images = self._build_sample_images(video, target_device)
+        batch_size = len(sample_images)
         languages = prepare_n1_7_language_batch(
             comp.get("language"),
             batch_size,
             formalize_language=False,
         )
-
-        target_device = self._target_device()
-        sample_images = self._build_sample_images(video, batch_size, target_device)
 
         texts: list[str] = []
         images: list[Any] = []

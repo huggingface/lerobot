@@ -1251,12 +1251,12 @@ def test_groot_n1_7_pack_inputs_orders_video_by_checkpoint_modality_keys():
     output = step(transition)
 
     video = output[TransitionKey.OBSERVATION]["video"]
-    assert len(video.cameras) == 2
-    assert video.cameras[0].shape == (1, 1, 3, 2, 2)
-    assert video.cameras[0].data_ptr() == front.data_ptr()
-    assert video.cameras[1].data_ptr() == wrist.data_ptr()
-    assert torch.unique(video.cameras[0]).tolist() == [11]
-    assert torch.unique(video.cameras[1]).tolist() == [22]
+    assert len(video) == 2
+    assert video[0].shape == (1, 1, 3, 2, 2)
+    assert video[0].data_ptr() == front.data_ptr()
+    assert video[1].data_ptr() == wrist.data_ptr()
+    assert torch.unique(video[0]).tolist() == [11]
+    assert torch.unique(video[1]).tolist() == [22]
     assert f"{OBS_IMAGES}.zz_extra" not in output[TransitionKey.OBSERVATION]
     assert f"{OBS_IMAGES}.image" not in output[TransitionKey.OBSERVATION]
     assert f"{OBS_IMAGES}.image2" not in output[TransitionKey.OBSERVATION]
@@ -1288,8 +1288,8 @@ def test_groot_n1_7_tensor_video_path_matches_legacy_numpy_bytes():
     )
     encode_step = GrootN17VLMEncodeStep()
 
-    tensor_frames = encode_step._build_sample_images(video, batch_size=2, target_device=None)
-    legacy_frames = encode_step._build_sample_images(legacy_video, batch_size=2, target_device=None)
+    tensor_frames = encode_step._build_sample_images(video, target_device=None)
+    legacy_frames = encode_step._build_sample_images(legacy_video, target_device=None)
 
     assert len(tensor_frames) == len(legacy_frames) == 2
     for tensor_sample, legacy_sample in zip(tensor_frames, legacy_frames, strict=True):
