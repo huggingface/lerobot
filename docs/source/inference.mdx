@@ -207,6 +207,35 @@ One policy call per control tick. The main loop blocks until the action is compu
 
 Works with all policies. No extra flags needed.
 
+#### Chunked action cache with background prefetch (ACT)
+
+For ACT, `select_action` only runs the expensive forward pass once every `n_action_steps` ticks — the other ticks pop an action from an internal queue and ignore the observation. The default sync path still pays the per-tick observation upload + normalization, and the tick that does run the forward pass blocks the control loop (a periodic stall of the full inference latency).
+
+Two opt-in flags remove both costs:
+
+- `--inference.chunked_action_cache=true` drives the policy via `predict_action_chunk` and serves postprocessed actions from a local cache, so observation preprocessing only runs when a new chunk is needed.
+- `--inference.prefetch_chunks=true` additionally computes the next chunk on a background thread: when the cache drops to `--inference.prefetch_watermark` actions (default 20), the current observation is snapshotted and the next chunk is prefetched while the loop keeps serving cached actions. The first `watermark` actions of the new chunk are skipped so it stays time-aligned with the actions served in the meantime. The control loop never blocks on inference.
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USER}/act_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="Pick up the cube" \
+    --inference.chunked_action_cache=true \
+    --inference.prefetch_chunks=true
+```
+
+| Flag                               | Description                                                                   | Default |
+| ---------------------------------- | ----------------------------------------------------------------------------- | ------- |
+| `--inference.chunked_action_cache` | Cache postprocessed action chunks; skip per-tick observation prep             | false   |
+| `--inference.prefetch_chunks`      | Compute the next chunk on a background thread (requires the cache)            | false   |
+| `--inference.prefetch_watermark`   | Cache level (in actions) that triggers the prefetch; `1 ≤ w < n_action_steps` | 20      |
+
+Currently supported for ACT without temporal ensembling, where serving cached chunks is behaviour-preserving (`select_action` ignores the observation while its queue is non-empty). The factory raises a clear error for unsupported policies. Each prefetched chunk yields `n_action_steps - watermark` usable actions, so the policy re-plans slightly more often than with the inline path.
+
 ### Real-Time Chunking (`--inference.type=rtc`)
 
 A background thread produces action chunks asynchronously. The main control loop polls for the next ready action while the policy computes the next chunk in parallel.
