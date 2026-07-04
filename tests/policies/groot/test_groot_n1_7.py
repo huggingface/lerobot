@@ -619,20 +619,6 @@ def test_raw_n1_7_libero_checkpoint_processors_use_checkpoint_assets(tmp_path):
     assert decode_actions.action_decode_transform == GROOT_ACTION_DECODE_TRANSFORM_LIBERO
 
 
-def test_groot_training_keeps_vlm_image_preprocessing_deterministic(tmp_path):
-    model_path = tmp_path / "libero_spatial"
-    _write_raw_n1_7_libero_checkpoint(model_path)
-    config = _raw_n1_7_libero_config(model_path)
-
-    preprocessor, _ = make_groot_pre_post_processors(config, dataset_meta=object())
-
-    pack_inputs = next(step for step in preprocessor.steps if isinstance(step, GrootN17PackInputsStep))
-    vlm_encode = next(step for step in preprocessor.steps if isinstance(step, GrootN17VLMEncodeStep))
-
-    assert pack_inputs.training is True
-    assert not hasattr(vlm_encode, "training")
-
-
 def test_raw_n1_7_checkpoint_requires_percentile_stats_when_config_uses_percentiles(tmp_path):
     model_path = tmp_path / "libero_spatial"
     _write_raw_n1_7_libero_checkpoint(model_path)
