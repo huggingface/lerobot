@@ -201,11 +201,13 @@ intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54,<2.57.0 ; sys_platform == 'darwin'",
 ]
-# isaacteleop 1.3.x ships on public PyPI. The [cloudxr,retargeters] extras pull
-# the CloudXR runtime bindings and the retargeter library the XR controller
-# pipeline uses.
+# isaacteleop 1.3.x ships on public PyPI. The [cloudxr] extra pulls the CloudXR
+# runtime bindings the XR controller pipeline uses. We deliberately skip the
+# [retargeters] extra: our teleoperators only use retargeting_engine (base wheel),
+# and [retargeters] drags in dex-retargeting (numpy<2, conflicts with lerobot)
+# and nlopt (no aarch64 wheels >=2.8).
 #   uv pip install 'lerobot[isaac-teleop]'
-isaac-teleop = ["isaacteleop[cloudxr,retargeters]~=1.3.0", "lerobot[kinematics]", "lerobot[scipy-dep]"]
+isaac-teleop = ["isaacteleop[cloudxr]~=1.3.0", "lerobot[kinematics]", "lerobot[scipy-dep]"]
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0", "lerobot[scipy-dep]"]
 
 # Policies
