@@ -106,7 +106,8 @@ def test_crop_position_corners_differ_from_center():
 
 
 def _video(img, views=2):
-    return np.stack([img] * views, axis=0).reshape(1, 1, views, *img.shape)
+    frame = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).unsqueeze(0)
+    return tuple(frame.clone() for _ in range(views))
 
 
 def _step(training):

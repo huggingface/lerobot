@@ -1262,40 +1262,31 @@ def test_groot_n1_7_pack_inputs_orders_video_by_checkpoint_modality_keys():
     assert f"{OBS_IMAGES}.image2" not in output[TransitionKey.OBSERVATION]
 
 
-def test_groot_n1_7_tensor_video_path_matches_legacy_numpy_bytes():
-    camera_a = torch.arange(2 * 2 * 3 * 4 * 5, dtype=torch.uint8).reshape(2, 2, 3, 4, 5)
-    camera_b = (camera_a.to(torch.int16) * 3 % 251).to(torch.uint8)
+def test_groot_n1_7_single_camera_is_one_element_tuple_and_preserves_bytes():
+    camera = torch.arange(2 * 2 * 3 * 4 * 5, dtype=torch.uint8).reshape(2, 2, 3, 4, 5)
     pack_step = GrootN17PackInputsStep(
         normalize_min_max=False,
-        video_modality_keys=["image", "wrist_image"],
+        video_modality_keys=["image"],
     )
     packed = pack_step(
         {
             TransitionKey.OBSERVATION: {
-                f"{OBS_IMAGES}.image": camera_a,
-                f"{OBS_IMAGES}.image2": camera_b,
+                f"{OBS_IMAGES}.image": camera,
             },
             TransitionKey.COMPLEMENTARY_DATA: {"task": ["a", "b"]},
         }
     )
-    video = packed[TransitionKey.OBSERVATION]["video"]
-    legacy_video = np.stack(
-        [
-            camera_a.permute(0, 1, 3, 4, 2).numpy(),
-            camera_b.permute(0, 1, 3, 4, 2).numpy(),
-        ],
-        axis=2,
-    )
-    encode_step = GrootN17VLMEncodeStep()
+    cameras = packed[TransitionKey.OBSERVATION]["video"]
 
-    tensor_frames = encode_step._build_sample_images(video, target_device=None)
-    legacy_frames = encode_step._build_sample_images(legacy_video, target_device=None)
+    assert isinstance(cameras, tuple)
+    assert len(cameras) == 1
+    assert cameras[0].data_ptr() == camera.data_ptr()
 
-    assert len(tensor_frames) == len(legacy_frames) == 2
-    for tensor_sample, legacy_sample in zip(tensor_frames, legacy_frames, strict=True):
-        assert len(tensor_sample) == len(legacy_sample) == 4
-        for tensor_frame, legacy_frame in zip(tensor_sample, legacy_sample, strict=True):
-            torch.testing.assert_close(tensor_frame, legacy_frame, rtol=0, atol=0)
+    frames = GrootN17VLMEncodeStep()._build_sample_images(cameras, target_device=None)
+    for batch_idx, sample_frames in enumerate(frames):
+        assert len(sample_frames) == 2
+        for timestep, frame in enumerate(sample_frames):
+            torch.testing.assert_close(frame, camera[batch_idx, timestep], rtol=0, atol=0)
 
 
 def test_groot_n1_7_postprocessor_clips_normalized_action_before_unnormalizing():
@@ -1796,7 +1787,7 @@ def test_groot_n1_7_vlm_encode_uses_per_sample_language():
     step._proc = fake_proc
     transition = {
         TransitionKey.OBSERVATION: {
-            "video": np.zeros((2, 1, 1, 2, 2, 3), dtype=np.uint8),
+            "video": (torch.zeros((2, 1, 3, 2, 2), dtype=torch.uint8),),
         },
         TransitionKey.COMPLEMENTARY_DATA: {
             "language": ["first task", "second task"],
@@ -1851,15 +1842,18 @@ def test_groot_n1_7_vlm_encode_packs_images_time_major_then_camera_order():
     fake_proc = FakeProcessor()
     step = GrootN17VLMEncodeStep()
     step._proc = fake_proc
-    video = np.zeros((2, 2, 2, 2, 2, 3), dtype=np.uint8)
+    cameras = (
+        torch.zeros((2, 2, 3, 2, 2), dtype=torch.uint8),
+        torch.zeros((2, 2, 3, 2, 2), dtype=torch.uint8),
+    )
     image_id = 1
     for batch_idx in range(2):
         for timestep in range(2):
             for view_idx in range(2):
-                video[batch_idx, timestep, view_idx, :, :, :] = image_id
+                cameras[view_idx][batch_idx, timestep] = image_id
                 image_id += 1
     transition = {
-        TransitionKey.OBSERVATION: {"video": video},
+        TransitionKey.OBSERVATION: {"video": cameras},
         TransitionKey.COMPLEMENTARY_DATA: {"language": ["task a", "task b"]},
     }
 
@@ -1980,7 +1974,9 @@ def test_groot_n1_7_vlm_encode_transforms_non_square_two_camera_sample_like_core
 
     camera_a = np.arange(3 * 5 * 3, dtype=np.uint8).reshape(3, 5, 3)
     camera_b = (np.arange(3 * 5 * 3, dtype=np.uint16).reshape(3, 5, 3) * 3 % 251).astype(np.uint8)
-    video = np.stack([camera_a, camera_b], axis=0).reshape(1, 1, 2, 3, 5, 3)
+    cameras = tuple(
+        torch.from_numpy(camera).permute(2, 0, 1).unsqueeze(0).unsqueeze(0) for camera in (camera_a, camera_b)
+    )
     fake_proc = FakeProcessor()
     step = GrootN17VLMEncodeStep(
         image_target_size=[8, 8],
@@ -1992,7 +1988,7 @@ def test_groot_n1_7_vlm_encode_transforms_non_square_two_camera_sample_like_core
 
     step(
         {
-            TransitionKey.OBSERVATION: {"video": video},
+            TransitionKey.OBSERVATION: {"video": cameras},
             TransitionKey.COMPLEMENTARY_DATA: {"language": ["move"]},
         }
     )

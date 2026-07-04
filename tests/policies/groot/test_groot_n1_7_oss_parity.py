@@ -96,7 +96,10 @@ def test_groot_n1_7_vlm_chat_content_order_matches_oss_reference():
     step._proc = processor
     transition = {
         TransitionKey.OBSERVATION: {
-            "video": np.zeros((1, 1, 2, 480, 640, 3), dtype=np.uint8),
+            "video": (
+                torch.zeros((1, 1, 3, 480, 640), dtype=torch.uint8),
+                torch.zeros((1, 1, 3, 480, 640), dtype=torch.uint8),
+            ),
         },
         TransitionKey.COMPLEMENTARY_DATA: {"language": ["pick up the vial"]},
     }
