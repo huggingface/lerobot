@@ -207,8 +207,15 @@ intelrealsense = [
 # path. We deliberately avoid the full [retargeters] extra: it drags in
 # dex-retargeting (pins numpy<2, conflicts with lerobot) and nlopt (no aarch64
 # wheels), breaking resolution on ARM hosts (DGX Spark, Jetson Thor, GH200).
+# The full [retargeters] extra is therefore gated to x86_64, where its wheels
+# exist; ARM hosts get the base + retargeters-lite path.
 #   uv pip install 'lerobot[isaac-teleop]'
-isaac-teleop = ["isaacteleop[cloudxr,retargeters-lite]~=1.3.131", "lerobot[kinematics]", "lerobot[scipy-dep]"]
+isaac-teleop = [
+    "isaacteleop[cloudxr,retargeters-lite]~=1.3.131",
+    "isaacteleop[retargeters]~=1.3.131 ; platform_machine == 'x86_64'",
+    "lerobot[kinematics]",
+    "lerobot[scipy-dep]",
+]
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0", "lerobot[scipy-dep]"]
 
 # Policies

@@ -2,10 +2,14 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
-    "(python_full_version >= '3.15' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux')",
-    "(python_full_version == '3.14.*' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'linux')",
-    "(python_full_version == '3.13.*' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'linux')",
-    "(python_full_version < '3.13' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'linux')",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version >= '3.15' and platform_machine == 'AMD64' and sys_platform == 'linux'",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version == '3.14.*' and platform_machine == 'AMD64' and sys_platform == 'linux'",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version == '3.13.*' and platform_machine == 'AMD64' and sys_platform == 'linux'",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.13' and platform_machine == 'AMD64' and sys_platform == 'linux'",
     "(python_full_version >= '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'arm64' and sys_platform == 'linux')",
     "(python_full_version == '3.14.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version == '3.14.*' and platform_machine == 'arm64' and sys_platform == 'linux')",
     "(python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version == '3.13.*' and platform_machine == 'arm64' and sys_platform == 'linux')",
@@ -14,22 +18,34 @@ resolution-markers = [
     "python_full_version == '3.14.*' and platform_machine != 'AMD64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'linux'",
     "python_full_version == '3.13.*' and platform_machine != 'AMD64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'linux'",
     "python_full_version < '3.13' and platform_machine != 'AMD64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'linux'",
-    "(python_full_version >= '3.15' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version >= '3.15' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "(python_full_version == '3.14.*' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.14.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
-    "(python_full_version == '3.13.*' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "(python_full_version < '3.13' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version < '3.13' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version >= '3.15' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version >= '3.15' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.15' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version == '3.14.*' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version == '3.14.*' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version == '3.14.*' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version == '3.13.*' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version < '3.13' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version < '3.13' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version < '3.13' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin'",
     "python_full_version == '3.14.*' and platform_machine == 'arm64' and sys_platform == 'darwin'",
     "python_full_version == '3.13.*' and platform_machine == 'arm64' and sys_platform == 'darwin'",
     "python_full_version < '3.13' and platform_machine == 'arm64' and sys_platform == 'darwin'",
-    "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version < '3.13' and sys_platform == 'win32'",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version >= '3.15' and platform_machine != 'x86_64' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and platform_machine != 'x86_64' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and platform_machine != 'x86_64' and sys_platform == 'win32'",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version < '3.13' and platform_machine != 'x86_64' and sys_platform == 'win32'",
 ]
 
 [[package]]
@@ -217,6 +233,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3b/72/5562aabb8dd7181e8e860622a38bea08d17842b99ecd4c91f84ac95251b0/anyio-4.14.1.tar.gz", hash = "sha256:8d648a3544c1a700e3ff78615cd679e4c5c3f149904287e73687b2596963629e", size = 254831, upload-time = "2026-06-24T20:56:06.017Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b0/7b/90df4a0a816d98d6ea26f559d87836d494a2cf1fcf063be67df50a7bcc30/anyio-4.14.1-py3-none-any.whl", hash = "sha256:4e5533c5b8ff0a24f5d7a176cbe6877129cd183893f66b537f8f227d10527d72", size = 124875, upload-time = "2026-06-24T20:56:04.413Z" },
+]
+
+[[package]]
+name = "anytree"
+version = "2.13.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bc/a8/eb55fab589c56f9b6be2b3fd6997aa04bb6f3da93b01154ce6fc8e799db2/anytree-2.13.0.tar.gz", hash = "sha256:c9d3aa6825fdd06af7ebb05b4ef291d2db63e62bb1f9b7d9b71354be9d362714", size = 48389, upload-time = "2025-04-08T21:06:30.662Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7b/98/f6aa7fe0783e42be3093d8ef1b0ecdc22c34c0d69640dfb37f56925cb141/anytree-2.13.0-py3-none-any.whl", hash = "sha256:4cbcf10df36b1f1cba131b7e487ff3edafc9d6e932a3c70071b5b768bab901ff", size = 45077, upload-time = "2025-04-08T21:06:29.494Z" },
 ]
 
 [[package]]
@@ -1158,6 +1183,23 @@ wheels = [
 ]
 
 [[package]]
+name = "dex-retargeting"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anytree" },
+    { name = "lxml" },
+    { name = "nlopt" },
+    { name = "numpy" },
+    { name = "pin" },
+    { name = "pytransform3d" },
+    { name = "pyyaml" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/26/c1/2ed904c6adb9ef20eabc1ae1cd18acc7a20d1347c58c30a985987dd6b83f/dex_retargeting-0.5.0-py3-none-any.whl", hash = "sha256:347ce785181e7c7dff2c2ca1a55955f6b33b711d33a7171cb4ef89dc19bd66d3", size = 52307, upload-time = "2025-04-05T00:17:29.322Z" },
+]
+
+[[package]]
 name = "diffusers"
 version = "0.35.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1250,20 +1292,28 @@ name = "dm-tree"
 version = "0.1.9"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "(python_full_version >= '3.15' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux')",
-    "(python_full_version == '3.14.*' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'linux')",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version >= '3.15' and platform_machine == 'AMD64' and sys_platform == 'linux'",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version == '3.14.*' and platform_machine == 'AMD64' and sys_platform == 'linux'",
     "(python_full_version >= '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'arm64' and sys_platform == 'linux')",
     "(python_full_version == '3.14.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version == '3.14.*' and platform_machine == 'arm64' and sys_platform == 'linux')",
     "python_full_version >= '3.15' and platform_machine != 'AMD64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'linux'",
     "python_full_version == '3.14.*' and platform_machine != 'AMD64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'linux'",
-    "(python_full_version >= '3.15' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version >= '3.15' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "(python_full_version == '3.14.*' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.14.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version >= '3.15' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version >= '3.15' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.15' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version == '3.14.*' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version == '3.14.*' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version == '3.14.*' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin'",
     "python_full_version == '3.14.*' and platform_machine == 'arm64' and sys_platform == 'darwin'",
-    "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version >= '3.15' and platform_machine != 'x86_64' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and platform_machine != 'x86_64' and sys_platform == 'win32'",
 ]
 dependencies = [
     { name = "absl-py" },
@@ -1291,20 +1341,28 @@ name = "dm-tree"
 version = "0.1.10"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "(python_full_version == '3.13.*' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'linux')",
-    "(python_full_version < '3.13' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'linux')",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version == '3.13.*' and platform_machine == 'AMD64' and sys_platform == 'linux'",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.13' and platform_machine == 'AMD64' and sys_platform == 'linux'",
     "(python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version == '3.13.*' and platform_machine == 'arm64' and sys_platform == 'linux')",
     "(python_full_version < '3.13' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.13' and platform_machine == 'arm64' and sys_platform == 'linux')",
     "python_full_version == '3.13.*' and platform_machine != 'AMD64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'linux'",
     "python_full_version < '3.13' and platform_machine != 'AMD64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'linux'",
-    "(python_full_version == '3.13.*' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "(python_full_version < '3.13' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version < '3.13' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version == '3.13.*' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version < '3.13' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version < '3.13' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version < '3.13' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and platform_machine == 'arm64' and sys_platform == 'darwin'",
     "python_full_version < '3.13' and platform_machine == 'arm64' and sys_platform == 'darwin'",
-    "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version < '3.13' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and platform_machine != 'x86_64' and sys_platform == 'win32'",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version < '3.13' and platform_machine != 'x86_64' and sys_platform == 'win32'",
 ]
 dependencies = [
     { name = "absl-py" },
@@ -2303,6 +2361,17 @@ wheels = [
 cloudxr = [
     { name = "websockets" },
 ]
+retargeters = [
+    { name = "cmeel-tinyxml2" },
+    { name = "cmeel-urdfdom" },
+    { name = "dex-retargeting" },
+    { name = "nlopt" },
+    { name = "pin" },
+    { name = "pyyaml" },
+    { name = "scipy" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
+    { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform == 'linux'" },
+]
 retargeters-lite = [
     { name = "scipy" },
 ]
@@ -3106,6 +3175,7 @@ isaac-teleop = [
     { name = "cmeel-tinyxml2" },
     { name = "cmeel-urdfdom" },
     { name = "isaacteleop", extra = ["cloudxr", "retargeters-lite"] },
+    { name = "isaacteleop", extra = ["retargeters"], marker = "platform_machine == 'x86_64'" },
     { name = "placo" },
     { name = "scipy" },
 ]
@@ -3345,6 +3415,7 @@ requires-dist = [
     { name = "huggingface-hub", specifier = ">=1.0.0,<2.0.0" },
     { name = "ipykernel", marker = "extra == 'notebook'", specifier = ">=6.0.0,<7.0.0" },
     { name = "isaacteleop", extras = ["cloudxr", "retargeters-lite"], marker = "extra == 'isaac-teleop'", specifier = "~=1.3.131" },
+    { name = "isaacteleop", extras = ["retargeters"], marker = "platform_machine == 'x86_64' and extra == 'isaac-teleop'", specifier = "~=1.3.131" },
     { name = "jsonlines", marker = "extra == 'dataset'", specifier = ">=4.0.0,<5.0.0" },
     { name = "jupyter", marker = "extra == 'notebook'", specifier = ">=1.0.0,<2.0.0" },
     { name = "lerobot", extras = ["accelerate-dep"], marker = "extra == 'lingbot-va'" },
@@ -4277,6 +4348,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/6a/51/63fe664f3908c97be9d2e4f1158eb633317598cfa6e1fc14af5383f17512/networkx-3.6.1.tar.gz", hash = "sha256:26b7c357accc0c8cde558ad486283728b65b6a95d85ee1cd66bafab4c8168509", size = 2517025, upload-time = "2025-12-08T17:02:39.908Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9e/c9/b2622292ea83fbb4ec318f5b9ab867d0a28ab43c5717bb85b0a5f6b3b0a4/networkx-3.6.1-py3-none-any.whl", hash = "sha256:d47fbf302e7d9cbbb9e2555a0d267983d2aa476bac30e90dfbe5669bd57f3762", size = 2068504, upload-time = "2025-12-08T17:02:38.159Z" },
+]
+
+[[package]]
+name = "nlopt"
+version = "2.10.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2e/57/87a00a49664ae90f312cf9fd12262a3803d4f81709e01653bc2be6299b63/nlopt-2.10.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:939a0f3ed1710a6b9493a029744e07e8703f56aea4cfd3010d8619c4fba0df8e", size = 440214, upload-time = "2025-12-23T15:24:00.774Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/03/3140b6417a4cb113cd0f5d53b27ada263f81f158355ad991aaeee770e10e/nlopt-2.10.0-cp312-cp312-win_amd64.whl", hash = "sha256:8364bdd98c8265eb87779155f4ab144dd67c7990620244b629f2ebc024d727d1", size = 641684, upload-time = "2025-12-23T15:24:02.094Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/eb/1dbdb4fa2ac8550870eef7f74dcd5c35f4c4df58d223e068daeac20f7c98/nlopt-2.10.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:c3a9697d24f3cb92b53c37cad7dc8900c7cc125dbe95da73bc92a4fed133eaf0", size = 439869, upload-time = "2025-12-23T15:24:04.598Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/44/20f39446c3edb9bd80e37fa0f996118170f8509eea0e118595a6c5aa3b18/nlopt-2.10.0-cp313-cp313-win_amd64.whl", hash = "sha256:98cbe9012ae641970366c9935ffcbb9cdcd6deef8521881a3e2ad7d35ed33506", size = 641822, upload-time = "2025-12-23T15:24:05.708Z" },
+    { url = "https://files.pythonhosted.org/packages/10/92/87b81b0d149ef4439c1edd475ac62127904e63efe7aacc89f6279aba957c/nlopt-2.10.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:6a49ba09083bdb10c2fde31e2190a16e0e57050a2e98e37ece9b606ad2cb2a31", size = 439883, upload-time = "2025-12-23T15:24:08.233Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/1d/be16a2bd80f28f7cc838448950c1468ab6fced9939806b6a88396cc4028c/nlopt-2.10.0-cp314-cp314-win_amd64.whl", hash = "sha256:0b0cb9de4270b7ed2d9a299ba379ae6b24d5095b0365a2af9702ff0ccdff5235", size = 660414, upload-time = "2025-12-23T15:24:09.296Z" },
 ]
 
 [[package]]
@@ -5609,6 +5696,21 @@ wheels = [
 ]
 
 [[package]]
+name = "pytransform3d"
+version = "3.15.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "lxml" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f8/c2/62a4b2378bbf2239f78eba17ecec5d5173bb1df6cad8b4c89ccd6c2ced0c/pytransform3d-3.15.0.tar.gz", hash = "sha256:496538dbd4d3b189f79744dc983554a8c194ee57bfc8c1a2db9bf2e8f68b1053", size = 8254749, upload-time = "2026-04-10T11:40:56.668Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ee/90/dec318aa22c0d9699b2fe856866e165194d743c462f24dc6780577994a93/pytransform3d-3.15.0-py3-none-any.whl", hash = "sha256:a72b01556dee3e3023c328a2f424c2966a6bdbee62e7543e64ff3700054d65e5", size = 165463, upload-time = "2026-04-10T11:40:54.045Z" },
+]
+
+[[package]]
 name = "pytz"
 version = "2026.2"
 source = { registry = "https://pypi.org/simple" }
@@ -6597,22 +6699,34 @@ name = "torch"
 version = "2.11.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "(python_full_version >= '3.15' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version >= '3.15' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "(python_full_version == '3.14.*' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.14.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
-    "(python_full_version == '3.13.*' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "(python_full_version < '3.13' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version < '3.13' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version >= '3.15' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version >= '3.15' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.15' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version == '3.14.*' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version == '3.14.*' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version == '3.14.*' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version == '3.13.*' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version < '3.13' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version < '3.13' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version < '3.13' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin'",
     "python_full_version == '3.14.*' and platform_machine == 'arm64' and sys_platform == 'darwin'",
     "python_full_version == '3.13.*' and platform_machine == 'arm64' and sys_platform == 'darwin'",
     "python_full_version < '3.13' and platform_machine == 'arm64' and sys_platform == 'darwin'",
-    "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version < '3.13' and sys_platform == 'win32'",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version >= '3.15' and platform_machine != 'x86_64' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and platform_machine != 'x86_64' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and platform_machine != 'x86_64' and sys_platform == 'win32'",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version < '3.13' and platform_machine != 'x86_64' and sys_platform == 'win32'",
 ]
 dependencies = [
     { name = "filelock" },
@@ -6641,10 +6755,14 @@ name = "torch"
 version = "2.11.0+cu128"
 source = { registry = "https://download.pytorch.org/whl/cu128" }
 resolution-markers = [
-    "(python_full_version >= '3.15' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux')",
-    "(python_full_version == '3.14.*' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'linux')",
-    "(python_full_version == '3.13.*' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'linux')",
-    "(python_full_version < '3.13' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'linux')",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version >= '3.15' and platform_machine == 'AMD64' and sys_platform == 'linux'",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version == '3.14.*' and platform_machine == 'AMD64' and sys_platform == 'linux'",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version == '3.13.*' and platform_machine == 'AMD64' and sys_platform == 'linux'",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.13' and platform_machine == 'AMD64' and sys_platform == 'linux'",
     "(python_full_version >= '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'arm64' and sys_platform == 'linux')",
     "(python_full_version == '3.14.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version == '3.14.*' and platform_machine == 'arm64' and sys_platform == 'linux')",
     "(python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version == '3.13.*' and platform_machine == 'arm64' and sys_platform == 'linux')",
@@ -6721,22 +6839,34 @@ name = "torchvision"
 version = "0.26.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "(python_full_version >= '3.15' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version >= '3.15' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "(python_full_version == '3.14.*' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.14.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
-    "(python_full_version == '3.13.*' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "(python_full_version < '3.13' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version < '3.13' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version >= '3.15' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version >= '3.15' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.15' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version == '3.14.*' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version == '3.14.*' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version == '3.14.*' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version == '3.13.*' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version < '3.13' and platform_machine != 'arm64' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version < '3.13' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'emscripten'",
+    "python_full_version < '3.13' and platform_machine != 'x86_64' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin'",
     "python_full_version == '3.14.*' and platform_machine == 'arm64' and sys_platform == 'darwin'",
     "python_full_version == '3.13.*' and platform_machine == 'arm64' and sys_platform == 'darwin'",
     "python_full_version < '3.13' and platform_machine == 'arm64' and sys_platform == 'darwin'",
-    "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version < '3.13' and sys_platform == 'win32'",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version >= '3.15' and platform_machine != 'x86_64' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and platform_machine != 'x86_64' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and platform_machine != 'x86_64' and sys_platform == 'win32'",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version < '3.13' and platform_machine != 'x86_64' and sys_platform == 'win32'",
 ]
 dependencies = [
     { name = "numpy" },
@@ -6761,10 +6891,14 @@ name = "torchvision"
 version = "0.26.0+cu128"
 source = { registry = "https://download.pytorch.org/whl/cu128" }
 resolution-markers = [
-    "(python_full_version >= '3.15' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux')",
-    "(python_full_version == '3.14.*' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'linux')",
-    "(python_full_version == '3.13.*' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'linux')",
-    "(python_full_version < '3.13' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'linux')",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version >= '3.15' and platform_machine == 'AMD64' and sys_platform == 'linux'",
+    "python_full_version == '3.14.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version == '3.14.*' and platform_machine == 'AMD64' and sys_platform == 'linux'",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version == '3.13.*' and platform_machine == 'AMD64' and sys_platform == 'linux'",
+    "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.13' and platform_machine == 'AMD64' and sys_platform == 'linux'",
     "(python_full_version >= '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'arm64' and sys_platform == 'linux')",
     "(python_full_version == '3.14.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version == '3.14.*' and platform_machine == 'arm64' and sys_platform == 'linux')",
     "(python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version == '3.13.*' and platform_machine == 'arm64' and sys_platform == 'linux')",
