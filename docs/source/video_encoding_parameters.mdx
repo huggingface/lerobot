@@ -232,75 +232,10 @@ After the first episode of a video stream is encoded, the encoder configuration 
 
 Two sources contribute to the `info` block:
 
-<div style="display:flex;flex-wrap:wrap;gap:14px;margin:20px 0;font-family:'Source Sans 3',ui-sans-serif,system-ui,sans-serif;">
-  <div style="flex:1 1 280px;border:1px solid #BFDBFE;border-radius:12px;overflow:hidden;">
-    <div style="background:#DBEAFE;color:#1D4ED8;font-weight:700;font-size:14px;padding:8px 14px;">
-      Stream-derived
-    </div>
-    <div style="padding:12px 14px;">
-      <div style="font-size:13px;color:#4B5563;margin-bottom:10px;">
-        Read back from the encoded MP4 with PyAV.
-      </div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;">
-        <code style="background:#EFF6FF;color:#1D4ED8;border-radius:6px;padding:2px 8px;font-size:12px;">
-          video.height
-        </code>
-        <code style="background:#EFF6FF;color:#1D4ED8;border-radius:6px;padding:2px 8px;font-size:12px;">
-          video.width
-        </code>
-        <code style="background:#EFF6FF;color:#1D4ED8;border-radius:6px;padding:2px 8px;font-size:12px;">
-          video.codec
-        </code>
-        <code style="background:#EFF6FF;color:#1D4ED8;border-radius:6px;padding:2px 8px;font-size:12px;">
-          video.pix_fmt
-        </code>
-        <code style="background:#EFF6FF;color:#1D4ED8;border-radius:6px;padding:2px 8px;font-size:12px;">
-          video.fps
-        </code>
-        <code style="background:#EFF6FF;color:#1D4ED8;border-radius:6px;padding:2px 8px;font-size:12px;">
-          video.channels
-        </code>
-        <code style="background:#EFF6FF;color:#1D4ED8;border-radius:6px;padding:2px 8px;font-size:12px;">
-          is_depth_map
-        </code>
-        <code style="background:#EFF6FF;color:#1D4ED8;border-radius:6px;padding:2px 8px;font-size:12px;">
-          audio.*
-        </code>
-      </div>
-    </div>
-  </div>
-  <div style="flex:1 1 280px;border:1px solid #DDD6FE;border-radius:12px;overflow:hidden;">
-    <div style="background:#F3E8FF;color:#7E22CE;font-weight:700;font-size:14px;padding:8px 14px;">
-      Encoder-derived
-    </div>
-    <div style="padding:12px 14px;">
-      <div style="font-size:13px;color:#4B5563;margin-bottom:10px;">
-        Taken from <code style="font-size:12px;">RGBEncoderConfig</code> /{" "}
-        <code style="font-size:12px;">DepthEncoderConfig</code>.
-      </div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;">
-        <code style="background:#FAF5FF;color:#7E22CE;border-radius:6px;padding:2px 8px;font-size:12px;">
-          video.g
-        </code>
-        <code style="background:#FAF5FF;color:#7E22CE;border-radius:6px;padding:2px 8px;font-size:12px;">
-          video.crf
-        </code>
-        <code style="background:#FAF5FF;color:#7E22CE;border-radius:6px;padding:2px 8px;font-size:12px;">
-          video.preset
-        </code>
-        <code style="background:#FAF5FF;color:#7E22CE;border-radius:6px;padding:2px 8px;font-size:12px;">
-          video.fast_decode
-        </code>
-        <code style="background:#FAF5FF;color:#7E22CE;border-radius:6px;padding:2px 8px;font-size:12px;">
-          video.video_backend
-        </code>
-        <code style="background:#FAF5FF;color:#7E22CE;border-radius:6px;padding:2px 8px;font-size:12px;">
-          video.extra_options
-        </code>
-      </div>
-    </div>
-  </div>
-</div>
+| Source              | Where it comes from                                   | Fields                                                                                                                  |
+| ------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **Stream-derived**  | Read back from the encoded MP4 with PyAV.             | `video.height`, `video.width`, `video.codec`, `video.pix_fmt`, `video.fps`, `video.channels`, `is_depth_map`, `audio.*` |
+| **Encoder-derived** | Taken from `RGBEncoderConfig` / `DepthEncoderConfig`. | `video.g`, `video.crf`, `video.preset`, `video.fast_decode`, `video.video_backend`, `video.extra_options`               |
 
 > [!IMPORTANT]
 > This block is populated **once**, from the **first** episode. It assumes every
@@ -314,35 +249,7 @@ Two sources contribute to the `info` block:
 
 When aggregating datasets with `merge_datasets`, video files are concatenated as-is (no re-encoding), and encoder fields in `info.json` are merged per-key:
 
-<div style="display:flex;flex-direction:column;gap:12px;margin:20px 0;font-family:'Source Sans 3',ui-sans-serif,system-ui,sans-serif;">
-  <div style="display:flex;gap:12px;align-items:flex-start;border-left:3px solid #F87171;background:#FEF2F2;border-radius:0 10px 10px 0;padding:12px 14px;">
-    <span style="flex:none;background:#FEE2E2;color:#B91C1C;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.4px;border-radius:6px;padding:3px 8px;margin-top:1px;white-space:nowrap;">
-      Must match
-    </span>
-    <span style="font-size:14px;color:#1B1B1D;">
-      Stream-derived fields — <code style="font-size:12px;">video.codec</code>,{" "}
-      <code style="font-size:12px;">video.pix_fmt</code>,{" "}
-      <code style="font-size:12px;">video.height</code>,{" "}
-      <code style="font-size:12px;">video.width</code>,{" "}
-      <code style="font-size:12px;">video.fps</code> — must match across
-      sources, otherwise FFmpeg's concat demuxer fails.
-    </span>
-  </div>
-  <div style="display:flex;gap:12px;align-items:flex-start;border-left:3px solid #34D399;background:#ECFDF5;border-radius:0 10px 10px 0;padding:12px 14px;">
-    <span style="flex:none;background:#D1FAE5;color:#047857;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.4px;border-radius:6px;padding:3px 8px;margin-top:1px;white-space:nowrap;">
-      Merged loosely
-    </span>
-    <span style="font-size:14px;color:#1B1B1D;">
-      Encoder-tuning fields — <code style="font-size:12px;">video.g</code>,{" "}
-      <code style="font-size:12px;">video.crf</code>,{" "}
-      <code style="font-size:12px;">video.preset</code>,{" "}
-      <code style="font-size:12px;">video.fast_decode</code>,{" "}
-      <code style="font-size:12px;">video.extra_options</code>. If every source
-      agrees, the value is kept; if not, it's set to{" "}
-      <code style="font-size:12px;">null</code> (or{" "}
-      <code style="font-size:12px;">{}</code> for{" "}
-      <code style="font-size:12px;">video.extra_options</code>) and a warning is
-      logged.
-    </span>
-  </div>
-</div>
+| Merge rule         | Fields                                                                             | Behaviour                                                                                                                                                 |
+| ------------------ | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Must match**     | `video.codec`, `video.pix_fmt`, `video.height`, `video.width`, `video.fps`         | Stream-derived fields must match across sources, otherwise FFmpeg's concat demuxer fails.                                                                 |
+| **Merged loosely** | `video.g`, `video.crf`, `video.preset`, `video.fast_decode`, `video.extra_options` | Encoder-tuning fields. If every source agrees, the value is kept; if not, it's set to `null` (or `{}` for `video.extra_options`) and a warning is logged. |
