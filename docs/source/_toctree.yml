@@ -169,6 +169,8 @@
 - sections:
   - local: phone_teleop
     title: Phone
+  - local: isaac_teleop
+    title: Isaac Teleop
   title: "Teleoperators"
 - sections:
   - local: cameras
