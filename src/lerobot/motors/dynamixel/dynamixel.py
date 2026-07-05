@@ -137,7 +137,14 @@ class DynamixelMotorsBus(SerialMotorsBus):
             )
 
     def _assert_protocol_is_compatible(self, instruction_name: str) -> None:
-        pass
+        if instruction_name == "sync_read" and self.protocol_version == 1:
+            raise NotImplementedError(
+                "'Sync Read' is not available with Dynamixel motors using Protocol 1. Use 'Read' sequentially instead."
+            )
+        if instruction_name == "broadcast_ping" and self.protocol_version == 1:
+            raise NotImplementedError(
+                "'Broadcast Ping' is not available with Dynamixel motors using Protocol 1. Use 'Ping' sequentially instead."
+            )
 
     def _handshake(self) -> None:
         self._assert_motors_exist()
@@ -261,6 +268,7 @@ class DynamixelMotorsBus(SerialMotorsBus):
         return data
 
     def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
+        self._assert_protocol_is_compatible("broadcast_ping")
         for n_try in range(1 + num_retry):
             data_list, comm = self.packet_handler.broadcastPing(self.port_handler)
             if self._is_comm_success(comm):
