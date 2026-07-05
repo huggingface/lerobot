@@ -109,3 +109,38 @@ def test_send_action(follower):
 
     goal_pos = {m: (i + 1) * 10 for i, m in enumerate(follower.bus.motors)}
     follower.bus.sync_write.assert_called_once_with("Goal_Position", goal_pos)
+
+
+@pytest.mark.parametrize(
+    "gripper_closed_pos, expected_drive_mode",
+    [
+        (2035, 0),  # closed position at range_min -> raw increases when opening -> not inverted
+        (3528, 1),  # closed position at range_max -> raw increases when closing -> inverted
+    ],
+)
+def test_calibrate_detects_gripper_drive_mode(follower, gripper_closed_pos, expected_drive_mode):
+    """Regression test for #3942: the follower gripper can be mounted mirrored with respect to the
+    leader's, in which case its raw position increases when closing. Calibration must detect this
+    and set drive_mode=1 so that normalized values follow the 0=closed/100=open convention."""
+    follower.connect()
+
+    motors = list(follower.bus.motors)
+    follower.bus.set_half_turn_homings.return_value = dict.fromkeys(motors, 0)
+    follower.bus.record_ranges_of_motion.return_value = (
+        dict.fromkeys(motors, 2035),
+        dict.fromkeys(motors, 3528),
+    )
+    follower.bus.read.return_value = gripper_closed_pos
+
+    with (
+        patch("builtins.input", return_value=""),
+        patch.object(type(follower), "_save_calibration", lambda self: None),
+    ):
+        follower.calibration = {}
+        follower.calibrate()
+
+    follower.bus.read.assert_called_with("Present_Position", "gripper", normalize=False)
+    assert follower.calibration["gripper"].drive_mode == expected_drive_mode
+    for motor in motors:
+        if motor != "gripper":
+            assert follower.calibration[motor].drive_mode == 0

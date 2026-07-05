@@ -110,11 +110,22 @@ class SOLeader(Teleoperator):
         range_mins[full_turn_motor] = 0
         range_maxes[full_turn_motor] = 4095
 
+        drive_modes = dict.fromkeys(self.bus.motors, 0)
+        input(f"Fully close the gripper of {self} and press ENTER....")
+        gripper_closed_pos = self.bus.read("Present_Position", "gripper", normalize=False)
+        if abs(gripper_closed_pos - range_maxes["gripper"]) < abs(gripper_closed_pos - range_mins["gripper"]):
+            # The closed position is at the top of the recorded range, meaning the raw position increases
+            # when the gripper closes. This is inverted with respect to the expected convention
+            # (0 = closed, 100 = open), which happens when the gripper motor is mounted mirrored.
+            # Invert it in software via drive_mode so both arms share the same convention.
+            logger.info("Gripper motor is inverted, setting drive_mode=1 to compensate.")
+            drive_modes["gripper"] = 1
+
         self.calibration = {}
         for motor, m in self.bus.motors.items():
             self.calibration[motor] = MotorCalibration(
                 id=m.id,
-                drive_mode=0,
+                drive_mode=drive_modes[motor],
                 homing_offset=homing_offsets[motor],
                 range_min=range_mins[motor],
                 range_max=range_maxes[motor],
