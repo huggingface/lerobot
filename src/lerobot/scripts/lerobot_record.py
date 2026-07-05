@@ -156,6 +156,7 @@ from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dic
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.keyboard_input import init_keyboard_listener
 from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.startup_guard import StartupJointGuard
 from lerobot.utils.utils import (
     init_logging,
     log_say,
@@ -188,6 +189,14 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    # Startup joint-mismatch guard: on the first frame of every episode, commanded vs
+    # measured joint positions are compared; a disagreement larger than
+    # `startup_guard_threshold` (action units, e.g. degrees) is ramped over
+    # `startup_guard_ramp_s` seconds ("ramp") or raises ("abort") instead of jumping.
+    startup_guard: bool = True
+    startup_guard_threshold: float = 10.0
+    startup_guard_ramp_s: float = 1.5
+    startup_guard_mode: str = "ramp"
 
     def __post_init__(self):
         if self.teleop is None:
@@ -245,9 +254,16 @@ def record_loop(
     display_data: bool = False,
     display_mode: str = "rerun",
     display_compressed_images: bool = False,
+    startup_guard: StartupJointGuard | None = None,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
+
+    # Re-arm the guard at every episode start: reconnections, manual environment
+    # resets, or a power-cycled multi-turn encoder can (re)introduce a mismatch
+    # between episodes, not just at process startup.
+    if startup_guard is not None:
+        startup_guard.reset()
 
     teleop_arm = teleop_keyboard = None
     if isinstance(teleop, list):
@@ -329,6 +345,8 @@ def record_loop(
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset. action = postprocessor.process(action)
         # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
+        if startup_guard is not None:
+            robot_action_to_send = startup_guard.process(robot_action_to_send, obs)
         _sent_action = robot.send_action(robot_action_to_send)
 
         # Write to dataset
@@ -459,6 +477,16 @@ def record(
 
         listener, events = init_keyboard_listener()
 
+        startup_guard = (
+            StartupJointGuard(
+                threshold=cfg.startup_guard_threshold,
+                ramp_duration_s=cfg.startup_guard_ramp_s,
+                mode=cfg.startup_guard_mode,
+            )
+            if cfg.startup_guard
+            else None
+        )
+
         if not cfg.dataset.streaming_encoding:
             logging.info(
                 "Streaming encoding is disabled. If you have capable hardware, consider enabling it for way faster episode saving. --dataset.streaming_encoding=true --dataset.encoder_threads=2 # --dataset.rgb_encoder.vcodec=auto. More info in the documentation: https://huggingface.co/docs/lerobot/streaming_video_encoding"
@@ -482,6 +510,7 @@ def record(
                     display_data=cfg.display_data,
                     display_mode=cfg.display_mode,
                     display_compressed_images=display_compressed_images,
+                    startup_guard=startup_guard,
                 )
 
                 # Execute a few seconds without recording to give time to manually reset the environment
@@ -503,6 +532,7 @@ def record(
                         single_task=cfg.dataset.single_task,
                         display_data=cfg.display_data,
                         display_mode=cfg.display_mode,
+                        startup_guard=startup_guard,
                     )
 
                 if events["rerecord_episode"]:
