@@ -17,11 +17,15 @@
 """
 Helper to find the camera devices available in your system.
 
-Example:
+Examples:
 
 ```shell
 lerobot-find-cameras
+lerobot-find-cameras opencv --live   # live tiled preview; 'q'/ESC quit, 's' snapshot
 ```
+
+Note: --live requires an OpenCV build with GUI support (opencv-python, not
+opencv-python-headless).
 """
 
 # NOTE(Steven): RealSense can also be identified/opened as OpenCV cameras. If you know the camera is a RealSense, use the `lerobot-find-cameras realsense` flag to avoid confusion.
@@ -30,10 +34,12 @@ lerobot-find-cameras
 import argparse
 import concurrent.futures
 import logging
+import math
 import time
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 from PIL import Image
 
@@ -225,6 +231,174 @@ def cleanup_cameras(cameras_to_use: list[dict[str, Any]]):
             logger.error(f"Error disconnecting camera {cam_dict['meta'].get('id')}: {e}")
 
 
+def _check_cv2_gui_available() -> None:
+    """Verify the installed OpenCV build has GUI (highgui) support.
+
+    The declared dependency is ``opencv-python-headless``, which lacks
+    ``imshow``/``namedWindow``/``waitKey``. Calling them raises ``cv2.error``.
+    This probes that capability up front so ``--live`` fails with an actionable
+    message instead of a cryptic traceback mid-loop.
+
+    Raises:
+        RuntimeError: If the OpenCV build has no GUI support.
+    """
+    probe = "__lerobot_gui_probe__"
+    try:
+        cv2.namedWindow(probe, cv2.WINDOW_NORMAL)
+        cv2.destroyWindow(probe)
+        cv2.waitKey(1)
+    except cv2.error as e:
+        raise RuntimeError(
+            "Live preview (--live) requires OpenCV GUI support, but the installed "
+            "build is headless (opencv-python-headless). Install the GUI build:\n"
+            "    pip uninstall -y opencv-python-headless\n"
+            "    pip install opencv-python\n"
+            f"(original error: {e})"
+        ) from e
+
+
+def build_camera_grid(
+    frames: list[np.ndarray | None],
+    labels: list[str],
+    tile_size: tuple[int, int] = (480, 640),
+) -> np.ndarray:
+    """Assemble per-camera BGR frames into a single tiled grid image.
+
+    Computes a near-square grid (``cols = ceil(sqrt(n))``, ``rows = ceil(n/cols)``),
+    resizes every frame to a uniform tile, overlays its label, and pads unused
+    cells with black tiles so the grid is a perfect rectangle.
+
+    Args:
+        frames: One entry per camera. ``None`` (failed read) becomes a black tile.
+        labels: Per-camera label text, same length and order as ``frames``.
+        tile_size: Target ``(height, width)`` of each tile.
+
+    Returns:
+        A single BGR ``uint8`` image of shape ``(rows * tile_h, cols * tile_w, 3)``.
+    """
+    tile_h, tile_w = tile_size
+    n = len(frames)
+    if n == 0:
+        return np.zeros((tile_h, tile_w, 3), dtype=np.uint8)
+
+    cols = math.ceil(math.sqrt(n))
+    rows = math.ceil(n / cols)
+
+    tiles: list[np.ndarray] = []
+    for i in range(rows * cols):
+        if i < n and frames[i] is not None:
+            tile = cv2.resize(frames[i], (tile_w, tile_h))
+            if tile.ndim == 2:  # grayscale safety
+                tile = cv2.cvtColor(tile, cv2.COLOR_GRAY2BGR)
+            tile = np.ascontiguousarray(tile)
+            label = labels[i]
+        else:
+            tile = np.zeros((tile_h, tile_w, 3), dtype=np.uint8)
+            label = f"{labels[i]} (no signal)" if i < n else ""
+
+        if label:
+            cv2.putText(
+                tile,
+                label,
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 255, 0),
+                2,
+                cv2.LINE_AA,
+            )
+        tiles.append(tile)
+
+    row_imgs = [np.hstack(tiles[r * cols : (r + 1) * cols]) for r in range(rows)]
+    return np.vstack(row_imgs)
+
+
+def _save_snapshot(frames: list[np.ndarray | None], labels: list[str], output_dir: Path) -> None:
+    """Save current live frames (BGR) as PNG files into ``output_dir``.
+
+    Frames are converted BGR->RGB before delegating to :func:`save_image`, which
+    expects RGB. Filenames match the timed-capture path (``<type>_<id>.png``) and
+    overwrite on repeated snapshots.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for frame, label in zip(frames, labels, strict=False):
+        if frame is None:
+            continue
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        cam_type, _, cam_id = label.partition(" ")
+        save_image(rgb, cam_id, output_dir, cam_type)
+    logger.info(f"Snapshot saved to {output_dir}")
+
+
+def show_live_preview(
+    output_dir: Path,
+    camera_type: str | None = None,
+    tile_size: tuple[int, int] = (480, 640),
+):
+    """Open all matching cameras and show a live tiled preview in one window.
+
+    Keys: ``q``/``ESC`` quit; ``s`` saves a snapshot of all current frames to
+    ``output_dir``. Used instead of the timed capture when ``--live`` is passed.
+
+    Args:
+        output_dir: Directory snapshots are written to (created on demand).
+        camera_type: Optional filter ("opencv" / "realsense"); None uses all.
+        tile_size: Per-tile ``(height, width)`` for the grid.
+    """
+    _check_cv2_gui_available()
+
+    all_camera_metadata = find_and_print_cameras(camera_type_filter=camera_type)
+    if not all_camera_metadata:
+        logger.warning("No cameras detected matching the criteria. Cannot start live preview.")
+        return
+
+    cameras_to_use = []
+    for cam_meta in all_camera_metadata:
+        camera_instance = create_camera_instance(cam_meta)
+        if camera_instance:
+            cameras_to_use.append(camera_instance)
+
+    if not cameras_to_use:
+        logger.warning("No cameras could be connected. Aborting live preview.")
+        return
+
+    labels = [f"{c['meta'].get('type')} {c['meta'].get('id')}" for c in cameras_to_use]
+    last_good: list[np.ndarray | None] = [None] * len(cameras_to_use)
+
+    window = "lerobot-find-cameras (live)  |  q/ESC: quit   s: snapshot"
+    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+    logger.info("Live preview started. Press 'q' or ESC to quit, 's' to snapshot.")
+
+    try:
+        while True:
+            frames: list[np.ndarray | None] = []
+            for i, cam_dict in enumerate(cameras_to_use):
+                try:
+                    # Request BGR directly so frames are imshow-ready (no conversion).
+                    frame = cam_dict["instance"].read(color_mode=ColorMode.BGR)
+                    last_good[i] = frame
+                    frames.append(frame)
+                except Exception as e:
+                    logger.debug(f"Read failed for {labels[i]}: {e}")
+                    frames.append(last_good[i])  # last good frame, else None -> black tile
+
+            grid = build_camera_grid(frames, labels, tile_size=tile_size)
+            cv2.imshow(window, grid)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord("q"), 27):  # q or ESC
+                break
+            if key == ord("s"):
+                _save_snapshot(frames, labels, output_dir)
+    except KeyboardInterrupt:
+        logger.info("Live preview interrupted by user.")
+    finally:
+        cv2.destroyAllWindows()
+        cv2.waitKey(1)  # flush window events on macOS/Qt
+        cleanup_cameras(cameras_to_use)
+        logger.info("Live preview finished.")
+
+
 def save_images_from_all_cameras(
     output_dir: Path,
     record_time_s: float = 2.0,
@@ -309,8 +483,27 @@ def main():
         default=6.0,
         help="Time duration to attempt capturing frames. Default: 6 seconds.",
     )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Show a live tiled preview of all matching cameras instead of capturing for "
+        "--record-time-s. Press 'q'/ESC to quit, 's' to snapshot. Requires an OpenCV GUI "
+        "build (opencv-python, not opencv-python-headless).",
+    )
     args = parser.parse_args()
-    save_images_from_all_cameras(**vars(args))
+
+    if args.live:
+        try:
+            show_live_preview(output_dir=args.output_dir, camera_type=args.camera_type)
+        except RuntimeError as e:
+            logger.error(str(e))
+            raise SystemExit(1) from e
+    else:
+        save_images_from_all_cameras(
+            output_dir=args.output_dir,
+            record_time_s=args.record_time_s,
+            camera_type=args.camera_type,
+        )
 
 
 if __name__ == "__main__":
