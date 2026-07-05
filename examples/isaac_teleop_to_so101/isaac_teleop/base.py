@@ -33,6 +33,7 @@ without it.
 from __future__ import annotations
 
 import abc
+import importlib.util
 import logging
 import os
 from collections.abc import Mapping
@@ -53,6 +54,16 @@ logger = logging.getLogger(__name__)
 # Gripper closedness [0, 1] -> SO-101 follower motor units [0, 100] (RANGE_0_100, 100 = OPEN).
 # Shared by the XR processor and leader device, which invert via ``pos = (1 - c) * SCALE``.
 _GRIPPER_MOTOR_SCALE = 100.0
+
+
+def _require_isaacteleop() -> None:
+    """Fail fast with install pointers when the optional ``isaacteleop`` package is missing,
+    instead of a raw ``ModuleNotFoundError`` from a deferred import deep inside connect()."""
+    if importlib.util.find_spec("isaacteleop") is None:
+        raise ImportError(
+            "The 'isaacteleop' package is required for Isaac Teleop devices but is not "
+            "installed. See examples/isaac_teleop_to_so101/README.md for install instructions."
+        )
 
 
 class IsaacTeleopTeleoperator(Teleoperator):
@@ -111,6 +122,7 @@ class IsaacTeleopTeleoperator(Teleoperator):
         if self._session is not None:
             raise RuntimeError("Already connected. Call disconnect() first.")
 
+        _require_isaacteleop()
         self._ensure_cloudxr_runtime()
 
         try:
@@ -130,16 +142,20 @@ class IsaacTeleopTeleoperator(Teleoperator):
         logger.info("Isaac Teleop session started: %s", self.config.app_name)
 
     def disconnect(self) -> None:
-        if self._session is not None:
-            self._session.__exit__(None, None, None)
-            self._session = None
-            logger.info("Isaac Teleop session ended")
-
-        # Reap the CloudXR runtime even if no session was ever established (e.g.
-        # the launcher came up but session creation failed before this point); a
-        # no-op when we never launched CloudXR (opt-out / externally-owned
-        # runtime), so we never stop a runtime we don't own.
-        self._stop_cloudxr_runtime()
+        try:
+            if self._session is not None:
+                # Null the handle BEFORE __exit__: even a failed session teardown must not
+                # wedge the device as is_connected (blocking every later connect/disconnect).
+                session = self._session
+                self._session = None
+                session.__exit__(None, None, None)
+                logger.info("Isaac Teleop session ended")
+        finally:
+            # Reap the CloudXR runtime even if session teardown raised, and even if no
+            # session was ever established (e.g. the launcher came up but session creation
+            # failed before this point); a no-op when we never launched CloudXR (opt-out /
+            # externally-owned runtime), so we never stop a runtime we don't own.
+            self._stop_cloudxr_runtime()
 
     # ------------------------------------------------------------------
     # CloudXR runtime (shared)

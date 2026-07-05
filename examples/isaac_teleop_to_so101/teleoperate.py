@@ -101,8 +101,12 @@ def teleoperate(cfg: TeleoperateConfig):
     except KeyboardInterrupt:
         pass
     finally:
-        device.cleanup()
-        robot.disconnect()
+        # A failing device cleanup must not skip the follower disconnect (which is what
+        # disables torque on the arm).
+        try:
+            device.cleanup()
+        finally:
+            robot.disconnect()
 
 
 def main():

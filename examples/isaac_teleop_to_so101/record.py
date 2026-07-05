@@ -278,15 +278,29 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     finally:
         logging.info("Stop recording")
 
+        # Hardware teardown FIRST, each step guarded: the arm must be freed promptly (not
+        # after a potentially long finalize/encode), a cleanup failure must not skip the
+        # follower disconnect (which is what disables torque), and neither must prevent
+        # the dataset from being finalized below.
+        try:
+            device.cleanup()
+        except Exception:
+            logging.exception("Device cleanup failed")
+        try:
+            if robot.is_connected:
+                robot.disconnect()
+        except Exception:
+            logging.exception("Robot disconnect failed")
+
+        # Restore the terminal before the (potentially long) finalize/encode.
+        if listener is not None:
+            try:
+                listener.stop()
+            except Exception:
+                logging.exception("Keyboard listener stop failed")
+
         if dataset is not None:
             dataset.finalize()
-
-        device.cleanup()
-        if robot.is_connected:
-            robot.disconnect()
-
-        if listener is not None:
-            listener.stop()
 
         if cfg.dataset.push_to_hub:
             if dataset is not None and dataset.num_episodes > 0:

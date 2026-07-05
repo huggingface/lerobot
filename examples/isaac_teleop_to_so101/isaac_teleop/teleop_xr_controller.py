@@ -100,8 +100,13 @@ class XRController(IsaacTeleopTeleoperator):
 
     def connect(self, calibrate: bool = True) -> None:
         super().connect(calibrate=calibrate)
-        # Built after a successful connect so a failed connect leaves no half-state.
-        self._external_inputs = self._build_external_inputs()
+        try:
+            self._external_inputs = self._build_external_inputs()
+        except Exception:
+            # Roll the session/runtime back so a failed connect() leaves no half-state
+            # (a live session behind a raised connect would leak the CloudXR runtime).
+            self.disconnect()
+            raise
 
     # ------------------------------------------------------------------
     # Action features

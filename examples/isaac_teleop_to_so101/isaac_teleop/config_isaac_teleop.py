@@ -56,8 +56,9 @@ class IsaacTeleopConfig(TeleoperatorConfig):
     """
 
 
-# Static rebase from the OpenXR controller anchor frame into the robot base frame
-# (X=Forward, Y=Left, Z=Up). A proper rotation (det=+1): controller motion right -> robot +X.
+# Static rebase from the OpenXR controller anchor frame (X=Right, Y=Up, Z=Backward) into the
+# robot base frame (X=Forward, Y=Left, Z=Up). A proper rotation (det=+1): controller motion
+# forward -> robot +X, right -> robot -Y (i.e. rightward), up -> robot +Z.
 _DEFAULT_BASE_T_ANCHOR: list[list[float]] = [
     [0.0, 0.0, -1.0, 0.0],
     [-1.0, 0.0, 0.0, 0.0],
@@ -84,7 +85,9 @@ class XRControllerConfig(IsaacTeleopConfig):
     device reports only the raw squeeze; the threshold is applied by the loop."""
 
     base_T_anchor: list[list[float]] = field(  # noqa: N815  (frameA_T_frameB transform-matrix convention)
-        default_factory=lambda: _DEFAULT_BASE_T_ANCHOR
+        # Fresh copy per instance: returning the module-level list itself would alias one
+        # mutable matrix across every config.
+        default_factory=lambda: [row.copy() for row in _DEFAULT_BASE_T_ANCHOR]
     )
     """Static 4x4 [row-major] transform rebasing the OpenXR controller anchor frame into
     the robot base frame. Defaults to OpenXR (X=Right, Y=Up, Z=Backward) -> robot

@@ -170,10 +170,16 @@ def _ensure_so101_urdf() -> str:
     the public ``lerobot/robot-urdfs`` HF bucket into the LeRobot cache on first use."""
     dest_dir = HF_LEROBOT_HOME / "robot-urdfs" / "so101"
     urdf_path = dest_dir / "so101_new_calib.urdf"
-    if not urdf_path.exists():
+    # Completeness marker written only after a FULL sync: the URDF file alone is not a
+    # completeness signal (an interrupted first sync can leave the meshes it references
+    # missing, which the URDF's mere existence would then hide forever). Re-syncing is
+    # idempotent and repairs a partial cache; delete the folder to force a re-download.
+    marker = dest_dir / ".sync_complete"
+    if not marker.exists():
         from huggingface_hub import sync_bucket
 
         sync_bucket("hf://buckets/lerobot/robot-urdfs/so101", str(dest_dir), quiet=True)
+        marker.touch()
     return str(urdf_path)
 
 
@@ -533,13 +539,17 @@ def setup_leader(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
         return leader_action
 
     def cleanup() -> None:
-        if plugin_proc is not None:
-            plugin_proc.terminate()
-            try:
-                plugin_proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                plugin_proc.kill()
-        teleop.disconnect()
+        # A plugin-reaping failure must not skip the session disconnect (and vice versa
+        # the disconnect runs after the plugin stops pushing on it).
+        try:
+            if plugin_proc is not None:
+                plugin_proc.terminate()
+                try:
+                    plugin_proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    plugin_proc.kill()
+        finally:
+            teleop.disconnect()
 
     return Device(compute=compute, startup=startup, cleanup=cleanup)
 
