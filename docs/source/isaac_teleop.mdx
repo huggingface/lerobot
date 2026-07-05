@@ -306,6 +306,36 @@ The URDF fetch uses `huggingface_hub` (already a LeRobot dependency) against the
 `lerobot/robot-urdfs` bucket, so it needs no login. It is cached under
 `HF_LEROBOT_HOME/robot-urdfs/so101/`; delete that folder to force a re‑download.
 
+### reBot DevArm leader (Damiao)
+
+The third device, `RebotDevArmLeaderArm` (`rebot_devarm_leader` in the Isaac device registry),
+does the same 1:1 joint mirror for the Seeed Studio reBot DevArm (B601-DM: 6-DOF + gripper,
+seven Damiao CAN motors) onto LeRobot's `rebot_b601_follower` — the identical arm hardware, so
+every joint including the gripper is a plain rad→deg mirror with **no** gripper normalization
+(the follower's soft `joint_limits` clip out-of-range targets). Isaac Teleop's native
+`rebot_devarm_leader` plugin owns the Damiao USB-to-CAN serial bus: it torque-disables the
+motors (Damiao motors keep answering feedback requests while disabled, which is what makes the
+leader back-drivable) and streams the decoded joint angles in radians.
+
+Like `so101_leader_plugin`, the `rebot_devarm_leader_plugin` binary is built from the Isaac
+Teleop source tree and lands at `install/plugins/rebot_devarm_leader/rebot_devarm_leader_plugin`.
+Start it separately (or with an empty device path for its synthetic, hardware-free trajectory),
+then create the teleoperator:
+
+```python
+from lerobot.teleoperators.isaac_teleop import RebotDevArmLeaderArm, RebotDevArmLeaderArmConfig
+
+teleop = RebotDevArmLeaderArm(RebotDevArmLeaderArmConfig(device="/dev/ttyACM0"))
+teleop.connect()
+action = teleop.get_action()  # {"shoulder_pan.pos": ..., ..., "gripper.pos": ...} [deg]
+```
+
+`config.joint_name_map` renames the plugin's URDF joint names (`joint1..joint6, gripper`) to the
+follower motor names and can be overridden for a differently-named follower. Before trusting the
+wiring, run the plugin's `probe` subcommand (`rebot_devarm_leader_plugin probe /dev/ttyACM0`) —
+it verifies the bus, motor ids, and decode path with no OpenXR runtime and exits 0 when all
+seven motors reply.
+
 Then, in your headset: squeeze and hold the grip to engage, move the controller to drive the
 arm, twist/tilt it to orient the wrist, and press the trigger to close the gripper
 (proportionally — release to open).
