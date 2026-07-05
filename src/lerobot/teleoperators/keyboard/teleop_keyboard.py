@@ -120,7 +120,14 @@ class KeyboardTeleop(Teleoperator):
     def _drain_pressed_keys(self):
         while not self.event_queue.empty():
             key_char, is_pressed = self.event_queue.get_nowait()
-            self.current_pressed[key_char] = is_pressed
+            if is_pressed:
+                self.current_pressed[key_char] = True
+            else:
+                # Remove released keys instead of keeping a False entry: subclasses
+                # iterate current_pressed and assign per-axis values, so a stale
+                # False entry from a released key would keep overwriting the value
+                # of the opposite (still pressed) key on the same axis.
+                self.current_pressed.pop(key_char, None)
 
     def configure(self):
         pass
