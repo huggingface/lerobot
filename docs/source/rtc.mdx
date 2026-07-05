@@ -57,7 +57,7 @@ policy_cfg.rtc_config = RTCConfig(
 policy = PI0Policy.from_pretrained("lerobot/pi0_base", policy_cfg=policy_cfg, device="cuda")
 
 # Now use predict_action_chunk with RTC parameters
-inference_delay = 4  # How many steps of inference latency, this values should be calculated based on the inference latency of the policy
+inference_delay = 4  # How many steps of inference latency, this value should be calculated based on the inference latency of the policy
 
 # Initialize the action queue
 action_queue = ActionQueue(policy_cfg.rtc_config)
@@ -100,7 +100,7 @@ Typical values: 8-12 steps
 RTCConfig(execution_horizon=10)
 ```
 
-**`max_guidance_weight`**: How strongly to enforce consistency with the previous chunk. This is a hyperparameter that can be tuned to balance the smoothness of the transitions and the reactivity of the policy. For 10 steps flow matching (SmolVLA, Pi0, Pi0.5), a value of 10.0 is a optimal value.
+**`max_guidance_weight`**: How strongly to enforce consistency with the previous chunk. This is a hyperparameter that can be tuned to balance the smoothness of the transitions and the reactivity of the policy. For 10 steps flow matching (SmolVLA, Pi0, Pi0.5), a value of 10.0 is an optimal value.
 
 **`prefix_attention_schedule`**: How to weight consistency across the overlap region.
 
