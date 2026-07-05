@@ -210,6 +210,20 @@ class DynamixelMotorsBus(SerialMotorsBus):
         return self.calibration == self.read_calibration()
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
+        if self.protocol_version == 1:
+            # AX-series (Protocol 1.0) has no Homing_Offset/Drive_Mode registers, uses CW/CCW angle
+            # limits as its position range, and does not support Sync Read.
+            calibration = {}
+            for motor, m in self.motors.items():
+                calibration[motor] = MotorCalibration(
+                    id=m.id,
+                    drive_mode=0,
+                    homing_offset=0,
+                    range_min=int(self.read("CW_Angle_Limit", motor, normalize=False)),
+                    range_max=int(self.read("CCW_Angle_Limit", motor, normalize=False)),
+                )
+            return calibration
+
         offsets = self.sync_read("Homing_Offset", normalize=False)
         mins = self.sync_read("Min_Position_Limit", normalize=False)
         maxes = self.sync_read("Max_Position_Limit", normalize=False)
@@ -229,9 +243,13 @@ class DynamixelMotorsBus(SerialMotorsBus):
 
     def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
         for motor, calibration in calibration_dict.items():
-            self.write("Homing_Offset", motor, calibration.homing_offset)
-            self.write("Min_Position_Limit", motor, calibration.range_min)
-            self.write("Max_Position_Limit", motor, calibration.range_max)
+            if self.protocol_version == 1:
+                self.write("CW_Angle_Limit", motor, calibration.range_min)
+                self.write("CCW_Angle_Limit", motor, calibration.range_max)
+            else:
+                self.write("Homing_Offset", motor, calibration.homing_offset)
+                self.write("Min_Position_Limit", motor, calibration.range_min)
+                self.write("Max_Position_Limit", motor, calibration.range_max)
 
         if cache:
             self.calibration = calibration_dict
@@ -273,6 +291,11 @@ class DynamixelMotorsBus(SerialMotorsBus):
         On Dynamixel Motors:
         Present_Position = Actual_Position + Homing_Offset
         """
+        if self.protocol_version == 1:
+            raise NotImplementedError(
+                "AX-series motors (Protocol 1.0) have no Homing_Offset register; "
+                "calibrate the position range via CW/CCW angle limits instead."
+            )
         half_turn_homings: dict[NameOrID, Value] = {}
         for motor, pos in positions.items():
             model = self._get_motor_model(motor)
