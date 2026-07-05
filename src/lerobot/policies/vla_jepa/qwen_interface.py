@@ -17,9 +17,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-import numpy as np
 import torch
-from PIL import Image
 
 from lerobot.utils.import_utils import _transformers_available
 
@@ -78,7 +76,7 @@ class Qwen3VLInterface(torch.nn.Module):
 
     def build_inputs(
         self,
-        images: Sequence[Sequence[Image.Image]],
+        images: Sequence[Sequence[torch.Tensor]],
         instructions: Sequence[str],
         action_prompt: str,
         embodied_prompt: str,
@@ -94,24 +92,42 @@ class Qwen3VLInterface(torch.nn.Module):
             content.append({"type": "text", "text": prompt})
             messages.append([{"role": "user", "content": content}])
 
+        # The Qwen image processor is a torchvision-backed fast processor: passing the
+        # images as GPU tensors (with `device`) keeps the whole vision pipeline on-device
+        # and avoids a GPU->CPU->GPU roundtrip. The image tensors are forwarded through
+        # apply_chat_template untouched into Qwen3VLProcessor.__call__.
+        # do_rescale=False: images already arrive as float in [0, 1] (the dataset decoder
+        # yields float32/255 and VISUAL normalization is IDENTITY), so we skip the
+        # processor's /255 rescale instead of round-tripping through uint8.
         batch_inputs = self.processor.apply_chat_template(
             messages,
             tokenize=True,
             add_generation_prompt=True,
             return_dict=True,
-            processor_kwargs={"padding": True, "return_tensors": "pt"},
+            processor_kwargs={
+                "padding": True,
+                "return_tensors": "pt",
+                "device": self.model.device,
+                "do_rescale": False,
+            },
         )
         return batch_inputs.to(self.model.device)
 
     @staticmethod
-    def tensor_to_pil(image_tensor: torch.Tensor) -> Image.Image:
-        image = image_tensor.detach().cpu()
-        if image.ndim == 3 and image.shape[0] in (1, 3):
-            image = image.permute(1, 2, 0)
-        image = image.float()
-        if image.max() <= 1.0:
-            image = image * 255.0
-        image = image.clamp(0, 255).round().to(torch.uint8).numpy()
-        if image.shape[-1] == 1:
-            image = np.repeat(image, 3, axis=-1)
-        return Image.fromarray(image)
+    def to_pixel_values(image_tensor: torch.Tensor) -> torch.Tensor:
+        """Prepare an image/video tensor for the fast processors (used with do_rescale=False).
+
+        The dataset decoder yields float32 in [0, 1] (channels-first) and VISUAL
+        normalization is IDENTITY, so the tensor already arrives in [0, 1]; we pass it
+        through as float and let the processors normalize (no rescale, no uint8
+        quantization). A single channel is expanded to 3 to match the RGB processors.
+
+        Works for any channels-first layout (channel dim is -3): [C, H, W], [B, C, H, W],
+        [T, C, H, W], [B, V, T, C, H, W], ...
+        """
+        image = image_tensor.detach().float()
+        if image.shape[-3] == 1:
+            repeats = [1] * image.ndim
+            repeats[-3] = 3
+            image = image.repeat(*repeats)
+        return image

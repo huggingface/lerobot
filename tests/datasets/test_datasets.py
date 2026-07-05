@@ -51,7 +51,7 @@ from lerobot.robots import make_robot_from_config
 from lerobot.transforms import ImageTransforms, ImageTransformsConfig
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, OBS_STR, REWARD
 from lerobot.utils.feature_utils import hw_to_dataset_features
-from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID
+from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_MOTOR_FEATURES, DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
 from tests.utils import require_x86_64_kernel
 
@@ -131,6 +131,21 @@ def test_dataset_feature_with_forward_slash_raises_error():
             fps=30,
             features={"a/b": {"dtype": "float32", "shape": 2, "names": None}},
         )
+
+
+def test_create_does_not_mutate_input_features(tmp_path, empty_lerobot_dataset_factory):
+    # ``create`` must deep-copy features so a dataset built from another's features stays independent.
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "ds1", features=DUMMY_MOTOR_FEATURES, use_videos=False
+    )
+    dataset_copy = empty_lerobot_dataset_factory(
+        root=tmp_path / "ds2", features=dataset.meta.features, use_videos=False
+    )
+
+    original_shape = dataset.meta.info.features["state"]["shape"]
+    dataset_copy.meta.info.features["state"]["shape"] = (999,)
+
+    assert dataset.meta.info.features["state"]["shape"] == original_shape
 
 
 def test_add_frame_missing_task(tmp_path, empty_lerobot_dataset_factory):
@@ -1516,10 +1531,15 @@ def test_valid_video_codecs_constant():
     assert "h264" in VALID_VIDEO_CODECS
     assert "hevc" in VALID_VIDEO_CODECS
     assert "libsvtav1" in VALID_VIDEO_CODECS
+    assert "libaom-av1" in VALID_VIDEO_CODECS
     assert "auto" in VALID_VIDEO_CODECS
     assert "h264_videotoolbox" in VALID_VIDEO_CODECS
     assert "h264_nvenc" in VALID_VIDEO_CODECS
-    assert len(VALID_VIDEO_CODECS) == 10
+    assert "h264_vaapi" in VALID_VIDEO_CODECS
+    assert "h264_qsv" in VALID_VIDEO_CODECS
+    assert "hevc_videotoolbox" in VALID_VIDEO_CODECS
+    assert "hevc_nvenc" in VALID_VIDEO_CODECS
+    assert len(VALID_VIDEO_CODECS) == 11
 
 
 def test_delta_timestamps_with_episodes_filter(tmp_path, empty_lerobot_dataset_factory):
