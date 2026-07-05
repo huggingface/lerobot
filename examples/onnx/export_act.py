@@ -68,16 +68,16 @@ def main():
     has_env_state = cfg.env_state_feature is not None
     state_dim = (cfg.robot_state_feature or cfg.env_state_feature).shape[0]
 
-    print(f"      image_keys={image_keys} state_dim={state_dim} "
-          f"chunk_size={cfg.chunk_size} action_dim={cfg.action_feature.shape[0]}")
+    print(
+        f"      image_keys={image_keys} state_dim={state_dim} "
+        f"chunk_size={cfg.chunk_size} action_dim={cfg.action_feature.shape[0]}"
+    )
 
     wrapper = ACTExportWrapper(policy.model, image_keys, has_state, has_env_state).eval().to(args.device)
 
     # Build example inputs (batch size 1) from the config feature shapes.
     state_example = torch.randn(1, state_dim, device=args.device)
-    image_examples = [
-        torch.rand(1, *cfg.image_features[k].shape, device=args.device) for k in image_keys
-    ]
+    image_examples = [torch.rand(1, *cfg.image_features[k].shape, device=args.device) for k in image_keys]
     example_inputs = (state_example, *image_examples)
 
     input_names = ["state"] + [f"image_{i}" for i in range(len(image_keys))]

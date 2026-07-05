@@ -38,7 +38,9 @@ from lerobot.utils.random_utils import set_seed
 class ONNXACTModel(nn.Module):
     """Drop-in replacement for ``ACTPolicy.model`` backed by onnxruntime."""
 
-    def __init__(self, onnx_path: str, image_keys: list[str], has_state: bool, has_env_state: bool, device: str):
+    def __init__(
+        self, onnx_path: str, image_keys: list[str], has_state: bool, has_env_state: bool, device: str
+    ):
         super().__init__()
         import onnxruntime as ort
 
@@ -56,10 +58,7 @@ class ONNXACTModel(nn.Module):
         print(f"[onnx] providers in use: {self.sess.get_providers()}")
 
     def forward(self, batch: dict):
-        if self.has_state:
-            state = batch[OBS_STATE]
-        else:
-            state = batch[OBS_ENV_STATE]
+        state = batch[OBS_STATE] if self.has_state else batch[OBS_ENV_STATE]
         ref = state
         ort_inputs = {"state": state.detach().cpu().numpy().astype(np.float32)}
         images = batch[OBS_IMAGES]
