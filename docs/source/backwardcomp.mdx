@@ -58,7 +58,7 @@ final_action = postprocessor(action)
 
 ## Hardware API redesign
 
-PR [#777](https://github.com/huggingface/lerobot/pull/777) improves the LeRobot calibration but is **not backward-compatible**. Below is a overview of what changed and how you can continue to work with datasets created before this pull request.
+PR [#777](https://github.com/huggingface/lerobot/pull/777) improves the LeRobot calibration but is **not backward-compatible**. Below is an overview of what changed and how you can continue to work with datasets created before this pull request.
 
 ### What changed?
 
@@ -129,8 +129,8 @@ python examples/backward_compatibility/replay.py \
 
 Policies output actions in the same format as the datasets (`torch.Tensors`). Therefore, the same transformations should be applied.
 
-To find these transformations, we recommend to first try and and replay an episode of the dataset your policy was trained on using the section above.
-Then, add these same transformations on your inference script (shown here in the `record.py` script):
+To find these transformations, we recommend first replaying an episode of the dataset your policy was trained on using the section above.
+Then, add these same transformations to your inference script (shown here in the `record.py` script):
 
 ```diff
 action_values = predict_action(
