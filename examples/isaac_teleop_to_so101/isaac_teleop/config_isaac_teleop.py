@@ -23,7 +23,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import ClassVar, Literal
+from typing import ClassVar
 
 from lerobot.teleoperators.config import TeleoperatorConfig
 
@@ -75,8 +75,9 @@ class XRControllerConfig(IsaacTeleopConfig):
     No retargeters: the clutch and gripper mapping live in the owning loop.
     """
 
-    hand_side: Literal["left", "right"] = "right"
-    """Which controller hand to use."""
+    hand_side: str = "right"
+    """Which controller hand to use: ``"left"`` or ``"right"``. A plain ``str`` (validated in
+    ``__post_init__``) because draccus cannot decode ``Literal``-typed fields from the CLI."""
 
     clutch_threshold: float = 0.5
     """Squeeze value above which the owning loop's clutch engages (held-to-enable). The
@@ -89,6 +90,10 @@ class XRControllerConfig(IsaacTeleopConfig):
     the robot base frame. Defaults to OpenXR (X=Right, Y=Up, Z=Backward) -> robot
     (X=Forward, Y=Left, Z=Up). Plain nested lists so the config stays serializable.
     """
+
+    def __post_init__(self):
+        if self.hand_side not in ("left", "right"):
+            raise ValueError(f"hand_side must be 'left' or 'right', got {self.hand_side!r}")
 
 
 # Provisional gripper open/close endpoints [rad], normalizing the streamed gripper angle
