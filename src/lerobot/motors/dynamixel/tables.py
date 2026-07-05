@@ -166,12 +166,13 @@ X_SERIES_ENCODINGS_TABLE = {
     "Present_Velocity": X_SERIES_CONTROL_TABLE["Present_Velocity"][1],
 }
 
-# {data_name: size_byte}
+# {data_name: sign_bit_index}
+# AX-series speed/load use sign-magnitude encoding with the direction stored in bit 10.
+# Position registers (0-1023) are unsigned and therefore need no sign handling.
 AX_SERIES_ENCODINGS_TABLE = {
-    "Goal_Position": AX_SERIES_CONTROL_TABLE["Goal_Position"][1],
-    "Moving_Speed": AX_SERIES_CONTROL_TABLE["Moving_Speed"][1],
-    "Present_Position": AX_SERIES_CONTROL_TABLE["Present_Position"][1],
-    "Present_Speed": AX_SERIES_CONTROL_TABLE["Present_Speed"][1],
+    "Moving_Speed": 10,
+    "Present_Speed": 10,
+    "Present_Load": 10,
 }
 
 MODEL_ENCODING_TABLE = {

@@ -25,7 +25,12 @@ from typing import TYPE_CHECKING
 
 from lerobot.utils.import_utils import _dynamixel_sdk_available, require_package
 
-from ..encoding_utils import decode_twos_complement, encode_twos_complement
+from ..encoding_utils import (
+    decode_sign_magnitude,
+    decode_twos_complement,
+    encode_sign_magnitude,
+    encode_twos_complement,
+)
 from ..motors_bus import Motor, MotorCalibration, NameOrID, SerialMotorsBus, Value, get_address
 from .tables import (
     AVAILABLE_BAUDRATES,
@@ -271,8 +276,12 @@ class DynamixelMotorsBus(SerialMotorsBus):
             model = self._id_to_model(id_)
             encoding_table = self.model_encoding_table.get(model)
             if encoding_table and data_name in encoding_table:
-                n_bytes = encoding_table[data_name]
-                ids_values[id_] = encode_twos_complement(ids_values[id_], n_bytes)
+                param = encoding_table[data_name]
+                # Protocol 1.0 (AX-series) uses sign-magnitude; Protocol 2.0 (X-series) two's complement.
+                if self.protocol_version == 1:
+                    ids_values[id_] = encode_sign_magnitude(ids_values[id_], param)
+                else:
+                    ids_values[id_] = encode_twos_complement(ids_values[id_], param)
 
         return ids_values
 
@@ -281,8 +290,12 @@ class DynamixelMotorsBus(SerialMotorsBus):
             model = self._id_to_model(id_)
             encoding_table = self.model_encoding_table.get(model)
             if encoding_table and data_name in encoding_table:
-                n_bytes = encoding_table[data_name]
-                ids_values[id_] = decode_twos_complement(ids_values[id_], n_bytes)
+                param = encoding_table[data_name]
+                # Protocol 1.0 (AX-series) uses sign-magnitude; Protocol 2.0 (X-series) two's complement.
+                if self.protocol_version == 1:
+                    ids_values[id_] = decode_sign_magnitude(ids_values[id_], param)
+                else:
+                    ids_values[id_] = decode_twos_complement(ids_values[id_], param)
 
         return ids_values
 
