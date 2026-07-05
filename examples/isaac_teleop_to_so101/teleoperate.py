@@ -31,8 +31,8 @@
 
 ``--teleop.type`` resolves against the Isaac device registry (see :class:`IsaacTeleopConfig`),
 distinct from the serial ``so101_leader``. The pipelines, clutch/IK/align internals, and
-reset-pose behavior live in ``common.py``. Requires the ``isaac-teleop`` extra and an OpenXR
-runtime.
+reset-pose behavior live in ``common.py``. Requires the ``isaacteleop`` package and an OpenXR
+runtime (install instructions in this folder's ``README.md``).
 """
 
 import time
@@ -41,7 +41,6 @@ from dataclasses import dataclass
 from lerobot.configs import parser
 from lerobot.robots import RobotConfig
 from lerobot.robots.so_follower import SOFollowerConfig  # noqa: F401  (registers so101_follower)
-from lerobot.teleoperators.isaac_teleop import IsaacTeleopConfig
 from lerobot.utils.robot_utils import precise_sleep
 
 from .common import (
@@ -51,6 +50,7 @@ from .common import (
     build_device,
     hold_action,
 )
+from .isaac_teleop import IsaacTeleopConfig
 
 
 @dataclass

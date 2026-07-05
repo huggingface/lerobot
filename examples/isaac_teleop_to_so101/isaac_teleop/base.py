@@ -25,8 +25,9 @@ lifecycle, the per-step staleness/worker-health guard, and the no-op calibration
 tracking devices need. A concrete device implements :meth:`_build_pipeline` (its
 retargeting graph) and :meth:`get_action` (usually via :meth:`_step`).
 
-``isaacteleop`` is an optional NVIDIA dependency (the ``isaac-teleop`` extra); all
-imports of it are deferred to :meth:`connect` so this module imports without it.
+``isaacteleop`` is an optional NVIDIA dependency (install instructions in the example's
+``README.md``); all imports of it are deferred to :meth:`connect` so this module imports
+without it.
 """
 
 from __future__ import annotations

@@ -5,12 +5,14 @@ multi-modal teleoperation framework. Isaac Teleop drives a single `TeleopSession
 of input devices — XR (VR) controllers, hand tracking, full-body tracking, Manus gloves, foot
 pedals, and more.
 
-In LeRobot, each Isaac Teleop input device is its own `Teleoperator` subclass under
-`lerobot.teleoperators.isaac_teleop`, sharing one session lifecycle (see
-`IsaacTeleopTeleoperator`). The devices available today are the **XR controller**
-(`XRController`) and a back-drivable **SO-101 leader arm** (`SO101LeaderArm`); Manus gloves and
-hand/full-body tracking are the natural next devices. This guide focuses on the XR controller; the
-SO-101 leader is summarized under [Run the example](#step-3-run-the-example).
+In LeRobot, Isaac Teleop ships as a self-contained example under
+[`examples/isaac_teleop_to_so101/`](https://github.com/huggingface/lerobot/tree/main/examples/isaac_teleop_to_so101).
+Each Isaac Teleop input device is its own `Teleoperator` subclass in the example's
+`isaac_teleop` package, sharing one session lifecycle (see `IsaacTeleopTeleoperator`). The
+devices available today are the **XR controller** (`XRController`) and a back-drivable
+**SO-101 leader arm** (`SO101LeaderArm`); Manus gloves and hand/full-body tracking are the
+natural next devices. This guide focuses on the XR controller; the SO-101 leader is summarized
+under [Run the example](#step-3-run-the-example).
 
 **In this guide you'll learn:**
 
@@ -20,43 +22,28 @@ SO-101 leader is summarized under [Run the example](#step-3-run-the-example).
 
 ## Installation
 
-Isaac Teleop support is the `isaac-teleop` extra. `isaacteleop` is published on public PyPI, so a
-plain install picks it up. Both forms below pull `isaacteleop[cloudxr,retargeters]~=1.3.0` — the
-`cloudxr` extra brings the CloudXR runtime bindings and `retargeters` the retargeter library the
-controller pipeline uses.
-
-### Into an existing LeRobot install
-
-```bash
-uv pip install 'lerobot[isaac-teleop]'
-```
-
-### From LeRobot source
-
-If you build LeRobot from source (e.g. to work on the teleoperator itself), clone the repo and
-install the extra in editable mode:
+The example lives in the LeRobot repository (it is not part of the `lerobot` pip package), so
+clone the repo and install from source. The canonical, always-up-to-date install and usage
+reference is the example's
+[`README.md`](https://github.com/huggingface/lerobot/tree/main/examples/isaac_teleop_to_so101/README.md);
+in short:
 
 ```bash
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
-uv pip install -e '.[isaac-teleop]'
+uv pip install -e ".[feetech,kinematics,dataset]" "huggingface_hub>=1.5"
+uv pip install "isaacteleop[cloudxr,retargeters-lite]~=1.3.131" "scipy>=1.14"
 ```
 
-`uv sync --locked` does **not** install this extra, so use the explicit `uv pip install -e` above.
-You can also install the underlying package on its own, which is handy when developing against a
-local Isaac Teleop checkout (see [Build Isaac Teleop from
-source](https://nvidia.github.io/IsaacTeleop/main/getting_started/build_from_source/index.html)):
+`isaacteleop` is published on public PyPI (Linux only). The `cloudxr` extra brings the CloudXR
+runtime bindings; `retargeters-lite` is the scipy-based retargeter path that resolves on both
+x86_64 and ARM (on aarch64 — e.g. a DGX Spark — the full `retargeters` extra does not resolve
+because of its `dex-retargeting`/`nlopt` pins, which is why it is not the default here). On
+x86_64 you can additionally install the full retargeter stack:
 
 ```bash
-uv pip install 'isaacteleop[cloudxr,retargeters]~=1.3.0'
+uv pip install "isaacteleop[retargeters]~=1.3.131"
 ```
-
-<Tip warning={true}>
-
-`uv sync --locked` will **not** pull the `isaac-teleop` extra. Install it explicitly with `uv pip
-install` as shown above.
-
-</Tip>
 
 ### Set up CloudXR and connect a headset
 
@@ -140,13 +127,14 @@ the robot base frame by the native `ControllerTransform` (`base_T_anchor`) — a
 transformed controller stream verbatim. `get_action()` reads the grip pose, squeeze, and trigger
 straight off it; the session is always stepped `RUNNING` (there is no clutch retargeter to gate).
 
-The example loop's `Clutch` class (in `examples/isaac_teleop_to_so101/teleoperate.py`) mirrors
-Isaac Teleop's `SO101ClutchRetargeter`, but lives in-loop so the device can stay a thin reader:
+The `Clutch` class (in `examples/isaac_teleop_to_so101/isaac_teleop/clutch.py`, driven by the
+loop in `common.py`) mirrors Isaac Teleop's `SO101ClutchRetargeter`, but lives in-loop so the
+device can stay a thin reader:
 
 - It latches its engage origin on the squeeze **engage edge** (the frame the squeeze first crosses
   `clutch_threshold`) and rebases both position and orientation around it, so engaging does not
-  teleport the arm. `Clutch.rebase` returns a 7D absolute `ee_pose` (position + grip quaternion) in
-  the base frame.
+  teleport the arm. `Clutch.rebase` returns the absolute base-frame target as a `(pos, quat)`
+  pair, which the loop concatenates into the 7D `ee_pose` fed to the processor.
 - The analog trigger becomes a gripper `closedness` in `[0, 1]` (0 = open, 1 = closed),
   proportional to the trigger pull, which `MapXRControllerActionToRobotAction` maps to a jaw target.
 
@@ -209,7 +197,8 @@ jump‑free. On a mid‑task re‑clutch it latches a fresh home from the last c
 ### Step 1: Create the teleoperator
 
 ```python
-from lerobot.teleoperators.isaac_teleop import XRController, XRControllerConfig
+# Run from the repo root so the `examples` package is importable.
+from examples.isaac_teleop_to_so101.isaac_teleop import XRController, XRControllerConfig
 
 teleop_config = XRControllerConfig(
     hand_side="right",      # "left" or "right" controller
@@ -357,18 +346,19 @@ The clutch already produces an absolute base‑frame pose, so the processor side
   frame‑to‑frame. Tune `orientation_weight` on hardware — too high fights position tracking, too
   low ignores the orientation command.
 
-The example also gates safety at the loop level: it commands the robot **only while the clutch is
-engaged**, and re‑sends the measured joints while disengaged, so launching the script never moves
-the arm and releasing the clutch freezes it in place.
+The example also gates safety at the loop level: after the startup reset slew (on by default —
+pass `--reset_to_origin=false` to keep the arm where it is), it commands the robot **only while
+the clutch is engaged**, and re‑sends the measured joints while disengaged, so releasing the
+clutch freezes the arm in place.
 
 See the [Processors for Robots and Teleoperators](./processors_robots_teleop) guide for more on
 adapting the pipeline to other robots.
 
 ## Troubleshooting
 
-- **`ModuleNotFoundError: isaacteleop`** — the `isaac-teleop` extra is not installed (note `uv sync
---locked` does not pull it). Re-run the install command at the top of this guide: `uv pip install
-'lerobot[isaac-teleop]'`.
+- **`ModuleNotFoundError: isaacteleop`** — the `isaacteleop` package is not installed in the
+  active environment. Re-run the install command at the top of this guide:
+  `uv pip install "isaacteleop[cloudxr,retargeters-lite]~=1.3.131"`.
 - **No controllers found** — make sure the CloudXR runtime is running, the firewall ports are
   whitelisted, and the headset is connected (see
   [Set up CloudXR and connect a headset](#set-up-cloudxr-and-connect-a-headset) and the Isaac

@@ -25,8 +25,8 @@ sleep. A :class:`Device` bundles three closures: ``compute(obs) -> RobotAction |
   :class:`Clutch` turns into an EE target for LeRobot's Cartesian IK pipeline.
 * ``so101_leader`` — a back-drivable leader arm mirrored 1:1 into the follower.
 
-Requires the ``isaac-teleop`` extra and an OpenXR runtime. User-facing guide:
-``docs/source/isaac_teleop.mdx``.
+Requires the ``isaacteleop`` package and an OpenXR runtime (install instructions in this
+folder's ``README.md``). User-facing guide: ``docs/source/isaac_teleop.mdx``.
 """
 
 import json
@@ -56,7 +56,11 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     InverseKinematicsEEToJoints,
 )
-from lerobot.teleoperators.isaac_teleop import (
+from lerobot.types import RobotAction, RobotObservation
+from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, HF_LEROBOT_HOME, TELEOPERATORS
+from lerobot.utils.robot_utils import precise_sleep
+
+from .isaac_teleop import (
     Clutch,
     IsaacTeleopConfig,
     MapXRControllerActionToRobotAction,
@@ -64,9 +68,6 @@ from lerobot.teleoperators.isaac_teleop import (
     SO101LeaderArmConfig,
     XRController,
 )
-from lerobot.types import RobotAction, RobotObservation
-from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, HF_LEROBOT_HOME, TELEOPERATORS
-from lerobot.utils.robot_utils import precise_sleep
 
 # Fixed rate [Hz] for the teleoperate loop and the pre-loop slews / connect-wait poll sleeps.
 FPS = 30

@@ -201,17 +201,6 @@ intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54,<2.57.0 ; sys_platform == 'darwin'",
 ]
-# isaacteleop v1.3.131 ships on public PyPI. The [cloudxr] extra pulls the
-# CloudXR runtime bindings the XR controller pipeline uses. [retargeters] is
-# x86_64-gated: on ARM it drags in dex-retargeting (pins numpy<2) and nlopt
-# (no aarch64 wheels), breaking resolution; ARM uses the scipy-only
-# [retargeters-lite] path instead.
-isaac-teleop = [
-    "isaacteleop[cloudxr,retargeters-lite]~=1.3.131",
-    "isaacteleop[retargeters]~=1.3.131 ; platform_machine == 'x86_64'",
-    "lerobot[kinematics]",
-    "lerobot[scipy-dep]",
-]
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0", "lerobot[scipy-dep]"]
 
 # Policies

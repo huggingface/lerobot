@@ -69,7 +69,6 @@ from lerobot.datasets import (
 from lerobot.processor import make_default_processors
 from lerobot.robots import RobotConfig
 from lerobot.robots.so_follower import SOFollowerConfig  # noqa: F401  (registers so101_follower)
-from lerobot.teleoperators.isaac_teleop import IsaacTeleopConfig
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.robot_utils import precise_sleep
@@ -83,6 +82,7 @@ from .common import (
     hold_action,
     init_keyboard_listener,
 )
+from .isaac_teleop import IsaacTeleopConfig
 
 
 @dataclass
