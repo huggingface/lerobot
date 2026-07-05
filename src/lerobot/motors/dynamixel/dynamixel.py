@@ -150,6 +150,11 @@ class DynamixelMotorsBus(SerialMotorsBus):
         self._assert_motors_exist()
 
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
+        if self.protocol_version == 1:
+            return self._find_single_motor_p1(motor, initial_baudrate)
+        return self._find_single_motor_p2(motor, initial_baudrate)
+
+    def _find_single_motor_p2(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
         model = self.motors[motor].model
         search_baudrates = (
             [initial_baudrate] if initial_baudrate is not None else self.model_baudrate_table[model]
@@ -168,6 +173,29 @@ class DynamixelMotorsBus(SerialMotorsBus):
                         f"Make sure you are connected only connected to the '{motor}' motor (model '{model}')."
                     )
                 return baudrate, found_id
+
+        raise RuntimeError(f"Motor '{motor}' (model '{model}') was not found. Make sure it is connected.")
+
+    def _find_single_motor_p1(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
+        # Protocol 1.0 has no Broadcast Ping, so scan IDs sequentially with individual pings.
+        model = self.motors[motor].model
+        search_baudrates = (
+            [initial_baudrate] if initial_baudrate is not None else self.model_baudrate_table[model]
+        )
+        expected_model_nb = self.model_number_table[model]
+
+        for baudrate in search_baudrates:
+            self.set_baudrate(baudrate)
+            for id_ in range(dxl.MAX_ID + 1):
+                found_model = self.ping(id_)
+                if found_model is not None:
+                    if found_model != expected_model_nb:
+                        raise RuntimeError(
+                            f"Found one motor on {baudrate=} with id={id_} but it has a "
+                            f"model number '{found_model}' different than the one expected: '{expected_model_nb}'. "
+                            f"Make sure you are connected only connected to the '{motor}' motor (model '{model}')."
+                        )
+                    return baudrate, id_
 
         raise RuntimeError(f"Motor '{motor}' (model '{model}') was not found. Make sure it is connected.")
 
