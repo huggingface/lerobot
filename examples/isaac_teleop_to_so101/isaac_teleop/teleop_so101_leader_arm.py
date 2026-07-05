@@ -27,18 +27,28 @@ Units (converted in the device so the output is always follower-valid):
   homing map to the same physical zero (the standard same-hardware assumption).
 * gripper: normalized from ``[gripper_open_rad, gripper_close_rad]`` to RANGE_0_100.
 
-``isaacteleop`` imports are deferred so this module — and the pure
-:func:`leader_joints_to_robot_action` converter — import without it.
+``isaacteleop`` imports are guarded behind the availability flag so this module — and the
+pure :func:`leader_joints_to_robot_action` converter — import without it (construction
+fails fast via the base class).
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from lerobot.types import RobotAction
 
-from .base import _GRIPPER_MOTOR_SCALE, IsaacTeleopTeleoperator
+from .base import _GRIPPER_MOTOR_SCALE, IsaacTeleopTeleoperator, _isaacteleop_available
 from .config_isaac_teleop import SO101LeaderArmConfig
+
+if TYPE_CHECKING or _isaacteleop_available:
+    from isaacteleop.retargeting_engine.deviceio_source_nodes import JointStateSource
+    from isaacteleop.retargeting_engine.interface import OutputCombiner
+else:
+    JointStateSource = None
+    OutputCombiner = None
 
 # Canonical SO-101 DOF names and order — matches the plugin stream and the follower's motor
 # order. Passed to the ``JointStateSource`` as its output layout; the source maps by name and
@@ -115,12 +125,9 @@ class SO101LeaderArm(IsaacTeleopTeleoperator):
     # Pipeline construction
     # ------------------------------------------------------------------
 
-    def _build_pipeline(self):
+    def _build_pipeline(self) -> OutputCombiner:
         """Build the joint-mirror pipeline: a single ``JointStateSource`` leaf that converts
         the raw stream into a name-keyed joint group. No retargeter (shared kinematics)."""
-        from isaacteleop.retargeting_engine.deviceio_source_nodes import JointStateSource
-        from isaacteleop.retargeting_engine.interface import OutputCombiner
-
         source = JointStateSource(
             name="so101_leader",
             collection_id=self.config.collection_id,

@@ -26,14 +26,13 @@ tracking devices need. A concrete device implements :meth:`_build_pipeline` (its
 retargeting graph) and :meth:`get_action` (usually via :meth:`_step`).
 
 ``isaacteleop`` is an optional NVIDIA dependency (install instructions in the example's
-``README.md``); all imports of it are deferred to :meth:`connect` so this module imports
-without it.
+``README.md``); its imports are guarded behind an availability check at module top, so this
+module imports without it and constructing a device fails fast with install instructions.
 """
 
 from __future__ import annotations
 
 import abc
-import importlib.util
 import logging
 import os
 from collections.abc import Mapping
@@ -41,13 +40,29 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from lerobot.teleoperators.teleoperator import Teleoperator
+from lerobot.utils.import_utils import is_package_available
 
 from .config_isaac_teleop import IsaacTeleopConfig
 
-if TYPE_CHECKING:
+_isaacteleop_available = is_package_available("isaacteleop")
+
+if TYPE_CHECKING or _isaacteleop_available:
     from isaacteleop.cloudxr import CloudXRLauncher
-    from isaacteleop.retargeting_engine.interface import ExecutionEvents, GraphExecutable, RetargeterIO
-    from isaacteleop.teleop_session_manager import TeleopSession
+    from isaacteleop.retargeting_engine.interface import (
+        ExecutionEvents,
+        ExecutionState,
+        GraphExecutable,
+        RetargeterIO,
+    )
+    from isaacteleop.teleop_session_manager import TeleopSession, TeleopSessionConfig
+else:
+    CloudXRLauncher = None
+    ExecutionEvents = None
+    ExecutionState = None
+    GraphExecutable = None
+    RetargeterIO = None
+    TeleopSession = None
+    TeleopSessionConfig = None
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +72,8 @@ _GRIPPER_MOTOR_SCALE = 100.0
 
 
 def _require_isaacteleop() -> None:
-    """Fail fast with install pointers when the optional ``isaacteleop`` package is missing,
-    instead of a raw ``ModuleNotFoundError`` from a deferred import deep inside connect()."""
-    if importlib.util.find_spec("isaacteleop") is None:
+    """Fail fast with install pointers when the optional ``isaacteleop`` package is missing."""
+    if not _isaacteleop_available:
         raise ImportError(
             "The 'isaacteleop' package is required for Isaac Teleop devices but is not "
             "installed. See examples/isaac_teleop_to_so101/README.md for install instructions."
@@ -76,6 +90,7 @@ class IsaacTeleopTeleoperator(Teleoperator):
     config_class = IsaacTeleopConfig
 
     def __init__(self, config: IsaacTeleopConfig):
+        _require_isaacteleop()
         super().__init__(config)
         self.config: IsaacTeleopConfig = config
         self._session: TeleopSession | None = None
@@ -122,12 +137,9 @@ class IsaacTeleopTeleoperator(Teleoperator):
         if self._session is not None:
             raise RuntimeError("Already connected. Call disconnect() first.")
 
-        _require_isaacteleop()
         self._ensure_cloudxr_runtime()
 
         try:
-            from isaacteleop.teleop_session_manager import TeleopSession, TeleopSessionConfig
-
             pipeline = self._build_pipeline()
             session_config = TeleopSessionConfig(app_name=self.config.app_name, pipeline=pipeline)
             self._session = TeleopSession(session_config)
@@ -188,8 +200,6 @@ class IsaacTeleopTeleoperator(Teleoperator):
 
         logger.info("Launching CloudXR runtime (first run may prompt for EULA and take ~30s)...")
 
-        from isaacteleop.cloudxr import CloudXRLauncher
-
         self._cloudxr_launcher = CloudXRLauncher(
             install_dir=str(Path.home() / ".cloudxr"),
             env_config=self.config.cloudxr_env_file,
@@ -226,8 +236,6 @@ class IsaacTeleopTeleoperator(Teleoperator):
         Keeps the stream flowing; ``reset`` stays ``False``. A clutched device that needs
         a real lifecycle should build its own ``ExecutionEvents`` instead.
         """
-        from isaacteleop.retargeting_engine.interface import ExecutionEvents, ExecutionState
-
         return ExecutionEvents(execution_state=ExecutionState.RUNNING, reset=False)
 
     def _step(

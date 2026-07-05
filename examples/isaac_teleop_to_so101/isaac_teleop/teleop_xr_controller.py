@@ -22,7 +22,8 @@ A deliberately thin reader: exposes the raw controller grip pose off
 the clutch rebasing and gripper mapping live downstream in the owning loop, so this
 device is stateless across frames.
 
-``isaacteleop`` imports are deferred so this module imports without it.
+``isaacteleop`` imports are guarded behind the availability flag so this module imports
+without it (construction fails fast via the base class).
 """
 
 from __future__ import annotations
@@ -33,11 +34,21 @@ import numpy as np
 
 from lerobot.types import RobotAction
 
-from .base import IsaacTeleopTeleoperator
+from .base import IsaacTeleopTeleoperator, _isaacteleop_available
 from .config_isaac_teleop import XRControllerConfig
 
-if TYPE_CHECKING:
-    from isaacteleop.retargeting_engine.interface import OutputCombiner
+if TYPE_CHECKING or _isaacteleop_available:
+    from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource
+    from isaacteleop.retargeting_engine.interface import OutputCombiner, TensorGroup, ValueInput
+    from isaacteleop.retargeting_engine.tensor_types import TransformMatrix
+    from isaacteleop.retargeting_engine.tensor_types.indices import ControllerInputIndex
+else:
+    ControllersSource = None
+    OutputCombiner = None
+    TensorGroup = None
+    ValueInput = None
+    TransformMatrix = None
+    ControllerInputIndex = None
 
 # Source-node name for the static base_T_anchor rebase input fed via
 # ``TeleopSession.step(external_inputs=...)`` each frame.
@@ -74,10 +85,6 @@ class XRController(IsaacTeleopTeleoperator):
         """Build the raw-grip-pose pipeline: a ``ControllersSource`` rebased into the base
         frame by ``ControllerTransform``, exposed verbatim as ``"controller"``. No retargeters.
         """
-        from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource
-        from isaacteleop.retargeting_engine.interface import OutputCombiner, ValueInput
-        from isaacteleop.retargeting_engine.tensor_types import TransformMatrix
-
         side = self.config.hand_side
         controller_key = f"controller_{side}"
 
@@ -91,9 +98,6 @@ class XRController(IsaacTeleopTeleoperator):
 
     def _build_external_inputs(self) -> dict[str, Any]:
         """Materialize the constant ``base_T_anchor`` external input (once, in connect)."""
-        from isaacteleop.retargeting_engine.interface import TensorGroup
-        from isaacteleop.retargeting_engine.tensor_types import TransformMatrix
-
         tg = TensorGroup(TransformMatrix())
         tg[0] = np.asarray(self.config.base_T_anchor, dtype=np.float32)
         return {_BASE_T_ANCHOR_INPUT: {"value": tg}}
@@ -166,8 +170,6 @@ class XRController(IsaacTeleopTeleoperator):
             "trigger": float}`` — pose in the robot base frame; squeeze/trigger in ``[0, 1]``.
         """
         result = self._step(execution_events=self._running_events(), external_inputs=self._external_inputs)
-
-        from isaacteleop.retargeting_engine.tensor_types.indices import ControllerInputIndex
 
         # Optional controller group is None until the headset is connected and its controllers
         # are live; expose that as is_tracking so the loop can wait before driving the arm.
