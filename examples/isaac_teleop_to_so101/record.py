@@ -78,8 +78,8 @@ from .common import (
     ALIGN_DURATION_S,
     RESET_DURATION_S,
     Device,
+    HoldLatch,
     build_device,
-    hold_action,
     init_keyboard_listener,
 )
 from .isaac_teleop import IsaacTeleopConfig
@@ -139,6 +139,7 @@ def _record_loop(
     timestamp = 0.0
     start_t = time.perf_counter()
     record_frames = dataset is not None
+    hold = HoldLatch(motor_names)
 
     while timestamp < control_time_s:
         loop_start = time.perf_counter()
@@ -152,11 +153,9 @@ def _record_loop(
         if record_frames:
             observation_frame = build_dataset_frame(dataset.features, obs, prefix=OBS_STR)
 
-        action = device.compute(obs)
-        if action is None:
-            # Device idle (XR clutch disengaged, or leader stream stale) — hold at the
-            # measured joint positions.
-            action = hold_action(obs, motor_names)
+        # Device idle (XR clutch disengaged, or leader stream stale) -> hold the pose
+        # latched on the active->idle edge.
+        action = hold.resolve(device.compute(obs), obs)
 
         robot.send_action(action)
 

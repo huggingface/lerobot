@@ -174,10 +174,12 @@ processor — `MapXRControllerActionToRobotAction` is a pure, stateless per‑fr
 
 The clutch latches its engage origin on the squeeze **engage edge** (the moment the squeeze crosses
 `clutch_threshold`) and drives the EE from the motion _relative_ to that origin, so the arm does not
-teleport on engage. It seeds its home from the `home_base_T_ee` transform the example computes by
-forward kinematics on the arm's **measured joints** right after startup — so the seeded home equals
-where the arm already is, the loop never commands the arm at startup, and the first engage is
-jump‑free. On a mid‑task re‑clutch it latches a fresh home from the last commanded pose.
+teleport on engage. On **every** engage — startup and mid‑task re‑clutch alike — the home
+_position_ is latched from forward kinematics on the arm's **measured joints**, so the home equals
+where the arm physically is even if it moved while disengaged, and the engage is jump‑free. The
+home _orientation_ keeps the last commanded rotation: the 5‑DOF arm tracks orientation only
+softly, so latching the measured wrist orientation would inject its tracking offset into the
+command on every re‑clutch.
 
 ## Controls
 

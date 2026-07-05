@@ -106,6 +106,29 @@ def hold_action(obs: RobotObservation, motor_names: list[str]) -> dict[str, floa
     return {f"{name}.pos": float(obs[f"{name}.pos"]) for name in motor_names}
 
 
+class HoldLatch:
+    """Resolve the per-frame action, holding one LATCHED pose while the device is idle.
+
+    Re-sending the freshly measured joints on every idle frame would ratchet the arm
+    downward: under gravity the P-only servo settles below its goal by a steady-state
+    error, so each re-command of the measurement lowers the goal by that error again.
+    Latching the target once on the active->idle transition holds a fixed pose instead.
+    """
+
+    def __init__(self, motor_names: list[str]):
+        self._motor_names = motor_names
+        self._held: dict[str, float] | None = None
+
+    def resolve(self, action: RobotAction | None, obs: RobotObservation) -> RobotAction:
+        """Pass through an active action (clearing the latch); latch + hold when idle."""
+        if action is not None:
+            self._held = None
+            return action
+        if self._held is None:
+            self._held = hold_action(obs, self._motor_names)
+        return self._held
+
+
 def slew(
     robot,
     motor_names: list[str],
@@ -351,11 +374,19 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
         trigger = float(xr_action["trigger"])
         enabled = squeeze > teleop_config.clutch_threshold
 
-        # On the engage edge, latch the clutch home (current arm EE) and the controller
-        # origin so the per-frame delta starts at zero (no jump).
+        # On the engage edge, latch the clutch home at the arm's MEASURED EE pose (FK of
+        # the live joints) and the controller origin so the per-frame delta starts at zero.
+        # Latching the last commanded pose instead would snap the arm back to it at full
+        # servo speed if the arm moved while disengaged (gravity sag, external contact).
         is_engage_frame = enabled and not prev_enabled
         if is_engage_frame:
-            clutch.engage(grip_pos, grip_quat)
+            q_measured = np.array([float(robot_obs[f"{name}.pos"]) for name in motor_names], dtype=float)
+            measured_base_T_ee = kinematics_solver.forward_kinematics(q_measured)  # noqa: N806
+            clutch.engage(grip_pos, grip_quat, measured_base_T_ee=measured_base_T_ee)
+            # Re-anchor the pipeline state at the measured pose as well: EEBoundsAndSafety's
+            # rate limiter and the IK warm start otherwise still reference the stale
+            # pre-disengage command and would fight the fresh home for several frames.
+            xr_to_robot_joints_processor.reset()
         prev_enabled = enabled
 
         # SAFETY GATE: command the robot ONLY while the clutch is engaged; otherwise return

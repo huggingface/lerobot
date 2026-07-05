@@ -47,8 +47,8 @@ from .common import (
     ALIGN_DURATION_S,
     FPS,
     RESET_DURATION_S,
+    HoldLatch,
     build_device,
-    hold_action,
 )
 from .isaac_teleop import IsaacTeleopConfig
 
@@ -89,13 +89,13 @@ class TeleoperateConfig:
 @parser.wrap()
 def teleoperate(cfg: TeleoperateConfig):
     robot, device, motor_names = build_device(cfg)
+    hold = HoldLatch(motor_names)
     try:
         while True:
             t0 = time.perf_counter()
             obs = robot.get_observation()
-            action = device.compute(obs)
-            if action is None:  # idle -> hold at the measured pose
-                action = hold_action(obs, motor_names)
+            # Idle (compute() -> None) holds the pose latched on the active->idle edge.
+            action = hold.resolve(device.compute(obs), obs)
             robot.send_action(action)
             precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
     except KeyboardInterrupt:
