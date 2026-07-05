@@ -1,4 +1,4 @@
-# !/usr/bin/env python
+#!/usr/bin/env python
 
 # Copyright 2026 NVIDIA Corporation and The HuggingFace Inc. team. All rights reserved.
 #
@@ -226,14 +226,12 @@ _SKIP_IFACE_PREFIXES = ("docker", "br-", "veth", "virbr", "l4tbr")
 def _primary_ipv4() -> str | None:
     """The workstation's primary outbound IPv4, via the UDP-socket trick (``connect()`` on a
     datagram socket selects the egress interface without sending packets)."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(("8.8.8.8", 80))
-        return s.getsockname()[0]
-    except OSError:
-        return None
-    finally:
-        s.close()
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+        except OSError:
+            return None
 
 
 def _candidate_ipv4s() -> list[tuple[str, str]]:
@@ -372,7 +370,8 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
 
     def compute(robot_obs: RobotObservation | None) -> RobotAction | None:
         nonlocal prev_enabled
-        assert clutch is not None  # set in startup(), which runs before compute()
+        if clutch is None:  # set in startup(), which runs before compute()
+            raise RuntimeError("compute() called before startup(); the clutch is not initialized")
         xr_action = teleop_device.get_action()
         grip_pos = np.asarray(xr_action["grip_pos"], dtype=float)
         grip_quat = np.asarray(xr_action["grip_quat"], dtype=float)

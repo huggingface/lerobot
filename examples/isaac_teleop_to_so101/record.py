@@ -1,4 +1,4 @@
-# !/usr/bin/env python
+#!/usr/bin/env python
 
 # Copyright 2026 NVIDIA Corporation and The HuggingFace Inc. team. All rights reserved.
 #
