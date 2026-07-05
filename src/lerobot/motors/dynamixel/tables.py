@@ -247,6 +247,20 @@ MODEL_BAUDRATE_TABLE = {
     "ax-12a": AX_SERIES_BAUDRATE_TABLE,
 }
 
+# {model: protocol_version}
+# AX series communicate over Protocol 1.0, X series over Protocol 2.0.
+MODEL_PROTOCOL = {
+    "x_series": 2,
+    "xl330-m077": 2,
+    "xl330-m288": 2,
+    "xl430-w250": 2,
+    "xm430-w350": 2,
+    "xm540-w270": 2,
+    "xc430-w150": 2,
+    "ax_series": 1,
+    "ax-12a": 1,
+}
+
 AVAILABLE_BAUDRATES = [
     9_600,
     19_200,

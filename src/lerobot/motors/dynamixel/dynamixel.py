@@ -33,6 +33,7 @@ from .tables import (
     MODEL_CONTROL_TABLE,
     MODEL_ENCODING_TABLE,
     MODEL_NUMBER_TABLE,
+    MODEL_PROTOCOL,
     MODEL_RESOLUTION,
 )
 
@@ -117,6 +118,8 @@ class DynamixelMotorsBus(SerialMotorsBus):
     ):
         require_package("dynamixel-sdk", extra="dynamixel", import_name="dynamixel_sdk")
         super().__init__(port, motors, calibration)
+        self.protocol_version = protocol_version
+        self._assert_same_protocol()
         self.port_handler = dxl.PortHandler(self.port)
         self.packet_handler = dxl.PacketHandler(protocol_version)
         print(f"Using protocol version {protocol_version}")
@@ -124,6 +127,14 @@ class DynamixelMotorsBus(SerialMotorsBus):
         self.sync_writer = dxl.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
         self._comm_success = dxl.COMM_SUCCESS
         self._no_error = 0x00
+
+    def _assert_same_protocol(self) -> None:
+        if any(MODEL_PROTOCOL[model] != self.protocol_version for model in self.models):
+            raise ValueError(
+                f"Some motors are incompatible with protocol_version={self.protocol_version}. "
+                f"Expected per-model protocols: "
+                f"{ {model: MODEL_PROTOCOL[model] for model in self.models} }"
+            )
 
     def _assert_protocol_is_compatible(self, instruction_name: str) -> None:
         pass
