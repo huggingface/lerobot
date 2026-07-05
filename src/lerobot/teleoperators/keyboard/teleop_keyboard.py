@@ -169,18 +169,17 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
     @property
     def action_features(self) -> dict:
+        names = {"delta_x": 0, "delta_y": 1, "delta_z": 2}
+        if self.config.use_orientation:
+            names["delta_pitch"] = len(names)
+            names["delta_roll"] = len(names)
         if self.config.use_gripper:
-            return {
-                "dtype": "float32",
-                "shape": (4,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3},
-            }
-        else:
-            return {
-                "dtype": "float32",
-                "shape": (3,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2},
-            }
+            names["gripper"] = len(names)
+        return {
+            "dtype": "float32",
+            "shape": (len(names),),
+            "names": names,
+        }
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
@@ -188,6 +187,8 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         delta_x = 0.0
         delta_y = 0.0
         delta_z = 0.0
+        delta_pitch = 0.0
+        delta_roll = 0.0
         gripper_action = 1.0
 
         # Generate action based on current key states
@@ -209,6 +210,14 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
                 gripper_action = int(val) + 1
             elif key == keyboard.Key.ctrl_l:
                 gripper_action = int(val) - 1
+            elif self.config.use_orientation and key == "k":
+                delta_pitch = int(val)
+            elif self.config.use_orientation and key == "i":
+                delta_pitch = -int(val)
+            elif self.config.use_orientation and key == "l":
+                delta_roll = int(val)
+            elif self.config.use_orientation and key == "j":
+                delta_roll = -int(val)
             elif val:
                 # If the key is pressed, add it to the misc_keys_queue
                 # this will record key presses that are not part of the delta_x, delta_y, delta_z
@@ -220,6 +229,10 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             "delta_y": delta_y,
             "delta_z": delta_z,
         }
+
+        if self.config.use_orientation:
+            action_dict["delta_pitch"] = delta_pitch
+            action_dict["delta_roll"] = delta_roll
 
         if self.config.use_gripper:
             action_dict["gripper"] = gripper_action

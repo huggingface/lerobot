@@ -37,9 +37,12 @@ class KeyboardEndEffectorTeleopConfig(KeyboardTeleopConfig):
 
     Attributes:
         use_gripper: Whether to include gripper control in actions
+        use_orientation: Whether to include end-effector orientation control (pitch/roll)
+            in actions, on the i/k (pitch) and j/l (roll) keys
     """
 
     use_gripper: bool = True
+    use_orientation: bool = False
 
 
 @TeleoperatorConfig.register_subclass("keyboard_rover")

@@ -28,9 +28,18 @@ commanded pose also bounds how far the target can lead the robot, so motion
 reverses instantly at workspace limits instead of having to unwind an accumulated
 overshoot.
 
+The SO100 has 5 joints, so on top of x/y/z the end-effector has exactly two
+controllable orientation degrees of freedom: pitch (where the nose points, e.g.
+pointing down at a piece on the table) and roll about the gripper axis (which acts
+as yaw of the jaws when the nose points down). Both are enabled here via
+``use_orientation=True``. True world-yaw is coupled to the base pan and follows
+from the commanded x/y position.
+
 Key mapping (see `KeyboardEndEffectorTeleop`):
     arrow keys   -> x / y translation
     shift        -> z down          right shift -> z up
+    i / k        -> pitch nose up / down
+    j / l        -> roll about the gripper axis
     left ctrl    -> close gripper   right ctrl  -> open gripper
 """
 
@@ -70,13 +79,16 @@ EE_BOUNDS = {"min": [-0.45, -0.45, 0.02], "max": [0.45, 0.45, 0.45]}
 # your gripper was assembled and calibrated, open/close may be swapped: flip the sign.
 GRIPPER_SPEED_FACTOR = 0.05
 
+# Radians rotated per control tick per unit keyboard delta (~15 deg/s at 30 FPS).
+EE_ROT_STEP_RAD = 0.0087
+
 
 def main():
     # Initialize the robot and teleoperator
     robot_config = SO100FollowerConfig(
         port="/dev/tty.usbmodem5A460814411", id="my_awesome_follower_arm", use_degrees=True
     )
-    teleop_config = KeyboardEndEffectorTeleopConfig(use_gripper=True)
+    teleop_config = KeyboardEndEffectorTeleopConfig(use_gripper=True, use_orientation=True)
 
     # Initialize the robot and teleoperator
     robot = SO100Follower(robot_config)
@@ -103,8 +115,8 @@ def main():
         tuple[RobotAction, RobotObservation], RobotAction
     ](
         steps=[
-            # {delta_x, delta_y, delta_z, gripper} -> {enabled, target_*, gripper_vel}
-            MapDeltaActionToRobotActionStep(),
+            # {delta_x/y/z, delta_pitch, delta_roll, gripper} -> {enabled, target_*, gripper_vel}
+            MapDeltaActionToRobotActionStep(rotation_scale=EE_ROT_STEP_RAD),
             # Velocity-style control: per-tick deltas are applied relative to the
             # previously commanded pose (the IK solution from the last tick).
             EEReferenceAndDelta(

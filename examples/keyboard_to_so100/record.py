@@ -23,6 +23,8 @@ with the same ``replay.py`` / ``evaluate.py`` / ``rollout.py`` scripts.
 Teleoperation keys (see `KeyboardEndEffectorTeleop`):
     arrow keys   -> x / y translation
     shift        -> z down          right shift -> z up
+    i / k        -> pitch nose up / down
+    j / l        -> roll about the gripper axis
     left ctrl    -> close gripper   right ctrl  -> open gripper
 
 Recording controls use letters only, because the usual arrow/Esc bindings of
@@ -83,6 +85,9 @@ EE_BOUNDS = {"min": [-0.45, -0.45, 0.02], "max": [0.45, 0.45, 0.45]}
 # Gripper position change per tick for the discrete open/close keys.
 GRIPPER_SPEED_FACTOR = 0.05
 
+# Radians rotated per control tick per unit keyboard delta (~15 deg/s at 30 FPS).
+EE_ROT_STEP_RAD = 0.0087
+
 
 def init_letter_keyboard_listener():
     """Recording controls on letter keys only: the teleoperator owns the arrows and Esc."""
@@ -108,7 +113,7 @@ def main():
         cameras=camera_config,
         use_degrees=True,
     )
-    teleop_config = KeyboardEndEffectorTeleopConfig(use_gripper=True)
+    teleop_config = KeyboardEndEffectorTeleopConfig(use_gripper=True, use_orientation=True)
 
     # Initialize the robot and teleoperator
     robot = SO100Follower(robot_config)
@@ -139,8 +144,8 @@ def main():
         tuple[RobotAction, RobotObservation], RobotAction
     ](
         steps=[
-            # {delta_x, delta_y, delta_z, gripper} -> {enabled, target_*, gripper_vel}
-            MapDeltaActionToRobotActionStep(),
+            # {delta_x/y/z, delta_pitch, delta_roll, gripper} -> {enabled, target_*, gripper_vel}
+            MapDeltaActionToRobotActionStep(rotation_scale=EE_ROT_STEP_RAD),
             # Velocity-style control: per-tick deltas are applied relative to the
             # previously commanded pose (the IK solution from the last tick).
             EEReferenceAndDelta(
@@ -203,7 +208,7 @@ def main():
                 initial_features=create_initial_features(
                     action={
                         f"delta_{axis}": PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-                        for axis in ["x", "y", "z"]
+                        for axis in ["x", "y", "z", "pitch", "roll"]
                     }
                 ),
                 use_videos=True,
