@@ -107,6 +107,39 @@ def test_abc_implementation(dummy_motors):
     DynamixelMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
 
 
+def test_assert_same_protocol_rejects_mismatch():
+    """AX-series motors (Protocol 1.0) cannot be used with the default Protocol 2.0."""
+    motors = {"ax": Motor(5, "ax-12a", MotorNormMode.RANGE_M100_100)}
+    with pytest.raises(ValueError, match="incompatible with protocol_version"):
+        DynamixelMotorsBus(port="/dev/dummy-port", motors=motors)
+
+
+@pytest.mark.parametrize("instruction", ["sync_read", "broadcast_ping"])
+def test_protocol1_unsupported_instructions(instruction):
+    motors = {"ax": Motor(5, "ax-12a", MotorNormMode.RANGE_M100_100)}
+    bus = DynamixelMotorsBus(port="/dev/dummy-port", motors=motors, protocol_version=1)
+    with pytest.raises(NotImplementedError):
+        bus._assert_protocol_is_compatible(instruction)
+
+
+@pytest.mark.parametrize(
+    "protocol_version, model, data_name, value",
+    [
+        (1, "ax-12a", "Present_Speed", -300),
+        (1, "ax-12a", "Moving_Speed", 300),
+        (2, "xl430-w250", "Present_Velocity", -300),
+    ],
+    ids=["ax-sign-magnitude-neg", "ax-sign-magnitude-pos", "x-twos-complement-neg"],
+)
+def test_sign_encoding_roundtrip(protocol_version, model, data_name, value):
+    motors = {"m": Motor(5, model, MotorNormMode.RANGE_M100_100)}
+    bus = DynamixelMotorsBus(port="/dev/dummy-port", motors=motors, protocol_version=protocol_version)
+    encoded = bus._encode_sign(data_name, {5: value})
+    assert encoded[5] >= 0
+    decoded = bus._decode_sign(data_name, encoded)
+    assert decoded[5] == value
+
+
 @pytest.mark.parametrize("id_", [1, 2, 3])
 def test_ping(id_, mock_motors, dummy_motors):
     expected_model_nb = MODEL_NUMBER_TABLE[dummy_motors[f"dummy_{id_}"].model]
