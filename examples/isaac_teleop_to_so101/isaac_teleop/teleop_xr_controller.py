@@ -173,15 +173,21 @@ class XRController(IsaacTeleopTeleoperator):
         trigger = 0.0
         self._is_tracking = not getattr(controller, "is_none", False)
         if self._is_tracking:
-            # A read failure on a partially-populated frame leaves the safe defaults above and
-            # reports not-tracked, so the loop freezes the arm rather than trusting a partial frame.
+            # Read ALL four fields into locals before committing any of them: a failure on a
+            # partially-populated frame must not mix live values with the safe defaults (a
+            # live squeeze paired with a defaulted trigger=0.0 would keep the clutch engaged
+            # while commanding the gripper fully open, dropping whatever is grasped). On
+            # failure the defaults stand untouched and the frame reports not-tracked.
             try:
-                grip_pos = np.asarray(controller[ControllerInputIndex.GRIP_POSITION], dtype=np.float32)
-                grip_quat = np.asarray(controller[ControllerInputIndex.GRIP_ORIENTATION], dtype=np.float32)
-                squeeze = float(controller[ControllerInputIndex.SQUEEZE_VALUE])
-                trigger = float(controller[ControllerInputIndex.TRIGGER_VALUE])
+                pos = np.asarray(controller[ControllerInputIndex.GRIP_POSITION], dtype=np.float32)
+                quat = np.asarray(controller[ControllerInputIndex.GRIP_ORIENTATION], dtype=np.float32)
+                squeeze_val = float(controller[ControllerInputIndex.SQUEEZE_VALUE])
+                trigger_val = float(controller[ControllerInputIndex.TRIGGER_VALUE])
             except (IndexError, KeyError, TypeError, ValueError):
                 self._is_tracking = False
+            else:
+                grip_pos, grip_quat = pos, quat
+                squeeze, trigger = squeeze_val, trigger_val
 
         return {
             "grip_pos": grip_pos,
