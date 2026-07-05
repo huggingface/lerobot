@@ -47,7 +47,7 @@ if TYPE_CHECKING or _dynamixel_sdk_available:
 else:
     dxl = None
 
-PROTOCOL_VERSION = 2.0
+PROTOCOL_VERSION = 2
 DEFAULT_BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
 
@@ -127,7 +127,7 @@ class DynamixelMotorsBus(SerialMotorsBus):
         self._assert_same_protocol()
         self.port_handler = dxl.PortHandler(self.port)
         self.packet_handler = dxl.PacketHandler(protocol_version)
-        print(f"Using protocol version {protocol_version}")
+        logger.debug(f"Using protocol version {protocol_version}")
         self.sync_reader = dxl.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
         self.sync_writer = dxl.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
         self._comm_success = dxl.COMM_SUCCESS

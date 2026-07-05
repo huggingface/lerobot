@@ -215,6 +215,8 @@ MODEL_NUMBER_TABLE = {
 
 # {model: available_operating_modes}
 # https://emanual.robotis.com/docs/en/dxl/x/{MODEL}/#operating-mode11
+# Note: AX-series (Protocol 1.0) has no Operating_Mode register; joint vs wheel mode is
+# selected via the CW/CCW angle limits, so it is intentionally absent from this table.
 MODEL_OPERATING_MODES = {
     "xl330-m077": [0, 1, 3, 4, 5, 16],
     "xl330-m288": [0, 1, 3, 4, 5, 16],
