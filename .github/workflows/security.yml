@@ -43,12 +43,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4 # zizmor: ignore[unpinned-uses]
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Secret Scanning
-        uses: trufflesecurity/trufflehog@v3.90.0  # zizmor: ignore[unpinned-uses]
+        uses: trufflesecurity/trufflehog@eafb8c5f6a06175141c27f17bcc17941853d0047  # v3.90.0
         with:
           extra_args: --only-verified

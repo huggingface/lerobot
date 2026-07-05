@@ -14,22 +14,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
+import logging
 import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import draccus
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR, LRScheduler
 
-from lerobot.constants import SCHEDULER_STATE
-from lerobot.datasets.utils import write_json
-from lerobot.utils.io_utils import deserialize_json_into_object
+from lerobot.utils.constants import SCHEDULER_STATE
+from lerobot.utils.import_utils import _diffusers_available, require_package
+from lerobot.utils.io_utils import deserialize_json_into_object, write_json
+
+if TYPE_CHECKING or _diffusers_available:
+    from diffusers.optimization import get_scheduler
+else:
+    get_scheduler = None
 
 
 @dataclass
 class LRSchedulerConfig(draccus.ChoiceRegistry, abc.ABC):
-    num_warmup_steps: int
+    num_warmup_steps: int | None
 
     @property
     def type(self) -> str:
@@ -47,7 +54,7 @@ class DiffuserSchedulerConfig(LRSchedulerConfig):
     num_warmup_steps: int | None = None
 
     def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
-        from diffusers.optimization import get_scheduler
+        require_package("diffusers", extra="diffusion")
 
         kwargs = {**asdict(self), "num_training_steps": num_training_steps, "optimizer": optimizer}
         return get_scheduler(**kwargs)
@@ -76,10 +83,58 @@ class VQBeTSchedulerConfig(LRSchedulerConfig):
         return LambdaLR(optimizer, lr_lambda, -1)
 
 
+@LRSchedulerConfig.register_subclass("constant_with_warmup")
+@dataclass
+class ConstantWithWarmupSchedulerConfig(LRSchedulerConfig):
+    """Linear warmup followed by a constant learning rate.
+
+    Mirrors the ``warmup_constant_lambda`` used by LingBot-VA (upstream ``wan_va/train.py``):
+    the LR ramps linearly from 0 to the peak over ``num_warmup_steps`` steps, then stays flat.
+    """
+
+    num_warmup_steps: int = 1000
+
+    def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
+        warmup_steps = self.num_warmup_steps or 0
+
+        def lr_lambda(current_step):
+            if current_step < warmup_steps:
+                return float(current_step) / float(max(1, warmup_steps))
+            return 1.0
+
+        return LambdaLR(optimizer, lr_lambda, -1)
+
+
+@LRSchedulerConfig.register_subclass("cosine_annealing_with_warmup")
+@dataclass
+class CosineAnnealingWithWarmupSchedulerConfig(LRSchedulerConfig):
+    """Linear warmup followed by cosine annealing from the peak LR to zero.
+
+    Used by EVO1; the annealing phase always spans the remaining training steps.
+    """
+
+    num_warmup_steps: int
+
+    def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
+        def lr_lambda(current_step: int) -> float:
+            if current_step < self.num_warmup_steps:
+                return current_step / max(1, self.num_warmup_steps)
+            progress = (current_step - self.num_warmup_steps) / max(
+                1, num_training_steps - self.num_warmup_steps
+            )
+            return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+
+        return LambdaLR(optimizer, lr_lambda, -1)
+
+
 @LRSchedulerConfig.register_subclass("cosine_decay_with_warmup")
 @dataclass
 class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
-    """Used by Physical Intelligence to train Pi0"""
+    """Used by Physical Intelligence to train Pi0.
+
+    Automatically scales warmup and decay steps if num_training_steps < num_decay_steps.
+    This ensures the learning rate schedule completes properly even with shorter training runs.
+    """
 
     num_warmup_steps: int
     num_decay_steps: int
@@ -87,23 +142,39 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
     decay_lr: float
 
     def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
-        del num_training_steps
+        # Auto-scale scheduler parameters if training steps are shorter than configured decay steps
+        actual_warmup_steps = self.num_warmup_steps
+        actual_decay_steps = self.num_decay_steps
+
+        if num_training_steps < self.num_decay_steps:
+            # Calculate scaling factor to fit the schedule into the available training steps
+            scale_factor = num_training_steps / self.num_decay_steps
+            actual_warmup_steps = int(self.num_warmup_steps * scale_factor)
+            actual_decay_steps = num_training_steps
+
+            logging.info(
+                f"Auto-scaling LR scheduler: "
+                f"num_training_steps ({num_training_steps}) < num_decay_steps ({self.num_decay_steps}). "
+                f"Scaling warmup: {self.num_warmup_steps} → {actual_warmup_steps}, "
+                f"decay: {self.num_decay_steps} → {actual_decay_steps} "
+                f"(scale factor: {scale_factor:.3f})"
+            )
 
         def lr_lambda(current_step):
             def linear_warmup_schedule(current_step):
                 if current_step <= 0:
-                    return 1 / (self.num_warmup_steps + 1)
-                frac = 1 - current_step / self.num_warmup_steps
-                return (1 / (self.num_warmup_steps + 1) - 1) * frac + 1
+                    return 1 / (actual_warmup_steps + 1)
+                frac = 1 - current_step / actual_warmup_steps
+                return (1 / (actual_warmup_steps + 1) - 1) * frac + 1
 
             def cosine_decay_schedule(current_step):
-                step = min(current_step, self.num_decay_steps)
-                cosine_decay = 0.5 * (1 + math.cos(math.pi * step / self.num_decay_steps))
+                step = min(current_step, actual_decay_steps)
+                cosine_decay = 0.5 * (1 + math.cos(math.pi * step / actual_decay_steps))
                 alpha = self.decay_lr / self.peak_lr
                 decayed = (1 - alpha) * cosine_decay + alpha
                 return decayed
 
-            if current_step < self.num_warmup_steps:
+            if current_step < actual_warmup_steps:
                 return linear_warmup_schedule(current_step)
 
             return cosine_decay_schedule(current_step)

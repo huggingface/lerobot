@@ -1,0 +1,40 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from .classifier.configuration_classifier import RewardClassifierConfig as RewardClassifierConfig
+from .factory import (
+    get_reward_model_class as get_reward_model_class,
+    make_reward_model as make_reward_model,
+    make_reward_model_config as make_reward_model_config,
+    make_reward_pre_post_processors as make_reward_pre_post_processors,
+)
+from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
+from .robometer.configuration_robometer import RobometerConfig as RobometerConfig
+from .sarm.configuration_sarm import SARMConfig as SARMConfig
+from .topreward.configuration_topreward import TOPRewardConfig as TOPRewardConfig
+
+__all__ = [
+    # Configuration classes
+    "RewardClassifierConfig",
+    "RobometerConfig",
+    "SARMConfig",
+    "TOPRewardConfig",
+    # Base class
+    "PreTrainedRewardModel",
+    # Factory functions
+    "get_reward_model_class",
+    "make_reward_model",
+    "make_reward_model_config",
+    "make_reward_pre_post_processors",
+]

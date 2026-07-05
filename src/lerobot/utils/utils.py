@@ -13,27 +13,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import logging
 import os
-import os.path as osp
 import platform
 import select
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from copy import copy, deepcopy
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from statistics import mean
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import torch
 
-
-def none_or_int(value):
-    if value == "None":
-        return None
-    return int(value)
+if TYPE_CHECKING:
+    from accelerate import Accelerator
 
 
 def inside_slurm():
@@ -42,115 +41,62 @@ def inside_slurm():
     return "SLURM_JOB_ID" in os.environ
 
 
-def auto_select_torch_device() -> torch.device:
-    """Tries to select automatically a torch device."""
-    if torch.cuda.is_available():
-        logging.info("Cuda backend detected, using cuda.")
-        return torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        logging.info("Metal backend detected, using mps.")
-        return torch.device("mps")
-    else:
-        logging.warning("No accelerated backend detected. Using default cpu, this will be slow.")
-        return torch.device("cpu")
-
-
-# TODO(Steven): Remove log. log shouldn't be an argument, this should be handled by the logger level
-def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
-    """Given a string, return a torch.device with checks on whether the device is available."""
-    try_device = str(try_device)
-    match try_device:
-        case "cuda":
-            assert torch.cuda.is_available()
-            device = torch.device("cuda")
-        case "mps":
-            assert torch.backends.mps.is_available()
-            device = torch.device("mps")
-        case "cpu":
-            device = torch.device("cpu")
-            if log:
-                logging.warning("Using CPU, this will be slow.")
-        case _:
-            device = torch.device(try_device)
-            if log:
-                logging.warning(f"Using custom {try_device} device.")
-
-    return device
-
-
-def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
-    """
-    mps is currently not compatible with float64
-    """
-    if isinstance(device, torch.device):
-        device = device.type
-    if device == "mps" and dtype == torch.float64:
-        return torch.float32
-    else:
-        return dtype
-
-
-def is_torch_device_available(try_device: str) -> bool:
-    try_device = str(try_device)  # Ensure try_device is a string
-    if try_device == "cuda":
-        return torch.cuda.is_available()
-    elif try_device == "mps":
-        return torch.backends.mps.is_available()
-    elif try_device == "cpu":
-        return True
-    else:
-        raise ValueError(f"Unknown device {try_device}. Supported devices are: cuda, mps or cpu.")
-
-
-def is_amp_available(device: str):
-    if device in ["cuda", "cpu"]:
-        return True
-    elif device == "mps":
-        return False
-    else:
-        raise ValueError(f"Unknown device '{device}.")
-
-
 def init_logging(
     log_file: Path | None = None,
     display_pid: bool = False,
     console_level: str = "INFO",
     file_level: str = "DEBUG",
+    accelerator: Accelerator | None = None,
 ):
+    """Initialize logging configuration for LeRobot.
+
+    In multi-GPU training, only the main process logs to console to avoid duplicate output.
+    Non-main processes have console logging suppressed but can still log to file.
+
+    Args:
+        log_file: Optional file path to write logs to
+        display_pid: Include process ID in log messages (useful for debugging multi-process)
+        console_level: Logging level for console output
+        file_level: Logging level for file output
+        accelerator: Optional Accelerator instance (for multi-GPU detection)
+    """
+
     def custom_format(record: logging.LogRecord) -> str:
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         fnameline = f"{record.pathname}:{record.lineno}"
-
-        # NOTE: Display PID is useful for multi-process logging.
-        if display_pid:
-            pid_str = f"[PID: {os.getpid()}]"
-            message = f"{record.levelname} {pid_str} {dt} {fnameline[-15:]:>15} {record.getMessage()}"
-        else:
-            message = f"{record.levelname} {dt} {fnameline[-15:]:>15} {record.getMessage()}"
-        return message
+        pid_str = f"[PID: {os.getpid()}] " if display_pid else ""
+        return f"{record.levelname} {pid_str}{dt} {fnameline[-15:]:>15} {record.getMessage()}"
 
     formatter = logging.Formatter()
     formatter.format = custom_format
 
     logger = logging.getLogger()
-    logger.setLevel(logging.NOTSET)  # Set the logger to the lowest level to capture all messages
+    logger.setLevel(logging.NOTSET)
 
-    # Remove unused default handlers
-    for handler in logger.handlers[:]:
-        logger.removeHandler(handler)
+    # Clear any existing handlers
+    logger.handlers.clear()
 
-    # Write logs to console
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    console_handler.setLevel(console_level.upper())
-    logger.addHandler(console_handler)
+    # Determine if this is a non-main process in distributed training
+    is_main_process = accelerator.is_main_process if accelerator is not None else True
 
-    # Additionally write logs to file
+    # Console logging (main process only)
+    if is_main_process:
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        console_handler.setLevel(console_level.upper())
+        logger.addHandler(console_handler)
+    else:
+        # Suppress console output for non-main processes
+        logger.addHandler(logging.NullHandler())
+        logger.setLevel(logging.ERROR)
+
     if log_file is not None:
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
         file_handler.setLevel(file_level.upper())
         logger.addHandler(file_handler)
+
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def format_big_number(num, precision=0):
@@ -163,36 +109,6 @@ def format_big_number(num, precision=0):
         num /= divisor
 
     return num
-
-
-def _relative_path_between(path1: Path, path2: Path) -> Path:
-    """Returns path1 relative to path2."""
-    path1 = path1.absolute()
-    path2 = path2.absolute()
-    try:
-        return path1.relative_to(path2)
-    except ValueError:  # most likely because path1 is not a subpath of path2
-        common_parts = Path(osp.commonpath([path1, path2])).parts
-        return Path(
-            "/".join([".."] * (len(path2.parts) - len(common_parts)) + list(path1.parts[len(common_parts) :]))
-        )
-
-
-def print_cuda_memory_usage():
-    """Use this function to locate and debug memory leak."""
-    import gc
-
-    gc.collect()
-    # Also clear the cache if you want to fully release the memory
-    torch.cuda.empty_cache()
-    print(f"Current GPU Memory Allocated: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB")
-    print(f"Maximum GPU Memory Allocated: {torch.cuda.max_memory_allocated(0) / 1024**2:.2f} MB")
-    print(f"Current GPU Memory Reserved: {torch.cuda.memory_reserved(0) / 1024**2:.2f} MB")
-    print(f"Maximum GPU Memory Reserved: {torch.cuda.max_memory_reserved(0) / 1024**2:.2f} MB")
-
-
-def capture_timestamp_utc():
-    return datetime.now(timezone.utc)
 
 
 def say(text: str, blocking: bool = False):
@@ -244,6 +160,25 @@ def has_method(cls: object, method_name: str) -> bool:
     return hasattr(cls, method_name) and callable(getattr(cls, method_name))
 
 
+def unwrap_scalar(value: Any) -> Any:
+    """Unwrap a tensor / numpy scalar / single-element list into a Python scalar.
+
+    Tensors and numpy scalars expose ``.item()``; single-element lists are
+    unwrapped recursively. Anything else is returned unchanged. Centralized
+    here so the language renderer and processor steps share one definition.
+
+    Raises:
+        ValueError: If ``value`` is a list with zero or multiple elements.
+    """
+    if hasattr(value, "item"):
+        return value.item()
+    if isinstance(value, list):
+        if len(value) != 1:
+            raise ValueError(f"Expected a scalar, got list of length {len(value)}: {value!r}")
+        return unwrap_scalar(value[0])
+    return value
+
+
 def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
     """
     Return True if a given string can be converted to a numpy dtype.
@@ -272,6 +207,121 @@ def enter_pressed() -> bool:
 def move_cursor_up(lines):
     """Move the cursor up by a specified number of lines."""
     print(f"\033[{lines}A", end="")
+
+
+def get_elapsed_time_in_days_hours_minutes_seconds(elapsed_time_s: float):
+    days = int(elapsed_time_s // (24 * 3600))
+    elapsed_time_s %= 24 * 3600
+    hours = int(elapsed_time_s // 3600)
+    elapsed_time_s %= 3600
+    minutes = int(elapsed_time_s // 60)
+    seconds = elapsed_time_s % 60
+    return days, hours, minutes, seconds
+
+
+def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
+    """Flatten a nested dictionary by joining keys with a separator.
+
+    Example:
+        >>> dct = {"a": {"b": 1, "c": {"d": 2}}, "e": 3}
+        >>> print(flatten_dict(dct))
+        {'a/b': 1, 'a/c/d': 2, 'e': 3}
+
+    Args:
+        d (dict): The dictionary to flatten.
+        parent_key (str): The base key to prepend to the keys in this level.
+        sep (str): The separator to use between keys.
+
+    Returns:
+        dict: A flattened dictionary.
+    """
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
+def unflatten_dict(d: dict, sep: str = "/") -> dict:
+    """Unflatten a dictionary with delimited keys into a nested dictionary.
+
+    Example:
+        >>> flat_dct = {"a/b": 1, "a/c/d": 2, "e": 3}
+        >>> print(unflatten_dict(flat_dct))
+        {'a': {'b': 1, 'c': {'d': 2}}, 'e': 3}
+
+    Args:
+        d (dict): A dictionary with flattened keys.
+        sep (str): The separator used in the keys.
+
+    Returns:
+        dict: A nested dictionary.
+    """
+    outdict = {}
+    for key, value in d.items():
+        parts = key.split(sep)
+        d_inner = outdict
+        for part in parts[:-1]:
+            if part not in d_inner:
+                d_inner[part] = {}
+            d_inner = d_inner[part]
+        d_inner[parts[-1]] = value
+    return outdict
+
+
+def cycle(iterable: Any) -> Iterator[Any]:
+    """Create a dataloader-safe cyclical iterator.
+
+    This is an equivalent of `itertools.cycle` but is safe for use with
+    PyTorch DataLoaders with multiple workers.
+    See https://github.com/pytorch/pytorch/issues/23900 for details.
+
+    Args:
+        iterable: The iterable to cycle over.
+
+    Yields:
+        Items from the iterable, restarting from the beginning when exhausted.
+    """
+    iterator = iter(iterable)
+    while True:
+        try:
+            yield next(iterator)
+        except StopIteration:
+            iterator = iter(iterable)
+
+
+class SuppressProgressBars:
+    """
+    Context manager to suppress progress bars.
+
+    Example
+    --------
+    ```python
+    with SuppressProgressBars():
+        # Code that would normally show progress bars
+    ```
+    """
+
+    def __enter__(self):
+        try:
+            from datasets.utils.logging import disable_progress_bar
+
+            disable_progress_bar()
+        except ImportError:
+            logging.getLogger(__name__).debug(
+                "SuppressProgressBars is a no-op because 'datasets' is not installed."
+            )
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            from datasets.utils.logging import enable_progress_bar
+
+            enable_progress_bar()
+        except ImportError:
+            pass
 
 
 class TimerManager:
@@ -356,10 +406,6 @@ class TimerManager:
     @property
     def history(self) -> list[float]:
         return deepcopy(self._history)
-
-    @property
-    def fps_history(self) -> list[float]:
-        return [1.0 / t for t in self._history]
 
     @property
     def fps_last(self) -> float:

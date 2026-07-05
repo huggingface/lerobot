@@ -27,10 +27,10 @@ import torch.distributed as distributed
 import torch.nn.functional as F  # noqa: N812
 from einops import pack, rearrange, reduce, repeat, unpack
 from torch import einsum, nn
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 from torch.optim import Optimizer
 
-from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
+from .configuration_vqbet import VQBeTConfig
 
 # ruff: noqa: N806
 
@@ -231,16 +231,6 @@ class GPT(nn.Module):
             torch.nn.init.zeros_(module.bias)
             torch.nn.init.ones_(module.weight)
 
-    def crop_block_size(self, gpt_block_size):
-        # model surgery to decrease the block size if necessary
-        # e.g. we may load the GPT2 pretrained model checkpoint (block size 1024)
-        # but want to use a smaller block size for some smaller, simpler model
-        assert gpt_block_size <= self.config.gpt_block_size
-        self.config.gpt_block_size = gpt_block_size
-        self.transformer.wpe.weight = nn.Parameter(self.transformer.wpe.weight[:gpt_block_size])
-        for block in self.transformer.h:
-            block.attn.bias = block.attn.bias[:, :, :gpt_block_size, :gpt_block_size]
-
     def configure_parameters(self):
         """
         This long function is unfortunately doing something very simple and is being very defensive:
@@ -270,13 +260,11 @@ class GPT(nn.Module):
         param_dict = dict(self.named_parameters())
         inter_params = decay & no_decay
         union_params = decay | no_decay
-        assert len(inter_params) == 0, "parameters {} made it into both decay/no_decay sets!".format(
-            str(inter_params)
+        assert len(inter_params) == 0, (
+            f"parameters {str(inter_params)} made it into both decay/no_decay sets!"
         )
         assert len(param_dict.keys() - union_params) == 0, (
-            "parameters {} were not separated into either decay/no_decay set!".format(
-                str(param_dict.keys() - union_params),
-            )
+            f"parameters {str(param_dict.keys() - union_params)} were not separated into either decay/no_decay set!"
         )
 
         decay = [param_dict[pn] for pn in sorted(decay)]
@@ -1382,7 +1370,7 @@ class EuclideanCodebook(nn.Module):
         batch_samples = rearrange(batch_samples, "h ... d -> h (...) d")
         self.replace(batch_samples, batch_mask=expired_codes)
 
-    @autocast(enabled=False)
+    @autocast("cuda", enabled=False)
     def forward(self, x, sample_codebook_temp=None, mask=None, freeze_codebook=False):
         needs_codebook_dim = x.ndim < 4
         sample_codebook_temp = (

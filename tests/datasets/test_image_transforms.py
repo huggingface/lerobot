@@ -21,17 +21,19 @@ from safetensors.torch import load_file
 from torchvision.transforms import v2
 from torchvision.transforms.v2 import functional as F  # noqa: N812
 
-from lerobot.datasets.transforms import (
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+from lerobot.scripts.lerobot_imgtransform_viz import (
+    save_all_transforms,
+    save_each_transform,
+)
+from lerobot.transforms import (
     ImageTransformConfig,
     ImageTransforms,
     ImageTransformsConfig,
     RandomSubsetApply,
     SharpnessJitter,
     make_transform_from_config,
-)
-from lerobot.scripts.visualize_image_transforms import (
-    save_all_transforms,
-    save_each_transform,
 )
 from lerobot.utils.random_utils import seeded_context
 from tests.artifacts.image_transforms.save_image_transforms_to_safetensors import ARTIFACT_DIR
@@ -132,6 +134,25 @@ def test_get_image_transforms_sharpness(img_tensor_factory, min_max):
     tf_actual = ImageTransforms(tf_cfg)
     tf_expected = SharpnessJitter(sharpness=min_max)
     torch.testing.assert_close(tf_actual(img_tensor), tf_expected(img_tensor))
+
+
+@pytest.mark.parametrize("degrees, translate", [((-5.0, 5.0), (0.05, 0.05)), ((10.0, 10.0), (0.1, 0.1))])
+def test_get_image_transforms_affine(img_tensor_factory, degrees, translate):
+    img_tensor = img_tensor_factory()
+    tf_cfg = ImageTransformsConfig(
+        enable=True,
+        tfs={
+            "affine": ImageTransformConfig(
+                type="RandomAffine", kwargs={"degrees": degrees, "translate": translate}
+            )
+        },
+    )
+    tf = ImageTransforms(tf_cfg)
+    output = tf(img_tensor)
+    # Verify output shape is preserved
+    assert output.shape == img_tensor.shape
+    # Verify transform is type RandomAffine
+    assert isinstance(tf.transforms["affine"], v2.RandomAffine)
 
 
 def test_get_image_transforms_max_num_transforms(img_tensor_factory):
@@ -262,7 +283,37 @@ def test_backward_compatibility_default_config(img_tensor, default_transforms):
     # NOTE: PyTorch versions have different randomness, it might break this test.
     # See this PR: https://github.com/huggingface/lerobot/pull/1127.
 
-    cfg = ImageTransformsConfig(enable=True)
+    # Use config without affine to match original test artifacts
+    cfg = ImageTransformsConfig(
+        enable=True,
+        tfs={
+            "brightness": ImageTransformConfig(
+                weight=1.0,
+                type="ColorJitter",
+                kwargs={"brightness": (0.8, 1.2)},
+            ),
+            "contrast": ImageTransformConfig(
+                weight=1.0,
+                type="ColorJitter",
+                kwargs={"contrast": (0.8, 1.2)},
+            ),
+            "saturation": ImageTransformConfig(
+                weight=1.0,
+                type="ColorJitter",
+                kwargs={"saturation": (0.5, 1.5)},
+            ),
+            "hue": ImageTransformConfig(
+                weight=1.0,
+                type="ColorJitter",
+                kwargs={"hue": (-0.05, 0.05)},
+            ),
+            "sharpness": ImageTransformConfig(
+                weight=1.0,
+                type="SharpnessJitter",
+                kwargs={"sharpness": (0.5, 1.5)},
+            ),
+        },
+    )
     default_tf = ImageTransforms(cfg)
 
     with seeded_context(1337):
@@ -341,6 +392,30 @@ def test_sharpness_jitter_invalid_range_max_smaller():
         SharpnessJitter((2.0, 0.1))
 
 
+def test_make_transform_from_config_with_v2_resize(img_tensor_factory):
+    img_tensor = img_tensor_factory()
+    tf_cfg = ImageTransformConfig(type="Resize", kwargs={"size": (32, 32)})
+    tf = make_transform_from_config(tf_cfg)
+    assert isinstance(tf, v2.Resize)
+    output = tf(img_tensor)
+    assert output.shape[-2:] == (32, 32)
+
+
+def test_make_transform_from_config_with_v2_identity(img_tensor_factory):
+    img_tensor = img_tensor_factory()
+    tf_cfg = ImageTransformConfig(type="Identity", kwargs={})
+    tf = make_transform_from_config(tf_cfg)
+    assert isinstance(tf, v2.Identity)
+    output = tf(img_tensor)
+    assert output.shape == img_tensor.shape
+
+
+def test_make_transform_from_config_invalid_type():
+    tf_cfg = ImageTransformConfig(type="NotARealTransform", kwargs={})
+    with pytest.raises(ValueError, match="not valid"):
+        make_transform_from_config(tf_cfg)
+
+
 def test_save_all_transforms(img_tensor_factory, tmp_path):
     img_tensor = img_tensor_factory()
     tf_cfg = ImageTransformsConfig(enable=True)
@@ -368,7 +443,7 @@ def test_save_each_transform(img_tensor_factory, tmp_path):
     save_each_transform(tf_cfg, img_tensor, tmp_path, n_examples)
 
     # Check if the transformed images exist for each transform type
-    transforms = ["brightness", "contrast", "saturation", "hue", "sharpness"]
+    transforms = ["brightness", "contrast", "saturation", "hue", "sharpness", "affine"]
     for transform in transforms:
         transform_dir = tmp_path / transform
         assert transform_dir.exists(), f"{transform} directory was not created."

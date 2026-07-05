@@ -1,0 +1,180 @@
+# Multi-GPU Training
+
+This guide shows you how to train policies on multiple GPUs using [Hugging Face Accelerate](https://huggingface.co/docs/accelerate).
+
+## Installation
+
+`accelerate` is included in the `training` extra. Install it with:
+
+```bash
+pip install 'lerobot[training]'
+```
+
+## Training with Multiple GPUs
+
+You can launch training in two ways:
+
+### Option 1: Without config (specify parameters directly)
+
+You can specify all parameters directly in the command without running `accelerate config`:
+
+```bash
+accelerate launch \
+  --multi_gpu \
+  --num_processes=2 \
+  $(which lerobot-train) \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --policy.type=act \
+  --policy.repo_id=${HF_USER}/my_trained_policy \
+  --output_dir=outputs/train/act_multi_gpu \
+  --job_name=act_multi_gpu \
+  --wandb.enable=true
+```
+
+**Key accelerate parameters:**
+
+- `--multi_gpu`: Enable multi-GPU training
+- `--num_processes=2`: Number of GPUs to use
+- `--mixed_precision=fp16`: Use fp16 mixed precision (or `bf16` if supported)
+
+### Option 2: Using accelerate config
+
+If you prefer to save your configuration, you can optionally configure accelerate for your hardware setup by running:
+
+```bash
+accelerate config
+```
+
+This interactive setup will ask you questions about your training environment (number of GPUs, mixed precision settings, etc.) and saves the configuration for future use. For a simple multi-GPU setup on a single machine, you can use these recommended settings:
+
+- Compute environment: This machine
+- Number of machines: 1
+- Number of processes: (number of GPUs you want to use)
+- GPU ids to use: (leave empty to use all)
+- Mixed precision: fp16 or bf16 (recommended for faster training)
+
+Then launch training with:
+
+```bash
+accelerate launch $(which lerobot-train) \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --policy.type=act \
+  --policy.repo_id=${HF_USER}/my_trained_policy \
+  --output_dir=outputs/train/act_multi_gpu \
+  --job_name=act_multi_gpu \
+  --wandb.enable=true
+```
+
+## How It Works
+
+When you launch training with accelerate:
+
+1. **Automatic detection**: LeRobot automatically detects if it's running under accelerate
+2. **Data distribution**: Your batch is automatically split across GPUs
+3. **Gradient synchronization**: Gradients are synchronized across GPUs during backpropagation
+4. **Single process logging**: Only the main process logs to wandb and saves checkpoints
+
+## Learning Rate and Training Steps Scaling
+
+**Important:** LeRobot does **NOT** automatically scale learning rates or training steps based on the number of GPUs. This gives you full control over your training hyperparameters.
+
+### Why No Automatic Scaling?
+
+Many distributed training frameworks automatically scale the learning rate by the number of GPUs (e.g., `lr = base_lr × num_gpus`).
+However, LeRobot keeps the learning rate exactly as you specify it.
+
+### When and How to Scale
+
+If you want to scale your hyperparameters when using multiple GPUs, you should do it manually:
+
+**Learning Rate Scaling:**
+
+```bash
+# Example: 2 GPUs with linear LR scaling
+# Base LR: 1e-4, with 2 GPUs -> 2e-4
+accelerate launch --num_processes=2 $(which lerobot-train) \
+  --optimizer.lr=2e-4 \
+  --dataset.repo_id=lerobot/pusht \
+  --policy.type=act
+```
+
+**Training Steps Scaling:**
+
+Since the effective batch size `bs` increases with multiple GPUs (batch_size × num_gpus), you may want to reduce the number of training steps proportionally:
+
+```bash
+# Example: 2 GPUs with effective batch size 2x larger
+# Original: batch_size=8, steps=100000
+# With 2 GPUs: batch_size=8 (16 in total), steps=50000
+accelerate launch --num_processes=2 $(which lerobot-train) \
+  --batch_size=8 \
+  --steps=50000 \
+  --dataset.repo_id=lerobot/pusht \
+  --policy.type=act
+```
+
+## Training Large Models with FSDP
+
+DDP replicates the full model on every GPU, so a model that doesn't fit on one GPU won't fit under
+DDP either. For large models, use **FSDP** (Fully Sharded Data Parallel), which shards parameters,
+gradients, and optimizer state across GPUs. See the [accelerate FSDP guide](https://huggingface.co/docs/accelerate/usage_guides/fsdp) for background.
+
+An example on how to launch LeRobot training with FSDP across 4 GPUs (1 machine):
+
+```bash
+accelerate launch --config_file fsdp.yaml --num_processes=4 $(which lerobot-train) \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --policy.type=<your_policy> \
+  --output_dir=outputs/train/my_policy_fsdp
+```
+
+A minimal `fsdp.yaml` (FSDP1; shards params/grads/optimizer — ZeRO-3-equivalent):
+
+```yaml
+compute_environment: LOCAL_MACHINE
+distributed_type: FSDP
+mixed_precision: bf16
+num_machines: 1
+num_processes: 4
+fsdp_config:
+  fsdp_version: 1
+  fsdp_sharding_strategy: FULL_SHARD # params + grads + optimizer (ZeRO-3)
+  fsdp_auto_wrap_policy: TRANSFORMER_BASED_WRAP
+  fsdp_transformer_layer_cls_to_wrap: <YourTransformerBlock> # repeated block class to shard
+  fsdp_use_orig_params: true # required: optimizer is built pre-prepare
+  fsdp_state_dict_type: FULL_STATE_DICT
+```
+
+Set `fsdp_transformer_layer_cls_to_wrap` to your model's repeated transformer-block class so each
+block is sharded as its own unit. `fsdp_use_orig_params: true` is required because LeRobot builds the
+optimizer before `accelerator.prepare()`.
+
+### FSDP checkpoints
+
+LeRobot gathers the full state dict across all ranks and the main process writes it as a single
+`model.safetensors`, loadable as usual with `Policy.from_pretrained(...)`. Two things to look out for:
+
+- **Checkpoints store fp32 weights.** Under mixed precision (`bf16`/`fp16`) FSDP keeps an fp32 master
+  copy, and the checkpoint saves it (~2× the bf16 size on disk) so training can resume consistently
+  with the fp32 optimizer state; `from_pretrained` casts back to the policy dtype on load. FSDP-specific
+  caveat: an fp32 checkpoint is materialized in full precision on the target device _before_ casting,
+  so loading it for inference on a tight GPU can OOM even when the bf16 model would fit — load on CPU
+  first, or cast `model.safetensors` to the deployment dtype offline.
+- The sharded optimizer state is gathered into a full (world-size-independent) state dict and saved
+  alongside the model in the same `optimizer_state.safetensors` / `optimizer_param_groups.json`
+  format as single-GPU training, so **resume-from-checkpoint is supported** with `--resume=true`.
+  Resume reshards both the model and the optimizer state to the _current_ FSDP topology, so you can
+  resume an FSDP checkpoint on a different number of GPUs. Note that the data sampler is only
+  sample-exact when the world size and batch size match the original run (a warning is logged
+  otherwise); the optimizer/model state itself is unaffected.
+
+## Notes
+
+- The `--policy.use_amp` flag in `lerobot-train` is only used when **not** running with accelerate. When using accelerate, mixed precision is controlled by accelerate's configuration.
+- Training logs, checkpoints, and hub uploads are only done by the main process to avoid conflicts. Non-main processes have console logging disabled to prevent duplicate output.
+- The effective batch size is `batch_size × num_gpus`. If you use 4 GPUs with `--batch_size=8`, your effective batch size is 32.
+- Learning rate scheduling is handled correctly across multiple processes—LeRobot sets `step_scheduler_with_optimizer=False` to prevent accelerate from adjusting scheduler steps based on the number of processes.
+- When saving or pushing models, LeRobot automatically unwraps the model from accelerate's distributed wrapper to ensure compatibility.
+- WandB integration automatically initializes only on the main process, preventing multiple runs from being created.
+
+For more advanced configurations and troubleshooting, see the [Accelerate documentation](https://huggingface.co/docs/accelerate). If you want to learn more about how to train on a large number of GPUs, checkout this awesome guide: [Ultrascale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook).

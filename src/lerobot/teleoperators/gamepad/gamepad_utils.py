@@ -15,6 +15,22 @@
 # limitations under the License.
 
 import logging
+from typing import TYPE_CHECKING
+
+from lerobot.utils.import_utils import _hidapi_available, _pygame_available, require_package
+from lerobot.utils.keyboard_input import pynput_can_capture
+
+from ..utils import TeleopEvents
+
+if TYPE_CHECKING or _pygame_available:
+    import pygame
+else:
+    pygame = None  # type: ignore[assignment]
+
+if TYPE_CHECKING or _hidapi_available:
+    import hid
+else:
+    hid = None  # type: ignore[assignment]
 
 
 class InputController:
@@ -49,10 +65,6 @@ class InputController:
     def get_deltas(self):
         """Get the current movement deltas (dx, dy, dz) in meters."""
         return 0.0, 0.0, 0.0
-
-    def should_quit(self):
-        """Return True if the user has requested to quit."""
-        return not self.running
 
     def update(self):
         """Update controller state - call this once per frame."""
@@ -112,6 +124,15 @@ class KeyboardController(InputController):
 
     def start(self):
         """Start the keyboard listener."""
+        if not pynput_can_capture():
+            logging.warning(
+                "Keyboard control is unavailable in this environment. pynput cannot capture keys "
+                "on Wayland or headless machines, or on macOS without Accessibility / Input "
+                "Monitoring permission. Keyboard motion will be inactive."
+            )
+            self.running = False
+            return
+
         from pynput import keyboard
 
         def on_press(key):
@@ -134,10 +155,10 @@ class KeyboardController(InputController):
                     return False
                 elif key == keyboard.Key.enter:
                     self.key_states["success"] = True
-                    self.episode_end_status = "success"
+                    self.episode_end_status = TeleopEvents.SUCCESS
                 elif key == keyboard.Key.backspace:
                     self.key_states["failure"] = True
-                    self.episode_end_status = "failure"
+                    self.episode_end_status = TeleopEvents.FAILURE
             except AttributeError:
                 pass
 
@@ -196,19 +217,12 @@ class KeyboardController(InputController):
 
         return delta_x, delta_y, delta_z
 
-    def should_quit(self):
-        """Return True if ESC was pressed."""
-        return self.key_states["quit"]
-
-    def should_save(self):
-        """Return True if Enter was pressed (save episode)."""
-        return self.key_states["success"] or self.key_states["failure"]
-
 
 class GamepadController(InputController):
     """Generate motion deltas from gamepad input."""
 
     def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1):
+        require_package("pygame", extra="gamepad")
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
         self.joystick = None
@@ -216,8 +230,6 @@ class GamepadController(InputController):
 
     def start(self):
         """Initialize pygame and the gamepad."""
-        import pygame
-
         pygame.init()
         pygame.joystick.init()
 
@@ -240,8 +252,6 @@ class GamepadController(InputController):
 
     def stop(self):
         """Clean up pygame resources."""
-        import pygame
-
         if pygame.joystick.get_init():
             if self.joystick:
                 self.joystick.quit()
@@ -250,18 +260,16 @@ class GamepadController(InputController):
 
     def update(self):
         """Process pygame events to get fresh gamepad readings."""
-        import pygame
-
         for event in pygame.event.get():
             if event.type == pygame.JOYBUTTONDOWN:
                 if event.button == 3:
-                    self.episode_end_status = "success"
+                    self.episode_end_status = TeleopEvents.SUCCESS
                 # A button (1) for failure
                 elif event.button == 1:
-                    self.episode_end_status = "failure"
+                    self.episode_end_status = TeleopEvents.FAILURE
                 # X button (0) for rerecord
                 elif event.button == 0:
-                    self.episode_end_status = "rerecord_episode"
+                    self.episode_end_status = TeleopEvents.RERECORD_EPISODE
 
                 # RB button (6) for closing gripper
                 elif event.button == 6:
@@ -290,13 +298,11 @@ class GamepadController(InputController):
 
     def get_deltas(self):
         """Get the current movement deltas from gamepad state."""
-        import pygame
-
         try:
             # Read joystick axes
             # Left stick X and Y (typically axes 0 and 1)
-            x_input = self.joystick.get_axis(0)  # Left/Right
-            y_input = self.joystick.get_axis(1)  # Up/Down (often inverted)
+            y_input = self.joystick.get_axis(0)  # Up/Down (often inverted)
+            x_input = self.joystick.get_axis(1)  # Left/Right
 
             # Right stick Y (typically axis 3 or 4)
             z_input = self.joystick.get_axis(3)  # Up/Down for Z
@@ -308,7 +314,7 @@ class GamepadController(InputController):
 
             # Calculate deltas (note: may need to invert axes depending on controller)
             delta_x = -x_input * self.x_step_size  # Forward/backward
-            delta_y = y_input * self.y_step_size  # Left/right
+            delta_y = -y_input * self.y_step_size  # Left/right
             delta_z = -z_input * self.z_step_size  # Up/down
 
             return delta_x, delta_y, delta_z
@@ -336,6 +342,7 @@ class GamepadControllerHID(InputController):
             z_scale: Scaling factor for Z-axis movement
             deadzone: Joystick deadzone to prevent drift
         """
+        require_package("hidapi", extra="gamepad", import_name="hid")
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
         self.device = None
@@ -349,13 +356,9 @@ class GamepadControllerHID(InputController):
 
         # Button states
         self.buttons = {}
-        self.quit_requested = False
-        self.save_requested = False
 
     def find_device(self):
         """Look for the gamepad device by vendor and product ID."""
-        import hid
-
         devices = hid.enumerate()
         for device in devices:
             device_name = device["product_string"]
@@ -369,8 +372,6 @@ class GamepadControllerHID(InputController):
 
     def start(self):
         """Connect to the gamepad using HIDAPI."""
-        import hid
-
         self.device_info = self.find_device()
         if not self.device_info:
             self.running = False
@@ -451,11 +452,11 @@ class GamepadControllerHID(InputController):
                 # Check if X/Square button (bit 5) is pressed for failure
                 # Check if A/Cross button (bit 4) is pressed for rerecording
                 if buttons & 1 << 7:
-                    self.episode_end_status = "success"
+                    self.episode_end_status = TeleopEvents.SUCCESS
                 elif buttons & 1 << 5:
-                    self.episode_end_status = "failure"
+                    self.episode_end_status = TeleopEvents.FAILURE
                 elif buttons & 1 << 4:
-                    self.episode_end_status = "rerecord_episode"
+                    self.episode_end_status = TeleopEvents.RERECORD_EPISODE
                 else:
                     self.episode_end_status = None
 
@@ -470,11 +471,3 @@ class GamepadControllerHID(InputController):
         delta_z = -self.right_y * self.z_step_size  # Up/down
 
         return delta_x, delta_y, delta_z
-
-    def should_quit(self):
-        """Return True if quit button was pressed."""
-        return self.quit_requested
-
-    def should_save(self):
-        """Return True if save button was pressed."""
-        return self.save_requested

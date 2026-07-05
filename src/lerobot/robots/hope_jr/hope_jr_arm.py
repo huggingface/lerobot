@@ -17,15 +17,15 @@
 import logging
 import time
 from functools import cached_property
-from typing import Any
 
-from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.cameras import make_cameras_from_configs
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.calibration_gui import RangeFinderGUI
 from lerobot.motors.feetech import (
     FeetechMotorsBus,
 )
+from lerobot.types import RobotAction, RobotObservation
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -66,9 +66,14 @@ class HopeJrArm(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
-        }
+        features: dict[str, tuple] = {}
+        for cam in self.cameras:
+            cfg = self.config.cameras[cam]
+            if getattr(cfg, "use_rgb", True):
+                features[cam] = (cfg.height, cfg.width, 3)
+            if getattr(cfg, "use_depth", False):
+                features[f"{cam}_depth"] = (cfg.height, cfg.width, 1)
+        return features
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -82,13 +87,12 @@ class HopeJrArm(Robot):
     def is_connected(self) -> bool:
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         """
         We assume that at connection time, arm is in a rest position,
         and torque can be safely disabled to run calibration.
         """
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.bus.connect(handshake=False)
         if not self.is_calibrated and calibrate:
@@ -105,7 +109,7 @@ class HopeJrArm(Robot):
     def is_calibrated(self) -> bool:
         return self.bus.is_calibrated
 
-    def calibrate(self, limb_name: str = None) -> None:
+    def calibrate(self) -> None:
         groups = {
             "all": list(self.bus.motors.keys()),
             "shoulder": ["shoulder_pitch", "shoulder_yaw", "shoulder_roll"],
@@ -128,10 +132,8 @@ class HopeJrArm(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
-    def get_observation(self) -> dict[str, Any]:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
+    @check_if_not_connected
+    def get_observation(self) -> RobotObservation:
         # Read arm position
         start = time.perf_counter()
         obs_dict = self.bus.sync_read("Present_Position", self.other_motors)
@@ -142,17 +144,22 @@ class HopeJrArm(Robot):
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
-            start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read()
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+            if getattr(cam, "use_rgb", True):
+                start = time.perf_counter()
+                obs_dict[cam_key] = cam.read_latest()
+                dt_ms = (time.perf_counter() - start) * 1e3
+                logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+
+            if getattr(cam, "use_depth", False):
+                start = time.perf_counter()
+                obs_dict[f"{cam_key}_depth"] = cam.read_latest_depth()
+                dt_ms = (time.perf_counter() - start) * 1e3
+                logger.debug(f"{self} read {cam_key} depth: {dt_ms:.1f}ms")
 
         return obs_dict
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
+    @check_if_not_connected
+    def send_action(self, action: RobotAction) -> RobotAction:
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
         # Cap goal position when too far away from present position.
@@ -165,10 +172,8 @@ class HopeJrArm(Robot):
         self.bus.sync_write("Goal_Position", goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
+    @check_if_not_connected
     def disconnect(self):
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()

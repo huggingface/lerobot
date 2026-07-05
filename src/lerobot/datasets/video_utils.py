@@ -13,31 +13,44 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import contextlib
 import glob
 import importlib
 import logging
+import os
+import queue
 import shutil
+import tempfile
+import threading
 import warnings
-from dataclasses import dataclass, field
+from collections import OrderedDict
+from dataclasses import asdict, dataclass, field
+from fractions import Fraction
 from pathlib import Path
+from threading import Lock
 from typing import Any, ClassVar
 
 import av
+import fsspec
+import numpy as np
 import pyarrow as pa
 import torch
-import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
 
+from lerobot.configs import (
+    DepthEncoderConfig,
+    RGBEncoderConfig,
+    VideoEncoderConfig,
+    depth_encoder_defaults,
+    rgb_encoder_defaults,
+)
+from lerobot.utils.import_utils import get_safe_default_video_backend
 
-def get_safe_default_codec():
-    if importlib.util.find_spec("torchcodec"):
-        return "torchcodec"
-    else:
-        logging.warning(
-            "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
-        )
-        return "pyav"
+from .depth_utils import quantize_depth
+from .pyav_utils import get_pix_fmt_channels
+
+logger = logging.getLogger(__name__)
 
 
 def decode_video_frames(
@@ -45,6 +58,8 @@ def decode_video_frames(
     timestamps: list[float],
     tolerance_s: float,
     backend: str | None = None,
+    return_uint8: bool = False,
+    is_depth: bool = False,
 ) -> torch.Tensor:
     """
     Decodes video frames using the specified backend.
@@ -53,129 +68,300 @@ def decode_video_frames(
         video_path (Path): Path to the video file.
         timestamps (list[float]): List of timestamps to extract frames.
         tolerance_s (float): Allowed deviation in seconds for frame retrieval.
-        backend (str, optional): Backend to use for decoding. Defaults to "torchcodec" when available in the platform; otherwise, defaults to "pyav"..
+        backend (str, optional): Backend to use for decoding. Defaults to "torchcodec" when available
+            in the platform; otherwise, defaults to "pyav". The legacy value "video_reader" is
+            accepted for one release as an alias for "pyav" and will be removed in a future version.
+        return_uint8 (bool): For RGB videos, if True return raw uint8 frames without float32 normalization.
+            This reduces memory for DataLoader IPC; normalization can be done on GPU afterward.
+        is_depth (bool): Set to True if the video is a depth map (1 channel, uint12).
 
     Returns:
-        torch.Tensor: Decoded frames.
+        torch.Tensor: Decoded frames (RGB: float32 in [0,1] by default, or uint8 if return_uint8=True, Depth: uint12).
 
     Currently supports torchcodec on cpu and pyav.
     """
+    if backend != "pyav" and is_depth:
+        logger.debug("Decoding depth maps is only supported with the 'pyav' backend, falling back to pyav.")
+        # We do not actually return uint8 here, but we avoid the 255 normalization step.
+        return decode_video_frames_pyav(
+            video_path, timestamps, tolerance_s, return_uint8=False, is_depth=True
+        )
+
     if backend is None:
-        backend = get_safe_default_codec()
+        backend = get_safe_default_video_backend()
     if backend == "torchcodec":
-        return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s)
-    elif backend in ["pyav", "video_reader"]:
-        return decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
+        return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s, return_uint8=return_uint8)
+    elif backend == "pyav":
+        return decode_video_frames_pyav(
+            video_path, timestamps, tolerance_s, return_uint8=return_uint8, is_depth=is_depth
+        )
+    elif backend == "video_reader":
+        logger.warning("backend='video_reader' is deprecated and now aliases to 'pyav'.")
+        return decode_video_frames_pyav(
+            video_path, timestamps, tolerance_s, return_uint8=return_uint8, is_depth=is_depth
+        )
     else:
         raise ValueError(f"Unsupported video backend: {backend}")
 
 
-def decode_video_frames_torchvision(
+def decode_video_frames_pyav(
     video_path: Path | str,
     timestamps: list[float],
     tolerance_s: float,
-    backend: str = "pyav",
     log_loaded_timestamps: bool = False,
+    return_uint8: bool = False,
+    is_depth: bool = False,
 ) -> torch.Tensor:
-    """Loads frames associated to the requested timestamps of a video
+    """Loads frames associated to the requested timestamps of a video using PyAV.
 
-    The backend can be either "pyav" (default) or "video_reader".
-    "video_reader" requires installing torchvision from source, see:
-    https://github.com/pytorch/vision/blob/main/torchvision/csrc/io/decoder/gpu/README.rst
-    (note that you need to compile against ffmpeg<4.3)
+    This is the fallback decoder for platforms where torchcodec has no wheel (currently macOS
+    x86_64 and linux armv7l — see the torchcodec block in pyproject.toml for the full matrix).
+    On supported platforms, prefer `decode_video_frames_torchcodec`, which is faster and supports
+    accurate seek.
 
-    While both use cpu, "video_reader" is supposedly faster than "pyav" but requires additional setup.
-    For more info on video decoding, see `benchmark/video/README.md`
+    PyAV doesn't support accurate seek: we seek to the nearest preceding keyframe and decode
+    forward until we have covered the requested timestamp range. The number of key frames in a
+    video can be adjusted at encoding time to trade off decoding speed against file size.
 
-    See torchvision doc for more info on these two backends:
-    https://pytorch.org/vision/0.18/index.html?highlight=backend#torchvision.set_video_backend
+    Args:
+        video_path: Path to the video file.
+        timestamps: List of timestamps (in seconds) to extract frames for.
+        tolerance_s: Allowed deviation in seconds between a queried timestamp and the closest
+            decoded frame.
+        log_loaded_timestamps: When True, log every decoded frame's timestamp at INFO level.
+        return_uint8: For RGB videos, if True return raw uint8 frames (C, H, W).
+            Otherwise, return float32 in [0, 1] range.
+        is_depth: Set to True if the video is a depth map (1 channel, uint12).
 
-    Note: Video benefits from inter-frame compression. Instead of storing every frame individually,
-    the encoder stores a reference frame (or a key frame) and subsequent frames as differences relative to
-    that key frame. As a consequence, to access a requested frame, we need to load the preceding key frame,
-    and all subsequent frames until reaching the requested frame. The number of key frames in a video
-    can be adjusted during encoding to take into account decoding time and video size in bytes.
+    Returns:
+        torch.Tensor of shape (len(timestamps), C, H, W).
     """
-    video_path = str(video_path)
-
-    # set backend
-    keyframes_only = False
-    torchvision.set_video_backend(backend)
-    if backend == "pyav":
-        keyframes_only = True  # pyav doesn't support accurate seek
-
-    # set a video stream reader
     # TODO(rcadene): also load audio stream at the same time
-    reader = torchvision.io.VideoReader(video_path, "video")
+    video_path = str(video_path)
 
     # set the first and last requested timestamps
     # Note: previous timestamps are usually loaded, since we need to access the previous key frame
     first_ts = min(timestamps)
     last_ts = max(timestamps)
 
-    # access closest key frame of the first requested frame
-    # Note: closest key frame timestamp is usually smaller than `first_ts` (e.g. key frame can be the first frame of the video)
-    # for details on what `seek` is doing see: https://pyav.basswood-io.com/docs/stable/api/container.html?highlight=inputcontainer#av.container.InputContainer.seek
-    reader.seek(first_ts, keyframes_only=keyframes_only)
+    loaded_frames: list[torch.Tensor] = []
+    loaded_ts: list[float] = []
 
-    # load all frames until last requested frame
-    loaded_frames = []
-    loaded_ts = []
-    for frame in reader:
-        current_ts = frame["pts"]
-        if log_loaded_timestamps:
-            logging.info(f"frame loaded at timestamp={current_ts:.4f}")
-        loaded_frames.append(frame["data"])
-        loaded_ts.append(current_ts)
-        if current_ts >= last_ts:
-            break
+    # Seek + decode. `container.seek(offset)` with no `stream` argument expects the offset in
+    # av.time_base units (microseconds). `backward=True` lands us on the nearest keyframe at or
+    # before `first_ts`, so we can then decode forward until we cover `last_ts`. See:
+    # https://pyav.basswood-io.com/docs/stable/api/container.html#av.container.InputContainer.seek
+    with av.open(video_path) as container:
+        stream = container.streams.video[0]
+        # Seek to the nearest keyframe at or before `first_ts` with a 1 frame margin
+        container.seek(
+            round(first_ts / stream.time_base) - 1,
+            backward=True,
+            any_frame=False,
+            stream=stream,
+        )
 
-    if backend == "pyav":
-        reader.container.close()
+        for frame in container.decode(stream):
+            if frame.pts is None:
+                continue
+            current_ts = float(frame.pts * stream.time_base)
+            if log_loaded_timestamps:
+                logger.info(f"frame loaded at timestamp={current_ts:.4f}")
+            if is_depth:
+                arr = frame.to_ndarray(format="gray12le")  # (H, W) uint12
+                loaded_frames.append(torch.from_numpy(arr).unsqueeze(0).contiguous())
+            else:
+                arr = frame.to_ndarray(format="rgb24")  # (H, W, 3)
+                # Convert to CHW uint8 to match torchcodec's output layout.
+                loaded_frames.append(torch.from_numpy(arr).permute(2, 0, 1).contiguous())
+            loaded_ts.append(current_ts)
+            if current_ts >= last_ts:
+                break
 
-    reader = None
+    if not loaded_frames:
+        raise FrameTimestampError(
+            f"No frames could be decoded from {video_path} in the timestamp range [{first_ts}, {last_ts}]."
+        )
 
     query_ts = torch.tensor(timestamps)
-    loaded_ts = torch.tensor(loaded_ts)
+    loaded_ts_t = torch.tensor(loaded_ts)
 
     # compute distances between each query timestamp and timestamps of all loaded frames
-    dist = torch.cdist(query_ts[:, None], loaded_ts[:, None], p=1)
+    dist = torch.cdist(query_ts[:, None], loaded_ts_t[:, None], p=1)
     min_, argmin_ = dist.min(1)
 
     is_within_tol = min_ < tolerance_s
-    assert is_within_tol.all(), (
-        f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} > {tolerance_s=})."
-        "It means that the closest frame that can be loaded from the video is too far away in time."
-        "This might be due to synchronization issues with timestamps during data collection."
-        "To be safe, we advise to ignore this item during training."
-        f"\nqueried timestamps: {query_ts}"
-        f"\nloaded timestamps: {loaded_ts}"
-        f"\nvideo: {video_path}"
-        f"\nbackend: {backend}"
-    )
+    if not is_within_tol.all():
+        raise FrameTimestampError(
+            f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} > {tolerance_s=})."
+            " It means that the closest frame that can be loaded from the video is too far away in time."
+            " This might be due to synchronization issues with timestamps during data collection."
+            " To be safe, we advise to ignore this item during training."
+            f"\nqueried timestamps: {query_ts}"
+            f"\nloaded timestamps: {loaded_ts_t}"
+            f"\nvideo: {video_path}"
+            f"\nbackend: pyav"
+        )
 
     # get closest frames to the query timestamps
     closest_frames = torch.stack([loaded_frames[idx] for idx in argmin_])
-    closest_ts = loaded_ts[argmin_]
+    closest_ts = loaded_ts_t[argmin_]
 
     if log_loaded_timestamps:
-        logging.info(f"{closest_ts=}")
+        logger.info(f"{closest_ts=}")
+
+    if len(timestamps) != len(closest_frames):
+        raise FrameTimestampError(
+            f"Number of retrieved frames ({len(closest_frames)}) does not match "
+            f"number of queried timestamps ({len(timestamps)})"
+        )
+
+    if return_uint8 or is_depth:
+        return closest_frames
 
     # convert to the pytorch format which is float32 in [0,1] range (and channel first)
     closest_frames = closest_frames.type(torch.float32) / 255
-
-    assert len(timestamps) == len(closest_frames)
     return closest_frames
+
+
+DEFAULT_DECODER_CACHE_SIZE = 100
+"""Default LRU capacity for :class:`VideoDecoderCache`.
+
+Sized to comfortably hold a small rolling window of episodes worth of decoders
+(typical recipes: 2-4 cameras per episode × tens of episodes in flight) while
+bounding host RAM. Each cached entry retains a torchcodec ``VideoDecoder`` plus
+an open ``fsspec`` file handle — on the order of a few MB per entry. Override
+via the ``LEROBOT_VIDEO_DECODER_CACHE_SIZE`` env var or by passing ``max_size``
+to the constructor (``None`` restores the legacy unbounded behaviour).
+"""
+
+
+def _default_max_cache_size() -> int | None:
+    raw = os.environ.get("LEROBOT_VIDEO_DECODER_CACHE_SIZE")
+    if raw is None:
+        return DEFAULT_DECODER_CACHE_SIZE
+    raw = raw.strip().lower()
+    if raw in ("", "none", "unbounded", "-1"):
+        return None
+    try:
+        value = int(raw)
+    except ValueError as e:
+        raise ValueError(
+            f"LEROBOT_VIDEO_DECODER_CACHE_SIZE must be an integer, 'none', or '-1'; got {raw!r}"
+        ) from e
+    if value <= 0:
+        raise ValueError(f"LEROBOT_VIDEO_DECODER_CACHE_SIZE must be positive; got {value}")
+    return value
+
+
+class VideoDecoderCache:
+    """Thread-safe LRU cache for torchcodec ``VideoDecoder`` instances.
+
+    Cached entries hold a ``VideoDecoder`` plus the open ``fsspec`` file handle
+    backing it. When the cache is full and a new path is requested, the
+    least-recently-used entry is evicted and its file handle is closed. This
+    bounds host-RAM growth when iterating over datasets with many distinct
+    video files (otherwise each ``DataLoader`` worker pins every decoder it has
+    ever opened until the process exits).
+
+    Args:
+        max_size: Maximum number of decoders to retain. ``None`` disables
+            eviction and restores legacy unbounded behaviour. Defaults to the
+            value of ``LEROBOT_VIDEO_DECODER_CACHE_SIZE`` if set, otherwise
+            :data:`DEFAULT_DECODER_CACHE_SIZE`.
+    """
+
+    _SENTINEL: ClassVar[object] = object()
+
+    def __init__(self, max_size: int | None | object = _SENTINEL):
+        if max_size is VideoDecoderCache._SENTINEL:
+            max_size = _default_max_cache_size()
+        if max_size is not None and max_size <= 0:
+            raise ValueError(f"max_size must be positive or None; got {max_size}")
+        self.max_size: int | None = max_size  # type: ignore[assignment]
+        self._cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
+        self._lock = Lock()
+
+    def __contains__(self, video_path: object) -> bool:
+        with self._lock:
+            return str(video_path) in self._cache
+
+    def get_decoder(self, video_path: str):
+        """Get a cached decoder or create a new one, evicting LRU if at capacity."""
+        if importlib.util.find_spec("torchcodec"):
+            from torchcodec.decoders import VideoDecoder
+        else:
+            raise ImportError(
+                "'torchcodec' is required but not installed. "
+                "Install it with: pip install 'lerobot[dataset]' (or uv pip install 'lerobot[dataset]')"
+            )
+
+        video_path = str(video_path)
+
+        with self._lock:
+            entry = self._cache.get(video_path)
+            if entry is not None:
+                self._cache.move_to_end(video_path)
+                return entry[0]
+
+            file_handle = fsspec.open(video_path).__enter__()
+            try:
+                decoder = VideoDecoder(file_handle, seek_mode="approximate")
+            except Exception:
+                file_handle.close()
+                raise
+            self._cache[video_path] = (decoder, file_handle)
+
+            # Evict LRU entries until we are back under the cap. We close
+            # evicted file handles immediately; the associated ``VideoDecoder``
+            # is released to the GC when its last reference goes away.
+            if self.max_size is not None:
+                while len(self._cache) > self.max_size:
+                    _evicted_path, (_evicted_decoder, evicted_handle) = self._cache.popitem(last=False)
+                    with contextlib.suppress(Exception):
+                        evicted_handle.close()
+
+            return decoder
+
+    def clear(self):
+        """Clear the cache and close all file handles."""
+        with self._lock:
+            for _, file_handle in self._cache.values():
+                with contextlib.suppress(Exception):
+                    file_handle.close()
+            self._cache.clear()
+
+    def size(self) -> int:
+        """Return the number of cached decoders."""
+        with self._lock:
+            return len(self._cache)
+
+
+class FrameTimestampError(ValueError):
+    """Helper error to indicate the retrieved timestamps exceed the queried ones"""
+
+    pass
+
+
+_default_decoder_cache = VideoDecoderCache()
 
 
 def decode_video_frames_torchcodec(
     video_path: Path | str,
     timestamps: list[float],
     tolerance_s: float,
-    device: str = "cpu",
     log_loaded_timestamps: bool = False,
+    decoder_cache: VideoDecoderCache | None = None,
+    return_uint8: bool = False,
 ) -> torch.Tensor:
     """Loads frames associated with the requested timestamps of a video using torchcodec.
+
+    Args:
+        video_path: Path to the video file.
+        timestamps: List of timestamps to extract frames.
+        tolerance_s: Allowed deviation in seconds for frame retrieval.
+        log_loaded_timestamps: Whether to log loaded timestamps.
+        decoder_cache: Optional decoder cache instance. Uses default if None.
 
     Note: Setting device="cuda" outside the main process, e.g. in data loader workers, will lead to CUDA initialization errors.
 
@@ -185,31 +371,28 @@ def decode_video_frames_torchcodec(
     and all subsequent frames until reaching the requested frame. The number of key frames in a video
     can be adjusted during encoding to take into account decoding time and video size in bytes.
     """
+    if decoder_cache is None:
+        decoder_cache = _default_decoder_cache
 
-    if importlib.util.find_spec("torchcodec"):
-        from torchcodec.decoders import VideoDecoder
-    else:
-        raise ImportError("torchcodec is required but not available.")
+    # Use cached decoder instead of creating new one each time
+    decoder = decoder_cache.get_decoder(str(video_path))
 
-    # initialize video decoder
-    decoder = VideoDecoder(video_path, device=device, seek_mode="approximate")
-    loaded_frames = []
     loaded_ts = []
+    loaded_frames = []
+
     # get metadata for frame information
     metadata = decoder.metadata
     average_fps = metadata.average_fps
-
     # convert timestamps to frame indices
     frame_indices = [round(ts * average_fps) for ts in timestamps]
-
     # retrieve frames based on indices
     frames_batch = decoder.get_frames_at(indices=frame_indices)
 
-    for frame, pts in zip(frames_batch.data, frames_batch.pts_seconds, strict=False):
+    for frame, pts in zip(frames_batch.data, frames_batch.pts_seconds, strict=True):
         loaded_frames.append(frame)
         loaded_ts.append(pts.item())
         if log_loaded_timestamps:
-            logging.info(f"Frame loaded at timestamp={pts:.4f}")
+            logger.info(f"Frame loaded at timestamp={pts:.4f}")
 
     query_ts = torch.tensor(timestamps)
     loaded_ts = torch.tensor(loaded_ts)
@@ -219,27 +402,34 @@ def decode_video_frames_torchcodec(
     min_, argmin_ = dist.min(1)
 
     is_within_tol = min_ < tolerance_s
-    assert is_within_tol.all(), (
-        f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} > {tolerance_s=})."
-        "It means that the closest frame that can be loaded from the video is too far away in time."
-        "This might be due to synchronization issues with timestamps during data collection."
-        "To be safe, we advise to ignore this item during training."
-        f"\nqueried timestamps: {query_ts}"
-        f"\nloaded timestamps: {loaded_ts}"
-        f"\nvideo: {video_path}"
-    )
+    if not is_within_tol.all():
+        raise FrameTimestampError(
+            f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} > {tolerance_s=})."
+            " It means that the closest frame that can be loaded from the video is too far away in time."
+            " This might be due to synchronization issues with timestamps during data collection."
+            " To be safe, we advise to ignore this item during training."
+            f"\nqueried timestamps: {query_ts}"
+            f"\nloaded timestamps: {loaded_ts}"
+            f"\nvideo: {video_path}"
+        )
 
     # get closest frames to the query timestamps
     closest_frames = torch.stack([loaded_frames[idx] for idx in argmin_])
     closest_ts = loaded_ts[argmin_]
 
     if log_loaded_timestamps:
-        logging.info(f"{closest_ts=}")
+        logger.info(f"{closest_ts=}")
 
-    # convert to float32 in [0,1] range (channel first)
-    closest_frames = closest_frames.type(torch.float32) / 255
+    if not len(timestamps) == len(closest_frames):
+        raise FrameTimestampError(
+            f"Retrieved timestamps differ from queried {set(closest_frames) - set(timestamps)}"
+        )
 
-    assert len(timestamps) == len(closest_frames)
+    if return_uint8:
+        return closest_frames
+
+    # convert to float32 in [0,1] range
+    closest_frames = (closest_frames / 255.0).type(torch.float32)
     return closest_frames
 
 
@@ -247,60 +437,66 @@ def encode_video_frames(
     imgs_dir: Path | str,
     video_path: Path | str,
     fps: int,
-    vcodec: str = "libsvtav1",
-    pix_fmt: str = "yuv420p",
-    g: int | None = 2,
-    crf: int | None = 30,
-    fast_decode: int = 0,
-    log_level: int | None = av.logging.ERROR,
+    video_encoder: VideoEncoderConfig | None = None,
+    encoder_threads: int | None = None,
+    *,
+    log_level: int | None = av.logging.WARNING,
     overwrite: bool = False,
 ) -> None:
-    """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
-    # Check encoder availability
-    if vcodec not in ["h264", "hevc", "libsvtav1"]:
-        raise ValueError(f"Unsupported video codec: {vcodec}. Supported codecs are: h264, hevc, libsvtav1.")
+    """Encode a directory of image frames into an MP4 video.
+
+    When ``video_encoder`` is a :class:`~lerobot.configs.video.DepthEncoderConfig`,
+    frames are read from ``.tiff`` files and quantized to 12-bit depth codes using the
+    encoder's ``depth_min`` / ``depth_max`` / ``shift`` / ``use_log``; otherwise ``.png``
+    RGB frames are encoded directly.
+
+    Args:
+        imgs_dir: Directory containing the frames to encode, named ``frame-000000``
+            onwards (``.png`` for RGB, ``.tiff`` for depth).
+        video_path: Output path for the encoded ``.mp4`` file.
+        fps: Frame rate of the output video.
+        video_encoder: Encoder settings (codec, pixel format, quality, ...). When
+            ``None``, :func:`rgb_encoder_defaults` is used. Pass a
+            :class:`~lerobot.configs.video.DepthEncoderConfig` to encode depth frames.
+        encoder_threads: Per-encoder thread count forwarded to the codec. ``None``
+            lets the codec decide.
+        log_level: libav log level to set while encoding, or ``None`` to leave the
+            current logging configuration unchanged.
+        overwrite: When ``False`` and ``video_path`` already exists, skip encoding and
+            log a warning. When ``True``, re-encode and replace the existing file.
+    """
+    if video_encoder is None:
+        video_encoder = rgb_encoder_defaults()
+    vcodec = video_encoder.vcodec
+    pix_fmt = video_encoder.pix_fmt
 
     video_path = Path(video_path)
     imgs_dir = Path(imgs_dir)
 
-    video_path.parent.mkdir(parents=True, exist_ok=overwrite)
+    if video_path.exists() and not overwrite:
+        logger.warning(f"Video file already exists: {video_path}. Skipping encoding.")
+        return
 
-    # Encoders/pixel formats incompatibility check
-    if (vcodec == "libsvtav1" or vcodec == "hevc") and pix_fmt == "yuv444p":
-        logging.warning(
-            f"Incompatible pixel format 'yuv444p' for codec {vcodec}, auto-selecting format 'yuv420p'"
-        )
-        pix_fmt = "yuv420p"
+    video_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Get input frames
-    template = "frame_" + ("[0-9]" * 6) + ".png"
+    is_depth = isinstance(video_encoder, DepthEncoderConfig)
+    suffix = ".png" if not is_depth else ".tiff"
+    template = "frame-" + ("[0-9]" * 6) + suffix
     input_list = sorted(
-        glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("_")[-1].split(".")[0])
+        glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("-")[-1].split(".")[0])
     )
 
-    # Define video output frame size (assuming all input frames are the same size)
     if len(input_list) == 0:
-        raise FileNotFoundError(f"No images found in {imgs_dir}.")
-    dummy_image = Image.open(input_list[0])
-    width, height = dummy_image.size
+        raise FileNotFoundError(f"No images with suffix {suffix} found in {imgs_dir}.")
+    with Image.open(input_list[0]) as dummy_image:
+        width, height = dummy_image.size
 
-    # Define video codec options
-    video_options = {}
-
-    if g is not None:
-        video_options["g"] = str(g)
-
-    if crf is not None:
-        video_options["crf"] = str(crf)
-
-    if fast_decode:
-        key = "svtav1-params" if vcodec == "libsvtav1" else "tune"
-        value = f"fast-decode={fast_decode}" if vcodec == "libsvtav1" else "fastdecode"
-        video_options[key] = value
+    video_options = video_encoder.get_codec_options(encoder_threads, as_strings=True)
 
     # Set logging level
     if log_level is not None:
-        # "While less efficient, it is generally preferable to modify logging with Python’s logging"
+        # "While less efficient, it is generally preferable to modify logging with Python's logging"
         logging.getLogger("libav").setLevel(log_level)
 
     # Create and open output file (overwrite by default)
@@ -312,11 +508,23 @@ def encode_video_frames(
 
         # Loop through input frames and encode them
         for input_data in input_list:
-            input_image = Image.open(input_data).convert("RGB")
-            input_frame = av.VideoFrame.from_image(input_image)
-            packet = output_stream.encode(input_frame)
-            if packet:
-                output.mux(packet)
+            with Image.open(input_data) as input_image:
+                if is_depth:
+                    input_frame = quantize_depth(
+                        np.array(input_image),
+                        depth_min=video_encoder.depth_min,
+                        depth_max=video_encoder.depth_max,
+                        shift=video_encoder.shift,
+                        use_log=video_encoder.use_log,
+                        pix_fmt=video_encoder.pix_fmt,
+                        video_backend="pyav",
+                    )
+                else:
+                    input_image = input_image.convert("RGB")
+                    input_frame = av.VideoFrame.from_image(input_image)
+                packet = output_stream.encode(input_frame)
+                if packet:
+                    output.mux(packet)
 
         # Flush the encoder
         packet = output_stream.encode()
@@ -329,6 +537,569 @@ def encode_video_frames(
 
     if not video_path.exists():
         raise OSError(f"Video encoding did not work. File not found: {video_path}.")
+
+
+def reencode_video(
+    input_video_path: Path | str,
+    output_video_path: Path | str,
+    video_encoder: VideoEncoderConfig | None = None,
+    encoder_threads: int | None = None,
+    log_level: int | None = av.logging.WARNING,
+    overwrite: bool = False,
+    start_time_s: float | None = None,
+    end_time_s: float | None = None,
+) -> None:
+    """Re-encode a video file, optionally trimming it to ``[start_time_s, end_time_s)``.
+
+    Args:
+        input_video_path: Existing video file to read.
+        output_video_path: Path for the re-encoded file.
+        video_encoder: Encoder configuration. Defaults to :func:`rgb_encoder_defaults`.
+        encoder_threads: Optional thread count forwarded to :meth:`VideoEncoderConfig.get_codec_options`.
+        log_level: libav log level while encoding, or ``None`` to leave logging unchanged. Defaults to WARNING.
+        overwrite: When ``False`` and ``output_video_path`` already exists, skip and log a warning.
+        start_time_s: When set, trim the output to start at this timestamp (seconds).
+        end_time_s: When set, trim the output to end at this timestamp (seconds, exclusive).
+    """
+
+    video_encoder = video_encoder or rgb_encoder_defaults()
+
+    if (start_time_s is not None and start_time_s < 0) or (end_time_s is not None and end_time_s < 0):
+        raise ValueError(f"Trim times must be non-negative, got start={start_time_s}, end={end_time_s}.")
+    if start_time_s is not None and end_time_s is not None and end_time_s <= start_time_s:
+        raise ValueError(f"end_time_s ({end_time_s}) must be greater than start_time_s ({start_time_s}).")
+
+    output_video_path = Path(output_video_path)
+
+    if output_video_path.exists() and not overwrite:
+        logger.warning(f"Video file already exists: {output_video_path}. Skipping re-encode.")
+        return
+
+    output_video_path.parent.mkdir(parents=True, exist_ok=True)
+
+    video_options = video_encoder.get_codec_options(encoder_threads, as_strings=True)
+    vcodec = video_encoder.vcodec
+    pix_fmt = video_encoder.pix_fmt
+
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_named_file:
+        tmp_output_video_path = tmp_named_file.name
+
+    if log_level is not None:
+        logging.getLogger("libav").setLevel(log_level)
+
+    try:
+        with av.open(input_video_path, mode="r") as src:
+            try:
+                in_stream = src.streams.video[0]
+            except IndexError as e:
+                raise ValueError(f"No video stream in {input_video_path}") from e
+
+            fps = (
+                in_stream.base_rate
+            )  # We allow fractional fps though LeRobotDataset only supports integer fps
+            width = int(in_stream.width)
+            height = int(in_stream.height)
+
+            # Seek to the keyframe at or before start_time_s to avoid reading from the start.
+            if start_time_s is not None:
+                src.seek(int(start_time_s * av.time_base), backward=True)
+
+            with av.open(
+                tmp_output_video_path,
+                mode="w",
+                options={
+                    "movflags": "faststart"
+                },  # faststart is to move the metadata to the beginning of the file to speed up loading
+            ) as dst:
+                out_stream = dst.add_stream(vcodec, fps, options=video_options)
+                out_stream.pix_fmt = pix_fmt
+                out_stream.width = width
+                out_stream.height = height
+
+                for frame in src.decode(in_stream):
+                    frame_time_s = frame.time
+                    if start_time_s is not None and frame_time_s < start_time_s:
+                        continue
+                    if end_time_s is not None and frame_time_s >= end_time_s:
+                        break
+                    frame = frame.reformat(width=width, height=height, format=pix_fmt)
+                    if start_time_s is not None:
+                        frame.pts = None  # reset timestamps so the trimmed output starts at t=0
+                    packet = out_stream.encode(frame)
+                    if packet:
+                        dst.mux(packet)
+
+                packet = out_stream.encode()
+                if packet:
+                    dst.mux(packet)
+
+        shutil.move(tmp_output_video_path, output_video_path)
+    except Exception:
+        Path(tmp_output_video_path).unlink(missing_ok=True)
+        raise
+    finally:
+        if log_level is not None:
+            av.logging.restore_default_callback()
+
+    if not output_video_path.exists():
+        raise OSError(f"Video re-encoding did not work. File not found: {output_video_path}.")
+
+
+def concatenate_video_files(
+    input_video_paths: list[Path | str],
+    output_video_path: Path,
+    overwrite: bool = True,
+    compatibility_check: bool = False,
+):
+    """
+    Concatenate multiple video files into a single video file using pyav.
+
+    This function takes a list of video input file paths and concatenates them into a single
+    output video file. It uses ffmpeg's concat demuxer with stream copy mode for fast
+    concatenation without re-encoding.
+
+    Args:
+        input_video_paths: Ordered list of input video file paths to concatenate.
+        output_video_path: Path to the output video file.
+        overwrite: Whether to overwrite the output video file if it already exists. Default is True.
+        compatibility_check: Whether to check if the input videos are compatible. Default is False.
+
+    Note:
+        - Creates a temporary directory for intermediate files that is cleaned up after use.
+        - Uses ffmpeg's concat demuxer which requires all input videos to have the same
+          codec, resolution, and frame rate for proper concatenation.
+    """
+
+    output_video_path = Path(output_video_path)
+
+    if output_video_path.exists() and not overwrite:
+        logger.warning(f"Video file already exists: {output_video_path}. Skipping concatenation.")
+        return
+
+    output_video_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if len(input_video_paths) == 0:
+        raise FileNotFoundError("No input video paths provided.")
+
+    # This check may be skipped at recording time as videos are encoded with the same encoder config.
+    if compatibility_check:
+        reference_video_info = get_video_info(input_video_paths[0])
+        for input_path in input_video_paths[1:]:
+            video_info = get_video_info(input_path)
+            if (
+                video_info["video.height"] != reference_video_info["video.height"]
+                or video_info["video.width"] != reference_video_info["video.width"]
+                or video_info["video.fps"] != reference_video_info["video.fps"]
+                or video_info["video.codec"] != reference_video_info["video.codec"]
+                or video_info["video.pix_fmt"] != reference_video_info["video.pix_fmt"]
+            ):
+                raise ValueError(
+                    f"Input video {input_path} is not compatible with the reference video {input_video_paths[0]}."
+                )
+
+    # Create a temporary .ffconcat file to list the input video paths
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ffconcat", delete=False) as tmp_concatenate_file:
+        tmp_concatenate_file.write("ffconcat version 1.0\n")
+        for input_path in input_video_paths:
+            tmp_concatenate_file.write(f"file '{str(input_path.resolve())}'\n")
+        tmp_concatenate_file.flush()
+        tmp_concatenate_path = tmp_concatenate_file.name
+
+    # Create input and output containers
+    input_container = av.open(
+        tmp_concatenate_path, mode="r", format="concat", options={"safe": "0"}
+    )  # safe = 0 allows absolute paths as well as relative paths
+
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_named_file:
+        tmp_output_video_path = tmp_named_file.name
+
+    output_container = av.open(
+        tmp_output_video_path, mode="w", options={"movflags": "faststart"}
+    )  # faststart is to move the metadata to the beginning of the file to speed up loading
+
+    # Replicate input streams in output container
+    stream_map = {}
+    for input_stream in input_container.streams:
+        if input_stream.type in ("video", "audio", "subtitle"):  # only copy compatible streams
+            stream_map[input_stream.index] = output_container.add_stream_from_template(
+                template=input_stream, opaque=True
+            )
+
+            # set the time base to the input stream time base (missing in the codec context)
+            stream_map[input_stream.index].time_base = input_stream.time_base
+
+    # Demux + remux packets (no re-encode)
+    for packet in input_container.demux():
+        # Skip packets from un-mapped streams
+        if packet.stream.index not in stream_map:
+            continue
+
+        # Skip demux flushing packets
+        if packet.dts is None:
+            continue
+
+        output_stream = stream_map[packet.stream.index]
+        packet.stream = output_stream
+        output_container.mux(packet)
+
+    input_container.close()
+    output_container.close()
+    shutil.move(tmp_output_video_path, output_video_path)
+    Path(tmp_concatenate_path).unlink()
+
+
+class _CameraEncoderThread(threading.Thread):
+    """A thread that encodes video frames streamed via a queue into an MP4 file.
+
+    One instance is created per camera per episode. Frames are received as numpy arrays
+    from the main thread, encoded in real-time using PyAV (which releases the GIL during
+    encoding), and written to disk. Stats are computed incrementally using
+    RunningQuantileStats and returned via result_queue.
+    """
+
+    def __init__(
+        self,
+        video_path: Path,
+        fps: int,
+        video_encoder: VideoEncoderConfig,
+        frame_queue: queue.Queue,
+        result_queue: queue.Queue,
+        stop_event: threading.Event,
+        encoder_threads: int | None = None,
+    ):
+        super().__init__(daemon=True)
+        self.video_path = video_path
+        self.fps = fps
+        self.video_encoder = video_encoder
+        self.is_depth = isinstance(video_encoder, DepthEncoderConfig)
+        self.frame_queue = frame_queue
+        self.result_queue = result_queue
+        self.stop_event = stop_event
+        self.encoder_threads = encoder_threads
+
+    def run(self) -> None:
+        from .compute_stats import RunningQuantileStats, auto_downsample_height_width
+
+        container = None
+        output_stream = None
+        stats_tracker = RunningQuantileStats()
+        frame_count = 0
+
+        try:
+            logging.getLogger("libav").setLevel(av.logging.WARNING)
+
+            while True:
+                try:
+                    frame_data = self.frame_queue.get(timeout=1)
+                except queue.Empty:
+                    if self.stop_event.is_set():
+                        break
+                    continue
+
+                if frame_data is None:
+                    # Sentinel: flush and close
+                    break
+
+                # Ensure HWC (RGB or depth) uint8 (RGB only) numpy array
+                if isinstance(frame_data, np.ndarray):
+                    if frame_data.ndim == 3 and frame_data.shape[0] in (1, 3):
+                        # CHW -> HWC
+                        frame_data = frame_data.transpose(1, 2, 0)
+                    if not self.is_depth and frame_data.dtype != np.uint8:
+                        frame_data = (frame_data * 255).astype(np.uint8)
+
+                # Open container on first frame (to get width/height)
+                if container is None:
+                    height, width = frame_data.shape[:2]
+                    Path(self.video_path).parent.mkdir(parents=True, exist_ok=True)
+                    container = av.open(str(self.video_path), "w")
+                    output_stream = container.add_stream(
+                        self.video_encoder.vcodec,
+                        self.fps,
+                        options=self.video_encoder.get_codec_options(self.encoder_threads, as_strings=True),
+                    )
+                    output_stream.pix_fmt = self.video_encoder.pix_fmt
+                    output_stream.width = width
+                    output_stream.height = height
+                    output_stream.time_base = Fraction(1, self.fps)
+
+                # Encode frame with explicit timestamps
+                if not self.is_depth:
+                    pil_img = Image.fromarray(frame_data)
+                    video_frame = av.VideoFrame.from_image(pil_img)
+                else:
+                    video_frame = quantize_depth(
+                        frame_data,
+                        depth_min=self.video_encoder.depth_min,
+                        depth_max=self.video_encoder.depth_max,
+                        shift=self.video_encoder.shift,
+                        use_log=self.video_encoder.use_log,
+                        video_backend=self.video_encoder.video_backend,
+                    )
+                video_frame.pts = frame_count
+                video_frame.time_base = Fraction(1, self.fps)
+                packet = output_stream.encode(video_frame)
+                if packet:
+                    container.mux(packet)
+
+                # Update stats with downsampled frame (per-channel stats like compute_episode_stats)
+                img_chw = frame_data.transpose(2, 0, 1)  # HWC -> CHW
+                img_downsampled = auto_downsample_height_width(img_chw)
+                # Reshape CHW to (H*W, C) for per-channel stats
+                channels = img_downsampled.shape[0]
+                img_for_stats = img_downsampled.transpose(1, 2, 0).reshape(-1, channels)
+                stats_tracker.update(img_for_stats)
+
+                frame_count += 1
+
+            # Flush encoder
+            if output_stream is not None:
+                packet = output_stream.encode()
+                if packet:
+                    container.mux(packet)
+
+            if container is not None:
+                container.close()
+
+            av.logging.restore_default_callback()
+
+            # Get stats and put on result queue
+            if frame_count >= 2:
+                stats = stats_tracker.get_statistics()
+                self.result_queue.put(("ok", stats))
+            else:
+                self.result_queue.put(("ok", None))
+
+        except Exception as e:
+            logger.error(f"Encoder thread error: {e}")
+            if container is not None:
+                with contextlib.suppress(Exception):
+                    container.close()
+            self.result_queue.put(("error", str(e)))
+
+
+class StreamingVideoEncoder:
+    """Manages per-camera encoder threads for real-time video encoding during recording.
+
+    Instead of writing frames as PNG images and then encoding to MP4 at episode end,
+    this class streams frames directly to encoder threads, eliminating the
+    PNG round-trip and making save_episode() near-instant.
+
+    Uses threading instead of multiprocessing to avoid the overhead of pickling large
+    numpy arrays through multiprocessing.Queue. PyAV's encode() releases the GIL,
+    so encoding runs in parallel with the main recording loop.
+    """
+
+    def __init__(
+        self,
+        fps: int,
+        rgb_encoder: RGBEncoderConfig | None = None,
+        depth_encoder: DepthEncoderConfig | None = None,
+        queue_maxsize: int = 30,
+        encoder_threads: int | None = None,
+    ):
+        """
+        Args:
+            fps: Frames per second for the output videos.
+            rgb_encoder: Video encoder settings applied to all RGB cameras.
+                When ``None``, :func:`rgb_encoder_defaults` is used.
+            depth_encoder: Video encoder settings applied to all depth cameras,
+                including the depth quantization parameters. When ``None``,
+                :func:`depth_encoder_defaults` is used.
+            queue_maxsize: Max frames to buffer per camera before
+                back-pressure drops frames.
+            encoder_threads: Number of encoder threads (global setting).
+                ``None`` lets the codec decide.
+        """
+        self.fps = fps
+        self._rgb_encoder = rgb_encoder or rgb_encoder_defaults()
+        self._depth_encoder = depth_encoder or depth_encoder_defaults()
+        self._encoder_threads = encoder_threads
+        self.queue_maxsize = queue_maxsize
+
+        self._frame_queues: dict[str, queue.Queue] = {}
+        self._result_queues: dict[str, queue.Queue] = {}
+        self._threads: dict[str, _CameraEncoderThread] = {}
+        self._stop_events: dict[str, threading.Event] = {}
+        self._video_paths: dict[str, Path] = {}
+        self._dropped_frames: dict[str, int] = {}
+        self._episode_active = False
+        self._closed = False
+
+    def start_episode(
+        self, video_keys: list[str], temp_dir: Path, depth_video_keys: list[str] | None = None
+    ) -> None:
+        """Start encoder threads for a new episode.
+
+        Args:
+            video_keys: List of video feature keys (e.g. ["observation.images.laptop"])
+            temp_dir: Base directory for temporary MP4 files
+            depth_video_keys: List of video or image feature keys that carry depth maps (e.g.
+                ["observation.images.laptop_depth"]).  Defaults to ``[]`` (no depth keys).
+        """
+        if self._episode_active:
+            self.cancel_episode()
+
+        self._dropped_frames.clear()
+
+        if depth_video_keys is None:
+            depth_video_keys = []
+
+        for video_key in video_keys:
+            frame_queue: queue.Queue = queue.Queue(maxsize=self.queue_maxsize)
+            result_queue: queue.Queue = queue.Queue(maxsize=1)
+            stop_event = threading.Event()
+
+            temp_video_dir = Path(tempfile.mkdtemp(dir=temp_dir))
+            video_path = temp_video_dir / f"{video_key.replace('/', '_')}_streaming.mp4"
+
+            encoder = self._depth_encoder if video_key in depth_video_keys else self._rgb_encoder
+            encoder_thread = _CameraEncoderThread(
+                video_path=video_path,
+                fps=self.fps,
+                video_encoder=encoder,
+                frame_queue=frame_queue,
+                result_queue=result_queue,
+                stop_event=stop_event,
+                encoder_threads=self._encoder_threads,
+            )
+            encoder_thread.start()
+
+            self._frame_queues[video_key] = frame_queue
+            self._result_queues[video_key] = result_queue
+            self._threads[video_key] = encoder_thread
+            self._stop_events[video_key] = stop_event
+            self._video_paths[video_key] = video_path
+
+        self._episode_active = True
+
+    def feed_frame(self, video_key: str, image: np.ndarray) -> None:
+        """Feed a frame to the encoder for a specific camera.
+
+        A copy of the image is made before enqueueing to prevent race conditions
+        with camera drivers that may reuse buffers. If the encoder queue is full
+        (encoder can't keep up), the frame is dropped with a warning instead of
+        crashing the recording session.
+
+        Args:
+            video_key: The video feature key
+            image: numpy array in (H,W,C) or (C,H,W) format, uint8 or float
+
+        Raises:
+            RuntimeError: If the encoder thread has crashed
+        """
+        if not self._episode_active:
+            raise RuntimeError("No active episode. Call start_episode() first.")
+
+        thread = self._threads[video_key]
+        if not thread.is_alive():
+            # Check for error
+            try:
+                status, msg = self._result_queues[video_key].get_nowait()
+                if status == "error":
+                    raise RuntimeError(f"Encoder thread for {video_key} crashed: {msg}")
+            except queue.Empty:
+                pass
+            raise RuntimeError(f"Encoder thread for {video_key} is not alive")
+
+        try:
+            self._frame_queues[video_key].put(image.copy(), timeout=0.1)
+        except queue.Full:
+            self._dropped_frames[video_key] = self._dropped_frames.get(video_key, 0) + 1
+            count = self._dropped_frames[video_key]
+            # Log periodically to avoid spam (1st, then every 10th)
+            if count == 1 or count % 10 == 0:
+                logger.warning(
+                    f"Encoder queue full for {video_key}, dropped {count} frame(s). "
+                    f"Consider using vcodec='auto' for hardware encoding or increasing encoder_queue_maxsize."
+                )
+
+    def finish_episode(self) -> dict[str, tuple[Path, dict | None]]:
+        """Finish encoding the current episode.
+
+        Sends sentinel values, waits for encoder threads to complete,
+        and collects results.
+
+        Returns:
+            Dict mapping video_key to (mp4_path, stats_dict_or_None)
+        """
+        if not self._episode_active:
+            raise RuntimeError("No active episode to finish.")
+
+        results = {}
+
+        # Report dropped frames
+        for video_key, count in self._dropped_frames.items():
+            if count > 0:
+                logger.warning(f"Episode finished with {count} dropped frame(s) for {video_key}.")
+
+        # Send sentinel to all queues
+        for video_key in self._frame_queues:
+            self._frame_queues[video_key].put(None)
+
+        # Wait for all threads and collect results
+        for video_key in self._threads:
+            self._threads[video_key].join(timeout=120)
+            if self._threads[video_key].is_alive():
+                logger.error(f"Encoder thread for {video_key} did not finish in time")
+                self._stop_events[video_key].set()
+                self._threads[video_key].join(timeout=5)
+                results[video_key] = (self._video_paths[video_key], None)
+                continue
+
+            try:
+                status, data = self._result_queues[video_key].get(timeout=5)
+                if status == "error":
+                    raise RuntimeError(f"Encoder thread for {video_key} failed: {data}")
+                results[video_key] = (self._video_paths[video_key], data)
+            except queue.Empty:
+                logger.error(f"No result from encoder thread for {video_key}")
+                results[video_key] = (self._video_paths[video_key], None)
+
+        self._cleanup()
+        self._episode_active = False
+        return results
+
+    def cancel_episode(self) -> None:
+        """Cancel the current episode, stopping encoder threads and cleaning up."""
+        if not self._episode_active:
+            return
+
+        # Signal all threads to stop
+        for video_key in self._stop_events:
+            self._stop_events[video_key].set()
+
+        # Wait for threads to finish
+        for video_key in self._threads:
+            self._threads[video_key].join(timeout=5)
+
+            # Clean up temp MP4 files
+            video_path = self._video_paths.get(video_key)
+            if video_path is not None and video_path.exists():
+                shutil.rmtree(str(video_path.parent), ignore_errors=True)
+
+        self._cleanup()
+        self._episode_active = False
+
+    def close(self) -> None:
+        """Close the encoder, canceling any in-progress episode."""
+        if self._closed:
+            return
+        if self._episode_active:
+            self.cancel_episode()
+        self._closed = True
+
+    def _cleanup(self) -> None:
+        """Clean up queues and thread tracking dicts."""
+        for q in self._frame_queues.values():
+            with contextlib.suppress(Exception):
+                while not q.empty():
+                    q.get_nowait()
+        self._frame_queues.clear()
+        self._result_queues.clear()
+        self._threads.clear()
+        self._stop_events.clear()
+        self._video_paths.clear()
 
 
 @dataclass
@@ -365,7 +1136,7 @@ with warnings.catch_warnings():
 
 def get_audio_info(video_path: Path | str) -> dict:
     # Set logging level
-    logging.getLogger("libav").setLevel(av.logging.ERROR)
+    logging.getLogger("libav").setLevel(av.logging.WARNING)
 
     # Getting audio stream information
     audio_info = {}
@@ -395,9 +1166,27 @@ def get_audio_info(video_path: Path | str) -> dict:
     return audio_info
 
 
-def get_video_info(video_path: Path | str) -> dict:
-    # Set logging level
-    logging.getLogger("libav").setLevel(av.logging.ERROR)
+def get_video_info(
+    video_path: Path | str,
+    video_encoder: VideoEncoderConfig | None = None,
+) -> dict:
+    """Build the ``video.*`` / ``audio.*`` info dict persisted in ``info.json``.
+
+    Args:
+        video_path: Path to the encoded video file to probe.
+        video_encoder: If provided, record the exact encoder settings used to encode this
+            video. Stream-derived values take precedence — encoder fields are only written for keys
+            not already populated from the video file itself. When a
+            :class:`~lerobot.configs.video.DepthEncoderConfig` is passed, the depth
+            quantization parameters (``depth_min`` / ``depth_max`` / ``shift`` /
+            ``use_log``) are recorded so frames can be dequantized on read.
+
+    Returns:
+        The ``video.*`` / ``audio.*`` info dict, including ``is_depth_map`` which is
+        ``True`` only when ``video_encoder`` is a
+        :class:`~lerobot.configs.video.DepthEncoderConfig`.
+    """
+    logging.getLogger("libav").setLevel(av.logging.WARNING)
 
     # Getting video stream information
     video_info = {}
@@ -413,13 +1202,10 @@ def get_video_info(video_path: Path | str) -> dict:
         video_info["video.width"] = video_stream.width
         video_info["video.codec"] = video_stream.codec.canonical_name
         video_info["video.pix_fmt"] = video_stream.pix_fmt
-        video_info["video.is_depth_map"] = False
 
         # Calculate fps from r_frame_rate
         video_info["video.fps"] = int(video_stream.base_rate)
-
-        pixel_channels = get_video_pixel_channels(video_stream.pix_fmt)
-        video_info["video.channels"] = pixel_channels
+        video_info["video.channels"] = get_pix_fmt_channels(video_stream.pix_fmt)
 
     # Reset logging level
     av.logging.restore_default_callback()
@@ -427,31 +1213,39 @@ def get_video_info(video_path: Path | str) -> dict:
     # Adding audio stream information
     video_info.update(**get_audio_info(video_path))
 
+    # Add additional encoder configuration if provided
+    if video_encoder is not None:
+        for field_name, field_value in asdict(video_encoder).items():
+            # vcodec is already populated from the video stream
+            if field_name == "vcodec":
+                continue
+            video_info.setdefault(f"video.{field_name}", field_value)
+
+    video_info["is_depth_map"] = isinstance(video_encoder, DepthEncoderConfig)
+
     return video_info
 
 
-def get_video_pixel_channels(pix_fmt: str) -> int:
-    if "gray" in pix_fmt or "depth" in pix_fmt or "monochrome" in pix_fmt:
-        return 1
-    elif "rgba" in pix_fmt or "yuva" in pix_fmt:
-        return 4
-    elif "rgb" in pix_fmt or "yuv" in pix_fmt:
-        return 3
-    else:
-        raise ValueError("Unknown format")
+def get_video_duration_in_s(video_path: Path | str) -> float:
+    """
+    Get the duration of a video file in seconds using PyAV.
 
+    Args:
+        video_path: Path to the video file.
 
-def get_image_pixel_channels(image: Image):
-    if image.mode == "L":
-        return 1  # Grayscale
-    elif image.mode == "LA":
-        return 2  # Grayscale + Alpha
-    elif image.mode == "RGB":
-        return 3  # RGB
-    elif image.mode == "RGBA":
-        return 4  # RGBA
-    else:
-        raise ValueError("Unknown format")
+    Returns:
+        Duration of the video in seconds.
+    """
+    with av.open(str(video_path)) as container:
+        # Get the first video stream
+        video_stream = container.streams.video[0]
+        # Calculate duration: stream.duration * stream.time_base gives duration in seconds
+        if video_stream.duration is not None:
+            duration = float(video_stream.duration * video_stream.time_base)
+        else:
+            # Fallback to container duration if stream duration is not available
+            duration = float(container.duration / av.time_base)
+    return duration
 
 
 class VideoEncodingManager:
@@ -474,44 +1268,31 @@ class VideoEncodingManager:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # Handle any remaining episodes that haven't been batch encoded
-        if self.dataset.episodes_since_last_encoding > 0:
-            if exc_type is not None:
-                logging.info("Exception occurred. Encoding remaining episodes before exit...")
-            else:
-                logging.info("Recording stopped. Encoding remaining episodes...")
+        writer = self.dataset.writer
+        if writer is not None:
+            if exc_type is not None and writer._streaming_encoder is not None:
+                writer.cancel_pending_videos()
 
-            start_ep = self.dataset.num_episodes - self.dataset.episodes_since_last_encoding
-            end_ep = self.dataset.num_episodes
-            logging.info(
-                f"Encoding remaining {self.dataset.episodes_since_last_encoding} episodes, "
-                f"from episode {start_ep} to {end_ep - 1}"
-            )
-            self.dataset.batch_encode_videos(start_ep, end_ep)
+            # finalize() handles flush_pending_videos + parquet + metadata
+            self.dataset.finalize()
 
-        # Clean up episode images if recording was interrupted
-        if exc_type is not None:
-            interrupted_episode_index = self.dataset.num_episodes
-            for key in self.dataset.meta.video_keys:
-                img_dir = self.dataset._get_image_file_path(
-                    episode_index=interrupted_episode_index, image_key=key, frame_index=0
-                ).parent
-                if img_dir.exists():
-                    logging.debug(
-                        f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}"
-                    )
-                    shutil.rmtree(img_dir)
+            # Clean up episode images if recording was interrupted (only for non-streaming mode)
+            if exc_type is not None and writer._streaming_encoder is None:
+                writer.cleanup_interrupted_episode(self.dataset.num_episodes)
+        else:
+            self.dataset.finalize()
 
         # Clean up any remaining images directory if it's empty
         img_dir = self.dataset.root / "images"
-        # Check for any remaining PNG files
-        png_files = list(img_dir.rglob("*.png"))
-        if len(png_files) == 0:
-            # Only remove the images directory if no PNG files remain
-            if img_dir.exists():
+        if img_dir.exists():
+            png_files = list(img_dir.rglob("*.png"))
+            tiff_files = list(img_dir.rglob("*.tiff"))
+            if len(png_files) == 0 and len(tiff_files) == 0:
                 shutil.rmtree(img_dir)
-                logging.debug("Cleaned up empty images directory")
-        else:
-            logging.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
+                logger.debug("Cleaned up empty images directory")
+            else:
+                logger.debug(
+                    f"Images directory is not empty, containing {len(png_files)} PNG and {len(tiff_files)} TIFF files"
+                )
 
         return False  # Don't suppress the original exception
