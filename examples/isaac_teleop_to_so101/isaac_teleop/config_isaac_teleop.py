@@ -133,3 +133,46 @@ class SO101LeaderArmConfig(IsaacTeleopConfig):
     gripper_close_rad: float = _DEFAULT_GRIPPER_CLOSE_RAD
     """Leader gripper angle [rad] at fully CLOSED -> follower jaw 0. Provisional default;
     set from the plugin's ``calibrate`` subcommand. See ``_DEFAULT_GRIPPER_CLOSE_RAD``."""
+
+
+# Stream (URDF) joint names -> rebot_b601_follower motor names, in stream order. The plugin
+# streams the ``reBot-DevArm_fixend`` URDF names; the follower names its seven Damiao motors
+# functionally. Same physical joints, so the mapping is a pure rename.
+_DEFAULT_REBOT_JOINT_NAME_MAP: dict[str, str] = {
+    "joint1": "shoulder_pan",
+    "joint2": "shoulder_lift",
+    "joint3": "elbow_flex",
+    "joint4": "wrist_flex",
+    "joint5": "wrist_yaw",
+    "joint6": "wrist_roll",
+    "gripper": "gripper",
+}
+
+
+@IsaacTeleopConfig.register_subclass("rebot_devarm_leader")
+@dataclass(kw_only=True)
+class RebotDevArmLeaderArmConfig(IsaacTeleopConfig):
+    """Config for an Isaac Teleop reBot DevArm *leader arm* (generic joint-space device).
+
+    Mirrors the leader's joint angles 1:1 onto a follower reBot B601-DM (LeRobot's
+    ``rebot_b601_follower``) — the same 6-DOF + gripper Damiao hardware, so no IK, clutch,
+    retargeter, or gripper normalization is needed. The leader state is streamed in radians
+    by the native ``rebot_devarm_leader`` plugin (which torque-disables the motors so the
+    arm is back-drivable) and read via a ``JointStateSource``; the device converts all
+    joints to degrees and renames them via :attr:`joint_name_map`.
+    """
+
+    port: str = ""
+    """Serial device of the physical LEADER arm's Damiao USB-to-CAN adapter (e.g.
+    ``/dev/ttyACM0``), forwarded to the plugin (which owns the bus) when the example
+    launches it. Empty -> the plugin runs its synthetic trajectory."""
+
+    collection_id: str = "rebot_devarm_leader"
+    """Tensor collection id the leader plugin pushes on; must match the running
+    ``rebot_devarm_leader`` plugin (its second positional arg, default
+    ``"rebot_devarm_leader"``)."""
+
+    joint_name_map: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_REBOT_JOINT_NAME_MAP))
+    """Stream (URDF) joint name -> follower motor name. Defaults to the
+    ``rebot_b601_follower`` motor names; override to drive a follower with a different
+    naming scheme. Stream joints absent from the map are dropped from the action."""

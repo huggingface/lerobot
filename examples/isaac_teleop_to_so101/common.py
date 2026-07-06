@@ -51,6 +51,9 @@ from lerobot.processor import (
     transition_to_robot_action,
 )
 from lerobot.robots import RobotConfig, make_robot_from_config
+from lerobot.robots.rebot_b601_follower import (
+    RebotB601FollowerRobotConfig,  # noqa: F401  (registers rebot_b601_follower)
+)
 from lerobot.robots.so_follower import SOFollowerConfig  # noqa: F401  (registers so101_follower)
 from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
@@ -64,6 +67,8 @@ from .isaac_teleop import (
     Clutch,
     IsaacTeleopConfig,
     MapXRControllerActionToRobotAction,
+    RebotDevArmLeaderArm,
+    RebotDevArmLeaderArmConfig,
     SO101LeaderArm,
     SO101LeaderArmConfig,
     XRController,
@@ -432,6 +437,10 @@ def _leader_calibration_path(cfg: LoopConfig) -> Path | None:
     (or ``--teleop.calibration_dir`` if set). Returns None (plugin falls back to defaults) when
     it does not exist, warning if an id was given, or when no ``--teleop.id`` is set.
     """
+    if isinstance(cfg.teleop, RebotDevArmLeaderArmConfig):
+        # The reBot DevArm plugin has its own plain-text calibration format (not the serial
+        # SO-101 leader's JSON); pass none and let the plugin use its factory defaults.
+        return None
     if not cfg.teleop.id:
         return None
     calib_dir = cfg.teleop.calibration_dir or (
@@ -448,13 +457,13 @@ def _leader_calibration_path(cfg: LoopConfig) -> Path | None:
     return None
 
 
-def _wait_for_leader(teleop: SO101LeaderArm, timeout_s: float) -> dict[str, float]:
+def _wait_for_leader(teleop: SO101LeaderArm | RebotDevArmLeaderArm, timeout_s: float) -> dict[str, float]:
     """Poll the leader until it streams a live frame; return that frame's ``{joint}.pos``.
 
     Raises ``SystemExit`` if no live frame arrives within ``timeout_s`` (plugin not pushing,
     wrong ``--teleop.collection_id``, or CloudXR not up).
     """
-    print(f"Waiting up to {timeout_s:.0f}s for the so101_leader plugin to stream…")
+    print(f"Waiting up to {timeout_s:.0f}s for the leader plugin to stream…")
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         action = teleop.get_action()
@@ -463,7 +472,7 @@ def _wait_for_leader(teleop: SO101LeaderArm, timeout_s: float) -> dict[str, floa
             return action
         time.sleep(1.0 / FPS)
     raise SystemExit(
-        f"FAILED: leader did not stream within {timeout_s:.0f}s. Is the so101_leader plugin "
+        f"FAILED: leader did not stream within {timeout_s:.0f}s. Is the leader plugin "
         "running and pushing (check --teleop.collection_id)? Is CloudXR up?"
     )
 
@@ -494,9 +503,12 @@ def _maybe_launch_plugin(cfg: LoopConfig) -> subprocess.Popen | None:
 
 
 def setup_leader(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
-    """Build the SO-101 leader arm device bundle (1:1 joint mirror)."""
-    teleop_config = cfg.teleop  # SO101LeaderArmConfig (selected via --teleop.type=so101_leader)
-    teleop = SO101LeaderArm(teleop_config)
+    """Build a joint-mirror leader arm device bundle (SO-101 or reBot DevArm, 1:1)."""
+    teleop_config = cfg.teleop  # selected via --teleop.type=so101_leader|rebot_devarm_leader
+    if isinstance(teleop_config, RebotDevArmLeaderArmConfig):
+        teleop = RebotDevArmLeaderArm(teleop_config)
+    else:
+        teleop = SO101LeaderArm(teleop_config)
 
     plugin_proc: subprocess.Popen | None = None
 
@@ -572,11 +584,18 @@ def build_device(cfg: LoopConfig) -> tuple:
     if cfg.teleop.cloudxr_env_file is None:
         cfg.teleop.cloudxr_env_file = CLOUDXR_ENV_FILE
 
-    # SO-101/SO-100 only (both share the SO-101 URDF), reject other followers.
-    supported_robots = {"so101_follower", "so100_follower"}
+    # Follower support depends on the input device: the XR/IK path relies on the SO-101 URDF
+    # (SO-101/SO-100 only); joint-mirror leaders additionally pair the reBot DevArm leader
+    # with its same-hardware rebot_b601_follower.
+    if isinstance(cfg.teleop, RebotDevArmLeaderArmConfig):
+        supported_robots = {"rebot_b601_follower"}
+    elif isinstance(cfg.teleop, SO101LeaderArmConfig):
+        supported_robots = {"so101_follower", "so100_follower"}
+    else:
+        supported_robots = {"so101_follower", "so100_follower"}
     if cfg.robot.type not in supported_robots:
         raise ValueError(
-            f"This example only supports SO-101/SO-100 followers ({sorted(supported_robots)}), "
+            f"--teleop.type={cfg.teleop.type} supports followers {sorted(supported_robots)}, "
             f"but got --robot.type={cfg.robot.type}."
         )
 
@@ -591,7 +610,7 @@ def build_device(cfg: LoopConfig) -> tuple:
         # Joint names in action order, read from {name}.pos action features (robot-agnostic).
         motor_names = [key.removesuffix(".pos") for key in robot.action_features if key.endswith(".pos")]
 
-        if isinstance(cfg.teleop, SO101LeaderArmConfig):
+        if isinstance(cfg.teleop, (SO101LeaderArmConfig, RebotDevArmLeaderArmConfig)):
             device = setup_leader(cfg, robot, motor_names)
         else:
             device = setup_xr(cfg, robot, motor_names)
