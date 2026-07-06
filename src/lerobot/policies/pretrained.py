@@ -18,10 +18,11 @@ import builtins
 import dataclasses
 import logging
 import os
+from enum import StrEnum
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, ClassVar, TypedDict, TypeVar, Unpack
 
 import packaging
 import safetensors
@@ -42,6 +43,13 @@ T = TypeVar("T", bound="PreTrainedPolicy")
 
 if TYPE_CHECKING:
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+
+
+class ImageInputFormat(StrEnum):
+    """Raw image representation expected by a policy before preprocessing."""
+
+    FLOAT32_0_1 = "float32_0_1"
+    UINT8_0_255 = "uint8_0_255"
 
 
 def _build_card_context(
@@ -102,6 +110,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     config_class: None
     name: None
+    input_image_format: ClassVar[ImageInputFormat] = ImageInputFormat.FLOAT32_0_1
 
     def __init__(self, config: PreTrainedConfig, *inputs, **kwargs):
         super().__init__()

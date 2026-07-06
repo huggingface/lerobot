@@ -39,7 +39,7 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.import_utils import _transformers_available, require_package
 
-from ..pretrained import PreTrainedPolicy
+from ..pretrained import ImageInputFormat, PreTrainedPolicy
 from ..utils import get_device_from_parameters
 from .configuration_groot import (
     GROOT_N1_5,
@@ -67,6 +67,7 @@ class GrootPolicy(PreTrainedPolicy):
 
     name = "groot"
     config_class = GrootConfig
+    input_image_format = ImageInputFormat.UINT8_0_255
 
     def __init__(self, config: GrootConfig, **kwargs):
         """Initialize Groot policy wrapper."""

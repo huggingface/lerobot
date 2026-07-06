@@ -53,7 +53,6 @@ from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
-    ImageInputFormat,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
@@ -553,10 +552,6 @@ def _load_groot_processor_pipelines(
         to_transition=policy_action_to_transition,
         to_output=transition_to_policy_action,
     )
-    # Older serialized GR00T pipelines predate the raw-image contract. GR00T's
-    # packer consumes worker-produced uint8 directly, so upgrade them at load
-    # time rather than falling back to the global float compatibility default.
-    preprocessor.input_image_format = ImageInputFormat.UINT8_0_255
     return preprocessor, postprocessor
 
 
@@ -1329,7 +1324,6 @@ def make_groot_pre_post_processors(
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=input_steps,
             name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-            input_image_format=ImageInputFormat.UINT8_0_255,
         ),
         PolicyProcessorPipeline[PolicyAction, PolicyAction](
             steps=output_steps,

@@ -54,8 +54,7 @@ from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.jobs import submit_to_hf
 from lerobot.optim.factory import make_optimizer_and_scheduler
-from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
-from lerobot.processor import ImageInputFormat, PolicyProcessorPipeline
+from lerobot.policies import ImageInputFormat, PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -75,11 +74,11 @@ from .lerobot_eval import eval_policy_all
 def prepare_images_for_policy(
     batch: dict[str, Any],
     camera_keys: list[str],
-    preprocessor: PolicyProcessorPipeline,
+    input_image_format: ImageInputFormat,
 ) -> None:
-    """Adapt worker-produced images to the policy preprocessor's raw input contract."""
+    """Adapt worker-produced images to the policy's raw input contract."""
 
-    if preprocessor.input_image_format is ImageInputFormat.UINT8_0_255:
+    if input_image_format is ImageInputFormat.UINT8_0_255:
         return
 
     for cam_key in camera_keys:
@@ -311,6 +310,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             ds_meta=dataset.meta,
             rename_map=cfg.rename_map,
         )
+
+    # Capture this before Accelerate or PEFT wraps the policy. Reward models do
+    # not currently declare an image format and retain the historical default.
+    input_image_format = getattr(policy, "input_image_format", ImageInputFormat.FLOAT32_0_1)
 
     if cfg.peft is not None:
         if cfg.is_reward_model_training:
@@ -582,7 +585,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
-        prepare_images_for_policy(batch, dataset.meta.camera_keys, preprocessor)
+        prepare_images_for_policy(batch, dataset.meta.camera_keys, input_image_format)
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
@@ -635,7 +638,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             n_eval_batches = 0
             with torch.no_grad(), accelerator.autocast():
                 for eval_batch in eval_dataloader:
-                    prepare_images_for_policy(eval_batch, dataset.meta.camera_keys, preprocessor)
+                    prepare_images_for_policy(eval_batch, dataset.meta.camera_keys, input_image_format)
                     eval_batch = preprocessor(eval_batch)
                     loss, _ = policy.forward(eval_batch)
                     eval_loss_sum += loss.item()

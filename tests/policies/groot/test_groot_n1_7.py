@@ -27,6 +27,7 @@ from safetensors.torch import load_file
 from torch import nn
 
 from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.policies import ImageInputFormat
 from lerobot.policies.factory import make_policy_config, make_pre_post_processors
 from lerobot.policies.groot.configuration_groot import (
     GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
@@ -51,7 +52,6 @@ from lerobot.policies.groot.processor_groot import (
 )
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
-    ImageInputFormat,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
 )
@@ -1698,7 +1698,7 @@ def test_groot_n1_7_processors_are_registered_lazily_without_external_gr00t():
     preprocessor, _ = make_groot_pre_post_processors(config)
     step_types = {type(step) for step in preprocessor.steps}
 
-    assert preprocessor.input_image_format is ImageInputFormat.UINT8_0_255
+    assert GrootPolicy.input_image_format is ImageInputFormat.UINT8_0_255
     assert GrootN17PackInputsStep in step_types
     assert GrootN17VLMEncodeStep in step_types
     assert "gr00t" not in sys.modules

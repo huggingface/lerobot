@@ -38,8 +38,8 @@ from lerobot.configs.default import DatasetConfig
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.policies import ImageInputFormat, PreTrainedPolicy
 from lerobot.policies.factory import make_policy_config
-from lerobot.processor import ImageInputFormat, PolicyProcessorPipeline
 from lerobot.scripts.lerobot_train import prepare_images_for_policy, train
 from lerobot.utils.device_utils import auto_select_torch_device
 
@@ -59,14 +59,14 @@ IMAGE_SIZE = 8
 DEVICE = auto_select_torch_device()
 
 
-def test_prepare_images_for_policy_obeys_preprocessor_contract():
+def test_prepare_images_for_policy_obeys_policy_contract():
     image = torch.tensor([0, 127, 255], dtype=torch.uint8)
 
     float_batch = {"observation.images.front": image.clone()}
     prepare_images_for_policy(
         float_batch,
         ["observation.images.front"],
-        PolicyProcessorPipeline([]),
+        PreTrainedPolicy.input_image_format,
     )
     assert float_batch["observation.images.front"].dtype == torch.float32
     torch.testing.assert_close(
@@ -79,7 +79,7 @@ def test_prepare_images_for_policy_obeys_preprocessor_contract():
     prepare_images_for_policy(
         uint8_batch,
         ["observation.images.front"],
-        PolicyProcessorPipeline([], input_image_format=ImageInputFormat.UINT8_0_255),
+        ImageInputFormat.UINT8_0_255,
     )
     assert uint8_batch["observation.images.front"].data_ptr() == uint8_image.data_ptr()
     assert uint8_batch["observation.images.front"].dtype == torch.uint8
