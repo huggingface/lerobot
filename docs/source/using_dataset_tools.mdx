@@ -11,8 +11,9 @@ LeRobot provides several utilities for manipulating datasets:
 3. **Merge Datasets** - Combine multiple datasets into one. The datasets must have identical features, and episodes are concatenated in the order specified in `repo_ids`
 4. **Add Features** - Add new features to a dataset
 5. **Remove Features** - Remove features from a dataset
-6. **Convert to Video** - Convert image-based datasets to video format for efficient storage
-7. **Show the Info of Datasets** - Show the summary of datasets information such as number of episode etc.
+6. **Convert to Video** - Convert image-based datasets to video format for efficient storage (RGB and depth cameras are encoded with separate encoders)
+7. **Re-encode Videos** - Re-encode an existing video dataset's RGB and/or depth streams with new encoder settings
+8. **Show the Info of Datasets** - Show the summary of datasets information such as number of episode etc.
 
 The core implementation is in `lerobot.datasets.dataset_tools`.
 An example script detailing how to use the tools API is available in `examples/dataset/use_dataset_tools.py`.
@@ -117,10 +118,19 @@ lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
     --operation.type convert_image_to_video \
     --operation.output_dir outputs/pusht_video \
-    --operation.camera_encoder.vcodec libsvtav1 \
-    --operation.camera_encoder.pix_fmt yuv420p \
-    --operation.camera_encoder.g 2 \
-    --operation.camera_encoder.crf 30
+    --operation.rgb_encoder.vcodec libsvtav1 \
+    --operation.rgb_encoder.pix_fmt yuv420p \
+    --operation.rgb_encoder.g 2 \
+    --operation.rgb_encoder.crf 30
+
+# Convert a dataset that includes depth maps, customizing the depth encoder
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type convert_image_to_video \
+    --operation.output_dir outputs/pusht_video \
+    --operation.depth_encoder.depth_min 0.01 \
+    --operation.depth_encoder.depth_max 10.0 \
+    --operation.depth_encoder.use_log true
 
 # Convert only specific episodes
 lerobot-edit-dataset \
@@ -147,11 +157,42 @@ lerobot-edit-dataset \
 **Parameters:**
 
 - `output_dir`: Custom output directory (optional - by default uses `new_repo_id` or `{repo_id}_video`)
-- `camera_encoder`: Video encoder settings — all sub-fields accessible via `--operation.camera_encoder.<field>. See [Video Encoding Parameters](./video_encoding_parameters) for more details.
+- `rgb_encoder`: Video encoder settings applied to RGB cameras — all sub-fields accessible via `--operation.rgb_encoder.<field>`. See [Video Encoding Parameters](./video_encoding_parameters) for more details.
+- `depth_encoder`: Video encoder settings applied to depth-map cameras (e.g. from an Intel RealSense). In addition to the standard encoder fields it exposes the depth quantization knobs (`depth_min`, `depth_max`, `shift`, `use_log`), accessible via `--operation.depth_encoder.<field>`. These quantization settings are persisted to the dataset metadata so depth can be dequantized back to physical units on load. See the [Depth streams](./video_encoding_parameters#depth-streams) section for details.
 - `episode_indices`: List of specific episodes to convert (default: all episodes)
 - `num_workers`: Number of parallel workers for processing (default: 4)
 
-**Note:** The resulting dataset will be a proper LeRobotDataset with all cameras encoded as videos in the `videos/` directory, with parquet files containing only metadata (no raw image data). All episodes, stats, and tasks are preserved.
+**Note:** The resulting dataset will be a proper LeRobotDataset with all cameras encoded as videos in the `videos/` directory, with parquet files containing only metadata (no raw image data). Depth-map cameras are detected automatically and routed to the `depth_encoder`, while RGB cameras use the `rgb_encoder`. All episodes, stats, and tasks are preserved.
+
+#### Re-encode Videos
+
+Re-encode the videos of an existing video dataset with different encoder settings, without going back to raw frames. RGB videos use the `rgb_encoder` and depth videos use the `depth_encoder`. Provide only the encoder(s) you want to re-encode; the other stream type is left untouched.
+
+```bash
+# Re-encode all RGB videos with new settings (saves to lerobot/pusht_reencoded by default)
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type reencode_videos \
+    --operation.rgb_encoder.vcodec h264 \
+    --operation.rgb_encoder.pix_fmt yuv420p \
+    --operation.rgb_encoder.crf 23
+
+# Re-encode both RGB and depth videos in a dataset with depth maps
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_depth \
+    --operation.type reencode_videos \
+    --operation.rgb_encoder.vcodec h264 \
+    --operation.depth_encoder.crf 50
+```
+
+**Parameters:**
+
+- `rgb_encoder`: Encoder settings applied to every RGB video. Omit to skip re-encoding RGB videos.
+- `depth_encoder`: Encoder settings applied to every depth video. Omit to skip re-encoding depth videos.
+- `num_workers`: Number of parallel workers for processing.
+
+> [!NOTE]
+> When re-encoding depth videos, the existing depth quantization parameters (`depth_min`, `depth_max`, `shift`, `use_log`) and the `is_depth_map` flag are **preserved** — re-encoding only changes the codec/quality of the stored stream, not how depth is dequantized on load.
 
 ### Show the information of datasets
 
@@ -223,6 +264,8 @@ lerobot-dataset-viz \
 ```
 
 Once executed, the tool opens `rerun.io` and displays the camera streams, robot states, and actions for the selected episode.
+
+To use [Foxglove](https://foxglove.dev) instead of Rerun, install the extra add `--display-mode foxglove`. This starts a WebSocket server (connect the Foxglove app to `ws://127.0.0.1:8765`) that serves the episode as a seekable timeline you can play/pause and scrub.
 
 For advanced usage—including visualizing datasets stored on a remote server—run:
 

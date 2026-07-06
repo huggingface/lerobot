@@ -436,7 +436,7 @@ class OpenCVCamera(Camera):
         Internal loop run by the background thread for asynchronous reading.
 
         On each iteration:
-        1. Reads a color frame
+        1. Reads a color frame (blocking call)
         2. Stores result in latest_frame and updates timestamp (thread-safe)
         3. Sets new_frame_event to notify listeners
 
@@ -485,6 +485,8 @@ class OpenCVCamera(Camera):
 
         if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=2.0)
+            if self.thread.is_alive():
+                logger.warning(f"{self} read thread did not terminate within timeout.")
 
         self.thread = None
         self.stop_event = None

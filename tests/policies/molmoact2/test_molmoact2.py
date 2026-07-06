@@ -44,10 +44,12 @@ from lerobot.policies.molmoact2.modeling_molmoact2 import (
     _combine_rollout_seeds,
 )
 from lerobot.policies.molmoact2.processor_molmoact2 import (
+    MolmoAct2ActionFrameTransformStep,
     MolmoAct2ClampNormalizedProcessorStep,
     MolmoAct2MaskedNormalizerProcessorStep,
     MolmoAct2MaskedUnnormalizerProcessorStep,
     MolmoAct2PackInputsProcessorStep,
+    MolmoAct2StateFrameTransformStep,
     _add_gripper_masks_to_stats,
     _build_discrete_state_string,
     _normalize_question_text,
@@ -924,6 +926,39 @@ def test_question_normalization_matches_release_prompt_style():
     assert (
         _normalize_question_text("The task is to open drawer. Then close it.") == "open drawer; then close it"
     )
+
+
+def test_joint_frame_transform_round_trip():
+    signs = [1.0, -1.0, 1.0, 1.0, 1.0, 1.0]
+    offsets = [0.0, 90.0, 90.0, 0.0, 0.0, 0.0]
+    original_state = torch.tensor([[10.0, -90.0, -120.0, 30.0, 0.0, -45.0]])
+
+    state_step = MolmoAct2StateFrameTransformStep(joint_signs=signs, joint_offsets=offsets)
+    action_step = MolmoAct2ActionFrameTransformStep(joint_signs=signs, joint_offsets=offsets)
+
+    transition = {
+        TransitionKey.OBSERVATION: {OBS_STATE: original_state.clone()},
+    }
+    transformed = state_step(transition)
+    model_state = transformed[TransitionKey.OBSERVATION][OBS_STATE]
+
+    action_transition = {TransitionKey.ACTION: model_state.clone()}
+    recovered = action_step(action_transition)
+    recovered_state = recovered[TransitionKey.ACTION]
+
+    assert torch.allclose(recovered_state, original_state)
+
+
+def test_joint_frame_transform_noop_when_none():
+    state_step = MolmoAct2StateFrameTransformStep(joint_signs=None, joint_offsets=None)
+    action_step = MolmoAct2ActionFrameTransformStep(joint_signs=None, joint_offsets=None)
+    state = torch.tensor([[10.0, -90.0, -120.0]])
+
+    state_transition = {TransitionKey.OBSERVATION: {OBS_STATE: state}}
+    assert state_step(state_transition) is state_transition
+
+    action_transition = {TransitionKey.ACTION: state}
+    assert action_step(action_transition) is action_transition
 
 
 def test_action_padding_marks_only_real_dimensions():

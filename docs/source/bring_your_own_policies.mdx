@@ -295,11 +295,12 @@ The file names are load-bearing: the factory does lazy imports by name, and the 
 
 ### Wiring
 
-Three places need to know about your policy. All by name.
+Four places need to know about your policy. All by name.
 
 1. **`policies/__init__.py`** — re-export `MyPolicyConfig` and add it to `__all__`. **Don't** re-export the modeling class; it loads lazily through the factory (so `import lerobot` stays fast).
 2. **`factory.py:get_policy_class`** — add a branch returning `MyPolicy` from a lazy import.
 3. **`factory.py:make_policy_config`** and **`factory.py:make_pre_post_processors`** — same idea, two more branches.
+4. **`templates/lerobot_modelcard_template.md` and the root `README.md`** — the template is what `push_model_to_hub` renders into the model card of every checkpoint trained with your policy: add a one-line description of your policy in the `model_name` branches, map it in `policy_docs` so cards link to your MDX guide, and optionally add an architecture image to `diagrams`. Then add your policy to the models table in the root `README.md`, under the right category, linking to your doc page.
 
 Mirror an existing policy that's structurally similar to yours; the diff is small.
 
@@ -371,6 +372,8 @@ The general expectations are in [`CONTRIBUTING.md`](https://github.com/huggingfa
 - [ ] Optional deps live behind a `[project.optional-dependencies]` extra and the `TYPE_CHECKING + require_package` guard.
 - [ ] `tests/policies/` updated; backward-compat artifact committed & policy-specific tests.
 - [ ] `src/lerobot/policies/<name>/README.md` symlinked into `docs/source/policy_<name>_README.md`; user-facing `docs/source/<name>.mdx` written and added to `_toctree.yml`.
+- [ ] `templates/lerobot_modelcard_template.md` has a description entry and a `policy_docs` link for your policy.
+- [ ] The models table in the root `README.md` lists your policy in the right category, linking to your doc page.
 - [ ] At least one reproducible benchmark eval in the policy MDX with a published checkpoint (sim benchmark, or real-robot dataset + checkpoint).
 
 The fastest way to get a clean PR is to copy the directory of the existing policy closest to yours, rename, and replace contents method by method. Don't wait until everything is polished — open a draft PR early and iterate with us; reviewers would much rather give feedback on a half-finished branch than a fully-merged one.

@@ -14,13 +14,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import traceback
 
+import draccus.wrappers.docstring as _draccus_docstring
 import pytest
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.utils.import_utils import is_package_available
 from tests.utils import DEVICE
+
+# On every `draccus.parse()`, draccus rebuilds each dataclass field's help text by
+# re-reading and re-parsing the class source (draccus.wrappers.docstring). For a config
+# as large as TrainPipelineConfig this costs ~2.5s per parse — negligible for the single
+# parse a CLI does, but tests parse configs hundreds of times. The source can't change
+# within a run, so memoize it for the whole test session.
+_draccus_docstring.get_attribute_docstring = functools.cache(_draccus_docstring.get_attribute_docstring)
 
 # Import fixture modules as plugins.
 # Fixtures that depend on optional packages are only registered when those packages are available,

@@ -87,11 +87,14 @@ DATA_DIR = "data"
 VIDEO_DIR = "videos"
 
 CHUNK_FILE_PATTERN = "chunk-{chunk_index:03d}/file-{file_index:03d}"
+IMAGE_FILE_PATTERN = "frame-{frame_index:06d}.png"
+DEPTH_FILE_PATTERN = "frame-{frame_index:06d}.tiff"
 DEFAULT_TASKS_PATH = "meta/tasks.parquet"
 DEFAULT_EPISODES_PATH = EPISODES_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_DATA_PATH = DATA_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_VIDEO_PATH = VIDEO_DIR + "/{video_key}/" + CHUNK_FILE_PATTERN + ".mp4"
-DEFAULT_IMAGE_PATH = "images/{image_key}/episode-{episode_index:06d}/frame-{frame_index:06d}.png"
+DEFAULT_IMAGE_PATH = "images/{image_key}/episode-{episode_index:06d}/" + IMAGE_FILE_PATTERN
+DEFAULT_DEPTH_PATH = "images/{image_key}/episode-{episode_index:06d}/" + DEPTH_FILE_PATTERN
 
 LEGACY_EPISODES_PATH = "meta/episodes.jsonl"
 LEGACY_EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
