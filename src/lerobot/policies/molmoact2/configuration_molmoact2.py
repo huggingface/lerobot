@@ -79,6 +79,15 @@ class MolmoAct2Config(PreTrainedConfig):
     eval_seed: int | None = None
     rtc_config: RTCConfig | None = None
 
+    # Joint frame transform for cross-calibration compatibility.
+    # Some MolmoAct2 checkpoints were trained on data using a different joint
+    # convention than the current LeRobot calibration. Set both to apply a
+    # sign/offset correction at runtime (state before model, action after).
+    # See: https://huggingface.co/docs/lerobot/backwardcomp
+    # Default is None (no transform). Both must be set together.
+    joint_signs: list[float] | None = None
+    joint_offsets: list[float] | None = None
+
     # Default is full finetuning with gradients from the action expert flowing into the VLM.
     enable_lora_vlm: bool = False
     lora_rank: int = 64
@@ -123,6 +132,10 @@ class MolmoAct2Config(PreTrainedConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if (self.joint_signs is None) != (self.joint_offsets is None):
+            raise ValueError("joint_signs and joint_offsets must both be set or both be None.")
+        if self.joint_signs is not None and len(self.joint_signs) != len(self.joint_offsets):
+            raise ValueError("joint_signs and joint_offsets must have the same length.")
         if self.action_mode not in {"continuous", "discrete", "both"}:
             raise ValueError(
                 f"Unsupported action_mode={self.action_mode!r}. "
