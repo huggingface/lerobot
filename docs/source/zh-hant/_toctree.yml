@@ -6,3 +6,9 @@
   - local: cheat-sheet
     title: 小抄（Cheat sheet）
   title: 開始使用（Get started）
+- sections:
+  - local: contributing
+    title: 貢獻至 LeRobot
+  - local: backwardcomp
+    title: 向下相容性（Backward compatibility）
+  title: "關於（About）"
