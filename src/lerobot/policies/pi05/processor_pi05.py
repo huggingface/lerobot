@@ -124,6 +124,7 @@ def make_pi05_pre_post_processors(
         enabled=config.use_relative_actions,
         exclude_joints=getattr(config, "relative_exclude_joints", []),
         action_names=getattr(config, "action_feature_names", None),
+        state_action_index_map=getattr(config, "relative_state_index_map", None),
     )
 
     steps = make_default_policy_processor_steps(config, dataset_stats)

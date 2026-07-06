@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -654,12 +655,32 @@ def _get_valid_chunk_starts(episode_indices: np.ndarray, chunk_size: int) -> np.
     return starts[valid]
 
 
+def _validate_state_action_index_map(
+    state_action_index_map: Sequence[int],
+    action_dim: int,
+    state_dim: int,
+) -> None:
+    if len(state_action_index_map) != action_dim:
+        raise ValueError(
+            "state_action_index_map length must match the relative action mask length "
+            f"({len(state_action_index_map)} != {action_dim})."
+        )
+
+    invalid_indices = [index for index in state_action_index_map if index < 0 or index >= state_dim]
+    if invalid_indices:
+        raise ValueError(
+            "state_action_index_map entries must be valid observation.state indices "
+            f"(state_dim={state_dim}, invalid={invalid_indices})."
+        )
+
+
 def _compute_relative_chunk_batch(
     start_indices: np.ndarray,
     all_actions: np.ndarray,
     all_states: np.ndarray,
     chunk_size: int,
     relative_mask: np.ndarray,
+    state_action_index_map: Sequence[int] | None = None,
 ) -> np.ndarray:
     """Vectorised relative-action computation for a batch of start indices.
 
@@ -672,7 +693,12 @@ def _compute_relative_chunk_batch(
     chunks = all_actions[frame_idx].copy()
     states = all_states[start_indices]
     mask_dim = len(relative_mask)
-    chunks[:, :, :mask_dim] -= states[:, None, :mask_dim] * relative_mask[None, None, :]
+    if state_action_index_map is None:
+        state_offsets = states[:, :mask_dim]
+    else:
+        _validate_state_action_index_map(state_action_index_map, mask_dim, all_states.shape[1])
+        state_offsets = states[:, state_action_index_map]
+    chunks[:, :, :mask_dim] -= state_offsets[:, None, :] * relative_mask[None, None, :]
     return chunks.reshape(-1, all_actions.shape[1])
 
 
@@ -681,6 +707,7 @@ def compute_relative_action_stats(
     features: dict,
     chunk_size: int,
     exclude_joints: list[str] | None = None,
+    state_action_index_map: Sequence[int] | None = None,
     num_workers: int = 0,
 ) -> dict[str, np.ndarray]:
     """Compute normalization statistics for relative actions over the full dataset.
@@ -697,6 +724,8 @@ def compute_relative_action_stats(
         chunk_size: Number of consecutive frames per action chunk.
         exclude_joints: Joint names whose dimensions should remain absolute
             (not converted to relative actions).
+        state_action_index_map: Optional observation.state index for each action
+            dimension. Defaults to the legacy state prefix behavior.
         num_workers: Number of parallel threads for computation. Values ≤1
             mean single-threaded. Numpy releases the GIL so threads give
             real parallelism here.
@@ -724,6 +753,9 @@ def compute_relative_action_stats(
     all_actions = np.array(hf_dataset[ACTION], dtype=np.float32)
     all_states = np.array(hf_dataset[OBS_STATE], dtype=np.float32)
     episode_indices = np.array(hf_dataset["episode_index"])
+    if state_action_index_map is not None:
+        state_action_index_map = list(state_action_index_map)
+        _validate_state_action_index_map(state_action_index_map, len(relative_mask), all_states.shape[1])
 
     valid_starts = _get_valid_chunk_starts(episode_indices, chunk_size)
     if len(valid_starts) == 0:
@@ -754,6 +786,7 @@ def compute_relative_action_stats(
                     all_states,
                     chunk_size,
                     relative_mask,
+                    state_action_index_map,
                 )
                 for batch in batches
             ]
@@ -762,7 +795,14 @@ def compute_relative_action_stats(
     else:
         for batch in batches:
             running_stats.update(
-                _compute_relative_chunk_batch(batch, all_actions, all_states, chunk_size, relative_mask)
+                _compute_relative_chunk_batch(
+                    batch,
+                    all_actions,
+                    all_states,
+                    chunk_size,
+                    relative_mask,
+                    state_action_index_map,
+                )
             )
 
     stats = running_stats.get_statistics()
