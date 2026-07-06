@@ -1,0 +1,8 @@
+- sections:
+  - local: index
+    title: LeRobot
+  - local: installation
+    title: 安裝（Installation）
+  - local: cheat-sheet
+    title: 小抄（Cheat sheet）
+  title: 開始使用（Get started）
