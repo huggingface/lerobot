@@ -1,0 +1,13 @@
+Processor step carrys a dual contract
+
+src/lerobot/processor/ is a pipeline of transformation steps (DataProcessorPipeline/PolicyProcessorPipeline).
+Each ProcessorStep implements two methods that must stay in sync: 
+    1. action (...) - the runtime path. Takes the actual dict/tensor flowing through at inference time and transforms it. 
+    2. transform_features(...) - the schema path. Takes a dict describing the action feature schema (PipelineFeatureType.ACTION) and mutates it to describe what the data will look like after this step runs. 
+
+# Propagated ACTION schema was inconsistent with the actual dict action()?
+
+This bug fixes and restores the 1:1 correspondence bewteen action() (runtime) and transform_features() (schema) - the same clean contract that the sibling
+MapTensorToDeltaActionDictStep already honored. The regression test in af26049e locks it in by asserting the post-transition schema exactly matches the keys action() produces. 
+
+# How can we code more policies for this or integrate more interesting algorithms?
