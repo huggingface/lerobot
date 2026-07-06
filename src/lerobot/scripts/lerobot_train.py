@@ -343,6 +343,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 "enabled": True,
                 "exclude_joints": getattr(active_cfg, "relative_exclude_joints", []),
                 "action_names": getattr(active_cfg, "action_feature_names", None),
+                "state_action_index_map": getattr(active_cfg, "relative_state_index_map", None),
             }
             postprocessor_overrides["absolute_actions_processor"] = {"enabled": True}
         processor_kwargs["preprocessor_overrides"] = preprocessor_overrides

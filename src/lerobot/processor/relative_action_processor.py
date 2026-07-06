@@ -37,13 +37,44 @@ __all__ = [
 ]
 
 
-def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Tensor:
+def _select_state_action_offsets(
+    state: Tensor, action_dim: int, state_action_index_map: Sequence[int] | None
+) -> Tensor:
+    if state_action_index_map is None:
+        return state[..., :action_dim]
+
+    if len(state_action_index_map) != action_dim:
+        raise ValueError(
+            "state_action_index_map length must match the relative action mask length "
+            f"({len(state_action_index_map)} != {action_dim})."
+        )
+
+    state_dim = state.shape[-1]
+    invalid_indices = [index for index in state_action_index_map if index < 0 or index >= state_dim]
+    if invalid_indices:
+        raise ValueError(
+            "state_action_index_map entries must be valid observation.state indices "
+            f"(state_dim={state_dim}, invalid={invalid_indices})."
+        )
+
+    index = torch.tensor(state_action_index_map, dtype=torch.long, device=state.device)
+    return state.index_select(-1, index)
+
+
+def to_relative_actions(
+    actions: Tensor,
+    state: Tensor,
+    mask: Sequence[bool],
+    state_action_index_map: Sequence[int] | None = None,
+) -> Tensor:
     """Convert absolute actions to relative: relative = action - state (for masked dims).
 
     Args:
         actions: (B, T, action_dim) or (B, action_dim).
         state: (B, state_dim). Broadcast across time dimension.
         mask: Which dims to convert. Can be shorter than action_dim.
+        state_action_index_map: Optional observation.state index for each masked
+            action dimension. Defaults to the legacy state prefix behavior.
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
     dims = mask_t.shape[0]
@@ -51,7 +82,7 @@ def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
     if state.device != actions.device or state.dtype != actions.dtype:
         state = state.to(device=actions.device, dtype=actions.dtype)
-    state_offset = state[..., :dims] * mask_t
+    state_offset = _select_state_action_offsets(state, dims, state_action_index_map) * mask_t
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)
     actions = actions.clone()
@@ -59,13 +90,20 @@ def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     return actions
 
 
-def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Tensor:
+def to_absolute_actions(
+    actions: Tensor,
+    state: Tensor,
+    mask: Sequence[bool],
+    state_action_index_map: Sequence[int] | None = None,
+) -> Tensor:
     """Convert relative actions back to absolute: absolute = relative + state (for masked dims).
 
     Args:
         actions: (B, T, action_dim) or (B, action_dim).
         state: (B, state_dim). Broadcast across time dimension.
         mask: Which dims to convert. Can be shorter than action_dim.
+        state_action_index_map: Optional observation.state index for each masked
+            action dimension. Defaults to the legacy state prefix behavior.
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
     dims = mask_t.shape[0]
@@ -73,7 +111,7 @@ def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
     if state.device != actions.device or state.dtype != actions.dtype:
         state = state.to(device=actions.device, dtype=actions.dtype)
-    state_offset = state[..., :dims] * mask_t
+    state_offset = _select_state_action_offsets(state, dims, state_action_index_map) * mask_t
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)
     actions = actions.clone()
@@ -96,11 +134,14 @@ class RelativeActionsProcessorStep(ProcessorStep):
         exclude_joints: Joint names to keep absolute (not converted to relative).
         action_names: Action dimension names from dataset metadata, used to build
             the mask from exclude_joints. If None, all dims are converted.
+        state_action_index_map: Optional observation.state index for each action
+            dimension. If unset, actions use the legacy state prefix mapping.
     """
 
     enabled: bool = False
     exclude_joints: list[str] = field(default_factory=list)
     action_names: list[str] | None = None
+    state_action_index_map: list[int] | None = None
     _last_state: torch.Tensor | None = field(default=None, init=False, repr=False)
 
     def _build_mask(self, action_dim: int) -> list[bool]:
@@ -139,7 +180,9 @@ class RelativeActionsProcessorStep(ProcessorStep):
             return new_transition
 
         mask = self._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask)
+        new_transition[TransitionKey.ACTION] = to_relative_actions(
+            action, state, mask, self.state_action_index_map
+        )
         return new_transition
 
     def get_cached_state(self) -> torch.Tensor | None:
@@ -151,6 +194,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
             "enabled": self.enabled,
             "exclude_joints": self.exclude_joints,
             "action_names": self.action_names,
+            "state_action_index_map": self.state_action_index_map,
         }
 
     def transform_features(
@@ -199,7 +243,9 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
             return new_transition
 
         mask = self.relative_step._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_absolute_actions(action, cached_state, mask)
+        new_transition[TransitionKey.ACTION] = to_absolute_actions(
+            action, cached_state, mask, self.relative_step.state_action_index_map
+        )
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
