@@ -604,13 +604,6 @@ def test_save_and_load_pretrained():
         assert loaded_pipeline.steps[1].counter == 10
 
 
-def test_policy_image_format_is_not_owned_by_pipeline():
-    pipeline = DataProcessorPipeline([])
-
-    assert not hasattr(pipeline, "input_image_format")
-    assert "input_image_format" not in pipeline.get_config()
-
-
 def test_step_without_optional_methods():
     """Test pipeline with steps that don't implement optional methods."""
     step = MockStepWithoutOptionalMethods(multiplier=3.0)

@@ -1338,16 +1338,11 @@ def make_groot_pre_post_processors(
 
 
 def _as_uint8_video_tensor_btchw(image: torch.Tensor) -> torch.Tensor:
-    """Make the time dimension explicit and adapt legacy float inference images once."""
-
     if image.ndim not in (4, 5):
         raise ValueError(
             f"Expected image tensor shape (B, C, H, W) or (B, T, C, H, W), got {tuple(image.shape)}."
         )
-    if image.dtype.is_floating_point:
-        image = (image.clamp(0, 1) * 255.0).to(torch.uint8)
-    elif image.dtype != torch.uint8:
-        image = image.to(torch.uint8)
+    image = tv_functional.to_dtype(image, torch.uint8, scale=True)
     return image.unsqueeze(1) if image.ndim == 4 else image
 
 
@@ -1852,30 +1847,16 @@ class GrootN17PackInputsStep(ProcessorStep):
             if grouped:
                 self._last_raw_state = grouped
 
+        batch_size, batch_device = infer_n1_7_batch_size_and_device(obs, transition.get(TransitionKey.ACTION))
         img_keys = self._ordered_image_keys(obs)
-        packed_cameras: _GrootN17CameraBatch = ()
         if img_keys:
-            packed_cameras = tuple(
+            obs["video"] = tuple(
                 _align_video_horizon_tensor(_as_uint8_video_tensor_btchw(obs[key]), self.video_horizon)
                 for key in img_keys
             )
-            # Keep the pinned worker tensors in their native channels-first
-            # representation. The VLM step transfers each view directly and
-            # never creates a CPU NumPy/HWC staging buffer.
-            obs["video"] = packed_cameras
-            image_keys_to_remove = [key for key in obs if key.startswith(OBS_IMAGES)]
-            if OBS_IMAGE in obs:
-                image_keys_to_remove.append(OBS_IMAGE)
-            for k in image_keys_to_remove:
-                obs.pop(k, None)
-
-        if packed_cameras:
-            batch_size = packed_cameras[0].shape[0]
-            batch_device = packed_cameras[0].device
-        else:
-            batch_size, batch_device = infer_n1_7_batch_size_and_device(
-                obs, transition.get(TransitionKey.ACTION)
-            )
+            # Preserve channels-first tensors until VLM preprocessing.
+            for key in [key for key in obs if key.startswith(OBS_IMAGES) or key == OBS_IMAGE]:
+                obs.pop(key)
         comp["language"] = prepare_n1_7_language_batch(
             comp.get(self.language_key),
             batch_size,
@@ -2140,11 +2121,12 @@ class GrootN17VLMEncodeStep(ProcessorStep):
                 )
             return sample_images
 
-        prepared_cameras: list[torch.Tensor] = []
-        for camera in cameras:
-            if target_device is not None and camera.device != target_device:
-                camera = camera.to(target_device, non_blocking=(target_device.type == "cuda"))
-            prepared_cameras.append(camera)
+        prepared_cameras = [
+            camera.to(target_device, non_blocking=(target_device.type == "cuda"))
+            if target_device is not None and camera.device != target_device
+            else camera
+            for camera in cameras
+        ]
 
         return [
             [

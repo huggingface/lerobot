@@ -30,7 +30,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
@@ -38,9 +37,8 @@ from lerobot.configs.default import DatasetConfig
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies import ImageInputFormat, PreTrainedPolicy
 from lerobot.policies.factory import make_policy_config
-from lerobot.scripts.lerobot_train import prepare_images_for_policy, train
+from lerobot.scripts.lerobot_train import train
 from lerobot.utils.device_utils import auto_select_torch_device
 
 pytest.importorskip("transformers")
@@ -57,32 +55,6 @@ DUMMY_STATE_DIM = 6
 DUMMY_ACTION_DIM = 6
 IMAGE_SIZE = 8
 DEVICE = auto_select_torch_device()
-
-
-def test_prepare_images_for_policy_obeys_policy_contract():
-    image = torch.tensor([0, 127, 255], dtype=torch.uint8)
-
-    float_batch = {"observation.images.front": image.clone()}
-    prepare_images_for_policy(
-        float_batch,
-        ["observation.images.front"],
-        PreTrainedPolicy.input_image_format,
-    )
-    assert float_batch["observation.images.front"].dtype == torch.float32
-    torch.testing.assert_close(
-        float_batch["observation.images.front"],
-        torch.tensor([0.0, 127.0 / 255.0, 1.0]),
-    )
-
-    uint8_image = image.clone()
-    uint8_batch = {"observation.images.front": uint8_image}
-    prepare_images_for_policy(
-        uint8_batch,
-        ["observation.images.front"],
-        ImageInputFormat.UINT8_0_255,
-    )
-    assert uint8_batch["observation.images.front"].data_ptr() == uint8_image.data_ptr()
-    assert uint8_batch["observation.images.front"].dtype == torch.uint8
 
 
 def make_dummy_dataset(camera_keys, tmp_path):

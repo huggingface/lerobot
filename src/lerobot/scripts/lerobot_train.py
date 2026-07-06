@@ -71,21 +71,6 @@ from lerobot.utils.utils import (
 from .lerobot_eval import eval_policy_all
 
 
-def prepare_images_for_policy(
-    batch: dict[str, Any],
-    camera_keys: list[str],
-    input_image_format: ImageInputFormat,
-) -> None:
-    """Adapt worker-produced images to the policy's raw input contract."""
-
-    if input_image_format is ImageInputFormat.UINT8_0_255:
-        return
-
-    for cam_key in camera_keys:
-        if cam_key in batch and batch[cam_key].dtype == torch.uint8:
-            batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
-
-
 def update_policy(
     train_metrics: MetricsTracker,
     policy: PreTrainedPolicy,
@@ -585,7 +570,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
-        prepare_images_for_policy(batch, dataset.meta.camera_keys, input_image_format)
+        if input_image_format is ImageInputFormat.FLOAT32_0_1:
+            for cam_key in dataset.meta.camera_keys:
+                if cam_key in batch and batch[cam_key].dtype == torch.uint8:
+                    batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
@@ -638,7 +626,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             n_eval_batches = 0
             with torch.no_grad(), accelerator.autocast():
                 for eval_batch in eval_dataloader:
-                    prepare_images_for_policy(eval_batch, dataset.meta.camera_keys, input_image_format)
+                    if input_image_format is ImageInputFormat.FLOAT32_0_1:
+                        for cam_key in dataset.meta.camera_keys:
+                            if cam_key in eval_batch and eval_batch[cam_key].dtype == torch.uint8:
+                                eval_batch[cam_key] = eval_batch[cam_key].to(dtype=torch.float32) / 255.0
                     eval_batch = preprocessor(eval_batch)
                     loss, _ = policy.forward(eval_batch)
                     eval_loss_sum += loss.item()

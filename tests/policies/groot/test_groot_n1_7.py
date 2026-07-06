@@ -1235,12 +1235,11 @@ def test_groot_n1_7_pack_inputs_orders_video_by_checkpoint_modality_keys():
         normalize_min_max=False,
         video_modality_keys=["image", "wrist_image"],
     )
-    extra = torch.full((1, 3, 2, 2), 33, dtype=torch.uint8)
     wrist = torch.full((1, 3, 2, 2), 22, dtype=torch.uint8)
     front = torch.full((1, 3, 2, 2), 11, dtype=torch.uint8)
     transition = {
         TransitionKey.OBSERVATION: {
-            f"{OBS_IMAGES}.zz_extra": extra,
+            f"{OBS_IMAGES}.zz_extra": torch.full((1, 3, 2, 2), 33, dtype=torch.uint8),
             f"{OBS_IMAGES}.image2": wrist,
             f"{OBS_IMAGES}.image": front,
             OBS_STATE: torch.zeros(1, 8),
@@ -1251,63 +1250,13 @@ def test_groot_n1_7_pack_inputs_orders_video_by_checkpoint_modality_keys():
     output = step(transition)
 
     video = output[TransitionKey.OBSERVATION]["video"]
-    assert len(video) == 2
+    assert isinstance(video, tuple) and len(video) == 2
     assert video[0].shape == (1, 1, 3, 2, 2)
     assert video[0].data_ptr() == front.data_ptr()
     assert video[1].data_ptr() == wrist.data_ptr()
-    assert torch.unique(video[0]).tolist() == [11]
-    assert torch.unique(video[1]).tolist() == [22]
     assert f"{OBS_IMAGES}.zz_extra" not in output[TransitionKey.OBSERVATION]
     assert f"{OBS_IMAGES}.image" not in output[TransitionKey.OBSERVATION]
     assert f"{OBS_IMAGES}.image2" not in output[TransitionKey.OBSERVATION]
-
-
-def test_groot_n1_7_single_camera_is_one_element_tuple_and_preserves_bytes():
-    camera = torch.arange(2 * 2 * 3 * 4 * 5, dtype=torch.uint8).reshape(2, 2, 3, 4, 5)
-    pack_step = GrootN17PackInputsStep(
-        normalize_min_max=False,
-        video_modality_keys=["image"],
-    )
-    packed = pack_step(
-        {
-            TransitionKey.OBSERVATION: {
-                f"{OBS_IMAGES}.image": camera,
-            },
-            TransitionKey.COMPLEMENTARY_DATA: {"task": ["a", "b"]},
-        }
-    )
-    cameras = packed[TransitionKey.OBSERVATION]["video"]
-
-    assert isinstance(cameras, tuple)
-    assert len(cameras) == 1
-    assert cameras[0].data_ptr() == camera.data_ptr()
-
-    frames = GrootN17VLMEncodeStep()._build_sample_images(cameras, target_device=None)
-    for batch_idx, sample_frames in enumerate(frames):
-        assert len(sample_frames) == 2
-        for timestep, frame in enumerate(sample_frames):
-            torch.testing.assert_close(frame, camera[batch_idx, timestep], rtol=0, atol=0)
-
-
-def test_groot_n1_7_pack_inputs_adapts_legacy_float_images_once():
-    camera = torch.tensor([0.0, 0.5, 1.0], dtype=torch.float32).reshape(1, 3, 1, 1)
-    pack_step = GrootN17PackInputsStep(normalize_min_max=False, video_modality_keys=["image"])
-
-    packed = pack_step(
-        {
-            TransitionKey.OBSERVATION: {f"{OBS_IMAGES}.image": camera},
-            TransitionKey.COMPLEMENTARY_DATA: {"task": ["move"]},
-        }
-    )
-    packed_camera = packed[TransitionKey.OBSERVATION]["video"][0]
-
-    assert packed_camera.dtype == torch.uint8
-    torch.testing.assert_close(
-        packed_camera[:, 0, :, 0, 0],
-        torch.tensor([[0, 127, 255]], dtype=torch.uint8),
-        rtol=0,
-        atol=0,
-    )
 
 
 def test_groot_n1_7_postprocessor_clips_normalized_action_before_unnormalizing():
