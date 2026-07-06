@@ -242,6 +242,25 @@ python src/lerobot/scripts/augment_dataset_quantile_stats.py \
   --repo-id=your_dataset
 ```
 
+The script accepts the following options:
+
+| Option | Description |
+| ------ | ----------- |
+| `--repo-id` | (required) Dataset repository ID on the Hugging Face Hub (e.g. `lerobot/pusht`). |
+| `--root` | Local dataset root directory. When omitted, the dataset is downloaded from the Hub. |
+| `--overwrite` | Recompute and overwrite quantile statistics even if they already exist. Use this to correct datasets whose stored quantiles are inaccurate. |
+| `--skip-images` | Skip image/video features and preserve their existing statistics. This avoids expensive video decoding when only action/state quantiles need to be (re)computed. |
+
+For example, to recompute only the action/state quantiles of a dataset that
+already contains (possibly inaccurate) quantile statistics:
+
+```bash
+python src/lerobot/scripts/augment_dataset_quantile_stats.py \
+  --repo-id=your_dataset \
+  --overwrite \
+  --skip-images
+```
+
 Alternatively, train MolmoAct2 with mean/std normalization:
 
 ```bash

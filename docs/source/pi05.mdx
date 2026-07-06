@@ -92,7 +92,26 @@ If your dataset is not converted with `quantiles`, you can convert it with the f
 
 ```bash
 python src/lerobot/scripts/augment_dataset_quantile_stats.py \
+    --repo-id=your_dataset
+```
+
+The script accepts the following options:
+
+| Option | Description |
+| ------ | ----------- |
+| `--repo-id` | (required) Dataset repository ID on the Hugging Face Hub (e.g. `lerobot/pusht`). |
+| `--root` | Local dataset root directory. When omitted, the dataset is downloaded from the Hub. |
+| `--overwrite` | Recompute and overwrite quantile statistics even if they already exist. Use this to correct datasets whose stored quantiles are inaccurate. |
+| `--skip-images` | Skip image/video features and preserve their existing statistics. This avoids expensive video decoding when only action/state quantiles need to be (re)computed. |
+
+To recompute only the action/state quantiles of a dataset that already contains
+(possibly inaccurate) quantile statistics:
+
+```bash
+python src/lerobot/scripts/augment_dataset_quantile_stats.py \
     --repo-id=your_dataset \
+    --overwrite \
+    --skip-images
 ```
 
 Or train pi05 with this normalization mapping: `--policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'`
