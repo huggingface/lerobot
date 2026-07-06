@@ -1337,16 +1337,18 @@ def make_groot_pre_post_processors(
 # GR00T specific processor steps
 
 
-def _as_video_tensor_btchw(image: torch.Tensor) -> torch.Tensor:
-    """Preserve a LeRobot image tensor while making its time dimension explicit."""
+def _as_uint8_video_tensor_btchw(image: torch.Tensor) -> torch.Tensor:
+    """Make the time dimension explicit and adapt legacy float inference images once."""
 
-    if image.ndim == 4:
-        return image.unsqueeze(1)
-    if image.ndim == 5:
-        return image
-    raise ValueError(
-        f"Expected image tensor shape (B, C, H, W) or (B, T, C, H, W), got {tuple(image.shape)}."
-    )
+    if image.ndim not in (4, 5):
+        raise ValueError(
+            f"Expected image tensor shape (B, C, H, W) or (B, T, C, H, W), got {tuple(image.shape)}."
+        )
+    if image.dtype.is_floating_point:
+        image = (image.clamp(0, 1) * 255.0).to(torch.uint8)
+    elif image.dtype != torch.uint8:
+        image = image.to(torch.uint8)
+    return image.unsqueeze(1) if image.ndim == 4 else image
 
 
 def _align_video_horizon_tensor(video: torch.Tensor, horizon: int | None) -> torch.Tensor:
@@ -1363,17 +1365,8 @@ def _align_video_horizon_tensor(video: torch.Tensor, horizon: int | None) -> tor
     return torch.cat([pad, video], dim=1)
 
 
-def _uint8_image_tensor(image: torch.Tensor) -> torch.Tensor:
-    if image.dtype.is_floating_point:
-        return (image.clamp(0, 1) * 255.0).to(torch.uint8)
-    if image.dtype != torch.uint8:
-        return image.to(torch.uint8)
-    return image
-
-
 def _uint8_image_numpy_hwc(image: torch.Tensor) -> np.ndarray:
-    image = _uint8_image_tensor(image).detach().cpu()
-    return image.permute(1, 2, 0).contiguous().numpy()
+    return image.detach().cpu().permute(1, 2, 0).contiguous().numpy()
 
 
 def _build_n1_7_processor(model_name: str = GROOT_N1_7_BACKBONE_MODEL) -> ProcessorMixin:
@@ -1863,7 +1856,7 @@ class GrootN17PackInputsStep(ProcessorStep):
         packed_cameras: _GrootN17CameraBatch = ()
         if img_keys:
             packed_cameras = tuple(
-                _align_video_horizon_tensor(_as_video_tensor_btchw(obs[key]), self.video_horizon)
+                _align_video_horizon_tensor(_as_uint8_video_tensor_btchw(obs[key]), self.video_horizon)
                 for key in img_keys
             )
             # Keep the pinned worker tensors in their native channels-first
@@ -2151,9 +2144,7 @@ class GrootN17VLMEncodeStep(ProcessorStep):
         for camera in cameras:
             if target_device is not None and camera.device != target_device:
                 camera = camera.to(target_device, non_blocking=(target_device.type == "cuda"))
-            # Float observations from direct/inference callers remain supported,
-            # but conversion happens after transfer. Training uint8 is a no-op.
-            prepared_cameras.append(_uint8_image_tensor(camera))
+            prepared_cameras.append(camera)
 
         return [
             [

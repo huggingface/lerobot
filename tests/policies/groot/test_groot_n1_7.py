@@ -1289,6 +1289,27 @@ def test_groot_n1_7_single_camera_is_one_element_tuple_and_preserves_bytes():
             torch.testing.assert_close(frame, camera[batch_idx, timestep], rtol=0, atol=0)
 
 
+def test_groot_n1_7_pack_inputs_adapts_legacy_float_images_once():
+    camera = torch.tensor([0.0, 0.5, 1.0], dtype=torch.float32).reshape(1, 3, 1, 1)
+    pack_step = GrootN17PackInputsStep(normalize_min_max=False, video_modality_keys=["image"])
+
+    packed = pack_step(
+        {
+            TransitionKey.OBSERVATION: {f"{OBS_IMAGES}.image": camera},
+            TransitionKey.COMPLEMENTARY_DATA: {"task": ["move"]},
+        }
+    )
+    packed_camera = packed[TransitionKey.OBSERVATION]["video"][0]
+
+    assert packed_camera.dtype == torch.uint8
+    torch.testing.assert_close(
+        packed_camera[:, 0, :, 0, 0],
+        torch.tensor([[0, 127, 255]], dtype=torch.uint8),
+        rtol=0,
+        atol=0,
+    )
+
+
 def test_groot_n1_7_postprocessor_clips_normalized_action_before_unnormalizing():
     step = GrootActionUnpackUnnormalizeStep(
         env_action_dim=3,
