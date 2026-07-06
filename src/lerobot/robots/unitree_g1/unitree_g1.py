@@ -508,6 +508,13 @@ class UnitreeG1(Robot):
             for key in REMOTE_KEYS:
                 if key in action:
                     self.controller_input[key] = action[key]
+            # Forward the whole-body SMPL reference (pico_headset teleop) to the
+            # controller. Carried as flat smpl.{i} floats so it passes untouched
+            # through the standard action pipeline; SonicWholeBodyController
+            # reassembles it into the 720-vec encoder window.
+            for key in action:
+                if key.startswith("smpl."):
+                    self.controller_input[key] = action[key]
 
     @property
     def is_calibrated(self) -> bool:

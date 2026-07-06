@@ -35,6 +35,7 @@ import time
 
 import numpy as np
 from motion_loader import SmplMotion
+from smpl_stream import DEFAULT_SMPL_HOST, DEFAULT_SMPL_PORT, SmplStream
 
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
 from lerobot.robots.unitree_g1.controllers.sonic_pipeline import (
@@ -90,7 +91,28 @@ def main():
     parser.add_argument(
         "--no-loop", action="store_true", help="With --motion-file, play once instead of looping"
     )
+    parser.add_argument(
+        "--smpl-stream",
+        action="store_true",
+        help="Use the live rt/smpl headset stream as the reference motion "
+        "(SONIC whole-body, encode_mode=2), instead of a --motion-file clip.",
+    )
+    parser.add_argument(
+        "--smpl-host",
+        type=str,
+        default=DEFAULT_SMPL_HOST,
+        help=f"Host publishing rt/smpl (default: {DEFAULT_SMPL_HOST})",
+    )
+    parser.add_argument(
+        "--smpl-port",
+        type=int,
+        default=DEFAULT_SMPL_PORT,
+        help=f"Port for the rt/smpl stream (default: {DEFAULT_SMPL_PORT})",
+    )
     args = parser.parse_args()
+
+    if args.smpl_stream and args.motion_file:
+        parser.error("--smpl-stream and --motion-file are mutually exclusive")
 
     # Surface native crashes (onnxruntime / mujoco) with a real traceback, and
     # avoid losing buffered diagnostics if the process dies mid-loop.
@@ -128,7 +150,14 @@ def main():
     ms = runtime.ms
 
     motion = None
-    if args.motion_file:
+    if args.smpl_stream:
+        motion = SmplStream(host=args.smpl_host, port=args.smpl_port)
+        controller.smpl_motion = motion  # lets 'M' key toggle streaming
+        controller.encode_mode = 2  # start in SONIC whole-body SMPL imitation
+        print(f"\n[Motion] live SMPL stream (rt/smpl @ {args.smpl_host}:{args.smpl_port})")
+        print("  Source: pico_manager_thread_server.py --manager on the publisher host.")
+        print("  encode_mode=2. Press 'M' to toggle SMPL stream <-> locomotion at runtime.")
+    elif args.motion_file:
         motion = SmplMotion(args.motion_file, loop=not args.no_loop)
         controller.smpl_motion = motion  # lets 'M' key toggle playback
         controller.encode_mode = 2  # start in SONIC whole-body SMPL imitation
@@ -283,6 +312,8 @@ def main():
             gc.enable()
             if args.log_csv:
                 print(f"\n[Log] Saved to {log_path}")
+            if motion is not None and hasattr(motion, "close"):
+                motion.close()
             runtime.shutdown()
             print("\nStopping...")
             if robot.is_connected:

@@ -17,7 +17,9 @@
 """SONIC full-body controller for Unitree G1."""
 
 import logging
+import os
 
+import numpy as np
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
@@ -41,6 +43,28 @@ from lerobot.robots.unitree_g1.controllers.sonic_pipeline import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Length of the flattened SONIC whole-body reference window
+# (10 frames x 24 SMPL joints x 3 coords). Matches smpl_joints_10frame_step1.
+SMPL_ACTION_DIM = 720
+# Prefix for per-element SMPL floats carried on the teleop action dict.
+SMPL_ACTION_PREFIX = "smpl."
+
+
+def _extract_smpl_from_action(action: dict | None) -> np.ndarray | None:
+    """Reassemble a (720,) SMPL window from ``smpl.{i}`` action keys, or None.
+
+    The pico_headset teleoperator emits the whole-body reference as flat floats so
+    it flows unchanged through the standard lerobot action pipeline.
+    """
+    if not action or f"{SMPL_ACTION_PREFIX}0" not in action:
+        return None
+    arr = np.fromiter(
+        (float(action.get(f"{SMPL_ACTION_PREFIX}{i}", 0.0)) for i in range(SMPL_ACTION_DIM)),
+        dtype=np.float32,
+        count=SMPL_ACTION_DIM,
+    )
+    return arr
 
 
 class SonicRuntime:
@@ -132,20 +156,60 @@ class SonicWholeBodyController:
         self.kd = self._runtime.kd
         self.controller = self._runtime.controller
         self.ms = self._runtime.ms
+
+        # Optional: subscribe directly to the rt/smpl headset stream so full-body
+        # teleop works with ANY teleoperator (e.g. --teleop.type=unitree_g1 for the
+        # estop/joystick) before the dedicated pico_headset teleop exists. Enable
+        # with SONIC_SMPL_STREAM=1; override endpoint via SONIC_SMPL_HOST/PORT.
+        self._smpl_stream = None
+        if os.environ.get("SONIC_SMPL_STREAM", "0") not in ("0", "", "false", "False"):
+            self._init_smpl_stream()
+
         logger.info(
-            "SONIC ready: %s (default mode: %s)",
+            "SONIC ready: %s (default mode: %s, smpl_stream=%s)",
             MOTION_SETS[0][0],
             LM(self.ms.mode).name,
+            self._smpl_stream is not None,
         )
+
+    def _init_smpl_stream(self) -> None:
+        # Lazy import so the zmq dependency is only required when streaming is on.
+        from lerobot.robots.unitree_g1.smpl_stream import (
+            DEFAULT_SMPL_HOST,
+            DEFAULT_SMPL_PORT,
+            SmplStream,
+        )
+
+        host = os.environ.get("SONIC_SMPL_HOST", DEFAULT_SMPL_HOST)
+        port = int(os.environ.get("SONIC_SMPL_PORT", DEFAULT_SMPL_PORT))
+        self._smpl_stream = SmplStream(host=host, port=port)
+        logger.info("SONIC subscribed to rt/smpl @ tcp://%s:%d", host, port)
 
     def run_step(self, action: dict, lowstate) -> dict:
         if lowstate is None:
             return {}
         obs = lowstate_to_obs(lowstate)
+
+        # Prefer SMPL delivered via the teleop action (pico_headset). Fall back to a
+        # direct rt/smpl subscription when SONIC_SMPL_STREAM is enabled.
+        smpl = _extract_smpl_from_action(action)
+        if smpl is None and self._smpl_stream is not None:
+            window = self._smpl_stream.step()
+            if self._smpl_stream.has_data:
+                smpl = window
+
+        if smpl is not None:
+            # Full-body whole-body tracking: SMPL drives the reference, not joystick.
+            self.controller.encode_mode = 2
+            self.controller.smpl_joints_10frame_step1 = smpl
+            return self._runtime.tick(obs, debug=False, use_joystick=False)
+
         return self._runtime.tick(obs, debug=False)
 
     def reset(self):
         self._runtime.reset()
 
     def shutdown(self):
+        if self._smpl_stream is not None:
+            self._smpl_stream.close()
         self._runtime.shutdown()
