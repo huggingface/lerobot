@@ -174,6 +174,11 @@ def _to_mujoco(a):
     return a[MUJOCO_TO_ISAACLAB]
 
 
+def mujoco_to_isaaclab(q: np.ndarray) -> np.ndarray:
+    """Reorder 29-DOF vector from robot/MuJoCo order to SONIC Isaac Lab order."""
+    return np.asarray(q, dtype=np.float32)[MUJOCO_TO_ISAACLAB]
+
+
 def _to_runtime(a):
     r = np.zeros(29, np.float32)
     r[MUJOCO_TO_ISAACLAB] = a
@@ -983,6 +988,33 @@ class PlannerController(StandingEncoderDecoder):
             self.first_motion = True
             self.playing = True
             self.delta_heading = 0.0
+
+    def set_manual_g1_reference(
+        self,
+        q_isaac: np.ndarray,
+        body_quat: np.ndarray | None = None,
+    ) -> None:
+        """Feed encoder mode 0 from an external 29-DOF pose (Isaac Lab joint order).
+
+        Holds the pose static: all 10 encoder frames read the same reference (playing=False).
+        """
+        q = np.asarray(q_isaac, dtype=np.float64).reshape(29)
+        bq = (
+            np.asarray(body_quat, dtype=np.float64).reshape(4)
+            if body_quat is not None
+            else np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
+        )
+        with self.motion_lock:
+            self.encode_mode = 0
+            self.playing = False
+            self.motion_timesteps = 1
+            self.ref_cursor = 0
+            self.motion_joint_positions[0] = q
+            self.motion_joint_velocities[0] = 0.0
+            self.motion_body_quats[0] = bq
+            self.motion_body_pos[0] = np.array([0.0, 0.0, DEFAULT_HEIGHT], dtype=np.float64)
+            self.init_ref_quat = bq.copy()
+            self.reinit_heading = True
 
     def blend_new_motion(self, new_motion, gen_frame):
         """Blend like C++ CurrentFrameAdvancement: 8-frame cross-fade, then copy tail."""

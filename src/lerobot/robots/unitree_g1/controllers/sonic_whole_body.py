@@ -18,6 +18,7 @@
 
 import logging
 
+import numpy as np
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
@@ -36,9 +37,11 @@ from lerobot.robots.unitree_g1.controllers.sonic_pipeline import (
     clamp_mode_params,
     compute_kp_kd,
     lowstate_to_obs,
+    mujoco_to_isaaclab,
     process_joystick,
     should_replan_request,
 )
+from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +75,7 @@ class SonicRuntime:
         self.step = 0
         self.replan_timer = 0.0
         self.last_ms = _snapshot_ms(self.ms)
+        self.manual_g1_reference = False
 
     @property
     def pipeline(self):
@@ -82,13 +86,15 @@ class SonicRuntime:
             self.step += 1
             return {}
 
-        if use_joystick:
+        manual = self.manual_g1_reference
+        if use_joystick and not manual:
             process_joystick(obs, self.ms, self.controller)
-        clamp_mode_params(self.ms)
+        if not manual:
+            clamp_mode_params(self.ms)
 
-        if self.step > 0:
+        if not manual and self.step > 0:
             self.replan_timer += CONTROL_DT
-        if should_replan_request(self.ms, self.last_ms, self.replan_timer, self.step):
+        if not manual and should_replan_request(self.ms, self.last_ms, self.replan_timer, self.step):
             self.planner.request_replan(self.controller.ref_cursor, self.ms)
             self.replan_timer = 0.0
             self.ms.needs_replan = False
@@ -99,11 +105,12 @@ class SonicRuntime:
             debug = self.step % DEBUG_PRINT_EVERY == 0
         action = self.controller.step(obs, update_encoder=do_enc, debug=debug)
 
-        result = self.planner.try_get_new_motion()
-        if result:
-            self.controller.blend_new_motion(*result)
+        if not manual:
+            result = self.planner.try_get_new_motion()
+            if result:
+                self.controller.blend_new_motion(*result)
+            self.controller.advance_cursor()
 
-        self.controller.advance_cursor()
         self.step += 1
         return action
 
@@ -111,6 +118,7 @@ class SonicRuntime:
         self.ms = MovementState()
         self.controller.reinit_heading = True
         self.controller.playing = True
+        self.manual_g1_reference = False
         self.step = 0
         self.replan_timer = 0.0
         self.last_ms = _snapshot_ms(self.ms)
@@ -142,10 +150,36 @@ class SonicWholeBodyController:
         if lowstate is None:
             return {}
         obs = lowstate_to_obs(lowstate)
-        return self._runtime.tick(obs, debug=False)
+        q_ref = _joint_reference_from_action(action)
+        if q_ref is not None:
+            self._runtime.manual_g1_reference = True
+            body_quat = np.array(
+                [
+                    obs.get("imu.quat.w", 1.0),
+                    obs.get("imu.quat.x", 0.0),
+                    obs.get("imu.quat.y", 0.0),
+                    obs.get("imu.quat.z", 0.0),
+                ],
+                dtype=np.float64,
+            )
+            self.controller.set_manual_g1_reference(mujoco_to_isaaclab(q_ref), body_quat=body_quat)
+        return self._runtime.tick(obs, debug=False, use_joystick=not self._runtime.manual_g1_reference)
 
     def reset(self):
         self._runtime.reset()
 
     def shutdown(self):
         self._runtime.shutdown()
+
+
+def _joint_reference_from_action(action: dict) -> np.ndarray | None:
+    """Return a full 29-DOF reference if every joint .q key is present."""
+    if not action:
+        return None
+    q = np.zeros(29, dtype=np.float32)
+    for motor in G1_29_JointIndex:
+        key = f"{motor.name}.q"
+        if key not in action:
+            return None
+        q[motor.value] = float(action[key])
+    return q

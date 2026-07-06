@@ -104,6 +104,7 @@ from lerobot.teleoperators import (  # noqa: F401
     rebot_102_leader,
     so_leader,
     unitree_g1,
+    g1_sonic_slider as g1_sonic_slider_teleop,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep

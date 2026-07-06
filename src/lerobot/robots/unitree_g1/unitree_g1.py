@@ -508,6 +508,10 @@ class UnitreeG1(Robot):
             for key in REMOTE_KEYS:
                 if key in action:
                     self.controller_input[key] = action[key]
+            for motor in G1_29_JointIndex:
+                key = f"{motor.name}.q"
+                if key in action:
+                    self.controller_input[key] = action[key]
 
     @property
     def is_calibrated(self) -> bool:
