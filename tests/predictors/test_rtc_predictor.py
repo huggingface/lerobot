@@ -50,6 +50,7 @@ def _engine_with_predictor(predictor, camera="overall") -> RTCInferenceEngine:
     eng = object.__new__(RTCInferenceEngine)
     eng._predictor = predictor
     eng._predictor_camera = camera
+    eng._predictor_mode = "image_shift"
     return eng
 
 
