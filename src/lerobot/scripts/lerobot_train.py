@@ -82,6 +82,7 @@ def update_policy(
     lr_scheduler=None,
     lock=None,
     sample_weighter=None,
+    log_metrics: bool = True,
 ) -> tuple[MetricsTracker, dict | None]:
     """
     Performs a single training step to update the policy's weights.
@@ -99,6 +100,9 @@ def update_policy(
         lr_scheduler: An optional learning rate scheduler.
         lock: An optional lock for thread-safe optimizer updates.
         sample_weighter: Optional SampleWeighter instance for per-sample loss weighting.
+        log_metrics: When True, read loss/grad_norm/update_s off the GPU via `.item()` (a CUDA sync).
+            On non-logging steps set False so the step stays fully async — letting the next batch's
+            dataloading and enqueue overlap GPU compute instead of stalling on a per-step sync.
 
     Returns:
         A tuple containing:
@@ -166,12 +170,24 @@ def update_policy(
     if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
-    train_metrics.loss = loss.item()
-    train_metrics.grad_norm = grad_norm.item()
     train_metrics.lr = optimizer.param_groups[0]["lr"]
-    train_metrics.update_s = time.perf_counter() - start_time
     if torch.cuda.is_available():
         train_metrics.gpu_mem_gb = torch.cuda.max_memory_allocated() / (1024**3)
+    # `loss.item()` / `grad_norm.item()` each block on a CUDA sync. Only pay that on logging steps;
+    # on the other steps the readouts are never consumed, so skipping them keeps the step async and
+    # lets CPU-side dataloading/enqueue overlap GPU compute. update_s is only accurate under that
+    # sync, so it too is recorded on logging steps only.
+    if log_metrics:
+        train_metrics.loss = loss.item()
+        train_metrics.grad_norm = grad_norm.item()
+        train_metrics.update_s = time.perf_counter() - start_time
+        # Policies may hand back loss components as detached tensors to keep the forward async on
+        # non-logging steps (e.g. pi052). Materialize them to python floats here, on logging steps only,
+        # so the per-step CUDA sync is paid 1-in-log_freq rather than every step.
+        if output_dict:
+            output_dict = {
+                k: (v.item() if isinstance(v, torch.Tensor) else v) for k, v in output_dict.items()
+            }
     return train_metrics, output_dict
 
 
@@ -642,6 +658,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
+        # This update produces step number `step + 1`; only sync metrics off the GPU when that step
+        # will be logged (mirrors the is_log_step gate below). Everything else stays async.
+        log_metrics = cfg.log_freq > 0 and (step + 1) % cfg.log_freq == 0
+
         train_tracker, output_dict = update_policy(
             train_tracker,
             policy,
@@ -651,6 +671,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
             sample_weighter=sample_weighter,
+            log_metrics=log_metrics,
         )
 
         # EMA update: pull one step of the live weights into the shadow.

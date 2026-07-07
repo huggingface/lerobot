@@ -1150,9 +1150,11 @@ class PI052Policy(PreTrainedPolicy):
         ):
             return self._pi05_flow_forward(batch, reduction=reduction)
 
-        run_flow = self.config.flow_loss_weight > 0 and (
-            predict_actions_t is None or bool(predict_actions_t.any().item())
-        )
+        # Whether any sample in the batch wants actions predicted. This is a data-dependent branch, so
+        # it needs a host-side bool (one CUDA sync); compute it once and reuse for both flow and FAST
+        # instead of syncing twice.
+        predict_any = predict_actions_t is None or bool(predict_actions_t.any().item())
+        run_flow = self.config.flow_loss_weight > 0 and predict_any
         run_text = self.config.text_loss_weight > 0 and text_labels is not None
 
         loss_dict: dict[str, Any] = {}
@@ -1162,7 +1164,7 @@ class PI052Policy(PreTrainedPolicy):
         run_fast = (
             getattr(self.config, "enable_fast_action_loss", False)
             and self.config.fast_action_loss_weight > 0
-            and (predict_actions_t is None or bool(predict_actions_t.any().item()))
+            and predict_any
         )
         action_tokens = action_mask = action_code_mask = None
         if run_fast:
@@ -1200,13 +1202,13 @@ class PI052Policy(PreTrainedPolicy):
                 action_code_mask=action_code_mask if run_fast else None,
                 predict_actions_t=predict_actions_t,
             )
-            loss_dict["flow_loss"] = float(flow_loss.detach().item())
+            loss_dict["flow_loss"] = flow_loss.detach()
             total = self.config.flow_loss_weight * flow_loss
             if text_loss is not None:
-                loss_dict["text_loss"] = float(text_loss.detach().item())
+                loss_dict["text_loss"] = text_loss.detach()
                 total = total + self.config.text_loss_weight * text_loss
             if fast_loss is not None:
-                loss_dict["fast_action_loss"] = float(fast_loss.detach().item())
+                loss_dict["fast_action_loss"] = fast_loss.detach()
                 total = total + self.config.fast_action_loss_weight * fast_loss
         elif run_text or run_fast:
             text_loss, fast_loss = self._compute_text_and_fast_loss(
@@ -1218,11 +1220,11 @@ class PI052Policy(PreTrainedPolicy):
                 predict_actions_t=predict_actions_t,
             )
             if text_loss is not None:
-                loss_dict["text_loss"] = float(text_loss.detach().item())
+                loss_dict["text_loss"] = text_loss.detach()
                 weighted = self.config.text_loss_weight * text_loss
                 total = weighted if total is None else total + weighted
             if fast_loss is not None:
-                loss_dict["fast_action_loss"] = float(fast_loss.detach().item())
+                loss_dict["fast_action_loss"] = fast_loss.detach()
                 weighted = self.config.fast_action_loss_weight * fast_loss
                 total = weighted if total is None else total + weighted
 
@@ -1235,7 +1237,9 @@ class PI052Policy(PreTrainedPolicy):
                 "nothing to train."
             )
 
-        loss_dict["loss"] = float(total.detach().item()) if total.dim() == 0 else float("nan")
+        # Keep loss components as detached tensors (no CUDA sync here); the training loop converts
+        # them to python floats only on logging steps (see update_policy's log_metrics gate).
+        loss_dict["loss"] = total.detach() if total.dim() == 0 else float("nan")
         if reduction == "none":
             return total.expand(batch[OBS_LANGUAGE_TOKENS].shape[0]), loss_dict
         return total, loss_dict
