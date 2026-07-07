@@ -22,11 +22,11 @@ import numpy as np
 import torch
 from datasets import load_dataset
 
-from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig
+from lerobot.configs import DEFAULT_DEPTH_UNIT, DEPTH_METER_UNIT, DepthEncoderConfig
 from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
-from .depth_utils import dequantize_depth
+from .depth_utils import MM_PER_METRE, dequantize_depth
 from .feature_utils import get_delta_indices
 from .io_utils import item_to_torch
 from .utils import (
@@ -310,12 +310,20 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
+        self.meta.rescale_depth_stats(self._depth_output_unit)
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
 
         self._depth_encoder_configs: dict[str, DepthEncoderConfig] = {
             vid_key: DepthEncoderConfig.from_video_info(self.meta.features[vid_key].get("info"))
             for vid_key in self.meta.depth_keys
+        }
+
+        # Input unit of each depth feature stored as raw images (dequantized separately from videos).
+        self._image_depth_units: dict[str, str | None] = {
+            key: (self.meta.features[key].get("info") or {}).get("depth_unit")
+            for key in self.meta.depth_keys
+            if key in self.meta.image_keys
         }
 
         self.delta_timestamps = None
@@ -347,6 +355,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     @property
     def fps(self):
         return self.meta.fps
+
+    @property
+    def depth_output_unit(self) -> str:
+        """Physical unit (``"m"`` or ``"mm"``) depth maps are returned in on read."""
+        return self._depth_output_unit
 
     @staticmethod
     def _iter_random_indices(
@@ -529,6 +542,15 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         result = item.copy()
         for update in updates:
             result.update(update)
+
+        # Convert raw-image depth features to the output unit (video depth is already converted).
+        for key, stored_unit in self._image_depth_units.items():
+            if key in result and stored_unit is not None and stored_unit != self._depth_output_unit:
+                result[key] = (
+                    result[key] * MM_PER_METRE
+                    if stored_unit == DEPTH_METER_UNIT
+                    else result[key] / MM_PER_METRE
+                )
 
         result["task"] = self.meta.tasks.iloc[item["task_index"]].name
 

@@ -50,8 +50,9 @@ def mock_rerun(monkeypatch):
             return self
 
     class DummyDepthImage:
-        def __init__(self, arr, colormap=None):
+        def __init__(self, arr, meter=None, colormap=None):
             self.arr = arr
+            self.meter = meter
             self.colormap = colormap
 
     def dummy_log(key, obj=None, **kwargs):
