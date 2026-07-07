@@ -19,6 +19,8 @@ and forward/inference tests (added with the modeling milestone) are guarded by
 ``importorskip`` and ``@require_cuda``.
 """
 
+import pytest
+
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.factory import make_policy_config
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -74,3 +76,20 @@ def test_optimizer_and_scheduler_presets():
     scheduler = config.get_scheduler_preset()
     assert optimizer.lr == config.optimizer_lr
     assert scheduler.num_warmup_steps == config.scheduler_warmup_steps
+
+
+def test_policy_class_registration():
+    """The factory resolves ``lingbot_vla_v2`` to the LeRobot policy wrapper.
+
+    Importing the modeling module requires ``transformers`` (Qwen3-VL); the full
+    forward/select_action round-trip is exercised in the weight-loading test.
+    """
+    pytest.importorskip("transformers")
+    from lerobot.policies.factory import get_policy_class
+
+    cls = get_policy_class("lingbot_vla_v2")
+    assert cls.__name__ == "LingbotVLAV2Policy"
+    assert cls.name == "lingbot_vla_v2"
+    assert cls.config_class.__name__ == "LingbotVLAV2Config"
+    for method in ("forward", "select_action", "predict_action_chunk", "reset", "get_optim_params"):
+        assert hasattr(cls, method), f"missing {method}"
