@@ -51,7 +51,9 @@ def hw_to_dataset_features(
 
     This function takes a dictionary describing hardware outputs (like joint states
     or camera image shapes) and formats it into the standard LeRobot feature
-    specification.
+    specification. Single-channel cameras (shape ``(H, W, 1)``) are flagged as depth
+    maps via ``info["is_depth_map"] = True``; three-channel cameras ``(H, W, 3)`` are
+    treated as RGB.
 
     Args:
         hw_features (dict): Dictionary mapping feature names to their type (float for
@@ -61,7 +63,7 @@ def hw_to_dataset_features(
         use_video (bool): If True, image features are marked as "video", otherwise "image".
 
     Returns:
-        dict: A LeRobot features dictionary.
+        dict: A LeRobot features dictionary. Depth cameras carry ``info["is_depth_map"] = True``.
     """
     features = {}
     joint_fts = {
@@ -69,6 +71,7 @@ def hw_to_dataset_features(
         for key, ftype in hw_features.items()
         if ftype is float or (isinstance(ftype, PolicyFeature) and ftype.type != FeatureType.VISUAL)
     }
+    # TODO(CarolinePascal): we should not rely on the shape to determine if a feature is a camera !
     cam_fts = {key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)}
 
     if joint_fts and prefix == ACTION:
@@ -86,11 +89,19 @@ def hw_to_dataset_features(
         }
 
     for key, shape in cam_fts.items():
-        features[f"{prefix}.images.{key}"] = {
-            "dtype": "video" if use_video else "image",
-            "shape": shape,
-            "names": ["height", "width", "channels"],
-        }
+        dtype = "video" if use_video else "image"
+        if len(shape) == 3 and shape[2] in (1, 3):
+            features[f"{prefix}.images.{key}"] = {
+                "dtype": dtype,
+                "shape": shape,
+                "names": ["height", "width", "channels"],
+                "info": {"is_depth_map": shape[2] == 1},
+            }
+        else:
+            raise ValueError(
+                f"Camera feature '{key}' has shape {shape}. "
+                f"Expected a 3-tuple (H, W, C), e.g. (480, 640, 3) for RGB or (480, 640, 1) for depth."
+            )
 
     _validate_feature_names(features)
     return features
@@ -149,11 +160,11 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
             type = FeatureType.VISUAL
             if len(shape) != 3:
                 raise ValueError(f"Number of dimensions of {key} != 3 (shape={shape})")
-
-            names = ft["names"]
-            # Backward compatibility for "channel" which is an error introduced in LeRobotDataset v2.0 for ported datasets.
-            if names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
-                shape = (shape[2], shape[0], shape[1])
+            else:
+                names = ft["names"]
+                # Backward compatibility for "channel" which is an error introduced in LeRobotDataset v2.0 for ported datasets.
+                if names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
+                    shape = (shape[2], shape[0], shape[1])
         elif key == OBS_ENV_STATE:
             type = FeatureType.ENV
         elif key.startswith(OBS_STR):
