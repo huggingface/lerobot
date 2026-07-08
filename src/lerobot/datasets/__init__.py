@@ -61,6 +61,12 @@ def make_dataset(*args, **kwargs):
     return _make_dataset(*args, **kwargs)
 
 
+def make_train_eval_datasets(*args, **kwargs):
+    from .factory import make_train_eval_datasets as _make_train_eval_datasets
+
+    return _make_train_eval_datasets(*args, **kwargs)
+
+
 def resolve_delta_timestamps(*args, **kwargs):
     from .factory import resolve_delta_timestamps as _resolve_delta_timestamps
 
@@ -101,6 +107,7 @@ __all__ = [
     "get_feature_stats",
     "load_episodes",
     "make_dataset",
+    "make_train_eval_datasets",
     "merge_datasets",
     "modify_features",
     "modify_tasks",

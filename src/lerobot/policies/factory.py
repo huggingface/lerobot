@@ -47,8 +47,11 @@ from lerobot.utils.feature_utils import dataset_to_policy_features
 from .act.configuration_act import ACTConfig
 from .diffusion.configuration_diffusion import DiffusionConfig
 from .eo1.configuration_eo1 import EO1Config
+from .evo1.configuration_evo1 import Evo1Config
+from .fastwam.configuration_fastwam import FastWAMConfig
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
 from .groot.configuration_groot import GrootConfig
+from .lingbot_va.configuration_lingbot_va import LingBotVAConfig
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from .pi0.configuration_pi0 import PI0Config
@@ -190,7 +193,7 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
     Args:
         name: The name of the policy. Supported names are "tdmpc", "diffusion", "act",
             "multi_task_dit", "vqbet", "pi0", "pi05", "gaussian_actor", "smolvla", "wall_x",
-            "molmoact2".
+            "molmoact2", "eo1", "evo1".
     Returns:
         The policy class corresponding to the given name.
 
@@ -265,6 +268,18 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .vla_jepa.modeling_vla_jepa import VLAJEPAPolicy
 
         return VLAJEPAPolicy
+    elif name == "lingbot_va":
+        from .lingbot_va.modeling_lingbot_va import LingBotVAPolicy
+
+        return LingBotVAPolicy
+    elif name == "fastwam":
+        from .fastwam.modeling_fastwam import FastWAMPolicy
+
+        return FastWAMPolicy
+    elif name == "evo1":
+        from .evo1.modeling_evo1 import Evo1Policy
+
+        return Evo1Policy
     else:
         try:
             return _get_policy_cls_from_policy_name(name=name)
@@ -281,8 +296,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
 
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
-                     "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05",
-                     "pi052", "gaussian_actor", "smolvla", "wall_x", "molmoact2".
+                     "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05", "pi052",
+                     "gaussian_actor", "smolvla", "wall_x", "molmoact2", "eo1", "evo1".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -325,6 +340,12 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return MolmoAct2Config(**kwargs)
     elif policy_type == "vla_jepa":
         return VLAJEPAConfig(**kwargs)
+    elif policy_type == "lingbot_va":
+        return LingBotVAConfig(**kwargs)
+    elif policy_type == "fastwam":
+        return FastWAMConfig(**kwargs)
+    elif policy_type == "evo1":
+        return Evo1Config(**kwargs)
     else:
         try:
             config_cls = PreTrainedConfig.get_choice_class(policy_type)
@@ -408,26 +429,23 @@ def make_pre_post_processors(
         return preprocessor, postprocessor
 
     if pretrained_path:
-        # TODO(Steven): Temporary patch, implement correctly the processors for Gr00t
         if isinstance(policy_cfg, GrootConfig):
-            # GROOT handles normalization in groot_pack_inputs_v3 step
-            # Need to override both stats AND normalize_min_max since saved config might be empty
-            preprocessor_overrides = {}
-            postprocessor_overrides = {}
-            preprocessor_overrides["groot_pack_inputs_v3"] = {
-                "stats": kwargs.get("dataset_stats"),
-                "normalize_min_max": True,
-            }
+            from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
 
-            # Also ensure postprocessing slices to env action dim and unnormalizes with dataset stats
-            env_action_dim = policy_cfg.output_features[ACTION].shape[0]
-            postprocessor_overrides["groot_action_unpack_unnormalize_v1"] = {
-                "stats": kwargs.get("dataset_stats"),
-                "normalize_min_max": True,
-                "env_action_dim": env_action_dim,
-            }
-            kwargs["preprocessor_overrides"] = preprocessor_overrides
-            kwargs["postprocessor_overrides"] = postprocessor_overrides
+            return make_groot_pre_post_processors_from_pretrained(
+                config=policy_cfg,
+                pretrained_path=pretrained_path,
+                dataset_stats=kwargs.get("dataset_stats"),
+                dataset_meta=kwargs.get("dataset_meta"),
+                preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+                postprocessor_overrides=kwargs.get("postprocessor_overrides"),
+                preprocessor_config_filename=kwargs.get(
+                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+                ),
+                postprocessor_config_filename=kwargs.get(
+                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                ),
+            )
 
         preprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
@@ -450,6 +468,14 @@ def make_pre_post_processors(
             revision=pretrained_revision,
         )
         _reconnect_relative_absolute_steps(preprocessor, postprocessor)
+        if isinstance(policy_cfg, Evo1Config):
+            from .evo1.processor_evo1 import reconcile_evo1_processors
+
+            preprocessor, postprocessor = reconcile_evo1_processors(
+                policy_cfg,
+                preprocessor,
+                postprocessor,
+            )
         return preprocessor, postprocessor
 
     # Create a new processor based on policy type
@@ -549,6 +575,7 @@ def make_pre_post_processors(
         processors = make_groot_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+            dataset_meta=kwargs.get("dataset_meta"),
         )
 
     elif isinstance(policy_cfg, XVLAConfig):
@@ -576,6 +603,13 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
+    elif isinstance(policy_cfg, Evo1Config):
+        from .evo1.processor_evo1 import make_evo1_pre_post_processors
+
+        processors = make_evo1_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
 
     elif isinstance(policy_cfg, MolmoAct2Config):
         from .molmoact2.processor_molmoact2 import make_molmoact2_pre_post_processors
@@ -590,6 +624,22 @@ def make_pre_post_processors(
         from .vla_jepa.processor_vla_jepa import make_vla_jepa_pre_post_processors
 
         processors = make_vla_jepa_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, LingBotVAConfig):
+        from .lingbot_va.processor_lingbot_va import make_lingbot_va_pre_post_processors
+
+        processors = make_lingbot_va_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, FastWAMConfig):
+        from .fastwam.processor_fastwam import make_fastwam_pre_post_processors
+
+        processors = make_fastwam_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
@@ -683,6 +733,7 @@ def make_policy(
         set_dataset_feature_metadata = getattr(cfg, "set_dataset_feature_metadata", None)
         if callable(set_dataset_feature_metadata):
             set_dataset_feature_metadata(ds_meta.features)
+        cfg._runtime_dataset_meta = ds_meta
 
     kwargs["config"] = cfg
 

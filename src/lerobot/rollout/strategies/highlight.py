@@ -18,17 +18,14 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import os
-import sys
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event as ThreadingEvent, Lock
 
-from lerobot.common.control_utils import is_headless
 from lerobot.datasets import VideoEncodingManager
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
-from lerobot.utils.import_utils import _pynput_available, require_package
+from lerobot.utils.keyboard_input import create_key_listener
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
@@ -36,19 +33,6 @@ from ..configs import HighlightStrategyConfig
 from ..context import RolloutContext
 from ..ring_buffer import RolloutRingBuffer
 from .core import RolloutStrategy, safe_push_to_hub, send_next_action
-
-PYNPUT_AVAILABLE = _pynput_available
-keyboard = None
-if PYNPUT_AVAILABLE:
-    try:
-        if ("DISPLAY" not in os.environ) and ("linux" in sys.platform):
-            logging.info("No DISPLAY set. Skipping pynput import.")
-            PYNPUT_AVAILABLE = False
-        else:
-            from pynput import keyboard
-    except Exception as e:
-        PYNPUT_AVAILABLE = False
-        logging.info(f"Could not import pynput: {e}")
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +56,6 @@ class HighlightStrategy(RolloutStrategy):
 
     def __init__(self, config: HighlightStrategyConfig):
         super().__init__(config)
-        require_package("pynput", extra="pynput-dep")
         self._ring: RolloutRingBuffer | None = None
         self._listener = None
         self._save_requested = ThreadingEvent()
@@ -234,30 +217,27 @@ class HighlightStrategy(RolloutStrategy):
         logger.info("Highlight strategy teardown complete")
 
     def _setup_keyboard(self, shutdown_event: ThreadingEvent) -> None:
-        """Set up keyboard listener for save and push keys."""
-        if is_headless():
-            logger.warning("Headless environment — highlight keys unavailable")
-            return
+        """Set up a keyboard listener for the save and push keys.
 
-        try:
-            save_key = self.config.save_key
-            push_key = self.config.push_key
+        Backend selection (pynput on X11 / trusted-macOS / Windows, a terminal reader on
+        Wayland / headless TTY) is delegated to :func:`create_key_listener`.
+        """
+        save_key = self.config.save_key
+        push_key = self.config.push_key
 
-            def on_press(key):
-                with contextlib.suppress(Exception):
-                    if hasattr(key, "char") and key.char == save_key:
-                        self._save_requested.set()
-                    elif hasattr(key, "char") and key.char == push_key:
-                        self._push_requested.set()
-                    elif key == keyboard.Key.esc:
-                        self._save_requested.clear()
-                        shutdown_event.set()
+        def dispatch(name: str) -> None:
+            """Apply a resolved key name to the highlight events."""
+            if name == save_key:
+                self._save_requested.set()
+            elif name == push_key:
+                self._push_requested.set()
+            elif name == "esc":
+                self._save_requested.clear()
+                shutdown_event.set()
 
-            self._listener = keyboard.Listener(on_press=on_press)
-            self._listener.start()
-            logger.info("Keyboard listener started (save='%s', push='%s', ESC=stop)", save_key, push_key)
-        except ImportError:
-            logger.warning("pynput not available — keyboard listener disabled")
+        self._listener = create_key_listener(
+            dispatch, controls_help=f"save='{save_key}', push='{push_key}', ESC=stop"
+        )
 
     def _background_push(self, dataset, cfg) -> None:
         """Queue a Hub push on the single-worker executor."""
