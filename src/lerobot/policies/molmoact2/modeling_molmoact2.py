@@ -497,6 +497,56 @@ def _weighted_per_example(
     return loss_sum * float(batch_size) / global_weight_sum
 
 
+def _cat_action_contexts(cond_ctx, uncond_ctx):
+    """Concatenate two ActionExpertContext objects along the batch dimension."""
+    from .molmoact2_hf_model.modeling_molmoact2 import ActionExpertContext
+
+    kv_contexts = []
+    for (k_c, v_c), (k_u, v_u) in zip(cond_ctx.kv_contexts, uncond_ctx.kv_contexts, strict=True):
+        kv_contexts.append((torch.cat([k_c, k_u], dim=0), torch.cat([v_c, v_u], dim=0)))
+
+    cross_mask = None
+    if cond_ctx.cross_mask is not None and uncond_ctx.cross_mask is not None:
+        cross_mask = torch.cat([cond_ctx.cross_mask, uncond_ctx.cross_mask], dim=0)
+
+    self_mask = None
+    if cond_ctx.self_mask is not None and uncond_ctx.self_mask is not None:
+        self_mask = torch.cat([cond_ctx.self_mask, uncond_ctx.self_mask], dim=0)
+    elif cond_ctx.self_mask is not None:
+        self_mask = cond_ctx.self_mask.repeat(2, *([1] * (cond_ctx.self_mask.ndim - 1)))
+
+    valid_action = None
+    if cond_ctx.valid_action is not None and uncond_ctx.valid_action is not None:
+        valid_action = torch.cat([cond_ctx.valid_action, uncond_ctx.valid_action], dim=0)
+
+    rope_cache = cond_ctx.rope_cache
+
+    return ActionExpertContext(
+        kv_contexts=kv_contexts,
+        cross_mask=cross_mask,
+        self_mask=self_mask,
+        valid_action=valid_action,
+        rope_cache=rope_cache,
+    )
+
+
+def _clone_modulation_with_conditioning(modulation, batched_conditioning):
+    """Create a modulation with doubled batch for batched CFG forward."""
+    from .molmoact2_hf_model.modeling_molmoact2 import ActionExpertStepModulation
+
+    batched_block_modulations = []
+    for block_mod in modulation.block_modulations:
+        batched_block_modulations.append(tuple(torch.cat([m, m], dim=0) for m in block_mod))
+
+    batched_final_modulation = tuple(torch.cat([m, m], dim=0) for m in modulation.final_modulation)
+
+    return ActionExpertStepModulation(
+        conditioning=batched_conditioning,
+        block_modulations=batched_block_modulations,
+        final_modulation=batched_final_modulation,
+    )
+
+
 class MolmoAct2Policy(PreTrainedPolicy):
     """MolmoAct2 policy wrapping the vendored HF model for LeRobot.
 
@@ -1622,6 +1672,183 @@ class MolmoAct2Policy(PreTrainedPolicy):
         metrics["loss"] = loss.detach().float().mean().item()
         return loss, metrics
 
+    def _cfg_enabled_for_batch(self, batch: dict[str, Tensor]) -> bool:
+        """Check if CFG should be used for this batch."""
+        return self.config.cfg_beta > 1.0 and batch.get("uncond_input_ids") is not None
+
+    def _uncond_model_inputs(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        """Extract unconditional model inputs from the batch (prepared by processor)."""
+        compute_dtype = _torch_dtype(self.config.model_dtype)
+        uncond_inputs: dict[str, Tensor] = {}
+        for key in _MODEL_INPUT_KEYS:
+            uncond_key = f"uncond_{key}"
+            value = batch.get(uncond_key)
+            if value is not None:
+                uncond_inputs[key] = value.to(dtype=compute_dtype) if value.is_floating_point() else value
+        return uncond_inputs
+
+    def _generate_actions_with_cfg(
+        self,
+        *,
+        cond_model_inputs: dict[str, Tensor],
+        uncond_model_inputs: dict[str, Tensor],
+        action_dim_is_pad: Tensor | None,
+        num_steps: int | None,
+        generator: torch.Generator | None,
+    ) -> Tensor:
+        """CFG inference: dual VLM forward + batched flow denoising.
+
+        Caching strategy:
+        1. VLM backbone runs once per branch (cond + uncond) — KV states cached.
+        2. Action expert context prepared once per branch from cached KV states.
+        3. Modulation cache (timestep embeddings) shared across branches.
+        4. Denoising loop: cond + uncond batched into a single action expert
+           forward per step (2x batch dim), then split and blended.
+        """
+        backbone = self._backbone()
+        action_expert = self._action_expert()
+
+        # === VLM prefill (cached — runs once per branch) ===
+
+        cond_outputs = backbone(
+            **cond_model_inputs,
+            use_cache=True,
+            output_attentions=False,
+            output_hidden_states=False,
+        )
+        cond_encoder_kv_states = backbone._extract_kv_states(cond_outputs.past_key_values)
+        cond_encoder_attention_mask = self._encoder_attention_mask_for_action_expert(
+            input_ids=cond_model_inputs.get("input_ids"),
+            attention_mask=cond_model_inputs.get("attention_mask"),
+        )
+        cond_depth_gate, cond_depth_mask = backbone._depth_gate_from_condition(
+            input_ids=cond_model_inputs.get("input_ids"),
+            encoder_attention_mask=cond_encoder_attention_mask,
+            layer_kv_states=cond_encoder_kv_states,
+        )
+        cond_encoder_kv_states = backbone._apply_depth_gate_to_layer_kv_states(
+            cond_encoder_kv_states, cond_depth_mask, cond_depth_gate
+        )
+
+        uncond_outputs = backbone(
+            **uncond_model_inputs,
+            use_cache=True,
+            output_attentions=False,
+            output_hidden_states=False,
+        )
+        uncond_encoder_kv_states = backbone._extract_kv_states(uncond_outputs.past_key_values)
+        uncond_encoder_attention_mask = self._encoder_attention_mask_for_action_expert(
+            input_ids=uncond_model_inputs.get("input_ids"),
+            attention_mask=uncond_model_inputs.get("attention_mask"),
+        )
+        uncond_depth_gate, uncond_depth_mask = backbone._depth_gate_from_condition(
+            input_ids=uncond_model_inputs.get("input_ids"),
+            encoder_attention_mask=uncond_encoder_attention_mask,
+            layer_kv_states=uncond_encoder_kv_states,
+        )
+        uncond_encoder_kv_states = backbone._apply_depth_gate_to_layer_kv_states(
+            uncond_encoder_kv_states, uncond_depth_mask, uncond_depth_gate
+        )
+
+        # === Setup flow denoising ===
+
+        steps = int(num_steps or backbone.config.flow_matching_num_steps)
+        if steps <= 0:
+            raise ValueError(f"num_steps must be >= 1, got {steps}.")
+        source_tensor = cond_encoder_kv_states[0][0]
+        batch_size = int(source_tensor.shape[0])
+        device = source_tensor.device
+        trajectory = torch.randn(
+            batch_size,
+            self._generation_action_horizon(),
+            int(backbone.config.max_action_dim),
+            device=device,
+            dtype=torch.float32,
+            generator=generator,
+        )
+        if self.config.mask_action_dim_padding:
+            trajectory = _mask_action_dim_tensor(trajectory, action_dim_is_pad)
+
+        # === Prepare action contexts (cached — reused across all denoising steps) ===
+
+        cond_action_context = action_expert.prepare_context(
+            encoder_kv_states=cond_encoder_kv_states,
+            encoder_attention_mask=cond_encoder_attention_mask,
+            state_embeddings=None,
+            batch_size=batch_size,
+            seq_len=trajectory.shape[1],
+            device=device,
+            dtype=trajectory.dtype,
+        )
+        uncond_action_context = action_expert.prepare_context(
+            encoder_kv_states=uncond_encoder_kv_states,
+            encoder_attention_mask=uncond_encoder_attention_mask,
+            state_embeddings=None,
+            batch_size=batch_size,
+            seq_len=trajectory.shape[1],
+            device=device,
+            dtype=trajectory.dtype,
+        )
+
+        # Modulation cache shared between branches (timestep is prompt-independent)
+        flow_timesteps = [
+            torch.full((batch_size,), idx / steps, device=device, dtype=trajectory.dtype)
+            for idx in range(steps)
+        ]
+        modulation_cache = action_expert.get_or_prepare_modulation_cache(
+            flow_timesteps,
+            cache_key=(steps, batch_size, device, trajectory.dtype),
+        )
+
+        # === Batched CFG denoising loop ===
+        # Instead of two sequential action expert forwards per step, we batch
+        # cond + uncond on the batch dimension for a single forward (2x batch).
+        # This maximizes GPU utilization (same pattern as PI05).
+
+        dt = 1.0 / steps
+        mask_enabled = self.config.mask_action_dim_padding
+        cfg_beta = self.config.cfg_beta
+        batched_action_dim_is_pad = (
+            torch.cat([action_dim_is_pad, action_dim_is_pad], dim=0)
+            if action_dim_is_pad is not None
+            else None
+        )
+
+        for idx in range(steps):
+            modulation = modulation_cache[idx]
+
+            # Duplicate trajectory and conditioning for batched forward
+            batched_trajectory = torch.cat([trajectory, trajectory], dim=0)
+            batched_conditioning = torch.cat([modulation.conditioning, modulation.conditioning], dim=0)
+
+            # Build batched context by concatenating cond + uncond contexts
+            batched_context = _cat_action_contexts(cond_action_context, uncond_action_context)
+
+            # Build batched modulation with doubled conditioning
+            batched_modulation = _clone_modulation_with_conditioning(modulation, batched_conditioning)
+
+            # Single batched forward through action expert
+            v_all = action_expert.forward_with_context(
+                batched_trajectory,
+                batched_conditioning,
+                context=batched_context,
+                modulation=batched_modulation,
+            )
+            if mask_enabled:
+                v_all = _mask_action_dim_tensor(v_all, batched_action_dim_is_pad)
+
+            # Split: first half = cond, second half = uncond
+            v_cond, v_uncond = v_all.chunk(2, dim=0)
+
+            # CFG interpolation: v = v_uncond + beta * (v_cond - v_uncond)
+            velocity = v_uncond + cfg_beta * (v_cond - v_uncond)
+
+            trajectory = trajectory + dt * velocity
+            if mask_enabled:
+                trajectory = _mask_action_dim_tensor(trajectory, action_dim_is_pad)
+
+        return trajectory
+
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
         """Generate an action chunk via continuous flow matching or discrete AR decoding."""
@@ -1656,6 +1883,15 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 actions = self._generate_discrete_actions_from_inputs(
                     model_inputs=model_inputs,
                     action_dim=action_dim,
+                )
+            elif self._cfg_enabled_for_batch(batch):
+                uncond_model_inputs = self._uncond_model_inputs(batch)
+                actions = self._generate_actions_with_cfg(
+                    cond_model_inputs=model_inputs,
+                    uncond_model_inputs=uncond_model_inputs,
+                    action_dim_is_pad=batch.get("action_dim_is_pad"),
+                    num_steps=num_steps,
+                    generator=generator,
                 )
             elif self._rtc_enabled():
                 actions = self._generate_actions_from_inputs_with_rtc(

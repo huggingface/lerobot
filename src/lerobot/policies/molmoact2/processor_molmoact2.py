@@ -754,6 +754,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     env_action_dim: int | None = None
     # RECAP: advantage indicator for inference (e.g. "Advantage: positive. ")
     advantage_prefix: str = ""
+    # CFG scale for inference. >1.0 builds unconditional inputs for guidance.
+    cfg_beta: float = 1.0
 
     def __post_init__(self) -> None:
         require_package("transformers", extra="molmoact2")
@@ -1062,6 +1064,33 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         if build_action_labels:
             inputs["labels"] = self._build_labels(inputs["input_ids"], inputs["attention_mask"])
 
+        # CFG: build unconditional inputs (no advantage) for inference-time guidance.
+        # Only produced when cfg_beta > 1.0 and we have advantage conditioning.
+        if self.cfg_beta > 1.0 and action is None and any(advantages):
+            uncond_prompt_texts: list[str] = []
+            for batch_idx in range(batch_size):
+                images = images_by_example[batch_idx]
+                discrete_state = _build_discrete_state_string(state_np[batch_idx], self.num_state_tokens)
+                uncond_prompt = _build_robot_text(
+                    task=tasks[batch_idx],
+                    discrete_state_string=discrete_state,
+                    setup_type=self.setup_type,
+                    control_mode=self.control_mode,
+                    add_setup_tokens=self.add_setup_tokens,
+                    add_control_tokens=self.add_control_tokens,
+                    num_images=len(images),
+                    advantage="",
+                )
+                uncond_prompt_texts.append(uncond_prompt)
+            uncond_inputs = self.processor(
+                text=uncond_prompt_texts, images=flat_images, return_tensors="pt", padding=True
+            )
+            complementary["uncond_input_ids"] = uncond_inputs["input_ids"]
+            complementary["uncond_attention_mask"] = uncond_inputs["attention_mask"]
+            for key in ("pixel_values", "image_token_pooling", "image_grids", "image_num_crops"):
+                if key in uncond_inputs:
+                    complementary[f"uncond_{key}"] = uncond_inputs[key]
+
         complementary.update(dict(inputs))
         complementary["action_dim_is_pad"] = action_dim_is_pad
         if action_horizon_is_pad is not None:
@@ -1274,6 +1303,7 @@ def make_molmoact2_pre_post_processors(
                 max_action_dim=config.expected_max_action_dim,
                 env_action_dim=env_action_dim,
                 advantage_prefix=config.advantage_prefix,
+                cfg_beta=config.cfg_beta,
             ),
             DeviceProcessorStep(device=config.device),
         ]
