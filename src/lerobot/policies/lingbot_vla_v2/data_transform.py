@@ -70,6 +70,12 @@ class Normalizer:
             if stat.shape[0] != value.shape[0]:
                 stat = stat[: value.shape[0]]
 
+        # When the value is a torch tensor (e.g. a batched, on-device training
+        # item), coerce the numpy stat onto the same device/dtype so the arithmetic
+        # stays in torch instead of triggering a cuda->numpy conversion.
+        if isinstance(value, torch.Tensor):
+            stat = torch.as_tensor(stat, dtype=value.dtype, device=value.device)
+
         return stat
 
     def normalize(self, data: Dict[str, np.ndarray]) -> Dict[str, torch.Tensor]:

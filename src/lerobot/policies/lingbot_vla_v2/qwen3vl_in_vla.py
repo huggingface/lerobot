@@ -252,7 +252,8 @@ class Qwen3VLModel(_Qwen3VLModel):
 
 
 class Qwen3VLForConditionalGeneration(_Qwen3VLForConditionalGeneration, GenerationMixin):
-    _tied_weights_keys = ["lm_head.weight"]
+    # transformers>=5.5 expects a dict {tied_key: source_key} (was a list in 4.57).
+    _tied_weights_keys = {"lm_head.weight": "model.language_model.embed_tokens.weight"}
     config_class = Qwen3VLConfig
     _no_split_modules = ["Qwen3VLTextDecoderLayer", "Qwen3VLVisionBlock"]
 
@@ -323,7 +324,7 @@ def forward_without_grid_thw(
 
 
 def apply_lingbot_qwen3_vl_patch():
-    logger.info_rank0("apply Qwen3-VL Lingbot patch")
+    logger.info("apply Qwen3-VL Lingbot patch")
     hf_qwen3vl.Qwen3VLPreTrainedModel = Qwen3VLPreTrainedModel
     hf_qwen3vl.Qwen3VLTextDecoderLayer = Qwen3VLTextDecoderLayer
     hf_qwen3vl.Qwen3VLTextModel = Qwen3VLTextModel
