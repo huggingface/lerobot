@@ -195,27 +195,43 @@ class Qwen2FusedExperts(nn.Module):
         return self._robby_moe_workspace
 
     def forward(self, module, num_experts, routing_weights, selected_experts, hidden_states):
-        """Run fused_moe_forward with FSDP2-managed weights.
+        """Run the fused experts with FSDP2-managed weights.
 
-        Must be called via self.experts(...) so FSDP2 unshards params first.
-        Prefers the vendor triton kernel when available; otherwise falls back to a
-        mathematically-equivalent eager SwiGLU MoE (needed on eager / non-triton runs).
+        Must be called via self.experts(...) so FSDP2 unshards params first. Backend order:
+        the optional vendor triton kernel, then an in-tree ``@triton.jit`` grouped-GEMM
+        (:mod:`.triton_moe`, transitively available with CUDA torch), then a pure-torch
+        grouped-by-expert eager fallback (:meth:`_eager_forward`). All three are numerically
+        equivalent up to floating-point / tensor-core reassociation.
         """
+        # 1) vendor triton kernel, if the external package is installed.
         try:
             from lingbotvla.ops.fused_moe import fused_moe_forward
-        except ImportError:
-            return self._eager_forward(routing_weights, selected_experts, hidden_states)
 
-        return fused_moe_forward(
-            module=module,
-            num_experts=num_experts,
-            routing_weights=routing_weights,
-            selected_experts=selected_experts,
-            hidden_states=hidden_states,
-            fc1_1_weight=self.gate_proj,
-            fc1_2_weight=self.up_proj,
-            fc2_weight=self.down_proj,
-        )
+            return fused_moe_forward(
+                module=module,
+                num_experts=num_experts,
+                routing_weights=routing_weights,
+                selected_experts=selected_experts,
+                hidden_states=hidden_states,
+                fc1_1_weight=self.gate_proj,
+                fc1_2_weight=self.up_proj,
+                fc2_weight=self.down_proj,
+            )
+        except ImportError:
+            pass
+
+        # 2) in-tree triton grouped-GEMM (no extra dependency); guarded, CUDA + inference only.
+        if hidden_states.is_cuda and not torch.is_grad_enabled():
+            from .triton_moe import triton_grouped_moe, triton_moe_available
+
+            if triton_moe_available():
+                try:
+                    return triton_grouped_moe(self, routing_weights, selected_experts, hidden_states)
+                except Exception as exc:  # noqa: BLE001 - any kernel failure -> safe fallback
+                    logger.warning_once(f"triton grouped-MoE failed ({exc}); using eager fallback")
+
+        # 3) pure-torch grouped-by-expert eager fallback (CPU / no triton / training).
+        return self._eager_forward(routing_weights, selected_experts, hidden_states)
 
     def _eager_forward(self, routing_weights, selected_experts, hidden_states):
         """Grouped-by-EXPERT eager MoE over the stacked (num_experts, ...) weights.
