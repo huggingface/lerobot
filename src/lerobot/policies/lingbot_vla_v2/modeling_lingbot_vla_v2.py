@@ -27,6 +27,7 @@ from .utils import (
     create_sinusoidal_pos_embedding,
     make_att_2d_masks,
     our_eager_attention_forward,
+    our_sdpa_attention_forward,
     prefix_query_segments,
     prefix_query_token_spans,
     sample_beta,
@@ -442,6 +443,8 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         if self.config.attention_implementation == "flex_cached":
             print("=====Using Flex Cached (prebuilt BlockMask) Attn=====")
             return flex_attention_forward
+        if self.config.attention_implementation == "sdpa":
+            return our_sdpa_attention_forward
         if self.config.attention_implementation == "eager":
             print("=====Using Eager Attn=====")
             return our_eager_attention_forward
