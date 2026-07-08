@@ -98,6 +98,8 @@ class DistributionalVFConfig(RewardModelConfig):
         return CosineDecayWithWarmupSchedulerConfig(
             num_warmup_steps=500,
             num_decay_steps=50000,
+            peak_lr=3e-4,
+            decay_lr=1e-6,
         )
 
     def validate_features(self) -> None:
