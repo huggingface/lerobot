@@ -1,0 +1,46 @@
+# NexArm inference config (Jetson) - sentry recording, no display
+# Usage: python -m lerobot.scripts.lerobot_rollout --config_path=examples/nexarm/jetson_inference.yaml \
+#        --policy.path=outputs/train/nexarm_act/checkpoints/last/pretrained_model
+
+robot:
+  type: nexarm_follower
+  port: /dev/ttyCH341USB0
+  baudrate: 1000000
+  cameras:
+    wrist:
+      type: opencv
+      index_or_path: /dev/video0
+      width: 640
+      height: 480
+      fps: 30
+      fourcc: YUYV
+    front:
+      type: opencv
+      index_or_path: /dev/video2
+      width: 640
+      height: 480
+      fps: 30
+      fourcc: MJPG
+
+strategy:
+  type: sentry
+  upload_every_n_episodes: 999
+
+dataset:
+  repo_id: local/rollout_nexarm
+  single_task: "pick up the object"
+  push_to_hub: false
+  streaming_encoding: true
+  vcodec: h264_nvenc
+
+inference:
+  type: sync
+
+fps: 30
+duration: 60
+interpolation_multiplier: 2
+device: cuda
+task: "pick up the object"
+display_data: false
+play_sounds: false
+return_to_initial_position: false

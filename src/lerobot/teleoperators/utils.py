@@ -111,6 +111,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .bi_rebot_102_leader import BiRebot102Leader
 
         return BiRebot102Leader(config)
+    elif config.type == "nexarm_leader":
+        from .nexarm_leader import NexArmLeader
+
+        return NexArmLeader(config)
     else:
         try:
             return cast("Teleoperator", make_device_from_device_class(config))

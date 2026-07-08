@@ -1,0 +1,237 @@
+# NexArm
+
+NexArm is a 6-DOF desktop robot arm built on an ESP32 + AT32F421 co-processor
+architecture, using HX-30HM serial bus servos with 12-bit precision (0–4095) and
+1 Mbps communication. It is designed for imitation learning research and supports
+leader-follower teleoperation, dataset recording, and policy inference with LeRobot.
+
+## Hardware Overview
+
+### Components
+
+| Component | Description |
+|-----------|-------------|
+| **Leader arm** | ESP32 dev board directly driving 6 HX-30HM servos. Used for teleoperation — the operator freely drags this arm. |
+| **Follower arm** | ESP32 dev board + AT32F421 co-processor driving 6 HX-30HM servos. Mirrors the leader or executes policy outputs. |
+| **Servos** | HX-30HM high-performance serial bus servos — 12-bit resolution (0–4095), 1 Mbps baud rate, high torque and fast response. |
+| **Cameras** | 2 USB cameras — `front` (workspace overview) and `wrist` (end-effector close-up), 640×480 @ 30 fps. |
+
+### Joint Layout
+
+| Joint ID | Name | Description |
+|----------|------|-------------|
+| 1 | `shoulder_pan` | Base rotation |
+| 2 | `shoulder_lift` | Mirrored between leader and follower — handled automatically by calibration |
+| 3 | `elbow_flex` | Elbow joint |
+| 4 | `wrist_flex` | Wrist pitch |
+| 5 | `wrist_roll` | Wrist rotation |
+| 6 | `gripper` | Gripper open/close, range remapped via calibration |
+
+### Registered Device Types
+
+| Type | Class | Role |
+|------|-------|------|
+| `nexarm_follower` | `NexArmFollower` | Robot (follower arm) |
+| `nexarm_leader` | `NexArmLeader` | Teleoperator (leader arm) |
+
+### Communication Protocol
+
+NexArm uses a custom CommProtocol over USB serial:
+
+```
+Frame format: [0xFF][0xFF][ID][LEN][CMD][ARGS...][CHECKSUM]
+```
+
+| Command | Function | Direction |
+|---------|----------|-----------|
+| CMD 68 | Enter/exit LeRobot bridge mode (follower only) | Host → Follower |
+| CMD 96 | Read 6 servo positions (reply: 12 bytes) | Host → Device → Host |
+| CMD 97 | Write 6 servo positions (12 bytes, no reply) | Host → Device |
+| CMD 98 | Enable/disable torque | Host → Device |
+
+## Install LeRobot 🤗
+
+Follow the [installation guide](./installation) to set up LeRobot from source, then
+install the NexArm extras:
+
+```bash
+pip install -e ".[nexarm]"
+```
+
+This installs `pyserial`, which is required for USB serial communication with the
+ESP32 boards.
+
+## Find the USB Ports
+
+Connect each arm to your computer via USB, then run:
+
+```bash
+python -m lerobot.scripts.lerobot_find_port
+```
+
+Run it once per arm (plug in only one at a time if you cannot tell them apart).
+Note down the port for each:
+
+| Platform | Leader example | Follower example |
+|----------|----------------|------------------|
+| Windows | `COM18` | `COM19` |
+| Linux | `/dev/ttyUSB0` | `/dev/ttyUSB1` |
+| macOS | `/dev/tty.usbserial-110` | `/dev/tty.usbserial-120` |
+
+## Find Cameras
+
+Identify which camera index corresponds to `front` and `wrist`:
+
+```bash
+python -m lerobot.scripts.lerobot_find_cameras --camera-type opencv
+```
+
+Review the captured images to identify each camera. Camera indices can change when
+USB devices are replugged — re-scan after any hardware changes.
+
+## Calibration
+
+NexArm follows the standard LeRobot calibration flow (same as SO-100/SO-101). On
+first `connect()`, if no calibration file is found, the procedure runs automatically:
+
+1. Move the arm to its mechanical midpoint, then press Enter.
+2. Slowly move each joint through its full range of motion, then press Enter.
+
+Calibration is saved to:
+```
+~/.cache/huggingface/lerobot/calibration/{robots,teleoperators}/nexarm_{follower,leader}/<id>.json
+```
+
+Run the leader and follower calibration separately. After calibration, joint
+mirroring and range remapping between leader and follower are handled automatically
+by `MotorCalibration(drive_mode, homing_offset, range_min, range_max)` — no
+hard-coded remap functions are needed. If hardware changes (new servo, different
+assembly), re-running calibration is all that is required.
+
+## Teleoperation
+
+Edit `examples/nexarm/teleoperate.yaml` with your serial ports and camera indices,
+then run:
+
+```bash
+python -m lerobot.scripts.lerobot_teleoperate \
+    --config_path=examples/nexarm/teleoperate.yaml
+```
+
+Or pass arguments directly:
+
+```bash
+python -m lerobot.scripts.lerobot_teleoperate \
+    --robot.type=nexarm_follower \
+    --robot.port=COM19 \
+    --teleop.type=nexarm_leader \
+    --teleop.port=COM18 \
+    --fps=30
+```
+
+The leader arm runs in torque-off mode so you can freely drag it. The follower
+mirrors all 6 joints in real time. Joint directions, zero points, and mechanical
+limits are all absorbed by calibration.
+
+## Recording Datasets
+
+```bash
+python -m lerobot.scripts.lerobot_record \
+    --config_path=examples/nexarm/record.yaml
+```
+
+Key parameters in `record.yaml`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `dataset.repo_id` | `local/nexarm_pick` | Dataset name |
+| `dataset.num_episodes` | 50 | Number of episodes |
+| `dataset.episode_time_s` | 10 | Duration per episode (s) |
+| `dataset.reset_time_s` | 10 | Scene reset time between episodes (s) |
+| `dataset.fps` | 30 | Recording frame rate |
+| `dataset.push_to_hub` | `false` | Upload to HuggingFace Hub when done |
+
+Record at least 50 episodes for reasonable training results. Keep starting positions
+consistent and ensure good lighting and clear camera views.
+
+## Training a Policy
+
+```bash
+python -m lerobot.scripts.lerobot_train \
+    --dataset.repo_id=local/nexarm_pick \
+    --policy.type=act \
+    --output_dir=outputs/train/nexarm_act \
+    --batch_size=32 \
+    --steps=100000
+```
+
+A CUDA GPU is strongly recommended. Training checkpoints are saved to
+`outputs/train/nexarm_act/checkpoints/`.
+
+## Running Inference
+
+```bash
+python -m lerobot.scripts.lerobot_rollout \
+    --config_path=examples/nexarm/inference.yaml \
+    --policy.path=outputs/train/nexarm_act/checkpoints/last/pretrained_model
+```
+
+The follower arm executes policy-predicted actions autonomously — no leader arm is
+needed. Thanks to ACT's action chunking (chunk_size=100), the model only runs
+inference once per 100 frames; remaining frames are served from the action queue,
+so the loop reaches 20–30 Hz even on a CPU.
+
+## Code Architecture
+
+```
+src/lerobot/
+├── motors/nexarm/                    # Serial bus driver
+│   ├── __init__.py
+│   └── nexarm.py                     # CommProtocol frame build/parse,
+│                                     #   position read/write, torque, bridge mode
+├── robots/nexarm_follower/           # Follower robot
+│   ├── __init__.py
+│   ├── config_nexarm_follower.py     # RobotConfig subclass
+│   └── nexarm_follower.py            # Robot subclass
+└── teleoperators/nexarm_leader/      # Leader teleoperator
+    ├── __init__.py
+    ├── config_nexarm_leader.py       # TeleoperatorConfig subclass
+    └── nexarm_leader.py              # Teleoperator subclass
+```
+
+Upstream files modified:
+
+| File | Change |
+|------|--------|
+| `src/lerobot/robots/utils.py` | Added `nexarm_follower` branch in `make_robot_from_config()` |
+| `src/lerobot/teleoperators/utils.py` | Added `nexarm_leader` branch in `make_teleoperator_from_config()` |
+| `pyproject.toml` | Added `nexarm = ["lerobot[pyserial-dep]", "lerobot[av-dep]"]` |
+
+## Troubleshooting
+
+**Serial port permission denied (Linux)**
+```bash
+sudo usermod -a -G dialout $USER
+# Log out and back in for the change to take effect
+```
+
+**Cameras not found** — Close other programs using the cameras (OBS, browsers,
+etc.), then re-run `lerobot_find_cameras`. Camera indices may change after replugging.
+
+**Follower arm not responding** — Verify the serial port is correct, confirm the
+follower ESP32 firmware supports CMD 68 (LeRobot bridge mode), and try
+power-cycling the arm.
+
+**TimeoutError on leader arm** — Older leader firmware prints debug text over Serial
+in LeRobot mode, which corrupts protocol frames. The updated firmware in this
+repository disables that output. Reflash the leader ESP32 to resolve this.
+
+**Serial checksum warnings** — The leader firmware has a known checksum quirk
+(`tx_packet_complete` uses `rx_packet.elements.length` instead of
+`tx_packet.elements.length`). The driver accepts both the correct and the buggy
+short checksum for backward compatibility; this does not affect functionality.
+
+**Arm moves hesitantly or with small amplitude after training** — This is typically
+an ACT "mean collapse". Try increasing `batch_size`, lowering `kl_weight` (e.g.
+from 10 to 5), raising `optimizer_lr` (e.g. to `5e-5`), or recording more
+demonstration episodes with consistent starting positions and complete task motions.

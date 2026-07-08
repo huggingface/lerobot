@@ -196,6 +196,7 @@ reachy2 = [
 # Seeed Studio reBot B601-DM follower (motorbridge / CAN) + StarArm102 / reBot Arm 102
 # leader (motorbridge-smart-servo / FashionStar UART servos).
 rebot = ["lerobot[motorbridge-dep]", "lerobot[motorbridge-smart-servo-dep]"]
+nexarm = ["lerobot[pyserial-dep]", "lerobot[av-dep]"]
 kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",

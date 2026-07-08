@@ -1,0 +1,34 @@
+# NexArm inference - base strategy, no recording
+robot:
+  type: nexarm_follower
+  port: COM8  # Windows: COM8  |  Linux: /dev/ttyUSB0  |  macOS: /dev/tty.usbserial-120
+  baudrate: 1000000
+  cameras:
+    front:
+      type: opencv
+      index_or_path: 1  # Windows: 1  |  Linux: /dev/video0  |  macOS: 0
+      width: 640
+      height: 480
+      fps: 30
+      fourcc: MJPG  # MJPG starts faster than YUYV on Linux V4L2
+    wrist:
+      type: opencv
+      index_or_path: 2  # Windows: 2  |  Linux: /dev/video2  |  macOS: 1
+      width: 640
+      height: 480
+      fps: 30
+      fourcc: MJPG
+
+strategy:
+  type: base
+
+inference:
+  type: sync
+
+fps: 30
+duration: 60
+device: cpu
+task: "pick up the object"
+display_data: false
+play_sounds: false
+return_to_initial_position: false

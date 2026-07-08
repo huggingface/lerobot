@@ -1,0 +1,42 @@
+# NexArm dataset recording config
+# Usage: python -m lerobot.scripts.lerobot_record --config_path=examples/nexarm/record.yaml
+
+robot:
+  type: nexarm_follower
+  port: COM19          # Follower (slave) ESP32 serial port
+                       # Windows: COM19  |  Linux: /dev/ttyUSB1  |  macOS: /dev/tty.usbserial-120
+  baudrate: 1000000
+  cameras:
+    front:
+      type: opencv
+      index_or_path: 1  # Windows: 1  |  Linux: /dev/video0  |  macOS: 0
+      width: 640
+      height: 480
+      fps: 30
+      fourcc: MJPG
+    wrist:
+      type: opencv
+      index_or_path: 2  # Windows: 2  |  Linux: /dev/video2  |  macOS: 1
+      width: 640
+      height: 480
+      fps: 30
+      fourcc: MJPG
+
+teleop:
+  type: nexarm_leader
+  port: COM18          # Leader (master) ESP32 serial port
+                       # Windows: COM18  |  Linux: /dev/ttyUSB0  |  macOS: /dev/tty.usbserial-110
+  baudrate: 1000000
+
+dataset:
+  repo_id: local/nexarm_pick
+  single_task: "pick up the object"
+  num_episodes: 50
+  episode_time_s: 10
+  reset_time_s: 10
+  fps: 30
+  video: true
+  push_to_hub: false
+
+display_data: false
+play_sounds: true

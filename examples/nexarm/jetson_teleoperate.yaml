@@ -1,0 +1,36 @@
+# NexArm teleoperation config (Jetson + 2 cameras)
+# Usage: python -m lerobot.scripts.lerobot_teleoperate --config_path=examples/nexarm/jetson_teleoperate.yaml
+#
+# Hardware:
+#   /dev/ttyCH341USB0  ← follower (slave) ESP32
+#   /dev/ttyCH341USB1  ← leader  (master) ESP32
+#   /dev/video0        ← first-person camera (YUYV only)
+#   /dev/video2        ← third-person camera (MJPG capable)
+
+robot:
+  type: nexarm_follower
+  port: /dev/ttyCH341USB0
+  baudrate: 1000000
+  cameras:
+    wrist:
+      type: opencv
+      index_or_path: /dev/video0
+      width: 640
+      height: 480
+      fps: 30
+      fourcc: YUYV
+    front:
+      type: opencv
+      index_or_path: /dev/video2
+      width: 640
+      height: 480
+      fps: 30
+      fourcc: MJPG
+
+teleop:
+  type: nexarm_leader
+  port: /dev/ttyCH341USB1
+  baudrate: 1000000
+
+display_data: false
+fps: 30
