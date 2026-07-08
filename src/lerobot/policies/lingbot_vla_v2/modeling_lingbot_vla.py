@@ -57,7 +57,7 @@ from .utils import (
     resize_with_pad,
     sample_beta,
 )
-from .utils import apply_rope, our_eager_attention_forward
+from .utils import apply_rope, our_eager_attention_forward, our_sdpa_attention_forward
 from .flex_attention import flex_attention_forward
 from .flex_attention import build_block_mask, flex_attention_with_block_mask
 import time
@@ -199,9 +199,9 @@ class QwenvlWithExpertConfig(PretrainedConfig):
                 "You set `freeze_vision_encoder=False` and `train_expert_only=True` which are not compatible."
             )
 
-        if self.attention_implementation not in ["eager", "fa2", "flex"]:
+        if self.attention_implementation not in ["eager", "sdpa", "fa2", "flex"]:
             raise ValueError(
-                f"Wrong value provided for `attention_implementation` ({self.attention_implementation}). Expected 'eager', 'fa2' or 'flex'."
+                f"Wrong value provided for `attention_implementation` ({self.attention_implementation}). Expected 'eager', 'sdpa', 'fa2' or 'flex'."
             )
 
 
@@ -627,6 +627,8 @@ class QwenvlWithExpertModel(PreTrainedModel):
         elif self.config.attention_implementation == "flex":
             print("=====Using Flex Attn=====")
             attention_interface = flex_attention_forward
+        elif self.config.attention_implementation == "sdpa":
+            attention_interface = our_sdpa_attention_forward
         elif self.config.attention_implementation == "eager":
             print("=====Using Eager Attn=====")
             attention_interface = our_eager_attention_forward
@@ -639,7 +641,7 @@ class QwenvlWithExpertModel(PreTrainedModel):
         else:
             raise ValueError(
                 f"Invalid attention implementation: {self.config.attention_implementation}. "
-                "Expected one of ['fa2', 'flex', 'flex_cached', 'eager', 'xformer']."
+                "Expected one of ['fa2', 'flex', 'flex_cached', 'eager', 'sdpa', 'xformer']."
             )
         return attention_interface
 

@@ -268,6 +268,56 @@ def our_eager_attention_forward(
     return att_output
 
 
+def our_sdpa_attention_forward(
+    query_states: torch.Tensor,
+    key_states: torch.Tensor,
+    value_states: torch.Tensor,
+    attention_mask: torch.Tensor,
+):
+    """SDPA attention with the SAME (b, l, h, d) in / (b, l, h*d) out contract as
+    ``our_eager_attention_forward``.
+
+    Uses ``torch.nn.functional.scaled_dot_product_attention`` — the same softmax attention
+    (fidelity-preserving: identical math up to floating-point reassociation, no approximation),
+    but it fuses the softmax and never materializes the ``[b, h, q, k]`` score matrix, so it is
+    O(seq) in memory instead of O(seq^2) like the eager path. Torch-native (auto-selects the
+    flash / memory-efficient / math backend), no compiled dependency. Grouped-query attention
+    is handled by ``enable_gqa`` (num_kv_heads < num_att_heads). The default SDPA scale is
+    ``1/sqrt(head_dim)``, matching the eager path.
+
+    Args:
+        query_states: ``[batch, seq, num_att_heads, head_dim]``.
+        key_states / value_states: ``[batch, seq, num_kv_heads, head_dim]``.
+        attention_mask: bool tensor, ``True`` = attend; ``[batch, seq, seq]`` or ``[batch, 1, seq, seq]``.
+    """
+    bsize, seq_len, num_att_heads, head_dim = query_states.shape
+    num_kv_heads = key_states.shape[2]
+
+    # (b, l, h, d) -> (b, h, l, d)
+    q = query_states.transpose(1, 2)
+    k = key_states.transpose(1, 2)
+    v = value_states.transpose(1, 2)
+
+    mask = attention_mask
+    if mask is not None:
+        if mask.dim() == 3:  # (b, q, k) -> (b, 1, q, k) to broadcast over heads
+            mask = mask.unsqueeze(1)
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
+
+    att_output = nn.functional.scaled_dot_product_attention(
+        q,
+        k,
+        v,
+        attn_mask=mask,  # bool: True keeps, False masks (matches the eager where-mask)
+        enable_gqa=num_kv_heads != num_att_heads,
+    )
+
+    # (b, h, l, d) -> (b, l, h*d)
+    att_output = att_output.transpose(1, 2).reshape(bsize, seq_len, num_att_heads * head_dim)
+    return att_output
+
+
 # @torch.jit.script
 def apply_rope(
     x: torch.Tensor,
