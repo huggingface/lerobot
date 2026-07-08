@@ -1,0 +1,30 @@
+# subtask — subtask + action blend, no memory.
+#
+# Same as subtask_mem but with the memory_update sub-recipe dropped, so
+# the model only learns:
+#
+#   high_level_subtask   — predict the subtask from the task.
+#   low_level_execution  — flow loss with [images, subtask, state].
+#
+# No persistent high-level state (no memory note, no plan): the prompt is
+# just the task / subtask. Requires the dataset to carry `subtask`
+# annotations; samples whose `if_present` bindings are missing don't
+# render.
+
+blend:
+
+  high_level_subtask:
+    weight: 0.30
+    messages:
+      - {role: user, content: "${task}", stream: high_level}
+      - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
+
+  low_level_execution:
+    weight: 0.70
+    messages:
+      # The action expert is conditioned on the SUBTASK — at inference
+      # `HighLevelSubtaskFwd` generates it via the LM head and feeds it
+      # here. `stream: low_level` flips `predict_actions=True` so the
+      # flow loss fires; no text-CE target (subtask prediction is owned
+      # by `high_level_subtask`).
+      - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
