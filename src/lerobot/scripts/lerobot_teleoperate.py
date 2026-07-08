@@ -94,9 +94,11 @@ from lerobot.teleoperators import (  # noqa: F401
     keyboard,
     koch_leader,
     make_teleoperator_from_config,
+    nero_leader,
     omx_leader,
     openarm_leader,
     openarm_mini,
+    quest_arm,
     reachy2_teleoperator,
     so_leader,
     unitree_g1,
@@ -192,6 +194,10 @@ def teleop_loop(
         obs = robot.get_observation()
 
         if robot.name == "unitree_g1":
+            teleop.send_feedback(obs)
+
+        # Feed robot joint state back to VR teleop for IK continuity
+        if robot.name == "nero_follower" and hasattr(teleop, "send_feedback"):
             teleop.send_feedback(obs)
 
         # Get teleop action

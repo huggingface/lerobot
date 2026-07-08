@@ -129,6 +129,11 @@ class NEOFollower(Robot):
         # Set speed
         self._arm.set_speed_percent(self.config.speed_percent)
 
+        # Lock JS (servo passthrough) mode for instant teleop response.
+        # Without this, the SDK auto-switches to J mode on every move_j call.
+        self._arm.set_motion_mode(self._arm.OPTIONS.MOTION_MODE.JS)
+        self._arm.set_auto_set_motion_mode_enabled(False)
+
         # Prime cached targets from live state so partial actions don't zero unspecified joints.
         joint_msg = self._arm.get_joint_angles()
         if joint_msg is not None and joint_msg.msg is not None:
@@ -168,7 +173,7 @@ class NEOFollower(Robot):
         # Read gripper state
         if self._effector is not None:
             try:
-                gripper_msg = self._effector.get_gripper_ctrl_states()
+                gripper_msg = self._effector.get_gripper_status()
                 if gripper_msg is not None and gripper_msg.msg is not None:
                     obs_dict["gripper.pos"] = float(gripper_msg.msg.value)
                 else:
@@ -229,15 +234,15 @@ class NEOFollower(Robot):
                 base_targets[i] = joint_goals[name]
 
         if joint_goals:
-            self._arm.move_j(base_targets)
+            self._arm.move_js(base_targets)
             self._last_joint_targets = list(base_targets)
 
         # Send gripper command
         if "gripper" in goal_pos and self._effector is not None:
             gripper_val = goal_pos["gripper"]
-            # Map 0-100 normalized to degrees (0 = closed, 100 = fully open)
+            # Width/length mode: value in meters, pass through directly
             try:
-                self._effector.move_gripper_deg(gripper_val)
+                self._effector.move_gripper_m(gripper_val)
             except Exception as e:
                 logger.warning(f"Failed to send gripper command: {e}")
 

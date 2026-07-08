@@ -61,6 +61,7 @@ from lerobot.robots import (  # noqa: F401
     hope_jr,
     koch_follower,
     make_robot_from_config,
+    nero_follower,
     omx_follower,
     openarm_follower,
     reachy2,
@@ -118,7 +119,13 @@ def replay(cfg: ReplayConfig):
             action_array = actions[idx][ACTION]
             action = {}
             for i, name in enumerate(dataset.features[ACTION]["names"]):
-                action[name] = action_array[i]
+                # Map dataset action names to robot action names
+                # Dataset uses: joint1, joint2, ..., gripper_cmd
+                # Robot expects: joint1.pos, joint2.pos, ..., gripper.pos
+                if name == "gripper_cmd":
+                    action["gripper.pos"] = action_array[i]
+                else:
+                    action[f"{name}.pos"] = action_array[i]
 
             robot_obs = robot.get_observation()
 

@@ -49,7 +49,7 @@ class KeyboardEndEffectorTeleopConfig(KeyboardTeleopConfig):
     require_deadman: bool = True
     linear_step: float = 0.004
     angular_step: float = 0.06
-    gripper_step: float = 1.0
+    gripper_step: float = 20
 
 
 @TeleoperatorConfig.register_subclass("keyboard_joint")
@@ -81,7 +81,7 @@ class KeyboardJointTeleopConfig(KeyboardTeleopConfig):
     """
 
     joint_step: float = 0.05
-    gripper_step: float = 2.0
+    gripper_step: float = 20
     require_deadman: bool = False
     num_joints: int = 7
 

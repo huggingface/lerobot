@@ -138,9 +138,11 @@ from lerobot.teleoperators import (  # noqa: F401
     homunculus,
     koch_leader,
     make_teleoperator_from_config,
+    nero_leader,
     omx_leader,
     openarm_leader,
     openarm_mini,
+    quest_arm,
     reachy2_teleoperator,
     so_leader,
     unitree_g1,
@@ -660,7 +662,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         if not is_headless() and listener:
             listener.stop()
 
-        if cfg.dataset.push_to_hub:
+        if cfg.dataset.push_to_hub and dataset is not None:
             dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
 
         log_say("Exiting", cfg.play_sounds)

@@ -176,3 +176,9 @@ outputs/
 *.urdf
 *.xml
 *.part
+*.mp4
+*.parquet
+
+.nero/*
+*.json
+

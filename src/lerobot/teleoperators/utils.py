@@ -91,6 +91,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .reachy2_teleoperator import Reachy2Teleoperator
 
         return Reachy2Teleoperator(config)
+    elif config.type == "nero_leader":
+        from .nero_leader import NeroLeader
+
+        return NeroLeader(config)
     elif config.type == "openarm_leader":
         from .openarm_leader import OpenArmLeader
 
@@ -103,6 +107,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .openarm_mini import OpenArmMini
 
         return OpenArmMini(config)
+    elif config.type == "quest_arm":
+        from .quest_arm import QuestArmTeleop
+
+        return QuestArmTeleop(config)
     else:
         try:
             return cast("Teleoperator", make_device_from_device_class(config))
