@@ -162,11 +162,11 @@ Preliminary LeRobot integration results (GR00T-LeRobot, `eval.n_episodes >= 50` 
 
 | Suite            | Success rate | Checkpoint                                                                                                    |
 | ---------------- | -----------: | ------------------------------------------------------------------------------------------------------------- |
-| LIBERO Spatial   |          91% | [nvidia/gr00t17-lerobot-libero_spatial-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_spatial-640) |
-| LIBERO Object    |          81% | [nvidia/gr00t17-lerobot-libero_object-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_object-640)   |
-| LIBERO Goal      |          97% | [nvidia/gr00t17-lerobot-libero_goal-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_goal-640)       |
-| LIBERO 10 (Long) |          84% | [nvidia/gr00t17-lerobot-libero_10-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_10-640)           |
-| **Average**      |   **88.25%** |                                                                                                               |
+| LIBERO Spatial   |          95% | [nvidia/gr00t17-lerobot-libero_spatial-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_spatial-640) |
+| LIBERO Object    |         100% | [nvidia/gr00t17-lerobot-libero_object-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_object-640)   |
+| LIBERO Goal      |          98% | [nvidia/gr00t17-lerobot-libero_goal-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_goal-640)       |
+| LIBERO 10 (Long) |          93% | [nvidia/gr00t17-lerobot-libero_10-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_10-640)           |
+| **Average**      |    **96.5%** |                                                                                                               |
 
 ```bash
 export MODEL_ID=your_trained_model_on_huggingface
