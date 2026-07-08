@@ -238,6 +238,97 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
             "wrong robot, robot not at home pose)."
         ),
     )
+    # --- RoboCasa simulation mode args -------------------------------
+    # Setting ``--sim`` flips the runtime into simulation mode: instead of
+    # a real robot it drives a single RoboCasa mujoco scene, feeding the
+    # eval observation/action pipeline. The operator still types prompts
+    # (/action <prompt>) that the policy executes inside the chosen scene.
+    # Mutually exclusive with ``--robot.type``.
+    p.add_argument(
+        "--sim",
+        action="store_true",
+        help=(
+            "Run the policy in the RoboCasa simulator instead of on a real "
+            "robot. Select the scene with --sim.task; type prompts with "
+            "/action <prompt> to have the policy execute them in that scene."
+        ),
+    )
+    p.add_argument(
+        "--sim.task",
+        dest="sim_task",
+        type=str,
+        default="CloseFridge",
+        help="RoboCasa task/scene to instantiate (e.g. OpenDrawer, LoadDishwasher).",
+    )
+    p.add_argument(
+        "--sim.split",
+        dest="sim_split",
+        type=str,
+        default="pretrain",
+        help="RoboCasa scene split (all/pretrain/target). Default: pretrain.",
+    )
+    p.add_argument(
+        "--sim.obj_registries",
+        dest="sim_obj_registries",
+        type=str,
+        default="objaverse,lightwheel",
+        help="Comma-separated object-mesh registries. Default: objaverse,lightwheel.",
+    )
+    p.add_argument(
+        "--sim.seed",
+        dest="sim_seed",
+        type=int,
+        default=1000,
+        help="Seed for RoboCasa scene reset (default: 1000, matches eval).",
+    )
+    p.add_argument(
+        "--sim.record",
+        dest="sim_record",
+        type=str,
+        choices=["mp4", "off"],
+        default="mp4",
+        help="Record an annotated mp4 (task/subtask/memory overlay) of the sim session. Default: mp4.",
+    )
+    p.add_argument(
+        "--sim.output_dir",
+        dest="sim_output_dir",
+        type=str,
+        default="outputs/runtime_sim",
+        help="Directory for the recorded sim video (default: outputs/runtime_sim).",
+    )
+    p.add_argument(
+        "--sim.render_size",
+        dest="sim_render_size",
+        type=int,
+        default=384,
+        help=(
+            "Resolution (px) of the observation cameras used for the display "
+            "(default 384; try 512 for sharper, 256 for faster). The policy is "
+            "unaffected — it resizes to 224 internally."
+        ),
+    )
+    p.add_argument(
+        "--sim.views",
+        dest="sim_views",
+        type=str,
+        default="robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right",
+        help=(
+            "Comma-separated camera views to show side by side. Default shows "
+            "left, wrist (eye-in-hand), right. Use e.g. 'robot0_eye_in_hand' "
+            "for wrist-only."
+        ),
+    )
+    p.add_argument(
+        "--sim.stream_port",
+        dest="sim_stream_port",
+        type=int,
+        default=8010,
+        help=(
+            "Port for the live MJPEG viewer (default: 8010; 0 disables). "
+            "Open http://localhost:<port> in a browser; over SSH forward it with "
+            "ssh -L <port>:localhost:<port> <host>."
+        ),
+    )
     p.add_argument(
         "--chunk_hz",
         type=float,
@@ -256,6 +347,25 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         type=float,
         default=1.0,
         help="High-level subtask generation rate.",
+    )
+    p.add_argument(
+        "--sim.direct_subtask",
+        dest="sim_direct_subtask",
+        action="store_true",
+        help=(
+            "Direct-subtask mode: what you type IS the subtask fed to the action "
+            "expert (no LM subtask generation). Good when the model's subtask "
+            "head is weak — you steer the policy with exact imperatives."
+        ),
+    )
+    p.add_argument(
+        "--disable_memory",
+        action="store_true",
+        help=(
+            "Skip the memory-note generation on subtask change. Use for "
+            "subtask-only checkpoints (no memory head) — avoids a wasted LM "
+            "decode and a meaningless memory line."
+        ),
     )
     p.add_argument(
         "--subtask_chunks_per_gen",
@@ -333,6 +443,8 @@ def _select_observation_to_device(sample: dict, device: Any) -> dict:
 def _load_policy_and_preprocessor(
     policy_path: str,
     dataset_repo_id: str | None,
+    *,
+    load_processors_from_checkpoint: bool = False,
 ) -> tuple[Any, Any, Any, Any]:
     """Load a policy checkpoint (local path or Hub repo id).
 
@@ -340,6 +452,12 @@ def _load_policy_and_preprocessor(
     ``preprocessor`` / ``postprocessor`` / ``ds_meta`` are ``None``
     when no dataset is provided (rare — needed for autonomous robot
     mode to have action-denormalisation stats).
+
+    When ``load_processors_from_checkpoint`` is set and no dataset is
+    given, the pre/post processors are loaded from the checkpoint exactly
+    like ``lerobot-eval`` (normalizer stats from the saved safetensors,
+    recipe from ``cfg.recipe_path``). This is what the RoboCasa sim
+    backend uses so it needs no dataset to match eval-time processing.
     """
     from lerobot.configs import PreTrainedConfig  # noqa: PLC0415
     from lerobot.policies.factory import make_policy, make_pre_post_processors  # noqa: PLC0415
@@ -370,6 +488,12 @@ def _load_policy_and_preprocessor(
         policy_cls = get_policy_class(cfg.type)
         policy = policy_cls.from_pretrained(policy_path, config=cfg)
         policy.to(cfg.device)
+        if load_processors_from_checkpoint:
+            # Eval-matching processors: stats from the checkpoint safetensors,
+            # recipe from cfg.recipe_path. No dataset needed.
+            preprocessor, postprocessor = make_pre_post_processors(
+                cfg, pretrained_path=cfg.pretrained_path
+            )
 
     policy.eval()
     return policy, preprocessor, postprocessor, ds_meta
@@ -1305,7 +1429,15 @@ def run(
     )
     _silence_noisy_loggers()
 
+    sim_mode = bool(getattr(args, "sim", False)) and not args.no_robot
     autonomous_mode = bool(args.robot_type) and not args.no_robot
+    if sim_mode and autonomous_mode:
+        print(
+            "[runtime] ERROR: --sim and --robot.type are mutually exclusive "
+            "(pick a simulator scene OR a real robot).",
+            file=sys.stderr,
+        )
+        return 2
     if autonomous_mode and not args.dataset_repo_id:
         print(
             "[runtime] ERROR: autonomous robot mode requires --dataset.repo_id "
@@ -1315,9 +1447,40 @@ def run(
         )
         return 2
 
+    # Create the sim env subprocess BEFORE the policy initialises CUDA — the
+    # env worker inherits a corrupt EGL/GL context if forked from a CUDA parent
+    # (dark/garbled renders). This mirrors eval's make_env-before-make_policy.
+    sim_env = None
+    sim_obs = None
+    sim_stream_server = None
+    sim_holder: dict[str, Any] = {"backend": None}
+    if sim_mode:
+        from lerobot.runtime.sim_robocasa import create_sim_env, start_mjpeg_server  # noqa: PLC0415
+
+        # Start the live viewer first so the port listens during the ~60s model
+        # load (browsers get a loading page instead of connection-refused).
+        if args.sim_stream_port:
+            sim_stream_server = start_mjpeg_server(
+                args.sim_stream_port,
+                lambda: sim_holder["backend"]._latest_frame if sim_holder["backend"] else None,
+            )
+        print(
+            f"[runtime] starting RoboCasa sim scene={args.sim_task!r} split={args.sim_split!r}",
+            flush=True,
+        )
+        sim_env, sim_obs = create_sim_env(
+            task=args.sim_task,
+            split=args.sim_split,
+            obj_registries=[r.strip() for r in args.sim_obj_registries.split(",") if r.strip()],
+            seed=args.sim_seed,
+            render_size=args.sim_render_size,
+        )
+
     print(f"[runtime] loading policy from {args.policy_path}", flush=True)
     policy, preprocessor, postprocessor, ds_meta = _load_policy_and_preprocessor(
-        args.policy_path, args.dataset_repo_id
+        args.policy_path,
+        args.dataset_repo_id,
+        load_processors_from_checkpoint=sim_mode,
     )
 
     policy_type = getattr(policy.config, "type", None)
@@ -1365,8 +1528,32 @@ def run(
     observation_provider: Callable[[], dict | None] | None = None
     robot_executor: Callable[[Any], None] | None = None
     robot = None
+    sim_backend = None
 
-    if autonomous_mode:
+    if sim_mode:
+        from lerobot.runtime.sim_robocasa import RoboCasaSimBackend  # noqa: PLC0415
+
+        sim_backend = RoboCasaSimBackend(
+            env=sim_env,
+            last_obs=sim_obs,
+            task=args.sim_task,
+            seed=args.sim_seed,
+            device=str(getattr(policy.config, "device", "cpu")),
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            record=(args.sim_record == "mp4"),
+            output_dir=args.sim_output_dir,
+            view_cams=[v.strip() for v in args.sim_views.split(",") if v.strip()],
+        )
+        observation_provider = sim_backend.observation_provider
+        robot_executor = sim_backend.action_executor
+        robot = sim_backend  # reuse _run_autonomous cleanup (calls .disconnect())
+        # Point the already-running live viewer at the backend and hand it the
+        # server so disconnect() shuts it down cleanly.
+        sim_holder["backend"] = sim_backend
+        if sim_stream_server is not None:
+            sim_backend.attach_stream_server(sim_stream_server)
+    elif autonomous_mode:
         print(
             f"[runtime] connecting to robot.type={args.robot_type} port={args.robot_port}",
             flush=True,
@@ -1416,6 +1603,8 @@ def run(
         temperature=float(args.text_temperature or 0.0),
         top_p=float(args.text_top_p or 1.0),
         chunks_per_regen=max(1, int(args.subtask_chunks_per_gen or 1)),
+        enable_memory=not bool(getattr(args, "disable_memory", False)),
+        enable_subtask=not bool(getattr(args, "sim_direct_subtask", False)),
     )
     runtime = LanguageConditionedRuntime(
         policy_adapter=adapter_factory(policy, gen_config),
@@ -1444,6 +1633,20 @@ def run(
     if bootstrap_state.get("subtask"):
         runtime.state["current_subtask"] = bootstrap_state["subtask"]
 
+    # Let the sim backend read live task/subtask/memory for the video overlay.
+    if sim_backend is not None:
+        sim_backend.bind_runtime(runtime)
+        # Sim runs its control/render loop in the MAIN thread (see
+        # _run_sim_interactive) — background-thread rendering corrupts EGL.
+        return _run_sim_interactive(
+            runtime,
+            sim_backend,
+            initial_task=args.task,
+            max_ticks=args.max_ticks,
+            panel_label=panel_label,
+            direct_subtask=bool(args.sim_direct_subtask),
+        )
+
     if autonomous_mode:
         return _run_autonomous(
             runtime,
@@ -1469,6 +1672,132 @@ def run(
         for line in startup_logs or []:
             print(f"[runtime] {line}", flush=True)
     return _run_repl(runtime, initial_task=args.task, max_ticks=args.max_ticks, panel_label=panel_label)
+
+
+def _run_sim_interactive(
+    runtime: Any,
+    sim_backend: Any,
+    *,
+    initial_task: str | None,
+    max_ticks: int | None,
+    panel_label: str = "Runtime",
+    direct_subtask: bool = False,
+) -> int:
+    """Main-thread control loop for the RoboCasa sim backend.
+
+    Unlike ``_run_autonomous`` (which runs ``runtime.run()`` in a daemon
+    thread), the tick loop — and therefore MuJoCo's EGL rendering — runs in the
+    MAIN thread. Driving the sim render from a background thread intermittently
+    corrupts the offscreen GL context (dark/garbled frames); main-thread
+    stepping matches ``lerobot-eval`` and renders cleanly. Stdin is polled
+    non-blockingly so typed commands still work while the sim runs.
+    """
+    import select  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    import torch  # noqa: PLC0415
+
+    if initial_task:
+        runtime.set_task(initial_task)
+        # In direct-subtask mode the typed text IS the subtask; otherwise clear
+        # it so the model generates one.
+        runtime.state["current_subtask"] = initial_task if direct_subtask else None
+        runtime.state["mode"] = "action"
+
+    # Clean chat-style prompt. The control loop steps in the MAIN thread (clean
+    # EGL rendering); the browser live-view shows the rollout, so the terminal
+    # stays a quiet command line. Nothing is printed mid-step, so typing is never
+    # clobbered — you can queue the next command any time.
+    _mode_line = (
+        "  Mode: DIRECT subtask (your text drives the action expert as-is)\n"
+        if direct_subtask
+        else "  Mode: task (the model generates a subtask from your text)\n"
+    )
+    print(
+        f"\n{'=' * 64}\n"
+        f"  {panel_label} — RoboCasa interactive sim (one persistent kitchen)\n"
+        f"{_mode_line}"
+        f"  Type a command + Enter to run it, e.g.  open the fridge\n"
+        f"  Commands:  /pause  ·  /resume  ·  /reset (new kitchen)  ·  stop\n"
+        f"{'=' * 64}",
+        flush=True,
+    )
+
+    def _prompt() -> None:
+        print("\n> ", end="", flush=True)
+
+    _prompt()
+    ticks_done = 0
+    stdin_open = True
+    try:
+        while True:
+            # Non-blocking stdin: a full line (canonical-mode terminal) is read
+            # only when Enter is pressed, so line editing works normally.
+            if stdin_open and select.select([sys.stdin], [], [], 0)[0]:
+                line = sys.stdin.readline()
+                if line == "":  # EOF — keep running the sim, stop reading stdin
+                    stdin_open = False
+                else:
+                    cmd = line.strip()
+                    if cmd:
+                        low = cmd.lower()
+                        if low in {"stop", "quit", "exit"}:
+                            break
+                        elif low in {"/pause", "pause", "/p"}:
+                            runtime.state["mode"] = "paused"
+                            _clear_action_queue(runtime)
+                            print("[paused] robot holding", flush=True)
+                        elif low in {"/resume", "resume", "/run"}:
+                            runtime.state["mode"] = "action"
+                            print("[running]", flush=True)
+                        elif low in {"/reset", "reset"}:
+                            sim_backend.reset_scene()
+                            _clear_action_queue(runtime)
+                            runtime.state["current_subtask"] = None
+                            if hasattr(runtime.policy, "reset"):
+                                runtime.policy.reset()
+                            print("[reset] new kitchen scene", flush=True)
+                        else:
+                            # A bare line is a new command: switch the robot to it
+                            # immediately (clear the in-flight chunk + subtask) and
+                            # force the subtask to regenerate on the very next tick
+                            # (reset the adapter throttle + high-level rate gate).
+                            runtime.set_task(cmd)
+                            # Direct mode: the typed text is the subtask itself;
+                            # otherwise clear it so the model regenerates one.
+                            runtime.state["current_subtask"] = cmd if direct_subtask else None
+                            _clear_action_queue(runtime)
+                            adapter = getattr(runtime, "policy_adapter", None)
+                            if adapter is not None and hasattr(adapter, "_chunks_until_regen"):
+                                adapter._chunks_until_regen = 0
+                            gate = getattr(runtime, "_language_gate", None)
+                            if gate is not None and hasattr(gate, "rearm"):
+                                gate.rearm()
+                            runtime.state["mode"] = "action"
+                            print(f"[running] {cmd}", flush=True)
+                    _prompt()
+
+            # One tick in the MAIN thread: subtask/action gen + env.step + render.
+            # inference_mode matches lerobot-eval's forward context.
+            if runtime.state.get("mode", "paused") == "action":
+                with torch.inference_mode():
+                    runtime.step_once()
+                ticks_done += 1
+            else:
+                time.sleep(0.05)  # idle only while paused (robot not moving)
+            if runtime.state.stop:
+                break
+            if max_ticks is not None and ticks_done >= max_ticks:
+                break
+    except KeyboardInterrupt:
+        print("\n[stopping]", flush=True)
+    finally:
+        runtime.stop()
+        try:
+            sim_backend.disconnect()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[runtime] WARNING: sim disconnect raised {exc}", flush=True)
+    return 0
 
 
 def _run_repl(

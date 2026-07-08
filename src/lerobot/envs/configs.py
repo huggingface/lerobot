@@ -556,7 +556,13 @@ class RoboCasaEnv(EnvConfig):
             kwargs["split"] = self.split
         return kwargs
 
-    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+    def create_envs(
+        self,
+        n_envs: int,
+        use_async_envs: bool = False,
+        terminate_on_success: bool = True,
+        horizon: int | None = None,
+    ):
         from .robocasa import create_robocasa_envs
 
         if self.task is None:
@@ -570,6 +576,8 @@ class RoboCasaEnv(EnvConfig):
             env_cls=env_cls,
             episode_length=self.episode_length,
             obj_registries=tuple(self.obj_registries),
+            terminate_on_success=terminate_on_success,
+            horizon=horizon,
         )
 
 

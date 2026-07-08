@@ -51,6 +51,8 @@ class GenerationConfig:
     temperature: float = 0.0
     top_p: float = 1.0
     chunks_per_regen: int = 1  # regenerate the language context every N action chunks
+    enable_memory: bool = True  # generate a running memory note on subtask change
+    enable_subtask: bool = True  # generate the low-level subtask (off => use the given text directly)
 
 
 @dataclass
@@ -127,6 +129,10 @@ class BaseLanguageAdapter(ABC):
 
         Override for a policy with a different language hierarchy.
         """
+        if not self.gen.enable_subtask:
+            # Direct-subtask mode: the operator supplies the subtask; don't
+            # generate (and thus don't overwrite) it.
+            return
         subtask = self._generate_filtered("subtask", observation, state)
         if subtask is None:
             return
@@ -137,6 +143,8 @@ class BaseLanguageAdapter(ABC):
         self.diag.repeat = 0
         if previous:
             state.extra["prior_subtask"] = previous
+        if not self.gen.enable_memory:
+            return
         memory = self._generate_filtered("memory", observation, state)
         if memory is not None:
             state.set_context("memory", memory, label="memory")

@@ -137,9 +137,16 @@ class RoboCasaEnv(gym.Env):
         episode_length: int | None = None,
         obj_registries: Sequence[str] = DEFAULT_OBJ_REGISTRIES,
         episode_index: int = 0,
+        terminate_on_success: bool = True,
+        horizon: int | None = None,
     ):
         super().__init__()
         self.task = task
+        # When False, a task-success does NOT end/reset the episode — used by the
+        # interactive sim so one kitchen persists across sequential prompts.
+        self.terminate_on_success = terminate_on_success
+        # Underlying robosuite horizon (steps before truncation). None -> default.
+        self.horizon = horizon
         self.obs_type = obs_type
         self.render_mode = render_mode
         self.observation_width = observation_width
@@ -211,12 +218,16 @@ class RoboCasaEnv(gym.Env):
         # (only None/"all"/"pretrain"/"target" are valid). Always pass a
         # valid value so we don't hit that default. Extra kwargs are
         # forwarded to the underlying kitchen env via create_env/robosuite.make.
+        extra_kwargs: dict[str, Any] = {}
+        if self.horizon is not None:
+            extra_kwargs["horizon"] = int(self.horizon)
         self._env = RoboCasaGymEnv(
             env_name=self.task,
             camera_widths=self.observation_width,
             camera_heights=self.observation_height,
             split=self.split if self.split is not None else "all",
             obj_registries=self.obj_registries,
+            **extra_kwargs,
         )
 
         ep_meta = self._env.env.get_ep_meta()
@@ -283,7 +294,7 @@ class RoboCasaEnv(gym.Env):
         raw_obs, reward, done, truncated, info = self._env.step(action_dict)
 
         is_success = bool(info.get("success", False))
-        terminated = done or is_success
+        terminated = done or (is_success and self.terminate_on_success)
         info.update({"task": self.task, "done": done, "is_success": is_success})
 
         observation = self._format_raw_obs(raw_obs)
@@ -316,6 +327,8 @@ def _make_env_fns(
     split: str | None,
     episode_length: int | None,
     obj_registries: Sequence[str],
+    terminate_on_success: bool = True,
+    horizon: int | None = None,
 ) -> list[Callable[[], RoboCasaEnv]]:
     """Build n_envs factory callables for a single task.
 
@@ -338,6 +351,8 @@ def _make_env_fns(
             episode_length=episode_length,
             obj_registries=obj_registries,
             episode_index=episode_index,
+            terminate_on_success=terminate_on_success,
+            horizon=horizon,
         )
 
     return [partial(_make_env, i) for i in range(n_envs)]
@@ -351,6 +366,8 @@ def create_robocasa_envs(
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
     episode_length: int | None = None,
     obj_registries: Sequence[str] = DEFAULT_OBJ_REGISTRIES,
+    terminate_on_success: bool = True,
+    horizon: int | None = None,
 ) -> dict[str, dict[int, Any]]:
     """Create vectorized RoboCasa365 environments with a consistent return shape.
 
@@ -412,6 +429,8 @@ def create_robocasa_envs(
             split=split,
             episode_length=episode_length,
             obj_registries=obj_registries,
+            terminate_on_success=terminate_on_success,
+            horizon=horizon,
         )
 
         if is_async:

@@ -37,14 +37,31 @@ class PI052PolicyAdapter(BaseLanguageAdapter):
     """Runtime bridge for PI052 policies."""
 
     def select_action(self, observation: dict[str, Any], state: RuntimeState) -> Any:
+        import torch  # noqa: PLC0415
+
+        from lerobot.utils.constants import (  # noqa: PLC0415
+            OBS_LANGUAGE_ATTENTION_MASK,
+            OBS_LANGUAGE_TOKENS,
+            OBS_STATE,
+        )
+
         subtask = state.language_context.get("subtask") or state.task or ""
+        # Condition the action expert on subtask + discretized state, matching
+        # training and lerobot-eval's low-level prompt ("{subtask}, State: {..};").
+        # Without the state the action expert is off-distribution.
+        content = subtask
+        obs_state = observation.get(OBS_STATE)
+        if isinstance(obs_state, torch.Tensor) and obs_state.numel() > 0:
+            from lerobot.policies.pi052.text_processor_pi052 import discretize_state_str  # noqa: PLC0415
+
+            state_row = obs_state[0] if obs_state.ndim > 1 else obs_state
+            content = f"{subtask}, State: {discretize_state_str(state_row)};"
+
         text_batch = _build_text_batch(
             self.policy,
-            [{"role": "user", "content": subtask}],
+            [{"role": "user", "content": content}],
             add_generation_prompt=False,
         )
-        from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS  # noqa: PLC0415
-
         batch = dict(observation)
         batch[OBS_LANGUAGE_TOKENS] = text_batch["lang_tokens"]
         batch[OBS_LANGUAGE_ATTENTION_MASK] = text_batch["lang_masks"]
