@@ -211,10 +211,10 @@ class LingbotVLAV2Config(PreTrainedConfig):
                 f"{self.n_action_steps} for `n_action_steps` and {self.chunk_size} for `chunk_size`."
             )
 
-        if self.attention_implementation not in ["eager", "fa2", "flex", "flex_cached"]:
+        if self.attention_implementation not in ["eager", "sdpa", "fa2", "flex", "flex_cached"]:
             raise ValueError(
-                f"attention_implementation must be one of 'eager', 'fa2', 'flex', 'flex_cached', "
-                f"got {self.attention_implementation}"
+                f"attention_implementation must be one of 'eager', 'sdpa', 'fa2', 'flex', "
+                f"'flex_cached', got {self.attention_implementation}"
             )
 
         if self.split_gate_liner and self.nosplit_gate_liner:

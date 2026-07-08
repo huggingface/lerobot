@@ -48,3 +48,12 @@ def test_sdpa_matches_eager(num_kv_heads):
 
     assert sdpa.shape == eager.shape == (bsize, seq, num_att_heads * head_dim)
     torch.testing.assert_close(sdpa, eager, atol=1e-4, rtol=1e-4)
+
+
+def test_config_accepts_sdpa():
+    """The lerobot config's attention_implementation validation must accept 'sdpa'
+    (it and the modeling-side validation are separate — keep them in sync)."""
+    from lerobot.policies.lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config
+
+    cfg = LingbotVLAV2Config(attention_implementation="sdpa")
+    assert cfg.attention_implementation == "sdpa"
