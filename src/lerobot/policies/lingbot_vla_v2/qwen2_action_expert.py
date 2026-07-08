@@ -218,23 +218,36 @@ class Qwen2FusedExperts(nn.Module):
         )
 
     def _eager_forward(self, routing_weights, selected_experts, hidden_states):
-        """Eager reference for the fused experts: per-token top-k SwiGLU with the
-        stacked (num_experts, ...) weights. gate/up: [E, I, H]; down: [E, H, I]."""
+        """Grouped-by-EXPERT eager MoE over the stacked (num_experts, ...) weights.
+
+        For each expert we gather the tokens routed to it and run a single dense matmul
+        (gate/up: ``[I, H]``; down: ``[H, I]``) — the expert weight is loaded once and reused
+        across its tokens. This replaces the naive per-token form (which materialized a
+        ``[T, I, H]`` weight copy per route, i.e. O(T) activation memory and O(T) matmuls).
+        It is algebraically identical (the same per-(token, route) SwiGLU terms, only
+        reordered/reassociated); cost is O(num_experts) matmuls with O(T) activations. Pure
+        torch, works on any backend. gate/up: ``[E, I, H]``; down: ``[E, H, I]``.
+        """
         T, H = hidden_states.shape
+        num_experts = self.gate_proj.shape[0]
         top_k = selected_experts.shape[-1]
         out = torch.zeros(T, H, dtype=torch.float32, device=hidden_states.device)
-        x = hidden_states.unsqueeze(1)  # [T,1,H]
-        for k in range(top_k):
-            eidx = selected_experts[:, k]                       # [T]
-            w = routing_weights[:, k].to(torch.float32).unsqueeze(-1)  # [T,1]
-            g = self.gate_proj[eidx]                            # [T,I,H]
-            u = self.up_proj[eidx]                              # [T,I,H]
-            d = self.down_proj[eidx]                            # [T,H,I]
-            gate_out = torch.bmm(x, g.transpose(1, 2)).squeeze(1)  # [T,I]
-            up_out = torch.bmm(x, u.transpose(1, 2)).squeeze(1)    # [T,I]
-            inter = (F.silu(gate_out) * up_out).unsqueeze(1)       # [T,1,I]
-            y = torch.bmm(inter, d.transpose(1, 2)).squeeze(1)     # [T,H]
-            out = out + w * y.to(torch.float32)
+
+        # Flatten the (token, route) routing table so each expert can pull its rows.
+        flat_expert = selected_experts.reshape(-1)  # [T * top_k]
+        flat_token = torch.arange(T, device=hidden_states.device).repeat_interleave(top_k)
+        flat_weight = routing_weights.reshape(-1).to(torch.float32).unsqueeze(-1)  # [T*top_k, 1]
+
+        for e in range(num_experts):
+            sel = torch.nonzero(flat_expert == e, as_tuple=True)[0]
+            if sel.numel() == 0:
+                continue
+            tok = flat_token[sel]
+            xe = hidden_states[tok]  # [n_e, H] — tokens routed to expert e
+            gate = xe @ self.gate_proj[e].t()  # [n_e, I]
+            up = xe @ self.up_proj[e].t()  # [n_e, I]
+            ye = (F.silu(gate) * up) @ self.down_proj[e].t()  # [n_e, H]
+            out.index_add_(0, tok, flat_weight[sel] * ye.to(torch.float32))
         return out.to(hidden_states.dtype)
 
 
