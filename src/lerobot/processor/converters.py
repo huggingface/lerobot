@@ -164,6 +164,10 @@ _COMPLEMENTARY_KEYS = (
     "messages",
     "message_streams",
     "target_message_indices",
+    "mc_return",
+    "is_terminal",
+    "next.success",
+    "intervention",
 )
 
 
