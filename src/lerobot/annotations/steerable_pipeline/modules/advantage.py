@@ -33,6 +33,7 @@ import numpy as np
 import torch
 
 from ..config import AdvantageConfig
+from ..frames import VideoFrameProvider, null_provider
 from ..reader import EpisodeRecord
 from ..staging import EpisodeStaging
 
@@ -124,6 +125,9 @@ class AdvantageModule:
     def _compute_values(self, record: EpisodeRecord, skip_mask: np.ndarray | None = None) -> np.ndarray:
         """Run frozen VF over all frames to get V(s_t) predictions.
 
+        Supports both image datasets (columns in parquet) and video datasets
+        (frames decoded from .mp4 via the shared VideoFrameProvider).
+
         Args:
             record: Episode data.
             skip_mask: Optional boolean mask [num_frames]. Frames where True are
@@ -133,16 +137,22 @@ class AdvantageModule:
         num_frames = len(df)
         values = np.zeros(num_frames, dtype=np.float32)
 
-        image_key = self._resolve_image_key(df)
-        if image_key is None:
-            logger.warning("No image key found for episode %d; returning zero values.", record.episode_index)
-            return values
-
         # Determine which frame indices actually need inference
         infer_indices = np.where(~skip_mask)[0] if skip_mask is not None else np.arange(num_frames)
-
         if len(infer_indices) == 0:
             return values
+
+        # Try parquet image columns first, fall back to video decoding
+        image_key = self._resolve_image_key(df)
+        video_frames = None
+
+        if image_key is None:
+            image_key, video_frames = self._decode_video_frames(record, infer_indices)
+            if image_key is None:
+                logger.warning(
+                    "No image/video key found for episode %d; returning zero values.", record.episode_index
+                )
+                return values
 
         task_text = record.episode_task
 
@@ -151,14 +161,18 @@ class AdvantageModule:
             batch_indices = infer_indices[batch_start:batch_end]
             batch_images = []
 
-            for idx in batch_indices:
-                img_val = df.iloc[idx][image_key]
-                if isinstance(img_val, np.ndarray):
-                    img_tensor = torch.from_numpy(img_val).float()
-                elif isinstance(img_val, torch.Tensor):
-                    img_tensor = img_val.float()
+            for local_i in range(len(batch_indices)):
+                if video_frames is not None:
+                    img_tensor = video_frames[batch_start + local_i].float()
                 else:
-                    img_tensor = torch.zeros(3, 224, 224)
+                    idx = batch_indices[local_i]
+                    img_val = df.iloc[idx][image_key]
+                    if isinstance(img_val, np.ndarray):
+                        img_tensor = torch.from_numpy(img_val).float()
+                    elif isinstance(img_val, torch.Tensor):
+                        img_tensor = img_val.float()
+                    else:
+                        img_tensor = torch.zeros(3, 224, 224)
                 batch_images.append(img_tensor)
 
             batch_images_tensor = torch.stack(batch_images)
@@ -177,6 +191,34 @@ class AdvantageModule:
             values[batch_indices] = v_values.cpu().numpy()
 
         return values
+
+    def _decode_video_frames(
+        self, record: EpisodeRecord, infer_indices: np.ndarray
+    ) -> tuple[str | None, torch.Tensor | None]:
+        """Decode video frames using the existing VideoFrameProvider infrastructure.
+
+        Returns (image_key, decoded_frames_tensor) or (None, None) on failure.
+        """
+        dataset_root = record.data_path.parent.parent.parent
+
+        if not hasattr(self, "_frame_provider") or self._frame_provider is None:
+            try:
+                self._frame_provider = VideoFrameProvider(root=dataset_root)
+            except Exception:
+                self._frame_provider = null_provider()
+
+        if not self._frame_provider.camera_keys:
+            return None, None
+
+        camera_key = self._frame_provider.camera_keys[0]
+        timestamps = [float(record.frame_timestamps[i]) for i in infer_indices]
+
+        frames = self._frame_provider.frames_at(record, timestamps, camera_key=camera_key)
+        if not frames:
+            return None, None
+
+        frames_tensor = torch.stack(frames)
+        return camera_key, frames_tensor
 
     def _compute_n_step_advantages(
         self, mc_returns: np.ndarray, values: np.ndarray, record: EpisodeRecord, n: int

@@ -31,6 +31,7 @@ rows into memory at once.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,6 +41,18 @@ import pyarrow.parquet as pq
 
 from lerobot.datasets.io_utils import load_tasks
 from lerobot.datasets.utils import DEFAULT_TASKS_PATH
+
+
+@functools.lru_cache(maxsize=8)
+def _read_parquet_as_pandas(path: Path):  # type: ignore[no-untyped-def]
+    """Read a parquet shard once and cache the pandas DataFrame.
+
+    Multiple EpisodeRecords from the same shard share this single read.
+    The LRU cache (keyed by path) avoids re-reading the same file
+    across 100+ episodes that all live in one chunk.
+    """
+
+    return pq.read_table(path).to_pandas()
 
 
 @dataclass
@@ -61,10 +74,7 @@ class EpisodeRecord:
     def frames_df(self):  # type: ignore[no-untyped-def]
         """Lazy-load the pandas slice for this episode (memoized)."""
         if self._frames_df_cache is None:
-            import pandas as pd  # noqa: PLC0415  - deferred for optional dataset extra
-
-            table = pq.read_table(self.data_path)
-            df: pd.DataFrame = table.to_pandas()
+            df = _read_parquet_as_pandas(self.data_path)
             self._frames_df_cache = df.iloc[self.row_offset : self.row_offset + self.row_count].reset_index(
                 drop=True
             )

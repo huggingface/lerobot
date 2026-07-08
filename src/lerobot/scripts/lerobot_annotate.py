@@ -53,6 +53,37 @@ def _resolve_root(cfg: AnnotationPipelineConfig) -> Path:
     if cfg.repo_id is not None:
         from huggingface_hub import snapshot_download
 
+        needs_vlm = cfg.plan.enabled or cfg.interjections.enabled or cfg.vqa.enabled
+        advantage_only = cfg.advantage.enabled and not needs_vlm
+
+        if advantage_only:
+            # Download only metadata + parquet first to resolve the camera key,
+            # then fetch only the single camera's videos the advantage module needs.
+            root = Path(
+                snapshot_download(
+                    repo_id=cfg.repo_id,
+                    repo_type="dataset",
+                    allow_patterns=["meta/**", "data/**"],
+                )
+            )
+            camera_key = cfg.vlm.camera_key
+            if camera_key is None:
+                from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata  # noqa: PLC0415
+
+                meta = LeRobotDatasetMetadata(repo_id="local", root=root)
+                depth_keys = set(meta.depth_keys)
+                video_keys = [k for k in meta.video_keys if k not in depth_keys]
+                camera_key = video_keys[0] if video_keys else None
+
+            if camera_key:
+                logger.info("advantage-only mode: downloading only camera %s", camera_key)
+                snapshot_download(
+                    repo_id=cfg.repo_id,
+                    repo_type="dataset",
+                    allow_patterns=[f"videos/{camera_key}/**"],
+                )
+            return root
+
         return Path(snapshot_download(repo_id=cfg.repo_id, repo_type="dataset"))
     raise ValueError("Either --root or --repo_id must be provided.")
 
@@ -65,10 +96,11 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
     logger.info("annotate: root=%s", root)
 
     needs_vlm = cfg.plan.enabled or cfg.interjections.enabled or cfg.vqa.enabled
+    needs_video = needs_vlm or cfg.advantage.enabled
     vlm = make_vlm_client(cfg.vlm) if needs_vlm else None
     frame_provider = (
         make_frame_provider(root, camera_key=cfg.vlm.camera_key, video_backend=cfg.video_backend)
-        if needs_vlm
+        if needs_video
         else None
     )
     # Surface the resolved cameras up front so a silent vqa-module no-op
@@ -105,7 +137,10 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
         if needs_vlm
         else None
     )
-    advantage = AdvantageModule(config=cfg.advantage)
+    advantage = AdvantageModule(
+        config=cfg.advantage,
+        **({"frame_provider": frame_provider} if frame_provider is not None else {}),
+    )
     writer = LanguageColumnsWriter()
     validator = StagingValidator(
         dataset_camera_keys=tuple(cam_keys) or None,
