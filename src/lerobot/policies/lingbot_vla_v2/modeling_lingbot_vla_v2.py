@@ -9,14 +9,14 @@ from transformers.models.auto import CONFIG_MAPPING
 from transformers.cache_utils import Cache
 from transformers.utils import logging
 
-from .configuration_lingbot_vla import LingbotVLAV2Config
+from .configuration_lingbot_vla_v2_internal import LingbotVLAV2Config
 from .qwen3vl_in_vla import (
     Qwen3VLForConditionalGeneration,
     Qwen3VLTextModel,
     Qwen3VLPreTrainedModel,
     apply_rotary_pos_emb,
 )
-from .modeling_lingbot_vla import (
+from .modeling_lingbot_vla_v2_base import (
     AdaRMSNorm,
     FixAdaRMSNorm,
     replace_lnorm_with_adanorm,
