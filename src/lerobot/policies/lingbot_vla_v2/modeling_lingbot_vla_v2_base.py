@@ -8,7 +8,7 @@ from torch import Tensor, nn
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, Union
 from functools import partial
 import math
-from .configuration_lingbot_vla import LingbotVLAConfig
+from .configuration_lingbot_vla_v2_internal import LingbotVLAConfig
 from transformers import (
     AutoConfig,
     PretrainedConfig,
