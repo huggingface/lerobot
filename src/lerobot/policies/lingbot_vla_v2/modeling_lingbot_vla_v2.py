@@ -1431,8 +1431,84 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         if isinstance(model_dtype, torch.dtype) and model_dtype.is_floating_point:
             self.model.to(model_dtype)
 
+        # Inference-time action de-normalizer: an unapply-only FeatureTransform (built
+        # without the image processor / tokenizer) that inverts the per-slot normalization
+        # and the canonical slot mapping on the model's actions. Built lazily-safe so a
+        # missing robot_config just falls back to a plain truncation (see _postprocess_actions).
+        self._action_unapply_ft = self._build_action_unapply_transform()
+
         self.reset()
         torch.set_float32_matmul_precision("high")
+
+    def _build_action_unapply_transform(self):
+        """Build a lightweight (processor-free) FeatureTransform for inference unapply."""
+        cfg = self.config
+        if not getattr(cfg, "robot_config_path", None):
+            return None
+        try:
+            from types import SimpleNamespace
+
+            from .feature_transform import FeatureTransform
+
+            data_config = SimpleNamespace(
+                joints=[f"{{'{k}': {v}}}" for k, v in cfg.canonical_joints.items()],
+                norm_type=[f"{{'{k}': '{v}'}}" for k, v in cfg.canonical_norm_type.items()],
+                cameras=list(cfg.canonical_cameras),
+                img_size=cfg.resize_imgs_with_padding[0],
+                chat_template="default",
+                text_keys="task",
+            )
+            model_config = SimpleNamespace(
+                max_state_dim=cfg.max_state_dim,
+                max_action_dim=cfg.max_action_dim,
+                chunk_size=cfg.chunk_size,
+                tokenizer_max_length=cfg.tokenizer_max_length,
+                use_qwen3_chat_template=True,
+                return_image_grid_thw=True,
+                qwen3vl_use_vision_boundaries=True,
+                resize_imgs_with_padding=tuple(cfg.resize_imgs_with_padding),
+            )
+            return FeatureTransform(
+                robot_config_path=cfg.robot_config_path,
+                data_config=data_config,
+                model_config=model_config,
+                processor=None,
+                chunk_size=cfg.chunk_size,
+                norm_stats_path=cfg.norm_stats_path,
+            )
+        except Exception as exc:  # noqa: BLE001 - de-normalizer is best-effort at build time
+            logging.get_logger(__name__).warning(
+                "Could not build the inference action de-normalizer (%s); select_action will "
+                "return actions in the normalized canonical space.",
+                exc,
+            )
+            return None
+
+    def _postprocess_actions(self, actions: Tensor, batch: dict) -> Tensor:
+        """Invert normalization + the canonical slot mapping on a model action chunk.
+
+        ``actions`` is ``(B, chunk, max_action_dim)`` in the normalized canonical space.
+        Uses the per-joint masks and observation state carried in the (preprocessed) batch.
+        Falls back to a plain truncation when the de-normalizer or masks are unavailable.
+        """
+        action_dim = self.config.output_features[ACTION].shape[0]
+        ft = self._action_unapply_ft
+        action_joint_mask = batch.get("action_joint_mask")
+        state_joint_mask = batch.get("state_joint_mask")
+        state = batch.get(OBS_STATE)
+        if ft is None or action_joint_mask is None or state_joint_mask is None or state is None:
+            return actions[:, :, :action_dim]
+
+        recovered = []
+        for i in range(actions.shape[0]):
+            item = {
+                "actions": actions[i].detach().to("cpu", torch.float32),
+                "action_joint_mask": action_joint_mask[i].detach().to("cpu"),
+                "state": state[i].detach().to("cpu", torch.float32),
+                "state_joint_mask": state_joint_mask[i].detach().to("cpu"),
+            }
+            recovered.append(ft.unapply(item)[ACTION])
+        return torch.stack(recovered, dim=0).to(actions.device)
 
     def reset(self):
         """Reset the rolling action queue used by select_action."""
@@ -1515,7 +1591,12 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict, noise: Tensor | None = None) -> Tensor:
-        """Run flow-matching denoising and return an action chunk (B, chunk, action_dim)."""
+        """Run flow-matching denoising and return a de-normalized action chunk (B, chunk, action_dim).
+
+        ``sample_actions`` returns the normalized 55-D canonical action; this inverts the
+        per-slot normalization and the canonical slot mapping back to the raw dataset action
+        (see ``_postprocess_actions``).
+        """
         self.eval()
         images, img_masks, lang_tokens, lang_masks, state, image_grid_thw = self._extract_model_inputs(batch)
         actions = self.model.sample_actions(
@@ -1527,8 +1608,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             noise=noise,
             image_grid_thw=image_grid_thw,
         )
-        action_dim = self.config.output_features[ACTION].shape[0]
-        return actions[:, :, :action_dim]
+        return self._postprocess_actions(actions, batch)
 
     @torch.no_grad()
     def select_action(self, batch: dict, noise: Tensor | None = None) -> Tensor:
