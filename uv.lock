@@ -1431,19 +1431,6 @@ wheels = [
 ]
 
 [[package]]
-name = "ema-pytorch"
-version = "0.7.9"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
-    { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform == 'linux'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c7/b8/de3bb1eacd77a81eb843fb098c2eaeac3bbe6777623a15c786e03fdc44be/ema_pytorch-0.7.9.tar.gz", hash = "sha256:a8ccdf2eeecce5489de02fc7c9776ef55400220afff92b8223f7516cb570b594", size = 10564, upload-time = "2025-12-19T21:30:04.154Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9f/99/d2c69a90d2d666ff9ef45426992bd2c7d578068ea6324a1a46e6020c636d/ema_pytorch-0.7.9-py3-none-any.whl", hash = "sha256:fe6f236d16e879d7d3cf4946fa1eed395c01f42d3df6a61a9f0ebebbc9aae56d", size = 11538, upload-time = "2025-12-19T21:30:03.122Z" },
-]
-
-[[package]]
 name = "etils"
 version = "1.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2842,7 +2829,6 @@ dependencies = [
     { name = "cmake" },
     { name = "draccus" },
     { name = "einops" },
-    { name = "ema-pytorch" },
     { name = "gymnasium" },
     { name = "huggingface-hub" },
     { name = "numpy" },
@@ -3318,7 +3304,6 @@ requires-dist = [
     { name = "draccus", specifier = "==0.10.0" },
     { name = "dynamixel-sdk", marker = "extra == 'dynamixel'", specifier = ">=3.7.31,<3.9.0" },
     { name = "einops", specifier = ">=0.8.0,<0.9.0" },
-    { name = "ema-pytorch", specifier = ">=0.7.7,<1.0.0" },
     { name = "faker", marker = "extra == 'sarm'", specifier = ">=33.0.0,<35.0.0" },
     { name = "fastapi", marker = "extra == 'phone'", specifier = "<1.0" },
     { name = "feetech-servo-sdk", marker = "extra == 'feetech'", specifier = ">=1.0.0,<2.0.0" },

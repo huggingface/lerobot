@@ -600,53 +600,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     policy.train()
 
-    # ------------------------------------------------------------------
-    # EMA setup
-    # ------------------------------------------------------------------
-    # Shadow copy of the trainable params for late-training averaging
-    # (Chi et al. 2023 Diffusion Policy §V.D; openpi JAX trainer ships
-    # this with decay=0.999 for pi05_libero; openpi PyTorch port and
-    # LeRobot main both skip it). Off by default; opt in with
-    # ``--ema.enable=true``. Implemented via ema-pytorch
-    # (https://github.com/lucidrains/ema-pytorch) — the standard PyTorch
-    # EMA library, also used by lucidrains' diffusion repos.
-    ema = None
-    if cfg.ema.enable and is_main_process:
-        from ema_pytorch import EMA  # noqa: PLC0415
-
-        ema = EMA(
-            accelerator.unwrap_model(policy),
-            beta=cfg.ema.decay,
-            update_after_step=cfg.ema.warmup_steps,
-            update_every=1,  # update on every ema.update() call
-            # Don't register the live model as an ema submodule — accelerator
-            # already owns its lifecycle, and double-registration would
-            # double-count its params in ``ema.state_dict()``.
-            include_online_model=False,
-        )
-        ema.to(accelerator.device)
-        logging.info(
-            "EMA enabled (ema-pytorch): beta=%g, update_after_step=%d, use_for_eval=%s",
-            cfg.ema.decay,
-            cfg.ema.warmup_steps,
-            cfg.ema.use_for_eval,
-        )
-
-        # Resume the EMA shadow if a previous run wrote one.
-        if cfg.checkpoint_path is not None:
-            ema_path = cfg.checkpoint_path / "training_state" / "ema_state.pt"
-            if ema_path.exists():
-                logging.info("Resuming EMA shadow from %s", ema_path)
-                try:
-                    ema.load_state_dict(
-                        torch.load(ema_path, map_location=accelerator.device, weights_only=True)
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logging.warning(
-                        "Failed to load EMA shadow (%s) — restarting EMA from current live weights",
-                        exc,
-                    )
-
     train_metrics = {
         # Per-rank loss reflects only one shard of the global batch; mean recovers the loss DDP
         # is actually optimizing. grad_norm and lr are already identical on every rank (post
@@ -714,14 +667,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             log_metrics=log_metrics,
         )
 
-        # EMA update: pull one step of the live weights into the shadow.
-        # Runs only on the main process (the shadow lives there); other
-        # ranks rely on the live model staying in sync via accelerator.
-        # ``ema-pytorch`` holds an internal reference to the online model
-        # (set at construction), so ``ema.update()`` takes no args.
-        if ema is not None:
-            ema.update()
-
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
         step += 1
@@ -759,14 +704,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     if sample_weighter is not None:
                         weighter_stats = sample_weighter.get_stats()
                         wandb_log_dict.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
-                    # EMA observability: ``ema.step`` is the count of
-                    # ``ema.update()`` calls (= optimizer steps once EMA is
-                    # enabled); ``ema.initted`` flips to True once we've
-                    # crossed ``update_after_step``.
-                    if ema is not None:
-                        wandb_log_dict["ema/step"] = int(ema.step.item())
-                        wandb_log_dict["ema/initted"] = float(ema.initted.item())
-                        wandb_log_dict["ema/beta"] = float(cfg.ema.decay)
                     wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
@@ -837,19 +774,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     optim_state_dict=optim_state_dict,
                 )
                 update_last_checkpoint(checkpoint_dir)
-                # Save the EMA shadow alongside the training state so a
-                # resumed run picks up exactly where the live EMA left off.
-                # ``ema-pytorch.state_dict()`` returns the full shadow
-                # nn.Module's state dict + step/initted buffers; saved as
-                # .pt (the rest of training_state mixes formats already).
-                if ema is not None:
-                    try:
-                        ema_path = checkpoint_dir / "training_state" / "ema_state.pt"
-                        ema_path.parent.mkdir(parents=True, exist_ok=True)
-                        torch.save(ema.state_dict(), ema_path)
-                    except Exception as exc:  # noqa: BLE001
-                        logging.warning("Failed to save EMA shadow: %s", exc)
-
                 if cfg.save_checkpoint_to_hub:
                     push_checkpoint_to_hub(
                         checkpoint_dir,
@@ -865,16 +789,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             if is_main_process:
                 step_id = get_step_identifier(step, cfg.steps)
                 logging.info(f"Eval policy at step {step}")
-                # Use the EMA shadow model for eval when enabled —
-                # standard practice for diffusion-style policies (~1–3%
-                # lift on closed-loop success). ``ema.ema_model`` is a
-                # full nn.Module clone, so we just pass it through; no
-                # swap/restore on the live policy needed.
-                eval_target_policy = (
-                    ema.ema_model
-                    if (ema is not None and cfg.ema.use_for_eval)
-                    else accelerator.unwrap_model(policy)
-                )
+                eval_target_policy = accelerator.unwrap_model(policy)
                 with torch.no_grad(), accelerator.autocast():
                     eval_info = eval_policy_all(
                         envs=eval_env,  # dict[suite][task_id] -> vec_env
@@ -940,26 +855,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 unwrapped_model.push_model_to_hub(cfg, state_dict=model_state_dict, dataset_meta=dataset.meta)
             preprocessor.push_to_hub(active_cfg.repo_id)
             postprocessor.push_to_hub(active_cfg.repo_id)
-
-            # When EMA is on we *eval* the EMA weights but the push above
-            # ships the live weights — they're different models. Push the EMA
-            # weights too, to a sibling ``<repo_id>-ema`` repo, so both are
-            # fully loadable and you can benchmark/deploy whichever is better.
-            # Non-fatal: the live model is already up if this fails.
-            if ema is not None and not (not cfg.is_reward_model_training and cfg.policy.use_peft):
-                ema_model = ema.ema_model
-                ema_repo_id = f"{active_cfg.repo_id}-ema"
-                orig_repo_id = ema_model.config.repo_id
-                try:
-                    ema_model.config.repo_id = ema_repo_id
-                    ema_model.push_model_to_hub(cfg)
-                    preprocessor.push_to_hub(ema_repo_id)
-                    postprocessor.push_to_hub(ema_repo_id)
-                    logging.info("Pushed EMA weights to %s", ema_repo_id)
-                except Exception as exc:  # noqa: BLE001
-                    logging.warning("Failed to push EMA weights to %s: %s", ema_repo_id, exc)
-                finally:
-                    ema_model.config.repo_id = orig_repo_id
 
     # Properly clean up the distributed process group
     accelerator.wait_for_everyone()

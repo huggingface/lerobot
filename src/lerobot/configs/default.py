@@ -81,19 +81,6 @@ class WandBConfig:
 
 
 @dataclass
-class EMAConfig:
-    """EMA shadow for flow/diffusion policies. Off by default because it doubles model memory."""
-
-    enable: bool = False
-    # Target EMA decay beta in theta_ema <- beta * theta_ema + (1 - beta) * theta_live.
-    decay: float = 0.99
-    # Initial update calls that keep the shadow as a hard copy before averaging starts.
-    warmup_steps: int = 0
-    # Use the EMA model for periodic eval.
-    use_for_eval: bool = True
-
-
-@dataclass
 class EvalConfig:
     n_episodes: int = 50
     # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
