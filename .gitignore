@@ -179,6 +179,4 @@ outputs/
 *.mp4
 *.parquet
 
-.nero/*
-*.json
 

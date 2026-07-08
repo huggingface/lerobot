@@ -38,7 +38,7 @@ class NeroLeaderConfigBase:
     # J1 flip (base rotates opposite), J3/J5/J6 flip (pitch direction opposite)
     # J2/J4/J7 keep (J4 asymmetric limits, cannot flip)
     mirror_sign: list[int] = field(
-        default_factory=lambda: [-1, 1, -1, 1, -1, -1, 1]
+        default_factory=lambda: [1, 1, 1, 1, 1, 1, 1]
     )
 
 
