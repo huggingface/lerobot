@@ -125,17 +125,23 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
     def __init__(self, config: QwenvlWithExpertV2Config, eval=False):
         super().__init__(config=config)
         self.config = config
+        # Map our attention_implementation to a transformers-valid attn class for the
+        # HF model instantiation. "fa2" -> flash_attention_2; everything else (eager /
+        # flex / flex_cached) builds with "eager" — the flex paths override attention in
+        # the custom forward, and eager is required where flash-attn is absent (Jetson,
+        # CPU, this A100 box without the flash_attn package).
+        hf_attn = "flash_attention_2" if self.config.attention_implementation == "fa2" else "eager"
         vlm_config = AutoConfig.from_pretrained(self.config.tokenizer_path)
         if self.config.vocab_size not in (0, 257152):
             vlm_config.text_config.vocab_size = self.config.vocab_size
-        vlm_config._attn_implementation = "flash_attention_2"
-        vlm_config.text_config._attn_implementation = "flash_attention_2"
+        vlm_config._attn_implementation = hf_attn
+        vlm_config.text_config._attn_implementation = hf_attn
         vlm_config.vision_config._attn_implementation = self.config.vit_attn_implementation
         self.qwenvl = Qwen3VLForConditionalGeneration._from_config(vlm_config)
         if self.config.use_lm_head:
             self.qwenvl.tie_weights()
 
-        self.config.qwen_expert_config._attn_implementation = "flash_attention_2"
+        self.config.qwen_expert_config._attn_implementation = hf_attn
         self.qwen_expert = Qwen2ForCausalLM._from_config(self.config.qwen_expert_config, eval=eval)
 
         if getattr(self.config, "adanorm_time", False):
@@ -197,8 +203,8 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
 
     def set_requires_grad(self):
         if self.config.freeze_vision_encoder:
-            self.qwenvl.visual.eval()
-            for params in self.qwenvl.visual.parameters():
+            self.qwenvl.model.visual.eval()
+            for params in self.qwenvl.model.visual.parameters():
                 params.requires_grad = False
         if self.config.train_expert_only:
             self.qwenvl.eval()
@@ -208,7 +214,7 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
     def train(self, mode: bool = True):
         super().train(mode)
         if self.config.freeze_vision_encoder:
-            self.qwenvl.visual.eval()
+            self.qwenvl.model.visual.eval()
         if self.config.train_expert_only:
             self.qwenvl.eval()
 
@@ -225,8 +231,8 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
                 self.cu_seqlens,
                 self.visual_split_sizes,
                 self.visual_max_seqlen,
-            ) = self.qwenvl.visual.preprcess_grid_thw(grid_thw=image_grid_thw)
-        image_embeds, deepstack_image_embeds = self.qwenvl.visual(
+            ) = self.qwenvl.model.visual.preprcess_grid_thw(grid_thw=image_grid_thw)
+        image_embeds, deepstack_image_embeds = self.qwenvl.model.visual(
             pixel_values,
             grid_thw=image_grid_thw,
             pos_embeds=self.pos_embeds,
@@ -236,7 +242,7 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         )
         split_sizes = self.visual_split_sizes
         if split_sizes is None:
-            split_sizes = (image_grid_thw.prod(-1) // self.qwenvl.visual.spatial_merge_size**2).tolist()
+            split_sizes = (image_grid_thw.prod(-1) // self.qwenvl.model.visual.spatial_merge_size**2).tolist()
         image_chunks = list(torch.split(image_embeds, split_sizes))
         deepstack_chunks = [
             list(torch.split(deepstack_embeds, split_sizes)) for deepstack_embeds in deepstack_image_embeds
@@ -260,12 +266,32 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         return emb.view(1, 1, 1, -1).expand(batch, count, 1, -1)
 
     def build_prefix_position_ids(self, input_ids, attention_mask, image_grid_thw=None, video_grid_thw=None):
+        # transformers>=5.5 externalized modality detection: get_rope_index now takes an
+        # explicit ``mm_token_type_ids`` (0=text, 1=image, 2=video) instead of matching
+        # the placeholder token ids internally. Reconstruct it from the vision token ids.
+        vlm_cfg = self.qwenvl.config
+        image_token_id = getattr(vlm_cfg, "image_token_id", None)
+        video_token_id = getattr(vlm_cfg, "video_token_id", None)
+        mm_token_type_ids = torch.zeros_like(input_ids)
+        if image_token_id is not None:
+            mm_token_type_ids[input_ids == image_token_id] = 1
+        if video_token_id is not None:
+            mm_token_type_ids[input_ids == video_token_id] = 2
         position_ids, _ = self.qwenvl.model.get_rope_index(
             input_ids=input_ids,
+            mm_token_type_ids=mm_token_type_ids,
             image_grid_thw=image_grid_thw,
             video_grid_thw=video_grid_thw,
             attention_mask=attention_mask,
         )
+        # transformers 4.57 (which the 6B checkpoint was trained under) filled masked
+        # (padding) rope positions with 1; transformers 5.5 fills them with 0. Restore the
+        # 4.57 convention so cached-prefix rope matches the trained weights exactly.
+        if attention_mask is not None:
+            pad = attention_mask == 0
+            while pad.dim() < position_ids.dim():
+                pad = pad.unsqueeze(0)
+            position_ids = position_ids.masked_fill(pad.expand_as(position_ids), 1)
         return position_ids
 
     def apply_mrope(self, query_states, key_states, position_ids):
@@ -1397,6 +1423,13 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         if not getattr(self.config, "use_lm_head", False):
             del self.model.qwenvl_with_expert.qwenvl.lm_head
         del self.model.qwenvl_with_expert.qwen_expert.lm_head
+
+        # The Qwen3-VL backbone builds in bfloat16 while our added projection/AdaRMSNorm
+        # heads build in float32. Cast the whole model to one dtype so the dual streams
+        # stay consistent (mixed dtypes raise "mat1 and mat2 must have the same dtype").
+        model_dtype = getattr(torch, getattr(self.config, "dtype", "bfloat16"))
+        if isinstance(model_dtype, torch.dtype) and model_dtype.is_floating_point:
+            self.model.to(model_dtype)
 
         self.reset()
         torch.set_float32_matmul_precision("high")

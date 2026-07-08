@@ -72,6 +72,54 @@ class LingbotVLAV2Config(PreTrainedConfig):
     # Number of flow-matching denoising steps at inference.
     num_steps: int = 10
 
+    # ==================== Feature transform (robot-config slot mapping) ====================
+    # Per-embodiment robot config (YAML) mapping raw dataset state/action/image keys
+    # onto the unified canonical slots, and the matching normalization-stats JSON.
+    # Both are resolved by the processor; leave None to fall back to a pass-through
+    # single-arm mapping built from the dataset's own features.
+    robot_config_path: str | None = None
+    norm_stats_path: str | None = None
+    # Path (or hub id) to the Qwen3-VL processor (image processor + tokenizer). Falls
+    # back to ``tokenizer_path`` when None.
+    processor_path: str | None = None
+    # Compute dtype for the whole model. The Qwen3-VL backbone defaults to bfloat16
+    # while our added heads default to float32; we cast everything to this single dtype
+    # after build so the streams stay consistent (mixed dtypes break the custom AdaRMSNorm
+    # linears under autocast). lerobot-train also reads this to drive Accelerate autocast.
+    dtype: str = "bfloat16"
+    # Canonical joint vocabulary (name -> dim) and per-joint normalization mode. These
+    # define the unified cross-embodiment layout the checkpoint was trained with and
+    # MUST match it. Defaults mirror the v2 55-D canonical vector.
+    canonical_joints: dict[str, int] = field(
+        default_factory=lambda: {
+            "arm.position": 14,
+            "end.position": 14,
+            "effector.position": 2,
+            "hand.position": 12,
+            "waist.position": 4,
+            "head.position": 2,
+            "base.velocity": 3,
+            "reserved.slots": 4,
+        }
+    )
+    canonical_norm_type: dict[str, str] = field(
+        default_factory=lambda: {
+            "arm.position": "meanstd",
+            "end.position": "meanstd",
+            "effector.position": "meanstd",
+            "hand.position": "meanstd",
+            "waist.position": "meanstd",
+            "head.position": "meanstd",
+            "base.velocity": "meanstd",
+            "reserved.slots": "meanstd",
+        }
+    )
+    # Canonical camera-view slots the checkpoint expects. The robot config maps raw
+    # dataset cameras onto these; missing views are zero-filled at inference.
+    canonical_cameras: list[str] = field(
+        default_factory=lambda: ["camera_top", "camera_wrist_left", "camera_wrist_right"]
+    )
+
     # Qwen3-VL specific token/vision handling.
     use_qwen3_chat_template: bool = True
     return_image_grid_thw: bool = True
@@ -150,6 +198,12 @@ class LingbotVLAV2Config(PreTrainedConfig):
 
     def __post_init__(self):
         super().__post_init__()
+
+        # The vendored QwenvlWithExpertV2 reads the expert-storage layout from
+        # ``_moe_implementation``; expose our public ``moe_implementation`` under that
+        # private name so "fused" selects the stacked-parameter experts that the
+        # released MoE checkpoints (e.g. the 6B) were saved with.
+        self._moe_implementation = self.moe_implementation
 
         if self.n_action_steps > self.chunk_size:
             raise ValueError(

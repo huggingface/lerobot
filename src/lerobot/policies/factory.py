@@ -199,7 +199,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
                      "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05", "gaussian_actor",
-                     "smolvla", "wall_x", "molmoact2", "eo1", "evo1".
+                     "smolvla", "wall_x", "molmoact2", "eo1", "evo1", "lingbot_vla_v2".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -504,6 +504,14 @@ def make_pre_post_processors(
         from .fastwam.processor_fastwam import make_fastwam_pre_post_processors
 
         processors = make_fastwam_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, LingbotVLAV2Config):
+        from .lingbot_vla_v2.processor_lingbot_vla_v2 import make_lingbot_vla_v2_pre_post_processors
+
+        processors = make_lingbot_vla_v2_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )

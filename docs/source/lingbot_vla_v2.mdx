@@ -1,0 +1,102 @@
+# LingBot-VLA 2.0
+
+LingBot-VLA 2.0 is an open-source vision-language-action model integrated into LeRobot as
+the `lingbot_vla_v2` policy. It pairs a **Qwen3-VL-4B** multimodal backbone (native-resolution
+image tokens via `image_grid_thw`) with a **sparse-MoE Qwen2 action expert** (32 experts,
+top-4, sigmoid router) and **Flow-Matching** continuous action generation over a unified
+**55-D** state/action space, supporting cross-embodiment and bimanual manipulation. An
+optional predictive-dynamics branch (depth / DINO-video distillation) is available but off by
+default for the no-distillation checkpoint.
+
+It is the successor to the [`lingbot_vla`](./lingbot_va) (v1) policy from the same authors and
+slots into the same post-train → evaluate → deploy flow as π0, SmolVLA, WALL-OSS and v1.
+
+## Model Overview
+
+- **Backbone:** Qwen3-VL-4B (native-resolution patchification; the image token budget is
+  capped with `image_max_pixels` / `image_min_pixels`).
+- **Action expert:** dual-stream Qwen2 with a sparse Mixture-of-Experts MLP (32 experts,
+  top-4 routing, sigmoid router, `routed_scaling_factor=4.0`) plus a shared expert.
+- **Action generation:** flow matching over a padded 55-D canonical state/action space
+  (`max_state_dim = max_action_dim = 55`, `chunk_size = 50`, `num_steps = 10`).
+- **Reference checkpoint:** `robbyant/lingbot-vla-v2-6b` (~6B, "Native Depth").
+
+### What the LeRobot Integration Covers
+
+- The `lingbot_vla_v2` policy (config / modeling / processor) with strict-loading of the
+  upstream checkpoint and `lerobot-train` post-training.
+- A faithful port of the upstream `FeatureTransform` (per-embodiment robot-config slot
+  mapping + per-slot normalization + Qwen3-VL native-resolution tokenization) as a LeRobot
+  `ProcessorStep`.
+- Flash-attention is optional: the policy defaults to `eager` attention and only uses
+  `flash_attention_2` when explicitly requested (and when `flash-attn` is installed).
+
+## Installation
+
+```bash
+pip install -e ".[lingbot-v2]"
+```
+
+This pulls `transformers>=5.5` (with Qwen3-VL), `peft` and `qwen-vl-utils`.
+
+## Checkpoints
+
+| Checkpoint | Params | Notes |
+| --- | --- | --- |
+| `robbyant/lingbot-vla-v2-6b` | ~6B | "Native Depth" variant; action path loads with `use_depth=False` (the 84 distillation-head tensors are skipped). |
+
+## Training / fine-tuning
+
+```bash
+lerobot-train \
+  --policy.type=lingbot_vla_v2 \
+  --policy.robot_config_path=/path/to/robot_config.yaml \
+  --policy.norm_stats_path=/path/to/norm_stats.json \
+  --policy.tokenizer_path=Qwen/Qwen3-VL-4B-Instruct \
+  --policy.processor_path=Qwen/Qwen3-VL-4B-Instruct \
+  --policy.dtype=bfloat16 \
+  --dataset.repo_id=<your/dataset> \
+  --batch_size=1 --steps=40000
+```
+
+Official real-world hyperparameters: lr `5e-5` (constant), AdamW, global batch 3, `L1_fm`
+loss, `tokenizer_max_length=72`. Multi-GPU is supported through `accelerate launch` with FSDP;
+the policy has been run with 4-way FSDP on 24 GB cards (cap `image_max_pixels` and enable
+`fsdp_offload_params` / activation checkpointing to fit).
+
+## Data format
+
+Raw per-embodiment features are mapped onto the trained 55-D canonical slots by the
+robot-config YAML consumed by the feature transform (`states` / `actions` map dataset keys to
+canonical joints, `images` rename cameras). Slot mismatches are **silent**, so the robot
+config must match the checkpoint's canonical layout.
+
+## Numerical validation
+
+The port was validated layer-by-layer against the original `Robbyant/lingbot-vla-v2`
+implementation (transformers 4.57.3 native vs LeRobot's 5.5.4 port, both eager, same weights
+and fixed inputs/noise):
+
+- **Strict-load key parity:** the port `state_dict` matches the checkpoint's action-path keys
+  exactly (1624 keys, 0 missing / 0 unexpected; only the 84 distillation-head keys are skipped
+  via `use_depth=False`).
+- **Bit-exact intermediates:** prefix token embeddings, the full per-layer Qwen3-VL KV cache,
+  `embed_suffix` (state/action/time embeddings), and the MoE router logits + top-4 expert
+  selection are numerically identical (max\|Δ\| = 0) in both bf16 and fp32.
+- **Only residual:** the MoE expert SwiGLU output differs by ~0.06 per block, isolated to the
+  vendored triton `fused_moe` kernel's internal reduced-precision tensor-core MMA (the port's
+  eager path is full-precision). This is a benign kernel-precision difference, not an
+  architecture or weight-loading defect.
+
+## Notes
+
+- The Qwen3-VL backbone and Qwen2 action expert are adapted from HuggingFace Transformers and
+  the upstream `Robbyant/lingbot-vla-v2` repository, kept close to source with scoped ruff
+  per-file-ignores.
+- Inference action de-normalization (inverting the normalization + canonical slot mapping via
+  `FeatureTransform.unapply`) is the immediate follow-up; the training and forward paths are
+  validated.
+
+## License
+
+Apache-2.0, consistent with the upstream LingBot-VLA 2.0 and Qwen3-VL sources.

@@ -198,8 +198,13 @@ class Qwen2FusedExperts(nn.Module):
         """Run fused_moe_forward with FSDP2-managed weights.
 
         Must be called via self.experts(...) so FSDP2 unshards params first.
+        Prefers the vendor triton kernel when available; otherwise falls back to a
+        mathematically-equivalent eager SwiGLU MoE (needed on eager / non-triton runs).
         """
-        from lingbotvla.ops.fused_moe import fused_moe_forward
+        try:
+            from lingbotvla.ops.fused_moe import fused_moe_forward
+        except ImportError:
+            return self._eager_forward(routing_weights, selected_experts, hidden_states)
 
         return fused_moe_forward(
             module=module,
@@ -211,6 +216,26 @@ class Qwen2FusedExperts(nn.Module):
             fc1_2_weight=self.up_proj,
             fc2_weight=self.down_proj,
         )
+
+    def _eager_forward(self, routing_weights, selected_experts, hidden_states):
+        """Eager reference for the fused experts: per-token top-k SwiGLU with the
+        stacked (num_experts, ...) weights. gate/up: [E, I, H]; down: [E, H, I]."""
+        T, H = hidden_states.shape
+        top_k = selected_experts.shape[-1]
+        out = torch.zeros(T, H, dtype=torch.float32, device=hidden_states.device)
+        x = hidden_states.unsqueeze(1)  # [T,1,H]
+        for k in range(top_k):
+            eidx = selected_experts[:, k]                       # [T]
+            w = routing_weights[:, k].to(torch.float32).unsqueeze(-1)  # [T,1]
+            g = self.gate_proj[eidx]                            # [T,I,H]
+            u = self.up_proj[eidx]                              # [T,I,H]
+            d = self.down_proj[eidx]                            # [T,H,I]
+            gate_out = torch.bmm(x, g.transpose(1, 2)).squeeze(1)  # [T,I]
+            up_out = torch.bmm(x, u.transpose(1, 2)).squeeze(1)    # [T,I]
+            inter = (F.silu(gate_out) * up_out).unsqueeze(1)       # [T,1,I]
+            y = torch.bmm(inter, d.transpose(1, 2)).squeeze(1)     # [T,H]
+            out = out + w * y.to(torch.float32)
+        return out.to(hidden_states.dtype)
 
 
 class FixQwen2RMSNorm(nn.Module):
@@ -533,7 +558,8 @@ class Qwen2Model(Qwen2PreTrainedModel):
 
 
 class Qwen2ForCausalLM(Qwen2PreTrainedModel, GenerationMixin):
-    _tied_weights_keys = ["lm_head.weight"]
+    # transformers>=5.5 expects a dict {tied_key: source_key} (was a list in 4.57).
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
     _tp_plan = {"lm_head": "colwise_rep"}
     _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
     get_input_embeddings = _Qwen2ForCausalLM.get_input_embeddings
