@@ -51,6 +51,12 @@ def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
     if state.device != actions.device or state.dtype != actions.dtype:
         state = state.to(device=actions.device, dtype=actions.dtype)
+    # When the observation is temporally stacked (e.g. LingBot-VA loads several obs steps via
+    # observation_delta_indices, giving state shape (B, T_obs, state_dim)), the relative reference
+    # is the CURRENT frame (delta == 0, i.e. index 0). Collapse to it so the offset broadcasts over
+    # the action horizon. pi0/pi05 pass a 2D (B, state_dim) state and are unaffected.
+    if state.ndim == 3:
+        state = state[:, 0]
     state_offset = state[..., :dims] * mask_t
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)
@@ -73,6 +79,10 @@ def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
     if state.device != actions.device or state.dtype != actions.dtype:
         state = state.to(device=actions.device, dtype=actions.dtype)
+    # Mirror to_relative_actions: collapse a temporally-stacked (B, T_obs, state_dim) state to the
+    # current frame (index 0) so the round-trip stays symmetric with the relative conversion.
+    if state.ndim == 3:
+        state = state[:, 0]
     state_offset = state[..., :dims] * mask_t
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)

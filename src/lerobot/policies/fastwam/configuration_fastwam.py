@@ -188,6 +188,14 @@ class FastWAMConfig(PreTrainedConfig):
     action_video_freq_ratio: int = 4
     image_size: tuple[int, int] = (224, 448)
     context_len: int = 128
+
+    # Relative actions: converts absolute actions to relative (action -= state) during
+    # preprocessing, and reverses it at postprocessing. Requires `proprio_dim` (OBS_STATE).
+    use_relative_actions: bool = False
+    # Joint names to keep absolute (not converted to relative). Empty list = all dims relative.
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Populated at runtime from dataset metadata by make_policy (used to build the exclude mask).
+    action_feature_names: list[str] | None = None
     model_id: str = WAN22_MODEL_ID
     tokenizer_model_id: str = WAN_T5_TOKENIZER_ID
     text_encoder_model_id: str = WAN22_DIFFUSERS_MODEL_ID
@@ -278,6 +286,10 @@ class FastWAMConfig(PreTrainedConfig):
             super()._save_pretrained(save_directory)
         finally:
             self.pretrained_path = pretrained_path
+
+    @property
+    def chunk_size(self) -> int:
+        return self.action_horizon
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(lr=self.optimizer_lr, weight_decay=self.optimizer_weight_decay)

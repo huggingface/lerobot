@@ -21,13 +21,16 @@ import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
     ActionProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
+    ProcessorStep,
     ProcessorStepRegistry,
+    RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
     policy_action_to_transition,
@@ -105,10 +108,20 @@ def make_fastwam_pre_post_processors(
     # anyway) and unsafe across fine-tuning: its `resize_size` would be inherited from the base
     # checkpoint's camera geometry, not this dataset's, making the concatenation N_cameras x too wide.
 
-    input_steps = [
+    # Shared relative-action step (OpenPI order: raw -> relative -> normalize -> model ->
+    # unnormalize -> absolute). The SAME instance is passed to AbsoluteActionsProcessorStep
+    # below so its cached raw state (set during preprocessing) flows to postprocessing.
+    relative_step = RelativeActionsProcessorStep(
+        enabled=config.use_relative_actions,
+        exclude_joints=getattr(config, "relative_exclude_joints", []),
+        action_names=getattr(config, "action_feature_names", None),
+    )
+
+    input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
+        relative_step,
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
@@ -116,12 +129,13 @@ def make_fastwam_pre_post_processors(
             device=config.device,
         ),
     ]
-    output_steps = [
+    output_steps: list[ProcessorStep] = [
         UnnormalizerProcessorStep(
             features=config.output_features,
             norm_map=config.normalization_mapping,
             stats=normalization_stats,
         ),
+        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
     ]
     if config.toggle_action_dimensions:
         output_steps.append(

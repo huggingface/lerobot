@@ -1359,7 +1359,9 @@ class FastWAM(torch.nn.Module):
         pred_action = self.action_expert.post_dit(tokens_out["action"], action_pre)
         return pred_video, pred_action
 
-    def _compute_training_video_loss(self, inputs, pred_video, target_video, timestep_video):
+    def _compute_training_video_loss(
+        self, inputs, pred_video, target_video, timestep_video, reduction: str = "mean"
+    ):
         include_initial_video_step = inputs["first_frame_latents"] is None
         if inputs["first_frame_latents"] is not None:
             pred_video = pred_video[:, :, 1:]
@@ -1374,9 +1376,13 @@ class FastWAM(torch.nn.Module):
             loss_video_per_sample.device,
             dtype=loss_video_per_sample.dtype,
         )
-        return (loss_video_per_sample * video_weight).mean()
+        weighted = loss_video_per_sample * video_weight
+        # reduction="none" returns the per-sample vector (B,) for sample weighting (RA-BC).
+        return weighted if reduction == "none" else weighted.mean()
 
-    def _compute_training_action_loss(self, inputs, pred_action, target_action, timestep_action):
+    def _compute_training_action_loss(
+        self, inputs, pred_action, target_action, timestep_action, reduction: str = "mean"
+    ):
         action_loss_token = functional.mse_loss(
             pred_action.float(), target_action.float(), reduction="none"
         ).mean(dim=2)
@@ -1393,9 +1399,11 @@ class FastWAM(torch.nn.Module):
             action_loss_per_sample.device,
             dtype=action_loss_per_sample.dtype,
         )
-        return (action_loss_per_sample * action_weight).mean()
+        weighted = action_loss_per_sample * action_weight
+        # reduction="none" returns the per-sample vector (B,) for sample weighting (RA-BC).
+        return weighted if reduction == "none" else weighted.mean()
 
-    def training_loss(self, sample, tiled: bool = False):
+    def training_loss(self, sample, tiled: bool = False, reduction: str = "mean"):
         inputs = self.build_inputs(sample, tiled=tiled)
         targets = self._sample_training_targets(inputs)
         pred_video, pred_action = self._run_training_mot(inputs=inputs, targets=targets)
@@ -1404,17 +1412,20 @@ class FastWAM(torch.nn.Module):
             pred_video=pred_video,
             target_video=targets["target_video"],
             timestep_video=targets["timestep_video"],
+            reduction=reduction,
         )
         loss_action = self._compute_training_action_loss(
             inputs=inputs,
             pred_action=pred_action,
             target_action=targets["target_action"],
             timestep_action=targets["timestep_action"],
+            reduction=reduction,
         )
+        # With reduction="none" both terms are (B,), so loss_total is the per-sample loss (B,).
         loss_total = self.loss_lambda_video * loss_video + self.loss_lambda_action * loss_action
         loss_dict = {
-            "loss_video": self.loss_lambda_video * float(loss_video.detach().item()),
-            "loss_action": self.loss_lambda_action * float(loss_action.detach().item()),
+            "loss_video": self.loss_lambda_video * float(loss_video.detach().mean().item()),
+            "loss_action": self.loss_lambda_action * float(loss_action.detach().mean().item()),
         }
         return loss_total, loss_dict
 

@@ -25,12 +25,14 @@ import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode
 from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
+    RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
 )
@@ -52,9 +54,19 @@ def make_lingbot_va_pre_post_processors(
 ]:
     """Build the pre/post processor pipelines for LingBot-VA."""
 
+    # Shared relative-action step (OpenPI order: raw -> relative -> normalize -> model ->
+    # unnormalize -> absolute). The SAME instance is passed to AbsoluteActionsProcessorStep
+    # below so its cached raw state (set during preprocessing) flows to postprocessing.
+    relative_step = RelativeActionsProcessorStep(
+        enabled=config.use_relative_actions,
+        exclude_joints=getattr(config, "relative_exclude_joints", []),
+        action_names=getattr(config, "action_feature_names", None),
+    )
+
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
+        relative_step,
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
@@ -63,13 +75,16 @@ def make_lingbot_va_pre_post_processors(
         DeviceProcessorStep(device=config.device),
     ]
 
-    # Unnormalize actions from [-1, 1] to physical units (QUANTILES) using q01/q99 restored from the checkpoint.
+    # Unnormalize actions back to physical units. Config-driven norm_map (was hardcoded QUANTILES)
+    # so it stays symmetric with the preprocessor's NormalizerProcessorStep — required for
+    # use_relative_actions with ACTION=IDENTITY (and unchanged for QUANTILES runs).
     output_steps: list[ProcessorStep] = [
         UnnormalizerProcessorStep(
             features=config.output_features,
-            norm_map={FeatureType.ACTION: NormalizationMode.QUANTILES},
+            norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
+        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
         DeviceProcessorStep(device="cpu"),
     ]
 
