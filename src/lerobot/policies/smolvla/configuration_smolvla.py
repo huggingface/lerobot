@@ -67,6 +67,7 @@ class SmolVLAConfig(PreTrainedConfig):
 
     # Finetuning settings
     freeze_vision_encoder: bool = True
+    fine_tune_vision_encoder: bool = False
     train_expert_only: bool = True
     train_state_proj: bool = True
 
