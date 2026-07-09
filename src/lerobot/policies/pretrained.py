@@ -26,7 +26,10 @@ from typing import TYPE_CHECKING, TypedDict, TypeVar, Unpack
 from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
+import packaging.version
+import safetensors
 from safetensors.torch import load_model as load_model_as_safetensor, save_model as save_model_as_safetensor
+import torch
 from torch import Tensor, nn
 
 from lerobot.__version__ import __version__
@@ -219,9 +222,23 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
-        missing_keys, unexpected_keys = load_model_as_safetensor(
-            model, model_file, strict=strict, device=map_location
-        )
+        # safetensors' load_file maps the bare string "cuda" to cuda:0 regardless of the current
+        # device (unlike torch's .to("cuda"), which honors torch.cuda.current_device()). Under
+        # multi-GPU accelerate/FSDP every rank would then load its weights onto GPU 0, OOMing it
+        # before sharding. Resolve "cuda" to the concrete current-device index so each rank loads
+        # onto its own GPU.
+        if map_location == "cuda" and torch.cuda.is_available():
+            map_location = f"cuda:{torch.cuda.current_device()}"
+
+        # Create base kwargs
+        kwargs = {"strict": strict}
+
+        # Add device parameter for newer versions that support it
+        if packaging.version.parse(safetensors.__version__) >= packaging.version.parse("0.4.3"):
+            kwargs["device"] = map_location
+
+        # Load the model with appropriate kwargs
+        missing_keys, unexpected_keys = load_model_as_safetensor(model, model_file, **kwargs)
         log_model_loading_keys(missing_keys, unexpected_keys)
         return model
 
