@@ -25,9 +25,11 @@ import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode
 from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
+    RelativeActionsProcessorStep,
     UnnormalizerProcessorStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
@@ -47,20 +49,33 @@ def make_lingbot_va_pre_post_processors(
 
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
+    # Shared relative-action step (OpenPI order: raw -> relative -> normalize -> model ->
+    # unnormalize -> absolute). The SAME instance is passed to AbsoluteActionsProcessorStep
+    # below so its cached raw state (set during preprocessing) flows to postprocessing.
+    relative_step = RelativeActionsProcessorStep(
+        enabled=config.use_relative_actions,
+        exclude_joints=getattr(config, "relative_exclude_joints", []),
+        action_names=getattr(config, "action_feature_names", None),
+    )
+
     input_steps: list[ProcessorStep] = [
         steps.rename_observations,
         steps.add_batch_dim,
+        relative_step,
         steps.normalize,
         steps.to_device,
     ]
 
-    # Unnormalize actions from [-1, 1] to physical units (QUANTILES) using q01/q99 restored from the checkpoint.
+    # Unnormalize actions back to physical units. Config-driven norm_map (was hardcoded QUANTILES)
+    # so it stays symmetric with the preprocessor's NormalizerProcessorStep — required for
+    # use_relative_actions with ACTION=IDENTITY (and unchanged for QUANTILES runs).
     output_steps: list[ProcessorStep] = [
         UnnormalizerProcessorStep(
             features=config.output_features,
-            norm_map={FeatureType.ACTION: NormalizationMode.QUANTILES},
+            norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
+        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
         steps.to_cpu,
     ]
 

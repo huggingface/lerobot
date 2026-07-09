@@ -21,10 +21,13 @@ import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
     ActionProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
+    ProcessorStep,
     ProcessorStepRegistry,
+    RelativeActionsProcessorStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
@@ -98,14 +101,25 @@ def make_fastwam_pre_post_processors(
 
     steps = make_default_policy_processor_steps(config, normalization_stats, normalizer_device=config.device)
 
-    input_steps = [
+    # Shared relative-action step (OpenPI order: raw -> relative -> normalize -> model ->
+    # unnormalize -> absolute). The SAME instance is passed to AbsoluteActionsProcessorStep
+    # below so its cached raw state (set during preprocessing) flows to postprocessing.
+    relative_step = RelativeActionsProcessorStep(
+        enabled=config.use_relative_actions,
+        exclude_joints=getattr(config, "relative_exclude_joints", []),
+        action_names=getattr(config, "action_feature_names", None),
+    )
+
+    input_steps: list[ProcessorStep] = [
         steps.rename_observations,
         steps.add_batch_dim,
         steps.to_device,
+        relative_step,
         steps.normalize,
     ]
-    output_steps = [
+    output_steps: list[ProcessorStep] = [
         steps.unnormalize,
+        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
     ]
     if config.toggle_action_dimensions:
         output_steps.append(

@@ -92,6 +92,15 @@ class LingBotVAConfig(PreTrainedConfig):
     # (un)normalization quantiles live in the checkpoint's ``policy_postprocessor.json``, not here.
     used_action_channel_ids: list[int] = field(default_factory=lambda: list(range(7)))
 
+    # Relative actions: converts absolute actions to relative (action -= state) during
+    # preprocessing, and reverses it at postprocessing. Requires the dataset to provide
+    # observation.state whose leading dims align 1:1 with the used action channels.
+    use_relative_actions: bool = False
+    # Joint names to keep absolute (not converted to relative). Empty list = all dims relative.
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Populated at runtime from dataset metadata by make_policy (used to build the exclude mask).
+    action_feature_names: list[str] | None = None
+
     # Opt-in: VAE-decode predicted video latents to ``self.last_predicted_frames`` for saving MP4s.
     save_predicted_video: bool = False
 

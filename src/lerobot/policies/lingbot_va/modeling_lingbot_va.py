@@ -257,8 +257,12 @@ class LingBotVAPolicy(PreTrainedPolicy):
             "grid_id": grid_id,
         }
 
-    def _flow_matching_loss(self, input_dict, pred):
-        """Dual-stream flow-matching loss (port of upstream ``Trainer.compute_loss``)."""
+    def _flow_matching_loss(self, input_dict, pred, reduction: str = "mean"):
+        """Dual-stream flow-matching loss (port of upstream ``Trainer.compute_loss``).
+
+        ``reduction="mean"`` returns scalar (latent_loss, action_loss); ``"none"`` returns
+        per-sample vectors of shape ``(B,)`` each (averaged over latent frames) for RA-BC.
+        """
         latent_pred, action_pred = pred
         ld, ad = input_dict["latent_dict"], input_dict["action_dict"]
         action_pred = rearrange(action_pred, "b (f n) c -> b c f n 1", f=ad["targets"].shape[-3])
@@ -278,7 +282,8 @@ class LingBotVAPolicy(PreTrainedPolicy):
         latent_loss = (
             (latent_loss * lw[:, None, :, None, None]).permute(0, 2, 3, 4, 1).flatten(0, 1).flatten(1)
         )
-        latent_loss = (latent_loss.sum(dim=1) / (torch.ones_like(latent_loss).sum(dim=1) + 1e-6)).mean()
+        # per (batch*frame) mean over spatial/channel -> (B*F,)
+        latent_loss = latent_loss.sum(dim=1) / (torch.ones_like(latent_loss).sum(dim=1) + 1e-6)
 
         amask = ad["actions_mask"].float()
         action_loss = F.mse_loss(action_pred.float(), ad["targets"].float().detach(), reduction="none")
@@ -286,10 +291,14 @@ class LingBotVAPolicy(PreTrainedPolicy):
             (action_loss * aw[:, None, :, None, None] * amask).permute(0, 2, 3, 4, 1).flatten(0, 1).flatten(1)
         )
         amask_f = amask.permute(0, 2, 3, 4, 1).flatten(0, 1).flatten(1)
-        action_loss = (action_loss.sum(dim=1) / (amask_f.sum(dim=1) + 1e-6)).mean()
-        return latent_loss, action_loss
+        action_loss = action_loss.sum(dim=1) / (amask_f.sum(dim=1) + 1e-6)
 
-    def training_loss_from_streams(self, latents, actions, actions_mask, text_emb):
+        if reduction == "none":
+            # (B*F,) -> (B, F) -> (B,): per-sample losses for RA-BC weighting.
+            return latent_loss.reshape(bn, fn).mean(dim=1), action_loss.reshape(bn, fn).mean(dim=1)
+        return latent_loss.mean(), action_loss.mean()
+
+    def training_loss_from_streams(self, latents, actions, actions_mask, text_emb, reduction: str = "mean"):
         """Core dual-stream training loss given prepared latents / actions / text embeddings.
 
         ``latents``: ``[B, in_channels, F, h, w]`` (normalized video latents).
@@ -318,20 +327,24 @@ class LingBotVAPolicy(PreTrainedPolicy):
             "window_size": int(torch.randint(4, 65, (1,)).item()),
         }
         pred = self.transformer(input_dict, train_mode=True)
-        latent_loss, action_loss = self._flow_matching_loss(input_dict, pred)
+        latent_loss, action_loss = self._flow_matching_loss(input_dict, pred, reduction)
+        # reduction="none": latent_loss/action_loss are (B,) -> loss is per-sample (B,).
         loss = latent_loss + action_loss
-        return loss, {"latent_loss": latent_loss.item(), "action_loss": action_loss.item()}
+        return loss, {"latent_loss": latent_loss.mean().item(), "action_loss": action_loss.mean().item()}
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
+    def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict | None]:
         """Training forward: dual-stream flow-matching loss.
 
         Builds the (video-latent, action, text) training streams from a LeRobot batch
         (VAE-encoding the camera frames and UMT5-encoding the task), then runs the flow-matching
         dual-stream loss. Requires the policy to be built with ``attn_mode='flex'``.
+
+        ``reduction="mean"`` returns the scalar loss (default); ``"none"`` returns per-sample
+        losses of shape ``(B,)`` for sample weighting (RA-BC).
         """
         self._ensure_frozen_modules()
         latents, actions, actions_mask, text_emb = self._build_training_streams(batch)
-        return self.training_loss_from_streams(latents, actions, actions_mask, text_emb)
+        return self.training_loss_from_streams(latents, actions, actions_mask, text_emb, reduction=reduction)
 
     @torch.no_grad()
     def _build_training_streams(self, batch):
