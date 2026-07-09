@@ -29,6 +29,12 @@
     title: 使用重新命名映射表與空攝影機（Using Rename Map and Empty Cameras）
   title: "教學（Tutorials）"
 - sections:
+  - local: hardware_guide
+    title: 運算硬體指南（Compute Hardware Guide）
+  - local: torch_accelerators
+    title: PyTorch accelerators
+  title: "運算與硬體（Compute & Hardware）"
+- sections:
   - local: contributing
     title: 貢獻至 LeRobot
   - local: backwardcomp

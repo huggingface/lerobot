@@ -1,0 +1,99 @@
+# LeRobot 訓練的運算硬體指南（compute HW guide for LeRobot training）
+
+針對訓練（training） LeRobot 策略（policy）的粗略規格估算：每種策略需要多少 VRAM、訓練時間大致如何，以及當本地硬體不夠用時該在哪裡執行。
+
+以下數字是**參考性的（indicative）**——是用來挑選硬體的數量級（order-of-magnitude）估計，而非精確預測（exact predictions）。吞吐量（throughput）高度取決於資料集（dataset） I/O、影像解析度（image resolution）、批次大小（batch size）和 GPU 數量。
+
+## 各策略群組的記憶體需求（memory by policy group）
+
+策略（policy）按骨幹模型大小（backbone size）分群；以下分組為每個群組提供單一的 VRAM 範圍，而非逐一重複列出每個策略的數字。記憶體大致隨批次大小（batch size）線性成長；AdamW（LeRobot 的預設優化器）所攜帶的優化器狀態（optimizer state），會在前向+反向傳播（forward+backward pass）之外額外增加約 30–100% 的記憶體用量。
+
+| 群組（group）               | 策略（policy）                              | 峰值 VRAM（BS 8，AdamW） | 適合的入門 GPUs                     |
+| --------------------------- | ------------------------------------------- | -----------------------: | ----------------------------------- |
+| 輕量 BC                     | `act`、`vqbet`、`tdmpc`                     |                   ~2–6GB | 筆電 GPU（RTX 3060）、L4、A10G      |
+| 擴散模型（diffusion model） | `diffusion`、`multi_task_dit`               |                  ~8–14GB | RTX 4070+ / L4 / A10G               |
+| 小型 VLA                    | `smolvla`                                   |                 ~10–16GB | RTX 4080+ / L4 / A10G               |
+| 大型 VLA                    | `pi0`、`pi0_fast`、`pi05`、`xvla`、`wall_x` |                 ~24–40GB | A100 40 GB+（24 GB 在 BS 1 下很緊） |
+| 多模態                      | `groot`、`eo1`                              |                 ~24–40GB | A100 40 GB+                         |
+| RL                          | `sac`                                       |               視設定而定 | 請參閱 [HIL-SERL 指南](./hilserl)   |
+
+記憶體不足？降低批次大小（batch size，近似線性關係），使用梯度累積（gradient accumulation）來恢復等效批次大小（recover effective batch），或者對 SmolVLA 保持 `freeze_vision_encoder=True`。
+
+## 訓練時間（training time）
+
+機器人模仿學習（imitation learning）通常在**對資料集進行 5–10 個 epoch（5–10 epochs over the dataset）** 後收斂，而非數十萬個原始步數（raw steps）。一旦確定回合數量（epoch count），實際耗時（wall-clock）基本上就是：
+
+```text
+total_frames = 所有回合（episode）的總幀數 # 50 ep × 30 fps × 30 s ≈ 45,000
+steps_per_epoch = ceil(total_frames / (num_gpus × batch_size))
+total_steps = epochs × steps_per_epoch
+wall_clock ≈ total_steps × per_step_time
+```
+
+每步時間（per-step time）取決於策略（policy）和 GPU。下表中的數字是參考錨點（anchors）——選擇最接近你設置的那一行，如果訓練（training）更長或更短，則按 `total_steps` 線性縮放。
+
+### 常見場景（common scenarios）
+
+以下為**在約 50 個回合（episode）的資料集（~45k 影格，30 fps × 30 秒）上訓練 5 個 epoch** 的參考實際耗時，使用預設優化器（AdamW），640×480 影像：
+
+| 設置（setup）                      | 策略（policy） | 批次（batch） | Wall-clock |
+| ---------------------------------- | -------------- | ------------- | ---------: |
+| 單張 RTX 4090 / RTX 3090（24 GB）  | `act`          | 8             |  ~30–60 分 |
+| 單張 RTX 4090 / RTX 3090（24 GB）  | `diffusion`    | 8             |  ~2–4 小時 |
+| 單張 L4 / A10G（24 GB）            | `act`          | 8             |  ~1–2 小時 |
+| 單張 L4 / A10G（24 GB）            | `smolvla`      | 4             |  ~3–6 小時 |
+| 單張 A100 40 GB                    | `smolvla`      | 16            |  ~1–2 小時 |
+| 單張 A100 40 GB                    | `pi0` / `pi05` | 4             |  ~4–8 小時 |
+| 4× H100 80 GB 叢集（`accelerate`） | `diffusion`    | 32            |  ~30–60 分 |
+| 4× H100 80 GB 叢集（`accelerate`） | `smolvla`      | 32            |  ~1–2 小時 |
+| Apple Silicon M1/M2/M3 Max（MPS）  | `act`          | 4             | ~6–14 小時 |
+
+這些是數量級（order-of-magnitude）的估計值。實際執行會因影像解析度（image resolution）、資料集（dataset） I/O、資料載入器執行緒（dataloader threading）數和具體 GPU 型號而有 ±50% 的偏差。這些數字適合用來判斷「這次訓練（training）大概要一小時還是一天？」，而非作為 SLAs。
+
+### 多 GPU 影響甚鉅（multi-GPU matters）
+
+`accelerate launch --num_processes=N` 是縮短訓練時間（training time）最簡單的方式。每個優化器（optimizer）步驟處理 `N × batch_size` 個樣本（samples），所需的實際時間（wall-clock）與單 GPU 步驟大致相同，因此 4 張 GPU ≈ 對運算瓶頸型任務（compute-bound runs）有 4 倍加速。完整設置請參閱[多 GPU 訓練](./multi_gpu_training)指南。
+
+以下為在 4×H100 80 GB 叢集上的參考數據（`accelerate launch --num_processes=4`），5000 步（steps），批次（batch） 32，AdamW，資料集（dataset） [`imstevenpmwork/super_poulain_draft`](https://huggingface.co/datasets/imstevenpmwork/super_poulain_draft)（~50 個回合 episodes，~640×480 影像）：
+
+| 策略（policy） | Wall-clock   | `update_s` | `dataloading_s` | GPU 使用率（util） | 重要旗標（flags）                                                                                                                                                        |
+| -------------- | ------------ | ---------: | --------------: | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `diffusion`    | 16 分 17 秒  |      0.167 |           0.015 | ~90%               | 預設值（從頭訓練）                                                                                                                                                       |
+| `smolvla`      | 27 分 49 秒  |      0.312 |           0.011 | ~80%               | `--policy.path=lerobot/smolvla_base`、`freeze_vision_encoder=false`、`train_expert_only=false`                                                                           |
+| `pi05`         | 3 小時 41 分 |      2.548 |           0.014 | ~95%               | `--policy.pretrained_path=lerobot/pi05_base`、`gradient_checkpointing=true`、`dtype=bfloat16`，訓練（training）視覺編碼器（vision encoder） + 專家模組（expert trained） |
+
+`dataloading_s` 與 `update_s` 的比值（ratio）是關鍵診斷指標：當 `dataloading_s` 接近 `update_s` 時，增加更多 GPU 將不再有幫助——你的資料載入器（dataloader）才是瓶頸（bottleneck），此時應先檢視 `--num_workers`、影像解析度（image resolution）和磁碟速度（disk speed），再考慮增加運算資源。
+
+### 排程與檢查點（schedule and checkpoints）
+
+如果你縮短訓練（例如在小型資料集 dataset 上只訓練 5k–10k 步），也要同步縮短學習率排程（LR schedule），設定 `--policy.scheduler_decay_steps≈--steps`。否則學習率（LR）會一直維持在峰值附近而從未衰減。`--save_freq` 也是同理。
+
+## 在哪裡執行（where to run）
+
+VRAM 是第一個篩選條件。在同一層級內，根據預算和可用性選擇——`$`–`$$$$` 欄位是相對比較；請在你實際使用的供應商上查看當前價格。
+
+| 等級                      | VRAM  | 價格層級 | 適合用途                                                                        |
+| ------------------------- | ----- | -------- | ------------------------------------------------------------------------------- |
+| RTX 3090 / 4090（消費級） | 24 GB | `$`      | 輕量 BC、擴散模型（diffusion model）、SmolVLA。VLA 在批次（batch） 1 下很緊繃。 |
+| L4 / A10G（雲端）         | 24 GB | `$–$$`   | 相同範圍；常見於 Google Cloud、RunPod、AWS `g5/g6`。                            |
+| A100 40 GB                | 40 GB | `$$$`    | 任何策略（policy）在合理的批次大小（batch size）下皆可。                        |
+| A100 80 GB / H100 80 GB   | 80 GB | `$$$$`   | 多 GPU 叢集；VLA 的大批次（large batches）。                                    |
+| **僅 CPU**                | —     | —        | 不要用來訓練。請使用 Colab 或租用 GPU。                                         |
+
+### Hugging Face Jobs
+
+[Hugging Face Jobs](https://huggingface.co/docs/hub/jobs) 讓你在 HF 託管基礎設施上執行訓練（training），按秒計費，且無需自備 GPU。`lerobot-train` 會幫你提交（submit）並串流（stream）Job：只要在一般的訓練指令中加上 `--job.target=<flavor>` 即可：
+
+```bash
+lerobot-train \
+  --policy.type=act --dataset.repo_id=<USER>/<DATASET> \
+  --policy.repo_id=<USER>/act_<task> \
+  --job.target=a10g-large
+```
+
+注意事項：
+
+- 提交前先執行一次 `hf auth login`，Job 會以你的令牌（token）執行。
+- `--job.target` 對應上表：`t4-small`/`t4-medium`（T4，僅限 ACT）、`l4x1`/`l4x4`（L4 24 GB）、`a10g-small/large/largex2/largex4`（A10G 24 GB scaled out）、`a100-large`（A100）。要列出含定價的當前目錄，可執行 `hf jobs hardware`，或參閱 [https://huggingface.co/docs/hub/jobs](https://huggingface.co/docs/hub/jobs)。
+- Job 預設逾時（timeout）為 `2d`（48 小時）。用 `--job.timeout=4h`（或任何有效的時長字串）覆寫，以縮短或延長逾時。指令完成時 Job 會自動停止。
+- 完整逐步說明（full walkthrough）——資料集上傳（dataset upload）、檢查點串流（checkpoint streaming）、在 Job 上接續某次執行（resuming a run）——請參閱[模仿學習訓練指南](./il_robots#%E4%BD%BF%E7%94%A8-hugging-face-jobs-%E8%A8%93%E7%B7%B4train-using-hugging-face-jobs)。
