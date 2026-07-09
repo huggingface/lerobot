@@ -112,6 +112,24 @@ class SmplStream:
         """True once at least one real frame has been received."""
         return self._got_first
 
+    @property
+    def seconds_since_last(self) -> float:
+        """Wall-clock seconds since the last real frame (inf before the first)."""
+        if not self._got_first:
+            return float("inf")
+        return time.time() - self._last_recv_t
+
+    @property
+    def is_stale(self) -> bool:
+        """True when the stream has gone silent past ``stale_after_s``.
+
+        Consumers use this to stop feeding a frozen pose and let the controller
+        fall back to a safe standing/locomotion mode.
+        """
+        if not self._got_first or not self.stale_after_s:
+            return False
+        return self.seconds_since_last > self.stale_after_s
+
     def reset(self):
         self._buf.clear()
         self._got_first = False

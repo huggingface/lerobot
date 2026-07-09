@@ -34,6 +34,7 @@ import tempfile
 import time
 
 import numpy as np
+from dataset_motion import DatasetJointMotion
 from motion_loader import SmplMotion
 from smpl_stream import DEFAULT_SMPL_HOST, DEFAULT_SMPL_PORT, SmplStream
 
@@ -41,8 +42,10 @@ from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
 from lerobot.robots.unitree_g1.controllers.sonic_pipeline import (
     CONTROL_DT,
     DEFAULT_ANGLES,
+    ENCODER_UPDATE_EVERY,
     LM,
     MOTION_SETS,
+    MUJOCO_TO_ISAACLAB,
     RawKeyboard,
     compute_kp_kd,
     drain_keyboard,
@@ -50,6 +53,49 @@ from lerobot.robots.unitree_g1.controllers.sonic_pipeline import (
 from lerobot.robots.unitree_g1.controllers.sonic_whole_body import SonicRuntime
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
 from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
+
+
+def _load_joint_trajectory(controller, joints: np.ndarray, velocities: np.ndarray) -> None:
+    """Load a (T, 29) joint reference into the controller for encode_mode=0 tracking.
+
+    The dataset provides joints in Unitree/G1_29_JointIndex order, but the SONIC
+    encoder reference (motion_joint_positions) is in IsaacLab order. Reorder here.
+    """
+    joints = np.asarray(joints)[:, MUJOCO_TO_ISAACLAB]
+    velocities = np.asarray(velocities)[:, MUJOCO_TO_ISAACLAB]
+    t = joints.shape[0]
+    with controller.motion_lock:
+        cap = controller.motion_joint_positions.shape[0]
+        if t > cap:
+            controller.motion_joint_positions = np.zeros((t, 29), np.float64)
+            controller.motion_joint_velocities = np.zeros((t, 29), np.float64)
+            controller.motion_body_quats = np.zeros((t, 4), np.float64)
+            controller.motion_body_quats[:, 0] = 1.0
+            controller.motion_body_pos = np.zeros((t, 3), np.float64)
+        controller.motion_joint_positions[:t] = joints
+        controller.motion_joint_velocities[:t] = velocities
+        controller.motion_body_quats[:t, 0] = 1.0
+        controller.motion_body_quats[:t, 1:] = 0.0
+        controller.motion_body_pos[:t] = 0.0
+        controller.motion_timesteps = t
+        controller.ref_cursor = 0
+        controller.init_ref_quat = np.array([1, 0, 0, 0], np.float64)
+    controller.encode_mode = 0
+    controller.playing = True
+    controller.first_motion = True  # triggers heading init on first obs
+    controller.reinit_heading = True
+
+
+def _tick_replay(runtime, obs: dict) -> dict:
+    """One control tick for dataset replay: encode/decode + advance, no planner."""
+    if not obs:
+        runtime.step += 1
+        return {}
+    do_enc = runtime.step % ENCODER_UPDATE_EVERY == 0
+    action = runtime.controller.step(obs, update_encoder=do_enc, debug=False)
+    runtime.controller.advance_cursor()
+    runtime.step += 1
+    return action
 
 
 def main():
@@ -109,10 +155,27 @@ def main():
         default=DEFAULT_SMPL_PORT,
         help=f"Port for the rt/smpl stream (default: {DEFAULT_SMPL_PORT})",
     )
+    parser.add_argument(
+        "--replay-dataset",
+        type=str,
+        default=None,
+        help="Replay a LeRobot dataset episode's 29-DoF observation.state as a SONIC "
+        "encode_mode=0 joint reference (e.g. BitRobot/HIW-500-lerobot).",
+    )
+    parser.add_argument(
+        "--episode", type=int, default=0, help="Episode index for --replay-dataset (default: 0)"
+    )
+    parser.add_argument(
+        "--replay-frames",
+        type=int,
+        default=None,
+        help="Cap the number of replayed frames (default: whole episode)",
+    )
     args = parser.parse_args()
 
-    if args.smpl_stream and args.motion_file:
-        parser.error("--smpl-stream and --motion-file are mutually exclusive")
+    exclusive = [bool(args.smpl_stream), bool(args.motion_file), bool(args.replay_dataset)]
+    if sum(exclusive) > 1:
+        parser.error("--smpl-stream, --motion-file and --replay-dataset are mutually exclusive")
 
     # Surface native crashes (onnxruntime / mujoco) with a real traceback, and
     # avoid losing buffered diagnostics if the process dies mid-loop.
@@ -148,6 +211,22 @@ def main():
     runtime = SonicRuntime(force_cpu=args.cpu)
     controller = runtime.controller
     ms = runtime.ms
+
+    # --replay-dataset drives SONIC mode 0: load a recorded 29-DoF joint trajectory
+    # into the controller's reference buffers and let the policy try to track it,
+    # bypassing the locomotion planner (which would otherwise overwrite the ref).
+    replay = None
+    if args.replay_dataset:
+        replay = DatasetJointMotion(
+            args.replay_dataset, episode=args.episode, max_frames=args.replay_frames
+        )
+        _load_joint_trajectory(controller, replay.joints, replay.velocities)
+        dur = replay.num_frames / replay.fps
+        print(f"\n[Replay] {args.replay_dataset} episode {args.episode} -> SONIC mode 0")
+        print(
+            f"  frames={replay.num_frames} fps={replay.fps:.0f} duration={dur:.1f}s "
+            f"(src {replay.src_fps:.0f} fps, encode_mode=0, planner bypassed)"
+        )
 
     motion = None
     if args.smpl_stream:
@@ -221,6 +300,22 @@ def main():
                     if not obs:
                         runtime.tick({}, use_joystick=False)
                         time.sleep(max(0.0, CONTROL_DT - (time.time() - t0)))
+                        continue
+
+                    # Dataset replay: SONIC tracks the recorded 29-DoF joint clip.
+                    if replay is not None:
+                        step_before = runtime.step
+                        t_step = time.time()
+                        action = _tick_replay(runtime, obs)
+                        step_ms = 1000 * (time.time() - t_step)
+                        (enc_t if step_before % 5 == 0 else dec_t).append(step_ms)
+                        robot.send_action(action)
+                        if controller.ref_cursor >= controller.motion_timesteps - 1:
+                            print("\n[Replay] episode finished")
+                            break
+                        now = time.time()
+                        loop_t.append(1000 * (now - t0))
+                        time.sleep(max(0.0, CONTROL_DT - (now - t0)))
                         continue
 
                     # SMPL playback only while in whole-body mode; 'M' toggles it.

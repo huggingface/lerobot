@@ -63,6 +63,47 @@ class G1_29_JointArmIndex(IntEnum):
     kRightWristYaw = 28
 
 
+def lowstate_to_obs(lowstate) -> dict:
+    """Build a robot observation dict from a Unitree lowstate.
+
+    Shared by ``UnitreeG1.get_observation`` and the SONIC pipeline so the
+    lowstate -> obs mapping lives in exactly one place. Keys match the
+    ``<joint>.q``/``imu.*`` schema consumed across the controllers.
+    """
+    obs: dict = {}
+
+    for motor in G1_29_JointIndex:
+        idx = motor.value
+        obs[f"{motor.name}.q"] = lowstate.motor_state[idx].q
+        obs[f"{motor.name}.dq"] = lowstate.motor_state[idx].dq
+        obs[f"{motor.name}.tau"] = lowstate.motor_state[idx].tau_est
+
+    imu = lowstate.imu_state
+    if imu.gyroscope:
+        obs["imu.gyro.x"] = imu.gyroscope[0]
+        obs["imu.gyro.y"] = imu.gyroscope[1]
+        obs["imu.gyro.z"] = imu.gyroscope[2]
+    if imu.accelerometer:
+        obs["imu.accel.x"] = imu.accelerometer[0]
+        obs["imu.accel.y"] = imu.accelerometer[1]
+        obs["imu.accel.z"] = imu.accelerometer[2]
+    if imu.quaternion:
+        obs["imu.quat.w"] = imu.quaternion[0]
+        obs["imu.quat.x"] = imu.quaternion[1]
+        obs["imu.quat.y"] = imu.quaternion[2]
+        obs["imu.quat.z"] = imu.quaternion[3]
+    if imu.rpy:
+        obs["imu.rpy.roll"] = imu.rpy[0]
+        obs["imu.rpy.pitch"] = imu.rpy[1]
+        obs["imu.rpy.yaw"] = imu.rpy[2]
+
+    wr = getattr(lowstate, "wireless_remote", None)
+    if wr:
+        obs["wireless_remote"] = bytes(wr) if not isinstance(wr, (bytes, bytearray)) else wr
+
+    return obs
+
+
 def make_locomotion_controller(name: str | None):
     """Instantiate a locomotion controller by class name. Returns None if name is None."""
     if name is None:
