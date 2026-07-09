@@ -384,6 +384,17 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         ),
     )
     p.add_argument(
+        "--fp8",
+        action="store_true",
+        help=(
+            "PI052 only: enable FlashRT FP8 MLP kernels. Calibrates on the "
+            "first inference call and swaps every Gemma + SigLIP MLP to fused "
+            "FP8 (needs the `kernels` package and CUDA SM>=8.9; degrades to "
+            "BF16 otherwise). Speeds up the forward pass at a small accuracy "
+            "cost — see policies/pi052/flashrt_fp8.py."
+        ),
+    )
+    p.add_argument(
         "--subtask_chunks_per_gen",
         type=int,
         default=1,
@@ -461,6 +472,7 @@ def _load_policy_and_preprocessor(
     dataset_repo_id: str | None,
     *,
     load_processors_from_checkpoint: bool = False,
+    fp8: bool = False,
 ) -> tuple[Any, Any, Any, Any]:
     """Load a policy checkpoint (local path or Hub repo id).
 
@@ -489,6 +501,18 @@ def _load_policy_and_preprocessor(
         cfg.compile_model = False
     if getattr(cfg, "gradient_checkpointing", False):
         cfg.gradient_checkpointing = False
+
+    # Opt-in FP8: only PI052 has the FlashRT MLP swap. The policy calibrates and
+    # swaps on its first predict_action_chunk when this flag is set.
+    if fp8:
+        if hasattr(cfg, "use_flashrt_fp8_mlp"):
+            cfg.use_flashrt_fp8_mlp = True
+            logging.info("[runtime] FP8 MLP kernels enabled (FlashRT) for %s", cfg.type)
+        else:
+            logging.warning(
+                "[runtime] --fp8 ignored: %s has no use_flashrt_fp8_mlp (PI052 only).",
+                cfg.type,
+            )
 
     ds_meta = None
     preprocessor = None
@@ -1529,6 +1553,7 @@ def run(
         args.policy_path,
         args.dataset_repo_id,
         load_processors_from_checkpoint=sim_mode,
+        fp8=args.fp8,
     )
 
     policy_type = getattr(policy.config, "type", None)
