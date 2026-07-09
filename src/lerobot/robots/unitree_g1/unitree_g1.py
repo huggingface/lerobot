@@ -38,6 +38,7 @@ from .g1_utils import (
     G1_29_JointArmIndex,
     G1_29_JointIndex,
     default_remote_input,
+    lowstate_to_obs,
     make_locomotion_controller,
 )
 
@@ -428,44 +429,8 @@ class UnitreeG1(Robot):
         if lowstate is None:
             return {}
 
-        obs = {}
-
-        # Motors - q, dq, tau for all joints
-        for motor in G1_29_JointIndex:
-            name = motor.name
-            idx = motor.value
-            obs[f"{name}.q"] = lowstate.motor_state[idx].q
-            obs[f"{name}.dq"] = lowstate.motor_state[idx].dq
-            obs[f"{name}.tau"] = lowstate.motor_state[idx].tau_est
-
-        # IMU - gyroscope
-        if lowstate.imu_state.gyroscope:
-            obs["imu.gyro.x"] = lowstate.imu_state.gyroscope[0]
-            obs["imu.gyro.y"] = lowstate.imu_state.gyroscope[1]
-            obs["imu.gyro.z"] = lowstate.imu_state.gyroscope[2]
-
-        # IMU - accelerometer
-        if lowstate.imu_state.accelerometer:
-            obs["imu.accel.x"] = lowstate.imu_state.accelerometer[0]
-            obs["imu.accel.y"] = lowstate.imu_state.accelerometer[1]
-            obs["imu.accel.z"] = lowstate.imu_state.accelerometer[2]
-
-        # IMU - quaternion
-        if lowstate.imu_state.quaternion:
-            obs["imu.quat.w"] = lowstate.imu_state.quaternion[0]
-            obs["imu.quat.x"] = lowstate.imu_state.quaternion[1]
-            obs["imu.quat.y"] = lowstate.imu_state.quaternion[2]
-            obs["imu.quat.z"] = lowstate.imu_state.quaternion[3]
-
-        # IMU - rpy
-        if lowstate.imu_state.rpy:
-            obs["imu.rpy.roll"] = lowstate.imu_state.rpy[0]
-            obs["imu.rpy.pitch"] = lowstate.imu_state.rpy[1]
-            obs["imu.rpy.yaw"] = lowstate.imu_state.rpy[2]
-
-        # Wireless remote (raw bytes for teleoperator)
-        if lowstate.wireless_remote:
-            obs["wireless_remote"] = lowstate.wireless_remote
+        # Motors + IMU + wireless remote (shared lowstate -> obs mapping)
+        obs = lowstate_to_obs(lowstate)
 
         # Cameras - read images from ZMQ cameras
         for cam_name, cam in self._cameras.items():

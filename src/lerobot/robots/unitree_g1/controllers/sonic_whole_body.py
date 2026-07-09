@@ -37,10 +37,10 @@ from lerobot.robots.unitree_g1.controllers.sonic_pipeline import (
     _snapshot_ms,
     clamp_mode_params,
     compute_kp_kd,
-    lowstate_to_obs,
     process_joystick,
     should_replan_request,
 )
+from lerobot.robots.unitree_g1.g1_utils import lowstate_to_obs
 
 logger = logging.getLogger(__name__)
 
@@ -185,25 +185,49 @@ class SonicWholeBodyController:
         self._smpl_stream = SmplStream(host=host, port=port)
         logger.info("SONIC subscribed to rt/smpl @ tcp://%s:%d", host, port)
 
+    def _enter_wholebody(self) -> None:
+        """Switch into SMPL whole-body tracking (encode_mode 2)."""
+        self.controller.encode_mode = 2
+        self.controller.reinit_heading = True
+        logger.info("SONIC: SMPL stream active -> whole-body tracking (mode 2)")
+
+    def _exit_wholebody(self) -> None:
+        """Revert to locomotion/standing (encode_mode 0) after SMPL is lost.
+
+        Mirrors the 'M' toggle in sonic.py so the handoff is clean: the robot holds
+        a standing reference and (if a joystick teleop is attached) can be driven.
+        """
+        self.controller.encode_mode = 0
+        self.controller.playing = True
+        self.controller.reinit_heading = True
+        self.ms.needs_replan = True
+        logger.warning("SONIC: SMPL stream lost/stale -> reverting to locomotion (standing)")
+
     def run_step(self, action: dict, lowstate) -> dict:
         if lowstate is None:
             return {}
         obs = lowstate_to_obs(lowstate)
 
         # Prefer SMPL delivered via the teleop action (pico_headset). Fall back to a
-        # direct rt/smpl subscription when SONIC_SMPL_STREAM is enabled.
+        # direct rt/smpl subscription when SONIC_SMPL_STREAM is enabled. A stale
+        # stream (headset silent past its timeout) is treated as "no SMPL" so the
+        # robot doesn't stay frozen tracking the last pose.
         smpl = _extract_smpl_from_action(action)
         if smpl is None and self._smpl_stream is not None:
             window = self._smpl_stream.step()
-            if self._smpl_stream.has_data:
+            if self._smpl_stream.has_data and not self._smpl_stream.is_stale:
                 smpl = window
 
         if smpl is not None:
             # Full-body whole-body tracking: SMPL drives the reference, not joystick.
-            self.controller.encode_mode = 2
+            if self.controller.encode_mode != 2:
+                self._enter_wholebody()
             self.controller.smpl_joints_10frame_step1 = smpl
             return self._runtime.tick(obs, debug=False, use_joystick=False)
 
+        # No (or stale) SMPL: fall back to locomotion so the robot stays balanced.
+        if self.controller.encode_mode == 2:
+            self._exit_wholebody()
         return self._runtime.tick(obs, debug=False)
 
     def reset(self):

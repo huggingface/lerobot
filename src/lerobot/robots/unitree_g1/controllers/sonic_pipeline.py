@@ -30,7 +30,10 @@ from enum import IntEnum
 import numpy as np
 import onnxruntime as ort
 
-from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
+from lerobot.robots.unitree_g1.g1_utils import (
+    G1_29_JointIndex,
+    get_gravity_orientation,
+)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -174,12 +177,6 @@ def _to_mujoco(a):
     return a[MUJOCO_TO_ISAACLAB]
 
 
-def _to_runtime(a):
-    r = np.zeros(29, np.float32)
-    r[MUJOCO_TO_ISAACLAB] = a
-    return r
-
-
 DEFAULT_ANGLES_MUJOCO = _to_mujoco(DEFAULT_ANGLES)
 ENCODER_STANDING_REF = DEFAULT_ANGLES.copy()
 
@@ -214,28 +211,6 @@ def compute_kp_kd():
 _kp_kd = compute_kp_kd  # backward-compatible alias
 
 
-def lowstate_to_obs(lowstate) -> dict:
-    """Build a robot observation dict from Unitree lowstate."""
-    obs: dict = {}
-    for motor in G1_29_JointIndex:
-        idx = motor.value
-        obs[f"{motor.name}.q"] = float(lowstate.motor_state[idx].q)
-        obs[f"{motor.name}.dq"] = float(lowstate.motor_state[idx].dq)
-    quat = lowstate.imu_state.quaternion
-    obs["imu.quat.w"] = float(quat[0])
-    obs["imu.quat.x"] = float(quat[1])
-    obs["imu.quat.y"] = float(quat[2])
-    obs["imu.quat.z"] = float(quat[3])
-    gyro = lowstate.imu_state.gyroscope
-    obs["imu.gyro.x"] = float(gyro[0])
-    obs["imu.gyro.y"] = float(gyro[1])
-    obs["imu.gyro.z"] = float(gyro[2])
-    wr = getattr(lowstate, "wireless_remote", None)
-    if wr is not None:
-        obs["wireless_remote"] = bytes(wr) if not isinstance(wr, (bytes, bytearray)) else wr
-    return obs
-
-
 # ── Quaternion helpers ────────────────────────────────────────────────────────
 
 
@@ -255,12 +230,6 @@ def quat_mul(q1, q2):
         ],
         dtype=np.float32,
     )
-
-
-def gravity_dir(q):
-    q = q / (np.linalg.norm(q) + 1e-8)
-    qv = np.array([0, 0, 0, -1], dtype=np.float32)
-    return quat_mul(quat_mul(quat_conj(q), qv), q)[1:]
 
 
 def quat_to_6d(q):
@@ -631,7 +600,7 @@ class StandingEncoderDecoder:
                 obs[off : off + sz] = h[f]
                 off += sz
         for q in reversed(self.h_quat):
-            obs[off : off + 3] = gravity_dir(q)
+            obs[off : off + 3] = get_gravity_orientation(q)
             off += 3
         assert off == 994, f"Decoder obs mismatch: {off}"
         return obs
@@ -689,7 +658,9 @@ class StandingEncoderDecoder:
         print(
             f"  anchor_6d(identity): {self._anchor_6d(np.array([1, 0, 0, 0], np.float32), np.array([1, 0, 0, 0], np.float32))}"
         )
-        print(f"  gravity(identity): {gravity_dir(np.array([1, 0, 0, 0], np.float32))} (expect [0,0,-1])")
+        print(
+            f"  gravity(identity): {get_gravity_orientation(np.array([1, 0, 0, 0], np.float32))} (expect [0,0,-1])"
+        )
         dec0 = self.build_decoder_obs()
         print(f"  decoder q-delta max: {np.max(np.abs(dec0[94:384])):.6f}")
         print(f"  decoder dq max:      {np.max(np.abs(dec0[384:674])):.6f}")
@@ -1121,7 +1092,6 @@ class PlannerController(StandingEncoderDecoder):
 
 
 # ── Keyboard ──────────────────────────────────────────────────────────────────
-
 
 class RawKeyboard:
     def __init__(self):

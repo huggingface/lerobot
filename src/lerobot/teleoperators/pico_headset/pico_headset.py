@@ -91,9 +91,11 @@ class PicoHeadset(Teleoperator):
         if self._stream is None:
             raise RuntimeError(f"{self} is not connected")
         window = self._stream.step()
-        # Hold back until the headset is actually streaming, so the controller does
-        # not switch to whole-body tracking of an all-zero (collapsed) pose.
-        if not self._stream.has_data:
+        # Emit SMPL only while the headset is actively streaming: hold back before
+        # the first frame (so the controller doesn't track an all-zero collapsed
+        # pose) and once the stream goes stale (so the controller falls back to a
+        # safe standing/locomotion mode instead of freezing on the last pose).
+        if not self._stream.has_data or self._stream.is_stale:
             return {}
         return {f"{SMPL_ACTION_PREFIX}{i}": float(v) for i, v in enumerate(window)}
 
