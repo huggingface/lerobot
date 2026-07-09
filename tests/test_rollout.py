@@ -348,3 +348,200 @@ def test_rollout_context_fields():
 
     field_names = {f.name for f in dataclasses.fields(RolloutContext)}
     assert field_names == {"runtime", "hardware", "policy", "processors", "data"}
+
+
+# ---------------------------------------------------------------------------
+# Sync engine: relative-action anchoring (drift-free chunk execution)
+# ---------------------------------------------------------------------------
+
+_REL_ACTION_NAMES = ["j0.pos", "j1.pos", "j2.pos", "gripper.pos"]
+_REL_ACTION_DIM = len(_REL_ACTION_NAMES)
+
+
+def _relative_pre_post(exclude_joints=None):
+    """Pre/post processors wrapping the real relative (caches anchor) and absolute
+    (relative + cached state) steps, mirroring what the sync engine feeds them."""
+    from lerobot.processor import (
+        AbsoluteActionsProcessorStep,
+        RelativeActionsProcessorStep,
+        TransitionKey,
+        create_transition,
+    )
+    from lerobot.utils.constants import OBS_STATE
+
+    relative_step = RelativeActionsProcessorStep(
+        enabled=True, exclude_joints=exclude_joints or [], action_names=list(_REL_ACTION_NAMES)
+    )
+    absolute_step = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step)
+
+    class _Pre:
+        steps = [relative_step]
+
+        def __call__(self, observation):
+            # Run the relative step so it caches the anchor, then pass the batch through.
+            transition = create_transition(observation={OBS_STATE: observation[OBS_STATE]})
+            relative_step(transition)
+            return observation
+
+        def reset(self):
+            pass
+
+    class _Post:
+        def __call__(self, action):
+            transition = create_transition(action=action)
+            return absolute_step(transition)[TransitionKey.ACTION]
+
+        def reset(self):
+            pass
+
+    return _Pre(), _Post(), relative_step
+
+
+def _fake_relative_policy(chunk_rel, n_action_steps, chunking=True):
+    """Fake relative-action policy for the sync engine.
+
+    ``chunking=True`` buffers a chunk and serves it one action per tick, calling the
+    public ``predict_action_chunk`` only on refill (pi0/fastwam/lingbot). ``False``
+    returns an action directly and never calls it. The engine's anchor probe keys off
+    that public call, so the fake routes through it rather than any private queue.
+    """
+    from collections import deque
+
+    policy = MagicMock()
+    policy.config.use_amp = False
+    policy.config.action_feature_names = list(_REL_ACTION_NAMES)
+    state = {"predict_calls": 0}
+    queue = deque(maxlen=n_action_steps)
+
+    def predict_action_chunk(_batch=None, **_kwargs):
+        state["predict_calls"] += 1
+        return chunk_rel.unsqueeze(0)  # [B=1, n, dim]
+
+    def select_action(_observation):
+        if not chunking:
+            return chunk_rel[0].unsqueeze(0)
+        if len(queue) == 0:
+            actions = policy.predict_action_chunk(_observation)
+            queue.extend(actions.transpose(0, 1))  # [n, 1, dim]
+        return queue.popleft()
+
+    policy.predict_action_chunk.side_effect = predict_action_chunk
+    policy.select_action.side_effect = select_action
+    policy.reset.side_effect = queue.clear
+    policy._predict_state = state
+    return policy
+
+
+def _build_sync_engine(policy, pre, post):
+    from lerobot.rollout import SyncInferenceEngine
+
+    return SyncInferenceEngine(
+        policy=policy,
+        preprocessor=pre,
+        postprocessor=post,
+        dataset_features={"action": {"names": list(_REL_ACTION_NAMES)}},
+        ordered_action_keys=list(_REL_ACTION_NAMES),
+        task="test",
+        device="cpu",
+        robot_type="mock",
+    )
+
+
+def _obs_frame(state_values):
+    import numpy as np
+
+    return {"observation.state": np.asarray(state_values, dtype=np.float32)}
+
+
+def test_sync_relative_holds_anchor_across_chunk():
+    """Every action popped within a chunk must anchor to the tick-0 state (no drift)."""
+    n = 4
+    # A distinct relative offset per chunk step so a wrong anchor would be visible.
+    chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.1 * (i + 1)) for i in range(n)])
+    pre, post, relative_step = _relative_pre_post()
+    policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
+    engine = _build_sync_engine(policy, pre, post)
+
+    assert engine._relative_step is relative_step  # introspection wired the step
+
+    s0 = [1.0, 2.0, 3.0, 4.0]
+    outputs = []
+    for tick in range(n):
+        # Feed a *different* state each tick; a drifting anchor would use it.
+        state = [v + tick for v in s0]
+        outputs.append(engine.get_action(_obs_frame(state)))
+
+    # Exactly one chunk was predicted across the n ticks.
+    assert policy._predict_state["predict_calls"] == 1
+    for tick in range(n):
+        expected = torch.tensor(s0) + chunk_rel[tick]
+        torch.testing.assert_close(outputs[tick], expected)
+
+    # Next tick empties the queue -> fresh chunk -> anchor advances to the new state.
+    s_next = [10.0, 20.0, 30.0, 40.0]
+    out = engine.get_action(_obs_frame(s_next))
+    assert policy._predict_state["predict_calls"] == 2
+    torch.testing.assert_close(out, torch.tensor(s_next) + chunk_rel[0])
+    # The anchor now reflects the fresh-chunk state, not the held one.
+    torch.testing.assert_close(relative_step.get_cached_state(), torch.tensor([s_next]))
+
+
+def test_sync_relative_reset_reanchors_new_episode():
+    """After ``reset()`` the first tick of the next episode anchors to the new state."""
+    n = 3
+    chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.2) for _ in range(n)])
+    pre, post, relative_step = _relative_pre_post()
+    policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
+    engine = _build_sync_engine(policy, pre, post)
+
+    # Episode 1: one tick anchors to s0 and leaves cached actions in the queue.
+    engine.get_action(_obs_frame([1.0, 1.0, 1.0, 1.0]))
+    assert policy._predict_state["predict_calls"] == 1
+
+    engine.reset()  # clears the queue and the per-episode chunk flags
+
+    # Episode 2: a fresh state must produce a fresh chunk anchored to that state,
+    # not carry over the previous episode's anchor.
+    s_new = [7.0, 8.0, 9.0, 10.0]
+    out = engine.get_action(_obs_frame(s_new))
+    assert policy._predict_state["predict_calls"] == 2
+    torch.testing.assert_close(out, torch.tensor(s_new) + chunk_rel[0])
+    torch.testing.assert_close(relative_step.get_cached_state(), torch.tensor([s_new]))
+
+
+def test_sync_relative_non_chunking_policy_refreshes_every_tick():
+    """A policy that never calls ``predict_action_chunk`` must not freeze the anchor."""
+    n = 3
+    chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.5) for _ in range(n)])
+    pre, post, _ = _relative_pre_post()
+    policy = _fake_relative_policy(chunk_rel, n_action_steps=n, chunking=False)
+    engine = _build_sync_engine(policy, pre, post)
+
+    s0 = [1.0, 1.0, 1.0, 1.0]
+    for tick in range(3):
+        state = [v + tick for v in s0]
+        out = engine.get_action(_obs_frame(state))
+        # Anchor must track the current state every tick (no chunk => no hold).
+        torch.testing.assert_close(out, torch.tensor(state) + chunk_rel[0])
+    assert policy._predict_state["predict_calls"] == 0
+
+
+def test_sync_engine_no_relative_step_is_none():
+    """Without an enabled relative step, the engine takes the plain select_action path."""
+    policy = MagicMock()
+    policy.config.use_amp = False
+    engine = _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())
+    assert engine._relative_step is None
+
+
+def test_sync_relative_stop_restores_policy_method():
+    """``stop()`` un-patches the probe so the policy object isn't permanently modified."""
+    n = 3
+    chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.2) for _ in range(n)])
+    pre, post, _ = _relative_pre_post()
+    policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
+    original = policy.predict_action_chunk
+    engine = _build_sync_engine(policy, pre, post)
+    assert policy.predict_action_chunk is not original  # probe installed
+    engine.stop()
+    assert policy.predict_action_chunk is original  # restored
