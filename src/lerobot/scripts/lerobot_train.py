@@ -20,6 +20,7 @@ Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wand
 
 import dataclasses
 import logging
+import os
 import sys
 import time
 from contextlib import nullcontext
@@ -464,6 +465,14 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # declares language columns; otherwise stay on PyTorch's default
     # collate so non-language training runs are unaffected.
     collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
+    # Multi-node fork-OOM mitigation: on EFA nodes (vm.overcommit_memory=0, no swap),
+    # forking dataloader workers from a multi-GB rank reserve-charges the rank's full virtual
+    # footprint, so 8 ranks x num_workers forking at once trips OSError(ENOMEM) despite free
+    # RAM. Honor LEROBOT_DATALOADER_MP_CONTEXT (e.g. "forkserver"/"spawn") to spawn workers
+    # from a clean context instead of fork(). Only meaningful when workers are used.
+    dataloader_mp_context = os.environ.get("LEROBOT_DATALOADER_MP_CONTEXT") or None
+    if cfg.num_workers == 0:
+        dataloader_mp_context = None
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=cfg.num_workers,
@@ -475,6 +484,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         collate_fn=collate_fn,
         prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
         persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
+        multiprocessing_context=dataloader_mp_context,
     )
 
     # Build eval dataloader if a held-out split exists
@@ -502,6 +512,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             collate_fn=eval_collate_fn,
             prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
             persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
+            multiprocessing_context=dataloader_mp_context,
         )
 
     # Prepare everything with accelerator
