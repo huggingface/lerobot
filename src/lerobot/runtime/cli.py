@@ -229,6 +229,22 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         ),
     )
     p.add_argument(
+        "--rerun",
+        action="store_true",
+        help="Live rerun viewer for the robot cameras (real-robot mode). Serves a "
+        "headless web viewer; forward --rerun.web_port and --rerun.grpc_port over SSH.",
+    )
+    p.add_argument("--rerun.web_port", dest="rerun_web_port", type=int, default=9090,
+                   help="rerun web-viewer port (default 9090).")
+    p.add_argument("--rerun.grpc_port", dest="rerun_grpc_port", type=int, default=9876,
+                   help="rerun gRPC data port (default 9876).")
+    p.add_argument(
+        "--direct_subtask",
+        action="store_true",
+        help="Direct-subtask mode (sim OR robot): your typed text IS the subtask "
+        "fed to the action expert; the LM subtask generator is disabled.",
+    )
+    p.add_argument(
         "--auto_start",
         action="store_true",
         help=(
@@ -464,6 +480,15 @@ def _load_policy_and_preprocessor(
 
     cfg = PreTrainedConfig.from_pretrained(policy_path)
     cfg.pretrained_path = policy_path
+
+    # Inference-only overrides (mirror lerobot-eval). torch.compile recompiles
+    # whenever the prompt length changes (every subtask switch) — catastrophic
+    # in the interactive runtime — and gradient checkpointing only slows the
+    # forward pass. Neither is wanted for serving.
+    if getattr(cfg, "compile_model", False):
+        cfg.compile_model = False
+    if getattr(cfg, "gradient_checkpointing", False):
+        cfg.gradient_checkpointing = False
 
     ds_meta = None
     preprocessor = None
@@ -821,6 +846,7 @@ def _build_robot_observation_provider(
     device: str,
     task: str | None,
     ds_features: dict[str, Any] | None,
+    rerun_log: bool = False,
 ) -> Callable[[], dict | None]:
     """Closure reading from the robot each call: ``robot.get_observation()`` →
     ``build_inference_frame`` (state vector + image tensors, batched, on device)
@@ -869,6 +895,21 @@ def _build_robot_observation_provider(
         except Exception as exc:  # noqa: BLE001
             logger.warning("robot.get_observation failed: %s", exc)
             return None
+
+        # Live camera view: log the raw frames + joint state to rerun before any
+        # resize (natural camera resolution). Best-effort — never blocks control.
+        if rerun_log:
+            from lerobot.runtime import rerun_viz  # noqa: PLC0415
+
+            cam_keys = list(target_image_shapes.keys()) or [
+                k for k, v in raw.items() if hasattr(v, "ndim") and getattr(v, "ndim", 0) == 3
+            ]
+            state = {
+                k: v
+                for k, v in raw.items()
+                if isinstance(v, (int, float)) and k not in cam_keys
+            }
+            rerun_viz.log_robot_frame(raw, cam_keys, state=state, task=task)
 
         # The runtime supplies messages itself; strip any language
         # columns the robot stream may carry through.
@@ -977,6 +1018,7 @@ def _build_robot_action_executor(
     robot,
     postprocessor: Any,
     ds_meta: Any,
+    rerun_log: bool = False,
 ) -> Callable[[Any], None]:
     """Closure that postprocesses an action and dispatches to the robot.
 
@@ -1005,6 +1047,12 @@ def _build_robot_action_executor(
                 logger.warning("unsupported action type %r — skipping", type(action))
                 return
             robot.send_action(action_dict)
+            # Smooth live view: log the cameras every control tick (buffered
+            # async_read is cheap). Best-effort — never blocks control.
+            if rerun_log:
+                from lerobot.runtime import rerun_viz  # noqa: PLC0415
+
+                rerun_viz.log_cameras(robot)
         except Exception as exc:  # noqa: BLE001
             logger.error("robot.send_action failed: %s", exc, exc_info=True)
 
@@ -1554,6 +1602,14 @@ def run(
         if sim_stream_server is not None:
             sim_backend.attach_stream_server(sim_stream_server)
     elif autonomous_mode:
+        if args.rerun:
+            from lerobot.runtime.rerun_viz import start_rerun  # noqa: PLC0415
+
+            start_rerun(
+                app_name=f"lerobot_{policy_type or 'runtime'}",
+                grpc_port=args.rerun_grpc_port,
+                web_port=args.rerun_web_port,
+            )
         print(
             f"[runtime] connecting to robot.type={args.robot_type} port={args.robot_port}",
             flush=True,
@@ -1571,11 +1627,13 @@ def run(
             device=str(getattr(policy.config, "device", "cpu")),
             task=args.task,
             ds_features=ds_meta.features if ds_meta is not None else None,
+            rerun_log=bool(args.rerun),
         )
         robot_executor = _build_robot_action_executor(
             robot=robot,
             postprocessor=postprocessor,
             ds_meta=ds_meta,
+            rerun_log=bool(args.rerun),
         )
     elif args.dataset_repo_id is not None:
         print(
@@ -1604,7 +1662,7 @@ def run(
         top_p=float(args.text_top_p or 1.0),
         chunks_per_regen=max(1, int(args.subtask_chunks_per_gen or 1)),
         enable_memory=not bool(getattr(args, "disable_memory", False)),
-        enable_subtask=not bool(getattr(args, "sim_direct_subtask", False)),
+        enable_subtask=not _direct_subtask_enabled(args),
     )
     runtime = LanguageConditionedRuntime(
         policy_adapter=adapter_factory(policy, gen_config),
@@ -1644,16 +1702,16 @@ def run(
             initial_task=args.task,
             max_ticks=args.max_ticks,
             panel_label=panel_label,
-            direct_subtask=bool(args.sim_direct_subtask),
+            direct_subtask=_direct_subtask_enabled(args),
         )
 
     if autonomous_mode:
-        return _run_autonomous(
+        return _run_robot_interactive(
             runtime,
-            robot=robot,
-            auto_start=args.auto_start,
+            robot,
             initial_task=args.task,
             max_ticks=args.max_ticks,
+            direct_subtask=_direct_subtask_enabled(args),
             panel_label=panel_label,
         )
     # Fire one full pipeline tick at startup so the obs diagnostic
@@ -1672,6 +1730,11 @@ def run(
         for line in startup_logs or []:
             print(f"[runtime] {line}", flush=True)
     return _run_repl(runtime, initial_task=args.task, max_ticks=args.max_ticks, panel_label=panel_label)
+
+
+def _direct_subtask_enabled(args: Any) -> bool:
+    """Direct-subtask mode via either the general or sim-scoped flag."""
+    return bool(getattr(args, "direct_subtask", False) or getattr(args, "sim_direct_subtask", False))
 
 
 def _run_sim_interactive(
@@ -1797,6 +1860,105 @@ def _run_sim_interactive(
             sim_backend.disconnect()
         except Exception as exc:  # noqa: BLE001
             print(f"[runtime] WARNING: sim disconnect raised {exc}", flush=True)
+    return 0
+
+
+def _run_robot_interactive(
+    runtime: Any,
+    robot: Any,
+    *,
+    initial_task: str | None,
+    max_ticks: int | None,
+    direct_subtask: bool = False,
+    panel_label: str = "Runtime",
+) -> int:
+    """Real-robot interactive loop.
+
+    The control loop runs at real-time rates in a background thread
+    (``runtime.run()`` — a robot must be driven at a steady ``ctrl_hz``), while
+    the foreground is a clean chat prompt: type a command to run it (generate- or
+    direct-subtask mode), ``/pause`` / ``/resume`` / ``stop``. Starts PAUSED so
+    the arm doesn't move until you issue a command.
+    """
+    import threading  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    if initial_task:
+        runtime.set_task(initial_task)
+        runtime.state["current_subtask"] = initial_task if direct_subtask else None
+        # A task was given (via --task or the startup picker) => start running it
+        # immediately. Without an initial task we stay paused until the first
+        # typed command (which switches to action). No flag needed.
+        runtime.state["mode"] = "action"
+
+    mode_line = (
+        "DIRECT subtask (your text drives the action expert)"
+        if direct_subtask
+        else "task (the model generates a subtask from your text)"
+    )
+    starting_action = runtime.state.get("mode", "paused") == "action"
+    start_line = (
+        f"  Starting in ACTION — the ARM WILL MOVE NOW on: {initial_task!r}\n"
+        if starting_action
+        else "  Starts PAUSED. Type a command + Enter to run it — the ARM WILL MOVE.\n"
+    )
+    print(
+        f"\n{'=' * 64}\n"
+        f"  {panel_label} — OMX robot runtime  ·  Mode: {mode_line}\n"
+        f"{start_line}"
+        f"  Commands:  /pause  ·  /resume  ·  stop\n"
+        f"{'=' * 64}",
+        flush=True,
+    )
+
+    thread = threading.Thread(
+        target=runtime.run, kwargs={"max_ticks": max_ticks}, name="runtime-loop", daemon=True
+    )
+    thread.start()
+    try:
+        while thread.is_alive():
+            try:
+                line = input("\n> ").strip()
+            except EOFError:
+                break
+            if not line:
+                continue
+            low = line.lower()
+            if low in {"stop", "quit", "exit"}:
+                break
+            elif low in {"/pause", "pause", "/p"}:
+                runtime.state["mode"] = "paused"
+                _clear_action_queue(runtime)
+                print("[paused] robot holding", flush=True)
+            elif low in {"/resume", "resume", "/run"}:
+                runtime.state["mode"] = "action"
+                print("[running]", flush=True)
+            else:
+                # New command: switch task/subtask immediately and regenerate.
+                runtime.set_task(line)
+                runtime.state["current_subtask"] = line if direct_subtask else None
+                _clear_action_queue(runtime)
+                adapter = getattr(runtime, "policy_adapter", None)
+                if adapter is not None and hasattr(adapter, "_chunks_until_regen"):
+                    adapter._chunks_until_regen = 0
+                gate = getattr(runtime, "_language_gate", None)
+                if gate is not None and hasattr(gate, "rearm"):
+                    gate.rearm()
+                runtime.state["mode"] = "action"
+                print(f"[running] {line}", flush=True)
+    except KeyboardInterrupt:
+        print("\n[stopping]", flush=True)
+    finally:
+        runtime.stop()
+        for _ in range(10):
+            if not thread.is_alive():
+                break
+            time.sleep(0.1)
+        try:
+            robot.disconnect()
+            print("[runtime] robot disconnected", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[runtime] WARNING: robot.disconnect raised {exc}", flush=True)
     return 0
 
 
