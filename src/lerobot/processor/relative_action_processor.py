@@ -126,7 +126,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
         observation = transition.get(TransitionKey.OBSERVATION, {})
         state = observation.get(OBS_STATE) if observation else None
 
-        # Always cache state for the paired AbsoluteActionsProcessorStep
+        # Always cache state for the paired AbsoluteActionsProcessorStep.
         if state is not None:
             self._last_state = state
 
@@ -145,6 +145,11 @@ class RelativeActionsProcessorStep(ProcessorStep):
     def get_cached_state(self) -> torch.Tensor | None:
         """Return the cached ``observation.state`` used as the reference point for relative/absolute action conversions."""
         return self._last_state
+
+    def set_cached_state(self, state: torch.Tensor | None) -> None:
+        """Override the cached anchor state, e.g. to re-pin a chunk's anchor after the
+        per-tick pipeline overwrote it (see ``SyncInferenceEngine``)."""
+        self._last_state = state
 
     def get_config(self) -> dict[str, Any]:
         return {

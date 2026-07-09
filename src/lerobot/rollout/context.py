@@ -46,7 +46,6 @@ from lerobot.processor import (
     make_default_processors,
     rename_stats,
 )
-from lerobot.processor.relative_action_processor import RelativeActionsProcessorStep
 from lerobot.robots import make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
@@ -56,7 +55,6 @@ from .configs import BaseStrategyConfig, DAggerStrategyConfig, RolloutConfig
 from .inference import (
     InferenceEngine,
     RTCInferenceConfig,
-    SyncInferenceConfig,
     create_inference_engine,
 )
 from .inference.rtc import supports_rtc_inference
@@ -508,15 +506,6 @@ def build_rollout_context(
             "rename_observations_processor": {"rename_map": cfg.rename_map},
         },
     )
-
-    if isinstance(cfg.inference, SyncInferenceConfig) and any(
-        isinstance(step, RelativeActionsProcessorStep) and step.enabled
-        for step in getattr(preprocessor, "steps", ())
-    ):
-        raise NotImplementedError(
-            "SyncInferenceEngine does not support policies with relative actions for now."
-            "Use --inference.type=rtc or remove relative action processor steps from the policy pipeline."
-        )
 
     # --- 7. Inference strategy (needs policy + pre/post + hardware) --
     logger.info(
