@@ -346,3 +346,41 @@ def test_state_not_modified_by_relative_processor(dataset, action_dim):
 
     result_state = result[TransitionKey.OBSERVATION][OBS_STATE]
     torch.testing.assert_close(result_state, original_state)
+
+
+# Anchor-hold semantics (used by the synchronous rollout engine to avoid intra-chunk drift)
+
+
+def _state_transition(state):
+    return batch_to_transition({OBS_STATE: state})
+
+
+def test_set_hold_freezes_cached_anchor_state():
+    """While held, the cached anchor is not overwritten, but the observation passes through."""
+    step = RelativeActionsProcessorStep(enabled=True)
+
+    state_a = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+    step(_state_transition(state_a))
+    torch.testing.assert_close(step.get_cached_state(), state_a)
+
+    # Freeze: a new state must NOT replace the cached anchor.
+    step.set_hold(True)
+    state_b = torch.tensor([[9.0, 9.0, 9.0, 9.0]])
+    out = step(_state_transition(state_b))
+    torch.testing.assert_close(step.get_cached_state(), state_a)
+    # The transition's observation state is still the current one (hold only affects caching).
+    torch.testing.assert_close(out[TransitionKey.OBSERVATION][OBS_STATE], state_b)
+
+    # Release: caching resumes.
+    step.set_hold(False)
+    state_c = torch.tensor([[5.0, 6.0, 7.0, 8.0]])
+    step(_state_transition(state_c))
+    torch.testing.assert_close(step.get_cached_state(), state_c)
+
+
+def test_hold_state_not_in_config():
+    """Hold is ephemeral runtime state and must not leak into the serialized config."""
+    step = RelativeActionsProcessorStep(enabled=True)
+    step.set_hold(True)
+    assert "_hold_state" not in step.get_config()
+    assert set(step.get_config()) == {"enabled", "exclude_joints", "action_names"}

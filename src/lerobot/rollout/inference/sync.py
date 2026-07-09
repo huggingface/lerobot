@@ -24,26 +24,32 @@ import torch
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
-from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor import PolicyProcessorPipeline, RelativeActionsProcessorStep
 
 from .base import InferenceEngine
 
 logger = logging.getLogger(__name__)
 
 
-# TODO(Steven): support relative-action policies.  The per-tick flow refreshes
-# ``RelativeActionsProcessorStep._last_state`` every call, so cached chunk
-# actions popped on later ticks get reanchored to the *current* robot state and
-# absolute targets drift through the chunk.  Relative-action policies are
-# rejected at context-build time today; RTC postprocesses the whole chunk and
-# is unaffected.
+# Relative-action support (drift-free anchoring)
+# ----------------------------------------------
+# Relative-action policies predict a *chunk* of offsets anchored to the robot
+# state at chunk-prediction time.  ``select_action`` serves that chunk one action
+# per tick from an internal ``_action_queue``, recomputing only when the queue is
+# empty.  The per-tick flow here runs the full pre/post pipeline every call, and
+# ``RelativeActionsProcessorStep`` would otherwise refresh its cached anchor state
+# on every tick — so actions popped from the queue on later ticks would be
+# re-anchored to the *current* (already-moved) state and absolute targets would
+# drift through the chunk.
 #
-# Candidate fix: drive the policy via ``predict_action_chunk`` and serve a
-# local FIFO of postprocessed actions.  Eliminates drift by construction and
-# saves per-tick pre/post work, but bypasses ``select_action`` — needs
-# fallbacks for SAC (raises), ACT temporal ensembling (ensembler lives in
-# ``select_action``), and Diffusion-family (obs-history queues populated as a
-# side effect of ``select_action``).
+# Fix: detect chunk boundaries by inspecting the policy's ``_action_queue`` length
+# *before* running the pipeline, and freeze the relative step's cached anchor
+# (``set_hold``) on ticks that pop a cached action.  The whole chunk is then
+# anchored to a single state, exactly like RTC.  ``select_action`` stays on the
+# hot path, so policy-specific side effects (e.g. LingBot-VA's per-tick keyframe
+# feedback) are preserved.  Policies without an ``_action_queue`` (e.g. ACT
+# temporal ensembling, which recomputes every tick) fall back to refreshing the
+# anchor every tick, which is the correct behaviour there.
 
 
 class SyncInferenceEngine(InferenceEngine):
@@ -73,6 +79,24 @@ class SyncInferenceEngine(InferenceEngine):
         self._task = task
         self._device = torch.device(device or "cpu")
         self._robot_type = robot_type
+
+        # Relative-action policies need the chunk anchor held while cached actions
+        # are popped (see module docstring).  Introspect the preprocessor for an
+        # enabled RelativeActionsProcessorStep, mirroring the RTC engine.
+        self._relative_step = next(
+            (
+                s
+                for s in getattr(preprocessor, "steps", ())
+                if isinstance(s, RelativeActionsProcessorStep) and s.enabled
+            ),
+            None,
+        )
+        if self._relative_step is not None:
+            if self._relative_step.action_names is None:
+                cfg_names = getattr(policy.config, "action_feature_names", None)
+                self._relative_step.action_names = list(cfg_names) if cfg_names else list(ordered_action_keys)
+            logger.info("Relative actions enabled: chunk anchor will be held per chunk")
+
         logger.info(
             "SyncInferenceEngine initialized (device=%s, action_keys=%d)",
             self._device,
@@ -93,6 +117,21 @@ class SyncInferenceEngine(InferenceEngine):
         self._policy.reset()
         self._preprocessor.reset()
         self._postprocessor.reset()
+        # ``policy.reset()`` empties ``_action_queue`` so the next ``get_action``
+        # recomputes and refreshes the anchor; clear any leftover hold defensively.
+        if self._relative_step is not None:
+            self._relative_step.set_hold(False)
+
+    def _policy_will_recompute(self) -> bool:
+        """True if the next ``select_action`` will predict a fresh chunk (queue empty/absent).
+
+        Relative-action policies expose an ``_action_queue`` deque that is refilled
+        only when empty.  When it is non-empty the upcoming ``select_action`` will
+        pop a cached action, so the anchor state must be held.  Policies without the
+        attribute recompute every tick, so we always refresh the anchor.
+        """
+        queue = getattr(self._policy, "_action_queue", None)
+        return queue is None or len(queue) == 0
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Run the full inference pipeline on ``obs_frame`` and return an action tensor."""
@@ -107,13 +146,25 @@ class SyncInferenceEngine(InferenceEngine):
             if self._device.type == "cuda" and self._policy.config.use_amp
             else nullcontext()
         )
-        with torch.inference_mode(), autocast_ctx:
-            observation = prepare_observation_for_inference(
-                observation, self._device, self._task, self._robot_type
-            )
-            observation = self._preprocessor(observation)
-            action = self._policy.select_action(observation)
-            action = self._postprocessor(action)
+        # For relative-action policies, hold the cached anchor on ticks that pop a
+        # cached action so the whole chunk stays anchored to the state captured when
+        # it was predicted.  Decided before the pipeline runs (the queue is drained
+        # inside ``select_action``); always released in ``finally`` so a hold never
+        # leaks across ticks or on exception.
+        hold_anchor = self._relative_step is not None and not self._policy_will_recompute()
+        if self._relative_step is not None:
+            self._relative_step.set_hold(hold_anchor)
+        try:
+            with torch.inference_mode(), autocast_ctx:
+                observation = prepare_observation_for_inference(
+                    observation, self._device, self._task, self._robot_type
+                )
+                observation = self._preprocessor(observation)
+                action = self._policy.select_action(observation)
+                action = self._postprocessor(action)
+        finally:
+            if self._relative_step is not None:
+                self._relative_step.set_hold(False)
         action_tensor = action.squeeze(0).cpu()
 
         # Reorder to match dataset action ordering so the caller can treat

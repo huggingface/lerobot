@@ -348,3 +348,164 @@ def test_rollout_context_fields():
 
     field_names = {f.name for f in dataclasses.fields(RolloutContext)}
     assert field_names == {"runtime", "hardware", "policy", "processors", "data"}
+
+
+# ---------------------------------------------------------------------------
+# Sync engine: relative-action anchoring (drift-free chunk execution)
+# ---------------------------------------------------------------------------
+
+_REL_ACTION_NAMES = ["j0.pos", "j1.pos", "j2.pos", "gripper.pos"]
+_REL_ACTION_DIM = len(_REL_ACTION_NAMES)
+
+
+def _relative_pre_post(exclude_joints=None):
+    """Build fake pre/post processors wrapping real relative/absolute steps.
+
+    The preprocessor runs the ``RelativeActionsProcessorStep`` (caching/holding the
+    anchor state) and passes the observation through; the postprocessor runs the
+    paired ``AbsoluteActionsProcessorStep`` (relative + cached state) and returns the
+    absolute action tensor.  Shapes mirror what the sync engine feeds them.
+    """
+    from lerobot.processor import (
+        AbsoluteActionsProcessorStep,
+        RelativeActionsProcessorStep,
+        TransitionKey,
+        create_transition,
+    )
+    from lerobot.utils.constants import OBS_STATE
+
+    relative_step = RelativeActionsProcessorStep(
+        enabled=True, exclude_joints=exclude_joints or [], action_names=list(_REL_ACTION_NAMES)
+    )
+    absolute_step = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step)
+
+    class _Pre:
+        steps = [relative_step]
+
+        def __call__(self, observation):
+            # observation carries a batched OBS_STATE tensor; run the relative step so
+            # it caches (or holds) the anchor, then pass the batch through unchanged.
+            transition = create_transition(observation={OBS_STATE: observation[OBS_STATE]})
+            relative_step(transition)
+            return observation
+
+        def reset(self):
+            pass
+
+    class _Post:
+        def __call__(self, action):
+            transition = create_transition(action=action)
+            return absolute_step(transition)[TransitionKey.ACTION]
+
+        def reset(self):
+            pass
+
+    return _Pre(), _Post(), relative_step
+
+
+def _fake_relative_policy(chunk_rel, n_action_steps, with_queue=True):
+    """Fake chunk policy: refills an ``_action_queue`` with ``chunk_rel`` when empty."""
+    from collections import deque
+
+    policy = MagicMock()
+    policy.config.use_amp = False
+    policy.config.action_feature_names = list(_REL_ACTION_NAMES)
+    state = {"predict_calls": 0}
+
+    if with_queue:
+        policy._action_queue = deque(maxlen=n_action_steps)
+    else:
+        # Ensure the attribute is truly absent so getattr(...) falls back.
+        del policy._action_queue
+
+    def select_action(_observation):
+        if with_queue:
+            if len(policy._action_queue) == 0:
+                state["predict_calls"] += 1
+                policy._action_queue.extend(chunk_rel[i].unsqueeze(0) for i in range(n_action_steps))
+            return policy._action_queue.popleft()
+        # No queue: recompute every tick (like temporal ensembling).
+        state["predict_calls"] += 1
+        return chunk_rel[0].unsqueeze(0)
+
+    policy.select_action.side_effect = select_action
+    policy.reset.side_effect = lambda: policy._action_queue.clear() if with_queue else None
+    policy._predict_state = state
+    return policy
+
+
+def _build_sync_engine(policy, pre, post):
+    from lerobot.rollout import SyncInferenceEngine
+
+    return SyncInferenceEngine(
+        policy=policy,
+        preprocessor=pre,
+        postprocessor=post,
+        dataset_features={"action": {"names": list(_REL_ACTION_NAMES)}},
+        ordered_action_keys=list(_REL_ACTION_NAMES),
+        task="test",
+        device="cpu",
+        robot_type="mock",
+    )
+
+
+def _obs_frame(state_values):
+    import numpy as np
+
+    return {"observation.state": np.asarray(state_values, dtype=np.float32)}
+
+
+def test_sync_relative_holds_anchor_across_chunk():
+    """Every action popped within a chunk must anchor to the tick-0 state (no drift)."""
+    n = 4
+    # A distinct relative offset per chunk step so a wrong anchor would be visible.
+    chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.1 * (i + 1)) for i in range(n)])
+    pre, post, relative_step = _relative_pre_post()
+    policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
+    engine = _build_sync_engine(policy, pre, post)
+
+    assert engine._relative_step is relative_step  # introspection wired the step
+
+    s0 = [1.0, 2.0, 3.0, 4.0]
+    outputs = []
+    for tick in range(n):
+        # Feed a *different* state each tick; a drifting anchor would use it.
+        state = [v + tick for v in s0]
+        outputs.append(engine.get_action(_obs_frame(state)))
+
+    # Exactly one chunk was predicted across the n ticks.
+    assert policy._predict_state["predict_calls"] == 1
+    for tick in range(n):
+        expected = torch.tensor(s0) + chunk_rel[tick]
+        torch.testing.assert_close(outputs[tick], expected)
+
+    # Next tick empties the queue -> recompute -> anchor refreshes to the new state.
+    s_next = [10.0, 20.0, 30.0, 40.0]
+    out = engine.get_action(_obs_frame(s_next))
+    assert policy._predict_state["predict_calls"] == 2
+    torch.testing.assert_close(out, torch.tensor(s_next) + chunk_rel[0])
+    assert relative_step._hold_state is False  # released after every call
+
+
+def test_sync_relative_fallback_without_action_queue():
+    """A policy without ``_action_queue`` refreshes the anchor every tick."""
+    n = 3
+    chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.5) for _ in range(n)])
+    pre, post, _ = _relative_pre_post()
+    policy = _fake_relative_policy(chunk_rel, n_action_steps=n, with_queue=False)
+    engine = _build_sync_engine(policy, pre, post)
+
+    s0 = [1.0, 1.0, 1.0, 1.0]
+    for tick in range(3):
+        state = [v + tick for v in s0]
+        out = engine.get_action(_obs_frame(state))
+        # Anchor tracks the current state every tick.
+        torch.testing.assert_close(out, torch.tensor(state) + chunk_rel[0])
+
+
+def test_sync_engine_no_relative_step_is_none():
+    """Without an enabled relative step, the engine takes the plain select_action path."""
+    policy = MagicMock()
+    policy.config.use_amp = False
+    engine = _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())
+    assert engine._relative_step is None
