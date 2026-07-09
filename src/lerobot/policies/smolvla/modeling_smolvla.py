@@ -162,6 +162,14 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.config = config
         self.init_rtc_processor()
         self.model = VLAFlowMatching(config, rtc_processor=self.rtc_processor)
+
+        if self.config.fine_tune_vision_encoder:
+            self.model.vlm_with_expert.freeze_vision_encoder = False
+            for params in self.model.vlm_with_expert.get_vlm_model().vision_model.parameters():
+                params.requires_grad = True
+            for params in self.model.vlm_with_expert.get_vlm_model().connector.parameters():
+                params.requires_grad = True
+
         self.reset()
 
     def reset(self):
