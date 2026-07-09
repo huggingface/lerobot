@@ -37,7 +37,12 @@ class TransitionKey(str, Enum):
 
 
 class ImageInputFormat(StrEnum):
-    """Raw image representation expected by a policy before preprocessing."""
+    """Raw image dtype/range expected by a policy before preprocessing.
+
+    This only describes the tensor dtype and numeric range. It does not encode
+    channel count, channel order, or layout; those are defined by dataset/env
+    feature conventions and processor steps.
+    """
 
     FLOAT32_0_1 = "float32_0_1"
     UINT8_0_255 = "uint8_0_255"
