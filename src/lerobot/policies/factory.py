@@ -29,8 +29,10 @@ from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.envs import EnvConfig, env_to_policy_features
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
+    NormalizerProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
+    UnnormalizerProcessorStep,
     batch_to_transition,
     policy_action_to_transition,
     transition_to_batch,
@@ -82,6 +84,52 @@ def _reconnect_relative_absolute_steps(
     for step in postprocessor.steps:
         if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
             step.relative_step = relative_step
+
+
+def _ensure_relative_actions(
+    preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline, policy_cfg
+) -> None:
+    """Enable (or inject) the relative/absolute action steps in a loaded pipeline.
+
+    When loading from a pretrained checkpoint, the saved processor is authoritative. If the base
+    predates the relative-action feature (e.g. FastWAM/LingBot bases) its pipeline has no
+    RelativeActionsProcessorStep, so lerobot-train's override cannot enable one — those override
+    keys are popped before `from_pretrained` (else it raises) and we reconstruct the steps here.
+    Bases that DO ship the (disabled) steps (e.g. pi0/pi05) are simply flipped on. No-op unless
+    ``policy_cfg.use_relative_actions`` is set, so non-relative runs are untouched.
+    """
+    if not getattr(policy_cfg, "use_relative_actions", False):
+        return
+
+    exclude_joints = list(getattr(policy_cfg, "relative_exclude_joints", []) or [])
+    action_names = getattr(policy_cfg, "action_feature_names", None)
+
+    pre_steps = list(preprocessor.steps)
+    relative_step = next((s for s in pre_steps if isinstance(s, RelativeActionsProcessorStep)), None)
+    if relative_step is None:
+        relative_step = RelativeActionsProcessorStep(
+            enabled=True, exclude_joints=exclude_joints, action_names=action_names
+        )
+        # Insert right before the normalizer (raw -> relative -> normalize); fall back to the front.
+        idx = next((i for i, s in enumerate(pre_steps) if isinstance(s, NormalizerProcessorStep)), 0)
+        pre_steps.insert(idx, relative_step)
+        preprocessor.steps = pre_steps
+    else:
+        relative_step.enabled = True
+        relative_step.exclude_joints = exclude_joints
+        relative_step.action_names = action_names
+
+    post_steps = list(postprocessor.steps)
+    absolute_step = next((s for s in post_steps if isinstance(s, AbsoluteActionsProcessorStep)), None)
+    if absolute_step is None:
+        absolute_step = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step)
+        # Insert right after the unnormalizer (unnormalize -> absolute); fall back to the front.
+        idx = next((i for i, s in enumerate(post_steps) if isinstance(s, UnnormalizerProcessorStep)), -1)
+        post_steps.insert(idx + 1, absolute_step)
+        postprocessor.steps = post_steps
+    else:
+        absolute_step.enabled = True
+        absolute_step.relative_step = relative_step
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -320,12 +368,20 @@ def make_pre_post_processors(
                 ),
             )
 
+        # The relative/absolute override keys only match if the saved base already contains those
+        # steps (e.g. pi0/pi05). For bases that predate the feature (FastWAM/LingBot) they would
+        # raise "Override keys ... do not match any step". Pop them here and let
+        # _ensure_relative_actions() enable-or-inject the steps after loading (handles both cases).
+        pre_overrides = dict(kwargs.get("preprocessor_overrides") or {})
+        post_overrides = dict(kwargs.get("postprocessor_overrides") or {})
+        pre_overrides.pop("relative_actions_processor", None)
+        post_overrides.pop("absolute_actions_processor", None)
         preprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
             config_filename=kwargs.get(
                 "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
             ),
-            overrides=kwargs.get("preprocessor_overrides", {}),
+            overrides=pre_overrides,
             to_transition=batch_to_transition,
             to_output=transition_to_batch,
             revision=pretrained_revision,
@@ -335,11 +391,12 @@ def make_pre_post_processors(
             config_filename=kwargs.get(
                 "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
             ),
-            overrides=kwargs.get("postprocessor_overrides", {}),
+            overrides=post_overrides,
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
             revision=pretrained_revision,
         )
+        _ensure_relative_actions(preprocessor, postprocessor, policy_cfg)
         _reconnect_relative_absolute_steps(preprocessor, postprocessor)
         if isinstance(policy_cfg, Evo1Config):
             from .evo1.processor_evo1 import reconcile_evo1_processors
