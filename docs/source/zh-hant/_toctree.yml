@@ -7,6 +7,28 @@
     title: 小抄（Cheat sheet）
   title: 開始使用（Get started）
 - sections:
+  - local: il_robots
+    title: 機器人的模仿學習（Imitation Learning）
+  - local: lelab
+    title: LeLab - LeRobot GUI
+  - local: bring_your_own_policies
+    title: 新增策略（Adding a Policy）
+  - local: integrate_hardware
+    title: 自備硬體（Bring Your Own Hardware）
+  - local: hilserl
+    title: 使用強化學習訓練機器人（Train a Robot with RL）
+  - local: hilserl_sim
+    title: 在模擬環境中訓練強化學習（Train RL in Simulation）
+  - local: multi_gpu_training
+    title: 多 GPU 訓練
+  - local: hil_data_collection
+    title: 人在迴圈中的資料收集（Human In the Loop Data Collection）
+  - local: peft_training
+    title: 使用 PEFT 訓練（例如 LoRA）
+  - local: rename_map
+    title: 使用重新命名映射表與空攝影機（Using Rename Map and Empty Cameras）
+  title: "教學（Tutorials）"
+- sections:
   - local: contributing
     title: 貢獻至 LeRobot
   - local: backwardcomp
