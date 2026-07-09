@@ -31,6 +31,7 @@ from lerobot.envs.utils import (
     _parse_hub_url,
     preprocess_observation,
 )
+from lerobot.policies import ImageInputFormat
 from tests.utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
@@ -41,6 +42,26 @@ ENV_TASK_PAIRS = [
     ("pusht", "PushT-v0"),
 ]
 AVAILABLE_ENVS = ["aloha", "pusht"]
+
+
+def test_preprocess_observation_preserves_uint8_for_uint8_policy_contract():
+    image = np.zeros((4, 5, 3), dtype=np.uint8)
+    image[0, 0] = [0, 127, 255]
+    image[1, 2] = [255, 127, 0]
+
+    obs = preprocess_observation(
+        {"pixels": image},
+        image_input_format=ImageInputFormat.UINT8_0_255,
+    )
+
+    assert obs["observation.image"].dtype == torch.uint8
+    assert obs["observation.image"].shape == (1, 3, 4, 5)
+    torch.testing.assert_close(
+        obs["observation.image"][0, :, 0, 0], torch.tensor([0, 127, 255], dtype=torch.uint8)
+    )
+    torch.testing.assert_close(
+        obs["observation.image"][0, :, 1, 2], torch.tensor([255, 127, 0], dtype=torch.uint8)
+    )
 
 
 @pytest.mark.parametrize("obs_type", OBS_TYPES)

@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any, TypedDict
 
 import numpy as np
@@ -34,6 +34,13 @@ class TransitionKey(str, Enum):
     TRUNCATED = "truncated"
     INFO = "info"
     COMPLEMENTARY_DATA = "complementary_data"
+
+
+class ImageInputFormat(StrEnum):
+    """Raw image representation expected by a policy before preprocessing."""
+
+    FLOAT32_0_1 = "float32_0_1"
+    UINT8_0_255 = "uint8_0_255"
 
 
 PolicyAction = torch.Tensor

@@ -82,7 +82,7 @@ from lerobot.envs import (
     make_env_pre_post_processors,
     preprocess_observation,
 )
-from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
+from lerobot.policies import ImageInputFormat, PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.types import PolicyAction
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
@@ -260,7 +260,10 @@ def rollout(
     try:
         while not np.all(done) and step < max_steps:
             # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-            observation = preprocess_observation(observation)
+            observation = preprocess_observation(
+                observation,
+                image_input_format=getattr(policy, "input_image_format", ImageInputFormat.FLOAT32_0_1),
+            )
             if return_observations:
                 all_observations.append(deepcopy(observation))
 
@@ -378,7 +381,10 @@ def rollout(
 
     # Track the final observation.
     if return_observations:
-        observation = preprocess_observation(observation)
+        observation = preprocess_observation(
+            observation,
+            image_input_format=getattr(policy, "input_image_format", ImageInputFormat.FLOAT32_0_1),
+        )
         all_observations.append(deepcopy(observation))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.

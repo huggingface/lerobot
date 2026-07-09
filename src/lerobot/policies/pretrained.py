@@ -18,7 +18,6 @@ import builtins
 import dataclasses
 import logging
 import os
-from enum import StrEnum
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -35,6 +34,7 @@ from torch import Tensor, nn
 from lerobot.__version__ import __version__
 from lerobot.configs import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.types import ImageInputFormat
 from lerobot.utils.hub import HubMixin
 
 from .utils import log_model_loading_keys
@@ -43,13 +43,6 @@ T = TypeVar("T", bound="PreTrainedPolicy")
 
 if TYPE_CHECKING:
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-
-
-class ImageInputFormat(StrEnum):
-    """Raw image representation expected by a policy before preprocessing."""
-
-    FLOAT32_0_1 = "float32_0_1"
-    UINT8_0_255 = "uint8_0_255"
 
 
 def _build_card_context(

@@ -28,6 +28,7 @@ from huggingface_hub import hf_hub_download, snapshot_download
 from torch import Tensor
 
 from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.types import ImageInputFormat
 from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import get_channel_first_image_shape
 
@@ -65,7 +66,10 @@ def _convert_nested_dict(d):
     return result
 
 
-def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
+def preprocess_observation(
+    observations: dict[str, np.ndarray],
+    image_input_format: ImageInputFormat = ImageInputFormat.FLOAT32_0_1,
+) -> dict[str, Tensor]:
     # TODO(jadechoghari, imstevenpmwork): refactor this to use features from the environment (no hardcoding)
     """Convert environment observation to LeRobot format observation.
     Args:
@@ -96,10 +100,13 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             # sanity check that images are uint8
             assert img_tensor.dtype == torch.uint8, f"expect torch.uint8, but instead {img_tensor.dtype=}"
 
-            # convert to channel first of type float32 in range [0,1]
+            # convert to channel first, keeping the policy's expected image range
             img_tensor = einops.rearrange(img_tensor, "b h w c -> b c h w").contiguous()
-            img_tensor = img_tensor.type(torch.float32)
-            img_tensor /= 255
+            if image_input_format is ImageInputFormat.FLOAT32_0_1:
+                img_tensor = img_tensor.type(torch.float32)
+                img_tensor /= 255
+            elif image_input_format is not ImageInputFormat.UINT8_0_255:
+                raise ValueError(f"Unsupported policy image input format: {image_input_format}")
 
             return_observations[imgkey] = img_tensor
 
