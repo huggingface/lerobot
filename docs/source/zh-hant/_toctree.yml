@@ -35,6 +35,12 @@
     title: PyTorch accelerators
   title: "運算與硬體（Compute & Hardware）"
 - sections:
+  - local: phone_teleop
+    title: 手機（Phone）
+  - local: isaac_teleop
+    title: Isaac Teleop
+  title: "遙操作器（Teleoperators）"
+- sections:
   - local: contributing
     title: 貢獻至 LeRobot
   - local: backwardcomp
