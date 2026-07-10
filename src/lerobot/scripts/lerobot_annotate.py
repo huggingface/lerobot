@@ -48,41 +48,11 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_root(cfg: AnnotationPipelineConfig) -> Path:
+    """Resolve the dataset root by downloading the full snapshot if needed."""
     if cfg.root is not None:
         return Path(cfg.root)
     if cfg.repo_id is not None:
         from huggingface_hub import snapshot_download
-
-        needs_vlm = cfg.plan.enabled or cfg.interjections.enabled or cfg.vqa.enabled
-        advantage_only = cfg.advantage.enabled and not needs_vlm
-
-        if advantage_only:
-            # Download only metadata + parquet first to resolve the camera key,
-            # then fetch only the single camera's videos the advantage module needs.
-            root = Path(
-                snapshot_download(
-                    repo_id=cfg.repo_id,
-                    repo_type="dataset",
-                    allow_patterns=["meta/**", "data/**"],
-                )
-            )
-            camera_key = cfg.vlm.camera_key
-            if camera_key is None:
-                from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata  # noqa: PLC0415
-
-                meta = LeRobotDatasetMetadata(repo_id="local", root=root)
-                depth_keys = set(meta.depth_keys)
-                video_keys = [k for k in meta.video_keys if k not in depth_keys]
-                camera_key = video_keys[0] if video_keys else None
-
-            if camera_key:
-                logger.info("advantage-only mode: downloading only camera %s", camera_key)
-                snapshot_download(
-                    repo_id=cfg.repo_id,
-                    repo_type="dataset",
-                    allow_patterns=[f"videos/{camera_key}/**"],
-                )
-            return root
 
         return Path(snapshot_download(repo_id=cfg.repo_id, repo_type="dataset"))
     raise ValueError("Either --root or --repo_id must be provided.")
