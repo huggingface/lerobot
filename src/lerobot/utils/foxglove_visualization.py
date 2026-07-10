@@ -66,7 +66,6 @@ _SCALARS_SCHEMA = {
     },
 }
 
-# Topic for foxglove.JointStates messages that drive a URDF in the Foxglove 3D panel.
 JOINT_STATES_TOPIC = "/joint_states"
 
 
