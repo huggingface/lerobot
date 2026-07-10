@@ -71,12 +71,16 @@ class ExoskeletonArm:
     calibration_fpath: Path
     side: str
     baud_rate: int = 115200
+    ema_window: int = 10
 
     _ser: serial.Serial | None = None
     calibration: ExoskeletonCalibration | None = None
 
     def __post_init__(self):
         require_package("pyserial", extra="unitree_g1", import_name="serial")
+        # EMA smoothing on joint angles to reduce jitter (mirrors homunculus glove).
+        self._ema_alpha = 2 / (self.ema_window + 1)
+        self._ema: dict[str, float] = {}
         if self.calibration_fpath.is_file():
             self._load_calibration()
 
@@ -124,8 +128,28 @@ class ExoskeletonArm:
     def get_angles(self) -> dict[str, float]:
         if not self.calibration:
             raise RuntimeError("exoskeleton not calibrated")
-        raw = self.read_raw()
-        return {} if raw is None else exo_raw_to_angles(raw, self.calibration)
+        return self.angles_from_raw(self.read_raw())
+
+    def angles_from_raw(self, raw: list[int] | None) -> dict[str, float]:
+        """Convert an already-read raw frame to EMA-smoothed joint angles.
+
+        Lets callers read the raw frame once (e.g. to also inspect the joystick
+        button channel) without consuming a second serial sample.
+        """
+        if not self.calibration:
+            raise RuntimeError("exoskeleton not calibrated")
+        if raw is None:
+            return {}
+        return self._apply_ema(exo_raw_to_angles(raw, self.calibration))
+
+    def _apply_ema(self, angles: dict[str, float]) -> dict[str, float]:
+        """Exponential moving average per joint angle; lazily initialised on first read."""
+        smoothed: dict[str, float] = {}
+        for joint, value in angles.items():
+            prev = self._ema.get(joint)
+            self._ema[joint] = value if prev is None else self._ema_alpha * value + (1 - self._ema_alpha) * prev
+            smoothed[joint] = self._ema[joint]
+        return smoothed
 
     def calibrate(self) -> None:
         if not self.is_connected:

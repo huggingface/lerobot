@@ -79,6 +79,10 @@ class LocomotionController(Protocol):
 kTopicLowCommand_Debug = "rt/lowcmd"
 kTopicLowState = "rt/lowstate"
 
+# Side-channel port on the robot for forwarding exo R3/L3 gripper commands
+# (see run_g1_server.gripper_cmd_loop). Real-robot only.
+GRIPPER_CMD_PORT = 6002
+
 
 @dataclass
 class MotorState:
@@ -305,6 +309,23 @@ class UnitreeG1(Robot):
         else:
             self._ChannelFactoryInitialize(0, config=self.config)
 
+        # Gripper command side-channel (real robot only): forwards exo R3/L3 clicks to
+        # run_g1_server, which drives the Damiao grippers over CAN.
+        self._gripper_sock = None
+        self._last_gripper_cmd = None
+        if not self.config.is_simulation:
+            try:
+                import zmq
+
+                sock = zmq.Context.instance().socket(zmq.PUSH)
+                sock.setsockopt(zmq.SNDHWM, 2)
+                sock.setsockopt(zmq.LINGER, 0)
+                sock.connect(f"tcp://{self.config.robot_ip}:{GRIPPER_CMD_PORT}")
+                self._gripper_sock = sock
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Gripper command channel setup failed ({e}); grippers disabled.")
+                self._gripper_sock = None
+
         # Initialize direct motor control interface
         self.lowcmd_publisher = self._ChannelPublisher(kTopicLowCommand_Debug, hg_LowCmd)
         self.lowcmd_publisher.Init()
@@ -352,6 +373,13 @@ class UnitreeG1(Robot):
 
         # Start controller thread if enabled
         if self.controller is not None:
+            # Soft-start: ramp the arms from their current pose to the default position
+            # before the locomotion policy takes over, avoiding a jump at startup. The
+            # controller owns the legs, so send_action only moves the arms here. Runs in
+            # both sim and on the real robot so the ramp is visible in MuJoCo too.
+            logger.info("Soft-start: ramping arms to default position...")
+            self._interpolate_to_default(duration=3.0)
+
             self._controller_thread = threading.Thread(target=self._controller_loop, daemon=True)
             self._controller_thread.start()
             fps = int(1.0 / self.controller.control_dt)
@@ -411,6 +439,12 @@ class UnitreeG1(Robot):
                 logger.warning(f"Error closing sim_env: {e}")
             self.sim_env = None
             self._env_wrapper = None
+
+        # Close gripper command channel
+        sock = getattr(self, "_gripper_sock", None)
+        if sock is not None:
+            sock.close(linger=0)
+            self._gripper_sock = None
 
         # Disconnect cameras
         for cam in self._cameras.values():
@@ -500,7 +534,35 @@ class UnitreeG1(Robot):
                 tau[joint.value] = arm_tau[local_idx]
 
         self.publish_lowcmd(action_to_publish, tau=tau)
+        self._send_gripper_cmd(action)
         return action
+
+    def _send_gripper_cmd(self, action: RobotAction) -> None:
+        """Forward exo R3/L3 button flags to run_g1_server to open/close the grippers.
+
+        L3 (left stick, button.4) -> left gripper, R3 (right stick, button.0) -> right.
+        Only sends when the state changes to avoid flooding the channel.
+        """
+        sock = getattr(self, "_gripper_sock", None)
+        if sock is None:
+            return
+        l3 = action.get("remote.button.4")
+        r3 = action.get("remote.button.0")
+        if l3 is None and r3 is None:
+            logger.warning("[gripper] no remote.button.0/4 in action — teleop not emitting exo buttons")
+            return
+        cmd = {"L": int(bool(l3)), "R": int(bool(r3))}
+        if cmd == self._last_gripper_cmd:
+            return
+        self._last_gripper_cmd = cmd
+
+        import zmq
+
+        try:
+            sock.send_json(cmd, zmq.NOBLOCK)
+            logger.info(f"[gripper] sent {cmd} to {self.config.robot_ip}:{GRIPPER_CMD_PORT}")
+        except zmq.ZMQError as e:
+            logger.warning(f"[gripper] send failed ({e})")
 
     def _update_controller_action(self, action: RobotAction) -> None:
         """Update controller input state from incoming teleop action."""
@@ -527,6 +589,48 @@ class UnitreeG1(Robot):
     def cameras(self) -> dict:
         return self._cameras
 
+    def _interpolate_to_default(
+        self,
+        duration: float = 3.0,
+        control_dt: float | None = None,
+        default_positions: np.ndarray | list[float] | None = None,
+    ) -> None:
+        """Smoothly ramp joints from their current pose to the default pose (real robot).
+
+        When a locomotion controller owns the legs, ``send_action`` filters to the arm
+        joints, so this effectively ramps only the arms — enough to avoid a startup snap.
+        """
+        if control_dt is None:
+            control_dt = self.config.control_dt
+        if default_positions is None:
+            default_positions = np.array(self.config.default_positions, dtype=np.float32)
+
+        num_steps = max(1, int(duration / control_dt))
+
+        # record current positions
+        obs = self.get_observation()
+        init_dof_pos = np.zeros(29, dtype=np.float32)
+        for motor in G1_29_JointIndex:
+            init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
+
+        # Interpolate to default position
+        for step in range(num_steps):
+            start_time = time.time()
+
+            alpha = step / num_steps
+            action_dict = {}
+            for motor in G1_29_JointIndex:
+                target_pos = default_positions[motor.value]
+                interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
+                action_dict[f"{motor.name}.q"] = float(interp_pos)
+
+            self.send_action(action_dict)
+
+            # Maintain constant control rate
+            elapsed = time.time() - start_time
+            sleep_time = max(0, control_dt - elapsed)
+            time.sleep(sleep_time)
+
     def reset(
         self,
         control_dt: float | None = None,
@@ -543,34 +647,9 @@ class UnitreeG1(Robot):
                 {f"{motor.name}.q": float(default_positions[motor.value]) for motor in G1_29_JointIndex}
             )
         else:
-            total_time = 3.0
-            num_steps = int(total_time / control_dt)
-
-            # get current state
-            obs = self.get_observation()
-
-            # record current positions
-            init_dof_pos = np.zeros(29, dtype=np.float32)
-            for motor in G1_29_JointIndex:
-                init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
-
-            # Interpolate to default position
-            for step in range(num_steps):
-                start_time = time.time()
-
-                alpha = step / num_steps
-                action_dict = {}
-                for motor in G1_29_JointIndex:
-                    target_pos = default_positions[motor.value]
-                    interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
-                    action_dict[f"{motor.name}.q"] = float(interp_pos)
-
-                self.send_action(action_dict)
-
-                # Maintain constant control rate
-                elapsed = time.time() - start_time
-                sleep_time = max(0, control_dt - elapsed)
-                time.sleep(sleep_time)
+            self._interpolate_to_default(
+                duration=3.0, control_dt=control_dt, default_positions=default_positions
+            )
 
         # Reset controller internal state (gait phase, obs history, etc.)
         if self.controller is not None and hasattr(self.controller, "reset"):

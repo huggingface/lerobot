@@ -31,7 +31,7 @@ import cv2
 import numpy as np
 import zmq
 
-from ..configs import ColorMode
+from ..configs import ColorMode, Cv2Backends
 from ..opencv import OpenCVCamera, OpenCVCameraConfig
 
 logger = logging.getLogger(__name__)
@@ -97,13 +97,21 @@ class ImageServer:
 
         for name, cfg in config.get("cameras", {}).items():
             shape = cfg.get("shape", [480, 640])
-            cam_config = OpenCVCameraConfig(
-                index_or_path=cfg.get("device_id", 0),
-                fps=self.fps,
-                width=shape[1],
-                height=shape[0],
-                color_mode=ColorMode.RGB,
-            )
+            cam_kwargs = {
+                "index_or_path": cfg.get("device_id", 0),
+                "fps": self.fps,
+                "width": shape[1],
+                "height": shape[0],
+                "color_mode": ColorMode.RGB,
+                # Force V4L2 (Linux): the default FFMPEG backend is read-only for capture
+                # props, so it can't set FOURCC/resolution (e.g. RealSense color nodes).
+                "backend": Cv2Backends.V4L2,
+            }
+            # Some cameras (e.g. RealSense color nodes) won't apply a resolution unless the
+            # pixel format is forced first, so pass a FOURCC through when provided.
+            if cfg.get("fourcc"):
+                cam_kwargs["fourcc"] = cfg["fourcc"]
+            cam_config = OpenCVCameraConfig(**cam_kwargs)
             camera = OpenCVCamera(cam_config)
             camera.connect()
             self.cameras[name] = camera
@@ -125,7 +133,6 @@ class ImageServer:
     def run(self):
         frame_count = 0
         frame_times = deque(maxlen=60)
-        last_published_ts: dict[str, float] = {}
 
         # Start all capture threads
         for capture_thread in self.capture_threads.values():
@@ -142,18 +149,20 @@ class ImageServer:
             while True:
                 t0 = time.time()
 
-                # Build message
+                # Build message. Always include EVERY camera's latest frame so each message
+                # is complete: clients pick their own stream by name, and a partial message
+                # makes them fall back to another camera's image (cross-feed flicker).
                 message = {"timestamps": {}, "images": {}}
                 for name, capture_thread in self.capture_threads.items():
                     encoded, timestamp = capture_thread.get_latest()
-                    if encoded is not None and timestamp > last_published_ts.get(name, 0.0):
+                    if encoded is not None:
                         message["timestamps"][name] = timestamp
                         message["images"][name] = encoded
-                        last_published_ts[name] = timestamp
 
                 # Send as JSON string (suppress if buffer full)
-                with contextlib.suppress(zmq.Again):
-                    self.socket.send_string(json.dumps(message), zmq.NOBLOCK)
+                if message["images"]:
+                    with contextlib.suppress(zmq.Again):
+                        self.socket.send_string(json.dumps(message), zmq.NOBLOCK)
 
                 frame_count += 1
                 frame_times.append(time.time() - t0)

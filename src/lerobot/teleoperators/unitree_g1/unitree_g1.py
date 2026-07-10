@@ -209,10 +209,12 @@ class UnitreeG1Teleoperator(Teleoperator):
     @cached_property
     def action_features(self) -> dict[str, type]:
         remote_features = dict.fromkeys(self.remote_controller.remote_action, float)
+        # Exo joystick clicks (R3/L3) surfaced as button flags for gripper control.
+        gripper_features = {"remote.button.0": float, "remote.button.4": float}
         if not self._arm_control_enabled:
-            return remote_features
+            return {**remote_features, **gripper_features}
         joint_features = {f"{name}.q": float for name in self._g1_arm_joint_names}
-        return {**joint_features, **remote_features}
+        return {**joint_features, **remote_features, **gripper_features}
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
@@ -276,8 +278,8 @@ class UnitreeG1Teleoperator(Teleoperator):
             left_raw = self.left_arm.read_raw()
             right_raw = self.right_arm.read_raw()
 
-            left_angles = self.left_arm.get_angles()
-            right_angles = self.right_arm.get_angles()
+            left_angles = self.left_arm.angles_from_raw(left_raw)
+            right_angles = self.right_arm.angles_from_raw(right_raw)
             joint_action = self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
 
         # Wireless remote has priority when non-zero; otherwise, use exo joystick.
@@ -290,7 +292,23 @@ class UnitreeG1Teleoperator(Teleoperator):
             rc.set_from_exo(right_raw, "right")
 
         rc._sync_remote_action()
-        return {**joint_action, **rc.remote_action}
+        gripper_buttons = self._exo_gripper_buttons(left_raw, right_raw)
+        return {**joint_action, **rc.remote_action, **gripper_buttons}
+
+    def _exo_gripper_buttons(self, left_raw: list[int] | None, right_raw: list[int] | None) -> dict[str, float]:
+        """Exo joystick clicks as button flags: L3 (left stick) -> button.4, R3 (right) -> button.0.
+
+        Reads the raw joystick-button ADC channel directly (pressed pulls it below mid-scale),
+        so it is independent of the wireless-remote priority logic above. UnitreeG1.send_action
+        forwards these to the robot server to open/close the grippers.
+        """
+        rc = self.remote_controller
+        idx = rc.JOYSTICK_BTN_IDX
+
+        def pressed(raw: list[int] | None) -> float:
+            return 1.0 if (raw is not None and len(raw) > idx and raw[idx] < rc.ADC_HALF) else 0.0
+
+        return {"remote.button.4": pressed(left_raw), "remote.button.0": pressed(right_raw)}
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         wireless_remote = feedback.get("wireless_remote")
