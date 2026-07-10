@@ -167,7 +167,9 @@ Show dataset information without feature details:
         --operation.type info \
         --operation.show_features false
 
-Recompute dataset statistics (saves to lerobot/pusht_recomputed_stats by default):
+Recompute dataset statistics (saves to lerobot/pusht_recomputed_stats by default). The source
+dataset is never modified: large files are symlinked and only meta/ is copied, so this also works
+on read-only source datasets:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type recompute_stats
@@ -177,6 +179,12 @@ Recompute stats and save to a specific new repo_id:
         --repo_id lerobot/pusht \
         --new_repo_id lerobot/pusht_new_stats \
         --operation.type recompute_stats
+
+Recompute stats including image/video features (samples and decodes frames from each episode):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --operation.type recompute_stats \
+        --operation.skip_image_video false
 
 Recompute stats in-place (overwrites original dataset stats):
     lerobot-edit-dataset \
@@ -375,6 +383,30 @@ def _resolve_io_paths(
     output_repo_id = new_repo_id or default_new_repo_id or repo_id
     output_path = (Path(new_root) if new_root else HF_LEROBOT_HOME / output_repo_id).resolve()
     return output_repo_id, input_path, output_path
+
+
+def _reference_copy_dataset(input_root: Path, output_root: Path) -> None:
+    """Create a lightweight copy of a dataset that never modifies the source.
+
+    The directory tree is recreated with real directories, and every file is
+    symlinked to its source counterpart so no data is duplicated and the source is
+    only ever read. Files under ``meta/`` are instead copied as real, writable files
+    so that stats/info can be rewritten without touching the original. Symlinking
+    individual files (rather than whole directories) keeps ``push_to_hub`` working,
+    since ``Path.glob`` follows file symlinks but does not descend into symlinked
+    directories. This makes the operation safe on read-only source datasets.
+    """
+    for src in input_root.rglob("*"):
+        rel = src.relative_to(input_root)
+        dst = output_root / rel
+        if src.is_dir():
+            dst.mkdir(parents=True, exist_ok=True)
+        elif rel.parts[0] == "meta":
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dst)  # copyfile ignores source perms, so dst is writable
+        else:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.symlink_to(src.resolve())
 
 
 def get_output_path(
@@ -674,14 +706,17 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         )
         dataset = LeRobotDataset(cfg.repo_id, root=input_root)
     else:
-        logging.info(f"Copying dataset from {input_root} to {output_root}")
+        logging.info(f"Referencing dataset from {input_root} into {output_root} (source is left untouched)")
         if output_root.exists():
             backup_path = output_root.with_name(output_root.name + "_old")
             logging.warning(f"Output directory {output_root} already exists. Moving to {backup_path}")
             if backup_path.exists():
                 shutil.rmtree(backup_path)
             shutil.move(output_root, backup_path)
-        shutil.copytree(input_root, output_root)
+        # recompute_stats only reads data/ and rewrites meta/stats.json, so symlink the
+        # large immutable files and copy only meta/. This avoids duplicating the dataset
+        # and works even when the source dataset is read-only.
+        _reference_copy_dataset(input_root, output_root)
         dataset = LeRobotDataset(output_repo_id, root=output_root)
 
     logging.info(f"Recomputing stats for {cfg.repo_id}")

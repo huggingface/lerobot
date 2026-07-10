@@ -52,8 +52,11 @@ from lerobot.utils.utils import flatten_dict
 from .aggregate import aggregate_datasets
 from .compute_stats import (
     aggregate_stats,
+    auto_downsample_height_width,
     compute_episode_stats,
     compute_relative_action_stats,
+    get_feature_stats,
+    sample_indices,
 )
 from .dataset_metadata import LeRobotDatasetMetadata
 from .image_writer import write_image
@@ -77,6 +80,7 @@ from .utils import (
     update_chunk_file_indices,
 )
 from .video_utils import (
+    decode_video_frames,
     encode_video_frames,
     reencode_video,
 )
@@ -1559,6 +1563,82 @@ def modify_tasks(
     return dataset
 
 
+def _load_episode_image_frames(
+    dataset: LeRobotDataset,
+    key: str,
+    ep_idx: int,
+    frame_offsets: list[int],
+    is_depth: bool,
+) -> np.ndarray:
+    """Load sampled frames of an image feature for one episode as a (N, C, H, W) array."""
+    ep = dataset.meta.episodes[ep_idx]
+    from_idx = ep["dataset_from_index"]
+    column = dataset.hf_dataset.with_format(None).select_columns(key)
+
+    frames = []
+    for offset in frame_offsets:
+        img = column[from_idx + offset][key]
+        if is_depth:
+            arr = np.array(img)
+            if arr.ndim == 2:
+                arr = arr[np.newaxis, ...]
+        else:
+            arr = np.transpose(np.array(img.convert("RGB"), dtype=np.uint8), (2, 0, 1))
+        frames.append(auto_downsample_height_width(arr))
+    return np.stack(frames)
+
+
+def _load_episode_video_frames(
+    dataset: LeRobotDataset,
+    key: str,
+    ep_idx: int,
+    frame_offsets: list[int],
+    is_depth: bool,
+) -> np.ndarray:
+    """Load sampled frames of a video feature for one episode as a (N, C, H, W) array."""
+    ep = dataset.meta.episodes[ep_idx]
+    video_path = dataset.root / dataset.meta.get_video_file_path(ep_idx, key)
+    from_timestamp = ep[f"videos/{key}/from_timestamp"]
+    timestamps = [from_timestamp + offset / dataset.meta.fps for offset in frame_offsets]
+
+    frames = decode_video_frames(
+        video_path, timestamps, dataset.tolerance_s, return_uint8=not is_depth, is_depth=is_depth
+    )
+    return np.stack([auto_downsample_height_width(frame) for frame in frames.numpy()])
+
+
+def _compute_visual_episode_stats(
+    dataset: LeRobotDataset,
+    ep_idx: int,
+    visual_keys: list[str],
+) -> dict:
+    """Compute per-episode statistics for image/video features by sampling frames.
+
+    Mirrors the image/video branch of :func:`compute_episode_stats`: per-channel stats
+    are computed on downsampled sampled frames, then RGB stats are rescaled to [0, 1]
+    (depth maps keep their native units).
+    """
+    ep_length = dataset.meta.episodes[ep_idx]["length"]
+    frame_offsets = sample_indices(ep_length)
+
+    ep_stats = {}
+    for key in visual_keys:
+        is_depth = key in dataset.meta.depth_keys
+        if dataset.meta.features[key]["dtype"] == "video":
+            frames = _load_episode_video_frames(dataset, key, ep_idx, frame_offsets, is_depth)
+        else:
+            frames = _load_episode_image_frames(dataset, key, ep_idx, frame_offsets, is_depth)
+
+        stats = get_feature_stats(frames, axis=(0, 2, 3), keepdims=True)
+        normalization_factor = 1.0 if is_depth else 255.0
+        ep_stats[key] = {
+            k: v if k == "count" else np.squeeze(v / normalization_factor, axis=0)
+            for k, v in stats.items()
+        }
+
+    return ep_stats
+
+
 def recompute_stats(
     dataset: LeRobotDataset,
     skip_image_video: bool = True,
@@ -1572,7 +1652,9 @@ def recompute_stats(
     Args:
         dataset: The LeRobotDataset to recompute stats for.
         skip_image_video: If True (default), only recompute stats for numeric features
-            (action, state, etc.) and keep existing image/video stats unchanged.
+            (action, state, etc.) and keep existing image/video stats unchanged. If False,
+            image/video stats are also recomputed by sampling and decoding frames from each
+            episode (this reads the image/video files, unlike the numeric-only path).
         relative_action: If True, compute action stats in relative space by
             iterating all valid action chunks and subtracting the current state.
             This matches the normalization distribution the model sees during
@@ -1626,8 +1708,8 @@ def recompute_stats(
         raise ValueError(f"No parquet files found in {data_dir}")
 
     all_episode_stats = []
-    # TODO: enable image and video stats re-computation
     numeric_keys = [k for k, v in features_to_compute.items() if v["dtype"] not in ["image", "video"]]
+    visual_keys = [k for k, v in features_to_compute.items() if v["dtype"] in ["image", "video"]]
 
     for parquet_path in tqdm(parquet_files, desc="Computing stats from data files"):
         df = pd.read_parquet(parquet_path)
@@ -1644,6 +1726,8 @@ def recompute_stats(
                         episode_data[key] = np.array(values)
 
             ep_stats = compute_episode_stats(episode_data, features_to_compute)
+            if visual_keys:
+                ep_stats.update(_compute_visual_episode_stats(dataset, int(ep_idx), visual_keys))
             all_episode_stats.append(ep_stats)
 
     if features_to_compute and not all_episode_stats:
