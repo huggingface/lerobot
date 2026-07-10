@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,6 +33,8 @@ from lerobot.processor import (
     TransitionKey,
 )
 from lerobot.utils.rotation import Rotation
+
+logger = logging.getLogger(__name__)
 
 
 @ProcessorStepRegistry.register("ee_reference_and_delta")
@@ -194,11 +197,17 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
     Attributes:
         end_effector_bounds: A dictionary with "min" and "max" keys for position clipping.
         max_ee_step_m: The maximum allowed change in position (in meters) between steps.
+        raise_on_jump: When ``True`` (default) an over-limit per-frame step raises
+            ``ValueError`` (aborting the control loop). When ``False`` the step is
+            rate-limited to ``max_ee_step_m`` and a warning is logged instead — the
+            safer choice for live teleoperation, where a transient tracking glitch
+            should not crash the loop and leave the robot uncontrolled.
         _last_pos: Internal state storing the last commanded position.
     """
 
     end_effector_bounds: dict
     max_ee_step_m: float = 0.05
+    raise_on_jump: bool = True
     _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def action(self, action: RobotAction) -> RobotAction:
@@ -226,8 +235,19 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
             dpos = pos - self._last_pos
             n = float(np.linalg.norm(dpos))
             if n > self.max_ee_step_m and n > 0:
+                # Clamp the step to the per-frame limit (rate-limit). The clamped
+                # value is computed either way; raise_on_jump only decides whether
+                # an over-limit step aborts the loop or is rate-limited + warned.
                 pos = self._last_pos + dpos * (self.max_ee_step_m / n)
-                raise ValueError(f"EE jump {n:.3f}m > {self.max_ee_step_m}m")
+                if self.raise_on_jump:
+                    raise ValueError(f"EE jump {n:.3f}m > {self.max_ee_step_m}m")
+                logger.warning(
+                    "EE jump %.3fm > %.3fm; rate-limited to the per-frame step "
+                    "(likely a transient tracking glitch; if it recurs every frame "
+                    "the commanded target is systematically out of workspace).",
+                    n,
+                    self.max_ee_step_m,
+                )
 
         self._last_pos = pos
 
@@ -264,12 +284,18 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
         q_curr: Internal state storing the last joint positions, used as an initial guess for the IK solver.
         initial_guess_current_joints: If True, use the robot's current joint state as the IK guess.
             If False, use the solution from the previous step.
+        orientation_weight: Weight for the orientation constraint passed to
+            ``RobotKinematics.inverse_kinematics``. Defaults to ``0.01`` (matching the solver
+            default, so existing callers are unchanged). Set to ``0.0`` for position-only IK on
+            under-actuated arms; a small nonzero weight gives soft-orientation IK on the 5-DOF
+            SO-101, where the wrist tracks orientation only partially (position dominates).
     """
 
     kinematics: RobotKinematics
     motor_names: list[str]
     q_curr: np.ndarray | None = field(default=None, init=False, repr=False)
     initial_guess_current_joints: bool = True
+    orientation_weight: float = 0.01
 
     def action(self, action: RobotAction) -> RobotAction:
         x = action.pop("ee.x")
@@ -308,7 +334,9 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
         t_des[:3, 3] = [x, y, z]
 
         # Compute inverse kinematics
-        q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
+        q_target = self.kinematics.inverse_kinematics(
+            self.q_curr, t_des, orientation_weight=self.orientation_weight
+        )
         self.q_curr = q_target
 
         # TODO: This is sentitive to order of motor_names = q_target mapping

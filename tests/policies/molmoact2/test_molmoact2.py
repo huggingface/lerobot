@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The Allen Institute for Artificial Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,24 +33,27 @@ pytest.importorskip("scipy")
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies import get_policy_class, make_policy_config
 from lerobot.policies.molmoact2 import (
-    configuration_molmoact2 as molmoact2_config,
     modeling_molmoact2 as molmoact2_modeling,
     processor_molmoact2 as molmoact2_processor,
 )
-from lerobot.policies.molmoact2.configuration_molmoact2 import (
-    MolmoAct2Config,
-    MolmoAct2CosineDecayWithWarmupSchedulerConfig,
-    infer_molmoact2_max_sequence_length,
+from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
+from lerobot.policies.molmoact2.modeling_molmoact2 import (
+    MolmoAct2Policy,
+    _apply_action_chunk_padding_mask,
+    _apply_action_dim_padding_mask,
+    _combine_rollout_seeds,
 )
-from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
 from lerobot.policies.molmoact2.processor_molmoact2 import (
+    MolmoAct2ActionFrameTransformStep,
     MolmoAct2ClampNormalizedProcessorStep,
     MolmoAct2MaskedNormalizerProcessorStep,
     MolmoAct2MaskedUnnormalizerProcessorStep,
     MolmoAct2PackInputsProcessorStep,
+    MolmoAct2StateFrameTransformStep,
     _add_gripper_masks_to_stats,
     _build_discrete_state_string,
     _normalize_question_text,
+    infer_molmoact2_max_sequence_length,
     make_molmoact2_pre_post_processors,
 )
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
@@ -71,34 +72,38 @@ def test_molmoact2_policy_registration():
     assert cfg.per_episode_seed is False
     assert cfg.eval_seed is None
     assert cfg.normalize_language is True
-    assert cfg.get_scheduler_preset().num_decay_steps is None
+    assert cfg.get_scheduler_preset().num_decay_steps == 100_000
     assert cfg.action_delta_indices == list(range(cfg.chunk_size))
     assert get_policy_class("molmoact2") is MolmoAct2Policy
 
 
 def test_molmoact2_checkpoint_download_ignores_remote_python(monkeypatch):
+    import huggingface_hub
+
     download_kwargs = {}
 
     def fake_snapshot_download(**kwargs):
         download_kwargs.update(kwargs)
         return "/tmp/downloaded-molmoact2"
 
-    monkeypatch.setattr(molmoact2_config, "snapshot_download", fake_snapshot_download)
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot_download)
 
-    checkpoint_location = molmoact2_config._resolve_checkpoint_location("allenai/MolmoAct2")
+    checkpoint_location = molmoact2_modeling._resolve_checkpoint_location("allenai/MolmoAct2")
 
     assert checkpoint_location == "/tmp/downloaded-molmoact2"
     assert download_kwargs["ignore_patterns"] == ["*.py", "*.pyc", "__pycache__/*"]
 
 
-def test_molmoact2_scheduler_decay_steps_auto_match_training_steps():
+def test_molmoact2_scheduler_auto_scales_to_training_steps():
+    from lerobot.optim import CosineDecayWithWarmupSchedulerConfig
+
     param = torch.nn.Parameter(torch.ones(()))
     optimizer = torch.optim.AdamW([param], lr=0.001)
-    config = MolmoAct2CosineDecayWithWarmupSchedulerConfig(
+    config = CosineDecayWithWarmupSchedulerConfig(
         peak_lr=0.01,
         decay_lr=0.001,
         num_warmup_steps=10,
-        num_decay_steps=None,
+        num_decay_steps=100_000,
     )
 
     scheduler = config.build(optimizer, num_training_steps=100)
@@ -123,9 +128,7 @@ def test_molmoact2_rollout_generator_uses_eval_seed_per_task():
         batch_size=3,
         device=torch.device("cpu"),
     )
-    expected_first = torch.Generator().manual_seed(
-        MolmoAct2Policy._combine_rollout_seeds(first_seed=1000, batch_size=3)
-    )
+    expected_first = torch.Generator().manual_seed(_combine_rollout_seeds(first_seed=1000, batch_size=3))
     assert torch.allclose(torch.rand(4, generator=first), torch.rand(4, generator=expected_first))
 
     policy.reset()
@@ -134,9 +137,7 @@ def test_molmoact2_rollout_generator_uses_eval_seed_per_task():
         batch_size=3,
         device=torch.device("cpu"),
     )
-    expected_second = torch.Generator().manual_seed(
-        MolmoAct2Policy._combine_rollout_seeds(first_seed=1003, batch_size=3)
-    )
+    expected_second = torch.Generator().manual_seed(_combine_rollout_seeds(first_seed=1003, batch_size=3))
     assert torch.allclose(torch.rand(4, generator=second), torch.rand(4, generator=expected_second))
 
     policy.reset()
@@ -145,9 +146,7 @@ def test_molmoact2_rollout_generator_uses_eval_seed_per_task():
         batch_size=3,
         device=torch.device("cpu"),
     )
-    expected_new_task = torch.Generator().manual_seed(
-        MolmoAct2Policy._combine_rollout_seeds(first_seed=1000, batch_size=3)
-    )
+    expected_new_task = torch.Generator().manual_seed(_combine_rollout_seeds(first_seed=1000, batch_size=3))
     assert torch.allclose(torch.rand(4, generator=new_task), torch.rand(4, generator=expected_new_task))
 
 
@@ -537,34 +536,24 @@ def test_train_action_expert_only_requires_continuous_action_mode():
 
 
 def test_molmoact2_sequence_length_is_inferred_from_fixed_token_budget():
-    cfg = MolmoAct2Config(
-        action_mode="both",
-        chunk_size=10,
-        n_action_steps=10,
-        image_keys=["observation.images.image", "observation.images.wrist_image"],
-        input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(8,))},
-        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,))},
-    )
-
-    assert cfg.max_sequence_length is None
-    assert cfg.inferred_max_sequence_length() == 640
-    assert cfg.inferred_max_sequence_length(include_discrete_action=False) == 576
     assert (
         infer_molmoact2_max_sequence_length(
-            num_images=2,
-            state_dim=8,
-            action_dim=7,
-            action_horizon=30,
-            include_discrete_action=True,
+            num_images=2, state_dim=8, action_dim=7, action_horizon=10, include_discrete_action=True
+        )
+        == 640
+    )
+    assert (
+        infer_molmoact2_max_sequence_length(
+            num_images=2, state_dim=8, action_dim=7, action_horizon=10, include_discrete_action=False
+        )
+        == 576
+    )
+    assert (
+        infer_molmoact2_max_sequence_length(
+            num_images=2, state_dim=8, action_dim=7, action_horizon=30, include_discrete_action=True
         )
         == 768
     )
-
-
-def test_molmoact2_sequence_length_override_is_preserved():
-    cfg = MolmoAct2Config(max_sequence_length=1024)
-
-    assert cfg.inferred_max_sequence_length(num_images=2, state_dim=8, action_dim=7) == 1024
 
 
 def test_train_action_expert_only_freezes_non_action_expert_params():
@@ -939,6 +928,39 @@ def test_question_normalization_matches_release_prompt_style():
     )
 
 
+def test_joint_frame_transform_round_trip():
+    signs = [1.0, -1.0, 1.0, 1.0, 1.0, 1.0]
+    offsets = [0.0, 90.0, 90.0, 0.0, 0.0, 0.0]
+    original_state = torch.tensor([[10.0, -90.0, -120.0, 30.0, 0.0, -45.0]])
+
+    state_step = MolmoAct2StateFrameTransformStep(joint_signs=signs, joint_offsets=offsets)
+    action_step = MolmoAct2ActionFrameTransformStep(joint_signs=signs, joint_offsets=offsets)
+
+    transition = {
+        TransitionKey.OBSERVATION: {OBS_STATE: original_state.clone()},
+    }
+    transformed = state_step(transition)
+    model_state = transformed[TransitionKey.OBSERVATION][OBS_STATE]
+
+    action_transition = {TransitionKey.ACTION: model_state.clone()}
+    recovered = action_step(action_transition)
+    recovered_state = recovered[TransitionKey.ACTION]
+
+    assert torch.allclose(recovered_state, original_state)
+
+
+def test_joint_frame_transform_noop_when_none():
+    state_step = MolmoAct2StateFrameTransformStep(joint_signs=None, joint_offsets=None)
+    action_step = MolmoAct2ActionFrameTransformStep(joint_signs=None, joint_offsets=None)
+    state = torch.tensor([[10.0, -90.0, -120.0]])
+
+    state_transition = {TransitionKey.OBSERVATION: {OBS_STATE: state}}
+    assert state_step(state_transition) is state_transition
+
+    action_transition = {TransitionKey.ACTION: state}
+    assert action_step(action_transition) is action_transition
+
+
 def test_action_padding_marks_only_real_dimensions():
     step = object.__new__(MolmoAct2PackInputsProcessorStep)
     step.max_action_dim = 32
@@ -963,7 +985,7 @@ def test_action_dim_padding_loss_reduces_like_old_trainer():
         ]
     )
 
-    reduced = MolmoAct2Policy._apply_action_dim_padding_mask(loss, action_dim_is_pad)
+    reduced = _apply_action_dim_padding_mask(loss, action_dim_is_pad)
 
     expected = torch.stack(
         [
@@ -979,7 +1001,7 @@ def test_action_chunk_padding_keeps_old_mean_denominator():
     loss = torch.ones(1, 2, 4, 3)
     action_horizon_is_pad = torch.tensor([[False, False, True, True]])
 
-    masked = MolmoAct2Policy._apply_action_chunk_padding_mask(loss, action_horizon_is_pad)
+    masked = _apply_action_chunk_padding_mask(loss, action_horizon_is_pad)
 
     assert masked.mean().item() == 0.5
 
