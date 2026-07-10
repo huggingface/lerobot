@@ -23,7 +23,7 @@ Modified copy of lerobot's examples/dataset/slurm_recompute_stats.py
   1. --qos              : pass a SLURM QoS through to every worker's sbatch.
   2. --venv-path        : activate a venv on each worker before the python step.
   3. --env-command      : raw shell snippet injected before the python step (e.g. to
-                          export HF_LEROBOT_HOME). Overrides --venv-path if given.
+                          export HF_LEROBOT_HOME). Runs in addition to --venv-path.
   4. --chain-aggregate  : submit ``aggregate`` with an afterok dependency on
                           ``compute`` so it only runs once all shards exist
                           (no manual squeue-wait, no gap/overlap race).
@@ -69,25 +69,6 @@ from datatrove.executor import LocalPipelineExecutor
 from datatrove.executor.slurm import SlurmPipelineExecutor
 from datatrove.pipeline.base import PipelineStep
 
-SHARD_PATTERN = "episode_stats_{rank:05d}.pkl"
-SHARD_GLOB = "episode_stats_*.pkl"
-
-
-def _load_dataset(repo_id: str, root: str | None, new_root: str | None, video_backend: str | None = None):
-    """Load the (possibly reference-copied) dataset used for stats.
-
-    When ``new_root`` differs from the source, create a read-only-safe reference copy
-    once (only the aggregator's rank 0 or the first compute worker needs to; here every
-    rank just loads ``new_root`` if it already exists, else falls back to the source).
-    """
-    from lerobot.datasets import LeRobotDataset
-
-    kwargs = {"video_backend": video_backend} if video_backend else {}
-    if new_root and Path(new_root).exists():
-        return LeRobotDataset(repo_id, root=new_root, **kwargs)
-    return LeRobotDataset(repo_id, root=root, **kwargs)
-
-
 class ComputeEpisodeStatsShards(PipelineStep):
     """Each worker computes per-episode stats for its ``episodes[rank::world_size]`` shard."""
 
@@ -101,14 +82,20 @@ class ComputeEpisodeStatsShards(PipelineStep):
         self.video_backend = video_backend
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
+        # NOTE: this method is pickled and executed on a worker, where this script's module
+        # globals are NOT available. Keep it self-contained: import locally and don't reference
+        # module-level helpers/constants.
         import logging
         import pickle
+        from pathlib import Path
 
-        from lerobot.datasets import compute_dataset_episode_stats
+        from lerobot.datasets import LeRobotDataset, compute_dataset_episode_stats
         from lerobot.utils.utils import init_logging
 
         init_logging()
-        dataset = _load_dataset(self.repo_id, self.root, self.new_root, self.video_backend)
+        load_kwargs = {"video_backend": self.video_backend} if self.video_backend else {}
+        root = self.new_root if self.new_root and Path(self.new_root).exists() else self.root
+        dataset = LeRobotDataset(self.repo_id, root=root, **load_kwargs)
 
         my_episodes = list(range(dataset.meta.total_episodes))[rank::world_size]
         if not my_episodes:
@@ -124,7 +111,7 @@ class ComputeEpisodeStatsShards(PipelineStep):
 
         shard_dir = Path(self.shard_dir)
         shard_dir.mkdir(parents=True, exist_ok=True)
-        out = shard_dir / SHARD_PATTERN.format(rank=rank)
+        out = shard_dir / f"episode_stats_{rank:05d}.pkl"
         with open(out, "wb") as f:
             pickle.dump(episode_stats, f)
         logging.info(f"Rank {rank}: saved {len(episode_stats)} episode stats to {out}")
@@ -143,10 +130,12 @@ class AggregateEpisodeStats(PipelineStep):
         self.video_backend = video_backend
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
+        # NOTE: pickled and executed on a worker; keep self-contained (see ComputeEpisodeStatsShards.run).
         import logging
         import pickle
+        from pathlib import Path
 
-        from lerobot.datasets import aggregate_episode_stats
+        from lerobot.datasets import LeRobotDataset, aggregate_episode_stats
         from lerobot.utils.utils import init_logging
 
         init_logging()
@@ -154,7 +143,7 @@ class AggregateEpisodeStats(PipelineStep):
             return
 
         shard_dir = Path(self.shard_dir)
-        shards = sorted(shard_dir.glob(SHARD_GLOB))
+        shards = sorted(shard_dir.glob("episode_stats_*.pkl"))
         if not shards:
             raise FileNotFoundError(f"No episode stat shards found in {shard_dir}")
 
@@ -164,7 +153,9 @@ class AggregateEpisodeStats(PipelineStep):
                 all_episode_stats.extend(pickle.load(f))
         logging.info(f"Aggregating {len(all_episode_stats)} episode stats from {len(shards)} shards")
 
-        dataset = _load_dataset(self.repo_id, self.root, self.new_root, self.video_backend)
+        load_kwargs = {"video_backend": self.video_backend} if self.video_backend else {}
+        root = self.new_root if self.new_root and Path(self.new_root).exists() else self.root
+        dataset = LeRobotDataset(self.repo_id, root=root, **load_kwargs)
 
         # Aggregation is order-independent, so the only way sharding changes the result is a
         # gap (dropped shard) or an overlap (episode counted twice). Verify the shards cover
@@ -243,10 +234,10 @@ def _make_executor(
         )
         if qos:
             kwargs["qos"] = qos  # -> "#SBATCH --qos=<qos>" on every worker
-        if env_command:
-            kwargs["env_command"] = env_command  # raw snippet before python (overrides venv_path)
-        elif venv_path:
+        if venv_path:
             kwargs["venv_path"] = venv_path  # datatrove sources this before the python step
+        if env_command:
+            kwargs["env_command"] = env_command  # extra raw snippet before python (composes with venv_path)
         if depends is not None:
             kwargs["depends"] = depends  # chains --dependency=afterok:<compute jobid>
         return SlurmPipelineExecutor(**kwargs)
@@ -299,7 +290,7 @@ def _add_shared_args(p):
         type=str,
         default=None,
         help="Raw shell snippet injected into each worker's sbatch before the python step "
-        "(e.g. to export HF_LEROBOT_HOME). Overrides --venv-path if given.",
+        "(e.g. to export HF_LEROBOT_HOME). Runs in addition to --venv-path.",
     )
 
 
