@@ -155,6 +155,7 @@ Foot pedal input is also supported via `--strategy.input_device=pedal`. Configur
 | `--strategy.record_autonomous`       | Record autonomous frames too (default: false)           |
 | `--strategy.upload_every_n_episodes` | Push to Hub every N episodes (default: 5)               |
 | `--strategy.input_device`            | Input device: `keyboard` or `pedal` (default: keyboard) |
+| `--strategy.smooth_handover`         | Smoothly hand control over at pause / correction start (default: true). Disable for clutch-style teleops that re-reference at the current robot pose on engage |
 | `--teleop.type`                      | **Required.** Teleoperator type                         |
 
 ### Episodic (`--strategy.type=episodic`)

@@ -623,8 +623,8 @@ class DAggerStrategy(RolloutStrategy):
     # State-machine transition side-effects
     # ------------------------------------------------------------------
 
-    @staticmethod
     def _apply_transition(
+        self,
         old_phase: DAggerPhase,
         new_phase: DAggerPhase,
         engine,
@@ -633,6 +633,10 @@ class DAggerStrategy(RolloutStrategy):
         prev_action: dict | None,
     ) -> None:
         """Execute side-effects for a validated phase transition, including smooth handovers.
+
+        The smooth handovers below can be disabled with
+        ``--strategy.smooth_handover=false`` (useful for clutch-style teleops
+        that re-reference at the current robot pose on engage).
 
         AUTONOMOUS -> PAUSED (actuated teleop):
             Pause the engine, then drive the leader arm to the follower's last
@@ -657,7 +661,7 @@ class DAggerStrategy(RolloutStrategy):
             logger.info("Pausing engine - robot holds position")
             engine.pause()
 
-            if teleop_supports_feedback(teleop) and prev_action is not None:
+            if self.config.smooth_handover and teleop_supports_feedback(teleop) and prev_action is not None:
                 # TODO(Maxime): prev_action is in robot action key space (output of robot_action_processor).
                 # send_feedback expects teleop feedback key space. For homogeneous setups (e.g. SO-101
                 # leader + SO-101 follower) the keys are identical so this works. If the processor pipeline
@@ -668,7 +672,11 @@ class DAggerStrategy(RolloutStrategy):
 
         elif old_phase == DAggerPhase.PAUSED and new_phase == DAggerPhase.CORRECTING:
             logger.info("Entering correction mode - human teleop control")
-            if not teleop_supports_feedback(teleop) and prev_action is not None:
+            if (
+                self.config.smooth_handover
+                and not teleop_supports_feedback(teleop)
+                and prev_action is not None
+            ):
                 logger.info("Smooth handover: sliding follower to teleop position")
                 obs = robot.get_observation()
                 teleop_action = teleop.get_action()
