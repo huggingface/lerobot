@@ -27,8 +27,8 @@ import pytest
 import lerobot.scripts.lerobot_train as train_module
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
-from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
+from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 
 ALL_CONFIGS = [PI0Config, PI05Config, PI0FastConfig, SmolVLAConfig, DiffusionConfig]
@@ -53,8 +53,8 @@ def test_compile_mode_field_defaults_to_none(config_cls):
     ],
 )
 def test_class_compile_mode_constants(config_cls, expected_default, expected_safe):
-    assert config_cls.DEFAULT_COMPILE_MODE == expected_default
-    assert config_cls.SAFE_COMPILE_MODE == expected_safe
+    assert expected_default == config_cls.DEFAULT_COMPILE_MODE
+    assert expected_safe == config_cls.SAFE_COMPILE_MODE
 
 
 # -- resolve_compile_mode: implicit (compile_mode=None) ---------------------

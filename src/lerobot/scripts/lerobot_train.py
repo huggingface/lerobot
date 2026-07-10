@@ -206,9 +206,7 @@ def _make_policy_for_training(
     rename_map: dict[str, str],
     gradient_accumulation_steps: int,
 ) -> PreTrainedPolicy:
-    resolve_compile_mode = hasattr(policy_cfg, "compile_mode") and getattr(
-        policy_cfg, "compile_model", False
-    )
+    resolve_compile_mode = hasattr(policy_cfg, "compile_mode") and getattr(policy_cfg, "compile_model", False)
     requested_compile_mode = getattr(policy_cfg, "compile_mode", None)
     if resolve_compile_mode:
         resolved_compile_mode = policy_cfg.resolve_compile_mode(gradient_accumulation_steps)

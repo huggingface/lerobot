@@ -133,9 +133,7 @@ class MetricsTracker:
         if self.accelerator is None:
             return self._batch_size
         return (
-            self._batch_size
-            * self.accelerator.num_processes
-            * self.accelerator.gradient_accumulation_steps
+            self._batch_size * self.accelerator.num_processes * self.accelerator.gradient_accumulation_steps
         )
 
     def __getattr__(self, name: str) -> int | dict[str, AverageMeter] | AverageMeter | Any:
