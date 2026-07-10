@@ -117,9 +117,7 @@ def main() -> None:
     p.add_argument("--skeleton", type=str, default=None, help="Path to smpl_skeleton.npz")
     src = p.add_mutually_exclusive_group()
     src.add_argument("--fake", action="store_true", help="Publish synthetic motion (no headset)")
-    src.add_argument(
-        "--motion-file", type=str, default=None, help="Replay an SMPL .npz clip over rt/smpl"
-    )
+    src.add_argument("--motion-file", type=str, default=None, help="Replay an SMPL .npz clip over rt/smpl")
     p.add_argument("--no-loop", action="store_true", help="Play a --motion-file once, then stop")
     args = p.parse_args()
 
