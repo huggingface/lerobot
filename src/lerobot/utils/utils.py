@@ -100,15 +100,23 @@ def init_logging(
 
 
 def format_big_number(num, precision=0):
+    """Format large numbers with SI-style suffixes (K/M/B/T/Q).
+
+    Always returns a string. Values at or beyond 1000× the largest suffix
+    ("Q") keep the Q unit and use the residual magnitude (previously the
+    raw float was returned, which broke callers that concatenate strings).
+    """
     suffixes = ["", "K", "M", "B", "T", "Q"]
     divisor = 1000.0
+    num = float(num)
 
-    for suffix in suffixes:
-        if abs(num) < divisor:
+    for i, suffix in enumerate(suffixes):
+        if abs(num) < divisor or i == len(suffixes) - 1:
             return f"{num:.{precision}f}{suffix}"
         num /= divisor
 
-    return num
+    # Unreachable; keeps type checkers happy.
+    return f"{num:.{precision}f}"
 
 
 def say(text: str, blocking: bool = False):
