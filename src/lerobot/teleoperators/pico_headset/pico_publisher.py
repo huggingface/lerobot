@@ -31,6 +31,10 @@ Usage:
 
     # No hardware — emit a synthetic waving motion to test the consumer end-to-end:
     python -m lerobot.teleoperators.pico_headset.pico_publisher --fake
+
+    # Replay a canned SMPL clip to the robot through the same rt/smpl -> SONIC path:
+    python -m lerobot.teleoperators.pico_headset.pico_publisher \
+        --motion-file examples/unitree_g1/motions/walk_forward.npz
 """
 
 from __future__ import annotations
@@ -43,7 +47,11 @@ import time
 import numpy as np
 import zmq
 
-from lerobot.teleoperators.pico_headset.smpl_fk import SmplForwardKinematics
+from lerobot.teleoperators.pico_headset.smpl_fk import (
+    SmplForwardKinematics,
+    canonicalize_smpl_joints,
+    root_quats_from_aa,
+)
 
 SMPL_TOPIC = "rt/smpl"
 DEFAULT_SMPL_PORT = 5560
@@ -80,24 +88,56 @@ def _fake_body_poses(t: float) -> np.ndarray:
     return poses
 
 
+def _load_motion_clip(path: str) -> dict:
+    """Load an SMPL ``.npz`` clip and canonicalize it for rt/smpl streaming.
+
+    Expects the same keys as ``motion_loader.SmplMotion``:
+        smpl_joints (T, 24, 3), pose_aa (T, 72) optional, transl (T, 3) optional.
+    Returns per-frame joints already in the encoder's root-removed convention,
+    plus optional per-frame root quat/translation.
+    """
+    data = np.load(path)
+    joints = data["smpl_joints"].astype(np.float32)
+    if joints.ndim != 3 or joints.shape[1:] != (24, 3):
+        raise ValueError(f"Expected smpl_joints (T, 24, 3), got {joints.shape}")
+
+    pose_aa = data["pose_aa"].astype(np.float32) if "pose_aa" in data.files else None
+    root_quat = None
+    if pose_aa is not None:
+        joints = canonicalize_smpl_joints(joints, pose_aa[:, :3])
+        root_quat = root_quats_from_aa(pose_aa[:, :3])
+    transl = data["transl"].astype(np.float32) if "transl" in data.files else None
+    return {"joints": joints, "root_quat": root_quat, "transl": transl}
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--port", type=int, default=DEFAULT_SMPL_PORT, help="ZMQ PUB port for rt/smpl")
     p.add_argument("--fps", type=float, default=50.0, help="Target publish rate (Hz)")
     p.add_argument("--skeleton", type=str, default=None, help="Path to smpl_skeleton.npz")
-    p.add_argument("--fake", action="store_true", help="Publish synthetic motion (no headset)")
+    src = p.add_mutually_exclusive_group()
+    src.add_argument("--fake", action="store_true", help="Publish synthetic motion (no headset)")
+    src.add_argument(
+        "--motion-file", type=str, default=None, help="Replay an SMPL .npz clip over rt/smpl"
+    )
+    p.add_argument("--no-loop", action="store_true", help="Play a --motion-file once, then stop")
     args = p.parse_args()
 
-    fk = SmplForwardKinematics(args.skeleton) if args.skeleton else SmplForwardKinematics()
+    clip = _load_motion_clip(args.motion_file) if args.motion_file else None
+
+    # FK is only needed for live/synthetic (24,7) body poses; clips are pre-canonical.
+    fk = None
+    if clip is None:
+        fk = SmplForwardKinematics(args.skeleton) if args.skeleton else SmplForwardKinematics()
 
     xrt = None
-    if not args.fake:
+    if clip is None and not args.fake:
         try:
             import xrobotoolkit_sdk as xrt  # noqa: PLC0415
         except ImportError as e:
             raise SystemExit(
-                "xrobotoolkit_sdk not available. Install it, or run with --fake to test "
-                "the pipeline without a headset."
+                "xrobotoolkit_sdk not available. Install it, or run with --fake / --motion-file "
+                "to test the pipeline without a headset."
             ) from e
         xrt.init()
         print("[pico_publisher] XRoboToolkit initialized")
@@ -105,7 +145,13 @@ def main() -> None:
     ctx = zmq.Context.instance()
     sock = ctx.socket(zmq.PUB)
     sock.bind(f"tcp://*:{args.port}")
-    print(f"[pico_publisher] '{SMPL_TOPIC}' bound to tcp://*:{args.port} @ {args.fps:.0f} Hz")
+    src_desc = f"motion-file {args.motion_file}" if clip else ("fake" if args.fake else "headset")
+    print(
+        f"[pico_publisher] '{SMPL_TOPIC}' bound to tcp://*:{args.port} @ {args.fps:.0f} Hz "
+        f"[source: {src_desc}]"
+    )
+    if clip is not None:
+        print(f"[pico_publisher] clip frames={clip['joints'].shape[0]} loop={not args.no_loop}")
 
     period = 1.0 / max(1.0, args.fps)
     frame_index = 0
@@ -113,25 +159,33 @@ def main() -> None:
     try:
         while True:
             loop_start = time.time()
-            if args.fake:
-                body_poses = _fake_body_poses(loop_start - t0)
+            if clip is not None:
+                n = clip["joints"].shape[0]
+                if args.no_loop and frame_index >= n:
+                    print("\n[pico_publisher] clip finished")
+                    break
+                i = frame_index % n
+                joints = clip["joints"][i]
+                root_quat = None if clip["root_quat"] is None else clip["root_quat"][i]
+                root_transl = None if clip["transl"] is None else clip["transl"][i]
                 stamp_ns = time.time_ns()
             else:
-                body_poses = np.asarray(xrt.get_body_joints_pose(), np.float32)
-                stamp_ns = int(xrt.get_time_stamp_ns())
-                if body_poses.shape != (24, 7):
-                    time.sleep(0.005)
-                    continue
+                if args.fake:
+                    body_poses = _fake_body_poses(loop_start - t0)
+                    stamp_ns = time.time_ns()
+                else:
+                    body_poses = np.asarray(xrt.get_body_joints_pose(), np.float32)
+                    stamp_ns = int(xrt.get_time_stamp_ns())
+                    if body_poses.shape != (24, 7):
+                        time.sleep(0.005)
+                        continue
+                out = fk.compute(body_poses)
+                joints = out["smpl_joints_local"]
+                root_quat = out["root_quat"]
+                root_transl = out["root_transl"]
 
-            out = fk.compute(body_poses)
             sock.send(
-                pack_message(
-                    out["smpl_joints_local"],
-                    frame_index,
-                    stamp_ns,
-                    root_quat=out["root_quat"],
-                    root_transl=out["root_transl"],
-                )
+                pack_message(joints, frame_index, stamp_ns, root_quat=root_quat, root_transl=root_transl)
             )
             frame_index += 1
             if frame_index % int(max(1, args.fps)) == 0:
