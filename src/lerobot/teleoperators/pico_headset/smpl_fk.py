@@ -210,9 +210,9 @@ class SmplForwardKinematics:
         root_quat = smpl_root_ytoz_up(root_quat)
         global_orient_new = quat_to_aa(root_quat)
 
-        full_pose = np.concatenate(
-            [global_orient_new, body_pose, np.zeros(3 * self.n_joints - 66)]
-        ).reshape(self.n_joints, 3)
+        full_pose = np.concatenate([global_orient_new, body_pose, np.zeros(3 * self.n_joints - 66)]).reshape(
+            self.n_joints, 3
+        )
         joints = self._fk(full_pose)  # (24, 3)
 
         # Canonicalize: strip SMPL base rot and the root orientation.
