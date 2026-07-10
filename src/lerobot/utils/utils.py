@@ -163,15 +163,29 @@ def has_method(cls: object, method_name: str) -> bool:
 def unwrap_scalar(value: Any) -> Any:
     """Unwrap a tensor / numpy scalar / single-element list into a Python scalar.
 
-    Tensors and numpy scalars expose ``.item()``; single-element lists are
-    unwrapped recursively. Anything else is returned unchanged. Centralized
-    here so the language renderer and processor steps share one definition.
+    Tensors and numpy scalars expose ``.item()``; single-element lists and
+    length-1 numpy arrays are unwrapped recursively. Multi-element arrays
+    raise, matching list behaviour. Anything else is returned unchanged.
+    Centralized here so the language renderer and processor steps share one
+    definition.
 
     Raises:
-        ValueError: If ``value`` is a list with zero or multiple elements.
+        ValueError: If ``value`` is a list/array with zero or multiple elements,
+            or a zero-dimensional container that does not expose a scalar.
     """
-    if hasattr(value, "item"):
-        return value.item()
+    if isinstance(value, np.ndarray):
+        if value.size != 1:
+            raise ValueError(
+                f"Expected a scalar array, got shape {value.shape} (size={value.size}): {value!r}"
+            )
+        return unwrap_scalar(value.reshape(()).item() if value.shape == () else value.reshape(-1)[0])
+    if hasattr(value, "item") and not isinstance(value, (bytes, str)):
+        # Avoid calling .item() on multi-element torch tensors — it raises a
+        # generic RuntimeError. Normalize the message for callers/tests.
+        try:
+            return value.item()
+        except Exception as e:  # noqa: BLE001 - library variance (torch RuntimeError)
+            raise ValueError(f"Expected a scalar, got {type(value).__name__}: {value!r}") from e
     if isinstance(value, list):
         if len(value) != 1:
             raise ValueError(f"Expected a scalar, got list of length {len(value)}: {value!r}")
