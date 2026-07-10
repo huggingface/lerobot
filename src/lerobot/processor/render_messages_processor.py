@@ -40,11 +40,14 @@ class RenderMessagesStep(ProcessorStep):
     ``message_streams`` / ``target_message_indices`` keys.
     """
 
-    recipe: TrainingRecipe
+    recipe: TrainingRecipe | None = None
     dataset_ctx: Any | None = None
 
     def __call__(self, transition: EnvTransition) -> EnvTransition | None:
         """Render messages for a single transition; return ``None`` to drop it."""
+        if self.recipe is None:
+            return transition
+
         complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
         persistent = complementary_data.get(LANGUAGE_PERSISTENT) or []
         events = complementary_data.get(LANGUAGE_EVENTS) or []
