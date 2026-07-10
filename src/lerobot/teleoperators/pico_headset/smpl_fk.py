@@ -32,7 +32,7 @@ Quaternions are scalar-first (w, x, y, z) unless noted.
 from pathlib import Path
 
 import numpy as np
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R  # noqa: N817
 
 # 24-joint parent tree used by the headset body-pose stream (SMPL-X body subset).
 # Matches PoseStreamer.parent_indices in gear_sonic's pico_manager_thread_server.py.
