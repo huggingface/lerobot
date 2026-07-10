@@ -28,7 +28,11 @@ from dataclasses import dataclass, field
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
+from lerobot.optim.schedulers import (
+    ConstantWithWarmupSchedulerConfig,
+    CosineAnnealingWithWarmupSchedulerConfig,
+    LRSchedulerConfig,
+)
 from lerobot.utils.constants import ACTION
 
 
@@ -121,6 +125,11 @@ class LingBotVAConfig(PreTrainedConfig):
     optimizer_weight_decay: float = 1e-4
     optimizer_grad_clip_norm: float = 1.0
     scheduler_warmup_steps: int = 1000
+    # Scheduler after warmup. "constant_with_warmup" (upstream default: warmup then flat peak LR)
+    # or "cosine_annealing_with_warmup" (warmup then cosine anneal peak->0 over the remaining steps).
+    # Cosine tightens the loss tail and often nudges final loss down; it does NOT reduce the
+    # flow-matching estimator's step-to-step noise (that's metric variance, LR-independent).
+    scheduler_type: str = "constant_with_warmup"
 
     def __post_init__(self):
         super().__post_init__()
@@ -159,7 +168,10 @@ class LingBotVAConfig(PreTrainedConfig):
         )
 
     def get_scheduler_preset(self) -> LRSchedulerConfig | None:
-        # Upstream uses a linear warmup followed by a constant LR (warmup_constant_lambda).
+        # Default (upstream): linear warmup then constant LR (warmup_constant_lambda).
+        # Optionally cosine-anneal peak->0 over the remaining steps via scheduler_type.
+        if self.scheduler_type == "cosine_annealing_with_warmup":
+            return CosineAnnealingWithWarmupSchedulerConfig(num_warmup_steps=self.scheduler_warmup_steps)
         return ConstantWithWarmupSchedulerConfig(num_warmup_steps=self.scheduler_warmup_steps)
 
     @property
