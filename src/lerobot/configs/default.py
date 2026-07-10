@@ -88,6 +88,8 @@ class EvalConfig:
     use_async_envs: bool = True
     # Whether to record eval rollouts as a LeRobot dataset on disk.
     recording: bool = False
+    # Maximum number of eval episodes to render as videos. Set to 0 to disable video rendering for long evals.
+    max_episodes_rendered: int = 10
     # If set, push recorded eval datasets to the Hub under this repo id (one repo per task,
     # suffixed by task and env index). Requires recording=true.
     recording_repo_id: str | None = None
@@ -97,6 +99,8 @@ class EvalConfig:
     def __post_init__(self) -> None:
         if self.recording_repo_id is not None and not self.recording:
             raise ValueError("eval.recording_repo_id requires eval.recording=true.")
+        if self.max_episodes_rendered < 0:
+            raise ValueError("eval.max_episodes_rendered must be >= 0.")
         if self.batch_size == 0:
             self.batch_size = self._auto_batch_size()
         if self.batch_size > self.n_episodes:

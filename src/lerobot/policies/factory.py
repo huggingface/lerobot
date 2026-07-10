@@ -51,6 +51,7 @@ from .evo1.configuration_evo1 import Evo1Config
 from .fastwam.configuration_fastwam import FastWAMConfig
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
 from .groot.configuration_groot import GrootConfig
+from .lawam.configuration_lawam import LaWAMConfig
 from .lingbot_va.configuration_lingbot_va import LingBotVAConfig
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
@@ -145,6 +146,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .groot.modeling_groot import GrootPolicy
 
         return GrootPolicy
+    elif name == "lawam":
+        from .lawam.modeling_lawam import LaWAMPolicy
+
+        return LaWAMPolicy
     elif name == "xvla":
         from .xvla.modeling_xvla import XVLAPolicy
 
@@ -223,6 +228,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return SmolVLAConfig(**kwargs)
     elif policy_type == "groot":
         return GrootConfig(**kwargs)
+    elif policy_type == "lawam":
+        return LaWAMConfig(**kwargs)
     elif policy_type == "xvla":
         return XVLAConfig(**kwargs)
     elif policy_type == "wall_x":
@@ -433,6 +440,14 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
             dataset_meta=kwargs.get("dataset_meta"),
+        )
+
+    elif isinstance(policy_cfg, LaWAMConfig):
+        from .lawam.processor_lawam import make_lawam_pre_post_processors
+
+        processors = make_lawam_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
         )
 
     elif isinstance(policy_cfg, XVLAConfig):
