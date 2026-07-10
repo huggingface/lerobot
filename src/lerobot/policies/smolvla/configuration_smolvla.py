@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
@@ -104,7 +105,9 @@ class SmolVLAConfig(PreTrainedConfig):
     rtc_config: RTCConfig | None = None
 
     compile_model: bool = False  # Whether to use torch.compile for model optimization
-    compile_mode: str = "max-autotune"  # Torch compile mode
+    compile_mode: str | None = None  # Torch compile mode (None = use DEFAULT_COMPILE_MODE / SAFE_COMPILE_MODE)
+    DEFAULT_COMPILE_MODE: ClassVar[str] = "max-autotune"
+    SAFE_COMPILE_MODE: ClassVar[str] = "max-autotune-no-cudagraphs"
 
     def __post_init__(self):
         super().__post_init__()

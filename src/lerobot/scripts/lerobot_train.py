@@ -86,7 +86,7 @@ def update_policy(
     Performs a single training step to update the policy's weights.
 
     This function executes the forward and backward passes, clips gradients, and steps the optimizer and
-    learning rate scheduler. Accelerator handles mixed-precision training automatically.
+    learning rate scheduler. Accelerator handles mixed-precision training and gradient accumulation automatically.
 
     Args:
         train_metrics: A MetricsTracker instance to record training statistics.
@@ -94,7 +94,7 @@ def update_policy(
         batch: A batch of training data.
         optimizer: The optimizer used to update the policy's parameters.
         grad_clip_norm: The maximum norm for gradient clipping.
-        accelerator: The Accelerator instance for distributed training and mixed precision.
+        accelerator: The Accelerator instance for distributed training, mixed precision, and gradient accumulation.
         lr_scheduler: An optional learning rate scheduler.
         lock: An optional lock for thread-safe optimizer updates.
         sample_weighter: Optional SampleWeighter instance for per-sample loss weighting.
@@ -116,57 +116,65 @@ def update_policy(
     if sample_weighter is not None:
         sample_weights, weight_stats = sample_weighter.compute_batch_weights(batch)
 
-    # Let accelerator handle mixed precision
-    with accelerator.autocast():
-        if sample_weights is not None:
-            # Use per-sample loss for weighted training
-            # Note: Policies supporting sample weighting must implement forward(batch, reduction="none")
-            per_sample_loss, output_dict = policy.forward(batch, reduction="none")
+    # Use accumulate context manager to handle gradient accumulation
+    with accelerator.accumulate(policy):
+        # Let accelerator handle mixed precision
+        with accelerator.autocast():
+            if sample_weights is not None:
+                # Use per-sample loss for weighted training
+                # Note: Policies supporting sample weighting must implement forward(batch, reduction="none")
+                per_sample_loss, output_dict = policy.forward(batch, reduction="none")
 
-            # Weighted loss: each sample's contribution is scaled by its weight.
-            # We divide by weight sum (not batch size) so that if some weights are zero,
-            # the remaining samples contribute proportionally more, preserving gradient scale.
-            # Weights are pre-normalized to sum to batch_size for stable training dynamics.
-            epsilon = 1e-6
-            loss = (per_sample_loss * sample_weights).sum() / (sample_weights.sum() + epsilon)
+                # Weighted loss: each sample's contribution is scaled by its weight.
+                # We divide by weight sum (not batch size) so that if some weights are zero,
+                # the remaining samples contribute proportionally more, preserving gradient scale.
+                # Weights are pre-normalized to sum to batch_size for stable training dynamics.
+                epsilon = 1e-6
+                loss = (per_sample_loss * sample_weights).sum() / (sample_weights.sum() + epsilon)
 
-            # Log weighting statistics
-            if output_dict is None:
-                output_dict = {}
-            for key, value in weight_stats.items():
-                output_dict[f"sample_weight_{key}"] = value
-        else:
-            loss, output_dict = policy.forward(batch)
+                # Log weighting statistics
+                if output_dict is None:
+                    output_dict = {}
+                for key, value in weight_stats.items():
+                    output_dict[f"sample_weight_{key}"] = value
+            else:
+                loss, output_dict = policy.forward(batch)
 
-        # TODO(rcadene): policy.unnormalize_outputs(out_dict)
+            # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
-    # Use accelerator's backward method
-    accelerator.backward(loss)
+        # Use accelerator's backward method
+        accelerator.backward(loss)
 
-    # Clip gradients if specified
-    if grad_clip_norm > 0:
-        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
-    else:
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            policy.parameters(), float("inf"), error_if_nonfinite=False
-        )
+        if accelerator.sync_gradients:
+            # Clip gradients if specified
+            if grad_clip_norm > 0:
+                grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
+            else:
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    policy.parameters(), float("inf"), error_if_nonfinite=False
+                )
+            train_metrics.grad_norm = grad_norm.item()
 
-    # Optimizer step
-    with lock if lock is not None else nullcontext():
-        optimizer.step()
+        # Optimizer step
+        with lock if lock is not None else nullcontext():
+            optimizer.step()
 
-    optimizer.zero_grad()
+        optimizer.zero_grad()
 
-    # Step through pytorch scheduler at every batch instead of epoch
-    if lr_scheduler is not None:
-        lr_scheduler.step()
+        # Step through pytorch scheduler at every batch instead of epoch
+        # Only step when optimizer updates parameters (requires manual check with step_scheduler_with_optimizer=False).
+        if lr_scheduler is not None and accelerator.sync_gradients:
+            lr_scheduler.step()
 
-    # Update internal buffers if policy has update method
-    if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
-        accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
+        # Update internal buffers if policy has update method
+        if (
+            has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update")
+            and accelerator.sync_gradients
+        ):
+            accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
     train_metrics.loss = loss.item()
-    train_metrics.grad_norm = grad_norm.item()
+    # NOTE: grad_norm is updated only when gradients are actually applied
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
     if torch.cuda.is_available():
@@ -219,6 +227,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             mixed_precision=mixed_precision,
             kwargs_handlers=[ddp_kwargs],
             cpu=force_cpu,
+            gradient_accumulation_steps=cfg.gradient_accumulation_steps,
         )
 
     init_logging(accelerator=accelerator)
@@ -290,6 +299,19 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     else:
         if is_main_process:
             logging.info("Creating policy")
+        # Resolve compile_mode against gradient accumulation. Each policy declares its own
+        # DEFAULT_COMPILE_MODE / SAFE_COMPILE_MODE; the base PreTrainedConfig.resolve_compile_mode
+        # picks the right one and raises if the user explicitly requested a CUDAGraphs mode
+        # that would crash with gradient_accumulation_steps > 1.
+        if hasattr(cfg.policy, "compile_mode") and cfg.policy.compile_model:
+            resolved = cfg.policy.resolve_compile_mode(cfg.gradient_accumulation_steps)
+            if cfg.policy.compile_mode is None and cfg.gradient_accumulation_steps > 1:
+                logging.warning(
+                    f"gradient_accumulation_steps={cfg.gradient_accumulation_steps} is incompatible with "
+                    f"CUDAGraphs. Setting compile_mode to {resolved!r}. "
+                    f"To silence this warning, set compile_mode explicitly."
+                )
+            cfg.policy.compile_mode = resolved
         policy = make_policy(
             cfg=cfg.policy,
             ds_meta=dataset.meta,
@@ -405,8 +427,11 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
         num_processes = accelerator.num_processes
-        effective_bs = cfg.batch_size * num_processes
-        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
+        gradient_accumulation_steps = accelerator.gradient_accumulation_steps
+        effective_bs = cfg.batch_size * num_processes * gradient_accumulation_steps
+        logging.info(
+            f"Effective batch size: {cfg.batch_size} x {num_processes} x {gradient_accumulation_steps} = {effective_bs}"
+        )
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
@@ -563,7 +588,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}"
         )
 
-    for _ in range(step, cfg.steps):
+    while step < cfg.steps:
         start_time = time.perf_counter()
         batch = next(dl_iter)
         for cam_key in dataset.meta.camera_keys:
@@ -582,6 +607,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             lr_scheduler=lr_scheduler,
             sample_weighter=sample_weighter,
         )
+
+        # Skip evaluation and checkpointing during gradient accumulation.
+        if not accelerator.sync_gradients:
+            continue
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.

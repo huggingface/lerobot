@@ -608,8 +608,9 @@ class VLAFlowMatching(nn.Module):
         # Compile model if requested
         if config.compile_model:
             torch.set_float32_matmul_precision("high")
-            self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
-            self.forward = torch.compile(self.forward, mode=config.compile_mode)
+            compile_mode = config.compile_mode or config.DEFAULT_COMPILE_MODE
+            self.sample_actions = torch.compile(self.sample_actions, mode=compile_mode)
+            self.forward = torch.compile(self.forward, mode=compile_mode)
 
     def _rtc_enabled(self):
         return self.config.rtc_config is not None and self.config.rtc_config.enabled
