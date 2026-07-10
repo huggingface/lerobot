@@ -297,7 +297,9 @@ class OpenCVCamera(Camera):
                 f"{self} failed to set capture_height={self.capture_height} ({actual_height=}, {height_success=})."
             )
         if not height_success:
-            logger.warning(f"{self} set(CAP_PROP_FRAME_HEIGHT) returned False but {actual_height=} is correct.")
+            logger.warning(
+                f"{self} set(CAP_PROP_FRAME_HEIGHT) returned False but {actual_height=} is correct."
+            )
 
     @staticmethod
     def find_cameras() -> list[dict[str, Any]]:

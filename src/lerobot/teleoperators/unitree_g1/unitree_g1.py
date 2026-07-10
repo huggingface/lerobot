@@ -295,7 +295,9 @@ class UnitreeG1Teleoperator(Teleoperator):
         gripper_buttons = self._exo_gripper_buttons(left_raw, right_raw)
         return {**joint_action, **rc.remote_action, **gripper_buttons}
 
-    def _exo_gripper_buttons(self, left_raw: list[int] | None, right_raw: list[int] | None) -> dict[str, float]:
+    def _exo_gripper_buttons(
+        self, left_raw: list[int] | None, right_raw: list[int] | None
+    ) -> dict[str, float]:
         """Exo joystick clicks as button flags: L3 (left stick) -> button.4, R3 (right) -> button.0.
 
         Reads the raw joystick-button ADC channel directly (pressed pulls it below mid-scale),

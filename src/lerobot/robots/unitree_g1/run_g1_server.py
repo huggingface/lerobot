@@ -379,14 +379,28 @@ def main() -> None:
     if args.grippers:
         try:
             grippers["L"] = build_gripper(
-                "L", args.gripper_port_left, args.gripper_send_id, args.gripper_recv_id,
-                args.gripper_motor_type, args.gripper_fd, args.gripper_open_deg,
-                args.gripper_close_deg, args.gripper_kp, args.gripper_kd,
+                "L",
+                args.gripper_port_left,
+                args.gripper_send_id,
+                args.gripper_recv_id,
+                args.gripper_motor_type,
+                args.gripper_fd,
+                args.gripper_open_deg,
+                args.gripper_close_deg,
+                args.gripper_kp,
+                args.gripper_kd,
             )
             grippers["R"] = build_gripper(
-                "R", args.gripper_port_right, args.gripper_send_id, args.gripper_recv_id,
-                args.gripper_motor_type, args.gripper_fd, args.gripper_open_deg,
-                args.gripper_close_deg, args.gripper_kp, args.gripper_kd,
+                "R",
+                args.gripper_port_right,
+                args.gripper_send_id,
+                args.gripper_recv_id,
+                args.gripper_motor_type,
+                args.gripper_fd,
+                args.gripper_open_deg,
+                args.gripper_close_deg,
+                args.gripper_kp,
+                args.gripper_kd,
             )
         except Exception as e:  # noqa: BLE001
             print(f"WARNING: gripper setup failed ({e}); continuing without grippers.")

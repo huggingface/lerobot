@@ -147,7 +147,9 @@ class ExoskeletonArm:
         smoothed: dict[str, float] = {}
         for joint, value in angles.items():
             prev = self._ema.get(joint)
-            self._ema[joint] = value if prev is None else self._ema_alpha * value + (1 - self._ema_alpha) * prev
+            self._ema[joint] = (
+                value if prev is None else self._ema_alpha * value + (1 - self._ema_alpha) * prev
+            )
             smoothed[joint] = self._ema[joint]
         return smoothed
 
