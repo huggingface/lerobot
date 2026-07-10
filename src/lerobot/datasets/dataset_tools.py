@@ -33,6 +33,7 @@ from pathlib import Path
 import datasets
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
@@ -1665,12 +1666,12 @@ def compute_dataset_episode_stats(
     episode_indices: list[int] | None = None,
     skip_image_video: bool = True,
     drop_keys: list[str] | None = None,
-) -> list[dict]:
+) -> dict[int, dict]:
     """Compute per-episode statistics for a subset of episodes.
 
     This is the shardable unit of work behind :func:`recompute_stats`: distribute
     ``episode_indices`` across workers (e.g. ``list(range(n))[rank::world_size]``),
-    then combine the concatenated results with :func:`aggregate_stats`.
+    then combine the results with :func:`aggregate_episode_stats`.
 
     Args:
         dataset: The LeRobotDataset to compute stats for.
@@ -1681,7 +1682,9 @@ def compute_dataset_episode_stats(
             in relative-action space).
 
     Returns:
-        A list of per-episode stat dicts, one per processed episode.
+        A mapping of episode index to its per-episode stat dict. Keeping the episode index
+        (rather than a bare list) lets callers write the stats back to the correct episode
+        row, and survives sharding since shards can be merged by key.
     """
     features = dataset.meta.features
     meta_keys = {"index", "episode_index", "task_index", "frame_index", "timestamp"}
@@ -1708,7 +1711,7 @@ def compute_dataset_episode_stats(
     for ep_idx in episode_indices:
         file_to_episodes.setdefault(dataset.meta.get_data_file_path(ep_idx), []).append(ep_idx)
 
-    all_episode_stats = []
+    all_episode_stats = {}
     for src_path, eps in tqdm(sorted(file_to_episodes.items()), desc="Computing stats from data files"):
         df = pd.read_parquet(dataset.root / src_path) if numeric_keys else None
         for ep_idx in sorted(eps):
@@ -1725,7 +1728,7 @@ def compute_dataset_episode_stats(
             ep_stats = compute_episode_stats(episode_data, features_to_compute)
             if visual_keys:
                 ep_stats.update(_compute_visual_episode_stats(dataset, int(ep_idx), visual_keys))
-            all_episode_stats.append(ep_stats)
+            all_episode_stats[int(ep_idx)] = ep_stats
 
     return all_episode_stats
 
@@ -1737,6 +1740,7 @@ def recompute_stats(
     relative_exclude_joints: list[str] | None = None,
     chunk_size: int = 50,
     num_workers: int = 0,
+    update_episode_stats: bool = False,
 ) -> LeRobotDataset:
     """Recompute stats.json from scratch by iterating all episodes.
 
@@ -1746,6 +1750,11 @@ def recompute_stats(
             (action, state, etc.) and keep existing image/video stats unchanged. If False,
             image/video stats are also recomputed by sampling and decoding frames from each
             episode (this reads the image/video files, unlike the numeric-only path).
+        update_episode_stats: If True, also rewrite the per-episode ``stats/*`` columns in the
+            episodes parquet files so they stay consistent with the aggregated ``stats.json``.
+            Defaults to False (only ``stats.json`` is rewritten). Requires a writable
+            ``dataset.root``. Note that relative-action stats are aggregate-only and are not
+            written per-episode.
         relative_action: If True, compute action stats in relative space by
             iterating all valid action chunks and subtracting the current state.
             This matches the normalization distribution the model sees during
@@ -1784,7 +1793,10 @@ def recompute_stats(
     )
 
     new_stats = aggregate_episode_stats(
-        dataset, all_episode_stats, extra_stats={ACTION: relative_action_stats} if relative_action_stats else None
+        dataset,
+        all_episode_stats,
+        extra_stats={ACTION: relative_action_stats} if relative_action_stats else None,
+        update_episode_stats=update_episode_stats,
     )
     if new_stats is None:
         logging.warning("No episode stats computed")
@@ -1793,23 +1805,71 @@ def recompute_stats(
     return dataset
 
 
+def write_episode_stats(dataset: LeRobotDataset, episode_stats: dict[int, dict]) -> None:
+    """Overwrite the per-episode ``stats/*`` columns in the episodes parquet files in place.
+
+    Only the features present in ``episode_stats[ep_idx]`` are rewritten; stats columns for
+    features that were not recomputed are left untouched. Every other episode column (tasks,
+    length, chunk/file indices, frame ranges, …) is preserved. ``dataset.root`` must be
+    writable (e.g. the reference copy created for read-only sources).
+    """
+    if not episode_stats:
+        return
+
+    meta = dataset.meta
+    if meta.episodes is None:
+        meta.episodes = load_episodes(meta.root)
+
+    # Group episodes by the parquet file that holds them so each file is rewritten once.
+    file_to_episodes: dict[tuple[int, int], list[int]] = {}
+    for ep_idx in episode_stats:
+        ep = meta.episodes[ep_idx]
+        key = (ep["meta/episodes/chunk_index"], ep["meta/episodes/file_index"])
+        file_to_episodes.setdefault(key, []).append(ep_idx)
+
+    for (chunk_idx, file_idx), eps in file_to_episodes.items():
+        path = meta.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
+        table = pq.read_table(path)
+        rows = table.to_pylist()
+        row_by_ep = {row["episode_index"]: row for row in rows}
+        for ep_idx in eps:
+            row = row_by_ep[ep_idx]
+            for feature, feature_stats in episode_stats[ep_idx].items():
+                for stat_name, value in feature_stats.items():
+                    col = f"stats/{feature}/{stat_name}"
+                    if col in row:
+                        row[col] = np.asarray(value).tolist()
+        # Reuse the source schema so the rewritten stats keep the exact on-disk types.
+        new_table = pa.Table.from_pylist(rows, schema=table.schema)
+        pq.write_table(new_table, path, compression="snappy", use_dictionary=True)
+
+
 def aggregate_episode_stats(
     dataset: LeRobotDataset,
-    all_episode_stats: list[dict],
+    episode_stats: dict[int, dict],
     extra_stats: dict | None = None,
+    update_episode_stats: bool = False,
 ) -> dict | None:
     """Aggregate per-episode stats, merge with existing stats, and write ``stats.json``.
 
-    Companion to :func:`compute_dataset_episode_stats` for the distributed workflow: pass
-    the concatenation of every worker's per-episode stats. ``extra_stats`` lets callers
-    inject feature stats computed outside the per-episode pass (e.g. relative-action stats).
+    Companion to :func:`compute_dataset_episode_stats` for the distributed workflow: pass the
+    merged ``{episode_index: stats}`` mapping of every worker's per-episode stats. ``extra_stats``
+    lets callers inject feature stats computed outside the per-episode pass (e.g. relative-action
+    stats).
+
+    Args:
+        dataset: The dataset whose ``meta/stats.json`` (and optionally episode stats) is updated.
+        episode_stats: Mapping of episode index to its per-episode stat dict.
+        extra_stats: Feature stats to inject into the aggregate (not written per-episode).
+        update_episode_stats: If True, also rewrite the per-episode ``stats/*`` columns in the
+            episodes parquet files via :func:`write_episode_stats`.
 
     Returns the written stats dict, or ``None`` if there was nothing to aggregate.
     """
-    if not all_episode_stats and not extra_stats:
+    if not episode_stats and not extra_stats:
         return None
 
-    new_stats = aggregate_stats(all_episode_stats) if all_episode_stats else {}
+    new_stats = aggregate_stats(list(episode_stats.values())) if episode_stats else {}
     if extra_stats:
         new_stats.update(extra_stats)
 
@@ -1820,6 +1880,10 @@ def aggregate_episode_stats(
 
     write_stats(new_stats, dataset.root)
     dataset.meta.stats = new_stats
+
+    if update_episode_stats:
+        write_episode_stats(dataset, episode_stats)
+
     return new_stats
 
 

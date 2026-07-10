@@ -186,6 +186,13 @@ Recompute stats including image/video features (samples and decodes frames from 
         --operation.type recompute_stats \
         --operation.skip_image_video false
 
+Recompute stats and also rewrite the per-episode stats in the episodes parquet (keeps
+meta/stats.json and the per-episode stats consistent):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --operation.type recompute_stats \
+        --operation.update_episode_stats true
+
 Recompute stats in-place (overwrites original dataset stats):
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
@@ -333,6 +340,7 @@ class RecomputeStatsConfig(OperationConfig):
     relative_exclude_joints: list[str] | None = None
     chunk_size: int = 50
     num_workers: int = 0
+    update_episode_stats: bool = False
     overwrite: bool = False
 
 
@@ -713,9 +721,10 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
             if backup_path.exists():
                 shutil.rmtree(backup_path)
             shutil.move(output_root, backup_path)
-        # recompute_stats only reads data/ and rewrites meta/stats.json, so symlink the
-        # large immutable files and copy only meta/. This avoids duplicating the dataset
-        # and works even when the source dataset is read-only.
+        # recompute_stats only reads data/ and rewrites files under meta/ (stats.json, and
+        # the episodes parquet when update_episode_stats is set), so symlink the large
+        # immutable files and copy only meta/. This avoids duplicating the dataset and works
+        # even when the source dataset is read-only.
         _reference_copy_dataset(input_root, output_root)
         dataset = LeRobotDataset(output_repo_id, root=output_root)
 
@@ -733,6 +742,7 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         relative_exclude_joints=cfg.operation.relative_exclude_joints,
         chunk_size=cfg.operation.chunk_size,
         num_workers=cfg.operation.num_workers,
+        update_episode_stats=cfg.operation.update_episode_stats,
     )
 
     logging.info(f"Stats written to {dataset.root}")

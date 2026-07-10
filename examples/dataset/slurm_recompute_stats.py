@@ -27,6 +27,9 @@ Modified copy of lerobot's examples/dataset/slurm_recompute_stats.py
   4. --chain-aggregate  : submit ``aggregate`` with an afterok dependency on
                           ``compute`` so it only runs once all shards exist
                           (no manual squeue-wait, no gap/overlap race).
+  5. --update-episode-stats : in ``aggregate``, also rewrite the per-episode stats in the
+                          episodes parquet so they stay consistent with meta/stats.json
+                          (default: only stats.json is written).
 
 Data access: no filesystem mount. Point HF_LEROBOT_HOME at a node-visible shared
 cache (e.g. /fsx/$USER/.cache) so the dataset downloads once and all workers read
@@ -120,7 +123,16 @@ class ComputeEpisodeStatsShards(PipelineStep):
 class AggregateEpisodeStats(PipelineStep):
     """Merge all per-episode stat shards into meta/stats.json."""
 
-    def __init__(self, repo_id, root, new_root, shard_dir, push_to_hub=False, video_backend=None):
+    def __init__(
+        self,
+        repo_id,
+        root,
+        new_root,
+        shard_dir,
+        push_to_hub=False,
+        video_backend=None,
+        update_episode_stats=False,
+    ):
         super().__init__()
         self.repo_id = repo_id
         self.root = root
@@ -128,6 +140,7 @@ class AggregateEpisodeStats(PipelineStep):
         self.shard_dir = shard_dir
         self.push_to_hub = push_to_hub
         self.video_backend = video_backend
+        self.update_episode_stats = update_episode_stats
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         # NOTE: pickled and executed on a worker; keep self-contained (see ComputeEpisodeStatsShards.run).
@@ -147,10 +160,12 @@ class AggregateEpisodeStats(PipelineStep):
         if not shards:
             raise FileNotFoundError(f"No episode stat shards found in {shard_dir}")
 
-        all_episode_stats = []
+        # Shards map episode_index -> stats; merging by key makes a dropped shard show up as a
+        # missing episode and a re-run shard overwrite rather than double-count.
+        all_episode_stats = {}
         for shard in shards:
             with open(shard, "rb") as f:
-                all_episode_stats.extend(pickle.load(f))
+                all_episode_stats.update(pickle.load(f))
         logging.info(f"Aggregating {len(all_episode_stats)} episode stats from {len(shards)} shards")
 
         load_kwargs = {"video_backend": self.video_backend} if self.video_backend else {}
@@ -170,23 +185,26 @@ class AggregateEpisodeStats(PipelineStep):
 
         # Frame-count check catches the case where a duplicate and a gap cancel out in the
         # episode count: summed per-episode frame counts must equal the dataset's total frames.
+        stats_values = list(all_episode_stats.values())
         numeric_key = next(
             (
                 k
                 for k, v in dataset.meta.features.items()
-                if v["dtype"] not in ("image", "video", "string") and all_episode_stats and k in all_episode_stats[0]
+                if v["dtype"] not in ("image", "video", "string") and stats_values and k in stats_values[0]
             ),
             None,
         )
         if numeric_key is not None:
-            total_frames = sum(int(s[numeric_key]["count"][0]) for s in all_episode_stats)
+            total_frames = sum(int(s[numeric_key]["count"][0]) for s in stats_values)
             if total_frames != dataset.meta.total_frames:
                 raise ValueError(
                     f"Summed frame count from shards ({total_frames}) != dataset total_frames "
                     f"({dataset.meta.total_frames}); episodes are double-counted or missing."
                 )
 
-        new_stats = aggregate_episode_stats(dataset, all_episode_stats)
+        new_stats = aggregate_episode_stats(
+            dataset, all_episode_stats, update_episode_stats=self.update_episode_stats
+        )
         if new_stats is None:
             raise RuntimeError("Aggregation produced no stats")
         logging.info(f"Wrote stats for features: {list(new_stats.keys())} to {dataset.root}")
@@ -316,10 +334,20 @@ def main():
         help="After building compute, submit aggregate with an afterok dependency (single command).",
     )
     cp.add_argument("--push-to-hub", action="store_true", help="For the chained aggregate: push after done.")
+    cp.add_argument(
+        "--update-episode-stats",
+        action="store_true",
+        help="For the chained aggregate: also rewrite per-episode stats in the episodes parquet.",
+    )
 
     ap = sub.add_parser("aggregate", help="Merge shards into meta/stats.json.")
     _add_shared_args(ap)
     ap.add_argument("--push-to-hub", action="store_true", help="Push the dataset after aggregation.")
+    ap.add_argument(
+        "--update-episode-stats",
+        action="store_true",
+        help="Also rewrite per-episode stats in the episodes parquet to match stats.json.",
+    )
     ap.add_argument(
         "--depends-job-id",
         type=str,
@@ -372,6 +400,7 @@ def main():
                         str(args.shard_dir),
                         args.push_to_hub,
                         args.video_backend,
+                        args.update_episode_stats,
                     )
                 ],
                 logs_dir=args.logs_dir,
@@ -401,6 +430,7 @@ def main():
                     str(args.shard_dir),
                     args.push_to_hub,
                     args.video_backend,
+                    args.update_episode_stats,
                 )
             ],
             logs_dir=args.logs_dir,
