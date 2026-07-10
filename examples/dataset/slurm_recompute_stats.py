@@ -17,44 +17,57 @@
 """
 SLURM-distributed recomputation of a LeRobotDataset's ``meta/stats.json``.
 
-Per-episode statistics are embarrassingly parallel, so we shard episodes across
-workers, each computing stats for its subset, then a single worker aggregates all
-shards (weighted by frame counts) and writes ``meta/stats.json``. This is mostly
-useful when recomputing image/video stats (``--skip-image-video 0``), which decodes
-frames and is far more expensive than the numeric-only path.
+This is a modified copy of lerobot's examples/dataset/slurm_recompute_stats.py
+(feat/recompute-stats-readonly-and-visual branch) with three additions relevant
+to a shared HPC cluster:
+
+  1. --qos                : pass a SLURM QoS through to every worker's sbatch.
+  2. per-worker hf-mount  : each worker mounts the read-only source dataset on
+                            its OWN node's /scratch before loading it, injected
+                            via datatrove's ``env_command`` hook. This keeps the
+                            terabytes of reads node-local and lazy (nothing piles
+                            up on /fsx) and keeps hub traffic on the CPU nodes.
+  3. --chain-aggregate    : submit ``aggregate`` with an afterok dependency on
+                            ``compute`` so it only runs once all shards exist
+                            (no manual squeue-wait, no gap/overlap race).
+
+IMPORTANT — how to run (do NOT sbatch this file):
+  Run it as a normal python process on the LOGIN node. datatrove submits the
+  workers for you. Because the reference copy (--new-root) walks the source tree
+  on the login node, the source must also be mountable there — so mount once on
+  the login node too, before launching (see the mount snippet below).
 
 Requires: pip install 'lerobot[dataset]' datatrove
 
-Two subcommands, each a separate SLURM submission:
+Example (single command, compute then dependent aggregate):
 
-  compute    – N workers, each writes per-episode stats for its episode shard
-  aggregate  – 1 worker, merges shards into meta/stats.json (optionally push to hub)
+    # 0. Mount on the login node so the reference-copy walk can list the source.
+    /fsx/$USER/bin/hf-mount-nfs-x86_64-linux \
+        repo datasets/behavior-1k/2026-challenge-demos /scratch/$USER/behavior-demos \
+        --cache-dir /scratch/$USER/hfmount-cache --cache-size 100000000000 &
 
-The dataset is read-only during ``compute``. When ``--new-root`` is given, a
-lightweight reference copy is made (large files symlinked, only meta/ copied) so a
-read-only / mounted source dataset is never modified; stats land in ``--new-root``.
+    # 1. Launch. Each worker will mount the source on its own node via --mount-repo.
+    python slurm_recompute_stats_patched.py compute \
+        --repo-id behavior-1k/2026-challenge-demos \
+        --new-root /fsx/$USER/behavior-1k_recomputed \
+        --shard-dir /fsx/$USER/behavior-1k_recomputed/stats_shards \
+        --logs-dir /fsx/$USER/logs/recompute \
+        --skip-image-video 0 \
+        --workers 250 \
+        --partition hopper-cpu \
+        --qos <your-cpu-qos> \
+        --cpus-per-task 8 --mem-per-cpu 4G \
+        --mount-repo datasets/behavior-1k/2026-challenge-demos \
+        --hf-mount-bin /fsx/$USER/bin/hf-mount-nfs-x86_64-linux \
+        --venv-path /fsx/$USER/venvs/lerobot/bin/activate \
+        --chain-aggregate
 
-Usage:
-    # Recompute image/video stats for a mounted, read-only dataset with 50 workers.
-    python slurm_recompute_stats.py compute \\
-        --repo-id someone-else/their-dataset \\
-        --root /path/to/mounted/repo \\
-        --new-root /local/writable/their-dataset_recomputed \\
-        --skip-image-video 0 --workers 50 --partition cpu
-
-    python slurm_recompute_stats.py aggregate \\
-        --repo-id someone-else/their-dataset \\
-        --new-root /local/writable/their-dataset_recomputed \\
-        --partition cpu
-
-    # Run locally without SLURM (single process); use pyav if torchcodec won't load.
-    python slurm_recompute_stats.py compute \\
-        --repo-id someone-else/their-dataset \\
-        --new-root /local/writable/their-dataset_recomputed \\
-        --skip-image-video 0 --video-backend pyav --slurm 0
+REHEARSE FIRST with --workers 2 and inspect one worker's log under --logs-dir to
+confirm the mount came up and video decoding ran (not a silent hub download).
 """
 
 import argparse
+import os
 from pathlib import Path
 
 from datatrove.executor import LocalPipelineExecutor
@@ -197,7 +210,62 @@ class AggregateEpisodeStats(PipelineStep):
             dataset.push_to_hub()
 
 
-def _make_executor(pipeline, logs_dir, job_name, slurm, workers, tasks, time, partition, cpus, mem):
+def _mem_gb(mem: str) -> int:
+    """Parse '4G' / '4GB' / '4' into an int number of GB for datatrove's mem_per_cpu_gb."""
+    s = str(mem).strip().lower().rstrip("b").rstrip("g")
+    return int(float(s))
+
+
+def _build_env_command(args) -> str | None:
+    """Construct the per-worker shell snippet datatrove runs before the python step.
+
+    Mounts the read-only source dataset on THIS worker's node-local /scratch, waits
+    for it to come up, and fails LOUDLY (exit 1) if it doesn't — so a broken mount
+    surfaces as a failed job instead of a silent fall-back to downloading the dataset.
+    Also activates the venv. Returns None if --mount-repo was not requested (in which
+    case you must supply --root yourself and datatrove uses --venv-path only).
+    """
+    if args.env_command:
+        return args.env_command
+
+    lines = []
+    if args.venv_path:
+        lines.append(f"source {args.venv_path}")
+
+    if args.mount_repo:
+        if not args.hf_mount_bin:
+            raise SystemExit("--mount-repo requires --hf-mount-bin")
+        mnt = args.mount_point
+        cache = args.mount_cache_dir
+        lines += [
+            f'MNT="{mnt}"',
+            f'CACHE="{cache}"',
+            'mkdir -p "$MNT" "$CACHE"',
+            f'{args.hf_mount_bin} \\',
+            f'    repo {args.mount_repo} "$MNT" \\',
+            f'    --cache-dir "$CACHE" --cache-size {args.mount_cache_size} &',
+            'for i in $(seq 1 60); do [ -f "$MNT/meta/info.json" ] && break; sleep 2; done',
+            '[ -f "$MNT/meta/info.json" ] || { echo "hf-mount failed to come up at $MNT" >&2; exit 1; }',
+        ]
+
+    return "\n".join(lines) if lines else None
+
+
+def _make_executor(
+    pipeline,
+    logs_dir,
+    job_name,
+    slurm,
+    workers,
+    tasks,
+    time,
+    partition,
+    cpus,
+    mem,
+    qos=None,
+    env_command=None,
+    depends=None,
+):
     kwargs = {"pipeline": pipeline, "logging_dir": str(Path(logs_dir) / job_name)}
     if slurm:
         kwargs.update(
@@ -208,9 +276,16 @@ def _make_executor(pipeline, logs_dir, job_name, slurm, workers, tasks, time, pa
                 "time": time,
                 "partition": partition,
                 "cpus_per_task": cpus,
-                "sbatch_args": {"mem-per-cpu": mem},
+                "mem_per_cpu_gb": _mem_gb(mem),  # datatrove's native field (int GB)
+                "sbatch_args": {},
             }
         )
+        if qos:
+            kwargs["qos"] = qos  # -> "#SBATCH --qos=<qos>" on every worker
+        if env_command:
+            kwargs["env_command"] = env_command  # per-worker mount + venv, runs before python
+        if depends is not None:
+            kwargs["depends"] = depends  # chains --dependency=afterok:<compute jobid>
         return SlurmPipelineExecutor(**kwargs)
     kwargs.update({"tasks": tasks, "workers": 1})
     return LocalPipelineExecutor(**kwargs)
@@ -230,7 +305,7 @@ def _maybe_reference_copy(repo_id, root, new_root):
     _reference_copy_dataset(src.root, new_root_path)
 
 
-def _add_shared_args(p):
+def _add_shared_args(p, user):
     p.add_argument("--repo-id", type=str, required=True, help="Dataset identifier, e.g. 'user/dataset'.")
     p.add_argument("--root", type=str, default=None, help="Source dataset root (e.g. a mount).")
     p.add_argument(
@@ -244,7 +319,8 @@ def _add_shared_args(p):
     p.add_argument("--logs-dir", type=Path, default=Path("logs"), help="datatrove logs dir.")
     p.add_argument("--job-name", type=str, default=None, help="SLURM job name.")
     p.add_argument("--slurm", type=int, default=1, help="1 = submit via SLURM; 0 = run locally.")
-    p.add_argument("--partition", type=str, default=None, help="SLURM partition.")
+    p.add_argument("--partition", type=str, default=None, help="SLURM partition, e.g. 'hopper-cpu'.")
+    p.add_argument("--qos", type=str, default=None, help="SLURM QoS, e.g. 'high'. Passed to every worker.")
     p.add_argument("--cpus-per-task", type=int, default=4, help="CPUs per SLURM task.")
     p.add_argument("--mem-per-cpu", type=str, default="4G", help="Memory per CPU, e.g. '4G'.")
     p.add_argument(
@@ -255,16 +331,44 @@ def _add_shared_args(p):
         "use 'pyav' if torchcodec fails to load locally.",
     )
 
+    # --- per-worker mount options (patch) ---
+    p.add_argument(
+        "--env-command",
+        type=str,
+        default=None,
+        help="Raw shell snippet injected into each worker's sbatch before the python step. "
+        "Overrides the auto-generated mount snippet if given.",
+    )
+    p.add_argument(
+        "--mount-repo",
+        type=str,
+        default=None,
+        help="If set, each worker mounts this repo (e.g. 'datasets/user/name') on its own node "
+        "via hf-mount before loading the dataset. Auto-sets --root to --mount-point if --root unset.",
+    )
+    p.add_argument("--hf-mount-bin", type=str, default=None, help="Path to the hf-mount NFS binary.")
+    p.add_argument("--venv-path", type=str, default=None, help="Path to a venv activate script to source.")
+    p.add_argument(
+        "--mount-point",
+        type=str,
+        default=f"/scratch/{user}/behavior-demos",
+        help="Node-local mount path (must be identical on every node).",
+    )
+    p.add_argument("--mount-cache-dir", type=str, default=f"/scratch/{user}/hfmount-cache")
+    p.add_argument("--mount-cache-size", type=str, default="100000000000", help="hf-mount --cache-size bytes.")
+
 
 def main():
+    user = os.environ.get("USER", "user")
+
     parser = argparse.ArgumentParser(
-        description="SLURM-distributed LeRobotDataset stats recomputation",
+        description="PATCHED SLURM-distributed LeRobotDataset stats recomputation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     cp = sub.add_parser("compute", help="Distribute per-episode stats across SLURM workers.")
-    _add_shared_args(cp)
+    _add_shared_args(cp, user)
     cp.add_argument("--workers", type=int, default=50, help="Number of parallel SLURM tasks.")
     cp.add_argument(
         "--skip-image-video",
@@ -272,20 +376,40 @@ def main():
         default=1,
         help="1 = numeric features only (fast); 0 = also recompute image/video stats (decodes frames).",
     )
+    cp.add_argument(
+        "--chain-aggregate",
+        action="store_true",
+        help="After building compute, submit aggregate with an afterok dependency (single command).",
+    )
+    cp.add_argument("--push-to-hub", action="store_true", help="For the chained aggregate: push after done.")
 
     ap = sub.add_parser("aggregate", help="Merge shards into meta/stats.json.")
-    _add_shared_args(ap)
+    _add_shared_args(ap, user)
     ap.add_argument("--push-to-hub", action="store_true", help="Push the dataset after aggregation.")
+    ap.add_argument(
+        "--depends-job-id",
+        type=str,
+        default=None,
+        help="Optional SLURM job id; aggregate waits for it (afterok) before running.",
+    )
 
     args = parser.parse_args()
     slurm = args.slurm == 1
 
+    # If a per-worker mount is requested and --root wasn't given, workers read from the mount.
+    if args.mount_repo and not args.root:
+        args.root = args.mount_point
+
+    env_command = _build_env_command(args)
+
     if args.command == "compute":
         # The reference copy (if any) is created once on the submitting node so workers
-        # can all load --new-root without racing to build it.
+        # can all load --new-root without racing to build it. NOTE: this walks the source
+        # tree, so the source must be mountable on the login node too.
         _maybe_reference_copy(args.repo_id, args.root, args.new_root)
-        job_name = args.job_name or "recompute_stats_compute"
-        executor = _make_executor(
+
+        compute_job_name = args.job_name or "recompute_stats_compute"
+        compute_exec = _make_executor(
             pipeline=[
                 ComputeEpisodeStatsShards(
                     args.repo_id,
@@ -297,7 +421,7 @@ def main():
                 )
             ],
             logs_dir=args.logs_dir,
-            job_name=job_name,
+            job_name=compute_job_name,
             slurm=slurm,
             workers=args.workers,
             tasks=args.workers,
@@ -305,10 +429,42 @@ def main():
             partition=args.partition,
             cpus=args.cpus_per_task,
             mem=args.mem_per_cpu,
+            qos=args.qos,
+            env_command=env_command,
         )
+
+        if args.chain_aggregate and slurm:
+            # Build aggregate depending on compute. datatrove launches the dependency
+            # (compute) first, then submits aggregate with --dependency=afterok:<jobid>.
+            aggregate_exec = _make_executor(
+                pipeline=[
+                    AggregateEpisodeStats(
+                        args.repo_id,
+                        args.root,
+                        args.new_root,
+                        str(args.shard_dir),
+                        args.push_to_hub,
+                        args.video_backend,
+                    )
+                ],
+                logs_dir=args.logs_dir,
+                job_name="recompute_stats_aggregate",
+                slurm=slurm,
+                workers=1,
+                tasks=1,
+                time="02:00:00",
+                partition=args.partition,
+                cpus=args.cpus_per_task,
+                mem=args.mem_per_cpu,
+                qos=args.qos,
+                env_command=env_command,  # aggregate also needs the mount to load the dataset
+                depends=compute_exec,
+            )
+            aggregate_exec.run()
+        else:
+            compute_exec.run()
     else:
-        job_name = args.job_name or "recompute_stats_aggregate"
-        executor = _make_executor(
+        aggregate_exec = _make_executor(
             pipeline=[
                 AggregateEpisodeStats(
                     args.repo_id,
@@ -320,7 +476,7 @@ def main():
                 )
             ],
             logs_dir=args.logs_dir,
-            job_name=job_name,
+            job_name=args.job_name or "recompute_stats_aggregate",
             slurm=slurm,
             workers=1,
             tasks=1,
@@ -328,9 +484,12 @@ def main():
             partition=args.partition,
             cpus=args.cpus_per_task,
             mem=args.mem_per_cpu,
+            qos=args.qos,
+            env_command=env_command,
         )
-
-    executor.run()
+        if args.depends_job_id is not None:
+            aggregate_exec.depends_job_id = args.depends_job_id
+        aggregate_exec.run()
 
 
 if __name__ == "__main__":
