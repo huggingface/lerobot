@@ -38,6 +38,7 @@ import torch
 from tqdm import tqdm
 
 from lerobot.configs import (
+    DEFAULT_DEPTH_UNIT,
     DepthEncoderConfig,
     RGBEncoderConfig,
     VideoEncoderConfig,
@@ -59,6 +60,7 @@ from .compute_stats import (
     sample_indices,
 )
 from .dataset_metadata import LeRobotDatasetMetadata
+from .depth_utils import dequantize_depth
 from .image_writer import write_image
 from .io_utils import (
     get_parquet_file_size_in_mb,
@@ -1602,8 +1604,27 @@ def _load_episode_video_frames(
     timestamps = [from_timestamp + offset / dataset.meta.fps for offset in frame_offsets]
 
     frames = decode_video_frames(
-        video_path, timestamps, dataset.tolerance_s, return_uint8=not is_depth, is_depth=is_depth
+        video_path,
+        timestamps,
+        dataset.tolerance_s,
+        backend=dataset._video_backend,
+        return_uint8=not is_depth,
+        is_depth=is_depth,
     )
+    if is_depth:
+        # ``decode_video_frames`` returns raw 12-bit codec values; dequantize back to
+        # the recorded depth unit so stats match record-time stats (which are stored in
+        # ``info.depth_unit`` and only rescaled to the output unit on read).
+        info = dataset.meta.features[key].get("info") or {}
+        depth_encoder = DepthEncoderConfig.from_video_info(info)
+        frames = dequantize_depth(
+            frames,
+            depth_min=depth_encoder.depth_min,
+            depth_max=depth_encoder.depth_max,
+            shift=depth_encoder.shift,
+            use_log=depth_encoder.use_log,
+            output_unit=info.get("depth_unit") or DEFAULT_DEPTH_UNIT,
+        )
     return np.stack([auto_downsample_height_width(frame) for frame in frames.numpy()])
 
 

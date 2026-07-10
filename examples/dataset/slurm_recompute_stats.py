@@ -46,6 +46,12 @@ Usage:
         --repo-id someone-else/their-dataset \\
         --new-root /local/writable/their-dataset_recomputed \\
         --partition cpu
+
+    # Run locally without SLURM (single process); use pyav if torchcodec won't load.
+    python slurm_recompute_stats.py compute \\
+        --repo-id someone-else/their-dataset \\
+        --new-root /local/writable/their-dataset_recomputed \\
+        --skip-image-video 0 --video-backend pyav --slurm 0
 """
 
 import argparse
@@ -59,7 +65,7 @@ SHARD_PATTERN = "episode_stats_{rank:05d}.pkl"
 SHARD_GLOB = "episode_stats_*.pkl"
 
 
-def _load_dataset(repo_id: str, root: str | None, new_root: str | None):
+def _load_dataset(repo_id: str, root: str | None, new_root: str | None, video_backend: str | None = None):
     """Load the (possibly reference-copied) dataset used for stats.
 
     When ``new_root`` differs from the source, create a read-only-safe reference copy
@@ -68,21 +74,23 @@ def _load_dataset(repo_id: str, root: str | None, new_root: str | None):
     """
     from lerobot.datasets import LeRobotDataset
 
+    kwargs = {"video_backend": video_backend} if video_backend else {}
     if new_root and Path(new_root).exists():
-        return LeRobotDataset(repo_id, root=new_root)
-    return LeRobotDataset(repo_id, root=root)
+        return LeRobotDataset(repo_id, root=new_root, **kwargs)
+    return LeRobotDataset(repo_id, root=root, **kwargs)
 
 
 class ComputeEpisodeStatsShards(PipelineStep):
     """Each worker computes per-episode stats for its ``episodes[rank::world_size]`` shard."""
 
-    def __init__(self, repo_id, root, new_root, skip_image_video, shard_dir):
+    def __init__(self, repo_id, root, new_root, skip_image_video, shard_dir, video_backend=None):
         super().__init__()
         self.repo_id = repo_id
         self.root = root
         self.new_root = new_root
         self.skip_image_video = skip_image_video
         self.shard_dir = shard_dir
+        self.video_backend = video_backend
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         import logging
@@ -92,7 +100,7 @@ class ComputeEpisodeStatsShards(PipelineStep):
         from lerobot.utils.utils import init_logging
 
         init_logging()
-        dataset = _load_dataset(self.repo_id, self.root, self.new_root)
+        dataset = _load_dataset(self.repo_id, self.root, self.new_root, self.video_backend)
 
         my_episodes = list(range(dataset.meta.total_episodes))[rank::world_size]
         if not my_episodes:
@@ -117,13 +125,14 @@ class ComputeEpisodeStatsShards(PipelineStep):
 class AggregateEpisodeStats(PipelineStep):
     """Merge all per-episode stat shards into meta/stats.json."""
 
-    def __init__(self, repo_id, root, new_root, shard_dir, push_to_hub=False):
+    def __init__(self, repo_id, root, new_root, shard_dir, push_to_hub=False, video_backend=None):
         super().__init__()
         self.repo_id = repo_id
         self.root = root
         self.new_root = new_root
         self.shard_dir = shard_dir
         self.push_to_hub = push_to_hub
+        self.video_backend = video_backend
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         import logging
@@ -147,7 +156,37 @@ class AggregateEpisodeStats(PipelineStep):
                 all_episode_stats.extend(pickle.load(f))
         logging.info(f"Aggregating {len(all_episode_stats)} episode stats from {len(shards)} shards")
 
-        dataset = _load_dataset(self.repo_id, self.root, self.new_root)
+        dataset = _load_dataset(self.repo_id, self.root, self.new_root, self.video_backend)
+
+        # Aggregation is order-independent, so the only way sharding changes the result is a
+        # gap (dropped shard) or an overlap (episode counted twice). Verify the shards cover
+        # every episode exactly once before writing stats.json.
+        expected_episodes = dataset.meta.total_episodes
+        if len(all_episode_stats) != expected_episodes:
+            raise ValueError(
+                f"Expected {expected_episodes} per-episode stats (one per episode) but got "
+                f"{len(all_episode_stats)} across {len(shards)} shards. A compute shard is likely "
+                "missing or was written more than once; re-run the failed shards before aggregating."
+            )
+
+        # Frame-count check catches the case where a duplicate and a gap cancel out in the
+        # episode count: summed per-episode frame counts must equal the dataset's total frames.
+        numeric_key = next(
+            (
+                k
+                for k, v in dataset.meta.features.items()
+                if v["dtype"] not in ("image", "video", "string") and all_episode_stats and k in all_episode_stats[0]
+            ),
+            None,
+        )
+        if numeric_key is not None:
+            total_frames = sum(int(s[numeric_key]["count"][0]) for s in all_episode_stats)
+            if total_frames != dataset.meta.total_frames:
+                raise ValueError(
+                    f"Summed frame count from shards ({total_frames}) != dataset total_frames "
+                    f"({dataset.meta.total_frames}); episodes are double-counted or missing."
+                )
+
         new_stats = aggregate_episode_stats(dataset, all_episode_stats)
         if new_stats is None:
             raise RuntimeError("Aggregation produced no stats")
@@ -208,6 +247,13 @@ def _add_shared_args(p):
     p.add_argument("--partition", type=str, default=None, help="SLURM partition.")
     p.add_argument("--cpus-per-task", type=int, default=4, help="CPUs per SLURM task.")
     p.add_argument("--mem-per-cpu", type=str, default="4G", help="Memory per CPU, e.g. '4G'.")
+    p.add_argument(
+        "--video-backend",
+        type=str,
+        default=None,
+        help="Video decoding backend (e.g. 'pyav', 'torchcodec'). Defaults to the dataset's default; "
+        "use 'pyav' if torchcodec fails to load locally.",
+    )
 
 
 def main():
@@ -242,7 +288,12 @@ def main():
         executor = _make_executor(
             pipeline=[
                 ComputeEpisodeStatsShards(
-                    args.repo_id, args.root, args.new_root, args.skip_image_video == 0, str(args.shard_dir)
+                    args.repo_id,
+                    args.root,
+                    args.new_root,
+                    bool(args.skip_image_video),
+                    str(args.shard_dir),
+                    args.video_backend,
                 )
             ],
             logs_dir=args.logs_dir,
@@ -260,7 +311,12 @@ def main():
         executor = _make_executor(
             pipeline=[
                 AggregateEpisodeStats(
-                    args.repo_id, args.root, args.new_root, str(args.shard_dir), args.push_to_hub
+                    args.repo_id,
+                    args.root,
+                    args.new_root,
+                    str(args.shard_dir),
+                    args.push_to_hub,
+                    args.video_backend,
                 )
             ],
             logs_dir=args.logs_dir,
