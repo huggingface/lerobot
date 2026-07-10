@@ -96,6 +96,17 @@ class ActionSelectKwargs(TypedDict, total=False):
     return_intermediate_predictions: bool
 
 
+def unpack_action_output(out: Tensor | tuple[Tensor, dict[str, Tensor]]) -> tuple[Tensor, dict[str, Tensor]]:
+    """Normalize a ``select_action`` / ``predict_action_chunk`` return to ``(action, predictions)``.
+
+    These methods return a bare action ``Tensor`` by default, or a ``(action, predictions)`` tuple when
+    called with ``return_intermediate_predictions=True``. A bare tensor becomes ``(tensor, {})``.
+    """
+    if isinstance(out, tuple):
+        return out[0], out[1]
+    return out, {}
+
+
 class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     """
     Base class for policy models.

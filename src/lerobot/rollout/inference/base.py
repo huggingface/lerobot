@@ -69,6 +69,15 @@ class InferenceEngine(abc.ABC):
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Return the next action tensor, or ``None`` if unavailable."""
 
+    def get_intermediate_predictions(self) -> dict | None:
+        """Extra display-ready model outputs to visualize this tick, or ``None``.
+
+        Lets a backend surface a world model's intermediate predictions (e.g. imagined video
+        frames) into the rollout visualization path, keyed by ``"<datatype>.<name>"`` (mirroring
+        observation feature keys). Default: nothing extra.
+        """
+        return None
+
     def notify_observation(self, obs: dict) -> None:  # noqa: B027
         """Publish the latest processed observation.  Default: no-op."""
 

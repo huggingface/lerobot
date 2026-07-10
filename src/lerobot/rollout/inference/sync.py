@@ -22,7 +22,7 @@ from copy import copy
 
 import torch
 
-from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.pretrained import PreTrainedPolicy, unpack_action_output
 from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
 from lerobot.processor import PolicyProcessorPipeline
 
@@ -64,6 +64,7 @@ class SyncInferenceEngine(InferenceEngine):
         task: str,
         device: str | None,
         robot_type: str,
+        visualize_predictions: bool = False,
     ) -> None:
         self._policy = policy
         self._preprocessor = preprocessor
@@ -73,10 +74,20 @@ class SyncInferenceEngine(InferenceEngine):
         self._task = task
         self._device = torch.device(device or "cpu")
         self._robot_type = robot_type
+
+        # Intermediate-prediction visualization (e.g. a world model's imagined video). When on,
+        # ``get_action`` requests predictions and keeps the current chunk's frame stacks; a playhead
+        # (``get_intermediate_predictions``) advances one step per tick, paced across the chunk's tick
+        # span so the imagined clip stays wall-clock aligned with execution.
+        self._visualize_predictions = visualize_predictions
+        self._pred_stacks: dict = {}  # key -> [T, H, W, 3] frame stack for the current chunk
+        self._pred_cursor = 0  # ticks elapsed since the current chunk's frames arrived
+        self._ticks_per_chunk = getattr(getattr(policy, "config", None), "chunk_size", None)
         logger.info(
-            "SyncInferenceEngine initialized (device=%s, action_keys=%d)",
+            "SyncInferenceEngine initialized (device=%s, action_keys=%d, visualize_predictions=%s)",
             self._device,
             len(ordered_action_keys),
+            self._visualize_predictions,
         )
 
     def start(self) -> None:
@@ -93,6 +104,33 @@ class SyncInferenceEngine(InferenceEngine):
         self._policy.reset()
         self._preprocessor.reset()
         self._postprocessor.reset()
+        self._pred_stacks = {}
+        self._pred_cursor = 0
+
+    def get_intermediate_predictions(self) -> dict | None:
+        """Serve one imagined frame per key for this tick, advancing the playhead.
+
+        Maps the current chunk's ``T`` decoded frames onto its ``ticks_per_chunk`` control ticks so
+        the imagined video plays back in step with execution (falls back to one frame/tick, clamped,
+        when the chunk's tick span is unknown). Returns ``None`` until a chunk with frames arrives.
+        """
+        if not self._pred_stacks:
+            return None
+        tick = self._pred_cursor
+        span = self._ticks_per_chunk
+        out: dict = {}
+        for key, stack in self._pred_stacks.items():
+            n = len(stack)
+            if n == 0:
+                continue
+            idx = round(tick / (span - 1) * (n - 1)) if span and span > 1 else tick
+            idx = min(max(idx, 0), n - 1)
+            frame = stack[idx]
+            if hasattr(frame, "detach"):
+                frame = frame.detach().cpu().numpy()
+            out[key] = frame
+        self._pred_cursor += 1
+        return out or None
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Run the full inference pipeline on ``obs_frame`` and return an action tensor."""
@@ -112,7 +150,16 @@ class SyncInferenceEngine(InferenceEngine):
                 observation, self._device, self._task, self._robot_type
             )
             observation = self._preprocessor(observation)
-            action = self._policy.select_action(observation)
+            if self._visualize_predictions:
+                action, predictions = unpack_action_output(
+                    self._policy.select_action(observation, return_intermediate_predictions=True)
+                )
+                if predictions:
+                    # A fresh chunk was predicted this tick — store its frame stacks and restart the playhead.
+                    self._pred_stacks = predictions
+                    self._pred_cursor = 0
+            else:
+                action = self._policy.select_action(observation)
             action = self._postprocessor(action)
         action_tensor = action.squeeze(0).cpu()
 
