@@ -53,6 +53,7 @@ class AdvantageModule:
     """
 
     config: AdvantageConfig
+    frame_provider: Any = None
     _model: Any = field(default=None, init=False, repr=False)
     _preprocessor: Any = field(default=None, init=False, repr=False)
     _threshold: float | None = field(default=None, init=False, repr=False)
