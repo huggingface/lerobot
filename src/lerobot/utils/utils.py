@@ -239,7 +239,13 @@ def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
     for k, v in d.items():
         new_key = f"{parent_key}{sep}{k}" if parent_key else k
         if isinstance(v, dict):
-            items.extend(flatten_dict(v, new_key, sep=sep).items())
+            nested = flatten_dict(v, new_key, sep=sep)
+            if nested:
+                items.extend(nested.items())
+            else:
+                # Preserve empty nested dicts as terminal values so round-trips
+                # (and stats merges with missing branches) do not lose keys.
+                items.append((new_key, {}))
         else:
             items.append((new_key, v))
     return dict(items)
