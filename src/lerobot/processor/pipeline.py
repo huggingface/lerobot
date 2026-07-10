@@ -1054,8 +1054,20 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             try:
                 step_class = ProcessorStepRegistry.get(step_entry["registry_name"])
                 return step_class, step_entry["registry_name"]
-            except KeyError as e:
-                raise ImportError(f"Failed to load processor step from registry. {str(e)}") from e
+            except KeyError:
+                registry_name = step_entry["registry_name"]
+                module_path = f"lerobot.processor.{registry_name}"
+                try:
+                    importlib.import_module(module_path)
+                    step_class = ProcessorStepRegistry.get(registry_name)
+                    return step_class, registry_name
+                except (ImportError, ModuleNotFoundError, KeyError):
+                    raise ImportError(
+                        f"Failed to load processor step from registry. "
+                        f"Processor step '{registry_name}' not found in registry. "
+                        f"Available steps: {list(ProcessorStepRegistry._registry.keys())}. "
+                        f"Make sure the step is registered using @ProcessorStepRegistry.register()"
+                    ) from None
         else:
             # Fallback to dynamic import using the full class path
             full_class_path = step_entry["class"]
