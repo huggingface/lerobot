@@ -103,9 +103,7 @@ class PicoHeadset(Teleoperator):
         if not self._stream.has_data or self._stream.is_stale:
             return {}
         action = {f"{SMPL_ACTION_PREFIX}{i}": float(v) for i, v in enumerate(window)}
-        action.update(
-            {f"{ROOT_ACTION_PREFIX}{i}": float(v) for i, v in enumerate(self._stream.root_quat)}
-        )
+        action.update({f"{ROOT_ACTION_PREFIX}{i}": float(v) for i, v in enumerate(self._stream.root_quat)})
         return action
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
