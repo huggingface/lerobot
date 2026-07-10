@@ -32,21 +32,23 @@ def load_json(fpath: Path) -> Any:
     Returns:
         Any: The data loaded from the JSON file.
     """
-    with open(fpath) as f:
+    with open(fpath, encoding="utf-8") as f:
         return json.load(f)
 
 
-def write_json(data: dict, fpath: Path) -> None:
-    """Write data to a JSON file.
+def write_json(data: Any, fpath: Path) -> None:
+    """Write JSON-serializable data to a file.
 
-    Creates parent directories if they don't exist.
+    Creates parent directories if they don't exist. Accepts any value that
+    ``json.dump`` can encode (dict, list, str, …) so callers are not forced
+    through a spurious ``dict``-only annotation.
 
     Args:
-        data (dict): The dictionary to write.
+        data: JSON-serializable payload.
         fpath (Path): The path to the output JSON file.
     """
     fpath.parent.mkdir(exist_ok=True, parents=True)
-    with open(fpath, "w") as f:
+    with open(fpath, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 

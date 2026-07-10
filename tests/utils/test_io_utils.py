@@ -88,3 +88,20 @@ def test_list_length_mismatch_raises(tmp_json_file):
     obj = {"nums": [0, 0]}
     with pytest.raises(ValueError):
         deserialize_json_into_object(json_path, obj)
+
+
+def test_write_and_load_json_roundtrip(tmp_path: Path):
+    from lerobot.utils.io_utils import load_json, write_json
+
+    path = tmp_path / "nested" / "data.json"
+    payload = {"a": 1, "b": [1, 2, 3]}
+    write_json(payload, path)
+    assert load_json(path) == payload
+
+
+def test_write_json_list(tmp_path: Path):
+    from lerobot.utils.io_utils import load_json, write_json
+
+    path = tmp_path / "list.json"
+    write_json([1, 2, 3], path)
+    assert load_json(path) == [1, 2, 3]
