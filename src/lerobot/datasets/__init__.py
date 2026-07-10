@@ -25,6 +25,8 @@ from .compute_stats import DEFAULT_QUANTILES, aggregate_stats, get_feature_stats
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .dataset_tools import (
     add_features,
+    aggregate_episode_stats,
+    compute_dataset_episode_stats,
     convert_image_to_video_dataset,
     delete_episodes,
     merge_datasets,
@@ -78,8 +80,10 @@ __all__ = [
     "detect_available_encoders_pyav",
     "add_features",
     "aggregate_datasets",
+    "aggregate_episode_stats",
     "aggregate_pipeline_dataset_features",
     "aggregate_stats",
+    "compute_dataset_episode_stats",
     "convert_image_to_video_dataset",
     "create_initial_features",
     "compute_sampler_state",

@@ -1639,6 +1639,76 @@ def _compute_visual_episode_stats(
     return ep_stats
 
 
+def compute_dataset_episode_stats(
+    dataset: LeRobotDataset,
+    episode_indices: list[int] | None = None,
+    skip_image_video: bool = True,
+    drop_keys: list[str] | None = None,
+) -> list[dict]:
+    """Compute per-episode statistics for a subset of episodes.
+
+    This is the shardable unit of work behind :func:`recompute_stats`: distribute
+    ``episode_indices`` across workers (e.g. ``list(range(n))[rank::world_size]``),
+    then combine the concatenated results with :func:`aggregate_stats`.
+
+    Args:
+        dataset: The LeRobotDataset to compute stats for.
+        episode_indices: Episodes to process. When ``None``, all episodes are processed.
+        skip_image_video: If True (default), only numeric features are computed. If False,
+            image/video stats are also computed by sampling and decoding frames.
+        drop_keys: Feature keys to exclude (e.g. ``action`` when it is computed separately
+            in relative-action space).
+
+    Returns:
+        A list of per-episode stat dicts, one per processed episode.
+    """
+    features = dataset.meta.features
+    meta_keys = {"index", "episode_index", "task_index", "frame_index", "timestamp"}
+    drop = set(drop_keys or [])
+    features_to_compute = {
+        k: v
+        for k, v in features.items()
+        if v["dtype"] != "string"
+        and k not in meta_keys
+        and k not in drop
+        and (not skip_image_video or v["dtype"] not in ["image", "video"])
+    }
+    numeric_keys = [k for k, v in features_to_compute.items() if v["dtype"] not in ["image", "video"]]
+    visual_keys = [k for k, v in features_to_compute.items() if v["dtype"] in ["image", "video"]]
+
+    if dataset.meta.episodes is None:
+        dataset.meta.episodes = load_episodes(dataset.meta.root)
+
+    if episode_indices is None:
+        episode_indices = list(range(dataset.meta.total_episodes))
+
+    # Group requested episodes by their data parquet file so each file is read once.
+    file_to_episodes: dict[Path, list[int]] = {}
+    for ep_idx in episode_indices:
+        file_to_episodes.setdefault(dataset.meta.get_data_file_path(ep_idx), []).append(ep_idx)
+
+    all_episode_stats = []
+    for src_path, eps in tqdm(sorted(file_to_episodes.items()), desc="Computing stats from data files"):
+        df = pd.read_parquet(dataset.root / src_path) if numeric_keys else None
+        for ep_idx in sorted(eps):
+            episode_data = {}
+            if numeric_keys:
+                ep_df = df[df["episode_index"] == ep_idx]
+                for key in numeric_keys:
+                    if key in ep_df.columns:
+                        values = ep_df[key].values
+                        episode_data[key] = (
+                            np.stack(values) if hasattr(values[0], "__len__") else np.array(values)
+                        )
+
+            ep_stats = compute_episode_stats(episode_data, features_to_compute)
+            if visual_keys:
+                ep_stats.update(_compute_visual_episode_stats(dataset, int(ep_idx), visual_keys))
+            all_episode_stats.append(ep_stats)
+
+    return all_episode_stats
+
+
 def recompute_stats(
     dataset: LeRobotDataset,
     skip_image_video: bool = True,
@@ -1670,24 +1740,12 @@ def recompute_stats(
         The same dataset with updated stats.
     """
     features = dataset.meta.features
-    meta_keys = {"index", "episode_index", "task_index", "frame_index", "timestamp"}
-    numeric_features = {
-        k: v
-        for k, v in features.items()
-        if v["dtype"] not in ["image", "video", "string"] and k not in meta_keys
-    }
-
-    if skip_image_video:
-        features_to_compute = numeric_features
-    else:
-        features_to_compute = {
-            k: v for k, v in features.items() if v["dtype"] != "string" and k not in meta_keys
-        }
 
     # When relative_action is enabled, compute action stats via chunk-based sampling
     # (matching what the model sees during training) and skip action in the
     # per-episode pass below.
     relative_action_stats = None
+    drop_keys = None
     if relative_action and ACTION in features and OBS_STATE in features:
         if relative_exclude_joints is None:
             relative_exclude_joints = ["gripper"]
@@ -1698,58 +1756,50 @@ def recompute_stats(
             exclude_joints=relative_exclude_joints,
             num_workers=num_workers,
         )
-        features_to_compute.pop(ACTION, None)
+        drop_keys = [ACTION]
 
-    logging.info(f"Recomputing stats for features: {list(features_to_compute.keys())}")
+    all_episode_stats = compute_dataset_episode_stats(
+        dataset, skip_image_video=skip_image_video, drop_keys=drop_keys
+    )
 
-    data_dir = dataset.root / DATA_DIR
-    parquet_files = sorted(data_dir.glob("*/*.parquet"))
-    if not parquet_files:
-        raise ValueError(f"No parquet files found in {data_dir}")
-
-    all_episode_stats = []
-    numeric_keys = [k for k, v in features_to_compute.items() if v["dtype"] not in ["image", "video"]]
-    visual_keys = [k for k, v in features_to_compute.items() if v["dtype"] in ["image", "video"]]
-
-    for parquet_path in tqdm(parquet_files, desc="Computing stats from data files"):
-        df = pd.read_parquet(parquet_path)
-
-        for ep_idx in sorted(df["episode_index"].unique()):
-            ep_df = df[df["episode_index"] == ep_idx]
-            episode_data = {}
-            for key in numeric_keys:
-                if key in ep_df.columns:
-                    values = ep_df[key].values
-                    if hasattr(values[0], "__len__"):
-                        episode_data[key] = np.stack(values)
-                    else:
-                        episode_data[key] = np.array(values)
-
-            ep_stats = compute_episode_stats(episode_data, features_to_compute)
-            if visual_keys:
-                ep_stats.update(_compute_visual_episode_stats(dataset, int(ep_idx), visual_keys))
-            all_episode_stats.append(ep_stats)
-
-    if features_to_compute and not all_episode_stats:
+    new_stats = aggregate_episode_stats(
+        dataset, all_episode_stats, extra_stats={ACTION: relative_action_stats} if relative_action_stats else None
+    )
+    if new_stats is None:
         logging.warning("No episode stats computed")
-        return dataset
+    else:
+        logging.info("Stats recomputed successfully")
+    return dataset
+
+
+def aggregate_episode_stats(
+    dataset: LeRobotDataset,
+    all_episode_stats: list[dict],
+    extra_stats: dict | None = None,
+) -> dict | None:
+    """Aggregate per-episode stats, merge with existing stats, and write ``stats.json``.
+
+    Companion to :func:`compute_dataset_episode_stats` for the distributed workflow: pass
+    the concatenation of every worker's per-episode stats. ``extra_stats`` lets callers
+    inject feature stats computed outside the per-episode pass (e.g. relative-action stats).
+
+    Returns the written stats dict, or ``None`` if there was nothing to aggregate.
+    """
+    if not all_episode_stats and not extra_stats:
+        return None
 
     new_stats = aggregate_stats(all_episode_stats) if all_episode_stats else {}
+    if extra_stats:
+        new_stats.update(extra_stats)
 
-    if relative_action_stats is not None:
-        new_stats[ACTION] = relative_action_stats
-
-    # Merge: keep existing stats for features we didn't recompute
+    # Merge: keep existing stats for features we didn't recompute.
     if dataset.meta.stats:
         for key, value in dataset.meta.stats.items():
-            if key not in new_stats:
-                new_stats[key] = value
+            new_stats.setdefault(key, value)
 
     write_stats(new_stats, dataset.root)
     dataset.meta.stats = new_stats
-
-    logging.info("Stats recomputed successfully")
-    return dataset
+    return new_stats
 
 
 def convert_image_to_video_dataset(
