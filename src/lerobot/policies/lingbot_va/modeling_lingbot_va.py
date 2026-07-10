@@ -38,7 +38,7 @@ import torch.nn.functional as F  # noqa: N812
 from einops import rearrange
 from torch import Tensor
 
-from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.pretrained import PreTrainedPolicy, unpack_action_output
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import require_package
 
@@ -99,8 +99,6 @@ class LingBotVAPolicy(PreTrainedPolicy):
         # from ``config.wan_pretrained_path`` the first time inference runs.
         self._frozen: dict = {}
 
-        self.last_predicted_frames: Tensor | None = None
-        self.last_predicted_latents: Tensor | None = None
         self.reset()
 
     # Frozen-module lazy loading (VAE + UMT5 + tokenizer)
@@ -170,8 +168,6 @@ class LingBotVAPolicy(PreTrainedPolicy):
         self._prompt: str | None = None
         self._prompt_embeds = None
         self._negative_prompt_embeds = None
-        self.last_predicted_frames = None
-        self.last_predicted_latents = None
         self._use_cfg = (cfg.guidance_scale > 1) or (cfg.action_guidance_scale > 1)
         # Two independent flow-matching schedulers (video latent + action streams).
         self._scheduler = FlowMatchScheduler(shift=cfg.snr_shift, sigma_min=0.0, extra_one_step=True)
@@ -413,22 +409,31 @@ class LingBotVAPolicy(PreTrainedPolicy):
         return torch.cat(per_cam, dim=-1).to(self.config.device)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+    def select_action(
+        self, batch: dict[str, Tensor], return_intermediate_predictions: bool = False, **kwargs
+    ) -> Tensor | tuple[Tensor, dict[str, Tensor]]:
         """Return one action, refilling the chunk (and feeding back observed keyframes) as needed.
 
         Mirrors the upstream LIBERO client loop (``evaluation/libero/client.py``): the first obs is
         the conditioning frame; every observation produced afterwards is buffered as a keyframe and,
         once the chunk's actions are exhausted, the buffered frames + executed actions are fed back
         into the KV cache before the next chunk is predicted.
+
+        When ``return_intermediate_predictions=True`` returns ``(action, predictions)``. Predictions
+        are produced only on the ticks that predict a fresh chunk (first tick and each chunk refill);
+        on the intermediate ticks that just pop a cached action, ``predictions`` is an empty dict.
         """
         self.eval()
         self._ensure_frozen_modules()
         self._maybe_init_prompt(batch)
 
+        predictions: dict[str, Tensor] = {}
         if not self._started:
             # First call: this observation conditions the first chunk (it is *not* a keyframe).
             self._started = True
-            actions = self.predict_action_chunk(batch)  # [B, chunk_size, n_used]
+            actions, predictions = unpack_action_output(
+                self.predict_action_chunk(batch, return_intermediate_predictions=return_intermediate_predictions)
+            )  # [B, chunk_size, n_used]
             self._action_queue.extend(actions.transpose(0, 1))  # [chunk_size, B, n_used]
             self._obs_buffer = []
             self._exec_step = 0
@@ -440,17 +445,31 @@ class LingBotVAPolicy(PreTrainedPolicy):
             if len(self._action_queue) == 0:
                 # All actions for the current chunk have been executed; feed the observed
                 # keyframes + executed actions back and predict the next chunk.
-                actions = self.predict_action_chunk(None)
+                actions, predictions = unpack_action_output(
+                    self.predict_action_chunk(
+                        None, return_intermediate_predictions=return_intermediate_predictions
+                    )
+                )
                 self._action_queue.extend(actions.transpose(0, 1))
                 self._exec_step = 0
 
         self._prev_j = self._exec_step % self.config.action_per_frame
         self._exec_step += 1
-        return self._action_queue.popleft()
+        action = self._action_queue.popleft()
+        if return_intermediate_predictions:
+            return action, predictions
+        return action
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
-        """Run one autoregressive chunk and return actions ``[B, chunk_size, n_used]`` (normalized)."""
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], return_intermediate_predictions: bool = False, **kwargs
+    ) -> Tensor | tuple[Tensor, dict[str, Tensor]]:
+        """Run one autoregressive chunk and return actions ``[B, chunk_size, n_used]`` (normalized).
+
+        When ``return_intermediate_predictions=True`` returns ``(actions, predictions)`` where
+        ``predictions`` holds this chunk's VAE-decoded imagined video under ``"images.predicted"``
+        (``[T, H, W, 3]`` uint8 on CPU).
+        """
         self.eval()
         self._ensure_frozen_modules()
         self._maybe_init_prompt(batch)
@@ -472,12 +491,6 @@ class LingBotVAPolicy(PreTrainedPolicy):
         # actions: [B, action_dim, F, action_per_frame, 1] (model-normalized). Keep for KV feedback.
         self._executed_actions = actions
 
-        if self.config.save_predicted_video:
-            # Match upstream LingBot-VA visualization: collect chunk latents and decode the
-            # concatenated latent sequence once after the rollout finishes.
-            self.last_predicted_frames = None
-            self.last_predicted_latents = latents.detach().to("cpu")
-
         # On the first chunk, frame 0 is the conditioning frame (already "known"): the upstream
         # LIBERO client skips it (start_idx=1), so we drop the first frame's actions here.
         used = self.config.used_action_channel_ids
@@ -486,7 +499,15 @@ class LingBotVAPolicy(PreTrainedPolicy):
             a = a[:, :, 1:]  # drop frame 0 -> (F-1) frames of actions
         a = a.squeeze(-1).flatten(2)  # [B, n_used, n_steps]
         a = a.transpose(1, 2).contiguous()  # [B, n_steps, n_used]
-        return a.to(torch.float32)
+        a = a.to(torch.float32)
+
+        if return_intermediate_predictions:
+            # Decode this chunk's imagined video for visualization / eval. Per-chunk decode (the VAE
+            # has no streaming decoder) may differ slightly at chunk boundaries from a single decode
+            # over the whole concatenated latent sequence; acceptable for monitoring/inspection.
+            frames = self._decode_predicted_video(latents)  # [T, H, W, 3] uint8, CPU
+            return a, {"images.predicted": frames}
+        return a
 
     # Prompt / text encoding
     def _maybe_init_prompt(self, batch):
@@ -847,11 +868,6 @@ class LingBotVAPolicy(PreTrainedPolicy):
         return actions, latents
 
     # Predicted-video decoding (opt-in)
-    @torch.no_grad()
-    def decode_predicted_latents(self, latents) -> Tensor:
-        """Decode a concatenated predicted-latent sequence into ``[T, H, W, 3]`` uint8 frames."""
-        return self._decode_predicted_video(latents)
-
     @torch.no_grad()
     def _decode_predicted_video(self, latents) -> Tensor:
         """VAE-decode predicted latents into a uint8 frame stack ``[T, H, W, 3]`` on CPU."""
