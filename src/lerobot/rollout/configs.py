@@ -226,6 +226,10 @@ class RolloutConfig:
     device: str | None = None
     task: str = ""
     display_data: bool = False
+    # Also visualize model "extras" (e.g. a world model's imagined video) alongside observations.
+    # Off by default: requesting predictions forces per-chunk decoding on the control thread and only
+    # world-model policies produce anything. Implies display_data. Sync inference only.
+    display_extra_data: bool = False
     # Visualization backend used when display_data is True: "rerun" or "foxglove".
     display_mode: str = "rerun"
     # For "rerun": IP of a remote server to send to. For "foxglove": interface to bind the WebSocket
@@ -255,6 +259,21 @@ class RolloutConfig:
 
     def __post_init__(self):
         """Validate config invariants and load the policy config from ``--policy.path``."""
+        # --- Visualization validation ---
+        # Extra-data visualization piggybacks on the display_data path (backend init + telemetry
+        # logging are both gated on display_data), so enabling it implies display_data.
+        if self.display_extra_data and not self.display_data:
+            logger.info("display_extra_data=True implies display_data=True; enabling display_data")
+            self.display_data = True
+        # Only the sync engine surfaces intermediate predictions (RTC runs the policy in a background
+        # thread); warn and let it be ignored rather than fail.
+        if self.display_extra_data and not isinstance(self.inference, SyncInferenceConfig):
+            logger.warning(
+                "display_extra_data is only supported with sync inference (--inference.type=sync); "
+                "it will be ignored for inference type '%s'",
+                self.inference.type,
+            )
+
         # --- Strategy-specific validation ---
         if isinstance(self.strategy, DAggerStrategyConfig) and self.teleop is None:
             raise ValueError("DAgger strategy requires --teleop.type to be set")

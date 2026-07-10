@@ -95,6 +95,7 @@ def create_inference_engine(
     use_torch_compile: bool = False,
     compile_warmup_inferences: int = 2,
     shutdown_event: Event | None = None,
+    visualize_predictions: bool = False,
 ) -> InferenceEngine:
     """Instantiate the appropriate inference engine from a config object."""
     logger.info("Creating inference engine: %s", config.type)
@@ -108,6 +109,7 @@ def create_inference_engine(
             task=task,
             device=device,
             robot_type=robot_wrapper.robot_type,
+            visualize_predictions=visualize_predictions,
         )
     if isinstance(config, RTCInferenceConfig):
         return RTCInferenceEngine(

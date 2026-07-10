@@ -156,8 +156,8 @@ class RolloutStrategy(abc.ABC):
         except Exception as e:
             logger.warning("Could not return to initial position: %s", e)
 
-    @staticmethod
     def _log_telemetry(
+        self,
         obs_processed: dict | None,
         action_dict: dict | None,
         runtime_ctx: RuntimeContext,
@@ -166,10 +166,16 @@ class RolloutStrategy(abc.ABC):
         cfg = runtime_ctx.cfg
         if not cfg.display_data:
             return
+        # When extra-data visualization is on, pull any display-ready model predictions from the
+        # engine (e.g. a world model's imagined video) and log them on the dedicated prediction channel.
+        prediction = None
+        if cfg.display_extra_data and self._engine is not None:
+            prediction = self._engine.get_intermediate_predictions()
         log_visualization_data(
             cfg.display_mode,
             observation=obs_processed,
             action=action_dict,
+            prediction=prediction,
             compress_images=cfg.display_compressed_images,
         )
 

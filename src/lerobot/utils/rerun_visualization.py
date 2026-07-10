@@ -27,7 +27,7 @@ import numpy as np
 from lerobot.configs import DEPTH_MILLIMETER_UNIT, infer_depth_unit
 from lerobot.types import RobotAction, RobotObservation
 
-from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR
+from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, PREDICTION_PREFIX
 from .import_utils import require_package
 
 
@@ -35,6 +35,43 @@ def _is_scalar(x):
     return isinstance(x, (float | numbers.Real | np.integer | np.floating)) or (
         isinstance(x, np.ndarray) and x.ndim == 0
     )
+
+
+def _log_scalar_or_image_mapping(rr, data, prefix, scalar_paths, image_paths, compress_images):
+    """Log a mapping of scalars/images (observation- or prediction-style) under ``prefix``.
+
+    Scalars and 1D arrays go to ``scalar_paths`` (time-series); 2D/3D arrays are treated as images
+    (CHW->HWC as needed, depth for single-channel) and go to ``image_paths`` (spatial views).
+    """
+    for k, v in data.items():
+        if v is None:
+            continue
+        key = str(k) if str(k).startswith(prefix) else f"{prefix}{k}"
+
+        if _is_scalar(v):
+            rr.log(key, rr.Scalars(float(v)))
+            scalar_paths.add(key)
+        elif isinstance(v, np.ndarray):
+            arr = v
+            # Convert CHW -> HWC when needed
+            if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
+                arr = np.transpose(arr, (1, 2, 0))
+            if arr.ndim == 1:
+                rr.log(key, rr.Scalars(arr.astype(float)))
+                scalar_paths.add(key)
+            else:
+                if arr.shape[-1] == 1:
+                    # At record time, the depth unit is inferred from the frame type.
+                    depth_unit = infer_depth_unit(arr.dtype)
+                    img_entity = rr.DepthImage(
+                        arr,
+                        meter=1000.0 if depth_unit == DEPTH_MILLIMETER_UNIT else 1.0,
+                        colormap=rr.components.Colormap.Viridis,
+                    )
+                else:
+                    img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
+                rr.log(key, entity=img_entity, static=True)
+                image_paths.add(key)
 
 
 def init_rerun(
@@ -73,10 +110,16 @@ def shutdown_rerun() -> None:
     rr.rerun_shutdown()
 
 
-def _build_blueprint(observation_paths: set[str], action_paths: set[str], image_paths: set[str]):
-    """Build a Rerun blueprint laying out camera images, observation and action scalars in separate views.
+def _build_blueprint(
+    observation_paths: set[str],
+    action_paths: set[str],
+    image_paths: set[str],
+    prediction_paths: set[str],
+):
+    """Build a Rerun blueprint laying out camera/predicted images and scalar series in separate views.
 
-    Camera images, observation and action scalars are arranged in a grid.
+    Images (observation and prediction) each get a spatial view; observation, action, and prediction
+    scalars each get their own time-series view. All arranged in a grid.
     """
 
     # Safe + zero-overhead: `log_rerun_data` already ran the `require_package` guard and imported rerun.
@@ -88,22 +131,29 @@ def _build_blueprint(observation_paths: set[str], action_paths: set[str], image_
         views.append(rrb.TimeSeriesView(name="observation", contents=sorted(observation_paths)))
     if action_paths:
         views.append(rrb.TimeSeriesView(name="action", contents=sorted(action_paths)))
+    if prediction_paths:
+        views.append(rrb.TimeSeriesView(name="prediction", contents=sorted(prediction_paths)))
 
     return rrb.Blueprint(rrb.Grid(*views))
 
 
-def _ensure_blueprint(observation_paths: set[str], action_paths: set[str], image_paths: set[str]) -> None:
-    """Build and send the blueprint once, from the first observation and action data."""
+def _ensure_blueprint(
+    observation_paths: set[str],
+    action_paths: set[str],
+    image_paths: set[str],
+    prediction_paths: set[str],
+) -> None:
+    """Build and send the blueprint once, from the first observation/action/prediction data."""
     if getattr(log_rerun_data, "blueprint", None) is not None:
         return
 
-    if not (observation_paths or action_paths or image_paths):
+    if not (observation_paths or action_paths or image_paths or prediction_paths):
         return
 
     # Safe + zero-overhead: `log_rerun_data` already ran the `require_package` guard and imported rerun.
     import rerun as rr
 
-    blueprint = _build_blueprint(observation_paths, action_paths, image_paths)
+    blueprint = _build_blueprint(observation_paths, action_paths, image_paths, prediction_paths)
     log_rerun_data.blueprint = blueprint
     rr.send_blueprint(blueprint)
 
@@ -111,10 +161,11 @@ def _ensure_blueprint(observation_paths: set[str], action_paths: set[str], image
 def log_rerun_data(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
+    prediction: dict | None = None,
     compress_images: bool = False,
 ) -> None:
     """
-    Logs observation and action data to Rerun for real-time visualization.
+    Logs observation, action and prediction data to Rerun for real-time visualization.
 
     This function iterates through the provided observation and action dictionaries and sends their contents
     to the Rerun viewer. It handles different data types appropriately:
@@ -133,6 +184,8 @@ def log_rerun_data(
     Args:
         observation: An optional dictionary containing observation data to log.
         action: An optional dictionary containing action data to log.
+        prediction: An optional dictionary of display-ready model outputs (e.g. a world model's
+            imagined video), keyed "<datatype>.<name>", logged on a dedicated "prediction." channel.
         compress_images: Whether to compress images before logging to save bandwidth & memory in exchange for cpu and quality.
     """
 
@@ -142,37 +195,19 @@ def log_rerun_data(
     observation_paths: set[str] = set()
     action_paths: set[str] = set()
     image_paths: set[str] = set()
+    prediction_paths: set[str] = set()
 
     if observation:
-        for k, v in observation.items():
-            if v is None:
-                continue
-            key = k if str(k).startswith(OBS_PREFIX) else f"{OBS_STR}.{k}"
+        _log_scalar_or_image_mapping(
+            rr, observation, OBS_PREFIX, observation_paths, image_paths, compress_images
+        )
 
-            if _is_scalar(v):
-                rr.log(key, rr.Scalars(float(v)))
-                observation_paths.add(key)
-            elif isinstance(v, np.ndarray):
-                arr = v
-                # Convert CHW -> HWC when needed
-                if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
-                    arr = np.transpose(arr, (1, 2, 0))
-                if arr.ndim == 1:
-                    rr.log(key, rr.Scalars(arr.astype(float)))
-                    observation_paths.add(key)
-                else:
-                    if arr.shape[-1] == 1:
-                        # At record time, the depth unit is inferred from the frame type.
-                        depth_unit = infer_depth_unit(arr.dtype)
-                        img_entity = rr.DepthImage(
-                            arr,
-                            meter=1000.0 if depth_unit == DEPTH_MILLIMETER_UNIT else 1.0,
-                            colormap=rr.components.Colormap.Viridis,
-                        )
-                    else:
-                        img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
-                    rr.log(key, entity=img_entity, static=True)
-                    image_paths.add(key)
+    if prediction:
+        # Predicted images share the spatial-view set (their "prediction." names keep them distinct);
+        # predicted scalars get their own time-series view.
+        _log_scalar_or_image_mapping(
+            rr, prediction, PREDICTION_PREFIX, prediction_paths, image_paths, compress_images
+        )
 
     if action:
         for k, v in action.items():
@@ -188,4 +223,4 @@ def log_rerun_data(
                 rr.log(key, rr.Scalars(v.reshape(-1).astype(float)))
                 action_paths.add(key)
 
-    _ensure_blueprint(observation_paths, action_paths, image_paths)
+    _ensure_blueprint(observation_paths, action_paths, image_paths, prediction_paths)
