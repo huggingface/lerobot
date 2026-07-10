@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 # scalar floats so the reference flows unchanged through the standard lerobot action
 # pipeline; SonicWholeBodyController reassembles them into smpl_joints_10frame_step1.
 SMPL_ACTION_PREFIX = "smpl."
+# Per-frame SMPL root orientation (wxyz) that steers the SONIC mode-2 anchor/heading.
+ROOT_ACTION_PREFIX = "root."
+ROOT_ACTION_DIM = 4
 
 
 class PicoHeadset(Teleoperator):
@@ -52,7 +55,9 @@ class PicoHeadset(Teleoperator):
 
     @property
     def action_features(self) -> dict:
-        return {f"{SMPL_ACTION_PREFIX}{i}": float for i in range(SMPL_OBS_DIM)}
+        feats = {f"{SMPL_ACTION_PREFIX}{i}": float for i in range(SMPL_OBS_DIM)}
+        feats.update({f"{ROOT_ACTION_PREFIX}{i}": float for i in range(ROOT_ACTION_DIM)})
+        return feats
 
     @property
     def feedback_features(self) -> dict:
@@ -97,7 +102,11 @@ class PicoHeadset(Teleoperator):
         # safe standing/locomotion mode instead of freezing on the last pose).
         if not self._stream.has_data or self._stream.is_stale:
             return {}
-        return {f"{SMPL_ACTION_PREFIX}{i}": float(v) for i, v in enumerate(window)}
+        action = {f"{SMPL_ACTION_PREFIX}{i}": float(v) for i, v in enumerate(window)}
+        action.update(
+            {f"{ROOT_ACTION_PREFIX}{i}": float(v) for i, v in enumerate(self._stream.root_quat)}
+        )
+        return action
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         pass

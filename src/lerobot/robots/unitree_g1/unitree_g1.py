@@ -486,7 +486,7 @@ class UnitreeG1(Robot):
             # through the standard action pipeline; SonicWholeBodyController
             # reassembles it into the 720-vec encoder window.
             for key in action:
-                if key.startswith("smpl."):
+                if key.startswith("smpl.") or key.startswith("root."):
                     self.controller_input[key] = action[key]
 
     @property

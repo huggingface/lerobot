@@ -49,6 +49,9 @@ logger = logging.getLogger(__name__)
 SMPL_ACTION_DIM = 720
 # Prefix for per-element SMPL floats carried on the teleop action dict.
 SMPL_ACTION_PREFIX = "smpl."
+# Optional per-frame SMPL root orientation (wxyz) for the mode-2 anchor.
+ROOT_ACTION_DIM = 4
+ROOT_ACTION_PREFIX = "root."
 
 
 def _extract_smpl_from_action(action: dict | None) -> np.ndarray | None:
@@ -65,6 +68,21 @@ def _extract_smpl_from_action(action: dict | None) -> np.ndarray | None:
         count=SMPL_ACTION_DIM,
     )
     return arr
+
+
+def _extract_root_from_action(action: dict | None) -> np.ndarray | None:
+    """Reassemble a (4,) SMPL root quaternion (wxyz) from ``root.{i}`` keys, or None."""
+    if not action or f"{ROOT_ACTION_PREFIX}0" not in action:
+        return None
+    q = np.fromiter(
+        (float(action.get(f"{ROOT_ACTION_PREFIX}{i}", 0.0)) for i in range(ROOT_ACTION_DIM)),
+        dtype=np.float32,
+        count=ROOT_ACTION_DIM,
+    )
+    n = float(np.linalg.norm(q))
+    if n < 1e-6:
+        return None
+    return q / n
 
 
 class SonicRuntime:
@@ -213,20 +231,25 @@ class SonicWholeBodyController:
         # stream (headset silent past its timeout) is treated as "no SMPL" so the
         # robot doesn't stay frozen tracking the last pose.
         smpl = _extract_smpl_from_action(action)
+        root_quat = _extract_root_from_action(action)
         if smpl is None and self._smpl_stream is not None:
             window = self._smpl_stream.step()
             if self._smpl_stream.has_data and not self._smpl_stream.is_stale:
                 smpl = window
+                root_quat = np.asarray(self._smpl_stream.root_quat, np.float32)
 
         if smpl is not None:
             # Full-body whole-body tracking: SMPL drives the reference, not joystick.
             if self.controller.encode_mode != 2:
                 self._enter_wholebody()
             self.controller.smpl_joints_10frame_step1 = smpl
+            # Root orientation (if provided) steers the mode-2 anchor/heading.
+            self.controller.smpl_root_quat = root_quat
             return self._runtime.tick(obs, debug=False, use_joystick=False)
 
         # No (or stale) SMPL: fall back to locomotion so the robot stays balanced.
         if self.controller.encode_mode == 2:
+            self.controller.smpl_root_quat = None
             self._exit_wholebody()
         return self._runtime.tick(obs, debug=False)
 

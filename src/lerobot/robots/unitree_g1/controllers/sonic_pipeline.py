@@ -521,6 +521,9 @@ class StandingEncoderDecoder:
         self.vr_3point_local_target = VR_TARGET_DEF.copy()
         self.vr_3point_local_orn_target = VR_ORN_DEF.copy()
         self.smpl_joints_10frame_step1 = SMPL_DEF.copy()
+        # Optional per-frame SMPL root orientation (wxyz) for the mode-2 anchor.
+        # When None, the anchor falls back to the planner reference body quat.
+        self.smpl_root_quat = None
         self.set_zero_reference()
 
     def update_history(self, q, dq, ang, quat):
@@ -577,9 +580,12 @@ class StandingEncoderDecoder:
             obs[910:922] = self.vr_3point_local_orn_target
             obs[595:601] = self._anchor_6d(self.h_quat[0], ref_quat)
         elif self.encode_mode == 2:
+            # Prefer the SMPL clip/stream root orientation for the anchor; fall
+            # back to the planner reference body quat when no root is provided.
+            anchor_ref = self.smpl_root_quat if self.smpl_root_quat is not None else ref_quat
             obs[922:1642] = self.smpl_joints_10frame_step1
             for f in range(10):
-                obs[1642 + 6 * f : 1642 + 6 * (f + 1)] = self._anchor_6d(self.h_quat[0], ref_quat)
+                obs[1642 + 6 * f : 1642 + 6 * (f + 1)] = self._anchor_6d(self.h_quat[0], anchor_ref)
                 obs[1702 + 6 * f : 1702 + 6 * (f + 1)] = ref_pos[WRIST_IL]
         else:
             raise RuntimeError(f"Unsupported encoder mode: {self.encode_mode}")
@@ -1033,6 +1039,10 @@ class PlannerController(StandingEncoderDecoder):
                 rf = min(self.ref_cursor, self.motion_timesteps - 1)
                 ref_pos = self.motion_joint_positions[rf].astype(np.float32)
                 ref_quat = self.motion_body_quats[rf].astype(np.float32)
+                # Prefer the SMPL clip/stream root orientation (if provided) so the
+                # anchor tracks the operator's/clip's heading; else planner ref.
+                if self.smpl_root_quat is not None:
+                    ref_quat = np.asarray(self.smpl_root_quat, np.float32)
                 anchor = self._anchor_6d(self.h_quat[0], ref_quat)
                 wrist = ref_pos[WRIST_IL]
                 obs[922:1642] = self.smpl_joints_10frame_step1
@@ -1075,7 +1085,12 @@ class PlannerController(StandingEncoderDecoder):
                 self.heading_init_base_quat = np.array(q, np.float64)
                 with self.motion_lock:
                     rf = min(self.ref_cursor, self.motion_timesteps - 1)
-                    self.init_ref_quat = self.motion_body_quats[rf].copy()
+                    if self.encode_mode == 2 and self.smpl_root_quat is not None:
+                        # Anchor the heading delta to the SMPL root at init so the
+                        # robot turns *relative* to the clip/operator start heading.
+                        self.init_ref_quat = np.asarray(self.smpl_root_quat, np.float64)
+                    else:
+                        self.init_ref_quat = self.motion_body_quats[rf].copy()
                 self.delta_heading = 0.0
                 self.first_motion = False
                 self.reinit_heading = False

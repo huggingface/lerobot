@@ -117,6 +117,39 @@ def remove_smpl_base_rot(root_quat: np.ndarray) -> np.ndarray:
 # ── forward kinematics ───────────────────────────────────────────────────────
 
 
+def canonicalize_smpl_joints(smpl_joints: np.ndarray, root_aa: np.ndarray) -> np.ndarray:
+    """Remove per-frame root orientation -> SONIC ``smpl_joints_local`` format.
+
+    Mirrors the deploy transform (and ``motion_loader.canonicalize_smpl_joints``):
+    reference clips store world-frame joints, but the encoder wants each frame's
+    joints with the body root orientation removed.
+
+    Args:
+        smpl_joints: (T, 24, 3) world-frame (z-up) SMPL joint positions.
+        root_aa: (T, 3) SMPL global-orient axis-angle (y-up convention).
+
+    Returns:
+        (T, 24, 3) per-frame root-orientation-removed joints.
+    """
+    rx90 = R.from_euler("x", 90, degrees=True)  # smpl_root_ytoz_up
+    base120 = R.from_quat([0.5, 0.5, 0.5, 0.5])  # remove_smpl_base_rot
+    a = rx90 * R.from_rotvec(root_aa)
+    b_inv = base120 * a.inv()
+    return np.einsum("tij,tkj->tki", b_inv.as_matrix(), smpl_joints).astype(np.float32)
+
+
+def root_quats_from_aa(root_aa: np.ndarray) -> np.ndarray:
+    """Per-frame root orientation as (T, 4) wxyz, matching the live ``root_quat``.
+
+    Same convention as the headset stream: ytoz-up then base-rotation removed.
+    """
+    rx90 = R.from_euler("x", 90, degrees=True)
+    base120 = R.from_quat([0.5, 0.5, 0.5, 0.5])
+    r = (rx90 * R.from_rotvec(root_aa)) * base120.inv()
+    q = r.as_quat()  # xyzw
+    return np.concatenate([q[:, 3:4], q[:, :3]], axis=1).astype(np.float32)  # -> wxyz
+
+
 class SmplForwardKinematics:
     """Rest-skeleton SMPL forward kinematics (no mesh, no torch)."""
 
