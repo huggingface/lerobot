@@ -476,11 +476,12 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             if tokens.dim() > 1:
                 tokens = tokens.flatten()
 
-            bos_id = self._paligemma_tokenizer.bos_token_id
-            # add bos
+            # NOTE (bug 2 fix): do NOT prepend a <bos> to the action target. The prompt
+            # already carries the leading <bos>; a second one before "Action:" mismatches
+            # the generation-time prefix (see sample_actions_fast*) and drives degenerate
+            # bos->bos decoding. Target is "Action: <fast tokens> |".
             tokens = torch.cat(
                 [
-                    torch.tensor([bos_id], device=action.device),
                     torch.tensor(
                         self._paligemma_tokenizer.encode("Action: ", add_special_tokens=False),
                         device=action.device,

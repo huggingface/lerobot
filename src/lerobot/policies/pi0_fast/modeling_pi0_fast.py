@@ -613,15 +613,14 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         device = tokens.device
         lm_head = self.paligemma_with_expert.paligemma.lm_head
 
-        # add bos token after tokens
-        bos_token = torch.full(
-            (bsize, 1), self._paligemma_tokenizer.bos_token_id, dtype=torch.long, device=device
-        )
-        tokens = torch.cat([tokens, bos_token], dim=1)
-        masks = torch.cat([masks, torch.ones((bsize, 1), dtype=torch.bool, device=device)], dim=1)
+        # NOTE (bug 2 fix): do NOT append a second <bos> here. The language tokens
+        # already begin with <bos> (standard PaliGemma prefix "[image] <bos> prompt \n").
+        # Appending another <bos> right before decoding pushes the checkpoint into a
+        # bos->bos attractor and yields degenerate generation. Generate directly after
+        # the prompt instead.
 
         # 1. Initial Embedding (matches training prefix)
-        # prefix_embs will include [Images, Language Prompt, BOS]
+        # prefix_embs will include [Images, Language Prompt]
         prefix_embs, prefix_pad_masks, prefix_att_masks, total_t_images, _ = self.embed_prefix_fast(
             images, img_masks, tokens, masks, fast_action_tokens=None, fast_action_masks=None
         )
@@ -709,14 +708,13 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         # --- 1. PREFILL PHASE ---
         # Process Images + Text Prompt + BOS token once to populate the KV cache.
 
-        # Add BOS token to the prompt
-        bos_token = torch.full(
-            (bsize, 1), self._paligemma_tokenizer.bos_token_id, dtype=torch.long, device=device
-        )
-        tokens_in = torch.cat([tokens, bos_token], dim=1)
-        masks_in = torch.cat([masks, torch.ones((bsize, 1), dtype=torch.bool, device=device)], dim=1)
+        # NOTE (bug 2 fix): do NOT append a second <bos> here. The language tokens
+        # already begin with <bos> (standard PaliGemma prefix "[image] <bos> prompt \n").
+        # A second <bos> right before decoding causes degenerate bos->bos generation.
+        tokens_in = tokens
+        masks_in = masks
 
-        # Embed prefix [Images, Language, BOS]
+        # Embed prefix [Images, Language]
         # fast_action_tokens=None means we are just embedding the condition (images+text)
         prefix_embs, prefix_pad_masks, prefix_att_masks, total_t_images, _ = self.embed_prefix_fast(
             images, img_masks, tokens_in, masks_in, fast_action_tokens=None, fast_action_masks=None
