@@ -263,18 +263,49 @@ def _make_executor(
     return LocalPipelineExecutor(**kwargs)
 
 
-def _maybe_reference_copy(repo_id, root, new_root):
-    """Create the read-only-safe reference copy once, before submitting workers."""
+def _maybe_reference_copy(repo_id, root, new_root, download_videos):
+    """Create the read-only-safe reference copy once, before submitting workers.
+
+    Loads metadata only (to resolve the source root and revision) instead of a full
+    ``LeRobotDataset``, which would also memory-map the entire frame index just to read a
+    path. Fetches the source into the shared cache so the copy's symlinks point at real
+    files and workers don't each re-download, pulling videos only when the run needs them
+    (i.e. when image/video stats are being recomputed).
+    """
     if not new_root:
         return
-    from lerobot.datasets import LeRobotDataset
+    from huggingface_hub import snapshot_download
+
+    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
     from lerobot.scripts.lerobot_edit_dataset import _reference_copy_dataset
+    from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 
     new_root_path = Path(new_root)
     if new_root_path.exists():
         return
-    src = LeRobotDataset(repo_id, root=root)
-    _reference_copy_dataset(src.root, new_root_path)
+
+    meta = LeRobotDatasetMetadata(repo_id, root=Path(root) if root else None)
+    ignore_patterns = None if download_videos else "videos/"
+    if root:
+        snapshot_download(
+            repo_id,
+            repo_type="dataset",
+            revision=meta.revision,
+            local_dir=meta.root,
+            ignore_patterns=ignore_patterns,
+        )
+        src_root = Path(meta.root)
+    else:
+        src_root = Path(
+            snapshot_download(
+                repo_id,
+                repo_type="dataset",
+                revision=meta.revision,
+                cache_dir=HF_LEROBOT_HUB_CACHE,
+                ignore_patterns=ignore_patterns,
+            )
+        )
+    _reference_copy_dataset(src_root, new_root_path)
 
 
 def _add_shared_args(p):
@@ -360,8 +391,11 @@ def main():
 
     if args.command == "compute":
         # The reference copy (if any) is created once on the submitting node so workers
-        # can all load --new-root without racing to build it.
-        _maybe_reference_copy(args.repo_id, args.root, args.new_root)
+        # can all load --new-root without racing to build it. Videos are only fetched when
+        # image/video stats are being recomputed.
+        _maybe_reference_copy(
+            args.repo_id, args.root, args.new_root, download_videos=not bool(args.skip_image_video)
+        )
 
         compute_exec = _make_executor(
             pipeline=[
