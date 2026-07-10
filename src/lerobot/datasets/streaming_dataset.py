@@ -498,8 +498,13 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         # Get episode index from the item
         ep_idx = item["episode_index"]
 
-        # "timestamp" restarts from 0 for each episode, whereas we need a global timestep within the single .mp4 file (given by index/fps)
-        current_ts = item["index"] / self.fps
+        # A frame's video timestamp must be RELATIVE TO ITS VIDEO FILE. `item["timestamp"]`
+        # restarts from 0 each episode; the file position is `from_timestamp[key] + that`
+        # (added per-key below, since `from_timestamp` is where the episode's segment starts
+        # in the .mp4). The old `index / fps` was a GLOBAL position — correct only while the
+        # whole dataset fits in one .mp4, but wrong once v3.0 splits videos into multiple
+        # files (each timestamped from 0): later episodes then query out-of-range frames.
+        current_ts = float(item["timestamp"])
 
         episode_boundaries_ts = {
             key: (
@@ -517,7 +522,14 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         # Load video frames, when needed
         if len(self.meta.video_keys) > 0:
-            original_timestamps = self._make_timestamps_from_indices(current_ts, self.delta_indices)
+            # File-relative timestamps (episode-local + the per-key from_timestamp offset),
+            # matching episode_boundaries_ts so the padding-mask comparison stays consistent.
+            ep_local_ts = self._make_timestamps_from_indices(current_ts, self.delta_indices)
+            original_timestamps = {
+                key: [episode_boundaries_ts[key][0] + t for t in ts]
+                for key, ts in ep_local_ts.items()
+                if key in episode_boundaries_ts
+            }
 
             # Some timestamps might not result available considering the episode's boundaries
             query_timestamps = self._get_query_timestamps(
@@ -565,15 +577,18 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         query_timestamps = {}
         keys_to_timestamps = self._make_timestamps_from_indices(current_ts, query_indices)
         for key in self.meta.video_keys:
+            from_ts, to_ts = episode_boundaries_ts[key]
             if query_indices is not None and key in query_indices:
-                timestamps = keys_to_timestamps[key]
-                # Clamp out timesteps outside of episode boundaries
-                query_timestamps[key] = torch.clamp(
-                    torch.tensor(timestamps), *episode_boundaries_ts[key]
-                ).tolist()
+                # episode-local (current_ts + delta) -> file-relative (+ from_ts), then clamp
+                # to the episode's segment [from_ts, to_ts] within its video file.
+                # float64 is required, not incidental: `_get_video_frame_padding_mask` pairs these
+                # against `original_timestamps` (python floats) within 1e-6, and float32's epsilon
+                # grows past 1e-6 beyond ~8s, which would mark real frames as padding.
+                timestamps = torch.tensor(keys_to_timestamps[key], dtype=torch.float64) + from_ts
+                query_timestamps[key] = torch.clamp(timestamps, from_ts, to_ts).tolist()
 
             else:
-                query_timestamps[key] = [current_ts]
+                query_timestamps[key] = [from_ts + current_ts]
 
         return query_timestamps
 
