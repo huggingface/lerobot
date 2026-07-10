@@ -218,6 +218,9 @@ class TrainPipelineConfig(HubMixin):
             self.reward_model.pretrained_path = str(policy_dir)
 
     def validate(self) -> None:
+        if self.gradient_accumulation_steps < 1:
+            raise ValueError("gradient_accumulation_steps must be greater than or equal to 1.")
+
         self._resolve_pretrained_from_cli()
 
         if self.policy is None and self.reward_model is None:

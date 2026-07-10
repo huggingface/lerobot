@@ -47,7 +47,7 @@ from lerobot.common.train_utils import (
     update_last_checkpoint,
 )
 from lerobot.common.wandb_utils import WandBLogger
-from lerobot.configs import JobConfig, parser
+from lerobot.configs import JobConfig, PreTrainedConfig, parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
@@ -182,6 +182,57 @@ def update_policy(
     return train_metrics, output_dict
 
 
+def _validate_accelerator_configuration(accelerator: "Accelerator", configured_steps: int) -> int:
+    gradient_accumulation_steps = accelerator.gradient_accumulation_steps
+    if gradient_accumulation_steps != configured_steps:
+        raise ValueError(
+            "The provided Accelerator uses "
+            f"gradient_accumulation_steps={gradient_accumulation_steps}, but the training config uses "
+            f"gradient_accumulation_steps={configured_steps}. These values must match."
+        )
+    if gradient_accumulation_steps > 1 and accelerator.gradient_state.sync_with_dataloader:
+        raise ValueError(
+            "The provided Accelerator must use "
+            "GradientAccumulationPlugin(sync_with_dataloader=False) when gradient accumulation is enabled. "
+            "LeRobot cycles the dataloader, so synchronizing at its boundary would produce incomplete "
+            "accumulation steps."
+        )
+    return gradient_accumulation_steps
+
+
+def _make_policy_for_training(
+    policy_cfg: PreTrainedConfig,
+    ds_meta: Any,
+    rename_map: dict[str, str],
+    gradient_accumulation_steps: int,
+) -> PreTrainedPolicy:
+    resolve_compile_mode = hasattr(policy_cfg, "compile_mode") and getattr(
+        policy_cfg, "compile_model", False
+    )
+    requested_compile_mode = getattr(policy_cfg, "compile_mode", None)
+    if resolve_compile_mode:
+        resolved_compile_mode = policy_cfg.resolve_compile_mode(gradient_accumulation_steps)
+        if requested_compile_mode is None and gradient_accumulation_steps > 1:
+            logging.warning(
+                f"gradient_accumulation_steps={gradient_accumulation_steps} is incompatible with "
+                f"CUDAGraphs. Setting compile_mode to {resolved_compile_mode!r}. "
+                "To silence this warning, set compile_mode explicitly."
+            )
+        policy_cfg.compile_mode = resolved_compile_mode
+
+    try:
+        return make_policy(
+            cfg=policy_cfg,
+            ds_meta=ds_meta,
+            rename_map=rename_map,
+        )
+    finally:
+        if resolve_compile_mode:
+            # The resolved mode is a runtime choice. Keep None in saved configs so future
+            # training or inference runs can resolve it for their own execution context.
+            policy_cfg.compile_mode = requested_compile_mode
+
+
 @parser.wrap()
 def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     """
@@ -215,7 +266,13 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting the lr_scheduler steps based on the num_processes
     # We set find_unused_parameters=True to handle models with conditional computation
     if accelerator is None:
+        from accelerate.utils import GradientAccumulationPlugin
+
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        gradient_accumulation_plugin = GradientAccumulationPlugin(
+            num_steps=cfg.gradient_accumulation_steps,
+            sync_with_dataloader=False,
+        )
         # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
         # Force the device to be CPU when the active config's device is set to CPU (works for both policy and reward model training).
         force_cpu = cfg.trainable_config.device == "cpu"
@@ -227,8 +284,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             mixed_precision=mixed_precision,
             kwargs_handlers=[ddp_kwargs],
             cpu=force_cpu,
-            gradient_accumulation_steps=cfg.gradient_accumulation_steps,
+            gradient_accumulation_plugin=gradient_accumulation_plugin,
         )
+
+    gradient_accumulation_steps = _validate_accelerator_configuration(
+        accelerator, cfg.gradient_accumulation_steps
+    )
 
     init_logging(accelerator=accelerator)
 
@@ -299,23 +360,11 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     else:
         if is_main_process:
             logging.info("Creating policy")
-        # Resolve compile_mode against gradient accumulation. Each policy declares its own
-        # DEFAULT_COMPILE_MODE / SAFE_COMPILE_MODE; the base PreTrainedConfig.resolve_compile_mode
-        # picks the right one and raises if the user explicitly requested a CUDAGraphs mode
-        # that would crash with gradient_accumulation_steps > 1.
-        if hasattr(cfg.policy, "compile_mode") and cfg.policy.compile_model:
-            resolved = cfg.policy.resolve_compile_mode(cfg.gradient_accumulation_steps)
-            if cfg.policy.compile_mode is None and cfg.gradient_accumulation_steps > 1:
-                logging.warning(
-                    f"gradient_accumulation_steps={cfg.gradient_accumulation_steps} is incompatible with "
-                    f"CUDAGraphs. Setting compile_mode to {resolved!r}. "
-                    f"To silence this warning, set compile_mode explicitly."
-                )
-            cfg.policy.compile_mode = resolved
-        policy = make_policy(
-            cfg=cfg.policy,
+        policy = _make_policy_for_training(
+            policy_cfg=cfg.policy,
             ds_meta=dataset.meta,
             rename_map=cfg.rename_map,
+            gradient_accumulation_steps=gradient_accumulation_steps,
         )
 
     if cfg.peft is not None:
@@ -427,7 +476,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
         num_processes = accelerator.num_processes
-        gradient_accumulation_steps = accelerator.gradient_accumulation_steps
         effective_bs = cfg.batch_size * num_processes * gradient_accumulation_steps
         logging.info(
             f"Effective batch size: {cfg.batch_size} x {num_processes} x {gradient_accumulation_steps} = {effective_bs}"
@@ -564,8 +612,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         # max() because headroom is gated by the worst-case rank.
         train_metrics["gpu_mem_gb"] = AverageMeter("mem_gb", ":.2f", reduction="max")
 
-    # Keep global batch size for logging; MetricsTracker handles world size internally.
-    effective_batch_size = cfg.batch_size * accelerator.num_processes
+    # Keep effective batch size for logging; MetricsTracker handles the same factors internally.
+    effective_batch_size = cfg.batch_size * accelerator.num_processes * gradient_accumulation_steps
     train_tracker = MetricsTracker(
         cfg.batch_size,
         dataset.num_frames,
