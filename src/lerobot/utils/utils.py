@@ -65,7 +65,23 @@ def init_logging(
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         fnameline = f"{record.pathname}:{record.lineno}"
         pid_str = f"[PID: {os.getpid()}] " if display_pid else ""
-        return f"{record.levelname} {pid_str}{dt} {fnameline[-15:]:>15} {record.getMessage()}"
+        msg = f"{record.levelname} {pid_str}{dt} {fnameline[-15:]:>15} {record.getMessage()}"
+        # Preserve traceback / stack info (logging.Formatter.format default behavior).
+        # Replacing Formatter.format wholesale would otherwise drop logging.exception()
+        # and log(..., exc_info=True) traces — critical for HIL-SERL actor/learner.
+        if record.exc_info:
+            if not record.exc_text:
+                record.exc_text = logging.Formatter().formatException(record.exc_info)
+            if record.exc_text:
+                msg = f"{msg}
+{record.exc_text}"
+        if record.stack_info:
+            if msg[-1:] != "
+":
+                msg = msg + "
+"
+            msg = msg + record.stack_info
+        return msg
 
     formatter = logging.Formatter()
     formatter.format = custom_format
