@@ -217,3 +217,49 @@ def test_predict_action_chunk(monkeypatch, policy_server):
     for i, ta in enumerate(timed_actions):
         expected_ts = obs.get_timestamp() + i * policy_server.config.environment_dt
         assert abs(ta.get_timestamp() - expected_ts) < 1e-6
+
+
+def test_predict_action_chunk_postprocesses_full_chunk_and_uses_output_horizon(monkeypatch, policy_server):
+    """Preserve the time axis for chunk-dependent transforms and horizon changes."""
+    from lerobot.async_inference.policy_server import PolicyServer
+
+    policy_server.policy_type = "act"
+    policy_server.preprocessor = lambda obs: obs
+    action_dim = 6
+    batch_size = 1
+    actions_per_chunk = policy_server.actions_per_chunk
+    output_horizon = actions_per_chunk - 3
+    raw_actions = torch.arange(batch_size * actions_per_chunk * action_dim, dtype=torch.float32).reshape(
+        batch_size, actions_per_chunk, action_dim
+    )
+    received_shapes = []
+
+    def chunk_dependent_postprocessor(tensor):
+        received_shapes.append(tensor.shape)
+        if tensor.ndim != 3:
+            raise NotImplementedError("This postprocessor requires a full action chunk")
+        horizon_offsets = torch.arange(tensor.shape[1], dtype=tensor.dtype, device=tensor.device).reshape(
+            1, -1, 1
+        )
+        return (tensor + horizon_offsets)[:, :output_horizon]
+
+    policy_server.postprocessor = chunk_dependent_postprocessor
+
+    def _fake_get_action_chunk(_self, _obs, _type="act"):
+        return raw_actions
+
+    monkeypatch.setattr(PolicyServer, "_get_action_chunk", _fake_get_action_chunk, raising=True)
+
+    obs = _make_obs(torch.zeros(6), timestep=5)
+    timed_actions = policy_server._predict_action_chunk(obs)
+
+    assert received_shapes == [torch.Size((batch_size, actions_per_chunk, action_dim))]
+    assert len(timed_actions) == output_horizon
+    assert [ta.get_timestep() for ta in timed_actions] == list(range(5, 5 + output_horizon))
+
+    horizon_offsets = torch.arange(actions_per_chunk, dtype=raw_actions.dtype).reshape(1, -1, 1)
+    expected_actions = (raw_actions + horizon_offsets).squeeze(0)[:output_horizon]
+    for i, (timed_action, expected_action) in enumerate(zip(timed_actions, expected_actions, strict=True)):
+        torch.testing.assert_close(timed_action.get_action(), expected_action)
+        expected_timestamp = obs.get_timestamp() + i * policy_server.config.environment_dt
+        assert abs(timed_action.get_timestamp() - expected_timestamp) < 1e-6
