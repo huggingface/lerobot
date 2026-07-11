@@ -1,0 +1,43 @@
+# RECAP advantage recipe for MolmoAct2 with CFG blend (training-time dropout).
+#
+# Two components selected per sample:
+# 1. advantage_conditioned (70%): Task + advantage indicator → action
+# 2. unconditional (30%): Task only → action (no advantage, trains CFG baseline)
+#
+# At inference, classifier-free guidance combines both:
+#   action = action_uncond + w * (action_cond - action_uncond)
+#
+# Paper: pi*0.6, Appendix E & F.
+
+bindings:
+  advantage: "active_at(t, style=advantage)"
+
+blend:
+  advantage_conditioned:
+    weight: 0.7
+    messages:
+      - role: user
+        content: "${task} Advantage: ${advantage}"
+        stream: high_level
+        if_present: advantage
+
+      - role: user
+        content: "${task}"
+        stream: high_level
+
+      - role: assistant
+        content: ""
+        stream: low_level
+        target: true
+
+  unconditional:
+    weight: 0.3
+    messages:
+      - role: user
+        content: "${task}"
+        stream: high_level
+
+      - role: assistant
+        content: ""
+        stream: low_level
+        target: true
