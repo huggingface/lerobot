@@ -87,6 +87,11 @@ import tqdm
 from lerobot.configs import DEPTH_MILLIMETER_UNIT
 from lerobot.datasets import LeRobotDataset
 from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD, SUCCESS
+from lerobot.utils.dataset_visualization_utils import (
+    get_extra_scalar_keys,
+    is_scalar_like,
+    scalar_to_float,
+)
 from lerobot.utils.utils import init_logging
 
 logger = logging.getLogger(__name__)
@@ -153,6 +158,8 @@ def build_blueprint_from_dataset(dataset: LeRobotDataset):
     for key in (DONE, REWARD, SUCCESS):
         if key in dataset.features:
             views.append(rrb.TimeSeriesView(origin=key, name=key))
+    for key in get_extra_scalar_keys(dataset):
+        views.append(rrb.TimeSeriesView(origin=key, name=key))
 
     return rrb.Blueprint(rrb.Grid(*views))
 
@@ -244,6 +251,8 @@ def visualize_dataset(
         hi = stats["q99"] if "q99" in stats else stats["max"]
         depth_ranges[key] = (float(np.asarray(lo).item()), float(np.asarray(hi).item()))
 
+    extra_scalar_keys = get_extra_scalar_keys(dataset)
+
     first_index = None
     for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
         if first_index is None:
@@ -286,6 +295,10 @@ def visualize_dataset(
 
             if SUCCESS in batch:
                 rr.log(SUCCESS, rr.Scalars(batch[SUCCESS][i].item()))
+
+            for key in extra_scalar_keys:
+                if key in batch and is_scalar_like(batch[key][i]):
+                    rr.log(key, rr.Scalars(scalar_to_float(batch[key][i])))
 
     # save .rrd locally
     if mode == "local" and save:

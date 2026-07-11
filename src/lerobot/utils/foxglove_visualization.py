@@ -23,6 +23,7 @@ importing from here directly. Requires the ``viz`` extra (``pip install 'lerobot
 import logging
 import numbers
 import time
+from collections.abc import Iterable, Mapping
 
 import cv2
 import numpy as np
@@ -41,6 +42,7 @@ from .constants import (
     SUCCESS,
     TRUNCATED,
 )
+from .dataset_visualization_utils import get_extra_scalar_keys, get_scalar_values
 from .import_utils import require_package
 
 # Static schema shared by all scalar topics. Each message carries a flat list of ``{label, value}``
@@ -405,6 +407,24 @@ def _frame_to_scalars(sample: dict, key: str, labels: list[str] | None = None) -
     return _labeled_scalars(name, arr.flatten(), labels)
 
 
+def _dataset_frame_scalar_groups(
+    sample: Mapping, extra_scalar_keys: Iterable[str]
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Return standard episode scalars and custom scalar features for one dataset frame."""
+
+    episode_scalars = {}
+    for feature, label in (
+        (DONE, "done"),
+        (TRUNCATED, "truncated"),
+        (REWARD, "reward"),
+        (SUCCESS, "success"),
+    ):
+        value = sample.get(feature)
+        if value is not None:
+            episode_scalars[label] = float(value)
+    return episode_scalars, get_scalar_values(sample, extra_scalar_keys)
+
+
 def serve_foxglove_dataset_playback(
     dataset,
     episode_index: int,
@@ -452,6 +472,7 @@ def serve_foxglove_dataset_playback(
         raise ValueError("Cannot visualize an empty episode.")
     first_ns, last_ns = times_ns[0], times_ns[-1]
     camera_keys = list(dataset.meta.camera_keys)
+    extra_scalar_keys = get_extra_scalar_keys(dataset, additional_known_keys=(TRUNCATED,))
     # Dataset-wide q01/q99 depth bounds (fallback min/max) used to normalize depth to [0, 1].
     depth_ranges: dict[str, tuple[float, float]] = {}
     for key in dataset.meta.depth_keys:
@@ -500,17 +521,14 @@ def serve_foxglove_dataset_playback(
             channels=channels,
             log_time=log_time,
         )
-        episode_scalars = {}
-        for feat, label in (
-            (DONE, "done"),
-            (TRUNCATED, "truncated"),
-            (REWARD, "reward"),
-            (SUCCESS, "success"),
-        ):
-            v = sample.get(feat)
-            if v is not None:
-                episode_scalars[label] = float(v)
+        episode_scalars, extra_scalars = _dataset_frame_scalar_groups(sample, extra_scalar_keys)
         _log_foxglove_scalars("/episode/state", episode_scalars, channels=channels, log_time=log_time)
+        _log_foxglove_scalars(
+            "/episode/extras",
+            extra_scalars,
+            channels=channels,
+            log_time=log_time,
+        )
 
     lock = threading.Lock()
     stop_event = threading.Event()

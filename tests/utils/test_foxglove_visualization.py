@@ -24,7 +24,7 @@ the functions that talk to the server, so the helpers below run in the base test
 import numpy as np
 
 from lerobot.utils import foxglove_visualization as fv
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD, SUCCESS
 
 
 def test_foxglove_safe_name_collapses_dots():
@@ -91,6 +91,24 @@ def test_feature_dim_names_formats():
     # Missing / absent names -> None.
     assert fv._feature_dim_names(None) is None
     assert fv._feature_dim_names({"shape": [2]}) is None
+
+
+def test_dataset_frame_scalar_groups_include_custom_scalars():
+    sample = {
+        DONE: np.array(True),
+        REWARD: np.array(0.5),
+        SUCCESS: np.array(False),
+        "q_target": np.array([0.75]),
+        "intervention": np.array([True]),
+        "embedding": np.array([1.0, 2.0]),
+    }
+
+    episode_scalars, extra_scalars = fv._dataset_frame_scalar_groups(
+        sample, ("q_target", "intervention", "embedding")
+    )
+
+    assert episode_scalars == {"done": 1.0, "reward": 0.5, "success": 0.0}
+    assert extra_scalars == {"q_target": 0.75, "intervention": 1.0}
 
 
 def test_is_scalar():
