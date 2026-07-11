@@ -1,0 +1,274 @@
+# 使用資料集工具（using dataset tools）
+
+本指南涵蓋 LeRobot 中可用於修改與編輯既有資料集（existing datasets）的資料集工具（dataset tools）。
+
+## 概觀（overview）
+
+LeRobot 提供數種操作資料集（dataset）的工具：
+
+1. **刪除回合（delete Episodes）** - 從資料集（dataset）中移除特定的回合（episodes）
+2. **分割資料集（split dataset）** - 將一個資料集（dataset）切分為多個較小的資料集
+3. **合併資料集（merge datasets）** - 將多個資料集（datasets）組合成一個。這些資料集必須具有完全相同的特徵（feature），且回合（episode）會依 `repo_ids` 中指定的順序（order）串接
+4. **新增特徵（add features）** - 為資料集（dataset）新增新特徵（new features）
+5. **移除特徵（remove features）** - 從資料集（dataset）移除特徵（features）
+6. **轉換為影片（convert to video）** - 將以影像為基礎的資料集（image-based datasets）轉換為影片格式（video format）以節省儲存空間（RGB 與深度攝影機以各自的編碼器 encoder 編碼）
+7. **重新編碼影片（re-encode videos）** - 以新的編碼器設定（encoder settings）重新編碼既有影片資料集的 RGB （re-encode an existing video dataset’s RGB）與/或深度串流（depth streams）
+8. **顯示資料集資訊（show the info of datasets）** - 顯示資料集資訊的摘要（summary of datasets information），例如回合數量（number of episode）等
+
+核心實作位於 `lerobot.datasets.dataset_tools`。
+一個詳細說明如何使用工具 API 的範例腳本可在 `examples/dataset/use_dataset_tools.py` 取得。
+
+## 命令列工具（command-line tool）：lerobot-edit-dataset
+
+`lerobot-edit-dataset` 是一個用於編輯資料集（datasets）的命令列腳本（command-line script）。它可用來刪除回合（delete episodes）、分割資料集（split datasets）、合併資料集（merge datasets）、新增特徵（add features）、移除特徵（remove features），以及將影像資料集（image datasets）轉換為影片格式（video format）。
+
+執行 `lerobot-edit-dataset --help` 以取得每個操作（operation）設定（configuration）相關資訊。
+
+### 使用範例（usage examples）
+
+#### 刪除回合（deleting episodes）
+
+從資料集（dataset）中移除特定的回合（episodes）。這對於過濾掉不需要的資料（undesired data）很有用。
+
+```bash
+# 刪除 episode 0、2 與 5（修改原始資料集）
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type delete_episodes \
+    --operation.episode_indices "[0, 2, 5]"
+
+# 刪除 episode 並儲存為新的資料集（保留原始資料集）
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --new_repo_id lerobot/pusht_after_deletion \
+    --operation.type delete_episodes \
+    --operation.episode_indices "[0, 2, 5]"
+```
+
+#### 分割資料集（splitting datasets）
+
+將一個資料集（dataset）切分為多個子集（subsets）。
+
+```bash
+# 依比例分割（例如 80% train、20% test、20% val）
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type split \
+    --operation.splits '{"train": 0.8, "test": 0.2, "val": 0.2}'
+
+# 依特定的 episode 索引分割
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type split \
+    --operation.splits '{"task1": [0, 1, 2, 3], "task2": [4, 5]}'
+```
+
+分割名稱沒有限制，可由使用者自行決定。產生的資料集（dataset）會以 repo id 加上分割名稱後綴儲存，例如 `lerobot/pusht_train`、`lerobot/pusht_task1`、`lerobot/pusht_task2`。
+
+#### 合併資料集（merging datasets）
+
+將多個資料集（datasets）組合成單一資料集。
+
+```bash
+# 將 train 與 validation 分割合併回一個資料集
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_merged \
+    --operation.type merge \
+    --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
+```
+
+#### 移除特徵（removing features）
+
+從資料集（dataset）移除特徵（features）。
+
+```bash
+# 移除一個相機特徵
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type remove_feature \
+    --operation.feature_names "['observation.images.top']"
+```
+
+#### 轉換為影片（convert to video）
+
+將以影像為基礎的資料集（image-based dataset）轉換為影片格式（video format），建立一個新的 LeRobotDataset，其中影像以影片形式儲存。這對於降低儲存需求與提升資料載入效能很有用。新資料集的結構（structure）與原始資料集完全相同，但影像會以正確的 LeRobot 格式編碼為 MP4 影片。
+
+```bash
+# 僅本機：儲存到自訂的輸出目錄（不推送到 hub）
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type convert_image_to_video \
+    --operation.output_dir /path/to/output/pusht_video
+
+# 以新的 repo_id 儲存（本機儲存）
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --new_repo_id lerobot/pusht_video \
+    --operation.type convert_image_to_video
+
+# 轉換並推送到 Hugging Face Hub
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --new_repo_id lerobot/pusht_video \
+    --operation.type convert_image_to_video \
+    --push_to_hub true
+
+# 以自訂的影片編解碼器與品質設定進行轉換
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type convert_image_to_video \
+    --operation.output_dir outputs/pusht_video \
+    --operation.rgb_encoder.vcodec libsvtav1 \
+    --operation.rgb_encoder.pix_fmt yuv420p \
+    --operation.rgb_encoder.g 2 \
+    --operation.rgb_encoder.crf 30
+
+# 轉換包含深度圖（depth map）的資料集，並自訂深度編碼器
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type convert_image_to_video \
+    --operation.output_dir outputs/pusht_video \
+    --operation.depth_encoder.depth_min 0.01 \
+    --operation.depth_encoder.depth_max 10.0 \
+    --operation.depth_encoder.use_log true
+
+# 只轉換特定的 episode
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type convert_image_to_video \
+    --operation.output_dir outputs/pusht_video \
+    --operation.episode_indices "[0, 1, 2, 5, 10]"
+
+# 以多個 worker 進行平行處理的轉換
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type convert_image_to_video \
+    --operation.output_dir outputs/pusht_video \
+    --operation.num_workers 8
+
+# 對於記憶體受限的系統，使用者現在可以指定上限：
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type convert_to_video \
+    --operation.max_episodes_per_batch 50 \
+    --operation.max_frames_per_batch 10000
+```
+
+**參數（parameters）：**
+
+- `output_dir`：自訂的輸出目錄（選用，預設使用 `new_repo_id` 或 `{repo_id}_video`）
+- `rgb_encoder`：套用於 RGB 攝影機的影片編碼器（video encoder）設定，所有子欄位（sub-fields）皆可透過 `--operation.rgb_encoder.<field>` 存取。更多細節請參閱[影片編碼參數](./video_encoding_parameters)。
+- `depth_encoder`：套用於深度圖攝影機（depth-map cameras）的影片編碼器（video encoder）設定（例如來自 Intel RealSense）。除了標準的編碼器欄位之外，它還提供深度量化的旋鈕（quantization knobs, `depth_min`、`depth_max`、`shift`、`use_log`），可透過 `--operation.depth_encoder.<field>` 存取。這些量化設定會被保存到資料集元資料（dataset metadata）中，以便在載入時將深度反量化回實體單位（physical units）。詳情請參閱[深度串流](./video_encoding_parameters#%E6%B7%B1%E5%BA%A6%E4%B8%B2%E6%B5%81depth-streams)章節。
+- `episode_indices`：要轉換的特定回合清單（list of specific episodes，預設：所有回合）
+- `num_workers`：處理時的平行 worker 數量（number of parallel workers，預設：4）
+
+**注意：** 產生的資料集（dataset）會是一個完整的 LeRobotDataset，所有攝影機皆以影片形式編碼於 `videos/` 目錄中，而 parquet 檔案只包含元資料（metadata，不含原始影像資料）。深度圖攝影機（depth-map cameras）會被自動偵測並導向 `depth_encoder`，而 RGB 攝影機則使用 `rgb_encoder`。所有回合（episode）、統計（stats）與任務（task）都會被保留。
+
+#### 重新編碼影片（re-encode videos）
+
+以不同的編碼器（encoder）設定重新編碼（re-encode）既有影片資料集（existing video dataset）的影片，而無需回到原始影格（raw frames）。RGB 影片使用 `rgb_encoder`，深度影片使用 `depth_encoder`。只需提供你想要重新編碼的編碼器；另一種串流類型（stream type）會維持不變。
+
+```bash
+# 以新設定重新編碼所有 RGB 影片（預設儲存到 lerobot/pusht_reencoded）
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type reencode_videos \
+    --operation.rgb_encoder.vcodec h264 \
+    --operation.rgb_encoder.pix_fmt yuv420p \
+    --operation.rgb_encoder.crf 23
+
+# 在具有深度圖的資料集中同時重新編碼 RGB 與深度影片
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_depth \
+    --operation.type reencode_videos \
+    --operation.rgb_encoder.vcodec h264 \
+    --operation.depth_encoder.crf 50
+```
+
+**參數（parameters）：**
+
+- `rgb_encoder`：套用於每個 RGB 影片的編碼器設定（encoder settings）。省略以跳過重新編碼 RGB 影片。
+- `depth_encoder`：套用於每個深度影片的編碼器設定（encoder settings）。省略以跳過重新編碼深度影片。
+- `num_workers`：處理時的平行 worker 數量（number of parallel workers）。
+
+> [!NOTE]
+> 在重新編碼深度影片（re-encoding depth videos）時，既有的深度量化參數（depth quantization parameters, `depth_min`、`depth_max`、`shift`、`use_log`）與 `is_depth_map` 旗標（flag）會被**保留**，重新編碼只會改變已儲存串流（stored stream）的編解碼器/品質（codec/quality），而不會改變載入時如何反量化（dequantized）深度。
+
+### 顯示資料集的資訊（showing the information of datasets）
+
+顯示資料集的資訊（information of datasets），例如回合數量（number of episode）、影格數量（number of frame）、檔案大小等等。
+不會對資料集（dataset）做任何變更
+
+```bash
+
+# 顯示資料集資訊而不含特徵細節
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type info \
+
+# 顯示含特徵細節的資料集資訊
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type info \
+    --operation.show_features true
+
+```
+
+**參數（parameters）：**
+
+- `show_features`：控制是否顯示含特徵細節（feature details）的資料集資訊（dataset information）的旗標（flag）。（預設=false）
+
+### 推送到 Hub
+
+在任何指令加上 `--push_to_hub true` 旗標（flag），即可自動將產生的資料集（dataset）上傳到 Hugging Face Hub：
+
+```bash
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --new_repo_id lerobot/pusht_after_deletion \
+    --operation.type delete_episodes \
+    --operation.episode_indices "[0, 2, 5]" \
+    --push_to_hub true
+```
+
+另外還有一個用於為資料集（dataset）新增特徵（features）的工具，尚未涵蓋在 `lerobot-edit-dataset` 中。
+
+# 資料集視覺化（dataset visualization）
+
+## 線上視覺化（online visualization）
+
+當你使用 `lerobot` 錄製資料集（record a dataset）時，除非另有指定，否則它會自動上傳到 Hugging Face Hub。要線上檢視資料集，請使用我們的 **LeRobot Dataset Visualizer**，網址為：
+<https://huggingface.co/spaces/lerobot/visualize_dataset>
+
+## 本機視覺化（local visualization）
+
+你也可以使用我們的命令列工具（command-line tool）在本機視覺化資料集（dataset）中的回合（episode）。
+
+**從 Hugging Face Hub：**
+
+```bash
+lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --episode-index 0
+```
+
+**從本機資料夾：**
+加上 `--root` 選項並設定 `--mode local`。例如，要在 `./my_local_data_dir/lerobot/pusht` 中搜尋：
+
+```bash
+lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --root ./my_local_data_dir \
+    --mode local \
+    --episode-index 0
+```
+
+執行後，工具會開啟 `rerun.io` 並顯示所選回合（episode）的攝影機串流（camera streams）、機器人狀態（robot states）與動作（action）。
+
+若要改用 [Foxglove](https://foxglove.dev) 而非 Rerun，請安裝對應的額外套件（extra）並加上 `--display-mode foxglove`。這會啟動一個 WebSocket 伺服器（server），你只要將 Foxglove app 連線到 `ws://127.0.0.1:8765`，它就會把該回合（episode）以可自由定位的時間軸（seekable timeline）形式提供，讓你能夠播放/暫停並拖曳（scrub）瀏覽。
+
+若要進行進階用法，包括視覺化儲存於遠端伺服器（remote server）上的資料集（dataset），請執行：
+
+```bash
+lerobot-dataset-viz --help
+```

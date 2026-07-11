@@ -35,6 +35,24 @@
     title: PyTorch accelerators
   title: "運算與硬體（Compute & Hardware）"
 - sections:
+  - local: lerobot-dataset-v3
+    title: 使用 LeRobotDataset
+  - local: porting_datasets_v3
+    title: 移轉大型資料集（Porting Large Datasets）
+  - local: using_dataset_tools
+    title: 使用資料集工具
+  - local: language_and_recipes
+    title: 語言欄位與範例（Language Columns and Recipes）
+  - local: tools
+    title: 工具
+  - local: annotation_pipeline
+    title: 標註管線（Annotation Pipeline）
+  - local: video_encoding_parameters
+    title: 影片編碼參數（Video encoding parameters）
+  - local: streaming_video_encoding
+    title: 串流影片編碼（Streaming Video Encoding）
+  title: "資料集（Datasets）"
+- sections:
   - local: phone_teleop
     title: 手機（Phone）
   - local: isaac_teleop
