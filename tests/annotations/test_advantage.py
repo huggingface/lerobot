@@ -111,7 +111,6 @@ def test_binarization_with_mock_values(staging: EpisodeStaging):
 
     cfg = AdvantageConfig(
         value_function_path="/fake/vf",
-        dropout_rate=0.0,
         threshold_percentile=0.5,
     )
     module = AdvantageModule(config=cfg)
@@ -146,7 +145,6 @@ def test_intervention_frames_forced_positive(staging: EpisodeStaging):
 
     cfg = AdvantageConfig(
         value_function_path="/fake/vf",
-        dropout_rate=0.0,
         force_positive_on_intervention=True,
     )
     module = AdvantageModule(config=cfg)
@@ -163,16 +161,13 @@ def test_intervention_frames_forced_positive(staging: EpisodeStaging):
     assert rows[2]["content"] == "positive"
 
 
-def test_dropout_reduces_output_rows(staging: EpisodeStaging):
-    """Non-zero dropout rate omits some frames."""
+def test_all_frames_labeled(staging: EpisodeStaging):
+    """Every frame gets an advantage label (no annotation-level dropout)."""
     num_frames = 100
     mc_returns = np.linspace(-0.9, -0.1, num_frames).astype(np.float32)
     mock_values = np.full(num_frames, -0.5, dtype=np.float32)
 
-    cfg = AdvantageConfig(
-        value_function_path="/fake/vf",
-        dropout_rate=0.3,
-    )
+    cfg = AdvantageConfig(value_function_path="/fake/vf")
     module = AdvantageModule(config=cfg)
     record = _make_record(num_frames=num_frames, mc_returns=mc_returns)
 
@@ -183,8 +178,7 @@ def test_dropout_reduces_output_rows(staging: EpisodeStaging):
         module.run_episode(record, staging)
 
     rows = staging.read("advantage")
-    # With 30% dropout on 100 frames, expect ~70 rows (with some variance)
-    assert 50 < len(rows) < 90
+    assert len(rows) == num_frames
 
 
 def test_staged_row_format(staging: EpisodeStaging):
@@ -193,10 +187,7 @@ def test_staged_row_format(staging: EpisodeStaging):
     mc_returns = np.array([-0.5, -0.4, -0.3, -0.2, -0.1], dtype=np.float32)
     mock_values = np.full(5, -0.3, dtype=np.float32)
 
-    cfg = AdvantageConfig(
-        value_function_path="/fake/vf",
-        dropout_rate=0.0,
-    )
+    cfg = AdvantageConfig(value_function_path="/fake/vf")
     module = AdvantageModule(config=cfg)
     record = _make_record(num_frames=num_frames, mc_returns=mc_returns)
 
@@ -225,7 +216,6 @@ def test_n_step_advantage():
     cfg = AdvantageConfig(
         value_function_path="/fake/vf",
         n_step=3,
-        dropout_rate=0.0,
     )
     module = AdvantageModule(config=cfg)
     record = _make_record(num_frames=num_frames, mc_returns=mc_returns)

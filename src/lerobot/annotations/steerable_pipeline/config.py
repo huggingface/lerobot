@@ -176,7 +176,7 @@ class AdvantageConfig:
     enabled: bool = True
 
     # Constant advantage label for all frames (e.g. "positive" for SFT iteration 0).
-    # Skips VF inference, dropout still applies for CFG.
+    # Skips VF inference.
     constant_value: str | None = None
 
     # Trained value function checkpoint (local path or Hub repo ID).
@@ -195,9 +195,6 @@ class AdvantageConfig:
     # Actions with advantage > ε_ℓ get I_t = True (positive).
     threshold_percentile: float = 0.3
 
-    # Fraction of frames to randomly omit advantage labels (enables CFG).
-    dropout_rate: float = 0.3
-
     # Force I_t = True for frames marked as human interventions.
     force_positive_on_intervention: bool = True
 
@@ -209,9 +206,6 @@ class AdvantageConfig:
 
     # Batch size for value function inference.
     batch_size: int = 32
-
-    # Random seed for dropout reproducibility.
-    seed: int = 1729
 
 
 @dataclass

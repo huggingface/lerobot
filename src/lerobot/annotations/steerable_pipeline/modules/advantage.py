@@ -262,13 +262,8 @@ class AdvantageModule:
 
         threshold = self._compute_threshold(advantages, intervention_mask)
 
-        rng = np.random.default_rng(seed=self.config.seed + record.episode_index)
-
         rows: list[dict[str, Any]] = []
         for t in range(num_frames):
-            if rng.random() < self.config.dropout_rate:
-                continue
-
             if (
                 self.config.force_positive_on_intervention
                 and intervention_mask[t]
@@ -303,15 +298,11 @@ class AdvantageModule:
         )
 
     def _run_constant_mode(self, record: EpisodeRecord, staging: EpisodeStaging) -> None:
-        """Emit a fixed advantage value for every frame (with dropout for CFG)."""
+        """Emit a fixed advantage value for every frame."""
         num_frames = len(record.frame_timestamps)
-        rng = np.random.default_rng(seed=self.config.seed + record.episode_index)
 
         rows: list[dict[str, Any]] = []
         for t in range(num_frames):
-            if rng.random() < self.config.dropout_rate:
-                continue
-
             rows.append(
                 {
                     "role": "user",
@@ -325,12 +316,11 @@ class AdvantageModule:
 
         staging.write("advantage", rows)
         logger.debug(
-            "Episode %d: %d/%d frames labeled constant '%s' (dropout=%.2f)",
+            "Episode %d: %d/%d frames labeled constant '%s'",
             record.episode_index,
             len(rows),
             num_frames,
             self.config.constant_value,
-            self.config.dropout_rate,
         )
 
     def _compute_threshold(self, advantages: np.ndarray, intervention_mask: np.ndarray) -> float:
