@@ -53,6 +53,12 @@
     title: 串流影片編碼（Streaming Video Encoding）
   title: "資料集（Datasets）"
 - sections:
+  - local: envhub
+    title: 來自 Hub 的環境（Environments from the Hub）
+  - local: envhub_leisaac
+    title: 在模擬中控制與訓練機器人（LeIsaac）
+  title: "模擬（Simulation）"
+- sections:
   - local: phone_teleop
     title: 手機（Phone）
   - local: isaac_teleop
