@@ -89,6 +89,63 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD, SUCCESS
 from lerobot.utils.utils import init_logging
 
+METADATA_KEYS = {"index", "timestamp", "episode_index", "frame_index", "task_index", "task"}
+KNOWN_SCALAR_KEYS = {DONE, REWARD, SUCCESS, "next.success"}
+SCALAR_DTYPES = {
+    "bool",
+    "float",
+    "float16",
+    "float32",
+    "float64",
+    "int8",
+    "int16",
+    "int32",
+    "int64",
+    "uint8",
+    "uint16",
+    "uint32",
+    "uint64",
+}
+
+
+def is_scalar_feature(feature: dict) -> bool:
+    dtype = feature.get("dtype")
+    if dtype not in SCALAR_DTYPES:
+        return False
+
+    shape = feature.get("shape")
+    if shape is None:
+        return True
+    if isinstance(shape, int):
+        return shape == 1
+    if not isinstance(shape, (list, tuple)):
+        return False
+    return len(shape) == 0 or (len(shape) == 1 and shape[0] == 1)
+
+
+def get_extra_scalar_keys(dataset: LeRobotDataset) -> list[str]:
+    known_keys = {ACTION, OBS_STATE, *KNOWN_SCALAR_KEYS, *METADATA_KEYS}
+    known_keys.update(dataset.meta.camera_keys)
+
+    return [
+        key
+        for key, feature in dataset.features.items()
+        if key not in known_keys and is_scalar_feature(feature)
+    ]
+
+
+def is_scalar_like(value) -> bool:
+    if isinstance(value, torch.Tensor):
+        return value.numel() == 1
+    if isinstance(value, np.ndarray):
+        return value.size == 1
+    return np.isscalar(value)
+
+
+def scalar_to_float(value) -> float:
+    return float(value.item() if hasattr(value, "item") else value)
+
+
 DEFAULT_FOXGLOVE_PORT = 8765
 DEFAULT_RERUN_PORT = 9090
 
@@ -151,6 +208,8 @@ def build_blueprint_from_dataset(dataset: LeRobotDataset):
     for key in (DONE, REWARD, SUCCESS):
         if key in dataset.features:
             views.append(rrb.TimeSeriesView(origin=key, name=key))
+    for key in get_extra_scalar_keys(dataset):
+        views.append(rrb.TimeSeriesView(origin=key, name=key))
 
     return rrb.Blueprint(rrb.Grid(*views))
 
@@ -242,6 +301,8 @@ def visualize_dataset(
         hi = stats["q99"] if "q99" in stats else stats["max"]
         depth_ranges[key] = (float(np.asarray(lo).item()), float(np.asarray(hi).item()))
 
+    extra_scalar_keys = get_extra_scalar_keys(dataset)
+
     first_index = None
     for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
         if first_index is None:
@@ -284,6 +345,10 @@ def visualize_dataset(
 
             if SUCCESS in batch:
                 rr.log(SUCCESS, rr.Scalars(batch[SUCCESS][i].item()))
+
+            for key in extra_scalar_keys:
+                if key in batch and is_scalar_like(batch[key][i]):
+                    rr.log(key, rr.Scalars(scalar_to_float(batch[key][i])))
 
     # save .rrd locally
     if mode == "local" and save:

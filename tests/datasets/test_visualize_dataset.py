@@ -33,3 +33,21 @@ def test_visualize_local_dataset(tmp_path, lerobot_dataset_factory):
         output_dir=output_dir,
     )
     assert rrd_path.exists()
+
+
+def test_scalar_feature_helpers_for_dataset_viz():
+    import numpy as np
+    import torch
+
+    from lerobot.scripts.lerobot_dataset_viz import (
+        is_scalar_feature,
+        is_scalar_like,
+        scalar_to_float,
+    )
+
+    assert is_scalar_feature({"dtype": "float32", "shape": (1,)})
+    assert is_scalar_feature({"dtype": "bool", "shape": []})
+    assert not is_scalar_feature({"dtype": "float32", "shape": (3,)})
+    assert is_scalar_like(torch.tensor(1.5))
+    assert is_scalar_like(np.array(2.0))
+    assert scalar_to_float(torch.tensor(3.0)) == 3.0
