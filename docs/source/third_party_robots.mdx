@@ -1,0 +1,99 @@
+# Third-Party Robots
+
+The LeRobot ecosystem extends far beyond its officially supported hardware. Thanks to LeRobot's plugin architecture, the community has built integrations for a wide range of robot arms — from industrial manipulators to affordable hobbyist platforms. This page showcases community-maintained robot integrations you can use for teleoperation, data collection, and policy deployment.
+
+<Tip>
+These projects are developed and maintained by third parties. Please refer to each repository for installation instructions, hardware requirements, and support.
+</Tip>
+
+## Industrial & Collaborative Arms
+
+### [lerobot-robot-xarm](https://github.com/SpesRobotics/lerobot-robot-xarm)
+**by SpesRobotics**
+
+xArm integration for LeRobot, bringing UFACTORY's popular collaborative arm series into the LeRobot workflow.
+
+### [lerobot_trossen](https://github.com/TrossenRobotics/lerobot_trossen)
+**by Trossen Robotics**
+
+Official hardware integrations from Trossen Robotics, makers of the WidowX and ALOHA-style arms widely used in robot learning research.
+
+### [LeFranX](https://github.com/wengmister/LeFranX)
+**by wengmister**
+
+LeRobot extension for the Franka robot paired with the XHand dexterous hand. An instantiation of the LeVR framework, combining a research-grade arm with VR-based teleoperation.
+
+### [UR5e-LeRobot](https://github.com/yechen056/UR5e-LeRobot)
+**by yechen056**
+
+LeRobot extension for the Universal Robots UR5e, with both single-arm and bimanual support.
+
+### [lerobot_ur5e_auto](https://github.com/scy-v/lerobot_ur5e_auto)
+**by scy-v**
+
+Automated data collection for a mobile UR5e platform, built on LeRobot — great for scaling up dataset creation with minimal human supervision.
+
+### [lerobot_ur5e_gello](https://github.com/F-Fer/lerobot_ur5e_gello)
+**by F-Fer**
+
+Custom LeRobot plugins for a UR5e follower and GELLO leader arm, with ready-to-use scripts for data collection and VLA policy inference.
+
+## Research & Learning Platforms
+
+### [lerobot-arx5](https://github.com/villekuosmanen/lerobot-arx5)
+**by villekuosmanen**
+
+An ARX5 robot arm plugin for LeRobot, integrating this compact, learning-friendly manipulator into the ecosystem.
+
+### [lerobot_robot_piper (AgRobotics Research)](https://github.com/AgRoboticsResearch/lerobot_robot_piper)
+**by AgRoboticsResearch**
+
+Integration of the AgileX Piper arm with LeRobot, developed in the context of agricultural robotics research.
+
+### [lerobot_robot_piper (WeGo Robotics)](https://github.com/WeGo-Robotics/lerobot_robot_piper)
+**by WeGo-Robotics**
+
+Multi-arm teleoperation plugin for the AgileX Piper robot, integrating with LeRobot for data collection and policy deployment.
+
+### [lerobot_yam](https://github.com/pravsels/lerobot_yam)
+**by pravsels**
+
+LeRobot plugin for the YAM arm paired with a GELLO leader for intuitive teleoperation.
+
+## Affordable & Hobbyist Arms
+
+### [fashionstar-lerobot-robot-cello](https://github.com/servodevelop/fashionstar-lerobot-robot-cello)
+**by servodevelop**
+
+LeRobot integration for the FashionStar Cello robot arm.
+
+### [fashionstar-lerobot-robot-viola](https://github.com/servodevelop/fashionstar-lerobot-robot-viola)
+**by servodevelop**
+
+LeRobot integration for the FashionStar Viola robot arm — a sibling to the Cello integration above.
+
+### [lerobot-robot-dummy](https://github.com/KillingJacky/lerobot-robot-dummy)
+**by KillingJacky**
+
+LeRobot integration for the Dummy robot arm, a popular open-source desktop manipulator.
+
+## Multi-Device & Specialized Integrations
+
+### [hex_lerobot_drivers](https://github.com/hexfellow/hex_lerobot_drivers)
+**by hexfellow**
+
+Drivers integrating the Hex series of devices with LeRobot, covering multiple hardware products under one plugin.
+
+### [lerobot-robot-ugo-pro](https://github.com/ugo-plus/lerobot-robot-ugo-pro)
+**by ugo (ugo-plus)**
+
+ugo Pro integration for LeRobot, bringing this service robot platform into the LeRobot ecosystem.
+
+### [lerobot_robot_lekiwi_pincopen](https://github.com/zuoxingdong/lerobot_robot_lekiwi_pincopen)
+**by zuoxingdong**
+
+A drop-in plugin that lets unmodified LeRobot drive a LeKiwi mobile manipulator built with STS3250 servos on the main arm joints and a PincOpen gripper, with tunable servo parameters exposed as config fields — no source edits required.
+
+## Contributing
+
+Built your own LeRobot hardware integration? The plugin system makes it straightforward to add new robots — check out the [Bring Your Own Hardware](./integrate_hardware) guide to get started, and share your project with the community!
