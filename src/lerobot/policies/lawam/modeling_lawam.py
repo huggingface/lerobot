@@ -184,6 +184,10 @@ def _normalize_lawam_checkpoint_state_dict(
             if candidate in model_state_dict:
                 normalized_key = candidate
         normalized[normalized_key] = value
+        if key.startswith("policy_backend.vlm."):
+            candidate = key.replace("policy_backend.vlm.", "policy_vlm_adapter.model.", 1)
+            if candidate in model_state_dict:
+                normalized[candidate] = value
     return normalized
 
 

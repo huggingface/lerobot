@@ -37,6 +37,7 @@ from lerobot.policies.lawam.modeling_lawam import (
     LaWAMPolicy,
     _build_native_policy_config,
     _load_lawam_checkpoint_freeze_config,
+    _normalize_lawam_checkpoint_state_dict,
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -235,6 +236,18 @@ def test_native_config_uses_padded_lawam_action_space() -> None:
     assert cfg.action_feature.shape == (7,)
     assert policy_cfg.flow_cfg.action_dim == 32
     assert policy_cfg.flow_cfg.state_dim == 32
+
+
+def test_checkpoint_normalization_populates_shared_vlm_adapter_alias() -> None:
+    state = {"policy_backend.vlm.model.visual.weight": torch.tensor([1.0])}
+    model_state = {
+        "policy_backend.vlm.model.visual.weight": torch.tensor([0.0]),
+        "policy_vlm_adapter.model.model.visual.weight": torch.tensor([0.0]),
+    }
+
+    normalized = _normalize_lawam_checkpoint_state_dict(state, model_state)
+
+    assert set(normalized) == set(model_state)
 
 
 def test_train_collator_masks_only_flow_horizon_steps() -> None:
