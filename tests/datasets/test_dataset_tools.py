@@ -26,6 +26,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
+    _fractions_to_episode_indices,
     add_features,
     convert_image_to_video_dataset,
     delete_episodes,
@@ -732,6 +733,67 @@ def test_split_three_ways(sample_dataset, tmp_path):
     assert result["val"].meta.total_episodes == 1
     assert result["test"].meta.total_episodes == 1
 
+    total_frames = sum(ds.meta.total_frames for ds in result.values())
+    assert total_frames == sample_dataset.meta.total_frames
+
+
+@pytest.mark.parametrize(
+    "total_episodes, fractions",
+    [
+        (5, {"train": 0.9, "val": 0.1}),  # last split rounds down to 0
+        (5, {"tiny": 0.1, "train": 0.9}),  # first split rounds down to 0
+        (7, {"a": 0.5, "b": 0.3, "c": 0.2}),
+        (3, {"train": 0.34, "val": 0.33, "test": 0.33}),
+    ],
+)
+def test_fractions_to_episode_indices_lossless(total_episodes, fractions):
+    """Fractions that sum to 1.0 must assign every episode exactly once and keep every requested split."""
+    result = _fractions_to_episode_indices(total_episodes, fractions)
+
+    # No requested split is silently dropped.
+    assert set(result.keys()) == set(fractions.keys())
+
+    all_indices = [idx for indices in result.values() for idx in indices]
+    # No episode is lost and none is assigned to more than one split.
+    assert sorted(all_indices) == list(range(total_episodes))
+    # Every split ends up non-empty.
+    assert all(len(indices) > 0 for indices in result.values())
+
+
+def test_fractions_to_episode_indices_raises_when_too_few_episodes():
+    """When there are fewer episodes than requested splits, fail loudly instead of dropping splits."""
+    with pytest.raises(ValueError, match="Cannot split"):
+        _fractions_to_episode_indices(2, {"train": 0.4, "val": 0.4, "test": 0.2})
+
+
+def test_fractions_to_episode_indices_raises_without_positive_fraction():
+    """A set of all-zero fractions has no valid split and should be rejected."""
+    with pytest.raises(ValueError, match="positive fraction"):
+        _fractions_to_episode_indices(5, {"train": 0.0})
+
+
+def test_split_by_fractions_no_episode_loss(sample_dataset, tmp_path):
+    """split_dataset must not drop episodes or omit a requested split when a fraction rounds to zero."""
+    splits = {"train": 0.9, "val": 0.1}
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+
+        def mock_snapshot(repo_id, **kwargs):
+            for split_name in splits:
+                if split_name in repo_id:
+                    return str(tmp_path / f"{sample_dataset.repo_id}_{split_name}")
+            return str(kwargs.get("local_dir", tmp_path))
+
+        mock_snapshot_download.side_effect = mock_snapshot
+
+        result = split_dataset(sample_dataset, splits=splits, output_dir=tmp_path)
+
+    assert set(result.keys()) == {"train", "val"}
+    assert result["val"].meta.total_episodes >= 1
     total_frames = sum(ds.meta.total_frames for ds in result.values())
     assert total_frames == sample_dataset.meta.total_frames
 

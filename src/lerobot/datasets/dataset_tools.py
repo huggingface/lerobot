@@ -488,23 +488,44 @@ def _fractions_to_episode_indices(
     total_episodes: int,
     splits: dict[str, float],
 ) -> dict[str, list[int]]:
-    """Convert split fractions to episode indices."""
+    """Convert split fractions to episode indices.
+
+    Every episode is assigned to exactly one split, and every split with a positive
+    fraction receives at least one episode. Truncating ``total_episodes * fraction``
+    with ``int()`` can round a small split down to zero, which previously dropped both
+    the split and its episodes; those episodes are instead redistributed here.
+    """
     if sum(splits.values()) > 1.0:
         raise ValueError("Split fractions must sum to <= 1.0")
+
+    positive_splits = [name for name, fraction in splits.items() if fraction > 0]
+    if not positive_splits:
+        raise ValueError("At least one split must have a positive fraction.")
+    if total_episodes < len(positive_splits):
+        raise ValueError(
+            f"Cannot split {total_episodes} episodes into {len(positive_splits)} non-empty splits: "
+            "there are fewer episodes than requested splits."
+        )
+
+    # Allocate by floor, then hand the leftover to the last split so fractions summing
+    # to 1.0 stay lossless (this preserves the historical distribution).
+    counts = {name: int(total_episodes * fraction) for name, fraction in splits.items()}
+    counts[positive_splits[-1]] += total_episodes - sum(counts.values())
+
+    # A requested split must never round down to zero and silently disappear. Borrow a
+    # single episode from the currently largest split to fill each empty one.
+    for name in positive_splits:
+        if counts[name] == 0:
+            donor = max(positive_splits, key=lambda n: counts[n])
+            counts[donor] -= 1
+            counts[name] = 1
 
     indices = list(range(total_episodes))
     result = {}
     start_idx = 0
-
-    for split_name, fraction in splits.items():
-        num_episodes = int(total_episodes * fraction)
-        if num_episodes == 0:
-            logging.warning(f"Split '{split_name}' has no episodes, skipping...")
-            continue
-        end_idx = start_idx + num_episodes
-        if split_name == list(splits.keys())[-1]:
-            end_idx = total_episodes
-        result[split_name] = indices[start_idx:end_idx]
+    for name in positive_splits:
+        end_idx = start_idx + counts[name]
+        result[name] = indices[start_idx:end_idx]
         start_idx = end_idx
 
     return result
