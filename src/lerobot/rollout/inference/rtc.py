@@ -22,6 +22,7 @@ way via ``notify_observation``.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import math
 import time
@@ -60,6 +61,15 @@ _RTC_JOIN_TIMEOUT_S: float = 3.0
 # ---------------------------------------------------------------------------
 # RTC helpers
 # ---------------------------------------------------------------------------
+
+
+def supports_rtc_inference_kwargs(policy: PreTrainedPolicy) -> bool:
+    """Whether a policy accepts the extra context passed by RTC inference."""
+    parameters = inspect.signature(policy.predict_action_chunk).parameters
+    return any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()) or {
+        "inference_delay",
+        "prev_chunk_left_over",
+    }.issubset(parameters)
 
 
 def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int) -> torch.Tensor:
