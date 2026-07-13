@@ -116,7 +116,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
             if gradient_accumulation_steps > 1 and explicit in self._CUDAGRAPHS_COMPILE_MODES:
                 raise ValueError(
                     f"compile_mode='{explicit}' uses CUDAGraphs which is incompatible with "
-                    f"gradient_accumulation_steps>1. Use {self.SAFE_COMPILE_MODE!r} or 'default' instead."
+                    f"gradient_accumulation_steps>1. Use a CUDAGraphs-free mode instead "
+                    f"(e.g. {self.SAFE_COMPILE_MODE!r})."
                 )
             return explicit
         if gradient_accumulation_steps > 1:

@@ -159,23 +159,26 @@ class EpisodeAwareSampler:
         return self._num_frames
 
 
-def compute_sampler_state(step: int, num_frames: int, batch_size: int, num_processes: int) -> dict:
+def compute_sampler_state(
+    step: int, num_frames: int, batch_size: int, num_processes: int, gradient_accumulation_steps: int = 1
+) -> dict:
     """Map an optimization step to an `EpisodeAwareSampler` state for sample-exact resume.
 
-    Under accelerate's batch sharding, one step consumes `batch_size * num_processes` sampler
-    positions and each rank sees `ceil(ceil(num_frames / batch_size) / num_processes)` batches
-    per epoch (`even_batches` padding included). The start index provably stays below
-    `num_frames`; the `min` is defensive.
+    Under accelerate's batch sharding, one step consumes
+    `batch_size * num_processes * gradient_accumulation_steps` sampler positions and each rank sees
+    `ceil(ceil(num_frames / batch_size) / num_processes)` batches per epoch (`even_batches` padding
+    included). The start index provably stays below `num_frames`; the `min` is defensive.
 
     Assumptions (resume is only sample-exact when they hold):
-        - `num_processes` and `batch_size` match the run that wrote the checkpoint. Both scale how
-          many positions a step consumes, so the epoch/offset are wrong if either changed. The
-          caller passes the checkpoint's `num_processes` and `batch_size` and warns on a mismatch.
+        - `num_processes`, `batch_size`, and `gradient_accumulation_steps` match the run that wrote
+          the checkpoint. All three scale how many positions a step consumes, so the epoch/offset
+          are wrong if any changed. The caller passes the checkpoint's values and warns on a
+          mismatch.
         - accelerate uses `even_batches=True` (its default). The `ceil(... / num_processes)` term
           mirrors that padding; with `even_batches=False` the per-epoch batch count differs and
           the boundary is off.
     """
     batches_per_epoch = math.ceil(math.ceil(num_frames / batch_size) / num_processes)
-    epoch, batches_into_epoch = divmod(step, batches_per_epoch)
+    epoch, batches_into_epoch = divmod(step * gradient_accumulation_steps, batches_per_epoch)
     start_index = min(batches_into_epoch * batch_size * num_processes, num_frames)
     return {"epoch": epoch, "start_index": start_index}

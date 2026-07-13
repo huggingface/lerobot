@@ -40,6 +40,7 @@ from lerobot.common.train_utils import (
     get_step_identifier,
     load_fsdp_optimizer_state,
     load_training_batch_size,
+    load_training_gradient_accumulation_steps,
     load_training_num_processes,
     load_training_state,
     push_checkpoint_to_hub,
@@ -503,8 +504,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             # ckpts that did not store them).
             saved_num_processes = load_training_num_processes(cfg.checkpoint_path)
             saved_batch_size = load_training_batch_size(cfg.checkpoint_path)
+            saved_grad_accum = load_training_gradient_accumulation_steps(cfg.checkpoint_path)
             ckpt_num_processes = saved_num_processes or accelerator.num_processes
             ckpt_batch_size = saved_batch_size or cfg.batch_size
+            ckpt_grad_accum = saved_grad_accum or gradient_accumulation_steps
             if is_main_process and saved_num_processes not in (None, accelerator.num_processes):
                 logging.warning(
                     f"Resuming with num_processes={accelerator.num_processes} but the checkpoint was "
@@ -517,7 +520,20 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     f"batch_size={saved_batch_size}. The data order resumes at the right epoch/offset, "
                     "but per-rank sample-exactness requires the same batch size."
                 )
-            sampler_state = compute_sampler_state(step, len(sampler), ckpt_batch_size, ckpt_num_processes)
+            if is_main_process and saved_grad_accum not in (None, gradient_accumulation_steps):
+                logging.warning(
+                    f"Resuming with gradient_accumulation_steps={gradient_accumulation_steps} but the "
+                    f"checkpoint was written with gradient_accumulation_steps={saved_grad_accum}. The "
+                    "data order resumes at the right epoch/offset, but per-rank sample-exactness "
+                    "requires the same accumulation factor."
+                )
+            sampler_state = compute_sampler_state(
+                step,
+                len(sampler),
+                ckpt_batch_size,
+                ckpt_num_processes,
+                gradient_accumulation_steps=ckpt_grad_accum,
+            )
             sampler.load_state_dict(sampler_state)
             if is_main_process:
                 logging.info(
@@ -736,6 +752,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     postprocessor=postprocessor,
                     num_processes=accelerator.num_processes,
                     batch_size=cfg.batch_size,
+                    gradient_accumulation_steps=gradient_accumulation_steps,
                     model_state_dict=model_state_dict,
                     optim_state_dict=optim_state_dict,
                 )
