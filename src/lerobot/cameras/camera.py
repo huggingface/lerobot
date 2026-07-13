@@ -84,7 +84,7 @@ class Camera(abc.ABC):
             bool: True if the camera is connected and ready to capture frames,
                   False otherwise.
         """
-        pass
+        raise NotImplementedError
 
     @staticmethod
     @abc.abstractmethod
@@ -94,7 +94,7 @@ class Camera(abc.ABC):
             List[Dict[str, Any]]: A list of dictionaries,
             where each dictionary contains information about a detected camera.
         """
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def connect(self, warmup: bool = True) -> None:
@@ -105,7 +105,7 @@ class Camera(abc.ABC):
                    for cameras that require time to adjust capture settings.
                    If False, skips the warmup frame.
         """
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def read(self) -> NDArray[Any]:
@@ -116,7 +116,7 @@ class Camera(abc.ABC):
         Returns:
             np.ndarray: Captured frame as a numpy array.
         """
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def async_read(self, timeout_ms: float = ...) -> NDArray[Any]:
@@ -148,7 +148,7 @@ class Camera(abc.ABC):
         Raises:
             TimeoutError: If no new frame arrives within `timeout_ms`.
         """
-        pass
+        raise NotImplementedError
 
     def read_latest(self, max_age_ms: int = 500) -> NDArray[Any]:
         """Return the most recent frame captured immediately (Peeking).
@@ -181,4 +181,4 @@ class Camera(abc.ABC):
     @abc.abstractmethod
     def disconnect(self) -> None:
         """Disconnect from the camera and release resources."""
-        pass
+        raise NotImplementedError
