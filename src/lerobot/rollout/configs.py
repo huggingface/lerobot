@@ -223,6 +223,11 @@ class RolloutConfig:
     fps: float = 30.0
     duration: float = 0.0  # 0 = infinite (24/7 mode)
     interpolation_multiplier: int = 1
+    # Action indices holding rotation vectors as (wx, wy, wz) triplets, e.g. [3, 4, 5].
+    # When set, these dims are canonicalized to the antipodal-twin rotvec nearest the
+    # previous action before interpolation, so interpolated sub-actions stay on the
+    # short arc instead of sweeping through the identity rotation (see #3691).
+    interpolation_rotation_dims: list[int] = field(default_factory=list)
     device: str | None = None
     task: str = ""
     display_data: bool = False
