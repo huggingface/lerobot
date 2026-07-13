@@ -92,7 +92,7 @@ def merge_video_feature_info_for_aggregate(all_metadata: list[LeRobotDatasetMeta
     return merged_info
 
 
-def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
+def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata], lenient: bool = False):
     """Validates that all dataset metadata have consistent properties.
 
     Ensures all datasets have the same fps, robot_type, and features to guarantee
@@ -101,13 +101,16 @@ def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
 
     Args:
         all_metadata: List of LeRobotDatasetMetadata objects to validate.
+        lenient: If True, allow feature mismatches and return the union of all features.
+            Missing columns will be filled with default values during aggregation.
 
     Returns:
-        tuple: A tuple containing (fps, robot_type, features) from the first metadata.
+        tuple: A tuple containing (fps, robot_type, features) from the first metadata
+            (or union of features if lenient=True).
 
     Raises:
         ValueError: If any metadata has different fps, robot_type, or features
-                   than the first metadata in the list.
+                   than the first metadata in the list (unless lenient=True for features).
     """
 
     fps = all_metadata[0].fps
@@ -122,9 +125,15 @@ def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
                 f"Same robot_type is expected, but got robot_type={meta.robot_type} instead of {robot_type}."
             )
         if not features_equal_for_merge(features, meta.features):
-            raise ValueError(
-                f"Same features is expected, but got features={meta.features} instead of {features}."
-            )
+            if not lenient:
+                raise ValueError(
+                    f"Same features is expected, but got features={meta.features} instead of {features}."
+                )
+            # Union: add any features present in this dataset but not the first
+            for key, feat_def in meta.features.items():
+                if key not in features:
+                    features[key] = feat_def
+                    logging.info(f"Lenient merge: adding missing feature '{key}' from {meta.repo_id}")
 
     return fps, robot_type, features
 
@@ -289,6 +298,7 @@ def aggregate_datasets(
     chunk_size: int | None = None,
     concatenate_videos: bool = True,
     concatenate_data: bool = True,
+    lenient: bool = False,
 ):
     """Aggregates multiple LeRobot datasets into a single unified dataset.
 
@@ -325,8 +335,17 @@ def aggregate_datasets(
             LeRobotDatasetMetadata(repo_id, root=root) for repo_id, root in zip(repo_ids, roots, strict=False)
         ]
     )
-    fps, robot_type, _ = validate_all_metadata(all_metadata)
-    features = merge_video_feature_info_for_aggregate(all_metadata)
+    fps, robot_type, union_features = validate_all_metadata(all_metadata, lenient=lenient)
+    if lenient:
+        # Use union features as the base, then merge video encoder info on top
+        features = copy.deepcopy(union_features)
+        video_keys_for_merge = [k for k in features if features[k].get("dtype") == "video"]
+        merged_video_info = merge_video_feature_info_for_aggregate(all_metadata)
+        for vk in video_keys_for_merge:
+            if vk in merged_video_info:
+                features[vk] = merged_video_info[vk]
+    else:
+        features = merge_video_feature_info_for_aggregate(all_metadata)
     video_keys = [key for key in features if features[key]["dtype"] == "video"]
 
     dst_meta = LeRobotDatasetMetadata.create(
@@ -538,6 +557,29 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
         else:
             df = pd.read_parquet(src_path)
         df = update_data_df(df, src_meta, dst_meta)
+
+        # Fill missing columns with default values (for lenient merge)
+        for col_name, feat_def in dst_meta.features.items():
+            if col_name in df.columns:
+                continue
+            if col_name in ("index", "episode_index", "task_index"):
+                continue
+            dtype = feat_def.get("dtype", "float32")
+            # Video/image features are stored as separate files, not in parquet
+            if dtype in ("video", "image"):
+                continue
+            n_rows = len(df)
+            if dtype == "bool":
+                df[col_name] = False
+            elif dtype in ("float32", "float64"):
+                df[col_name] = 0.0
+            elif dtype in ("int32", "int64"):
+                df[col_name] = 0
+            elif dtype == "string":
+                df[col_name] = ""
+            else:
+                df[col_name] = 0.0
+            logging.info(f"Filled missing column '{col_name}' with default for {n_rows} rows")
 
         # Write data and get the actual destination file it was written to
         # This avoids duplicating the rotation logic here

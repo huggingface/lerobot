@@ -290,6 +290,8 @@ class MergeConfig(OperationConfig):
     # When False, keep one file per source file instead of packing into shards.
     concatenate_videos: bool = True
     concatenate_data: bool = True
+    # Allow merging datasets with different feature sets (union + fill defaults).
+    lenient: bool = False
 
 
 @OperationConfig.register_subclass("remove_feature")
@@ -498,6 +500,7 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
         output_dir=output_dir,
         concatenate_videos=cfg.operation.concatenate_videos,
         concatenate_data=cfg.operation.concatenate_data,
+        lenient=cfg.operation.lenient,
     )
 
     logging.info(f"Merged dataset saved to {output_dir}")

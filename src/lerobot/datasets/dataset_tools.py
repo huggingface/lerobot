@@ -274,6 +274,7 @@ def merge_datasets(
     output_dir: str | Path | None = None,
     concatenate_videos: bool = True,
     concatenate_data: bool = True,
+    lenient: bool = False,
 ) -> LeRobotDataset:
     """Merge multiple LeRobotDatasets into a single dataset.
 
@@ -285,6 +286,7 @@ def merge_datasets(
         output_dir: Root directory where the merged dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/output_repo_id.
         concatenate_videos: When False, keep one mp4 per source file instead of packing into shards.
         concatenate_data: When False, keep one parquet per source file instead of packing into shards.
+        lenient: Allow merging datasets with different feature sets (union + fill defaults).
     """
     if not datasets:
         raise ValueError("No datasets to merge")
@@ -301,6 +303,7 @@ def merge_datasets(
         aggr_root=output_dir,
         concatenate_videos=concatenate_videos,
         concatenate_data=concatenate_data,
+        lenient=lenient,
     )
 
     merged_dataset = LeRobotDataset(
