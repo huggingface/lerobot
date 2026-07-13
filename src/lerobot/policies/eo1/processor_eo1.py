@@ -23,24 +23,16 @@ import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
-    AddBatchDimensionProcessorStep,
     ComplementaryDataProcessorStep,
-    DeviceProcessorStep,
-    NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
-    RenameObservationsProcessorStep,
-    UnnormalizerProcessorStep,
+    make_default_policy_processor_steps,
+    make_policy_processor_pipelines,
 )
-from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.types import TransitionKey
-from lerobot.utils.constants import (
-    OBS_STATE,
-    POLICY_POSTPROCESSOR_DEFAULT_NAME,
-    POLICY_PREPROCESSOR_DEFAULT_NAME,
-)
+from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from .configuration_eo1 import EO1Config
@@ -242,14 +234,12 @@ def make_eo1_pre_post_processors(
 ]:
     """Build pre/post processor pipelines for EO1."""
 
+    steps = make_default_policy_processor_steps(config, dataset_stats)
+
     input_steps: list[ProcessorStep] = [
-        RenameObservationsProcessorStep(rename_map={}),
-        AddBatchDimensionProcessorStep(),
-        NormalizerProcessorStep(
-            features={**config.input_features, **config.output_features},
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats,
-        ),
+        steps.rename_observations,
+        steps.add_batch_dim,
+        steps.normalize,
         EO1ConversationTemplateStep(input_features=config.input_features, chunk_size=config.chunk_size),
         EO1QwenProcessorStep(
             processor_name=config.vlm_base,
@@ -257,27 +247,12 @@ def make_eo1_pre_post_processors(
             image_max_pixels=config.image_max_pixels,
             use_fast_processor=config.use_fast_processor,
         ),
-        DeviceProcessorStep(device=config.device),
+        steps.to_device,
     ]
 
     output_steps: list[ProcessorStep] = [
-        UnnormalizerProcessorStep(
-            features=config.output_features,
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats,
-        ),
-        DeviceProcessorStep(device="cpu"),
+        steps.unnormalize,
+        steps.to_cpu,
     ]
 
-    return (
-        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
-            steps=input_steps,
-            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-        ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
-            steps=output_steps,
-            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-        ),
-    )
+    return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)

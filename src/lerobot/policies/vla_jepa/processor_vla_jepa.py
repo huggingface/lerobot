@@ -20,20 +20,16 @@ import torch
 
 from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig
 from lerobot.processor import (
-    AddBatchDimensionProcessorStep,
-    DeviceProcessorStep,
     EnvTransition,
-    NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
-    RenameObservationsProcessorStep,
     TransitionKey,
     UnnormalizerProcessorStep,
+    make_default_policy_processor_steps,
+    make_policy_processor_pipelines,
 )
-from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
-from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 
 @ProcessorStepRegistry.register(name="vla_jepa_clip_actions")
@@ -112,15 +108,12 @@ def make_vla_jepa_pre_post_processors(
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     features = {**config.input_features, **config.output_features}
+    steps = make_default_policy_processor_steps(config, dataset_stats)
     input_steps = [
-        RenameObservationsProcessorStep(rename_map={}),
-        AddBatchDimensionProcessorStep(),
-        DeviceProcessorStep(device=config.device),
-        NormalizerProcessorStep(
-            features=features,
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats,
-        ),
+        steps.rename_observations,
+        steps.add_batch_dim,
+        steps.to_device,
+        steps.normalize,
     ]
     output_steps: list[ProcessorStep] = []
     if config.clip_normalized_actions:
@@ -129,6 +122,8 @@ def make_vla_jepa_pre_post_processors(
         output_steps.append(
             PreSnapGripperProcessorStep(gripper_dim=config.gripper_dim, threshold=config.gripper_threshold)
         )
+    # NOTE: unlike the default policy unnormalizer (output features only), VLA-JEPA
+    # unnormalizes over BOTH input and output features.
     output_steps.append(
         UnnormalizerProcessorStep(
             features=features,
@@ -140,16 +135,5 @@ def make_vla_jepa_pre_post_processors(
         output_steps.append(
             BinarizeGripperProcessorStep(gripper_dim=config.gripper_dim, threshold=config.gripper_threshold)
         )
-    output_steps.append(DeviceProcessorStep(device="cpu"))
-    return (
-        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
-            steps=input_steps,
-            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-        ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
-            steps=output_steps,
-            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-        ),
-    )
+    output_steps.append(steps.to_cpu)
+    return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
