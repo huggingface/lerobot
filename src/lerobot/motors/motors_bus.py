@@ -75,58 +75,58 @@ class MotorsBusBase(abc.ABC):
     @abc.abstractmethod
     def connect(self, handshake: bool = True) -> None:
         """Establish connection to the motors."""
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def disconnect(self, disable_torque: bool = True) -> None:
         """Disconnect from the motors."""
-        pass
+        raise NotImplementedError
 
     @property
     @abc.abstractmethod
     def is_connected(self) -> bool:
         """Check if connected to the motors."""
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def read(self, data_name: str, motor: str) -> Value:
         """Read a value from a single motor."""
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def write(self, data_name: str, motor: str, value: Value) -> None:
         """Write a value to a single motor."""
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def sync_read(self, data_name: str, motors: str | list[str] | None = None) -> dict[str, Value]:
         """Read a value from multiple motors."""
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def sync_write(self, data_name: str, values: dict[str, Value]) -> None:
         """Write values to multiple motors."""
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         """Enable torque on selected motors."""
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         """Disable torque on selected motors."""
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def read_calibration(self) -> dict[str, MotorCalibration]:
         """Read calibration parameters from the motors."""
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
         """Write calibration parameters to the motors."""
-        pass
+        raise NotImplementedError
 
 
 def get_ctrl_table(model_ctrl_table: dict[str, dict], model: str) -> dict[str, tuple[int, int]]:
@@ -502,7 +502,7 @@ class SerialMotorsBus(MotorsBusBase):
 
     @abc.abstractmethod
     def _assert_protocol_is_compatible(self, instruction_name: str) -> None:
-        pass
+        raise NotImplementedError
 
     @property
     def is_connected(self) -> bool:
@@ -540,7 +540,7 @@ class SerialMotorsBus(MotorsBusBase):
 
     @abc.abstractmethod
     def _handshake(self) -> None:
-        pass
+        raise NotImplementedError
 
     @check_if_not_connected
     def disconnect(self, disable_torque: bool = True) -> None:
@@ -631,7 +631,7 @@ class SerialMotorsBus(MotorsBusBase):
 
     @abc.abstractmethod
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def configure_motors(self) -> None:
@@ -640,7 +640,7 @@ class SerialMotorsBus(MotorsBusBase):
         Typical changes include shortening the return delay, increasing
         acceleration limits or disabling safety locks.
         """
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
@@ -654,11 +654,11 @@ class SerialMotorsBus(MotorsBusBase):
             num_retry (int, optional): Number of additional retry attempts on communication failure.
                 Defaults to 0.
         """
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def _disable_torque(self, motor: int, model: str, num_retry: int = 0) -> None:
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def enable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
@@ -670,7 +670,7 @@ class SerialMotorsBus(MotorsBusBase):
             num_retry (int, optional): Number of additional retry attempts on communication failure.
                 Defaults to 0.
         """
-        pass
+        raise NotImplementedError
 
     @contextmanager
     def torque_disabled(self, motors: str | list[str] | None = None):
@@ -728,7 +728,7 @@ class SerialMotorsBus(MotorsBusBase):
     @abc.abstractmethod
     def is_calibrated(self) -> bool:
         """bool: ``True`` if the cached calibration matches the motors."""
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def read_calibration(self) -> dict[str, MotorCalibration]:
@@ -737,7 +737,7 @@ class SerialMotorsBus(MotorsBusBase):
         Returns:
             dict[str, MotorCalibration]: Mapping *motor name → calibration*.
         """
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
@@ -748,7 +748,7 @@ class SerialMotorsBus(MotorsBusBase):
                 :pymeth:`read_calibration` or crafted by the user.
             cache (bool, optional): Save the calibration to :pyattr:`calibration`. Defaults to True.
         """
-        pass
+        raise NotImplementedError
 
     def reset_calibration(self, motors: NameOrID | Sequence[NameOrID] | None = None) -> None:
         """Restore factory calibration for the selected motors.
@@ -797,7 +797,7 @@ class SerialMotorsBus(MotorsBusBase):
 
     @abc.abstractmethod
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
-        pass
+        raise NotImplementedError
 
     def record_ranges_of_motion(
         self, motors: NameOrID | Sequence[NameOrID] | None = None, display_values: bool = True
@@ -908,11 +908,11 @@ class SerialMotorsBus(MotorsBusBase):
 
     @abc.abstractmethod
     def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def _decode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
-        pass
+        raise NotImplementedError
 
     def _serialize_data(self, value: int, length: int) -> list[int]:
         """
@@ -939,7 +939,7 @@ class SerialMotorsBus(MotorsBusBase):
     @abc.abstractmethod
     def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
         """Convert an integer into a list of byte-sized integers."""
-        pass
+        raise NotImplementedError
 
     def ping(self, motor: NameOrID, num_retry: int = 0, raise_on_error: bool = False) -> int | None:
         """Ping a single motor and return its model number.
@@ -985,7 +985,7 @@ class SerialMotorsBus(MotorsBusBase):
         Returns:
             dict[int, int] | None: Mapping *id → model number* or `None` if the call failed.
         """
-        pass
+        raise NotImplementedError
 
     @check_if_not_connected
     def read(

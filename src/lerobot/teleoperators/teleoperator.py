@@ -95,7 +95,7 @@ class Teleoperator(abc.ABC):
 
         Note: this property should be able to be called regardless of whether the robot is connected or not.
         """
-        pass
+        raise NotImplementedError
 
     @property
     @abc.abstractmethod
@@ -108,7 +108,7 @@ class Teleoperator(abc.ABC):
 
         Note: this property should be able to be called regardless of whether the robot is connected or not.
         """
-        pass
+        raise NotImplementedError
 
     @property
     @abc.abstractmethod
@@ -117,7 +117,7 @@ class Teleoperator(abc.ABC):
         Whether the teleoperator is currently connected or not. If `False`, calling :pymeth:`get_action`
         or :pymeth:`send_feedback` should raise an error.
         """
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def connect(self, calibrate: bool = True) -> None:
@@ -128,13 +128,13 @@ class Teleoperator(abc.ABC):
             calibrate (bool): If True, automatically calibrate the teleoperator after connecting if it's not
                 calibrated or needs calibration (this is hardware-dependant).
         """
-        pass
+        raise NotImplementedError
 
     @property
     @abc.abstractmethod
     def is_calibrated(self) -> bool:
         """Whether the teleoperator is currently calibrated or not. Should be always `True` if not applicable"""
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def calibrate(self) -> None:
@@ -144,7 +144,7 @@ class Teleoperator(abc.ABC):
         This method should collect any necessary data (e.g., motor offsets) and update the
         :pyattr:`calibration` dictionary accordingly.
         """
-        pass
+        raise NotImplementedError
 
     def _load_calibration(self, fpath: Path | None = None) -> None:
         """
@@ -174,7 +174,7 @@ class Teleoperator(abc.ABC):
         Apply any one-time or runtime configuration to the teleoperator.
         This may include setting motor parameters, control modes, or initial state.
         """
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def get_action(self) -> RobotAction:
@@ -185,7 +185,7 @@ class Teleoperator(abc.ABC):
             RobotAction: A flat dictionary representing the teleoperator's current actions. Its
                 structure should match :pymeth:`observation_features`.
         """
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def send_feedback(self, feedback: dict[str, Any]) -> None:
@@ -200,9 +200,9 @@ class Teleoperator(abc.ABC):
             dict[str, Any]: The action actually sent to the motors potentially clipped or modified, e.g. by
                 safety limits on velocity.
         """
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def disconnect(self) -> None:
         """Disconnect from the teleoperator and perform any necessary cleanup."""
-        pass
+        raise NotImplementedError
