@@ -58,8 +58,7 @@ class WallXConfig(PreTrainedConfig):
     # Action prediction mode: "diffusion" or "fast"
     prediction_mode: str = "diffusion"
 
-    # Attention Implementation, options: "eager", "flash_attention_2", "sdpa"
-    # NOTE: flash-attn==2.7.4.post1 is required for flash_attention_2 implementation
+    # Wall-X's bidirectional action-token islands currently require eager attention.
     attn_implementation: str = "eager"
 
     # ==================== Optimizer Presets ====================
@@ -85,6 +84,12 @@ class WallXConfig(PreTrainedConfig):
 
         if self.prediction_mode not in ["diffusion", "fast"]:
             raise ValueError(f"prediction_mode must be 'diffusion' or 'fast', got {self.prediction_mode}")
+
+        if self.attn_implementation != "eager":
+            raise ValueError(
+                "Wall-X currently supports only attn_implementation='eager' because its "
+                "bidirectional action-token islands require an explicit attention mask."
+            )
 
         # Assign use_fast_tokenizer based on prediction_mode
         if self.prediction_mode == "fast":

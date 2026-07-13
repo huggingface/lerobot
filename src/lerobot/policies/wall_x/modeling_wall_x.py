@@ -45,6 +45,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
+from safetensors.torch import load_file
 from torch import Tensor
 from torch.distributions import Beta
 from torch.nn import CrossEntropyLoss
@@ -74,16 +75,15 @@ if TYPE_CHECKING or _wallx_deps_available:
     from qwen_vl_utils.vision_process import smart_resize
     from torchdiffeq import odeint
     from transformers import AutoProcessor, BatchFeature
-    from transformers.cache_utils import StaticCache
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+        Qwen2_5_VisionTransformerPretrainedModel,
         Qwen2_5_VLForConditionalGeneration,
     )
-    from transformers.utils import is_torchdynamo_compiling
+    from transformers.utils import cached_file, is_torchdynamo_compiling
 
-    from .qwen_model.configuration_qwen2_5_vl import Qwen2_5_VLConfig
-    from .qwen_model.qwen2_5_vl_moe import (
-        Qwen2_5_VisionTransformerPretrainedModel,
+    from .qwen_model import (
         Qwen2_5_VLACausalLMOutputWithPast,
+        Qwen2_5_VLConfig,
         Qwen2_5_VLMoEModel,
     )
 else:
@@ -93,8 +93,8 @@ else:
     odeint = None
     AutoProcessor = None
     BatchFeature = None
-    StaticCache = None
     Qwen2_5_VLForConditionalGeneration = None
+    cached_file = None
     is_torchdynamo_compiling = None
     Qwen2_5_VLConfig = None
     Qwen2_5_VisionTransformerPretrainedModel = None
@@ -326,6 +326,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
         Returns:
             Qwen2_5_VLMoEForAction: Loaded model instance
         """
+        Qwen2_5_VLMoEModel._require_eager_attention(attn_implementation)
         if config is None:
             config = cls.config_class.from_pretrained(
                 pretrained_name_or_path,
@@ -359,8 +360,6 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
         # Try to load the model.safetensors file
         print(f"Loading model from: {pretrained_name_or_path}")
         try:
-            from transformers.utils import cached_file
-
             # Try safetensors first
             resolved_file = cached_file(
                 pretrained_name_or_path,
@@ -373,8 +372,6 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
                 revision=kwargs.get("revision"),
                 local_files_only=kwargs.get("local_files_only", False),
             )
-            from safetensors.torch import load_file
-
             sd = load_file(resolved_file)
             print("✓ Loaded state dict from model.safetensors")
         except Exception as e:
@@ -416,6 +413,8 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             action_mapper: Action mapping utility
             flow_loss_weight (float): Weight for flow loss computation
         """
+        Qwen2_5_VLMoEModel._require_eager_attention(config._attn_implementation)
+        config._attn_implementation = "eager"
         super().__init__(config)
 
         # Initialize vision transformer and language model components
@@ -833,7 +832,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             # Process image embeddings
             if pixel_values is not None:
                 pixel_values = pixel_values.type(self.visual.dtype)
-                image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
+                image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw).pooler_output
                 mask = input_ids == self.config.image_token_id
                 mask_unsqueezed = mask.unsqueeze(-1)
                 mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
@@ -845,7 +844,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             # Process video embeddings
             if pixel_values_videos is not None:
                 pixel_values_videos = pixel_values_videos.type(self.visual.dtype)
-                video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
+                video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw).pooler_output
                 n_video_tokens = (input_ids == self.config.video_token_id).sum().item()
                 n_video_features = video_embeds.shape[0]
 
@@ -919,6 +918,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            cache_position=cache_position,
         )
 
         hidden_states = outputs[0]
@@ -1107,7 +1107,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             # Process image embeddings
             if pixel_values is not None:
                 pixel_values = pixel_values.type(self.visual.dtype)
-                image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
+                image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw).pooler_output
                 n_image_tokens = (input_ids == self.config.image_token_id).sum().item()
                 n_image_features = image_embeds.shape[0]
 
@@ -1128,7 +1128,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             # Process video embeddings
             if pixel_values_videos is not None:
                 pixel_values_videos = pixel_values_videos.type(self.visual.dtype)
-                video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
+                video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw).pooler_output
                 n_video_tokens = (input_ids == self.config.video_token_id).sum().item()
                 n_video_features = video_embeds.shape[0]
 
@@ -1523,27 +1523,6 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             model_inputs = {"inputs_embeds": inputs_embeds, "input_ids": None}
         else:
             model_inputs = {"input_ids": input_ids, "inputs_embeds": None}
-
-        # Prepare 4D causal attention mask for static cache
-        if isinstance(past_key_values, StaticCache) and attention_mask.ndim == 2:
-            if model_inputs["inputs_embeds"] is not None:
-                batch_size, sequence_length, _ = inputs_embeds.shape
-                device = inputs_embeds.device
-            else:
-                batch_size, sequence_length = input_ids.shape
-                device = input_ids.device
-
-            attention_mask = self.model._prepare_4d_causal_attention_mask_with_cache_position(
-                attention_mask,
-                sequence_length=sequence_length,
-                target_length=past_key_values.get_max_cache_shape(),
-                dtype=self.lm_head.weight.dtype,
-                device=device,
-                cache_position=cache_position,
-                batch_size=batch_size,
-                config=self.config,
-                past_key_values=past_key_values,
-            )
 
         # Assemble all model inputs for generation
         model_inputs.update(
