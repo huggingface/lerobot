@@ -569,7 +569,9 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
             if dtype in ("video", "image"):
                 continue
             n_rows = len(df)
-            if dtype == "bool":
+            if dtype == "language":
+                df[col_name] = [[] for _ in range(n_rows)]
+            elif dtype == "bool":
                 df[col_name] = False
             elif dtype in ("float32", "float64"):
                 df[col_name] = 0.0
