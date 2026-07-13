@@ -246,6 +246,15 @@ class PI052Config(PI05Config):
     ``DecodingError: The fields use_hf_kernels are not valid for
     PI052Config`` (job 22164492). Remove in a future major bump."""
 
+    use_flex_attention: bool = False
+    """Accepted for checkpoint-config compatibility only — no-op in this branch.
+    Newer training runs serialize ``use_flex_attention`` into ``config.json`` to
+    select the FlexAttention kernel at train time; this branch's attention path
+    is SDPA/eager, which is mathematically equivalent (same softmax attention,
+    different kernel), so inference/eval results are unchanged. Retained so those
+    checkpoints load instead of raising ``DecodingError: The fields
+    use_flex_attention are not valid for PI052Config``."""
+
     # Optimizer foreach/fused. pi052 carries these locally because the shared
     # PI05Config (kept identical to upstream main) does not define them; the
     # checkpoints we train serialize both keys into config.json, so they must
