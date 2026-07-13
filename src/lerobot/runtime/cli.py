@@ -83,6 +83,16 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         help="Local directory or Hugging Face Hub repo id pointing at a trained ``pretrained_model``.",
     )
     p.add_argument(
+        "--policy.device",
+        dest="policy_device",
+        type=str,
+        default=None,
+        help=(
+            "Override the checkpoint's ``config.device`` (e.g. ``cuda``, ``cpu``). "
+            "Some checkpoints ship ``device=cpu``; pass ``cuda`` to run on GPU."
+        ),
+    )
+    p.add_argument(
         "--dataset.repo_id",
         dest="dataset_repo_id",
         type=str,
@@ -501,6 +511,7 @@ def _load_policy_and_preprocessor(
     *,
     load_processors_from_checkpoint: bool = False,
     fp8: bool = False,
+    device: str | None = None,
 ) -> tuple[Any, Any, Any, Any]:
     """Load a policy checkpoint (local path or Hub repo id).
 
@@ -520,6 +531,10 @@ def _load_policy_and_preprocessor(
 
     cfg = PreTrainedConfig.from_pretrained(policy_path)
     cfg.pretrained_path = policy_path
+
+    # Optional device override — some checkpoints ship device=cpu.
+    if device:
+        cfg.device = device
 
     # Inference-only overrides (mirror lerobot-eval). torch.compile recompiles
     # whenever the prompt length changes (every subtask switch) — catastrophic
@@ -1615,6 +1630,7 @@ def run(
         args.dataset_repo_id,
         load_processors_from_checkpoint=load_processors_from_checkpoint,
         fp8=args.fp8,
+        device=args.policy_device,
     )
 
     policy_type = getattr(policy.config, "type", None)
