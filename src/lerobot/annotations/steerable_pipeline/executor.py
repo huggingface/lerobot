@@ -118,6 +118,10 @@ class Executor:
         # Phase 4: ``vqa`` module (VQA)
         phases.append(self._run_module_phase("vqa", records, staging_dir, self.vqa))
         # Phase 5: ``advantage`` module (advantage scoring via frozen VF)
+        # Two-pass global threshold: compute advantages across all episodes first,
+        # then apply the single threshold uniformly (matches paper Section V-D).
+        if self.advantage.enabled and self.advantage.config.global_threshold:
+            self.advantage.precompute_global_threshold(records)
         phases.append(self._run_module_phase("advantage", records, staging_dir, self.advantage))
 
         print("[annotate] running validator...", flush=True)

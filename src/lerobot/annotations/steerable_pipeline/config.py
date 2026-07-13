@@ -195,6 +195,10 @@ class AdvantageConfig:
     # Actions with advantage > ε_ℓ get I_t = True (positive).
     threshold_percentile: float = 0.3
 
+    # When True, compute a single global threshold across all episodes (paper behavior).
+    # When False, compute threshold per-episode (faster but less accurate).
+    global_threshold: bool = True
+
     # Force I_t = True for frames marked as human interventions.
     force_positive_on_intervention: bool = True
 

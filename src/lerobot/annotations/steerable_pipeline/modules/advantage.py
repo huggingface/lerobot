@@ -57,6 +57,7 @@ class AdvantageModule:
     _model: Any = field(default=None, init=False, repr=False)
     _preprocessor: Any = field(default=None, init=False, repr=False)
     _threshold: float | None = field(default=None, init=False, repr=False)
+    _cache: dict = field(default_factory=dict, init=False, repr=False)
 
     @property
     def enabled(self) -> bool:
@@ -247,6 +248,46 @@ class AdvantageModule:
                 return col
         return None
 
+    def precompute_global_threshold(self, records: list[EpisodeRecord]) -> None:
+        """Two-pass: compute advantages for all episodes and set a single global threshold.
+
+        This matches the paper (pi*0.6, Section V-D / Appendix F):
+        'We set ε_ℓ to the Nth percentile of values predicted by the value function for the task ℓ.'
+
+        The threshold is computed across ALL non-intervention frames in the dataset,
+        so successful episodes naturally get more 'positive' labels and failed episodes
+        get more 'negative' labels.
+        """
+        if self.config.constant_value:
+            return
+
+        if not self.config.value_function_path:
+            return
+
+        logger.info("Computing global advantage threshold (two-pass mode)...")
+        all_advantages: list[float] = []
+
+        for record in records:
+            advantages, intervention_mask = self.compute_advantages_for_episode(record)
+            self._cache[record.episode_index] = (advantages, intervention_mask)
+            non_intervention = advantages[~intervention_mask] if intervention_mask.any() else advantages
+            all_advantages.extend(non_intervention.tolist())
+
+        if not all_advantages:
+            self._threshold = 0.0
+        else:
+            self._threshold = float(np.percentile(all_advantages, self.config.threshold_percentile * 100))
+
+        num_positive = sum(1 for a in all_advantages if a > self._threshold)
+        logger.info(
+            "Global threshold: %.4f (percentile=%.0f%%, %d/%d frames positive = %.1f%%)",
+            self._threshold,
+            self.config.threshold_percentile * 100,
+            num_positive,
+            len(all_advantages),
+            100 * num_positive / max(len(all_advantages), 1),
+        )
+
     def run_episode(self, record: EpisodeRecord, staging: EpisodeStaging) -> None:
         """Score one episode and write advantage rows to staging."""
         if self.config.constant_value:
@@ -257,10 +298,16 @@ class AdvantageModule:
             logger.warning("No value_function_path or constant_value configured; skipping advantage scoring.")
             return
 
-        advantages, intervention_mask = self.compute_advantages_for_episode(record)
+        if record.episode_index in self._cache:
+            advantages, intervention_mask = self._cache.pop(record.episode_index)
+        else:
+            advantages, intervention_mask = self.compute_advantages_for_episode(record)
         num_frames = len(advantages)
 
-        threshold = self._compute_threshold(advantages, intervention_mask)
+        if self._threshold is not None:
+            threshold = self._threshold
+        else:
+            threshold = self._compute_threshold(advantages, intervention_mask)
 
         rows: list[dict[str, Any]] = []
         for t in range(num_frames):
