@@ -59,6 +59,20 @@
     title: 在模擬中控制與訓練機器人（LeIsaac）
   title: "模擬（Simulation）"
 - sections:
+  - local: introduction_processors
+    title: 處理器簡介（introduction to processors）
+  - local: debug_processor_pipeline
+    title: 除錯你的處理器管線（debugging your processor pipeline）
+  - local: implement_your_own_processor
+    title: 實作你自己的處理器（implementing your own processor）
+  - local: processors_robots_teleop
+    title: 用於機器人與遙操作器的處理器（processors for robots and teleoperators）
+  - local: env_processor
+    title: 環境處理器（Environment Processors）
+  - local: action_representations
+    title: 動作表示法（Action Representations）
+  title: "機器人處理器（Robot Processors）"
+- sections:
   - local: phone_teleop
     title: 手機（Phone）
   - local: isaac_teleop
