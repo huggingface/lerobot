@@ -24,6 +24,17 @@ from .constants import CHECKPOINTS_DIR
 
 T = TypeVar("T", bound="HubMixin")
 
+# Sharded-training resume artifacts (torch DCP shard dirs + shard files). Published model repos
+# carry safetensors only, so publishing uploads exclude these — checkpoint pushes (which exist
+# for resume, not distribution) deliberately do not.
+DCP_ARTIFACT_PATTERNS = (
+    "pytorch_model_fsdp*",
+    "pytorch_model_fsdp*/**",
+    "optimizer_*/**",
+    "*.distcp",
+    "**/.metadata",
+)
+
 
 def find_latest_hub_checkpoint(
     repo_id: str,
@@ -36,6 +47,16 @@ def find_latest_hub_checkpoint(
     Training runs push checkpoints to ``checkpoints/<step>/`` (see
     ``push_checkpoint_to_hub``). This lists those step dirs and returns
     ``checkpoints/<highest-step>``, or ``None`` if the repo has no checkpoints.
+
+    Args:
+        repo_id (str): The Hub model repo to inspect.
+        token (str | bool | None): Hub authentication token. Defaults to None (the token
+            cached by `huggingface-cli login`).
+        revision (str | None): Repo revision to list. Defaults to None (the default branch).
+
+    Returns:
+        str | None: The repo-relative path `checkpoints/<highest-step>`, or None if the repo
+            has no checkpoints.
     """
     files = HfApi().list_repo_files(repo_id=repo_id, repo_type="model", revision=revision, token=token)
     prefix = f"{CHECKPOINTS_DIR}/"
@@ -164,13 +185,17 @@ class HubMixin:
         ignore_patterns: list[str] | str | None = None,
         delete_patterns: list[str] | str | None = None,
         card_kwargs: dict[str, Any] | None = None,
-    ) -> str:
+    ) -> str | None:
         """
         Upload model checkpoint to the Hub.
 
         Use `allow_patterns` and `ignore_patterns` to precisely filter which files should be pushed to the hub. Use
         `delete_patterns` to delete existing remote files in the same commit. See [`upload_folder`] reference for more
         details.
+
+        Distributed contract: call on EVERY rank. `save_pretrained` runs on all ranks — for
+        sharded objects it can contain a collective gather (rank-gating it would deadlock) —
+        while repo creation and the upload happen on the main process only.
 
         Args:
             repo_id (`str`):
@@ -197,11 +222,17 @@ class HubMixin:
                 Additional arguments passed to the card template to customize the card.
 
         Returns:
-            The url of the commit of your object in the given repository.
+            `str` or `None`: The url of the commit of your object in the given repository, or
+            `None` on non-main ranks of a distributed run (only the main process uploads).
         """
-        api = HfApi(token=token)
-        repo_id = api.create_repo(repo_id=repo_id, private=private, exist_ok=True).repo_id
+        # Lazy import: hub code must not import the distributed package at module load
+        # (configs -> hub is on the import path of lerobot.distributed itself).
+        from lerobot.distributed.utils import is_main_process
 
+        # Distributed contract: `save_pretrained` runs on EVERY rank — for sharded policies it
+        # contains a collective gather (rank-gating it would deadlock) and it writes into this
+        # rank's private tmpdir only on the main process. Repo creation and upload are then
+        # main-process-only.
         if commit_message is None:
             if "Policy" in self.__class__.__name__:
                 commit_message = "Upload policy"
@@ -210,10 +241,13 @@ class HubMixin:
             else:
                 commit_message = f"Upload {self.__class__.__name__}"
 
-        # Push the files to the repo in a single commit
         with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             saved_path = Path(tmp) / repo_id
             self.save_pretrained(saved_path, card_kwargs=card_kwargs)
+            if not is_main_process():
+                return None
+            api = HfApi(token=token)
+            repo_id = api.create_repo(repo_id=repo_id, private=private, exist_ok=True).repo_id
             return api.upload_folder(
                 repo_id=repo_id,
                 repo_type="model",

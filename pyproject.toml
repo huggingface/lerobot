@@ -346,6 +346,7 @@ lerobot-record="lerobot.scripts.lerobot_record:main"
 lerobot-replay="lerobot.scripts.lerobot_replay:main"
 lerobot-setup-motors="lerobot.scripts.lerobot_setup_motors:main"
 lerobot-teleoperate="lerobot.scripts.lerobot_teleoperate:main"
+lerobot-convert-dcp="lerobot.scripts.lerobot_convert_dcp:main"
 lerobot-eval="lerobot.scripts.lerobot_eval:main"
 lerobot-train="lerobot.scripts.lerobot_train:main"
 lerobot-train-tokenizer="lerobot.scripts.lerobot_train_tokenizer:main"
@@ -477,6 +478,12 @@ default.extend-ignore-identifiers-re = [
 # TODO: Enable mypy gradually module by module across multiple PRs
 # Uncomment [tool.mypy] first, then uncomment individual module overrides as they get proper type annotations
 
+[tool.pytest.ini_options]
+markers = [
+    "multigpu: distributed tests needing 2-4 GPUs (CI: docker_publish.yml lane)",
+    "multigpu_heavy: 8-GPU sweeps and soak tests; never run in CI",
+]
+
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true
@@ -506,6 +513,15 @@ module = "lerobot.configs.*"
 ignore_errors = false
 
 # extra strictness for configs
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "lerobot.distributed.*"
+ignore_errors = false
+
+# extra strictness for the distributed engine
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true

@@ -17,6 +17,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,8 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot import envs
+from lerobot.configs.accelerator import AcceleratorConfig, ActivationCheckpointingMode
+from lerobot.configs.parallelism import ParallelismConfig
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint
@@ -36,6 +39,34 @@ from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
+
+
+class CheckpointFormat(str, Enum):
+    """Model-artifact format inside training checkpoints.
+
+    Selects only the *model* artifact; the training_state layout is format-independent (the
+    optimizer channel is always DCP under sharded runs, safetensors+json otherwise).
+
+    - SAFETENSORS (default): a full `model.safetensors` — maximum compatibility, one gather per
+      save under sharding.
+    - DCP: sharded `pytorch_model_fsdp_0/*.distcp` only — fastest save/resume; convert with
+      `lerobot-convert-dcp` before distributing.
+    - SAFETENSORS_AND_DCP: both artifacts, written independently.
+    """
+
+    SAFETENSORS = "safetensors"
+    DCP = "dcp"
+    SAFETENSORS_AND_DCP = "safetensors_dcp"
+
+    @property
+    def wants_safetensors(self) -> bool:
+        """True when a full `model.safetensors` artifact should be written."""
+        return self in (CheckpointFormat.SAFETENSORS, CheckpointFormat.SAFETENSORS_AND_DCP)
+
+    @property
+    def wants_dcp(self) -> bool:
+        """True when sharded DCP model shards (`pytorch_model_fsdp_0/`) should be written."""
+        return self in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_AND_DCP)
 
 
 def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None:
@@ -113,9 +144,16 @@ class TrainPipelineConfig(HubMixin):
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
     save_freq: int = 20_000
+    # Model-artifact format inside checkpoints; non-default values require a sharded run.
+    checkpoint_format: CheckpointFormat = CheckpointFormat.SAFETENSORS
     use_policy_training_preset: bool = True
     optimizer: OptimizerConfig | None = None
     scheduler: LRSchedulerConfig | None = None
+    # Process topology: dp_replicate / dp_shard (HSDP) and context-parallel degree placeholders.
+    parallelism: ParallelismConfig = field(default_factory=ParallelismConfig)
+    # Execution runtime handed to the Accelerator: mixed precision, gradient accumulation,
+    # FSDP/DDP tuning knobs, compile & activation-checkpointing placeholders.
+    accelerator: AcceleratorConfig = field(default_factory=AcceleratorConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
     peft: PeftConfig | None = None
@@ -267,6 +305,60 @@ class TrainPipelineConfig(HubMixin):
 
         if self.save_checkpoint_to_hub and not (self.policy is not None and self.policy.repo_id):
             raise ValueError("save_checkpoint_to_hub requires --policy.repo_id.")
+
+        self._validate_distributed()
+
+    def _validate_distributed(self) -> None:
+        """Fail-fasts for the distributed-training scope.
+
+        Raises:
+            ValueError: If the config requests anything outside the verified scope: context
+                parallelism or CFG parallelism (reserved placeholders), the compile or
+                activation-checkpointing placeholders, a DCP checkpoint format on a
+                non-sharded run, or — under sharded training — fp16 mixed precision, PEFT,
+                reward-model training, in-training environment evaluation, or multi-optimizer
+                configs.
+        """
+        if self.parallelism.cp_size > 1:
+            raise ValueError(
+                "Context parallelism is not implemented yet: --parallelism.context_parallel.* "
+                "degrees must be 1 (reserved for the CP engine round)."
+            )
+        if self.parallelism.cfg_parallel != 1:
+            raise ValueError(
+                "CFG parallelism is inference-only and must be 1 for training "
+                "(cfg_parallel is reserved for the serving round)."
+            )
+        if self.accelerator.compile.enabled:
+            raise ValueError("--accelerator.compile is a placeholder and not wired yet.")
+        if self.accelerator.activation_checkpointing.mode is not ActivationCheckpointingMode.NONE:
+            raise ValueError("--accelerator.activation_checkpointing is a placeholder and not wired yet.")
+        if self.checkpoint_format is not CheckpointFormat.SAFETENSORS and not self.parallelism.is_sharded:
+            raise ValueError(
+                f"checkpoint_format={self.checkpoint_format.value} requires a sharded run "
+                "(--parallelism.dp_shard != 1); non-sharded checkpoints are always safetensors."
+            )
+        if self.parallelism.is_sharded:
+            if self.accelerator.mixed_precision == "fp16":
+                raise ValueError(
+                    "fp16 is not supported under sharded training (GradScaler over DTensor "
+                    "gradients is unverified); use bf16 or full precision."
+                )
+            if self.peft is not None:
+                raise ValueError("PEFT is not supported under sharded training yet.")
+            if self.is_reward_model_training:
+                raise ValueError(
+                    "Reward-model training is not supported under sharded training yet "
+                    "(reward models declare no FSDP wrap units and have no sharded save path)."
+                )
+            if self.env is not None and self.env_eval_freq > 0:
+                raise ValueError(
+                    "In-training environment evaluation is not supported under sharded training "
+                    "(a rank-0-only rollout of a sharded model deadlocks on collectives); set "
+                    "--env_eval_freq=0 and evaluate with lerobot-eval on saved checkpoints."
+                )
+            if self.optimizer is not None and self.optimizer.builds_multiple_optimizers:
+                raise ValueError("Multi-optimizer configs are not supported under sharded training.")
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:

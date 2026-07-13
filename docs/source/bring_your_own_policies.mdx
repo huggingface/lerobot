@@ -161,6 +161,16 @@ The methods called by the train/eval loops:
 
 Batches are flat dictionaries keyed by the constants in [`lerobot.utils.constants`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/utils/constants.py): `OBS_STATE` (`observation.state.<motor>`), `OBS_IMAGES` (`observation.images.<camera>`), `OBS_LANGUAGE`, `ACTION`, etc. Reuse the constants — don't invent new prefixes.
 
+If your model is large enough to warrant [sharded multi-GPU training](./multi_gpu_training#sharded-training-fsdp), also declare its FSDP wrap units — the repeated block classes sharding operates on:
+
+```python
+class MyPolicy(PreTrainedPolicy):
+    ...
+    _fsdp_wrap_modules = ["MyTransformerBlock"]
+```
+
+With this one declaration, `--parallelism.dp_shard=N` works out of the box for your policy (users can still override it with `--accelerator.fsdp.wrap_modules`). Without any wrap source, sharded runs fail at startup by design.
+
 ### Processor functions
 
 LeRobot uses `PolicyProcessorPipeline`s to normalize inputs and de-normalize outputs around your policy. For a concrete reference, see [`processor_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/processor_act.py) or [`processor_diffusion.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/diffusion/processor_diffusion.py).
@@ -300,7 +310,7 @@ Four places need to know about your policy. All by name.
 1. **`policies/__init__.py`** — re-export `MyPolicyConfig` and add it to `__all__`. **Don't** re-export the modeling class; it loads lazily through the factory (so `import lerobot` stays fast).
 2. **`factory.py:get_policy_class`** — add a branch returning `MyPolicy` from a lazy import.
 3. **`factory.py:make_policy_config`** and **`factory.py:make_pre_post_processors`** — same idea, two more branches.
-4. **`templates/lerobot_modelcard_template.md` and the root `README.md`** — the template is what `push_model_to_hub` renders into the model card of every checkpoint trained with your policy: add a one-line description of your policy in the `model_name` branches, map it in `policy_docs` so cards link to your MDX guide, and optionally add an architecture image to `diagrams`. Then add your policy to the models table in the root `README.md`, under the right category, linking to your doc page.
+4. **`templates/lerobot_modelcard_template.md` and the root `README.md`** — the template is what the end-of-training publisher renders into the model card of every checkpoint trained with your policy: add a one-line description of your policy in the `model_name` branches, map it in `policy_docs` so cards link to your MDX guide, and optionally add an architecture image to `diagrams`. Then add your policy to the models table in the root `README.md`, under the right category, linking to your doc page.
 
 Mirror an existing policy that's structurally similar to yours; the diff is small.
 
@@ -338,7 +348,7 @@ A new policy is much easier to review — and far more useful — when it ships 
 
 **Pick at least one in-tree benchmark.** LeRobot ships sim benchmarks with per-benchmark Docker images (LIBERO, LIBERO-plus, Meta-World, RoboTwin 2.0, RoboCasa365, RoboCerebra, RoboMME, VLABench and more). Pick the one that matches your policy's modality — VLAs usually go to LIBERO or VLABench; image-only BC to LIBERO or Meta-World. The full list lives under [Benchmarks](./libero) in the docs sidebar.
 
-**Push the checkpoint & processors** to the Hub under `lerobot/<policy>_<benchmark>` (or your namespace if you don't have write access; a maintainer can mirror it). Use `PreTrainedPolicy.push_model_to_hub` so the repo gets `config.json`, `model.safetensors`, and a model card.
+**Push the checkpoint & processors** to the Hub under `lerobot/<policy>_<benchmark>` (or your namespace if you don't have write access; a maintainer can mirror it). The easiest way is training with `--policy.repo_id=<namespace>/<repo>` and `--policy.push_to_hub=true`: `lerobot-train` publishes the model, both processors, and a model card at the end of the run. To publish an existing checkpoint after the fact, upload its `pretrained_model/` directory (e.g. `huggingface-cli upload`), or use `lerobot-convert-dcp --push_to_hub=...` for sharded-format checkpoints.
 
 **Report results in your policy's MDX**, with the exact `lerobot-eval` command and hardware so anyone can re-run:
 
