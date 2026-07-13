@@ -53,6 +53,14 @@
     title: 串流影片編碼（Streaming Video Encoding）
   title: "資料集（Datasets）"
 - sections:
+  - local: inference
+    title: 策略部署（Policy Deployment, lerobot-rollout）
+  - local: async
+    title: 使用非同步推論（Async Inference）
+  - local: rtc
+    title: 即時分塊（Real-Time Chunking, RTC）
+  title: "推論（Inference）"
+- sections:
   - local: envhub
     title: 來自 Hub 的環境（Environments from the Hub）
   - local: envhub_leisaac
