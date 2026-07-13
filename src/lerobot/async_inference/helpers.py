@@ -301,8 +301,10 @@ def observations_similar(
     """
     # Default to euclidean distance for backward compatibility
     if similarity_fn is None:
-        similarity_fn = lambda s1, s2, tol: torch.linalg.norm(s1 - s2) < tol
-    
+
+        def similarity_fn(s1, s2, tol):
+            return torch.linalg.norm(s1 - s2) < tol
+
     obs1_state = extract_state_from_raw_observation(
         make_lerobot_observation(obs1.get_observation(), lerobot_features)
     )
