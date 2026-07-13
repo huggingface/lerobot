@@ -161,6 +161,7 @@ class TestResume:
 
     def test_dcp_format_integrity_preflight(self, tmp_path):
         """A checkpoint declaring DCP shards without the shard dir fails with the converter hint."""
+        pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
         cfg, policy, optimizer = self._checkpointed_run(tmp_path)
         cfg.parallelism.dp_shard = 2  # pretend the recorded run was sharded
         cfg.checkpoint_format = CheckpointFormat.DCP

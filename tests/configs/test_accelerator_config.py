@@ -81,6 +81,10 @@ class TestDraccusRoundTrip:
 class TestRuntimeBuilders:
     """The mirrors must translate into real accelerate objects (plugins built lazily)."""
 
+    @pytest.fixture(autouse=True)
+    def _requires_accelerate(self):
+        pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
+
     def test_fsdp_plugin_translation(self):
         plugin = FSDPConfig(
             reshard_after_forward=False, wrap_modules=["MyBlock"], cpu_offload=True

@@ -26,6 +26,8 @@ import inspect
 
 import pytest
 
+pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
+
 
 def test_fsdp_checkpoint_name_constants():
     """Checkpoint dir names are imported from accelerate; the on-disk layout depends on them."""

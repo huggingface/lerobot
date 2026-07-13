@@ -34,6 +34,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
+
 import torch
 import torch.distributed.checkpoint as dist_cp
 from accelerate.utils.constants import FSDP_MODEL_NAME, OPTIMIZER_NAME

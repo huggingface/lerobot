@@ -25,6 +25,10 @@ shard dir makes the containment check deterministically a no-op.
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
+
 
 def fake_accelerator() -> SimpleNamespace:
     return SimpleNamespace(state=SimpleNamespace(fsdp_plugin=object()))

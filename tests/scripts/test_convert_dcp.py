@@ -21,6 +21,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
+
 import lerobot.distributed.checkpoint as dist_checkpoint
 from lerobot.scripts.lerobot_convert_dcp import (
     ConvertDcpConfig,

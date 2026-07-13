@@ -62,6 +62,7 @@ class _TinyModel(nn.Module):
 class TestStripAccelerateCpHooks:
     def test_strips_the_real_accelerate_hook_and_restores_mask_semantics(self):
         """Attach accelerate's actual mask-stripping hook, strip it, verify masks survive."""
+        pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
         from accelerate.big_modeling import _attach_context_parallel_hooks
 
         model = _TinyModel()
@@ -97,6 +98,10 @@ def _accelerator_with(plugin) -> SimpleNamespace:
 
 
 class TestSetFsdpWrapModules:
+    @pytest.fixture(autouse=True)
+    def _requires_accelerate(self):
+        pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
+
     def test_policy_declaration_fills_plugin(self):
         plugin = FSDPConfig().build_plugin()
         set_fsdp_wrap_modules(_accelerator_with(plugin), _DeclaredPolicy())
