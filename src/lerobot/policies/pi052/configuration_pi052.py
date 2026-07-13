@@ -92,6 +92,25 @@ class PI052Config(PI05Config):
     knowledge_insulation: bool = True
     """Block action-loss gradients through VLM keys and values."""
 
+    # Optional training backends. Defaults preserve the eager/SDPA path.
+    use_flashrt_adarms: bool = False
+    """Use FlashRT adaptive RMSNorm kernels when available."""
+
+    use_compiled_text_ce: bool = False
+    """Compile the materialized-logits text and FAST CE path."""
+
+    use_compiled_vision: bool = False
+    """Compile the SigLIP tower for no-grad flow and inference passes."""
+
+    use_flex_attention: bool = False
+    """Use FlexAttention BlockMasks for KI where supported."""
+
+    use_manual_attention: bool = False
+    """Use materialized-logits attention for explicitly profiled KI shapes."""
+
+    manual_attention_scope: str = "all"
+    """Apply manual attention to all KI queries or only action queries."""
+
     # Scale language-head updates relative to the base optimizer schedule.
     lm_head_lr_scale: float = 1.0
 
@@ -110,9 +129,6 @@ class PI052Config(PI05Config):
 
     Apply after loading with ``PI052Policy.apply_flashrt_fp8_mlp``; unavailable kernels keep BF16.
     """
-
-    use_flex_attention: bool = False
-    """Select FlexAttention where supported; otherwise use equivalent SDPA/eager attention."""
 
     # Keep serialized PI052 AdamW options local because PI05Config lacks them.
     optimizer_foreach: bool | None = False
@@ -135,3 +151,13 @@ class PI052Config(PI05Config):
             self.train_expert_only = False
         if self.flow_num_repeats < 1:
             raise ValueError(f"flow_num_repeats must be >= 1, got {self.flow_num_repeats}")
+        if self.manual_attention_scope not in {"all", "action"}:
+            raise ValueError(
+                f"manual_attention_scope must be 'all' or 'action', got {self.manual_attention_scope!r}"
+            )
+        if self.use_flex_attention and self.use_manual_attention:
+            raise ValueError("use_flex_attention and use_manual_attention are mutually exclusive")
+        if not self.knowledge_insulation and (
+            self.use_flex_attention or self.use_manual_attention or self.use_flashrt_adarms
+        ):
+            raise ValueError("KI attention and AdaRMS optimizations require knowledge_insulation=True")
