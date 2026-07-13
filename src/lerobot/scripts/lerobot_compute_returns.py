@@ -80,6 +80,7 @@ class ComputeReturnsConfig:
     gamma: float = 1.0
     episodes: list[int] = field(default_factory=list)
     force: bool = False
+    push_to_hub: bool = False
 
 
 def _get_episode_success(
@@ -243,6 +244,19 @@ def compute_returns(config: ComputeReturnsConfig) -> Path:
     _update_info_json(root, meta)
 
     logger.info("Done. Columns written: is_terminal, mc_return")
+
+    if config.push_to_hub:
+        from huggingface_hub import HfApi
+
+        api = HfApi()
+        logger.info(f"Pushing updated dataset to Hub: {config.dataset_repo_id}")
+        api.upload_folder(
+            folder_path=str(root),
+            repo_id=config.dataset_repo_id,
+            repo_type="dataset",
+        )
+        logger.info("Push to Hub complete.")
+
     return root
 
 
@@ -350,6 +364,11 @@ Examples:
         action="store_true",
         help="Overwrite existing is_terminal/mc_return columns.",
     )
+    parser.add_argument(
+        "--push-to-hub",
+        action="store_true",
+        help="Push the updated dataset to the Hugging Face Hub after computing returns.",
+    )
 
     args = parser.parse_args()
 
@@ -369,6 +388,7 @@ Examples:
         gamma=args.gamma,
         episodes=args.episodes or [],
         force=args.force,
+        push_to_hub=args.push_to_hub,
     )
 
     root = compute_returns(config)
