@@ -456,14 +456,32 @@ def _strip_runtime_owned_language_cols(sample: dict) -> None:
         sample.pop(k, None)
 
 
+# Model-input keys some policies emit OUTSIDE the ``observation.*`` namespace and
+# still need at inference. MolmoAct2's processor packs its prompt + images into
+# these top-level keys; PI0-family policies never produce them, so keeping the
+# allowlist is a no-op for them.
+_MODEL_INPUT_PASSTHROUGH_KEYS = (
+    "input_ids",
+    "attention_mask",
+    "token_type_ids",
+    "pixel_values",
+    "image_token_pooling",
+    "image_grids",
+    "image_num_crops",
+    "pixel_values_videos",
+    "video_token_pooling",
+    "video_grids",
+)
+
+
 def _select_observation_to_device(sample: dict, device: Any) -> dict:
-    """Filter to ``observation.*`` keys and move tensors to ``device``."""
+    """Keep ``observation.*`` (+ model-input passthrough) keys, move tensors to ``device``."""
     import torch  # noqa: PLC0415
 
     return {
         k: v.to(device) if isinstance(v, torch.Tensor) else v
         for k, v in sample.items()
-        if isinstance(k, str) and k.startswith("observation.")
+        if isinstance(k, str) and (k.startswith("observation.") or k in _MODEL_INPUT_PASSTHROUGH_KEYS)
     }
 
 
@@ -871,11 +889,17 @@ def _build_robot_observation_provider(
     task: str | None,
     ds_features: dict[str, Any] | None,
     rerun_log: bool = False,
+    get_task: Callable[[], str | None] | None = None,
 ) -> Callable[[], dict | None]:
     """Closure reading from the robot each call: ``robot.get_observation()`` →
     ``build_inference_frame`` (state vector + image tensors, batched, on device)
     → ``EnvTransition``-wrapped preprocessor (rename, normalise) → flat
     observation batch for ``select_action`` / ``select_message``.
+
+    ``get_task`` (optional) is read every frame so the instruction packed into
+    the observation tracks the live task/subtask (e.g. MolmoAct2, whose processor
+    tokenizes the task into ``input_ids`` each frame). Falls back to the static
+    ``task`` when it returns nothing.
     """
     import torch  # noqa: PLC0415
 
@@ -914,6 +938,9 @@ def _build_robot_observation_provider(
             target_image_shapes[cam_key] = (int(h), int(w))
 
     def _provider() -> dict | None:
+        # Live task: re-read every frame so a typed command re-packs the prompt
+        # (falls back to the static startup task).
+        cur_task = (get_task() if get_task is not None else None) or task
         try:
             raw = robot.get_observation()
         except Exception as exc:  # noqa: BLE001
@@ -933,7 +960,7 @@ def _build_robot_observation_provider(
                 for k, v in raw.items()
                 if isinstance(v, (int, float)) and k not in cam_keys
             }
-            rerun_viz.log_robot_frame(raw, cam_keys, state=state, task=task)
+            rerun_viz.log_robot_frame(raw, cam_keys, state=state, task=cur_task)
 
         # The runtime supplies messages itself; strip any language
         # columns the robot stream may carry through.
@@ -997,7 +1024,7 @@ def _build_robot_observation_provider(
                     raw,
                     torch_device,
                     ds_features=ds_features,
-                    task=task,
+                    task=cur_task,
                     robot_type=robot_type,
                 )
             else:
@@ -1007,7 +1034,7 @@ def _build_robot_observation_provider(
                 obs_tensors = prepare_observation_for_inference(
                     raw,
                     torch_device,
-                    task=task,
+                    task=cur_task,
                     robot_type=robot_type,
                 )
         except Exception as exc:  # noqa: BLE001
@@ -1602,6 +1629,15 @@ def run(
     robot_executor: Callable[[Any], None] | None = None
     robot = None
     sim_backend = None
+    # Late-bound handle to the runtime so the robot observation provider can read
+    # the live task/subtask each frame (the runtime is created further below).
+    runtime_box: dict[str, Any] = {}
+
+    def _live_task() -> str | None:
+        rt = runtime_box.get("rt")
+        if rt is None:
+            return args.task
+        return rt.state.get("current_subtask") or rt.state.get("task") or args.task
 
     if sim_mode:
         from lerobot.runtime.sim_robocasa import RoboCasaSimBackend  # noqa: PLC0415
@@ -1653,6 +1689,7 @@ def run(
             task=args.task,
             ds_features=ds_meta.features if ds_meta is not None else None,
             rerun_log=bool(args.rerun),
+            get_task=_live_task,
         )
         robot_executor = _build_robot_action_executor(
             robot=robot,
@@ -1702,6 +1739,8 @@ def run(
         ctrl_hz=args.ctrl_hz,
         high_level_hz=args.high_level_hz,
     )
+    # Let the robot observation provider read the live task/subtask each frame.
+    runtime_box["rt"] = runtime
     # Apply the startup mode chosen above the task picker.
     runtime.state["mode"] = startup_mode
     if args.task:
