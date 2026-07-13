@@ -234,10 +234,20 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         help="Live rerun viewer for the robot cameras (real-robot mode). Serves a "
         "headless web viewer; forward --rerun.web_port and --rerun.grpc_port over SSH.",
     )
-    p.add_argument("--rerun.web_port", dest="rerun_web_port", type=int, default=9090,
-                   help="rerun web-viewer port (default 9090).")
-    p.add_argument("--rerun.grpc_port", dest="rerun_grpc_port", type=int, default=9876,
-                   help="rerun gRPC data port (default 9876).")
+    p.add_argument(
+        "--rerun.web_port",
+        dest="rerun_web_port",
+        type=int,
+        default=9090,
+        help="rerun web-viewer port (default 9090).",
+    )
+    p.add_argument(
+        "--rerun.grpc_port",
+        dest="rerun_grpc_port",
+        type=int,
+        default=9876,
+        help="rerun gRPC data port (default 9876).",
+    )
     p.add_argument(
         "--direct_subtask",
         action="store_true",
@@ -558,9 +568,7 @@ def _load_policy_and_preprocessor(
         if load_processors_from_checkpoint:
             # Eval-matching processors: stats from the checkpoint safetensors,
             # recipe from cfg.recipe_path. No dataset needed.
-            preprocessor, postprocessor = make_pre_post_processors(
-                cfg, pretrained_path=cfg.pretrained_path
-            )
+            preprocessor, postprocessor = make_pre_post_processors(cfg, pretrained_path=cfg.pretrained_path)
 
     policy.eval()
     return policy, preprocessor, postprocessor, ds_meta
@@ -761,6 +769,31 @@ def _select_task_interactively(
         )
 
 
+def _dataset_features_from_robot(robot) -> dict[str, Any]:
+    """Build a LeRobot feature schema from a connected robot.
+
+    Used when no ``--dataset.repo_id`` is given so the runtime can assemble
+    observations and name action joints without a dataset (normalization stats
+    then come from the checkpoint). Mirrors ``lerobot-rollout``'s
+    ``build_rollout_context``: only ``.pos`` joints and camera features are
+    routed to the policy.
+    """
+    from lerobot.utils.feature_utils import (  # noqa: PLC0415
+        combine_feature_dicts,
+        hw_to_dataset_features,
+    )
+
+    obs_hw = {
+        key: ft
+        for key, ft in robot.observation_features.items()
+        if isinstance(ft, tuple) or (ft is float and key.endswith(".pos"))
+    }
+    action_hw = {key: ft for key, ft in robot.action_features.items() if key.endswith(".pos")}
+    obs_features = hw_to_dataset_features(obs_hw, "observation")
+    action_features = hw_to_dataset_features(action_hw, "action")
+    return combine_feature_dicts(obs_features, action_features)
+
+
 def _build_robot(
     *,
     robot_type: str,
@@ -955,11 +988,7 @@ def _build_robot_observation_provider(
             cam_keys = list(target_image_shapes.keys()) or [
                 k for k, v in raw.items() if hasattr(v, "ndim") and getattr(v, "ndim", 0) == 3
             ]
-            state = {
-                k: v
-                for k, v in raw.items()
-                if isinstance(v, (int, float)) and k not in cam_keys
-            }
+            state = {k: v for k, v in raw.items() if isinstance(v, (int, float)) and k not in cam_keys}
             rerun_viz.log_robot_frame(raw, cam_keys, state=state, task=cur_task)
 
         # The runtime supplies messages itself; strip any language
@@ -1068,7 +1097,7 @@ def _build_robot_action_executor(
     *,
     robot,
     postprocessor: Any,
-    ds_meta: Any,
+    ds_features: dict[str, Any],
     rerun_log: bool = False,
 ) -> Callable[[Any], None]:
     """Closure that postprocesses an action and dispatches to the robot.
@@ -1091,7 +1120,7 @@ def _build_robot_action_executor(
             if isinstance(action, torch.Tensor):
                 if action.ndim > 1 and action.shape[0] == 1:
                     action = action.squeeze(0)
-                action_dict = make_robot_action(action, ds_meta.features)
+                action_dict = make_robot_action(action, ds_features)
             elif isinstance(action, dict):
                 action_dict = action
             else:
@@ -1537,14 +1566,16 @@ def run(
             file=sys.stderr,
         )
         return 2
+    # Autonomous robot mode can run without a dataset: normalization stats are
+    # loaded from the checkpoint (same as lerobot-rollout and sim mode) and the
+    # observation/action feature schema is derived from the connected robot. A
+    # dataset is still honoured when given — its stats then take precedence.
     if autonomous_mode and not args.dataset_repo_id:
-        print(
-            "[runtime] ERROR: autonomous robot mode requires --dataset.repo_id "
-            "for action-denormalisation stats and feature shapes. Pass the "
-            "same dataset the policy was trained on.",
-            file=sys.stderr,
+        logger.info(
+            "autonomous robot mode without --dataset.repo_id: loading "
+            "normalization stats from the checkpoint and deriving the feature "
+            "schema from the robot."
         )
-        return 2
 
     # Create the sim env subprocess BEFORE the policy initialises CUDA — the
     # env worker inherits a corrupt EGL/GL context if forked from a CUDA parent
@@ -1576,10 +1607,13 @@ def run(
         )
 
     print(f"[runtime] loading policy from {args.policy_path}", flush=True)
+    # Sim mode always loads processors from the checkpoint; robot mode does too
+    # when no dataset is supplied (stats come from the checkpoint / norm_tag).
+    load_processors_from_checkpoint = sim_mode or (autonomous_mode and not args.dataset_repo_id)
     policy, preprocessor, postprocessor, ds_meta = _load_policy_and_preprocessor(
         args.policy_path,
         args.dataset_repo_id,
-        load_processors_from_checkpoint=sim_mode,
+        load_processors_from_checkpoint=load_processors_from_checkpoint,
         fp8=args.fp8,
     )
 
@@ -1682,19 +1716,22 @@ def run(
             robot_cameras_json=args.robot_cameras,
             robot_max_relative_target=args.robot_max_relative_target,
         )
+        # Feature schema: from the dataset when given, otherwise derived from the
+        # connected robot (mirrors lerobot-rollout) so no dataset is required.
+        robot_features = ds_meta.features if ds_meta is not None else _dataset_features_from_robot(robot)
         observation_provider = _build_robot_observation_provider(
             robot=robot,
             preprocessor=preprocessor,
             device=str(getattr(policy.config, "device", "cpu")),
             task=args.task,
-            ds_features=ds_meta.features if ds_meta is not None else None,
+            ds_features=robot_features,
             rerun_log=bool(args.rerun),
             get_task=_live_task,
         )
         robot_executor = _build_robot_action_executor(
             robot=robot,
             postprocessor=postprocessor,
-            ds_meta=ds_meta,
+            ds_features=robot_features,
             rerun_log=bool(args.rerun),
         )
     elif args.dataset_repo_id is not None:
