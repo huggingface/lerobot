@@ -16,14 +16,19 @@
 
 """SONIC full-body controller for Unitree G1."""
 
+from __future__ import annotations
+
 import logging
 import os
+from typing import TYPE_CHECKING
 
 import numpy as np
-import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
-from lerobot.robots.unitree_g1.controllers.sonic_pipeline import (
+from lerobot.utils.import_utils import _onnxruntime_available, require_package
+
+from ..g1_utils import lowstate_to_obs
+from .sonic_pipeline import (
     CONTROL_DT,
     DEBUG_PRINT_EVERY,
     DEFAULT_ANGLES,
@@ -33,14 +38,18 @@ from lerobot.robots.unitree_g1.controllers.sonic_pipeline import (
     MovementState,
     PlannerController,
     SonicPlanner,
-    _ort_providers,
-    _snapshot_ms,
     clamp_mode_params,
     compute_kp_kd,
+    ort_providers,
     process_joystick,
     should_replan_request,
+    snapshot_ms,
 )
-from lerobot.robots.unitree_g1.g1_utils import lowstate_to_obs
+
+if TYPE_CHECKING or _onnxruntime_available:
+    import onnxruntime as ort
+else:
+    ort = None
 
 logger = logging.getLogger(__name__)
 
@@ -89,11 +98,12 @@ class SonicRuntime:
     """Shared SONIC control loop state (standalone demo + locomotion controller)."""
 
     def __init__(self, force_cpu: bool = False):
+        require_package("onnxruntime", extra="unitree_g1")
         planner_path = hf_hub_download(repo_id="nvidia/GEAR-SONIC", filename="planner_sonic.onnx")
         encoder_path = hf_hub_download(repo_id="nvidia/GEAR-SONIC", filename="model_encoder.onnx")
         decoder_path = hf_hub_download(repo_id="nvidia/GEAR-SONIC", filename="model_decoder.onnx")
 
-        providers = _ort_providers(force_cpu=force_cpu)
+        providers = ort_providers(force_cpu=force_cpu)
         self.use_gpu = providers[0] == "CUDAExecutionProvider"
         so = ort.SessionOptions()
         so.log_severity_level = 3
@@ -113,7 +123,7 @@ class SonicRuntime:
 
         self.step = 0
         self.replan_timer = 0.0
-        self.last_ms = _snapshot_ms(self.ms)
+        self.last_ms = snapshot_ms(self.ms)
 
     @property
     def pipeline(self):
@@ -134,7 +144,7 @@ class SonicRuntime:
             self.planner.request_replan(self.controller.ref_cursor, self.ms)
             self.replan_timer = 0.0
             self.ms.needs_replan = False
-            self.last_ms = _snapshot_ms(self.ms)
+            self.last_ms = snapshot_ms(self.ms)
 
         do_enc = self.step % ENCODER_UPDATE_EVERY == 0
         if debug is None:
@@ -155,7 +165,7 @@ class SonicRuntime:
         self.controller.playing = True
         self.step = 0
         self.replan_timer = 0.0
-        self.last_ms = _snapshot_ms(self.ms)
+        self.last_ms = snapshot_ms(self.ms)
 
     def shutdown(self):
         self.planner.stop_subprocess()

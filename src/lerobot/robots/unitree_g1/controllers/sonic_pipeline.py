@@ -16,6 +16,8 @@
 
 """SONIC planner pipeline: ONNX enc/dec/planner, movement state, and input helpers."""
 
+from __future__ import annotations
+
 import math
 import queue
 import select
@@ -26,14 +28,21 @@ import time
 import tty
 from dataclasses import dataclass
 from enum import IntEnum
+from typing import TYPE_CHECKING
 
 import numpy as np
-import onnxruntime as ort
 
-from lerobot.robots.unitree_g1.g1_utils import (
+from lerobot.utils.import_utils import _onnxruntime_available
+
+from ..g1_utils import (
     G1_29_JointIndex,
     get_gravity_orientation,
 )
+
+if TYPE_CHECKING or _onnxruntime_available:
+    import onnxruntime as ort
+else:
+    ort = None
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -419,7 +428,7 @@ def replan_interval(mode):
     return REPLAN_INTERVAL["default"]
 
 
-def _ort_providers(force_cpu: bool = False) -> list[str]:
+def ort_providers(force_cpu: bool = False) -> list[str]:
     """Prefer CUDA for enc/dec/planner (matches deploy when onnxruntime-gpu is installed)."""
     avail = ort.get_available_providers()
     if not force_cpu and "CUDAExecutionProvider" in avail:
@@ -471,7 +480,7 @@ class MovementSnapshot:
     facing: tuple[float, float, float] = (1.0, 0.0, 0.0)
 
 
-def _snapshot_ms(ms: MovementState) -> MovementSnapshot:
+def snapshot_ms(ms: MovementState) -> MovementSnapshot:
     md, fd = ms.movement_direction, ms.facing_direction
     return MovementSnapshot(ms.mode, ms.speed, ms.height, (md[0], md[1], md[2]), (fd[0], fd[1], fd[2]))
 
@@ -738,7 +747,7 @@ def _build_planner_inputs(ctx, ms_dict, version, seed):
 def _planner_worker(path, req_q, res_q, stop_evt, version, seed, use_gpu):
     so = ort.SessionOptions()
     so.log_severity_level = 3
-    providers = _ort_providers(force_cpu=not use_gpu)
+    providers = ort_providers(force_cpu=not use_gpu)
     sess = ort.InferenceSession(path, sess_options=so, providers=providers)
     while not stop_evt.is_set():
         try:

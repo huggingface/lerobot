@@ -14,20 +14,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import json
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
-import onnx
-import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
-from lerobot.robots.unitree_g1.g1_utils import (
+from lerobot.utils.import_utils import _onnx_available, _onnxruntime_available, require_package
+
+from ..g1_utils import (
     REMOTE_AXES,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
     get_gravity_orientation,
 )
+
+if TYPE_CHECKING or _onnxruntime_available:
+    import onnxruntime as ort
+else:
+    ort = None
+
+if TYPE_CHECKING or _onnx_available:
+    import onnx
+else:
+    onnx = None
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +114,8 @@ class HolosomaLocomotionController:
     control_dt = CONTROL_DT  # Expose for unitree_g1.py
 
     def __init__(self):
+        require_package("onnxruntime", extra="unitree_g1")
+        require_package("onnx", extra="unitree_g1")
         # Load policy and gains
         self.policy, self.kp, self.kd = load_policy()
 
