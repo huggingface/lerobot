@@ -14,7 +14,44 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SONIC planner pipeline: ONNX enc/dec/planner, movement state, and input helpers."""
+"""SONIC planner pipeline for the Unitree G1 whole-body controller.
+
+This module is a pure-Python/ONNX re-implementation of NVIDIA's SONIC deploy stack
+(mirrors ``g1_deploy_onnx_ref.cpp``). It turns a high-level movement intent
+(walk/run/squat/box/… + speed/height/heading, driven by keyboard or joystick) into
+50 Hz joint-position targets for the robot's PD controller.
+
+Data flow (one 50 Hz control tick, orchestrated by ``SonicRuntime`` in
+``sonic_whole_body.py``):
+
+    intent (MovementState) ──► SonicPlanner ──► PlannerController ──► joint targets
+                                   │                    │
+                     (planner ONNX, 30 Hz,       (encoder+decoder ONNX,
+                      async background thread)     runs every tick)
+
+Three cooperating ONNX models:
+  * **planner**  – generates a several-second *reference motion* (body trajectory +
+    joint clip) for the current intent. Slow, so it runs asynchronously in a
+    background thread (``_planner_worker``) and its 30 Hz output is resampled to
+    50 Hz. New motions are cross-faded into the live buffer (``blend_new_motion``).
+  * **encoder**  – compresses the reference window into a 64-D latent ``token``
+    (refreshed every ``ENCODER_UPDATE_EVERY`` ticks).
+  * **decoder**  – every tick, maps the token + recent proprioception history to a
+    residual action that is scaled and added to ``DEFAULT_ANGLES``.
+
+Encoder ``encode_mode`` selects what the reference represents:
+  * ``0`` – locomotion (planner clip drives lower + upper body).
+  * ``1`` – 3-point VR teleop (lower body from planner, arms from VR targets).
+  * ``2`` – SMPL whole-body imitation (720-D SMPL window drives the pose).
+
+Index spaces: joints exist in two orderings — **IsaacLab** (policy/training order)
+and **MuJoCo** (deploy order). ``ISAACLAB_TO_MUJOCO`` / ``MUJOCO_TO_ISAACLAB`` convert
+between them. Quaternions are scalar-first ``(w, x, y, z)``.
+
+Section map: constants & index tables · PD gains · quaternion helpers · locomotion
+modes · movement state · encoder/decoder · planner motion buffer · async planner
+worker · ``SonicPlanner`` · ``PlannerController`` · keyboard/joystick input.
+"""
 
 from __future__ import annotations
 
@@ -45,7 +82,11 @@ else:
     ort = None
 
 # ── Constants ────────────────────────────────────────────────────────────────
+# Robot/motor physical constants and the joint-order permutation tables. All
+# 29-vectors are in IsaacLab joint order unless the name says ``_MUJOCO``.
 
+# Nominal standing pose (rad), 29 joints in IsaacLab order. Actions are residuals
+# added on top of this; also used as the planner/encoder standing reference.
 DEFAULT_ANGLES = np.array(
     [
         -0.312,
@@ -81,36 +122,42 @@ DEFAULT_ANGLES = np.array(
     dtype=np.float32,
 )
 
-NATURAL_FREQ = 10.0 * 2.0 * np.pi
+# Per-motor-type parameters used to derive action scaling and PD gains. Keys are
+# Unitree motor model names; ARMATURE = rotor inertia, EFFORT = torque limit (N·m).
+NATURAL_FREQ = 10.0 * 2.0 * np.pi  # target closed-loop stiffness bandwidth (rad/s)
 ARMATURE = {"5020": 0.003609725, "7520_14": 0.010177520, "7520_22": 0.025101925, "4010": 0.00425}
 EFFORT = {"5020": 25.0, "7520_14": 88.0, "7520_22": 139.0, "4010": 5.0}
 
 
 def _action_scale(k):
+    """Per-motor residual-action scale (maps policy output to joint-angle delta)."""
     return 0.25 * EFFORT[k] / (ARMATURE[k] * NATURAL_FREQ**2)
 
 
+# Per-joint motor model (IsaacLab order): legs, waist, then arms.
 _J = (
     ["7520_22", "7520_22", "7520_14", "7520_22", "5020", "5020"] * 2
     + ["7520_14", "5020", "5020"]
     + ["5020", "5020", "5020", "5020", "5020", "4010", "4010"] * 2
 )
-ACTION_SCALE = np.array([_action_scale(k) for k in _J], dtype=np.float32)
+ACTION_SCALE = np.array([_action_scale(k) for k in _J], dtype=np.float32)  # (29,) IsaacLab order
 
-CONTROL_DT = 0.02
-DEFAULT_HEIGHT = 0.788740
-TOKEN_DIM = 64
-ENCODER_UPDATE_EVERY = 5
-DEBUG_PRINT_EVERY = 100
-MOTION_LOOK_AHEAD_STEPS = 2
+CONTROL_DT = 0.02  # 50 Hz control period (s)
+DEFAULT_HEIGHT = 0.788740  # nominal pelvis height (m)
+TOKEN_DIM = 64  # encoder latent size
+ENCODER_UPDATE_EVERY = 5  # refresh the encoder token every N ticks (decoder runs every tick)
+DEBUG_PRINT_EVERY = 100  # ticks between debug prints
+MOTION_LOOK_AHEAD_STEPS = 2  # frames ahead used to seed a replan context (hide planner latency)
 INITIAL_RANDOM_SEED = 1234
-MIN_TOKENS, MAX_TOKENS = 6, 16
+MIN_TOKENS, MAX_TOKENS = 6, 16  # planner prediction-length token range
 K = MAX_TOKENS - MIN_TOKENS + 1
-DEADZONE = 0.05
-BLEND_FRAMES = 8
+DEADZONE = 0.05  # joystick dead zone
+BLEND_FRAMES = 8  # cross-fade length when swapping in a freshly planned motion
 
+# Seconds between automatic replans, per motion class (faster for dynamic motions).
 REPLAN_INTERVAL = {"running": 0.1, "crawling": 0.2, "boxing": 1.0, "default": 1.0}
 
+# Joint-order permutations between IsaacLab (policy) and MuJoCo (deploy) layouts.
 ISAACLAB_TO_MUJOCO = np.array(
     [
         0,
@@ -183,22 +230,29 @@ MUJOCO_TO_ISAACLAB = np.array(
 
 
 def _to_mujoco(a):
+    """Reorder a 29-vector from IsaacLab order into MuJoCo/deploy order."""
     return a[MUJOCO_TO_ISAACLAB]
 
 
 DEFAULT_ANGLES_MUJOCO = _to_mujoco(DEFAULT_ANGLES)
 ENCODER_STANDING_REF = DEFAULT_ANGLES.copy()
 
-LOWER_BODY_IL = np.array([0, 3, 6, 9, 13, 17, 1, 4, 7, 10, 14, 18], dtype=np.int32)
-WRIST_IL = np.array([23, 24, 25, 26, 27, 28], dtype=np.int32)
-VR_TARGET_DEF = np.zeros(9, dtype=np.float32)
-VR_ORN_DEF = np.array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], dtype=np.float32)
-SMPL_DEF = np.zeros(720, dtype=np.float32)
+# Joint-index subsets (IsaacLab order) used to slice encoder observations.
+LOWER_BODY_IL = np.array([0, 3, 6, 9, 13, 17, 1, 4, 7, 10, 14, 18], dtype=np.int32)  # 12 leg joints
+WRIST_IL = np.array([23, 24, 25, 26, 27, 28], dtype=np.int32)  # 6 wrist joints
+VR_TARGET_DEF = np.zeros(9, dtype=np.float32)  # 3-point VR position targets (mode 1)
+VR_ORN_DEF = np.array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], dtype=np.float32)  # VR orn targets (mode 1)
+SMPL_DEF = np.zeros(720, dtype=np.float32)  # SMPL whole-body window default (mode 2)
 
 # ── PD gains ─────────────────────────────────────────────────────────────────
 
 
 def compute_kp_kd():
+    """Derive per-joint PD gains (kp, kd) from motor armature and target bandwidth.
+
+    Ankle and waist joints get a x2 factor for extra stiffness. Returns two
+    (29,) float32 arrays in IsaacLab joint order.
+    """
     def s(k):
         return ARMATURE[k] * NATURAL_FREQ**2
 
@@ -221,13 +275,16 @@ _kp_kd = compute_kp_kd  # backward-compatible alias
 
 
 # ── Quaternion helpers ────────────────────────────────────────────────────────
+# All quaternions are scalar-first (w, x, y, z). "heading" = yaw-only quaternion.
 
 
 def quat_conj(q):
+    """Quaternion conjugate (inverse for unit quaternions)."""
     return np.array([q[0], -q[1], -q[2], -q[3]], dtype=np.float32)
 
 
 def quat_mul(q1, q2):
+    """Hamilton product ``q1 ⊗ q2``."""
     w1, x1, y1, z1 = q1
     w2, x2, y2, z2 = q2
     return np.array(
@@ -242,6 +299,7 @@ def quat_mul(q1, q2):
 
 
 def quat_to_6d(q):
+    """Quaternion → 6-D rotation representation (first two rotated basis rows)."""
     w, x, y, z = q
     return np.array(
         [
@@ -257,20 +315,24 @@ def quat_to_6d(q):
 
 
 def calc_heading(q):
+    """Extract the yaw (heading) angle in radians from a quaternion."""
     w, x, y, z = q
     return float(np.arctan2(2 * (x * y + w * z), 1 - 2 * (y * y + z * z)))
 
 
 def heading_quat(q, sign=1.0):
+    """Yaw-only quaternion for ``q``'s heading (``sign=-1`` gives its inverse)."""
     a = sign * calc_heading(q) / 2.0
     return np.array([np.cos(a), 0, 0, np.sin(a)], dtype=np.float64)
 
 
 def heading_quat_inv(q):
+    """Inverse yaw-only quaternion for ``q``'s heading."""
     return heading_quat(q, -1.0)
 
 
 def quat_slerp(q0, q1, t):
+    """Spherical linear interpolation between two quaternions (scalar ``t``)."""
     q0 = q0 / (np.linalg.norm(q0) + 1e-12)
     q1 = q1 / (np.linalg.norm(q1) + 1e-12)
     dot = float(np.dot(q0, q1))
@@ -286,6 +348,7 @@ def quat_slerp(q0, q1, t):
 
 
 def quat_slerp_batch(q0, q1, t):
+    """Vectorized slerp over arrays of quaternions with a per-row parameter ``t``."""
     q0 = q0 / (np.linalg.norm(q0, axis=1, keepdims=True) + 1e-12)
     q1 = q1 / (np.linalg.norm(q1, axis=1, keepdims=True) + 1e-12)
     dot = np.sum(q0 * q1, axis=1)
@@ -309,6 +372,8 @@ def quat_slerp_batch(q0, q1, t):
 
 
 class LocomotionMode(IntEnum):
+    """High-level motion styles understood by the planner (fed as the ``mode`` input)."""
+
     IDLE = 0
     SLOW_WALK = 1
     WALK = 2
@@ -340,6 +405,7 @@ class LocomotionMode(IntEnum):
 
 LM = LocomotionMode
 
+# UI groupings of modes for cycling with the n/p keys; each entry is (label, modes).
 MOTION_SETS = [
     ("Standing", [LM.SLOW_WALK, LM.WALK, LM.RUN, LM.FORWARD_JUMP, LM.STEALTH_WALK, LM.INJURED_WALK]),
     ("Squat / Low", [LM.SQUAT, LM.KNEEL_TWO_LEGS, LM.KNEEL, LM.CRAWLING, LM.ELBOW_CRAWLING]),
@@ -369,6 +435,7 @@ MOTION_SETS = [
     ),
 ]
 
+# Mode classifications used by clamping and replan logic.
 STATIC_MODES = {LM.IDLE, LM.SQUAT, LM.KNEEL_TWO_LEGS, LM.KNEEL, LM.LYING_FACE_DOWN, LM.IDLE_BOXING}
 STANDING_MODES = {
     LM.IDLE,
@@ -404,6 +471,11 @@ SPEED_RANGES = {
 
 
 def clamp_mode_params(ms):
+    """Clamp ``ms.speed``/``ms.height`` into the valid range for its mode in place.
+
+    ``-1.0`` is a sentinel meaning "use the mode's default" (e.g. standing modes
+    ignore height; static modes ignore speed).
+    """
     m = LM(ms.mode)
     ms.height = -1.0 if m in STANDING_MODES else max(0.1, min(0.8, ms.height if ms.height >= 0 else 0.2))
     if m in STATIC_MODES:
@@ -418,6 +490,7 @@ def clamp_mode_params(ms):
 
 
 def replan_interval(mode):
+    """Seconds between automatic replans for the given mode."""
     m = LM(mode)
     if m == LM.RUN:
         return REPLAN_INTERVAL["running"]
@@ -441,6 +514,13 @@ def ort_providers(force_cpu: bool = False) -> list[str]:
 
 @dataclass
 class MovementState:
+    """Mutable high-level intent driven by keyboard/joystick and read by the planner.
+
+    Holds the current locomotion ``mode``, target ``speed``/``height`` (``-1`` =
+    mode default), facing/movement angles, and the ``needs_replan`` flag the control
+    loop watches to decide when to request a fresh motion from the planner.
+    """
+
     mode: int = LM.SLOW_WALK  # not IDLE — walking modes respond to WASD
     speed: float = -1.0
     height: float = -1.0
@@ -453,15 +533,18 @@ class MovementState:
 
     @property
     def movement_direction(self):
+        """Unit XY movement direction (0 vector when not moving)."""
         if not self.has_movement:
             return (0.0, 0.0, 0.0)
         return (math.cos(self.movement_angle), math.sin(self.movement_angle), 0.0)
 
     @property
     def facing_direction(self):
+        """Unit XY facing direction."""
         return (math.cos(self.facing_angle), math.sin(self.facing_angle), 0.0)
 
     def status_line(self):
+        """Human-readable one-line status for the terminal HUD."""
         return (
             f"[{MOTION_SETS[self.motion_set_idx][0]}] mode={self.mode}({LM(self.mode).name}) "
             f"spd={'default' if self.speed < 0 else f'{self.speed:.1f}'} "
@@ -473,6 +556,8 @@ class MovementState:
 
 @dataclass
 class MovementSnapshot:
+    """Immutable copy of the intent at the last replan, for change detection."""
+
     mode: int = 0
     speed: float = -1.0
     height: float = -1.0
@@ -481,12 +566,18 @@ class MovementSnapshot:
 
 
 def snapshot_ms(ms: MovementState) -> MovementSnapshot:
+    """Capture the current movement intent as a comparable snapshot."""
     md, fd = ms.movement_direction, ms.facing_direction
     return MovementSnapshot(ms.mode, ms.speed, ms.height, (md[0], md[1], md[2]), (fd[0], fd[1], fd[2]))
 
 
 def should_replan_request(ms: MovementState, last: MovementSnapshot, replan_timer: float, step: int) -> bool:
-    """Match C++ G1Deploy::Planner replan triggers (g1_deploy_onnx_ref.cpp)."""
+    """Decide whether to request a fresh plan this tick.
+
+    Triggers on an explicit ``needs_replan`` flag, any mode/facing/height change, or
+    (for non-static modes) speed/direction changes and periodic timeouts. Mirrors the
+    C++ ``G1Deploy::Planner`` replan triggers (``g1_deploy_onnx_ref.cpp``).
+    """
     if step <= 0:
         return False
     if ms.needs_replan:
@@ -508,6 +599,17 @@ def should_replan_request(ms: MovementState, last: MovementSnapshot, replan_time
 
 
 class StandingEncoderDecoder:
+    """Runs the encoder + decoder ONNX models and owns the proprioception history.
+
+    Each tick it appends the latest robot state to 10-frame history buffers, builds
+    the encoder observation (1762-D, layout depends on ``encode_mode``) to refresh
+    the 64-D ``token``, then builds the decoder observation (994-D) and maps
+    ``token + history`` to a residual action added onto ``DEFAULT_ANGLES``.
+
+    ``PlannerController`` subclasses this to source the reference from a live,
+    planner-generated motion buffer instead of a fixed standing pose.
+    """
+
     def __init__(self, encoder, decoder):
         self.encoder, self.decoder = encoder, decoder
         self.encoder_input = encoder.get_inputs()[0].name
@@ -536,6 +638,7 @@ class StandingEncoderDecoder:
         self.set_zero_reference()
 
     def update_history(self, q, dq, ang, quat):
+        """Push the latest proprioception (pos/vel/gyro/orientation) into the 10-frame buffers."""
         quat = quat / (np.linalg.norm(quat) + 1e-8)
         q_mj = _to_mujoco(q)
         dq_mj = _to_mujoco(dq)
@@ -557,6 +660,7 @@ class StandingEncoderDecoder:
         return np.array([np.cos(-h), 0, 0, np.sin(-h)], np.float32)
 
     def _anchor_6d(self, base_quat, ref_quat=None):
+        """6-D orientation error between the robot base and the (heading-aligned) reference."""
         if ref_quat is None:
             ref_quat = self.init_ref_quat
         delta = quat_mul(self._heading_quat(self.init_base_quat), self._heading_quat_inv(self.init_ref_quat))
@@ -564,6 +668,7 @@ class StandingEncoderDecoder:
         return quat_to_6d(quat_mul(quat_conj(base_quat), new_ref))
 
     def set_zero_reference(self):
+        """Initialize the reference to a single standing frame (used before a plan exists)."""
         self.motion_joint_positions = [ENCODER_STANDING_REF.copy()]
         self.motion_joint_velocities = [np.zeros(29, np.float32)]
         self.motion_body_quats = [np.array([1, 0, 0, 0], np.float32)]
@@ -573,6 +678,11 @@ class StandingEncoderDecoder:
         self.init_ref_quat = self.motion_body_quats[0].copy()
 
     def build_encoder_obs(self):
+        """Assemble the 1762-D encoder input; slot layout depends on ``encode_mode``.
+
+        mode 0 = locomotion (ref joint pos + anchor), 1 = 3-point VR teleop
+        (lower-body ref + VR targets), 2 = SMPL whole-body window + anchor/wrist.
+        """
         obs = np.zeros(1762, np.float32)
         obs[0] = float(self.encode_mode)
         rf = min(self.freeze_ref_frame, self.motion_timesteps - 1)
@@ -601,6 +711,7 @@ class StandingEncoderDecoder:
         return obs
 
     def build_decoder_obs(self):
+        """Assemble the 994-D decoder input: token + 10-frame proprioception history + gravity."""
         obs = np.zeros(994, np.float32)
         off = 0
         obs[off : off + 64] = self.token
@@ -621,6 +732,7 @@ class StandingEncoderDecoder:
         return obs
 
     def run_encoder(self):
+        """Run the encoder ONNX model and return the fresh 64-D token."""
         return (
             self.encoder.run(None, {self.encoder_input: self.build_encoder_obs().reshape(1, -1)})[0]
             .squeeze()
@@ -628,6 +740,16 @@ class StandingEncoderDecoder:
         )
 
     def step(self, robot_obs, update_encoder, debug=False):
+        """One control tick: read robot obs, (optionally) re-encode, decode → joint targets.
+
+        Args:
+            robot_obs: dict with ``<joint>.q``/``.dq`` and ``imu.*`` fields.
+            update_encoder: refresh the token this tick (else reuse the cached one).
+            debug: print action/delta norms.
+
+        Returns:
+            dict of ``<joint>.q`` target positions (rad) in IsaacLab joint order.
+        """
         jnames = [m.name for m in G1_29_JointIndex]
         q = np.array(
             [
@@ -666,6 +788,7 @@ class StandingEncoderDecoder:
         return {f"{m.name}.q": float(target[m.value]) for m in G1_29_JointIndex}
 
     def print_input_diagnostics(self):
+        """Print sanity checks on the reference/anchor/gravity terms (debugging aid)."""
         print("\n[Diag] Standing reference checks")
         names = {0: "g1", 1: "teleop", 2: "smpl"}
         print(f"  encoder mode: {self.encode_mode} ({names.get(self.encode_mode, 'unknown')})")
@@ -685,6 +808,8 @@ class StandingEncoderDecoder:
 
 
 class PlannerMotion:
+    """Fixed-capacity buffer for a planned motion (joint pos/vel + body pose per frame)."""
+
     def __init__(self, max_frames=1500):
         self.timesteps = 0
         self.joint_positions = np.zeros((max_frames, 29), np.float64)
@@ -698,6 +823,11 @@ class PlannerMotion:
 
 
 def _resample_30_to_50(qpos, n30):
+    """Resample planner output (30 Hz MuJoCo qpos) to a 50 Hz IsaacLab-order motion.
+
+    Returns a dict with joint positions/velocities (velocities via finite difference)
+    and body position/orientation trajectories at 50 Hz.
+    """
     t50 = int(np.floor(n30 / 30.0 * 50))
     f30 = np.arange(t50) / 50.0 * 30.0
     f0 = np.floor(f30).astype(int)
@@ -719,6 +849,11 @@ def _resample_30_to_50(qpos, n30):
 
 
 def _build_planner_inputs(ctx, ms_dict, version, seed):
+    """Build the planner ONNX input dict from a context window + movement intent.
+
+    ``version >= 1`` is the TensorRT-style deploy planner with extra height/target
+    inputs and a token-count mask; ``version 0`` is the minimal input set.
+    """
     inp = {
         "context_mujoco_qpos": ctx.astype(np.float32).reshape(1, 4, 36),
         "target_vel": np.array([ms_dict["speed"]], np.float32),
@@ -745,6 +880,12 @@ def _build_planner_inputs(ctx, ms_dict, version, seed):
 
 
 def _planner_worker(path, req_q, res_q, stop_evt, version, seed, use_gpu):
+    """Background thread: consume replan requests, run the planner ONNX, post motions.
+
+    Loads its own ONNX session, then loops pulling ``(ctx, gen_frame, ms_dict)`` off
+    ``req_q``, running inference, resampling to 50 Hz, and putting the newest result
+    on ``res_q`` (dropping stale entries). Runs until ``stop_evt`` is set.
+    """
     so = ort.SessionOptions()
     so.log_severity_level = 3
     providers = ort_providers(force_cpu=not use_gpu)
@@ -783,6 +924,14 @@ def _planner_worker(path, req_q, res_q, stop_evt, version, seed, use_gpu):
 
 
 class SonicPlanner:
+    """Owns the planner ONNX model and its async background worker.
+
+    Provides the initial motion synchronously (``initialize``), then serves replans
+    off-thread: ``request_replan`` enqueues the current context+intent and
+    ``try_get_new_motion`` non-blockingly returns a freshly planned motion (which the
+    controller cross-fades in). ``version`` selects the planner input schema.
+    """
+
     def __init__(self, session, planner_path):
         self.session = session
         self.planner_path = planner_path
@@ -810,6 +959,7 @@ class SonicPlanner:
 
     @staticmethod
     def build_initial_context(joint_positions):
+        """Build a 4-frame standing context (MuJoCo qpos layout) from a pose."""
         ctx = np.zeros((4, 36), np.float32)
         jp_mj = joint_positions.astype(np.float32)[ISAACLAB_TO_MUJOCO]
         for n in range(4):
@@ -819,6 +969,11 @@ class SonicPlanner:
         return ctx
 
     def _context_from_controller(self, current_frame):
+        """Sample a 4-frame look-ahead context from the controller's live motion buffer.
+
+        The context starts ``MOTION_LOOK_AHEAD_STEPS`` ahead of ``current_frame`` so a
+        replan blends in seamlessly by the time it is ready.
+        """
         ctrl = self._ctrl
         gen_frame = current_frame + MOTION_LOOK_AHEAD_STEPS
         t_arr = gen_frame / 50.0 + np.arange(4) / 30.0
@@ -841,6 +996,7 @@ class SonicPlanner:
         return ctx
 
     def _load_motion_in_place(self, qpos, n30, target=None):
+        """Resample raw planner qpos to 50 Hz and write it into a ``PlannerMotion`` buffer."""
         if target is None:
             target = self.motion_50hz
         r = _resample_30_to_50(qpos, n30)
@@ -853,6 +1009,7 @@ class SonicPlanner:
         return target
 
     def initialize(self, joint_positions, ms):
+        """Synchronously run the planner once to produce the first motion buffer."""
         ctx = self.build_initial_context(joint_positions)
         qpos_out, num_pred = self.session.run(None, self._build_inputs(ctx, ms))
         n = int(num_pred.flat[0])
@@ -865,6 +1022,7 @@ class SonicPlanner:
         return self.motion_50hz
 
     def request_replan(self, cursor, ms):
+        """Enqueue a replan for the worker (drops any pending stale request first)."""
         if self._req_q is None:
             return
         ctx = self._context_from_controller(cursor)
@@ -883,6 +1041,7 @@ class SonicPlanner:
         self._req_q.put((ctx, self.gen_frame, ms_dict))
 
     def try_get_new_motion(self):
+        """Non-blocking: return ``(snapshot_motion, gen_frame)`` if a new plan is ready, else None."""
         if self._res_q is None:
             return None
         result = None
@@ -926,6 +1085,7 @@ class SonicPlanner:
         print(f"[Planner] Background thread started ({'GPU' if use_gpu else 'CPU'})")
 
     def stop_subprocess(self):
+        """Signal the planner thread to stop and join it."""
         if self._stop_evt:
             self._stop_evt.set()
         if self._planner_thread is not None:
@@ -939,6 +1099,15 @@ class SonicPlanner:
 
 
 class PlannerController(StandingEncoderDecoder):
+    """Encoder/decoder driven by the planner's live, replannable motion buffer.
+
+    Extends ``StandingEncoderDecoder`` so the reference comes from a rolling motion
+    (advanced one frame per tick via ``advance_cursor``) instead of a fixed pose.
+    Handles heading re-initialization, cross-fading new plans into the buffer
+    (``blend_new_motion``), and the mode-2 SMPL reference. ``motion_lock`` guards the
+    buffer against the async planner thread.
+    """
+
     def __init__(self, planner, encoder, decoder):
         super().__init__(encoder, decoder)
         self.planner = planner
@@ -957,6 +1126,7 @@ class PlannerController(StandingEncoderDecoder):
         self.motion_lock = threading.Lock()
 
     def load_initial_motion(self, motion):
+        """Copy the planner's first motion into the live buffer and start playback."""
         with self.motion_lock:
             n = motion.timesteps
             self.motion_timesteps = n
@@ -1023,6 +1193,7 @@ class PlannerController(StandingEncoderDecoder):
             self.init_ref_quat = self.motion_body_quats[0].copy()
 
     def _heading_apply_delta(self):
+        """Heading correction quaternion (init base-vs-ref heading + operator ``delta_heading``)."""
         delta = quat_mul(
             heading_quat(self.heading_init_base_quat).astype(np.float32),
             heading_quat_inv(self.init_ref_quat).astype(np.float32),
@@ -1033,12 +1204,14 @@ class PlannerController(StandingEncoderDecoder):
         return delta
 
     def _anchor_6d(self, base_quat, ref_quat=None):
+        """6-D base-vs-reference orientation error, including the operator heading delta."""
         if ref_quat is None:
             ref_quat = self.init_ref_quat
         new_ref = quat_mul(self._heading_apply_delta(), ref_quat.astype(np.float32))
         return quat_to_6d(quat_mul(quat_conj(base_quat.astype(np.float32)), new_ref))
 
     def build_encoder_obs(self):
+        """Encoder input sourced from the live motion buffer (mode 0/2), lock-protected."""
         obs = np.zeros(1762, np.float32)
         obs[0] = float(self.encode_mode)
         with self.motion_lock:
@@ -1074,6 +1247,7 @@ class PlannerController(StandingEncoderDecoder):
         return obs
 
     def step(self, robot_obs, update_encoder, debug=False):
+        """Re-init the heading reference on first frame / after a reset, then run the base step."""
         if robot_obs and (self.first_motion or self.reinit_heading):
             q = None
             if "imu.quat.w" in robot_obs:
@@ -1107,7 +1281,7 @@ class PlannerController(StandingEncoderDecoder):
         return super().step(robot_obs, update_encoder=update_encoder, debug=debug)
 
     def advance_cursor(self):
-        """Advance one frame per 50 Hz tick (C++ current_frame_ += 1), no wall-clock catch-up."""
+        """Advance the reference cursor one frame per 50 Hz tick (no wall-clock catch-up)."""
         if not self.playing:
             return
         with self.motion_lock:
@@ -1119,6 +1293,8 @@ class PlannerController(StandingEncoderDecoder):
 
 
 class RawKeyboard:
+    """Context manager putting the terminal in cbreak mode for non-blocking key reads."""
+
     def __init__(self):
         self.fd = sys.stdin.fileno()
         self.old = termios.tcgetattr(self.fd)
@@ -1131,6 +1307,7 @@ class RawKeyboard:
         termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old)
 
     def get_key(self):
+        """Return one pending key, or None if none is available."""
         return sys.stdin.read(1) if select.select([sys.stdin], [], [], 0)[0] else None
 
 
@@ -1147,6 +1324,11 @@ def drain_keyboard(kb, ms, controller=None) -> bool:
 
 
 def process_keyboard(key, ms, controller=None):
+    """Apply a single key press to the movement state (returns True to quit).
+
+    Keys: WASD move, Q/E turn, digits pick a mode, n/p cycle motion sets, 9/0 speed,
+    -/= height, space = e-stop → IDLE, r = replan, m = toggle SMPL playback, Esc quit.
+    """
     if key is None:
         return False
     if key == "\x1b":
