@@ -187,7 +187,11 @@ class TrainPipelineConfig(HubMixin):
             )
 
         if Path(config_path).resolve().exists():
-            policy_dir = Path(config_path).parent
+            # `config_path` may point at the checkpoint's train_config.json or at its
+            # pretrained_model/ directory (both documented above) — resolve either to
+            # the pretrained_model/ directory.
+            config_path_obj = Path(config_path)
+            policy_dir = config_path_obj.parent if config_path_obj.is_file() else config_path_obj
             self.checkpoint_path = policy_dir.parent
         elif self.job.is_remote:
             return
