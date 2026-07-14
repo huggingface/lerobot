@@ -27,6 +27,11 @@ REMOTE_AXES = ("remote.lx", "remote.ly", "remote.rx", "remote.ry")
 REMOTE_BUTTONS = tuple(f"remote.button.{i}" for i in range(16))
 REMOTE_KEYS = REMOTE_AXES + REMOTE_BUTTONS
 
+# Reserved action-dict field used to forward the set of currently-pressed keyboard
+# keys from a KeyboardTeleop through the standard action pipeline to the SONIC
+# whole-body controller (see SonicWholeBodyController._process_keyboard).
+KEYBOARD_KEYS_FIELD = "keyboard.keys"
+
 
 def default_remote_input() -> dict[str, float]:
     """Return a zeroed-out remote input dict (axes + buttons)."""

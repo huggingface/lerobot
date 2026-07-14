@@ -56,6 +56,7 @@ worker · ``SonicPlanner`` · ``PlannerController`` · joystick input.
 from __future__ import annotations
 
 import math
+import os
 import queue
 import threading
 import time
@@ -506,6 +507,26 @@ def ort_providers(force_cpu: bool = False) -> list[str]:
     return ["CPUExecutionProvider"]
 
 
+# Number of intra-op threads each ONNX session may use. SONIC runs THREE CPU
+# sessions concurrently (async planner thread + per-tick encoder + decoder), and
+# ONNX Runtime otherwise defaults to one thread PER CORE per session, which
+# massively oversubscribes the CPU and starves the 50 Hz control loop (especially
+# alongside the MuJoCo sim). Capping keeps total ORT threads well under the core
+# count so the control loop stays real-time. Override with SONIC_ORT_THREADS.
+ORT_INTRA_OP_THREADS = int(os.environ.get("SONIC_ORT_THREADS", "2"))
+
+
+def make_ort_session_options():
+    """Build ONNX Runtime SessionOptions with capped, non-oversubscribing threading."""
+    so = ort.SessionOptions()
+    so.log_severity_level = 3
+    # inter_op=1: these graphs are sequential, parallel op scheduling only adds
+    # contention. intra_op capped so N concurrent sessions don't fight for cores.
+    so.inter_op_num_threads = 1
+    so.intra_op_num_threads = max(1, ORT_INTRA_OP_THREADS)
+    return so
+
+
 # ── Movement state ────────────────────────────────────────────────────────────
 
 
@@ -883,8 +904,7 @@ def _planner_worker(path, req_q, res_q, stop_evt, version, seed, use_gpu):
     ``req_q``, running inference, resampling to 50 Hz, and putting the newest result
     on ``res_q`` (dropping stale entries). Runs until ``stop_evt`` is set.
     """
-    so = ort.SessionOptions()
-    so.log_severity_level = 3
+    so = make_ort_session_options()
     providers = ort_providers(force_cpu=not use_gpu)
     sess = ort.InferenceSession(path, sess_options=so, providers=providers)
     while not stop_evt.is_set():
