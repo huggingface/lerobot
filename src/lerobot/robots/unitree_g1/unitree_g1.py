@@ -33,6 +33,7 @@ from ..robot import Robot
 from .config_unitree_g1 import UnitreeG1Config
 from .g1_kinematics import G1_29_ArmIK
 from .g1_utils import (
+    KEYBOARD_KEYS_FIELD,
     REMOTE_AXES,
     REMOTE_KEYS,
     G1_29_JointArmIndex,
@@ -486,8 +487,19 @@ class UnitreeG1(Robot):
             # through the standard action pipeline; SonicWholeBodyController
             # reassembles it into the 720-vec encoder window.
             for key in action:
-                if key.startswith("smpl.") or key.startswith("root."):
+                if isinstance(key, str) and (key.startswith("smpl.") or key.startswith("root.")):
                     self.controller_input[key] = action[key]
+            # Forward the KeyboardTeleop state. That teleop emits the set of
+            # currently-pressed keys as bare action keys with a None value
+            # (dict.fromkeys(pressed, None)); collect them into a single set so the
+            # SONIC controller sees the full held-key state each tick (and releases
+            # clear, unlike the persistent merge above). Special keys arrive as
+            # pynput objects, so normalise them to their name ("space", ...).
+            self.controller_input[KEYBOARD_KEYS_FIELD] = {
+                (k if isinstance(k, str) else getattr(k, "name", str(k)))
+                for k, value in action.items()
+                if value is None
+            }
 
     @property
     def is_calibrated(self) -> bool:

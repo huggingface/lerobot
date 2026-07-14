@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from typing import TYPE_CHECKING
 
@@ -27,11 +28,12 @@ from huggingface_hub import hf_hub_download
 
 from lerobot.utils.import_utils import _onnxruntime_available, require_package
 
-from ..g1_utils import lowstate_to_obs
+from ..g1_utils import KEYBOARD_KEYS_FIELD, lowstate_to_obs
 from .sonic_pipeline import (
     CONTROL_DT,
     DEBUG_PRINT_EVERY,
     DEFAULT_ANGLES,
+    DEFAULT_HEIGHT,
     ENCODER_UPDATE_EVERY,
     LM,
     MOTION_SETS,
@@ -40,6 +42,7 @@ from .sonic_pipeline import (
     SonicPlanner,
     clamp_mode_params,
     compute_kp_kd,
+    make_ort_session_options,
     ort_providers,
     process_joystick,
     should_replan_request,
@@ -108,8 +111,7 @@ class SonicRuntime:
 
         providers = ort_providers(force_cpu=force_cpu)
         self.use_gpu = providers[0] == "CUDAExecutionProvider"
-        so = ort.SessionOptions()
-        so.log_severity_level = 3
+        so = make_ort_session_options()
 
         planner_sess = ort.InferenceSession(planner_path, sess_options=so, providers=providers)
         encoder_sess = ort.InferenceSession(encoder_path, sess_options=so, providers=providers)
@@ -188,6 +190,11 @@ class SonicWholeBodyController:
         self.controller = self._runtime.controller
         self.ms = self._runtime.ms
 
+        # Tracks the previous keyboard held-key set so discrete controls (mode,
+        # motion set, replan, e-stop, WASD direction) fire once per physical press
+        # instead of every 50 Hz tick while the key is held.
+        self._prev_keys: set[str] = set()
+
         # Optional: subscribe directly to the rt/smpl headset stream so full-body
         # teleop works with ANY teleoperator (e.g. --teleop.type=unitree_g1 for the
         # estop/joystick) before the dedicated pico_headset teleop exists. Enable
@@ -234,10 +241,95 @@ class SonicWholeBodyController:
         self.ms.needs_replan = True
         logger.warning("SONIC: SMPL stream lost/stale -> reverting to locomotion (standing)")
 
+    def _process_keyboard(self, action: dict | None) -> None:
+        """Translate a native KeyboardTeleop's held-key set into MovementState.
+
+        Mirrors the standalone SONIC demo's keyboard mapping so locomotion (mode 0/1)
+        can be driven with ``--teleop.type=keyboard`` instead of the PICO SMPL stream.
+        Discrete controls act on newly-pressed keys (edge-detected against the previous
+        tick); inherently-continuous controls (facing turn, height, speed) integrate a
+        small per-tick delta while the key is held so they feel smooth at 50 Hz.
+
+        Controls: WASD move, Q/E turn, 1-8 select mode, 9/0 speed down/up,
+        -/= height down/up, R replan, Space emergency-stop -> IDLE.
+        """
+        if action is None:
+            return
+        keys = action.get(KEYBOARD_KEYS_FIELD)
+        if keys is None:
+            return  # No KeyboardTeleop attached; leave joystick/SMPL paths untouched.
+
+        ms, controller = self.ms, self.controller
+        held = {k.lower() if isinstance(k, str) and len(k) == 1 else k for k in keys}
+        prev = self._prev_keys
+        pressed = held - prev  # newly-pressed this tick (edge)
+        self._prev_keys = held
+
+        # ── Discrete: fire once per press ────────────────────────────────────
+        if "space" in pressed:
+            ms.mode = LM.IDLE
+            ms.speed = ms.height = -1.0
+            ms.has_movement = False
+            ms.needs_replan = True
+            controller.playing = False
+            controller.reinit_heading = True
+            logger.info("SONIC keyboard: EMERGENCY STOP -> IDLE")
+        if "r" in pressed:
+            ms.needs_replan = True
+        if "n" in pressed or "p" in pressed:
+            step = 1 if "n" in pressed else -1
+            ms.motion_set_idx = (ms.motion_set_idx + step) % len(MOTION_SETS)
+            logger.info("SONIC keyboard: motion set -> %s", MOTION_SETS[ms.motion_set_idx][0])
+        for digit in ("1", "2", "3", "4", "5", "6", "7", "8"):
+            if digit in pressed:
+                idx = int(digit) - 1
+                modes = MOTION_SETS[ms.motion_set_idx][1]
+                if 0 <= idx < len(modes):
+                    ms.mode = modes[idx]
+                    ms.has_movement = False
+                    ms.needs_replan = True
+                    controller.playing = True
+                    controller.reinit_heading = True
+                    logger.info("SONIC keyboard: mode -> %s", LM(ms.mode).name)
+        # WASD sets the movement direction relative to current facing (press to set,
+        # Space to stop) to match the standalone demo.
+        if "w" in pressed:
+            ms.movement_angle = ms.facing_angle
+        elif "s" in pressed:
+            ms.movement_angle = ms.facing_angle + math.pi
+        elif "a" in pressed:
+            ms.movement_angle = ms.facing_angle + math.pi / 2
+        elif "d" in pressed:
+            ms.movement_angle = ms.facing_angle - math.pi / 2
+        if pressed & {"w", "a", "s", "d"}:
+            ms.has_movement = True
+            ms.needs_replan = True
+
+        # ── Continuous: integrate a small delta while held ───────────────────
+        if "q" in held:
+            ms.facing_angle += 0.02
+            controller.delta_heading += 0.02
+        if "e" in held:
+            ms.facing_angle -= 0.02
+            controller.delta_heading -= 0.02
+        if "0" in held:
+            ms.speed = min(5.0, (ms.speed if ms.speed >= 0 else 1.0) + 0.02)
+        if "9" in held:
+            ms.speed = max(0.0, (ms.speed if ms.speed >= 0 else 1.0) - 0.02)
+        if "=" in held:
+            ms.height = min(1.0, (ms.height if ms.height >= 0 else DEFAULT_HEIGHT) + 0.005)
+        if "-" in held:
+            ms.height = max(0.1, (ms.height if ms.height >= 0 else DEFAULT_HEIGHT) - 0.005)
+
     def run_step(self, action: dict, lowstate) -> dict:
         if lowstate is None:
             return {}
         obs = lowstate_to_obs(lowstate)
+
+        # Keyboard teleop (native KeyboardTeleop) drives the same locomotion intent
+        # the joystick does; applied before the SMPL check so whole-body tracking
+        # still takes priority when a headset stream is present.
+        self._process_keyboard(action)
 
         # Prefer SMPL delivered via the teleop action (pico_headset). Fall back to a
         # direct rt/smpl subscription when SONIC_SMPL_STREAM is enabled. A stale
