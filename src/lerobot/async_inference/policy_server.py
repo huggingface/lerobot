@@ -84,6 +84,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.last_processed_obs = None
 
         # Attributes will be set by SendPolicyInstructions
+        self._pretrained_name_or_path = None
         self.device = None
         self.policy_type = None
         self.lerobot_features = None
@@ -101,7 +102,12 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         return self.policy.config.image_features
 
     def _reset_server(self) -> None:
-        """Flushes server state when new client connects."""
+        """Flushes server state when new client connects.
+
+        Resets inference state (pending observations, predicted timesteps) but
+        keeps the model in memory. The model is only offloaded if a different
+        policy is requested via SendPolicyInstructions.
+        """
         self.shutdown_event.set()
 
         with self._predicted_timesteps_lock:
@@ -111,6 +117,40 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             self._pending_obs = None
             self._inference_in_progress = False
             self._obs_available.clear()
+
+        self.last_processed_obs = None
+
+        # Reset policy internal state (action queues, ensemblers) if loaded
+        if self.policy is not None:
+            self.policy.reset()
+            self.logger.info(
+                f"Model kept in memory ({self._pretrained_name_or_path}). "
+                "Policy state reset; ready for reuse."
+            )
+        else:
+            self.logger.info("No model loaded. Waiting for SendPolicyInstructions.")
+
+    def _offload_policy(self) -> None:
+        """Free the current policy and processors from memory."""
+        if self.policy is not None:
+            self.logger.info(
+                f"Offloading model ({self._pretrained_name_or_path}) from {self.device}. Freeing memory."
+            )
+            del self.policy
+            self.policy = None
+            self.preprocessor = None
+            self.postprocessor = None
+            torch.cuda.empty_cache()
+
+    def _same_policy_requested(self, policy_specs: RemotePolicyConfig) -> bool:
+        """Check if the incoming policy specs match the currently loaded policy."""
+        if self.policy is None:
+            return False
+        return (
+            self.policy_type == policy_specs.policy_type
+            and self._pretrained_name_or_path == policy_specs.pretrained_name_or_path
+            and self.device == policy_specs.device
+        )
 
     def Ready(self, request, context):  # noqa: N802
         client_id = context.peer()
@@ -148,15 +188,29 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             f"Device: {policy_specs.device}"
         )
 
-        self.device = policy_specs.device
-        self.policy_type = policy_specs.policy_type  # act, pi0, etc.
-        self.lerobot_features = policy_specs.lerobot_features
-        self.actions_per_chunk = policy_specs.actions_per_chunk
         # Update server config with similarity function from client
         # Use getattr with default for backward compatibility with older clients
         similarity_fn_name = getattr(policy_specs, "similarity_fn_name", "euclidean")
         self.config.similarity_fn_name = similarity_fn_name
         self.config.similarity_fn = get_similarity_function(similarity_fn_name)
+
+        # If the same policy is requested, reuse the loaded model
+        if self._same_policy_requested(policy_specs):
+            self.logger.info(
+                f"Same policy requested ({policy_specs.pretrained_name_or_path}), reusing loaded model."
+            )
+            self.lerobot_features = policy_specs.lerobot_features
+            self.actions_per_chunk = policy_specs.actions_per_chunk
+            return services_pb2.Empty()
+
+        # Different policy requested — offload old model and load new one
+        self._offload_policy()
+
+        self.device = policy_specs.device
+        self.policy_type = policy_specs.policy_type  # act, pi0, etc.
+        self._pretrained_name_or_path = policy_specs.pretrained_name_or_path
+        self.lerobot_features = policy_specs.lerobot_features
+        self.actions_per_chunk = policy_specs.actions_per_chunk
 
         policy_class = get_policy_class(self.policy_type)
 
