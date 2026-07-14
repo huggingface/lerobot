@@ -174,11 +174,16 @@ def unwrap_scalar(value: Any) -> Any:
             or a zero-dimensional container that does not expose a scalar.
     """
     if isinstance(value, np.ndarray):
-        if value.size != 1:
+        # ndarray.item() already unwraps every size-1 shape (incl. 0-d) and
+        # raises ValueError for multi-element arrays, so defer to it directly.
+        try:
+            return value.item()
+        except ValueError as e:
             raise ValueError(
                 f"Expected a scalar array, got shape {value.shape} (size={value.size}): {value!r}"
-            )
-        return unwrap_scalar(value.reshape(()).item() if value.shape == () else value.reshape(-1)[0])
+            ) from e
+    # Guard excludes bytes/str (no .item) and, deliberately, np.str_ so string
+    # scalars are returned unchanged rather than unwrapped to a Python str.
     if hasattr(value, "item") and not isinstance(value, (bytes, str)):
         # Avoid calling .item() on multi-element torch tensors — it raises a
         # generic RuntimeError. Normalize the message for callers/tests.
