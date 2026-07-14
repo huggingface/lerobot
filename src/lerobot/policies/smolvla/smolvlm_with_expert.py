@@ -166,14 +166,23 @@ class SmolVLMWithExpertModel(nn.Module):
                 last_layers.append(self.num_vlm_layers - 2)
             frozen_layers = [
                 "lm_head",
-                "text_model.model.norm.weight",
+                "text_model.norm.weight",
             ]
             for layer in last_layers:
-                frozen_layers.append(f"text_model.model.layers.{layer}.")
+                frozen_layers.append(f"text_model.layers.{layer}.")
 
+            unmatched_patterns = set(frozen_layers)
             for name, params in self.vlm.named_parameters():
-                if any(k in name for k in frozen_layers):
+                matched_patterns = [k for k in frozen_layers if k in name]
+                if matched_patterns:
                     params.requires_grad = False
+                    unmatched_patterns.difference_update(matched_patterns)
+            if unmatched_patterns:
+                raise RuntimeError(
+                    "Some frozen layer patterns matched no VLM parameters, so the corresponding layers "
+                    "would silently remain trainable (parameter naming may have changed in transformers): "
+                    f"{sorted(unmatched_patterns)}"
+                )
         # To avoid unused params issue with distributed training
         for name, params in self.lm_expert.named_parameters():
             if "lm_head" in name:
