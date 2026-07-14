@@ -253,6 +253,7 @@ def compute_kp_kd():
     Ankle and waist joints get a x2 factor for extra stiffness. Returns two
     (29,) float32 arrays in IsaacLab joint order.
     """
+
     def s(k):
         return ARMATURE[k] * NATURAL_FREQ**2
 
