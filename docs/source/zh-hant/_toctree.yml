@@ -53,6 +53,14 @@
     title: 串流影片編碼（Streaming Video Encoding）
   title: "資料集（Datasets）"
 - sections:
+  - local: sarm
+    title: SARM
+  - local: robometer
+    title: ROBOMETER
+  - local: topreward
+    title: TOPReward
+  title: "獎勵模型（Reward Models）"
+- sections:
   - local: inference
     title: 策略部署（Policy Deployment, lerobot-rollout）
   - local: async

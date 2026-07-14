@@ -1,0 +1,177 @@
+# TOPReward
+
+TOPReward 是一個**零樣本獎勵模型（zero-shot reward model）**，它從現成的視覺語言模型（off-the-shelf vision-language model, VLM）中擷取標記（token）對數機率（log-probabilities）作為機器人的獎勵訊號（reward signal）。給定一段軌跡影片（trajectory video）與任務指令（task description），它會回傳（returns） VLM 認為該指令為真的對數概似（log-likelihood that the instruction is true），無需微調（no fine-tuning required）。
+
+**論文**：[TOPReward: Token Probabilities as Hidden Zero-Shot Rewards for Robotics](https://arxiv.org/abs/2602.19313)
+**專案**：[topreward.github.io](https://topreward.github.io/webpage/)
+**原始程式碼**：[github.com/TOPReward/TOPReward](https://github.com/TOPReward/TOPReward)
+**預設骨幹**：[Qwen/Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct)
+
+## 概觀（overview）
+
+TOPReward 詢問一個通用 VLM，**在機器人嘗試完成某任務的影片作為條件下（conditioned on the video of a robot trying to complete that task）**，一段任務指令有多可能為真（how likely a task instruction is）。具體而言，給定：
+
+- 一段軌跡影片（trajectory video, 一連串影格 a sequence of frames）。
+- 一段任務指令（task instruction，例如 _"open the drawer"_）。
+
+它會建構一個如下形式的聊天提示（chat prompt）
+
+```text
+<video>
+"The above video shows a robot manipulation trajectory that completes the
+ following task: <instruction> Decide whether the above statement is True
+ or not. The answer is: True"
+```
+
+將它前向傳遞（forwards）通過 VLM，對除了最後一個標記（token）之外的所有內容進行標籤遮罩（label-mask），並讀回（reads back）該標記（token）的對數機率（log-probability），預設就是收尾後綴模板（suffix template）的字面 `"True"`。所得的 `log P("True" | video + prompt + instruction)` 便是獎勵（reward）。
+
+由於此方法只依賴一個凍結（frozen）的 VLM，TOPReward 是**零樣本（zero-shot）**的：沒有需要託管的微調權重（no fine-tuned weights）。LeRobot 中的「模型（model）」是圍繞 `transformers` 的 `Qwen3VLForConditionalGeneration` 加上標籤遮罩邏輯（label-masking logic）的一個小型封裝（wrapper）。處理器（processor）擁有分詞器（tokenizer）並建構完整的聊天提示（chat prompt，EO-1/Robometer 模式）。
+
+## LeRobot 整合涵蓋的內容（what the LeRobot integration covers）
+
+- 透過 LeRobot 使用標準的 `reward_model.type=topreward` 設定（configuration）。
+- 透過 `transformers` 的 `Qwen3VLForConditionalGeneration` API 載入 VLM。
+- 在處理器（processor）中組裝提示（prompt assembly） + 斷詞（tokenisation），與 upstream 的 `QwenClient.compute_instruction_reward` 相符。
+- `compute_reward()` 為每個樣本回傳一個純量對數機率（returns one scalar log-prob per sample）。
+- LeRobot 獎勵模型（reward-model）儲存/載入 — `save_pretrained` 只寫入 `config.json`（VLM 由 `vlm_name` 識別）。
+- 一個離線標記腳本（offline labeling script），會寫入一個 `topreward_progress.parquet`（與 SARM 相容的 schema），供 RA-BC 與疊加（overlay）使用。
+
+目前的 LeRobot 移植**僅支援 Qwen3-VL 用戶端（client）**。其他上游（upstream）用戶端（Gemini、OpenAI、Gemma、Molmo）可作為後續的額外功能（follow-up extras）加入。
+
+## 安裝需求（installation requirements）
+
+1. 依照[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
+2. 安裝 TOPReward 選用的額外套件（extra）：
+
+```bash
+pip install -e ".[topreward]"
+```
+
+或者，從原始碼檢出以 `uv`：
+
+```bash
+uv sync --extra topreward
+```
+
+這會引入 `transformers`。你第一次執行 TOPReward 時，Hugging Face 也會從 Hub 下載 VLM 權重（weights，Qwen3-VL-8B-Instruct 約 16 GB）。強烈建議使用 GPU。
+
+## 模型輸入與輸出（model inputs and outputs）
+
+TOPReward 預期：
+
+- 一段軌跡影片（trajectory video）或影格序列（sequence of frames）。
+- 一段自然語言任務描述（natural-language task description）。
+
+在 LeRobot 資料集（dataset）中，預處理器（preprocessor）會讀取：
+
+| 設定欄位（config field）  | 預設（default）             | 含義（meaning）                                                    |
+| ------------------------- | --------------------------- | ------------------------------------------------------------------ |
+| `reward_model.image_key`  | `observation.images.top`    | TOPReward 使用的攝影機觀測（camera observation）                   |
+| `reward_model.task_key`   | `task`                      | 互補資料（complementary data）中任務字串（task string）的鍵（key） |
+| `reward_model.max_frames` | `16`                        | 每個樣本的影格上限（cap on frames per sample）                     |
+| `reward_model.fps`        | `2.0`                       | 傳給 Qwen 影片處理器（video processor）的元資料（metadata）        |
+| `reward_model.vlm_name`   | `Qwen/Qwen3-VL-8B-Instruct` | 底層 VLM 的 Hugging Face Hub id                                    |
+
+模型（model）會回傳（returns）：
+
+- `compute_reward(batch)`：每個樣本一個對數機率（one log-probability per sample）。越高 = 任務與影片對齊（task-video alignment）得越好。當 `success_threshold` 為有限值時，則改為回傳（returns）二元閾值（binary thresholded value）。
+
+## 用法（usage）
+
+### 直接載入獎勵模型（loading the reward model directly）
+
+```python
+from lerobot.rewards.topreward import TOPRewardConfig, TOPRewardModel
+
+cfg = TOPRewardConfig(
+    vlm_name="Qwen/Qwen3-VL-8B-Instruct",
+    device="cuda",
+)
+reward_model = TOPRewardModel(cfg)
+```
+
+### 使用獎勵工廠（use the reward factory）
+
+```python
+from lerobot.rewards import make_reward_model, make_reward_model_config, make_reward_pre_post_processors
+
+cfg = make_reward_model_config(
+    "topreward",
+    vlm_name="Qwen/Qwen3-VL-8B-Instruct",
+    device="cuda",
+    image_key="observation.images.top",
+)
+reward_model = make_reward_model(cfg)
+preprocessor, postprocessor = make_reward_pre_post_processors(cfg)
+```
+
+預處理器（preprocessor）會將完整的提示（prompt，影片 video + 前綴 prefix + 指令後綴 instruction suffix）tokenise，並將 Qwen-VL 張量（tensors） + `prompt_length` 寫入 `observation.topreward.*` 之下。模型（model）會讀取那些張量，根據 `prompt_length` 進行標籤遮罩（label-masks），並擷取對數機率獎勵（log-prob）。
+
+### 離線資料集標註（offline dataset labeling）
+
+為 RA-BC 訓練（RA-BC training）與疊加影片（overlay videos）寫入一個 `topreward_progress.parquet`：
+
+```bash
+# Sparse-dense（每個 episode 15 個錨點，與上游相符）
+uv run python -m lerobot.rewards.topreward.compute_rabc_weights \
+    --dataset-repo-id lerobot/libero_10_image \
+    --num-samples 15 \
+    --device cuda
+```
+
+接著為任何回合（episode）選染進度疊加（progress overlay）：
+
+```bash
+uv run examples/dataset/create_progress_videos.py \
+    --repo-id lerobot/libero_10_image \
+    --episode 0 \
+    --progress-file topreward_progress.parquet \
+    --gif
+```
+
+## 設定注意事項（configuration notes）
+
+### 提示詞控制項（prompt knobs）
+
+預設提示（prompt）反映（mirror）了上游論文：
+
+```text
+prompt_prefix = "The above video shows a robot manipulation trajectory that completes the following task: "
+prompt_suffix_template = "{instruction} Decide whether the above statement is True or not. The answer is: True"
+```
+
+兩者皆在 `TOPRewardConfig` 上公開以供消融（ablation）。後綴模板（suffix template）**必須**包含 `{instruction}`。
+
+### 聊天模板（chat template）
+
+`add_chat_template=True` 會在斷詞（tokenisation） 之前，以斷詞器的聊天模板（tokenizer’s chat template）包裝完整提示（prompt，包括指令 instruction）。預設為 `False`，與上游論文的主要實驗相符。
+
+## 限制（limitations）
+
+- 目前的 LeRobot 移植是**僅供推論且零樣本（inference-only and zero-shot）**的；`forward()` 未被覆寫，且 `is_trainable` 回傳（returns） `False`。
+- 只支援 **Qwen3-VL 家族（family）**；其他上游用戶端（upstream clients）不在範圍內。
+- TOPReward 繼承（inherits）了底層 VLM 的偏誤（underlying VLM’s biases）。
+
+## 參考資料
+
+- [TOPReward 專案頁面](https://topreward.github.io/webpage/)
+- [TOPReward 論文](https://arxiv.org/abs/2602.19313)
+- [原始 TOPReward 程式碼](https://github.com/TOPReward/TOPReward)
+- [Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct)
+
+## 引用
+
+```bibtex
+@article{chen2026topreward,
+  title={TOPReward: Token Probabilities as Hidden Zero-Shot Rewards for Robotics},
+  author={Chen, Shirui and Harrison, Cole and Lee, Ying-Chun and Yang, Angela Jin and
+          Ren, Zhongzheng and Ratliff, Lillian J and Duan, Jiafei and Fox, Dieter and
+          Krishna, Ranjay},
+  journal={arXiv preprint arXiv:2602.19313},
+  year={2026}
+}
+```
+
+## 授權
+
+原始的 TOPReward 程式碼庫採用 MIT 授權。LeRobot 移植遵循 LeRobot 的 Apache 2.0 授權；被包裝的 Qwen3-VL 權重則受原始的 Qwen 授權約束。
