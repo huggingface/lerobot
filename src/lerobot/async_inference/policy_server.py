@@ -85,6 +85,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         # Attributes will be set by SendPolicyInstructions
         self._pretrained_name_or_path = None
+        self._rename_map = {}
         self.device = None
         self.policy_type = None
         self.lerobot_features = None
@@ -119,6 +120,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             self._obs_available.clear()
 
         self.last_processed_obs = None
+        self.fps_tracker.reset()
 
         # Reset policy internal state (action queues, ensemblers) if loaded
         if self.policy is not None:
@@ -140,7 +142,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             self.policy = None
             self.preprocessor = None
             self.postprocessor = None
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available() and str(self.device).startswith("cuda"):
+                torch.cuda.empty_cache()
 
     def _same_policy_requested(self, policy_specs: RemotePolicyConfig) -> bool:
         """Check if the incoming policy specs match the currently loaded policy."""
@@ -150,6 +153,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             self.policy_type == policy_specs.policy_type
             and self._pretrained_name_or_path == policy_specs.pretrained_name_or_path
             and self.device == policy_specs.device
+            and self._rename_map == policy_specs.rename_map
         )
 
     def Ready(self, request, context):  # noqa: N802
@@ -209,6 +213,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.device = policy_specs.device
         self.policy_type = policy_specs.policy_type  # act, pi0, etc.
         self._pretrained_name_or_path = policy_specs.pretrained_name_or_path
+        self._rename_map = policy_specs.rename_map
         self.lerobot_features = policy_specs.lerobot_features
         self.actions_per_chunk = policy_specs.actions_per_chunk
 
