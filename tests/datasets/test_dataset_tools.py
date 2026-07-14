@@ -15,6 +15,7 @@
 # limitations under the License.
 """Tests for dataset tools utilities."""
 
+import logging
 from unittest.mock import patch
 
 import numpy as np
@@ -770,6 +771,24 @@ def test_fractions_to_episode_indices_raises_without_positive_fraction():
     """A set of all-zero fractions has no valid split and should be rejected."""
     with pytest.raises(ValueError, match="positive fraction"):
         _fractions_to_episode_indices(5, {"train": 0.0})
+
+
+def test_fractions_to_episode_indices_rejects_negative_fraction():
+    """A negative fraction slips through the sum <= 1.0 check, so reject it explicitly."""
+    with pytest.raises(ValueError, match="non-negative"):
+        _fractions_to_episode_indices(5, {"a": -0.5, "b": 0.5})
+
+
+def test_fractions_to_episode_indices_warns_on_zero_fraction(caplog):
+    """An explicit zero fraction is skipped, but loudly (a warning) rather than silently."""
+    with caplog.at_level(logging.WARNING):
+        result = _fractions_to_episode_indices(5, {"train": 0.9, "val": 0.1, "test": 0.0})
+
+    assert set(result.keys()) == {"train", "val"}
+    assert "test" in caplog.text
+    # Every episode still lands in exactly one of the positive splits.
+    all_indices = [idx for indices in result.values() for idx in indices]
+    assert sorted(all_indices) == list(range(5))
 
 
 def test_split_by_fractions_no_episode_loss(sample_dataset, tmp_path):

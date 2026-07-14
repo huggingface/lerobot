@@ -495,8 +495,17 @@ def _fractions_to_episode_indices(
     with ``int()`` can round a small split down to zero, which previously dropped both
     the split and its episodes; those episodes are instead redistributed here.
     """
+    for name, fraction in splits.items():
+        if fraction < 0:
+            raise ValueError(f"Split fraction for '{name}' must be non-negative, got {fraction}.")
     if sum(splits.values()) > 1.0:
         raise ValueError("Split fractions must sum to <= 1.0")
+
+    # An explicit zero fraction is a valid way to disable a split, but it must not
+    # disappear quietly (the same silent-drop this function exists to prevent).
+    for name, fraction in splits.items():
+        if fraction == 0:
+            logging.warning(f"Split '{name}' has a fraction of 0 and will be skipped.")
 
     positive_splits = [name for name, fraction in splits.items() if fraction > 0]
     if not positive_splits:
