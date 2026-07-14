@@ -171,7 +171,13 @@ class IOSPhone(BasePhone, Teleoperator):
         # HEBI provides orientation in w, x, y, z format.
         # Scipy's Rotation expects x, y, z, w.
         quat_xyzw = np.concatenate((ar_quat[1:], [ar_quat[0]]))  # wxyz to xyzw
-        rot = Rotation.from_quat(quat_xyzw)
+        # ARKit can emit zero/NaN quaternions before tracking is ready or on a
+        # dropped packet. Rotation.from_quat now rejects those; degrade the same
+        # way as a missing pose so teleop stays alive mid-session.
+        try:
+            rot = Rotation.from_quat(quat_xyzw)
+        except ValueError:
+            return False, None, None, None
         pos = ar_pos - rot.apply(self.config.camera_offset)
         return True, pos, rot, pose
 
