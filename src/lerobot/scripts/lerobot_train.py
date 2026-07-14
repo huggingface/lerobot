@@ -347,6 +347,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             postprocessor_overrides["absolute_actions_processor"] = {"enabled": True}
         processor_kwargs["preprocessor_overrides"] = preprocessor_overrides
         processor_kwargs["postprocessor_overrides"] = postprocessor_overrides
+        # These overrides are best-effort: policies with custom normalization steps
+        # (e.g. molmoact2's masked normalizer) do not contain a `normalizer_processor`
+        # step, so unmatched keys are skipped with a warning instead of raising.
+        processor_kwargs["strict_overrides"] = False
 
     if cfg.is_reward_model_training:
         preprocessor, postprocessor = make_reward_pre_post_processors(

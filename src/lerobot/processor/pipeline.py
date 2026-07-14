@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
@@ -622,6 +623,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         local_files_only: bool = False,
         revision: str | None = None,
         overrides: dict[str, Any] | None = None,
+        strict_overrides: bool = True,
         to_transition: Callable[[TInput], EnvTransition] | None = None,
         to_output: Callable[[EnvTransition], TOutput] | None = None,
         **kwargs,
@@ -735,7 +737,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         )
 
         # 4. Validate that all overrides were used
-        cls._validate_overrides_used(validated_overrides, loaded_config)
+        cls._validate_overrides_used(validated_overrides, loaded_config, strict=strict_overrides)
 
         # 5. Construct and return the final pipeline instance
         pipeline = cls(
@@ -1204,7 +1206,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
     @classmethod
     def _validate_overrides_used(
-        cls, remaining_override_keys: set[str], loaded_config: dict[str, Any]
+        cls, remaining_override_keys: set[str], loaded_config: dict[str, Any], strict: bool = True
     ) -> None:
         """Validate that all provided overrides were used.
 
@@ -1240,6 +1242,11 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         Args:
             remaining_override_keys: Override keys that weren't matched to any step
             loaded_config: The loaded processor configuration (contains "steps" list)
+            strict: When True (default), unmatched keys raise. When False, they are
+                logged as a warning and skipped — for callers that inject best-effort
+                overrides for steps a pipeline may legitimately not contain (e.g. the
+                trainer's ``normalizer_processor`` override on policies with custom
+                normalization steps).
 
         Raises:
             KeyError: If any override keys were not used, with helpful error message
@@ -1250,6 +1257,13 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         available_keys = [
             step.get("registry_name") or step["class"].rsplit(".", 1)[1] for step in loaded_config["steps"]
         ]
+
+        if not strict:
+            logging.warning(
+                f"Override keys {list(remaining_override_keys)} do not match any step in the saved "
+                f"configuration and were skipped. Available step keys: {available_keys}."
+            )
+            return
 
         raise KeyError(
             f"Override keys {list(remaining_override_keys)} do not match any step in the saved configuration. "
