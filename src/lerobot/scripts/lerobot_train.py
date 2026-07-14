@@ -325,7 +325,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         preprocessor_overrides = {
             "device_processor": {"device": device.type},
             "normalizer_processor": {
-                "stats": dataset.meta.stats,
                 "features": {**policy.config.input_features, **policy.config.output_features},
                 "norm_map": policy.config.normalization_mapping,
             },
@@ -333,11 +332,17 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         }
         postprocessor_overrides = {
             "unnormalizer_processor": {
-                "stats": dataset.meta.stats,
                 "features": policy.config.output_features,
                 "norm_map": policy.config.normalization_mapping,
             },
         }
+        # On resume, the checkpoint's saved processor stats are authoritative: they may have
+        # been adapted by the policy (e.g. EVO1 pads state/action stats to max_state_dim),
+        # and force-feeding raw dataset stats over them crashes normalization (#4006).
+        # This mirrors the `dataset_stats` kwarg above, which is also skipped on resume.
+        if not cfg.resume:
+            preprocessor_overrides["normalizer_processor"]["stats"] = dataset.meta.stats
+            postprocessor_overrides["unnormalizer_processor"]["stats"] = dataset.meta.stats
         if getattr(active_cfg, "use_relative_actions", False):
             preprocessor_overrides["relative_actions_processor"] = {
                 "enabled": True,
