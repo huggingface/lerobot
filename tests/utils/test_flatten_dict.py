@@ -36,11 +36,25 @@ def test_empty_dict():
     assert unflatten_dict({}) == {}
 
 
-def test_empty_nested_dict_preserved():
-    # Empty nested dict is a value and must round-trip; previously flatten
-    # dropped empty branches, which made stats-merge callsites silent.
+def test_empty_nested_dict_dropped_by_default():
+    # Default behavior matches historical flatten_dict: empty branches are
+    # dropped. This is required by serializer callsites (e.g. safetensors)
+    # that reject dict-valued leaves.
+    assert flatten_dict({"stats": {}}) == {}
+    assert flatten_dict({"a": {"b": {}}, "c": 2}) == {"c": 2}
+
+
+def test_empty_nested_dict_preserved_when_opted_in():
+    # With keep_empty=True the empty nested dict is a terminal value and must
+    # round-trip, so stats merges with missing branches do not lose keys.
     nested = {"stats": {}}
-    flat = flatten_dict(nested)
-    # Concrete contract: empty-dict leaves become terminal values in flat form.
+    flat = flatten_dict(nested, keep_empty=True)
     assert flat == {"stats": {}}
+    assert unflatten_dict(flat) == nested
+
+
+def test_keep_empty_propagates_to_nested_levels():
+    nested = {"a": {"b": {}}, "c": 2}
+    flat = flatten_dict(nested, keep_empty=True)
+    assert flat == {"a/b": {}, "c": 2}
     assert unflatten_dict(flat) == nested
