@@ -39,10 +39,10 @@ GROOT_DEFAULT_ANGLES[[4, 10]] = -0.2  # Ankle pitch
 # Control parameters
 ACTION_SCALE = 0.25
 CONTROL_DT = 0.02  # 50Hz
-ANG_VEL_SCALE: float = 0.25
+ANG_VEL_SCALE: float = 0.5
 DOF_POS_SCALE: float = 1.0
 DOF_VEL_SCALE: float = 0.05
-CMD_SCALE: list[float] = [2.0, 2.0, 0.25]
+CMD_SCALE: list[float] = [2.0, 2.0, 0.5]
 
 
 DEFAULT_GROOT_REPO_ID = "nepyope/GR00T-WholeBodyControl_g1"
