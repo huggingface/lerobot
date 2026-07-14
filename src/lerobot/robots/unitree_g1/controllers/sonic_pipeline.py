@@ -18,7 +18,7 @@
 
 This module is a pure-Python/ONNX re-implementation of NVIDIA's SONIC deploy stack
 (mirrors ``g1_deploy_onnx_ref.cpp``). It turns a high-level movement intent
-(walk/run/squat/box/… + speed/height/heading, driven by keyboard or joystick) into
+(walk/run/squat/box/… + speed/height/heading, driven by the joystick) into
 50 Hz joint-position targets for the robot's PD controller.
 
 Data flow (one 50 Hz control tick, orchestrated by ``SonicRuntime`` in
@@ -50,19 +50,15 @@ between them. Quaternions are scalar-first ``(w, x, y, z)``.
 
 Section map: constants & index tables · PD gains · quaternion helpers · locomotion
 modes · movement state · encoder/decoder · planner motion buffer · async planner
-worker · ``SonicPlanner`` · ``PlannerController`` · keyboard/joystick input.
+worker · ``SonicPlanner`` · ``PlannerController`` · joystick input.
 """
 
 from __future__ import annotations
 
 import math
 import queue
-import select
-import sys
-import termios
 import threading
 import time
-import tty
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import TYPE_CHECKING
@@ -1290,137 +1286,7 @@ class PlannerController(StandingEncoderDecoder):
                 self.ref_cursor = min(self.ref_cursor + 1, self.motion_timesteps - 1)
 
 
-# ── Keyboard ──────────────────────────────────────────────────────────────────
-
-
-class RawKeyboard:
-    """Context manager putting the terminal in cbreak mode for non-blocking key reads."""
-
-    def __init__(self):
-        self.fd = sys.stdin.fileno()
-        self.old = termios.tcgetattr(self.fd)
-
-    def __enter__(self):
-        tty.setcbreak(self.fd)
-        return self
-
-    def __exit__(self, *_):
-        termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old)
-
-    def get_key(self):
-        """Return one pending key, or None if none is available."""
-        return sys.stdin.read(1) if select.select([sys.stdin], [], [], 0)[0] else None
-
-
-def drain_keyboard(kb, ms, controller=None) -> bool:
-    """Process all pending terminal keys this frame (return True to quit)."""
-    quit_requested = False
-    while True:
-        key = kb.get_key()
-        if key is None:
-            break
-        if process_keyboard(key, ms, controller):
-            quit_requested = True
-    return quit_requested
-
-
-def process_keyboard(key, ms, controller=None):
-    """Apply a single key press to the movement state (returns True to quit).
-
-    Keys: WASD move, Q/E turn, digits pick a mode, n/p cycle motion sets, 9/0 speed,
-    -/= height, space = e-stop → IDLE, r = replan, m = toggle SMPL playback, Esc quit.
-    """
-    if key is None:
-        return False
-    if key == "\x1b":
-        return True
-    if key == " ":
-        ms.mode = LM.IDLE
-        ms.speed = ms.height = -1.0
-        ms.has_movement = False
-        ms.needs_replan = True
-        if controller:
-            controller.playing = False
-            controller.reinit_heading = True
-        print("\n  >> EMERGENCY STOP -> IDLE")
-        return False
-    if key in ("r", "R"):
-        ms.needs_replan = True
-        print("\n  >> Manual replan")
-        return False
-    if key in ("m", "M"):
-        if controller is not None and getattr(controller, "smpl_motion", None) is not None:
-            if controller.encode_mode == 2:
-                controller.encode_mode = 0
-                controller.playing = True
-                controller.reinit_heading = True
-                ms.needs_replan = True
-                print("\n  >> Motion OFF -> locomotion (mode 0). WASD to drive.")
-            else:
-                controller.encode_mode = 2
-                controller.reinit_heading = True
-                controller.smpl_motion.reset()
-                print("\n  >> Motion ON -> SMPL playback (mode 2)")
-        else:
-            print("\n  >> No motion loaded (start with --motion-file)")
-        return False
-    if key in ("n", "N", "p", "P"):
-        ms.motion_set_idx = (ms.motion_set_idx + (1 if key in ("n", "N") else -1)) % len(MOTION_SETS)
-        name, modes = MOTION_SETS[ms.motion_set_idx]
-        print(f"\n  >> Motion set: {name}")
-        [print(f"       {i + 1}: {m.name}") for i, m in enumerate(modes)]
-        return False
-    if key.isdigit() and key not in ("9", "0"):
-        idx = int(key) - 1
-        modes = MOTION_SETS[ms.motion_set_idx][1]
-        if 0 <= idx < len(modes):
-            ms.mode = modes[idx]
-            ms.needs_replan = True
-            if controller:
-                controller.playing = True
-                controller.reinit_heading = True
-            print(f"\n  >> Mode: {LM(ms.mode).name} ({ms.mode}) [replanning...]")
-        return False
-    if key == "9":
-        ms.speed = max(0.0, (ms.speed if ms.speed >= 0 else 1.0) - 0.1)
-        print(f"\n  >> Speed: {ms.speed:.1f}")
-        return False
-    if key == "0":
-        ms.speed = min(5.0, (ms.speed if ms.speed >= 0 else 1.0) + 0.1)
-        print(f"\n  >> Speed: {ms.speed:.1f}")
-        return False
-    if key == "-":
-        ms.height = max(0.2, (ms.height if ms.height >= 0 else DEFAULT_HEIGHT) - 0.02)
-        print(f"\n  >> Height: {ms.height:.2f}")
-        return False
-    if key == "=":
-        ms.height = min(1.0, (ms.height if ms.height >= 0 else DEFAULT_HEIGHT) + 0.02)
-        print(f"\n  >> Height: {ms.height:.2f}")
-        return False
-    if key.lower() == "w":
-        ms.movement_angle = ms.facing_angle
-    elif key.lower() == "s":
-        ms.movement_angle = ms.facing_angle + math.pi
-    elif key.lower() == "a":
-        ms.movement_angle = ms.facing_angle + math.pi / 2
-    elif key.lower() == "d":
-        ms.movement_angle = ms.facing_angle - math.pi / 2
-    if key.lower() in ("w", "s", "a", "d"):
-        ms.has_movement = ms.needs_replan = True
-        if controller:
-            controller.playing = True
-        print(f"\n  >> Move {key.upper()} (replanning...)")
-    elif key.lower() == "q":
-        ms.facing_angle += 0.1
-        if controller:
-            controller.delta_heading += 0.1
-        print(f"\n  >> Facing: {math.degrees(ms.facing_angle):.0f}°")
-    elif key.lower() == "e":
-        ms.facing_angle -= 0.1
-        if controller:
-            controller.delta_heading -= 0.1
-        print(f"\n  >> Facing: {math.degrees(ms.facing_angle):.0f}°")
-    return False
+# ── Joystick input ────────────────────────────────────────────────────────────
 
 
 def _parse_wireless(wr):

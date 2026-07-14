@@ -69,6 +69,9 @@ def _extract_smpl_from_action(action: dict | None) -> np.ndarray | None:
     The pico_headset teleoperator emits the whole-body reference as flat floats so
     it flows unchanged through the standard lerobot action pipeline.
     """
+    # The keys are smpl.0 .. smpl.719; presence of the first element (smpl.0) is the
+    # sentinel that a full SMPL window was sent this tick. If it's absent, there's no
+    # whole-body reference, so bail out.
     if not action or f"{SMPL_ACTION_PREFIX}0" not in action:
         return None
     arr = np.fromiter(
