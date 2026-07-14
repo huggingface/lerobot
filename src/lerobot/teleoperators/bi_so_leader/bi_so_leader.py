@@ -108,10 +108,10 @@ class BiSOLeader(BimanualMixin, Teleoperator):
     @check_if_not_connected
     def send_feedback(self, feedback: dict[str, float]) -> None:
         """Route bimanual feedback to left and right arms with proper prefix stripping.
-        
+
         Receives feedback dict with keys like: left_shoulder_pan.pos, right_shoulder_pan.pos, ...
         Splits and routes to each arm by removing the prefix.
-        
+
         This enables DAgger smooth handover: when transitioning from policy control to human
         intervention, both leader arms are commanded to the follower's current pose to avoid
         discontinuities.
