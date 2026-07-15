@@ -455,6 +455,7 @@ def _build_rollout_runtime_io(
         prepare_observation_for_inference,
     )
     from lerobot.utils.feature_utils import build_dataset_frame  # noqa: PLC0415
+    from lerobot.utils.rerun_visualization import log_rerun_data  # noqa: PLC0415
 
     robot = ctx.hardware.robot_wrapper
     device = torch.device(ctx.runtime.cfg.device or "cpu")
@@ -466,11 +467,10 @@ def _build_rollout_runtime_io(
             latest_raw.clear()
             latest_raw.update(raw)
             if rerun_log:
-                from lerobot.runtime import rerun_viz  # noqa: PLC0415
-
-                camera_keys = list(robot.cameras)
-                state = {k: v for k, v in raw.items() if isinstance(v, (int, float))}
-                rerun_viz.log_robot_frame(raw, camera_keys, state=state, task=get_task())
+                try:
+                    log_rerun_data(observation=raw)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("rerun observation log failed: %s", exc)
             _strip_runtime_owned_language_cols(raw)
             processed = ctx.processors.robot_observation_processor(raw)
             observation = build_dataset_frame(ctx.data.dataset_features, processed, prefix="observation")
@@ -501,10 +501,6 @@ def _build_rollout_runtime_io(
             raw = latest_raw or robot.get_observation()
             robot_action = ctx.processors.robot_action_processor((action_dict, raw))
             robot.send_action(robot_action)
-            if rerun_log:
-                from lerobot.runtime import rerun_viz  # noqa: PLC0415
-
-                rerun_viz.log_cameras(robot)
         except Exception as exc:  # noqa: BLE001
             logger.error("robot action pipeline failed: %s", exc, exc_info=True)
 
@@ -840,19 +836,28 @@ def run(
         if sim_stream_server is not None:
             sim_backend.attach_stream_server(sim_stream_server)
     elif autonomous_mode:
+        rerun_log = False
         if args.rerun:
-            from lerobot.runtime.rerun_viz import start_rerun  # noqa: PLC0415
+            from lerobot.utils.rerun_visualization import init_rerun  # noqa: PLC0415
 
-            start_rerun(
-                app_name=f"lerobot_{policy_type or 'runtime'}",
-                grpc_port=args.rerun_grpc_port,
-                web_port=args.rerun_web_port,
-            )
+            try:
+                init_rerun(
+                    session_name=f"lerobot_{policy_type or 'runtime'}",
+                    port=args.rerun_grpc_port,
+                    web_port=args.rerun_web_port,
+                )
+                rerun_log = True
+                print(
+                    f"[runtime] rerun live view: http://localhost:{args.rerun_web_port}",
+                    flush=True,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("could not start rerun: %s", exc)
         robot = rollout_ctx.hardware.robot_wrapper.inner
         print(f"[runtime] connected to {robot.name}", flush=True)
         observation_provider, robot_executor = _build_rollout_runtime_io(
             rollout_ctx,
-            rerun_log=bool(args.rerun),
+            rerun_log=rerun_log,
             get_task=_live_task,
         )
     # Generation settings belong to the adapter rather than mutable runtime state.

@@ -129,6 +129,36 @@ def _views_by_kind(blueprint, kind):
     return [v for v in blueprint.root.views if v.kind == kind]
 
 
+def test_init_rerun_can_serve_headless_web_viewer(mock_rerun, monkeypatch):
+    rv, _calls, _blueprints = mock_rerun
+    rr = sys.modules["rerun"]
+    served = {}
+
+    def serve_grpc(grpc_port):
+        served["grpc"] = grpc_port
+        return "rerun+http://localhost"
+
+    monkeypatch.setattr(
+        rr,
+        "serve_grpc",
+        serve_grpc,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        rr,
+        "serve_web_viewer",
+        lambda **kwargs: served.setdefault("web", kwargs),
+        raising=False,
+    )
+
+    rv.init_rerun(session_name="runtime", port=8765, web_port=9091)
+
+    assert served["grpc"] == 8765
+    assert served["web"]["web_port"] == 9091
+    assert served["web"]["open_browser"] is False
+    assert served["web"]["connect_to"] == "rerun+http://localhost"
+
+
 def test_log_rerun_data_envtransition_scalars_and_image(mock_rerun):
     rv, calls, blueprints = mock_rerun
 
