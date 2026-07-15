@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -179,13 +178,27 @@ class SonicWholeBodyController:
     control_dt = CONTROL_DT
     full_body = True
 
-    def __init__(self, force_cpu: bool = False):
+    def __init__(
+        self,
+        force_cpu: bool = False,
+        *,
+        enable_smpl_root: bool = False,
+        enable_smpl_stream: bool = False,
+        smpl_host: str | None = None,
+        smpl_port: int | None = None,
+    ):
         logger.info("Loading SONIC whole-body controller...")
         self._runtime = SonicRuntime(force_cpu=force_cpu)
         self.kp = self._runtime.kp
         self.kd = self._runtime.kd
         self.controller = self._runtime.controller
         self.ms = self._runtime.ms
+
+        # When True, the per-frame SMPL root quaternion steers the mode-2 anchor.
+        # Off by default: feeding it currently produces root-acceleration spikes
+        # (NaN QACC at DOF 0) until the reference root trajectory is smoothed and
+        # rate-matched (30 Hz dataset -> 50 Hz control).
+        self.enable_smpl_root = enable_smpl_root
 
         # Tracks the previous keyboard held-key set so discrete controls (mode,
         # motion set, replan, e-stop, WASD direction) fire once per physical press
@@ -194,10 +207,11 @@ class SonicWholeBodyController:
 
         # Optional: subscribe directly to the rt/smpl headset stream so full-body
         # teleop works with ANY teleoperator (e.g. --teleop.type=unitree_g1 for the
-        # estop/joystick) before the dedicated pico_headset teleop exists. Enable
-        # with SONIC_SMPL_STREAM=1; override endpoint via SONIC_SMPL_HOST/PORT.
+        # estop/joystick) before the dedicated pico_headset teleop exists.
+        self._smpl_host = smpl_host
+        self._smpl_port = smpl_port
         self._smpl_stream = None
-        if os.environ.get("SONIC_SMPL_STREAM", "0") not in ("0", "", "false", "False"):
+        if enable_smpl_stream:
             self._init_smpl_stream()
 
         logger.info(
@@ -215,8 +229,8 @@ class SonicWholeBodyController:
             SmplStream,
         )
 
-        host = os.environ.get("SONIC_SMPL_HOST", DEFAULT_SMPL_HOST)
-        port = int(os.environ.get("SONIC_SMPL_PORT", DEFAULT_SMPL_PORT))
+        host = self._smpl_host or DEFAULT_SMPL_HOST
+        port = self._smpl_port or DEFAULT_SMPL_PORT
         self._smpl_stream = SmplStream(host=host, port=port)
         logger.info("SONIC subscribed to rt/smpl @ tcp://%s:%d", host, port)
 
@@ -329,7 +343,7 @@ class SonicWholeBodyController:
         self._process_keyboard(action)
 
         # Prefer SMPL delivered via the teleop action (pico_headset). Fall back to a
-        # direct rt/smpl subscription when SONIC_SMPL_STREAM is enabled. A stale
+        # direct rt/smpl subscription when enabled (enable_smpl_stream). A stale
         # stream (headset silent past its timeout) is treated as "no SMPL" so the
         # robot doesn't stay frozen tracking the last pose.
         smpl = _extract_smpl_from_action(action)
@@ -345,14 +359,11 @@ class SonicWholeBodyController:
             if self.controller.encode_mode != 2:
                 self._enter_wholebody()
             self.controller.smpl_joints_10frame_step1 = smpl
-            # Root orientation (if provided) steers the mode-2 anchor/heading.
-            # Temporarily disabled: feeding the per-frame SMPL root quaternion produced
-            # root-acceleration spikes (NaN QACC at DOF 0, sim unstable) mid-episode.
-            # Keep the anchor self-driven until the reference root trajectory is
-            # smoothed/rate-matched (30 Hz dataset -> 50 Hz control). See
-            # docs/SONIC_REPLAY_DEBUGGING.md.
-            self.controller.smpl_root_quat = None
-            _ = root_quat
+            # Root orientation steers the mode-2 anchor/heading, but only when
+            # explicitly enabled (see enable_smpl_root); otherwise the anchor stays
+            # self-driven to avoid root-acceleration spikes from an unsmoothed
+            # reference trajectory.
+            self.controller.smpl_root_quat = root_quat if self.enable_smpl_root else None
             return self._runtime.tick(obs, debug=False, use_joystick=False)
 
         # No (or stale) SMPL: fall back to locomotion so the robot stays balanced.
