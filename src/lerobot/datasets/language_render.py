@@ -162,24 +162,15 @@ def render_sample(
     task: str | None = None,
     dataset_ctx: Any | None = None,
 ) -> RenderedMessages | None:
-    """Render the chat-style messages for a single dataset sample.
+    """Resolve one sample's bindings and render its message recipe.
 
-    Resolves the recipe's bindings against ``persistent`` and ``events`` rows
-    at frame timestamp ``t``, then expands the recipe's message templates.
-    Returns ``None`` if the resolved sample contains no target message.
+    Returns ``None`` when no text or low-level action supervision applies.
     """
     persistent_rows = _normalize_rows(persistent or [])
     event_rows = _normalize_rows(events or [])
 
-    # VQA-priority routing. A ``vqa`` annotation is sparse and
-    # view-dependent; the plain weighted blend would (a) waste a draw
-    # whenever it picks an ``ask_vqa*`` sub-recipe for a frame that has
-    # no VQA, and (b) silently drop a VQA-annotated frame whenever it
-    # picks a non-VQA sub-recipe. So: if the blend has ``ask_vqa*``
-    # sub-recipes and *this* frame carries one of their VQA bindings,
-    # render VQA here regardless of the weighted draw. That makes VQA's
-    # recipe-side training share equal the VQA-annotation density (the
-    # maximum reachable without a dataset-level oversampling sampler).
+    # Route sparse VQA frames to a matching view-specific component before weighted selection.
+    # This avoids dropping annotated frames or selecting VQA without annotations.
     if recipe.blend is not None:
         vqa_rendered = _render_vqa_if_present(
             recipe,
@@ -216,12 +207,9 @@ def _render_vqa_if_present(
     task: str | None,
     dataset_ctx: Any | None,
 ) -> RenderedMessages | None:
-    """Render an ``ask_vqa*`` sub-recipe iff this frame carries a VQA
-    annotation; otherwise return ``None`` so the caller falls back to the
-    normal weighted blend.
+    """Render a matching VQA component, or return ``None`` for normal selection.
 
-    When several VQA sub-recipes resolve (e.g. a frame annotated for more
-    than one camera), one is chosen deterministically by relative weight.
+    Multiple matching views are selected deterministically by relative weight.
     """
     assert recipe.blend is not None
     renderable: list[tuple[float, RenderedMessages]] = []
@@ -246,8 +234,7 @@ def _render_vqa_if_present(
     if len(renderable) == 1:
         return renderable[0][1]
 
-    # Multiple cameras have a VQA for this frame — deterministic pick by
-    # relative weight (fall back to a uniform draw if all weights are 0).
+    # Choose among matching cameras by relative weight, or uniformly when all weights are zero.
     total = sum(w for w, _ in renderable) or float(len(renderable))
     digest = hashlib.blake2b(f"vqa:{sample_idx}".encode(), digest_size=8).digest()
     draw = int.from_bytes(digest, "big") / 2**64 * total
@@ -422,13 +409,7 @@ def _render_message_recipe(
         if turn.target:
             target_indices.append(message_idx)
 
-    # A render is meaningful if it supervises *something*: either a
-    # text-CE target turn, or a ``low_level`` stream turn (flow / action
-    # supervision — e.g. the flow-only ``low_level_execution`` recipe,
-    # ``user(${subtask})`` with ``stream: low_level`` and no target).
-    # Without this, a flow-only recipe renders to ``None`` every time
-    # the blend draws it → ``predict_actions`` is never True → the
-    # action expert never receives a flow loss.
+    # Keep samples with either text targets or low-level action supervision.
     has_low_level = any(stream == "low_level" for stream in streams)
     if not target_indices and not has_low_level:
         return None
@@ -487,16 +468,12 @@ def _validate_rendered(rendered: RenderedMessages) -> None:
 
     if len(streams) != len(messages):
         raise ValueError("message_streams must be aligned with messages.")
-    # Valid iff it supervises something: a text-CE target turn OR a
-    # ``low_level`` stream turn (flow / action supervision).
+    # Require text or low-level action supervision.
     if not target_indices and not any(s == "low_level" for s in streams):
         raise ValueError("Rendered samples must contain a target message or a low_level-stream message.")
     for idx in target_indices:
         if idx < 0 or idx >= len(messages):
             raise ValueError(f"Target message index {idx} is out of bounds.")
-    # ``stream`` is enforced non-None at MessageTurn construction time
-    # (see ``MessageTurn.__post_init__``), so a missing stream here would
-    # mean the dataclass invariant was bypassed; no need to re-check.
 
 
 def _nth_relative(

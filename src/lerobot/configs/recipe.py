@@ -147,16 +147,7 @@ class TrainingRecipe:
         return cls.from_dict(data)
 
     def _validate_message_recipe(self) -> None:
-        """Ensure every templated binding is known and the recipe supervises something.
-
-        A recipe is valid if it has at least one of:
-
-        * a ``target: true`` assistant turn (drives text-CE supervision), or
-        * a ``stream: low_level`` turn (drives flow / action supervision via
-          ``predict_actions=True``, even when no assistant turn is targeted —
-          e.g. π0.5-style ``low_level_execution`` where the action expert
-          conditions on a user-only ``${subtask}`` prompt).
-        """
+        """Validate bindings and require text or low-level action supervision."""
         assert self.messages is not None
         known_bindings = set(DEFAULT_BINDINGS) | set(self.bindings or {}) | {"task"}
 

@@ -12,12 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Policy-agnostic high/low-level runtime for language-conditioned policies.
+"""Policy-agnostic runtime for language-conditioned policies.
 
-The tick loop, REPL, and interactive CLI here are policy-independent. A
-policy plugs in by subclassing :class:`BaseLanguageAdapter` (or satisfying
-:class:`LanguageConditionedPolicyAdapter` directly) and registering it in
-:mod:`lerobot.runtime.registry`; ``lerobot-rollout --language`` then serves it.
+Adapters registered in :mod:`lerobot.runtime.registry` are served by ``lerobot-rollout --language``.
 """
 
 from .adapter import BaseLanguageAdapter, GenerationConfig, LanguageDiagnostics

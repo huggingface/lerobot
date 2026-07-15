@@ -12,10 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Optional FlashRT FP8 MLP kernels for PI052.
-
-The opt-in swap calibrates once on a real observation and falls back to BF16 when unavailable.
-"""
+"""Optional FlashRT FP8 MLP kernels with one-pass calibration and BF16 fallback."""
 
 from __future__ import annotations
 
@@ -42,7 +39,7 @@ _GEMM_REPO = "flashrt/flashrt-gemm-epilogues"
 
 
 def _get_kernel(repo: str):
-    """Load a FlashRT Hub package (cached). Returns None if unavailable."""
+    """Load a cached FlashRT Hub package."""
     from kernels import get_kernel
 
     return get_kernel(repo, version=1)
@@ -59,7 +56,7 @@ def _static_scale(amax: float, safety: float) -> torch.Tensor:
 
 
 class _FlashRTGeGLU(nn.Module):
-    """FP8 drop-in for a Gemma GeGLU MLP (gate/up/down, gelu_pytorch_tanh, no bias)."""
+    """FP8 Gemma GeGLU MLP."""
 
     def __init__(self, mlp, in_amax, hid_amax, ffn_ops, quant_ops, safety, fuse_weight=None):
         super().__init__()
@@ -68,8 +65,7 @@ class _FlashRTGeGLU(nn.Module):
         self.in_features = mlp.gate_proj.weight.shape[1]
         device = mlp.gate_proj.weight.device
         gate_up = torch.cat([mlp.gate_proj.weight, mlp.up_proj.weight], dim=0).float()
-        # Fold fixed RMSNorm weights into the GEMM to avoid FP8 activation outliers.
-        # Adaptive RMSNorm instead uses an identity channel scale.
+        # Fold fixed RMSNorm weights into GEMM; adaptive norms use identity scaling.
         if fuse_weight is not None:
             f = 1.0 + fuse_weight.detach().float()
             gate_up = gate_up * f[None, :]
@@ -91,8 +87,7 @@ class _FlashRTGeGLU(nn.Module):
         self._ha = 0.0
 
     def _calibrate_step(self, x):
-        # FP8-propagated calibration (FlashRT contract): measure input/hidden amax
-        # on the live (already-FP8-upstream) activation, running-max across steps.
+        # Track input and hidden maxima on live FP8-propagated activations.
         flat = x.reshape(-1, self.in_features).to(torch.bfloat16)
         xq = flat.float() * self.channel_scale.float()
         self._ia = max(self._ia, xq.abs().max().item())
@@ -125,7 +120,7 @@ class _FlashRTGeGLU(nn.Module):
 
 
 class _FlashRTGeluMLP(nn.Module):
-    """FP8 drop-in for a SigLIP MLP (fc1 -> gelu_tanh -> fc2, with bias)."""
+    """FP8 SigLIP GELU MLP."""
 
     def __init__(self, mlp, in_amax, hid_amax, ffn_ops, quant_ops, safety):
         super().__init__()
@@ -191,8 +186,7 @@ def _siglip_mlps(model) -> list:
 
 
 def _run_forward(policy, batches) -> None:
-    """Run predict_action_chunk in eager mode (a compiled ``sample_actions``
-    bypasses the Python module forwards, so drop it for the calibration pass)."""
+    """Run eager action prediction so calibration reaches Python module forwards."""
     model = policy.model
     saved = {name: vars(model).pop(name) for name in ("sample_actions", "forward") if name in vars(model)}
     with torch.inference_mode():
@@ -205,14 +199,12 @@ def _run_forward(policy, batches) -> None:
 
 
 def _fixed_norm_weight(norm):
-    """RMSNorm (1+w) fold weight if ``norm`` is fixed-weight; None if adaptive."""
+    """Return a fixed RMSNorm fold weight, or ``None`` for adaptive norms."""
     return norm.weight if getattr(norm, "dense", None) is None else None
 
 
 def _fp8_supported(device) -> bool:
-    """FP8 E4M3 tensor cores require CUDA SM >= 8.9 (Ada / Hopper / Blackwell).
-    Older GPUs (e.g. A100 SM 8.0) and CPU have no FP8 path, so the kernels would
-    fail at runtime — gate here and keep BF16."""
+    """Return whether the device supports FP8 E4M3 tensor cores (CUDA SM >= 8.9)."""
     if device.type != "cuda" or not torch.cuda.is_available():
         return False
     major, minor = torch.cuda.get_device_capability(device)
@@ -220,17 +212,9 @@ def _fp8_supported(device) -> bool:
 
 
 def apply_fp8_mlp(policy, batch, *, safety: float = 1.05) -> bool:
-    """Swap every Gemma GeGLU MLP and SigLIP GELU MLP to the FlashRT FP8 kernels.
+    """Replace Gemma and SigLIP MLPs with FlashRT FP8 kernels calibrated on the supplied batch.
 
-    Calibration is FP8-propagated (the FlashRT contract): the FP8 modules are
-    swapped in first, then a single forward on one representative frame measures
-    each GEMM's input/hidden amax on the *already-quantized* activations it sees
-    at runtime (not on a clean BF16 forward), running-max across denoise steps.
-    The preceding fixed RMSNorm weight (1+w) is folded into the GEMM so the
-    quantized activation is the uniform rms(x); adaptive-RMSNorm inputs (action
-    expert) do not fold. ``scale = amax/448 * safety``. A single frame is enough.
-    Returns True on success, False (no-op, BF16 kept) if the device lacks FP8
-    support or the kernels are unavailable.
+    Returns ``False`` without modifying BF16 execution when FP8 or its kernels are unavailable.
     """
     device = next(policy.parameters()).device
     if not _fp8_supported(device):
@@ -264,7 +248,7 @@ def apply_fp8_mlp(policy, batch, *, safety: float = 1.05) -> bool:
         mlp_parent.mlp = _FlashRTGeluMLP(mlp_parent.mlp, 1.0, 1.0, gelu_ops, quant_ops, safety).to(device)
         calibrating.append(mlp_parent.mlp)
 
-    # FP8-propagated calibration: one forward with every module in calibrate mode.
+    # Calibrate every swapped module in one FP8-propagated forward.
     for m in calibrating:
         m.calibrating = True
     _run_forward(policy, batches)

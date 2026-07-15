@@ -358,7 +358,7 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
         str: The safe version string (e.g., "v1.2.3") to use as a revision.
 
     Raises:
-        RevisionNotFoundError: If the repo has no version tags.
+        RuntimeError: If the repo has no version tags.
         BackwardCompatibilityError: If only older major versions are available.
         ForwardCompatibilityError: If only newer major versions are available.
     """
@@ -375,16 +375,7 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
             f"  from huggingface_hub import HfApi\n"
             f"  HfApi().create_tag({repo_id!r}, tag='v3.0', repo_type='dataset', exist_ok=True)"
         )
-        # ``RevisionNotFoundError`` extends ``HfHubHTTPError`` whose
-        # ``__init__`` indexes ``response.headers`` unconditionally on
-        # current ``huggingface_hub`` versions. Constructing it without
-        # a real ``Response`` object crashes with either
-        # ``TypeError: missing 1 required keyword-only argument`` (old
-        # builds) or ``AttributeError: 'NoneType' object has no attribute
-        # 'headers'`` (new builds). Skip that path entirely — this isn't
-        # really an HTTP error, it's a configuration issue — and raise a
-        # plain ``RuntimeError`` so the message actually reaches the
-        # caller.
+        # This is a configuration error; RevisionNotFoundError requires a real HTTP response.
         raise RuntimeError(msg)
 
     if target_version in hub_versions:

@@ -163,27 +163,16 @@ class DatasetReader:
     def _load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self._meta.features)
-        # Datasets annotated with the PR1 language columns may have been
-        # written without registering those columns in ``meta/info.json``
-        # (e.g. they predate ``CODEBASE_VERSION="v3.1"`` and were
-        # back-filled by ``lerobot-annotate``). Probe a single parquet
-        # shard and graft the column features on so the strict
-        # ``Dataset.from_parquet`` cast doesn't fail with
-        # ``column names don't match``.
+        # Annotated datasets may have language columns absent from metadata.
+        # Extend the schema before the strict Parquet cast.
         features = self._extend_features_with_language_columns(features)
         hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
     def _extend_features_with_language_columns(self, features: datasets.Features) -> datasets.Features:
-        """Add ``language_persistent`` / ``language_events`` to ``features``
-        when the underlying parquet shards declare them but the metadata
-        doesn't. No-op when neither column is present or both are
-        already registered.
-        """
-        # Find any one parquet to peek at; bail if there are none yet
-        # (the dataset will fail later for an unrelated reason and we
-        # want that error to surface as-is).
+        """Register language columns found in Parquet but missing from metadata."""
+        # Leave empty datasets to fail through the normal loading path.
         try:
             sample = next((self.root / "data").glob("*/*.parquet"))
         except StopIteration:

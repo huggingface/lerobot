@@ -71,23 +71,9 @@ def _restore_pi052_pretrained_state(
     postprocessor: PolicyProcessorPipeline,
     pretrained_path: str,
 ) -> None:
-    """Transplant saved stateful blobs from a pi052 checkpoint into fresh pipelines.
+    """Restore checkpoint state into fresh PI052 pipelines that cannot JSON-roundtrip.
 
-    pi052's preprocessor includes steps whose constructor args don't
-    JSON-roundtrip (``RenderMessagesStep.recipe`` is a Python object,
-    ``ActionTokenizerProcessorStep.action_tokenizer_name`` is a
-    fitted-tokenizer path that may not exist at eval time). We rebuild
-    those pipelines fresh from ``config.recipe_path`` and then walk
-    over the saved ``policy_{pre,post}processor.json`` files to find
-    each step's ``state_file`` reference and load the bytes back into
-    the corresponding fresh step. Today that's only the
-    NormalizerProcessorStep / UnnormalizerProcessorStep (the action /
-    state quantile stats), but the loop is generic so any future
-    stateful step picks up its blob automatically.
-
-    Pairing is by ``registry_name`` AND position so a benign reorder
-    on the saved side surfaces a warning rather than silently feeding
-    the wrong tensors into the wrong step.
+    Steps are paired by position and registry name to prevent loading state into the wrong processor.
     """
     import json  # noqa: PLC0415
     import logging  # noqa: PLC0415
@@ -99,8 +85,7 @@ def _restore_pi052_pretrained_state(
 
     base = Path(pretrained_path)
     if not base.exists():
-        # Hub repo id, not a local dir: fetch the processor JSON + stats here
-        # (the generic loader never does for pi052's fresh-built processors).
+        # Resolve Hub processor configs and state files for the fresh PI052 pipelines.
         try:
             from huggingface_hub import snapshot_download  # noqa: PLC0415
 
@@ -374,11 +359,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     preprocessor_overrides: dict[str, Any] | None
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
-    # Optional: HF Hub repo id of the dataset the policy is being
-    # trained on. Used by policies that auto-fit pieces of their
-    # preprocessing (e.g. pi052's FAST action tokenizer per
-    # Pertsch et al. 2025 [64], π0.5 §III.C). When omitted, those
-    # policies fall back to their universal pre-fitted tokenizers.
+    # Dataset repo used for optional processor fitting; omit it to use universal tokenizers.
     dataset_repo_id: str | None
     dataset_meta: Any | None
 
@@ -415,8 +396,7 @@ def make_pre_post_processors(
             policy configuration type.
     """
     if pretrained_path and getattr(policy_cfg, "type", None) == "pi052":
-        # pi052 pipelines don't JSON-roundtrip — rebuild fresh and transplant
-        # saved state (see ``_restore_pi052_pretrained_state`` for why).
+        # Rebuild non-serializable PI052 steps, then restore their saved state.
         from .pi052.processor_pi052 import make_pi052_pre_post_processors
 
         preprocessor, postprocessor = make_pi052_pre_post_processors(
@@ -530,18 +510,13 @@ def make_pre_post_processors(
         )
 
     elif policy_cfg.type == "pi052":
-        # NOTE: PI052Config subclasses PI05Config, so this branch MUST
-        # come before the PI05Config isinstance check below (otherwise
-        # pi052 would silently pick up π0.5's processor).
+        # PI052 must precede PI05 because its config subclasses PI05Config.
         from .pi052.processor_pi052 import make_pi052_pre_post_processors
 
         processors = make_pi052_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
-            # ``dataset_repo_id`` flows in via kwargs when FAST CE is
-            # enabled — the train loop sets it from ``--dataset.repo_id``.
-            # When ``None``, ``make_pi052_pre_post_processors`` skips
-            # the auto-fit and uses the universal tokenizer.
+            # Without a dataset repo, FAST auto-fit falls back to the universal tokenizer.
             dataset_repo_id=kwargs.get("dataset_repo_id"),
         )
 
