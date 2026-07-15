@@ -1751,8 +1751,6 @@ class PI052Policy(PreTrainedPolicy):
         return out
 
     def _generate_low_level_subtask(self, obs_i: dict[str, Tensor], task: str, i: int) -> str:
-        from lerobot.runtime.adapter import looks_like_gibberish as _looks_like_gibberish  # noqa: PLC0415
-
         from .inference.pi052_adapter import _generate_with_policy  # noqa: PLC0415
 
         msg = ""
@@ -1767,7 +1765,7 @@ class PI052Policy(PreTrainedPolicy):
         self.last_subtasks_raw[i] = msg or ""
 
         # Feed the generated subtask verbatim, matching low-level training.
-        if msg and not _looks_like_gibberish(msg):
+        if msg:
             subtask = " ".join(msg.strip().split())
             self._last_good_subtasks[i] = subtask
             self.last_subtasks[i] = subtask
@@ -1779,8 +1777,6 @@ class PI052Policy(PreTrainedPolicy):
         debug = getattr(self, "_last_select_message_debug", "") or ""
         if not task:
             reason = "No task string was available in the batch."
-        elif msg:
-            reason = f"Rejected generated subtask: {msg!r}"
         else:
             reason = f"Empty generated subtask. {debug}".strip()
         if self._last_good_subtasks[i]:

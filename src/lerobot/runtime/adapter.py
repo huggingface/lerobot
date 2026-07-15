@@ -43,11 +43,10 @@ class GenerationConfig:
 
 @dataclass
 class LanguageDiagnostics:
-    """Runtime-panel rejection and repeat counters keyed by text kind."""
+    """Runtime-panel generation counters keyed by text kind."""
 
     last_raw: dict[str, str] = field(default_factory=dict)
     empty: dict[str, int] = field(default_factory=dict)
-    gibberish: dict[str, int] = field(default_factory=dict)
     repeat: int = 0
 
     def _bump(self, table: dict[str, int], kind: str) -> int:
@@ -96,9 +95,9 @@ class BaseLanguageAdapter(ABC):
             state.set_context("plan", plan, label="plan")
 
     def plan_from_text(self, text: str) -> str:
-        """Strip ``<say>`` speech markers and reject gibberish plans."""
+        """Strip ``<say>`` speech markers from a generated plan."""
         plan, _speech = split_plan_and_say(text)
-        return "" if looks_like_gibberish(plan) else plan
+        return plan
 
     def _regenerate_context(self, observation: dict[str, Any] | None, state: RuntimeState) -> None:
         """Default hierarchy: regenerate the subtask, then memory when it changes.
@@ -127,18 +126,13 @@ class BaseLanguageAdapter(ABC):
     def _generate_filtered(
         self, kind: str, observation: dict[str, Any] | None, state: RuntimeState
     ) -> str | None:
-        """Generate one ``kind``, record diagnostics, drop empty / gibberish output."""
+        """Generate one ``kind``, record diagnostics, and drop empty output."""
         text = self.generate_text(kind, observation, state)
         self.diag.last_raw[kind] = text or ""
         if not text:
             count = self.diag._bump(self.diag.empty, kind)
             if count == 1 or count % 5 == 0:
                 state.log(f"  [info] {kind} gen returned empty (x{count})")
-            return None
-        if looks_like_gibberish(text):
-            count = self.diag._bump(self.diag.gibberish, kind)
-            if count == 1 or count % 30 == 0:
-                state.log(f"  [info] {kind} gen rejected (gibberish x{count}): {text[:60]!r}")
             return None
         return text
 
@@ -157,29 +151,6 @@ class DirectTaskPolicyAdapter(BaseLanguageAdapter):
         user_text: str | None = None,
     ) -> str:
         return ""
-
-
-def looks_like_gibberish(text: str) -> bool:
-    """Heuristic filter for malformed / collapsed LM-head output."""
-    if not text or not text.strip():
-        return True
-    stripped = text.strip()
-    alpha = sum(1 for c in stripped if c.isalpha())
-    if alpha < max(3, len(stripped) // 8):
-        return True
-    if stripped.startswith('":') and stripped.count('"') > stripped.count(" "):
-        return True
-    if len(set(stripped)) <= 2 and len(stripped) > 4:
-        return True
-    cleaned = stripped.replace("\n", " ").replace(":", " ")
-    for marker in ("Assistant", "User", "Ass "):
-        if marker in cleaned and len(cleaned.split()) < 4:
-            return True
-    tokens = [t for t in cleaned.split() if any(c.isalpha() for c in t)]
-    unique_alpha = {t.lower() for t in tokens}
-    if len(unique_alpha) < 3 and len(stripped) < 80:
-        return True
-    return len(tokens) >= 8 and len(unique_alpha) <= max(3, len(tokens) // 10)
 
 
 def split_plan_and_say(text: str) -> tuple[str, str]:

@@ -17,7 +17,6 @@ from lerobot.runtime.adapter import (
     BaseLanguageAdapter,
     DirectTaskPolicyAdapter,
     GenerationConfig,
-    looks_like_gibberish,
 )
 
 
@@ -49,15 +48,15 @@ def test_cascade_sets_subtask_then_memory():
     assert adapter.calls == ["subtask", "memory"]
 
 
-def test_gibberish_subtask_is_rejected_and_counted():
-    adapter = ScriptedAdapter({"subtask": [":::: ::"], "memory": ["should not run"]})
+def test_nonempty_generation_is_used_verbatim():
+    adapter = ScriptedAdapter({"subtask": [":::: ::"], "memory": ["memory"]})
     state = RuntimeState(task="clean")
 
     adapter.update_language_state(None, state)
 
-    assert "subtask" not in state.language_context
-    assert adapter.diag.gibberish.get("subtask") == 1
-    assert adapter.calls == ["subtask"]  # memory never generated when subtask is rejected
+    assert state.language_context["subtask"] == ":::: ::"
+    assert state.language_context["memory"] == "memory"
+    assert adapter.calls == ["subtask", "memory"]
 
 
 def test_throttle_regenerates_every_n_chunks():
@@ -85,12 +84,6 @@ def test_handle_interjection_sets_plan_and_strips_say():
     adapter.handle_interjection("turn", None, state)
 
     assert state.language_context["plan"] == "turn to the left now"
-
-
-def test_looks_like_gibberish_basic():
-    assert looks_like_gibberish("")
-    assert looks_like_gibberish(":::: ::")
-    assert not looks_like_gibberish("pick up the red cube")
 
 
 def test_direct_task_adapter_delegates_action_chunk():

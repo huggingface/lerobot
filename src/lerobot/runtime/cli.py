@@ -660,24 +660,19 @@ def _make_state_panel_renderer(
         dispatched = int(st.get("actions_dispatched") or 0)
         console.print(f"  [dim]queued actions: {queue_len}    dispatched: {dispatched}[/]")
 
-        # Surface repeated or rejected generations as overfitting diagnostics.
+        # Surface repeated or empty generations as overfitting diagnostics.
         diag = getattr(runtime.policy_adapter, "diag", None)
         if diag is not None:
             raw_subtask = diag.last_raw.get("subtask")
             sub_rep = int(diag.repeat)
-            sub_gib = int(diag.gibberish.get("subtask", 0))
             sub_empty = int(diag.empty.get("subtask", 0))
-            if raw_subtask is not None or sub_rep or sub_gib or sub_empty:
+            if raw_subtask is not None or sub_rep or sub_empty:
                 raw_display = (raw_subtask or "(empty)")[:80]
-                color = "yellow" if (sub_rep >= 3 or sub_gib >= 3 or sub_empty >= 3) else "dim"
+                color = "yellow" if (sub_rep >= 3 or sub_empty >= 3) else "dim"
                 console.print(
-                    f"  [{color}]subtask diag    repeat:{sub_rep}  "
-                    f"gibberish:{sub_gib}  empty:{sub_empty}  "
+                    f"  [{color}]subtask diag    repeat:{sub_rep}  empty:{sub_empty}  "
                     f"last_raw: {raw_display!r}[/]"
                 )
-            mem_gib = int(diag.gibberish.get("memory", 0))
-            if mem_gib:
-                console.print(f"  [dim]gen rejects     memory:{mem_gib}[/]")
         console.rule(style="cyan")
         # Show recent generation warnings and speech oldest-first.
         if scrollback:
