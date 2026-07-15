@@ -76,9 +76,14 @@ for variant in ("baseline", "visual-memory"):
         continue
     with result_path.open() as handle:
         info = json.load(handle)
-    overall = info["aggregated"]
+    overall = info["overall"]
     print(
         f"{variant}: success={overall['pc_success']:.2f}% "
         f"avg_reward={overall['avg_sum_reward']:.4f}"
     )
+    for task, metrics in info["per_group"].items():
+        print(
+            f"  {task}: success={metrics['pc_success']:.2f}% "
+            f"avg_reward={metrics['avg_sum_reward']:.4f}"
+        )
 PY
