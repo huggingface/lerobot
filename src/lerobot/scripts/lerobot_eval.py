@@ -505,13 +505,10 @@ def eval_policy(
                 tasks = list(env.call("task"))
             except (AttributeError, NotImplementedError):
                 tasks = None
-        # Per-env subtasks when available (batched hierarchical policies);
-        # fall back to the scalar last_subtask for single-env / other policies.
         subtasks = getattr(policy, "last_subtasks", None)
-        subtask_scalar = getattr(policy, "last_subtask", None)
         annotated = []
         for i in range(frames.shape[0]):
-            subtask_i = subtasks[i] if subtasks is not None and i < len(subtasks) else subtask_scalar
+            subtask_i = subtasks[i] if subtasks is not None and i < len(subtasks) else None
             annotated.append(
                 _annotate_eval_frames(
                     frames[i : i + 1],

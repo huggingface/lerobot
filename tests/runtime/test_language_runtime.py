@@ -14,7 +14,6 @@
 
 from lerobot.runtime import (
     LanguageConditionedRuntime,
-    RuntimeState,
 )
 
 
@@ -70,12 +69,3 @@ def test_runtime_handles_user_interjection():
 
     assert "please say ok" in adapter.interjections
     assert runtime.state.language_context["plan"] == "new plan"
-
-
-def test_runtime_state_aliases_legacy_keys_to_language_context():
-    state = RuntimeState()
-    state["current_subtask"] = "open drawer"
-    state["current_memory"] = "drawer open"
-
-    assert state.get("current_subtask") == "open drawer"
-    assert state.language_context == {"subtask": "open drawer", "memory": "drawer open"}

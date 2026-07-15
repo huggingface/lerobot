@@ -42,14 +42,6 @@ class RuntimeState:
     action_deadline: float | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
-    _ALIASES = {
-        "current_plan": ("language_context", "plan"),
-        "current_subtask": ("language_context", "subtask"),
-        "current_memory": ("language_context", "memory"),
-        "events_this_tick": ("events", None),
-        "_tick": ("tick", None),
-    }
-
     def emit(self, event_name: str) -> None:
         self.events.add(event_name)
 
@@ -88,11 +80,6 @@ class RuntimeState:
         return default
 
     def __getitem__(self, key: str) -> Any:
-        alias = self._ALIASES.get(key)
-        if alias is not None:
-            target, subkey = alias
-            value = getattr(self, target)
-            return value if subkey is None else value.get(subkey)
         if hasattr(self, key):
             return getattr(self, key)
         if key in self.extra:
@@ -100,16 +87,6 @@ class RuntimeState:
         raise KeyError(key)
 
     def __setitem__(self, key: str, value: Any) -> None:
-        alias = self._ALIASES.get(key)
-        if alias is not None:
-            target, subkey = alias
-            if subkey is None:
-                setattr(self, target, value)
-            elif value is None:
-                getattr(self, target).pop(subkey, None)
-            else:
-                getattr(self, target)[subkey] = value
-            return
         if hasattr(self, key):
             setattr(self, key, value)
         else:

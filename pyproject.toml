@@ -358,8 +358,6 @@ lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 lerobot-annotate="lerobot.scripts.lerobot_annotate:main"
 lerobot-rollout="lerobot.scripts.lerobot_rollout:main"
-# Backward-compatible alias; interactive language deployment is part of lerobot-rollout.
-lerobot-language-runtime="lerobot.scripts.lerobot_language_runtime:main"
 
 # ---------------- Tool Configurations ----------------
 

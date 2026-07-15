@@ -211,7 +211,7 @@ class RoboCasaSimBackend:
     def bind_runtime(self, runtime: Any) -> None:
         """Wire live task/subtask/memory getters from the runtime state."""
         self._task_getter = lambda: runtime.state.get("task")
-        self._subtask_getter = lambda: runtime.state.get("current_subtask")
+        self._subtask_getter = lambda: runtime.state.language_context.get("subtask")
         self._memory_getter = lambda: (runtime.state.get("language_context") or {}).get("memory")
 
     def _scene_description(self) -> str:

@@ -979,15 +979,11 @@ class PI052Policy(PreTrainedPolicy):
                 "PI052: knowledge insulation enabled — action→VLM K/V gradients are blocked in attention."
             )
 
-        # Size per-environment inference state lazily; the scalar mirrors env 0 for compatibility.
+        # Size per-environment inference state lazily.
         self.last_subtasks: list[str] | None = None
         self.last_subtasks_raw: list[str] | None = None
         self.last_subtasks_source: list[str] | None = None
         self._last_good_subtasks: list[str | None] | None = None
-        self.last_subtask: str | None = None
-        self.last_subtask_raw: str | None = None
-        self.last_subtask_source: str = "unset"
-        self.last_subtask_debug: str = ""
 
     def reset(self):
         """Reset action and high-level inference state."""
@@ -1000,10 +996,6 @@ class PI052Policy(PreTrainedPolicy):
         self.last_subtasks_raw = None
         self.last_subtasks_source = None
         self._last_good_subtasks = None
-        self.last_subtask = None
-        self.last_subtask_raw = None
-        self.last_subtask_source = "unset"
-        self.last_subtask_debug = ""
         # Counts action chunks since the last subtask (re)generation, so the
         # subtask can be held across several chunks (see subtask_replan_steps).
         self._subtask_chunk_counter = 0
@@ -1827,11 +1819,6 @@ class PI052Policy(PreTrainedPolicy):
             tokenizer = text_batch["tokenizer"]
 
         tokens, masks = self._stack_token_rows(rows, tokenizer)
-
-        # Scalar aliases mirror env 0 for back-compat / single-env overlays.
-        self.last_subtask = self.last_subtasks[0] if self.last_subtasks else None
-        self.last_subtask_raw = self.last_subtasks_raw[0] if self.last_subtasks_raw else None
-        self.last_subtask_source = self.last_subtasks_source[0] if self.last_subtasks_source else "unset"
 
         out = dict(batch)
         out[OBS_LANGUAGE_TOKENS] = tokens

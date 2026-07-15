@@ -27,7 +27,6 @@ from typing import Any
 
 from .adapter import GenerationConfig
 from .language_runtime import LanguageConditionedPolicyAdapter, LanguageConditionedRuntime
-from .repl import _emit
 
 logger = logging.getLogger("lerobot.runtime")
 
@@ -586,7 +585,7 @@ def _handle_slash_command(runtime: Any, line: str) -> bool:
                 runtime.set_task(rest)
                 # New task → drop the stale subtask so the high-level
                 # loop regenerates one for the new goal.
-                runtime.state["current_subtask"] = None
+                runtime.state.set_context("subtask", None)
                 print(f"[runtime] action — task: {rest!r}", flush=True)
             elif runtime.state.get("task"):
                 print(
@@ -643,17 +642,16 @@ def _make_state_panel_renderer(
             console.print(
                 "  [dim]commands:[/] [bold]/action[/] <task> run  ·  [bold]/help[/]  ·  [bold]stop[/]"
             )
-        for key, label in (
-            ("task", "task"),
-            ("current_subtask", "subtask"),
-            ("current_plan", "plan"),
-            ("current_memory", "memory"),
-        ):
-            value = st.get(key)
+        display_values = {
+            "task": st.get("task"),
+            **(st.get("language_context") or {}),
+        }
+        for key in ("task", "subtask", "plan", "memory"):
+            value = display_values.get(key)
             if value:
-                console.print(f"  [bold cyan]{label:<8}[/] {value}")
+                console.print(f"  [bold cyan]{key:<8}[/] {value}")
             else:
-                console.print(f"  [dim]{label:<8} (not set)[/]")
+                console.print(f"  [dim]{key:<8} (not set)[/]")
         queue_len = (
             len(st["action_queue"])
             if isinstance(st.get("action_queue"), (list, tuple)) or hasattr(st.get("action_queue"), "__len__")
@@ -728,7 +726,7 @@ def run(
     *,
     adapter_factory: Callable[[Any, GenerationConfig], LanguageConditionedPolicyAdapter] | None = None,
     panel_label: str | None = None,
-    prog: str = "lerobot-language-runtime",
+    prog: str = "lerobot-rollout",
 ) -> int:
     """Run the interactive language-conditioned runtime CLI.
 
@@ -821,7 +819,7 @@ def run(
         rt = runtime_box.get("rt")
         if rt is None:
             return args.task
-        return rt.state.get("current_subtask") or rt.state.get("task") or args.task
+        return rt.state.language_context.get("subtask") or rt.state.task or args.task
 
     if sim_mode:
         from lerobot.runtime.sim_robocasa import RoboCasaSimBackend  # noqa: PLC0415
@@ -936,7 +934,7 @@ def _run_sim_interactive(
         runtime.set_task(initial_task)
         # In direct-subtask mode the typed text IS the subtask; otherwise clear
         # it so the model generates one.
-        runtime.state["current_subtask"] = initial_task if direct_subtask else None
+        runtime.state.set_context("subtask", initial_task if direct_subtask else None)
         runtime.state["mode"] = "action"
 
     # Keep the terminal quiet while the browser renders the rollout.
@@ -985,7 +983,7 @@ def _run_sim_interactive(
                         elif low in {"/reset", "reset"}:
                             sim_backend.reset_scene()
                             _clear_action_queue(runtime)
-                            runtime.state["current_subtask"] = None
+                            runtime.state.set_context("subtask", None)
                             if hasattr(runtime.policy, "reset"):
                                 runtime.policy.reset()
                             print("[reset] new kitchen scene", flush=True)
@@ -994,7 +992,7 @@ def _run_sim_interactive(
                             runtime.set_task(cmd)
                             # Direct mode: the typed text is the subtask itself;
                             # otherwise clear it so the model regenerates one.
-                            runtime.state["current_subtask"] = cmd if direct_subtask else None
+                            runtime.state.set_context("subtask", cmd if direct_subtask else None)
                             _clear_action_queue(runtime)
                             adapter = getattr(runtime, "policy_adapter", None)
                             if adapter is not None and hasattr(adapter, "_chunks_until_regen"):
@@ -1043,7 +1041,7 @@ def _run_robot_interactive(
 
     if initial_task:
         runtime.set_task(initial_task)
-        runtime.state["current_subtask"] = initial_task if direct_subtask else None
+        runtime.state.set_context("subtask", initial_task if direct_subtask else None)
         # An explicit initial task starts immediately; otherwise the robot stays paused.
         runtime.state["mode"] = "action"
 
@@ -1092,7 +1090,7 @@ def _run_robot_interactive(
             else:
                 # New command: switch task/subtask immediately and regenerate.
                 runtime.set_task(line)
-                runtime.state["current_subtask"] = line if direct_subtask else None
+                runtime.state.set_context("subtask", line if direct_subtask else None)
                 _clear_action_queue(runtime)
                 adapter = getattr(runtime, "policy_adapter", None)
                 if adapter is not None and hasattr(adapter, "_chunks_until_regen"):
@@ -1172,7 +1170,7 @@ def _run_repl(
                 _redraw(last_logs)
                 continue
             runtime.state["recent_interjection"] = line
-            _emit(runtime.state, "user_interjection")
+            runtime.state.emit("user_interjection")
 
             last_logs = runtime.step_once() or []
             _redraw(last_logs)

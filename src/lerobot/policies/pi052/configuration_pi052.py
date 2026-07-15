@@ -146,15 +146,6 @@ class PI052Config(PI05Config):
     Degrades gracefully to BF16 if ``kernels`` / the FlashRT packages are
     missing. Default off keeps behaviour identical to the BF16 path."""
 
-    use_hf_kernels: bool = True
-    """Deprecated. Liger HF kernels are patched unconditionally by
-    ``_enable_hf_kernels`` — this field is retained as a no-op for
-    backward compatibility with checkpoints saved before commit
-    d70c8104 (which still serialize ``use_hf_kernels: true`` into
-    ``config.json``). Loading those configs would otherwise raise
-    ``DecodingError: The fields use_hf_kernels are not valid for
-    PI052Config`` (job 22164492). Remove in a future major bump."""
-
     use_flex_attention: bool = False
     """Accepted for checkpoint-config compatibility only — no-op in this branch.
     Newer training runs serialize ``use_flex_attention`` into ``config.json`` to
