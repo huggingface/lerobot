@@ -60,7 +60,6 @@ import argparse
 import logging
 import sys
 from collections.abc import Callable
-from contextlib import suppress
 from typing import Any
 
 from .adapter import GenerationConfig
@@ -71,6 +70,7 @@ logger = logging.getLogger("lerobot.runtime")
 
 
 def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> argparse.Namespace:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
     p = argparse.ArgumentParser(
         prog=prog,
         description="Interactive REPL runtime for a language-conditioned robot policy.",
@@ -197,48 +197,6 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         ),
     )
     p.add_argument(
-        "--robot.port",
-        dest="robot_port",
-        type=str,
-        default=None,
-        help="Serial port for the robot (e.g. ``/dev/tty.usbmodem...``).",
-    )
-    p.add_argument(
-        "--robot.id",
-        dest="robot_id",
-        type=str,
-        default=None,
-        help="Optional robot identifier (passed through to ``RobotConfig.id``).",
-    )
-    p.add_argument(
-        "--robot.cameras",
-        dest="robot_cameras",
-        type=str,
-        default=None,
-        help=(
-            "Optional JSON dict describing camera configs to attach to "
-            'the robot (e.g. ``\'{"top": {"type": "opencv", "index": 0}}\'``). '
-            "Camera keys MUST match the ``observation.images.*`` features "
-            "the policy was trained on."
-        ),
-    )
-    p.add_argument(
-        "--robot.max_relative_target",
-        dest="robot_max_relative_target",
-        type=str,
-        default=None,
-        help=(
-            "Safety clip on per-motor relative motion, passed through to "
-            "``RobotConfig.max_relative_target``. Accepts either a float "
-            "(applied to every motor — e.g. ``5.0`` degrees) or a JSON "
-            "object mapping motor names to caps "
-            '(e.g. ``\'{"shoulder_pan": 5, "gripper": 30}\'``). The '
-            "robot driver clips each commanded position relative to the "
-            "current measured position before sending — same kill-switch "
-            "``lerobot-record`` uses. Default ``None`` = no clipping."
-        ),
-    )
-    p.add_argument(
         "--rerun",
         action="store_true",
         help="Live rerun viewer for the robot cameras (real-robot mode). Serves a "
@@ -263,16 +221,6 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         action="store_true",
         help="Direct-subtask mode (sim OR robot): your typed text IS the subtask "
         "fed to the action expert; the LM subtask generator is disabled.",
-    )
-    p.add_argument(
-        "--auto_start",
-        action="store_true",
-        help=(
-            "Skip the ``Press ENTER to start`` confirmation prompt before "
-            "the autonomous control loop begins. Off by default — having "
-            "to confirm catches a lot of stupid mistakes (wrong policy, "
-            "wrong robot, robot not at home pose)."
-        ),
     )
     # --- RoboCasa simulation mode args -------------------------------
     # Setting ``--sim`` flips the runtime into simulation mode: instead of
@@ -462,7 +410,12 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         help="Nucleus filtering for high-level text gen.",
     )
     p.add_argument("-v", "--verbose", action="store_true", help="Enable DEBUG logging.")
-    return p.parse_args(argv)
+    args, unknown = p.parse_known_args(raw_argv)
+    unsupported = [arg for arg in unknown if not arg.startswith(("--robot.", "--policy."))]
+    if unsupported:
+        p.error(f"unrecognized arguments: {' '.join(unsupported)}")
+    args.raw_argv = raw_argv
+    return args
 
 
 # Columns the runtime supplies itself via its own message stream — strip
@@ -784,374 +737,122 @@ def _select_task_interactively(
         )
 
 
-def _dataset_features_from_robot(robot) -> dict[str, Any]:
-    """Build a LeRobot feature schema from a connected robot.
+def _build_language_rollout_context(args: argparse.Namespace) -> Any:
+    """Build the canonical rollout context for a language-controlled robot."""
+    import threading  # noqa: PLC0415
 
-    Used when no ``--dataset.repo_id`` is given so the runtime can assemble
-    observations and name action joints without a dataset (normalization stats
-    then come from the checkpoint). Mirrors ``lerobot-rollout``'s
-    ``build_rollout_context``: only ``.pos`` joints and camera features are
-    routed to the policy.
-    """
-    from lerobot.utils.feature_utils import (  # noqa: PLC0415
-        combine_feature_dicts,
-        hw_to_dataset_features,
+    import draccus  # noqa: PLC0415
+
+    from lerobot.configs import parser  # noqa: PLC0415
+    from lerobot.rollout import RolloutConfig, build_rollout_context  # noqa: PLC0415
+
+    # Importing the rollout entry point registers every bundled camera and
+    # robot config choice used by Draccus. Third-party choices were registered
+    # by the top-level entry point before reaching this function.
+    from lerobot.scripts import lerobot_rollout as _rollout_registrations  # noqa: F401, PLC0415
+
+    rollout_argv = [arg for arg in args.raw_argv if arg.startswith(("--policy.", "--robot."))]
+    if args.task:
+        rollout_argv.append(f"--task={args.task}")
+    rollout_argv.extend(
+        (
+            "--strategy.type=base",
+            f"--fps={args.ctrl_hz}",
+            "--return_to_initial_position=false",
+        )
     )
 
-    obs_hw = {
-        key: ft
-        for key, ft in robot.observation_features.items()
-        if isinstance(ft, tuple) or (ft is float and key.endswith(".pos"))
-    }
-    action_hw = {key: ft for key, ft in robot.action_features.items() if key.endswith(".pos")}
-    obs_features = hw_to_dataset_features(obs_hw, "observation")
-    action_features = hw_to_dataset_features(action_hw, "action")
-    return combine_feature_dicts(obs_features, action_features)
-
-
-def _build_robot(
-    *,
-    robot_type: str,
-    robot_port: str | None,
-    robot_id: str | None,
-    robot_cameras_json: str | None,
-    robot_max_relative_target: str | None,
-):
-    """Build and connect a robot from CLI args.
-
-    Mirrors how ``lerobot-record`` builds a robot but takes the args
-    flat from argparse instead of through draccus, so the runtime
-    keeps its plain ``--key=value`` CLI surface. ``max_relative_target``
-    is passed through to the RobotConfig — the driver itself clips each
-    commanded joint position relative to the current measured one
-    before issuing it on the bus.
-    """
-    import importlib  # noqa: PLC0415
-    import json  # noqa: PLC0415
-    import pkgutil  # noqa: PLC0415
-
-    import lerobot.robots as _robots_pkg  # noqa: PLC0415
-    from lerobot.robots import (  # noqa: PLC0415
-        RobotConfig,
-        make_robot_from_config,
-    )
-
-    # ``RobotConfig._choice_registry`` is populated lazily — each robot's
-    # ``config_<name>.py`` calls ``@RobotConfig.register_subclass`` at
-    # import time. ``lerobot.robots/__init__.py`` doesn't import the
-    # individual robot packages, so ``get_choice_class(robot_type)``
-    # raises ``KeyError`` until at least one robot module has been
-    # imported. Mirror what ``make_robot_from_config`` does internally:
-    # walk the robots package's submodules and import each so the
-    # decorator side-effect runs. Slow only on the first call (~200ms
-    # for ~10 dataclass modules); negligible for an autonomous run that
-    # then loops at ctrl_hz for minutes.
-    for _modinfo in pkgutil.iter_modules(_robots_pkg.__path__):
-        if _modinfo.name.startswith("_"):
-            continue
-        try:
-            importlib.import_module(f"lerobot.robots.{_modinfo.name}")
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("could not import lerobot.robots.%s: %s", _modinfo.name, exc)
-
+    previous_argv = sys.argv
     try:
-        cls = RobotConfig.get_choice_class(robot_type)
-    except KeyError as exc:
-        available = sorted(RobotConfig._choice_registry.keys())
-        raise ValueError(f"Unknown robot type {robot_type!r}. Available choices: {available}") from exc
-    kwargs: dict[str, Any] = {}
-    if robot_port:
-        kwargs["port"] = robot_port
-    if robot_id:
-        kwargs["id"] = robot_id
-    if robot_cameras_json:
-        try:
-            cameras_raw = json.loads(robot_cameras_json)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"--robot.cameras must be a JSON object, got {robot_cameras_json!r}: {exc}"
-            ) from exc
-        # ``RobotConfig`` expects ``cameras: dict[str, CameraConfig]`` —
-        # each inner value must be an actual ``CameraConfig`` subclass
-        # instance, not a raw dict. Look up the matching subclass via
-        # ``CameraConfig.get_choice_class(<type>)`` (registered by
-        # ``@CameraConfig.register_subclass`` decorators on each camera
-        # backend's config) and instantiate it. Mirror the lazy-import
-        # pattern from above so the registry is populated.
-        import lerobot.cameras as _cameras_pkg  # noqa: PLC0415
-        from lerobot.cameras import CameraConfig  # noqa: PLC0415
+        # RolloutConfig resolves --policy.path and policy overrides through the
+        # shared parser helpers, which intentionally read sys.argv.
+        sys.argv = [previous_argv[0], *rollout_argv]
+        parsed_argv = parser.filter_path_args(RolloutConfig.__get_path_fields__(), rollout_argv)
+        cfg = draccus.parse(config_class=RolloutConfig, args=parsed_argv)
+    finally:
+        sys.argv = previous_argv
 
-        for _modinfo in pkgutil.iter_modules(_cameras_pkg.__path__):
-            if _modinfo.name.startswith("_"):
-                continue
-            try:
-                importlib.import_module(f"lerobot.cameras.{_modinfo.name}")
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("could not import lerobot.cameras.%s: %s", _modinfo.name, exc)
+    if getattr(cfg.policy, "compile_model", False):
+        cfg.policy.compile_model = False
+    if getattr(cfg.policy, "gradient_checkpointing", False):
+        cfg.policy.gradient_checkpointing = False
+    if args.fp8:
+        if hasattr(cfg.policy, "use_flashrt_fp8_mlp"):
+            cfg.policy.use_flashrt_fp8_mlp = True
+        else:
+            logger.warning("--fp8 ignored: %s does not support it", cfg.policy.type)
 
-        cameras: dict[str, Any] = {}
-        for cam_name, cam_dict in cameras_raw.items():
-            if not isinstance(cam_dict, dict):
-                raise ValueError(f"camera {cam_name!r} value must be a dict, got {cam_dict!r}")
-            cam_dict = dict(cam_dict)  # don't mutate caller's parsed JSON
-            cam_type = cam_dict.pop("type", None)
-            if cam_type is None:
-                raise ValueError(
-                    f"camera {cam_name!r} is missing a 'type' field (e.g. 'opencv', 'intelrealsense')"
-                )
-            try:
-                cam_cls = CameraConfig.get_choice_class(cam_type)
-            except KeyError as exc:
-                available = sorted(CameraConfig._choice_registry.keys())
-                raise ValueError(
-                    f"camera {cam_name!r}: unknown type {cam_type!r}. Available choices: {available}"
-                ) from exc
-            cameras[cam_name] = cam_cls(**cam_dict)
-        kwargs["cameras"] = cameras
-    if robot_max_relative_target:
-        # Accept either a bare float (uniform cap) or a JSON object
-        # (per-motor cap). Matches ``RobotConfig.max_relative_target``'s
-        # ``float | dict[str, float] | None`` shape.
-        s = robot_max_relative_target.strip()
-        try:
-            if s.startswith("{"):
-                kwargs["max_relative_target"] = json.loads(s)
-            else:
-                kwargs["max_relative_target"] = float(s)
-        except (json.JSONDecodeError, ValueError) as exc:
-            raise ValueError(
-                f"--robot.max_relative_target must be a float or JSON dict, "
-                f"got {robot_max_relative_target!r}: {exc}"
-            ) from exc
-    cfg = cls(**kwargs)
-    robot = make_robot_from_config(cfg)
-    robot.connect()
-    return robot
+    return build_rollout_context(cfg, threading.Event())
 
 
-def _build_robot_observation_provider(
+def _build_rollout_runtime_io(
+    ctx: Any,
     *,
-    robot,
-    preprocessor: Any,
-    device: str,
-    task: str | None,
-    ds_features: dict[str, Any] | None,
-    rerun_log: bool = False,
-    get_task: Callable[[], str | None] | None = None,
-) -> Callable[[], dict | None]:
-    """Closure reading from the robot each call: ``robot.get_observation()`` →
-    ``build_inference_frame`` (state vector + image tensors, batched, on device)
-    → ``EnvTransition``-wrapped preprocessor (rename, normalise) → flat
-    observation batch for ``select_action`` / ``select_message``.
-
-    ``get_task`` (optional) is read every frame so the instruction packed into
-    the observation tracks the live task/subtask (e.g. MolmoAct2, whose processor
-    tokenizes the task into ``input_ids`` each frame). Falls back to the static
-    ``task`` when it returns nothing.
-    """
+    rerun_log: bool,
+    get_task: Callable[[], str | None],
+) -> tuple[Callable[[], dict | None], Callable[[Any], None]]:
+    """Adapt a rollout context to the language runtime's observation/action API."""
     import torch  # noqa: PLC0415
 
     from lerobot.policies.utils import (  # noqa: PLC0415
-        build_inference_frame,
+        make_robot_action,
         prepare_observation_for_inference,
     )
+    from lerobot.utils.feature_utils import build_dataset_frame  # noqa: PLC0415
 
-    torch_device = torch.device(device) if isinstance(device, str) else device
-    robot_type = getattr(robot, "robot_type", None) or getattr(getattr(robot, "config", None), "type", None)
-
-    # Camera-key → training (H, W) map from ``ds_features``. Live cameras
-    # rarely match the recorded resolution, and a different aspect ratio
-    # changes resize_with_pad's padding geometry — the flow head tolerates
-    # that, but the tightly-supervised LM head goes OOD and collapses.
-    _resize_logged = {"done": False}
-    target_image_shapes: dict[str, tuple[int, int]] = {}
-    if ds_features:
-        for fkey, fmeta in ds_features.items():
-            if not isinstance(fmeta, dict):
-                continue
-            dtype = fmeta.get("dtype")
-            if dtype not in ("image", "video"):
-                continue
-            shape = fmeta.get("shape")
-            if not shape or len(shape) != 3:
-                continue
-            names = fmeta.get("names") or []
-            # Feature schema stores either (H, W, C) or (C, H, W);
-            # disambiguate by the ``names`` ordering when present.
-            if names and len(names) == 3 and names[0] == "channels":
-                _, h, w = shape
-            else:
-                h, w, _ = shape
-            cam_key = fkey.removeprefix("observation.images.")
-            target_image_shapes[cam_key] = (int(h), int(w))
+    robot = ctx.hardware.robot_wrapper
+    device = torch.device(ctx.runtime.cfg.device or "cpu")
+    latest_raw: dict[str, Any] = {}
 
     def _provider() -> dict | None:
-        # Live task: re-read every frame so a typed command re-packs the prompt
-        # (falls back to the static startup task).
-        cur_task = (get_task() if get_task is not None else None) or task
         try:
             raw = robot.get_observation()
+            latest_raw.clear()
+            latest_raw.update(raw)
+            if rerun_log:
+                from lerobot.runtime import rerun_viz  # noqa: PLC0415
+
+                camera_keys = list(robot.cameras)
+                state = {k: v for k, v in raw.items() if isinstance(v, (int, float))}
+                rerun_viz.log_robot_frame(raw, camera_keys, state=state, task=get_task())
+            _strip_runtime_owned_language_cols(raw)
+            processed = ctx.processors.robot_observation_processor(raw)
+            observation = build_dataset_frame(ctx.data.dataset_features, processed, prefix="observation")
+            observation = prepare_observation_for_inference(
+                observation,
+                device,
+                task=get_task(),
+                robot_type=robot.robot_type,
+            )
+            observation = ctx.policy.preprocessor(observation)
+            return _select_observation_to_device(observation, device)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("robot.get_observation failed: %s", exc)
+            logger.warning("robot observation pipeline failed: %s", exc)
             return None
-
-        # Live camera view: log the raw frames + joint state to rerun before any
-        # resize (natural camera resolution). Best-effort — never blocks control.
-        if rerun_log:
-            from lerobot.runtime import rerun_viz  # noqa: PLC0415
-
-            cam_keys = list(target_image_shapes.keys()) or [
-                k for k, v in raw.items() if hasattr(v, "ndim") and getattr(v, "ndim", 0) == 3
-            ]
-            state = {k: v for k, v in raw.items() if isinstance(v, (int, float)) and k not in cam_keys}
-            rerun_viz.log_robot_frame(raw, cam_keys, state=state, task=cur_task)
-
-        # The runtime supplies messages itself; strip any language
-        # columns the robot stream may carry through.
-        _strip_runtime_owned_language_cols(raw)
-
-        # Resize live frames to the training (H, W) so the downstream
-        # resize_with_pad geometry matches what the model saw in training.
-        if target_image_shapes:
-            try:
-                import cv2 as _cv2  # noqa: PLC0415
-                import numpy as _np  # noqa: PLC0415
-
-                # Snapshot the gate state at the start of the call: the
-                # camera info and startup-state warnings are meant to fire
-                # exactly once (operator sanity check), so gate them on
-                # the *previous* value rather than the post-loop value.
-                first_call = not _resize_logged["done"]
-                for cam_key, (target_h, target_w) in target_image_shapes.items():
-                    img = raw.get(cam_key)
-                    if img is None or not isinstance(img, _np.ndarray):
-                        continue
-                    if img.ndim != 3:
-                        continue
-                    cur_h, cur_w = img.shape[:2]
-                    if first_call:
-                        logger.warning(
-                            "camera %s: live=%dx%d, training=%dx%d (resize=%s)",
-                            cam_key,
-                            cur_h,
-                            cur_w,
-                            target_h,
-                            target_w,
-                            "yes" if (cur_h, cur_w) != (target_h, target_w) else "no — already matched",
-                        )
-                    if (cur_h, cur_w) == (target_h, target_w):
-                        continue
-                    raw[cam_key] = _cv2.resize(img, (target_w, target_h), interpolation=_cv2.INTER_AREA)
-                _resize_logged["done"] = True
-                # One-shot state-vector print so the operator can eyeball it
-                # against dataset stats (state OOD is a real VLA failure mode).
-                if first_call and "observation.state" in (ds_features or {}):
-                    state_names = ds_features["observation.state"].get("names") or []
-                    state_vals = [raw.get(n) for n in state_names]
-                    logger.warning(
-                        "robot state at startup: %s",
-                        {
-                            n: round(v, 2) if isinstance(v, float) else v
-                            for n, v in zip(state_names, state_vals, strict=False)
-                        },
-                    )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("camera resize to dataset shape failed: %s", exc)
-
-        try:
-            if ds_features:
-                # Use the dataset's feature schema to pick the right
-                # raw keys and fold per-joint scalars into a single
-                # ``observation.state`` tensor. Then tensor-ise +
-                # device-place + add batch dim.
-                obs_tensors = build_inference_frame(
-                    raw,
-                    torch_device,
-                    ds_features=ds_features,
-                    task=cur_task,
-                    robot_type=robot_type,
-                )
-            else:
-                # No dataset features available — fall back to the
-                # generic numpy-only path; only works when the robot
-                # already returns dataset-shaped keys.
-                obs_tensors = prepare_observation_for_inference(
-                    raw,
-                    torch_device,
-                    task=cur_task,
-                    robot_type=robot_type,
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("observation prep failed: %s", exc)
-            return None
-
-        if preprocessor is not None:
-            # ``PolicyProcessorPipeline`` defaults its ``to_transition``
-            # to ``batch_to_transition``, which expects a *flat batch
-            # dict* keyed by ``observation.*`` / ``action`` / etc., and
-            # wraps it into an ``EnvTransition`` itself. Pre-wrapping
-            # here would just have ``batch_to_transition`` look for
-            # ``observation.*`` keys at top level, find none (they'd
-            # be nested under ``TransitionKey.OBSERVATION``), and
-            # produce an empty observation → ``ObservationProcessorStep``
-            # bails. Pass the flat dict straight in; ``to_output``
-            # gives us a flat dict back.
-            try:
-                processed = preprocessor(obs_tensors)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("preprocessor failed on robot observation: %s", exc)
-                return None
-            obs_tensors = processed if isinstance(processed, dict) else {}
-
-        return _select_observation_to_device(obs_tensors, torch_device)
-
-    return _provider
-
-
-def _build_robot_action_executor(
-    *,
-    robot,
-    postprocessor: Any,
-    ds_features: dict[str, Any],
-    rerun_log: bool = False,
-) -> Callable[[Any], None]:
-    """Closure that postprocesses an action and dispatches to the robot.
-
-    Mirrors ``lerobot-record``'s ``predict_action`` tail: postprocess
-    (denormalise) → ``make_robot_action`` (tensor → ``{joint: value}``
-    dict) → ``robot.send_action(...)``. Safety clipping happens *inside*
-    ``robot.send_action`` via the driver's ``max_relative_target``
-    cap (passed in at ``RobotConfig`` construction time) — same place
-    ``lerobot-record`` enforces it.
-    """
-    import torch  # noqa: PLC0415
-
-    from lerobot.policies.utils import make_robot_action  # noqa: PLC0415
 
     def _executor(action: Any) -> None:
         try:
-            if postprocessor is not None:
-                action = postprocessor(action)
-            if isinstance(action, torch.Tensor):
-                if action.ndim > 1 and action.shape[0] == 1:
-                    action = action.squeeze(0)
-                action_dict = make_robot_action(action, ds_features)
-            elif isinstance(action, dict):
-                action_dict = action
+            processed_action = ctx.policy.postprocessor(action)
+            if isinstance(processed_action, torch.Tensor):
+                if processed_action.ndim == 1:
+                    processed_action = processed_action.unsqueeze(0)
+                action_dict = make_robot_action(processed_action, ctx.data.dataset_features)
+            elif isinstance(processed_action, dict):
+                action_dict = processed_action
             else:
-                logger.warning("unsupported action type %r — skipping", type(action))
+                logger.warning("unsupported action type %r — skipping", type(processed_action))
                 return
-            robot.send_action(action_dict)
-            # Smooth live view: log the cameras every control tick (buffered
-            # async_read is cheap). Best-effort — never blocks control.
+            raw = latest_raw or robot.get_observation()
+            robot_action = ctx.processors.robot_action_processor((action_dict, raw))
+            robot.send_action(robot_action)
             if rerun_log:
                 from lerobot.runtime import rerun_viz  # noqa: PLC0415
 
                 rerun_viz.log_cameras(robot)
         except Exception as exc:  # noqa: BLE001
-            logger.error("robot.send_action failed: %s", exc, exc_info=True)
+            logger.error("robot action pipeline failed: %s", exc, exc_info=True)
 
-    return _executor
+    return _provider, _executor
 
 
 def _print_runtime_help() -> None:
@@ -1256,168 +957,6 @@ def _handle_slash_command(runtime: Any, line: str) -> bool:
     return False
 
 
-def _run_autonomous(
-    runtime: Any,
-    *,
-    robot,
-    auto_start: bool,
-    initial_task: str | None,
-    max_ticks: int | None,
-    panel_label: str = "Runtime",
-) -> int:
-    """Drive the runtime continuously at ``ctrl_hz`` while accepting
-    stdin events in the foreground.
-
-    Different from ``_run_repl`` (dataset dry-run): the policy needs
-    to keep generating action chunks at ``chunk_hz`` and dispatching
-    them at ``ctrl_hz`` regardless of whether the user is typing, so
-    ``runtime.run()`` runs in a background thread and stdin handling
-    happens here in the main thread.
-    """
-    import threading  # noqa: PLC0415
-    import time  # noqa: PLC0415
-
-    # Only gate on ENTER when the robot will actually move at startup
-    # (``--mode=action``). The default is paused — the command line
-    # comes up immediately and nothing moves until ``/action``.
-    if not auto_start and runtime.state.get("mode", "paused") == "action":
-        try:
-            input(
-                "[runtime] Robot connected — starting in ACTION mode. Press ENTER to begin, Ctrl+C to abort. "
-            )
-        except (EOFError, KeyboardInterrupt):
-            print("\n[runtime] aborted before start", flush=True)
-            return 130
-
-    if initial_task:
-        runtime.set_task(initial_task)
-
-    thread = threading.Thread(
-        target=runtime.run,
-        kwargs={"max_ticks": max_ticks},
-        name="runtime-loop",
-        daemon=True,
-    )
-    thread.start()
-
-    # Capture log lines flushed by the runtime each tick into a
-    # bounded scrollback that the panel renderer prints inside the
-    # rule block. Without this, ``runtime._flush_logs`` just calls
-    # ``print(...)`` which the 2 Hz panel redraw clears immediately —
-    # so failure messages from generation (e.g. ``[warn] subtask gen
-    # failed: ...``) flash for ≤ 0.5 s and disappear, leaving the
-    # operator with no idea why ``last_raw`` stays empty.
-    _scrollback: list[str] = []
-    _scrollback_max = 12
-
-    def _flush_into_scrollback() -> None:
-        for line in runtime.state.get("log_lines") or []:
-            _scrollback.append(line)
-        # Trim to the cap so the panel doesn't grow unbounded.
-        if len(_scrollback) > _scrollback_max:
-            del _scrollback[: len(_scrollback) - _scrollback_max]
-
-    runtime._flush_logs = _flush_into_scrollback  # type: ignore[method-assign]
-
-    redraw = _make_state_panel_renderer(
-        runtime, mode_label="autonomous", panel_label=panel_label, scrollback=_scrollback
-    )
-    redraw()
-    print(
-        "  [autonomous] /action <task> to run  ·  /pause to stop  ·  "
-        "/question <text> to ask  ·  /help  ·  stop",
-        flush=True,
-    )
-
-    # Background panel-redraw thread so state changes from the runtime
-    # loop (subtask refresh, plan update, etc.) are visible without the
-    # user typing anything.
-    #
-    # In ``/vlm`` mode the action loop is paused — nothing changes in the
-    # background — so the timer redraw is suspended entirely. That keeps
-    # the screen stable while the operator types a VQA question and the
-    # interactive camera prompt, instead of the panel clearing the
-    # prompt every tick.
-    _panel_stop = threading.Event()
-
-    def _panel_loop() -> None:
-        while not _panel_stop.is_set():
-            st = runtime.state
-            if st.get("mode", "action") == "action":
-                # Timed burst (``/action <seconds>``): once the deadline
-                # passes, auto-revert to question mode and clear the
-                # queue so the robot stops.
-                deadline = st.get("action_deadline")
-                if deadline is not None and time.monotonic() >= deadline:
-                    st["mode"] = "paused"
-                    st["action_deadline"] = None
-                    queue = st.get("action_queue")
-                    if hasattr(queue, "clear"):
-                        queue.clear()
-                    print(
-                        "\n[runtime] timed action elapsed — paused",
-                        flush=True,
-                    )
-                else:
-                    with suppress(Exception):
-                        redraw()
-                        # Re-print the prompt the redraw just cleared so
-                        # the operator always has a visible ``> ``.
-                        print("> ", end="", flush=True)
-            _panel_stop.wait(0.7)
-
-    panel_thread = threading.Thread(target=_panel_loop, name="runtime-panel-redraw", daemon=True)
-    panel_thread.start()
-
-    try:
-        while thread.is_alive():
-            try:
-                line = input("> ").strip()
-            except EOFError:
-                break
-            if not line:
-                continue
-            lower = line.lower()
-            if lower in {"stop", "quit", "exit"}:
-                break
-            # The runtime is command-driven: /action "task", /pause,
-            # /question "...", /help. ``_handle_slash_command`` runs the
-            # VQA query inline for /question (the action loop is paused
-            # first, so the policy isn't in concurrent use).
-            if _handle_slash_command(runtime, line):
-                with suppress(Exception):
-                    redraw()
-                continue
-            # A bare (non-slash) line is treated as a user interjection
-            # — the trained ``user_interjection_response`` path. ``stop``
-            # already handled above; everything else routes here.
-            if runtime.state.get("task"):
-                runtime.state["recent_interjection"] = line
-                _emit(runtime.state, "user_interjection")
-            else:
-                print(
-                    "[runtime] no task yet — use /action <your task> to start",
-                    flush=True,
-                )
-    except KeyboardInterrupt:
-        print("\n[runtime] interrupt — stopping", flush=True)
-    finally:
-        _panel_stop.set()
-        runtime.stop()
-        # Give the loop a moment to drain.
-        for _ in range(10):
-            if not thread.is_alive():
-                break
-            time.sleep(0.1)
-        try:
-            robot.disconnect()
-            print("[runtime] robot disconnected", flush=True)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[runtime] WARNING: robot.disconnect raised {exc}", flush=True)
-
-    return 0
-
-
 def _make_state_panel_renderer(
     runtime: Any,
     *,
@@ -1427,10 +966,7 @@ def _make_state_panel_renderer(
 ) -> Callable[[list[str] | None], None]:
     """Return a closure that prints the task/subtask/plan/memory panel.
 
-    Used by both ``_run_repl`` (dry-run, called per user input) and
-    ``_run_autonomous`` (real robot, called on a 2 Hz timer +
-    whenever the user types). Centralises the visual format so the
-    two modes look identical.
+    Used by ``_run_repl`` for dataset-driven dry runs.
     """
     from rich.console import Console  # noqa: PLC0415
 
@@ -1621,17 +1157,27 @@ def run(
             render_size=args.sim_render_size,
         )
 
-    print(f"[runtime] loading policy from {args.policy_path}", flush=True)
-    # Sim mode always loads processors from the checkpoint; robot mode does too
-    # when no dataset is supplied (stats come from the checkpoint / norm_tag).
-    load_processors_from_checkpoint = sim_mode or (autonomous_mode and not args.dataset_repo_id)
-    policy, preprocessor, postprocessor, ds_meta = _load_policy_and_preprocessor(
-        args.policy_path,
-        args.dataset_repo_id,
-        load_processors_from_checkpoint=load_processors_from_checkpoint,
-        fp8=args.fp8,
-        device=args.policy_device,
-    )
+    rollout_ctx = None
+    if autonomous_mode:
+        print("[runtime] building rollout context (policy, processors, robot)", flush=True)
+        rollout_ctx = _build_language_rollout_context(args)
+        policy = rollout_ctx.policy.policy
+        preprocessor = rollout_ctx.policy.preprocessor
+        postprocessor = rollout_ctx.policy.postprocessor
+        ds_meta = None
+        if args.dataset_repo_id is not None:
+            from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata  # noqa: PLC0415
+
+            ds_meta = LeRobotDatasetMetadata(args.dataset_repo_id)
+    else:
+        print(f"[runtime] loading policy from {args.policy_path}", flush=True)
+        policy, preprocessor, postprocessor, ds_meta = _load_policy_and_preprocessor(
+            args.policy_path,
+            args.dataset_repo_id,
+            load_processors_from_checkpoint=sim_mode,
+            fp8=args.fp8,
+            device=args.policy_device,
+        )
 
     policy_type = getattr(policy.config, "type", None)
     if adapter_factory is None:
@@ -1658,8 +1204,7 @@ def run(
     # was passed, prompt the operator: pick from the dataset's tasks or
     # type a custom one. Non-TTY runs fall back to the bootstrap task
     # silently — the existing "first stdin line becomes task" flow in
-    # ``_run_repl`` / ``_run_autonomous`` still handles the no-default
-    # case.
+    # ``_run_repl`` still handles the no-default case.
     if not args.task:
         chosen = _select_task_interactively(
             ds_meta=ds_meta,
@@ -1706,7 +1251,7 @@ def run(
         )
         observation_provider = sim_backend.observation_provider
         robot_executor = sim_backend.action_executor
-        robot = sim_backend  # reuse _run_autonomous cleanup (calls .disconnect())
+        robot = sim_backend
         # Point the already-running live viewer at the backend and hand it the
         # server so disconnect() shuts it down cleanly.
         sim_holder["backend"] = sim_backend
@@ -1721,34 +1266,12 @@ def run(
                 grpc_port=args.rerun_grpc_port,
                 web_port=args.rerun_web_port,
             )
-        print(
-            f"[runtime] connecting to robot.type={args.robot_type} port={args.robot_port}",
-            flush=True,
-        )
-        robot = _build_robot(
-            robot_type=args.robot_type,
-            robot_port=args.robot_port,
-            robot_id=args.robot_id,
-            robot_cameras_json=args.robot_cameras,
-            robot_max_relative_target=args.robot_max_relative_target,
-        )
-        # Feature schema: from the dataset when given, otherwise derived from the
-        # connected robot (mirrors lerobot-rollout) so no dataset is required.
-        robot_features = ds_meta.features if ds_meta is not None else _dataset_features_from_robot(robot)
-        observation_provider = _build_robot_observation_provider(
-            robot=robot,
-            preprocessor=preprocessor,
-            device=str(getattr(policy.config, "device", "cpu")),
-            task=args.task,
-            ds_features=robot_features,
+        robot = rollout_ctx.hardware.robot_wrapper.inner
+        print(f"[runtime] connected to {robot.name}", flush=True)
+        observation_provider, robot_executor = _build_rollout_runtime_io(
+            rollout_ctx,
             rerun_log=bool(args.rerun),
             get_task=_live_task,
-        )
-        robot_executor = _build_robot_action_executor(
-            robot=robot,
-            postprocessor=postprocessor,
-            ds_features=robot_features,
-            rerun_log=bool(args.rerun),
         )
     elif args.dataset_repo_id is not None:
         print(
@@ -1865,9 +1388,8 @@ def _run_sim_interactive(
 ) -> int:
     """Main-thread control loop for the RoboCasa sim backend.
 
-    Unlike ``_run_autonomous`` (which runs ``runtime.run()`` in a daemon
-    thread), the tick loop — and therefore MuJoCo's EGL rendering — runs in the
-    MAIN thread. Driving the sim render from a background thread intermittently
+    The tick loop — and therefore MuJoCo's EGL rendering — runs in the MAIN
+    thread. Driving the sim render from a background thread intermittently
     corrupts the offscreen GL context (dark/garbled frames); main-thread
     stepping matches ``lerobot-eval`` and renders cleanly. Stdin is polled
     non-blockingly so typed commands still work while the sim runs.

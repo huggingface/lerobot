@@ -27,8 +27,8 @@ from typing import Any
 
 _ADAPTERS: dict[str, str] = {
     "pi052": "lerobot.policies.pi052.inference.pi052_adapter:PI052PolicyAdapter",
-    "pi05": "lerobot.policies.pi05.pi05_adapter:PI05PolicyAdapter",
-    "molmoact2": "lerobot.policies.molmoact2.molmoact2_adapter:MolmoAct2PolicyAdapter",
+    "pi05": "lerobot.runtime.adapter:DirectTaskPolicyAdapter",
+    "molmoact2": "lerobot.runtime.adapter:DirectTaskPolicyAdapter",
 }
 
 

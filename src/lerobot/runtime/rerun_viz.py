@@ -23,6 +23,7 @@ never interrupts robot control.
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -68,11 +69,9 @@ def log_cameras(robot: Any) -> None:
 
         cams = getattr(robot, "cameras", None) or {}
         for name, cam in cams.items():
-            try:
+            with suppress(Exception):
                 frame = cam.async_read(timeout_ms=1)
                 rr.log(f"cameras/{name}", rr.Image(frame))
-            except Exception:  # noqa: BLE001
-                pass
     except Exception as exc:  # noqa: BLE001
         logger.debug("[runtime] rerun camera log failed: %s", exc)
 
@@ -97,10 +96,8 @@ def log_robot_frame(
                 rr.log(f"cameras/{cam}", rr.Image(img))
         if state:
             for name, val in state.items():
-                try:
+                with suppress(Exception):
                     rr.log(f"state/{name}", rr.Scalars(float(val)))
-                except Exception:  # noqa: BLE001
-                    pass
         if task:
             rr.log("prompt/task", rr.TextLog(task))
         if subtask:

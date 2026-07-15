@@ -1,5 +1,10 @@
 from lerobot.runtime import RuntimeState
-from lerobot.runtime.adapter import BaseLanguageAdapter, GenerationConfig, looks_like_gibberish
+from lerobot.runtime.adapter import (
+    BaseLanguageAdapter,
+    DirectTaskPolicyAdapter,
+    GenerationConfig,
+    looks_like_gibberish,
+)
 
 
 class ScriptedAdapter(BaseLanguageAdapter):
@@ -72,3 +77,22 @@ def test_looks_like_gibberish_basic():
     assert looks_like_gibberish("")
     assert looks_like_gibberish(":::: ::")
     assert not looks_like_gibberish("pick up the red cube")
+
+
+def test_direct_task_adapter_delegates_action_chunk():
+    class Policy:
+        def predict_action_chunk(self, observation):
+            return ("chunk", observation)
+
+    observation = {"task": "pick up the cube"}
+    adapter = DirectTaskPolicyAdapter(Policy())
+
+    assert adapter.select_action(observation, RuntimeState()) == ("chunk", observation)
+    assert adapter.generate_text("subtask", observation, RuntimeState()) == ""
+
+
+def test_flat_policy_registry_reuses_direct_task_adapter():
+    from lerobot.runtime.registry import get_language_adapter_factory
+
+    assert get_language_adapter_factory("pi05") is DirectTaskPolicyAdapter
+    assert get_language_adapter_factory("molmoact2") is DirectTaskPolicyAdapter

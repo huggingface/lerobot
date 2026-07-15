@@ -22,6 +22,8 @@ from typing import Any
 import numpy as np
 import torch
 
+from lerobot.utils.video_annotation import annotate_frame
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,54 +46,6 @@ def _label_panel(img: np.ndarray, label: str) -> np.ndarray:
     y = img.shape[0] - 6
     cv2.putText(img, label, (5, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3, cv2.LINE_AA)
     cv2.putText(img, label, (5, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1, cv2.LINE_AA)
-    return img
-
-
-def _overlay_text(frame: np.ndarray, task: str | None, subtask: str | None, memory: str | None) -> np.ndarray:
-    """Draw task / subtask / memory lines onto an (H, W, 3) uint8 frame.
-
-    Best-effort: returns the frame unchanged if OpenCV is unavailable.
-    """
-    try:
-        import cv2  # noqa: PLC0415
-    except ImportError:
-        return frame
-
-    lines = [
-        f"{label}: {val}" for label, val in (("Task", task), ("Subtask", subtask), ("Memory", memory)) if val
-    ]
-    if not lines:
-        return frame
-
-    img = np.ascontiguousarray(frame).copy()
-    font, scale, margin = cv2.FONT_HERSHEY_SIMPLEX, 0.5, 6
-    max_width = img.shape[1] - 2 * margin
-    wrapped_lines: list[str] = []
-    for text in lines:
-        # naive width-based wrap so long memory strings stay on-frame
-        words, cur = text.split(), ""
-        for w in words:
-            cand = f"{cur} {w}".strip()
-            if cv2.getTextSize(cand, font, scale, 1)[0][0] > max_width and cur:
-                wrapped_lines.append(cur)
-                cur = w
-            else:
-                cur = cand
-        wrapped_lines.append(cur)
-
-    # Use a dark translucent header for contrast, then draw each label once.
-    # The previous black-outline + white-foreground technique rendered every
-    # glyph twice and looked like offset duplicate text in the MJPEG stream.
-    line_height = 20
-    header_height = min(img.shape[0], len(wrapped_lines) * line_height + 6)
-    backdrop = img.copy()
-    cv2.rectangle(backdrop, (0, 0), (img.shape[1], header_height), (0, 0, 0), -1)
-    cv2.addWeighted(backdrop, 0.55, img, 0.45, 0, dst=img)
-
-    y = 18
-    for line in wrapped_lines:
-        cv2.putText(img, line, (margin, y), font, scale, (255, 255, 255), 1, cv2.LINE_AA)
-        y += line_height
     return img
 
 
@@ -225,7 +179,7 @@ class RoboCasaSimBackend:
 
     Exposes ``observation_provider`` / ``action_executor`` closures matching the
     runtime's injected-callable contract, plus ``disconnect`` so the shared
-    ``_run_autonomous`` cleanup path can close the env (and flush the video).
+    The runtime cleanup path closes the env and flushes the video.
 
     The env must be created via :func:`create_sim_env` *before* the policy
     touches CUDA (see that function's note on the EGL/CUDA fork hazard).
@@ -366,25 +320,6 @@ class RoboCasaSimBackend:
         except Exception as exc:  # noqa: BLE001
             logger.error("[sim] env.step failed: %s", exc, exc_info=True)
 
-    def _frontal_obs_image(self) -> np.ndarray | None:
-        """Return the current front agent-view camera image (H, W, 3) uint8.
-
-        Uses the observation the policy already consumes rather than a separate
-        ``env.render()`` call: the render path's camera is intermittently
-        corrupted by the offscreen EGL context, whereas the policy's obs images
-        come straight through the eval pipeline and stay clean.
-        """
-        pixels = (self._last_obs or {}).get("pixels")
-        if not isinstance(pixels, dict) or not pixels:
-            return None
-        cam = "robot0_agentview_left" if "robot0_agentview_left" in pixels else next(iter(pixels))
-        img = np.asarray(pixels[cam])
-        if img.ndim == 4:  # vec env batches to (1, H, W, C)
-            img = img[0]
-        if img.ndim != 3 or img.shape[-1] != 3:
-            return None
-        return img.astype(np.uint8)
-
     def _multiview_frame(self) -> np.ndarray | None:
         """Composite the configured camera views (env 0) side by side, labeled.
 
@@ -424,7 +359,10 @@ class RoboCasaSimBackend:
             return
         subtask = self._subtask_getter() if self._subtask_getter else None
         memory = self._memory_getter() if self._memory_getter else None
-        annotated = _overlay_text(frame, self._current_task(), subtask, memory)
+        annotated = annotate_frame(
+            frame,
+            (("Task", self._current_task()), ("Subtask", subtask), ("Memory", memory)),
+        )
         self._frames.append(annotated)
         self._latest_frame = annotated  # served by the live MJPEG stream
         self._write_live_frame(annotated)
@@ -476,7 +414,7 @@ class RoboCasaSimBackend:
         self._stream_server = server
 
     def disconnect(self) -> None:
-        """Match the robot backend's cleanup contract (called by _run_autonomous)."""
+        """Match the robot backend's cleanup contract."""
         if self._stream_server is not None:
             try:
                 self._stream_server.shutdown()

@@ -168,6 +168,27 @@ class BaseLanguageAdapter(ABC):
         return text
 
 
+class DirectTaskPolicyAdapter(BaseLanguageAdapter):
+    """Adapter for flat policies conditioned directly on the operator's task text.
+
+    Policies such as PI0.5 and MolmoAct2 do not expose a language-generation
+    head. Their preprocessors pack the current task into the model inputs, so
+    the runtime only needs to request an action chunk.
+    """
+
+    def select_action(self, observation: dict[str, Any], state: RuntimeState) -> Any:
+        return self.policy.predict_action_chunk(observation)
+
+    def generate_text(
+        self,
+        kind: str,
+        observation: dict[str, Any] | None,
+        state: RuntimeState,
+        user_text: str | None = None,
+    ) -> str:
+        return ""
+
+
 def looks_like_gibberish(text: str) -> bool:
     """Heuristic filter for malformed / collapsed LM-head output."""
     if not text or not text.strip():

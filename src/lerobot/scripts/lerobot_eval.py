@@ -94,24 +94,7 @@ from lerobot.utils.utils import (
     init_logging,
     inside_slurm,
 )
-
-
-def _wrap_text_to_width(text: str, cv2, font, scale: int, thickness: int, max_width: int) -> list[str]:
-    """Greedy word-wrap using measured pixel width so text fits the frame."""
-    words = text.split()
-    lines: list[str] = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}".strip()
-        (w, _), _ = cv2.getTextSize(candidate, font, scale, thickness)
-        if w > max_width and current:
-            lines.append(current)
-            current = word
-        else:
-            current = candidate
-    if current:
-        lines.append(current)
-    return lines or [""]
+from lerobot.utils.video_annotation import annotate_frame
 
 
 def _annotate_eval_frames(frames: np.ndarray, task: str | None, subtask: str | None) -> np.ndarray:
@@ -123,36 +106,7 @@ def _annotate_eval_frames(frames: np.ndarray, task: str | None, subtask: str | N
     """
     if frames.ndim != 4 or frames.shape[-1] != 3:
         return frames
-    try:
-        import cv2  # noqa: PLC0415
-    except ImportError:
-        return frames
-
-    width = frames.shape[2]
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.5
-    margin = 6
-    max_width = width - 2 * margin
-
-    lines: list[str] = []
-    if task:
-        lines += _wrap_text_to_width(f"Task: {task}", cv2, font, scale, 1, max_width)
-    if subtask:
-        lines += _wrap_text_to_width(f"Subtask: {subtask}", cv2, font, scale, 1, max_width)
-    if not lines:
-        return frames
-
-    out = frames.copy()
-    for i in range(out.shape[0]):
-        img = np.ascontiguousarray(out[i])
-        y = 18
-        for line in lines:
-            # Black outline then white fill so text stays legible on any scene.
-            cv2.putText(img, line, (margin, y), font, scale, (0, 0, 0), 3, cv2.LINE_AA)
-            cv2.putText(img, line, (margin, y), font, scale, (255, 255, 255), 1, cv2.LINE_AA)
-            y += 20
-        out[i] = img
-    return out
+    return np.stack([annotate_frame(frame, (("Task", task), ("Subtask", subtask))) for frame in frames])
 
 
 def _env_features_to_dataset_features(env_features: dict) -> dict:
@@ -557,10 +511,7 @@ def eval_policy(
         subtask_scalar = getattr(policy, "last_subtask", None)
         annotated = []
         for i in range(frames.shape[0]):
-            if subtasks is not None and i < len(subtasks):
-                subtask_i = subtasks[i]
-            else:
-                subtask_i = subtask_scalar
+            subtask_i = subtasks[i] if subtasks is not None and i < len(subtasks) else subtask_scalar
             annotated.append(
                 _annotate_eval_frames(
                     frames[i : i + 1],

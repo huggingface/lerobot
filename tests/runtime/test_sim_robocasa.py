@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from lerobot.runtime.sim_robocasa import _overlay_text
+from lerobot.utils.video_annotation import annotate_frame
 
 
 def test_overlay_draws_each_label_once(monkeypatch):
@@ -33,7 +33,10 @@ def test_overlay_draws_each_label_once(monkeypatch):
     monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
 
     frame = np.full((120, 480, 3), 200, dtype=np.uint8)
-    annotated = _overlay_text(frame, "close the fridge", "reach for the handle", None)
+    annotated = annotate_frame(
+        frame,
+        (("Task", "close the fridge"), ("Subtask", "reach for the handle"), ("Memory", None)),
+    )
 
     assert [call[0] for call in put_text_calls] == [
         "Task: close the fridge",
