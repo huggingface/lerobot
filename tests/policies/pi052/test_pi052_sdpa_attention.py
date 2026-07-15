@@ -89,7 +89,7 @@ def _block_bidirectional_mask(
     "num_heads,num_kv_heads,head_dim",
     [
         (8, 1, 256),  # gemma_2b / paligemma config
-        (8, 8, 64),   # MHA control (no GQA repeat)
+        (8, 8, 64),  # MHA control (no GQA repeat)
     ],
 )
 def test_sdpa_parity_with_eager_block_bidirectional(num_heads, num_kv_heads, head_dim):
@@ -97,20 +97,16 @@ def test_sdpa_parity_with_eager_block_bidirectional(num_heads, num_kv_heads, hea
     block-bidirectional mask layout pi05 actually uses."""
     bsize, seq_len = 2, 13
     block_sizes = [4, 5, 4]  # images, language, suffix-style blocks
-    dtype = torch.float32   # cpu math kernel — keep fp32 for tight tol
-    scaling = head_dim ** -0.5
+    dtype = torch.float32  # cpu math kernel — keep fp32 for tight tol
+    scaling = head_dim**-0.5
 
     q, k, v = _build_inputs(bsize, num_heads, num_kv_heads, seq_len, head_dim, dtype)
     mask = _block_bidirectional_mask(bsize, seq_len, block_sizes, dtype)
 
     module = _mock_self_attn(num_heads // num_kv_heads)
 
-    out_eager, _ = modeling_gemma.eager_attention_forward(
-        module, q, k, v, mask, scaling
-    )
-    out_sdpa, _ = sdpa_attention_forward(
-        module, q, k, v, mask, scaling
-    )
+    out_eager, _ = modeling_gemma.eager_attention_forward(module, q, k, v, mask, scaling)
+    out_sdpa, _ = sdpa_attention_forward(module, q, k, v, mask, scaling)
     assert out_eager.shape == out_sdpa.shape
     torch.testing.assert_close(out_sdpa, out_eager, atol=1e-5, rtol=1e-4)
 
@@ -118,17 +114,13 @@ def test_sdpa_parity_with_eager_block_bidirectional(num_heads, num_kv_heads, hea
 def test_sdpa_parity_bf16():
     """bf16 path — looser tolerance, must still match eager."""
     bsize, num_heads, num_kv_heads, seq_len, head_dim = 2, 8, 1, 17, 256
-    scaling = head_dim ** -0.5
+    scaling = head_dim**-0.5
     q, k, v = _build_inputs(bsize, num_heads, num_kv_heads, seq_len, head_dim, torch.bfloat16)
     mask = _block_bidirectional_mask(bsize, seq_len, [5, 6, 6], torch.bfloat16)
     module = _mock_self_attn(num_heads // num_kv_heads)
 
-    out_eager, _ = modeling_gemma.eager_attention_forward(
-        module, q, k, v, mask, scaling
-    )
-    out_sdpa, _ = sdpa_attention_forward(
-        module, q, k, v, mask, scaling
-    )
+    out_eager, _ = modeling_gemma.eager_attention_forward(module, q, k, v, mask, scaling)
+    out_sdpa, _ = sdpa_attention_forward(module, q, k, v, mask, scaling)
     torch.testing.assert_close(out_sdpa, out_eager, atol=2e-2, rtol=2e-2)
 
 
@@ -136,9 +128,11 @@ def test_sdpa_parity_backward():
     """Gradients flow through SDPA and match the eager path within
     bf16 tolerance — critical for any training-side parity claim."""
     bsize, num_heads, num_kv_heads, seq_len, head_dim = 1, 4, 2, 9, 32
-    scaling = head_dim ** -0.5
+    scaling = head_dim**-0.5
     q, k, v = _build_inputs(bsize, num_heads, num_kv_heads, seq_len, head_dim, torch.float32)
-    q.requires_grad_(True); k.requires_grad_(True); v.requires_grad_(True)
+    q.requires_grad_(True)
+    k.requires_grad_(True)
+    v.requires_grad_(True)
     mask = _block_bidirectional_mask(bsize, seq_len, [3, 3, 3], torch.float32)
     module = _mock_self_attn(num_heads // num_kv_heads)
 
