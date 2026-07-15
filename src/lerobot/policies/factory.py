@@ -317,47 +317,15 @@ def make_pre_post_processors(
         and getattr(policy_cfg, "auto_fit_fast_tokenizer", False)
         and kwargs.get("dataset_repo_id") is not None
     ):
-        if policy_cfg.type == "pi052":
-            from .pi052.processor_pi052 import make_pi052_pre_post_processors
+        from .pi052.fit_fast_tokenizer import resolve_fast_tokenizer
 
-            factory = make_pi052_pre_post_processors
-        else:
-            from .pi0_fast.processor_pi0_fast import make_pi0_fast_pre_post_processors
-
-            factory = make_pi0_fast_pre_post_processors
-
-        return factory(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-            dataset_repo_id=kwargs.get("dataset_repo_id"),
-        )
-
-    if (
-        pretrained_path
-        and getattr(policy_cfg, "type", None) == "pi052"
-        and getattr(policy_cfg, "recipe_path", None)
-    ):
-        from .pi052.processor_pi052 import _load_recipe
-
-        pi052_overrides = {
-            "render_messages_processor": {"recipe": _load_recipe(policy_cfg.recipe_path)},
-            "pi052_text_tokenizer": {
-                "tokenizer_name": "google/paligemma-3b-pt-224",
-                "max_length": policy_cfg.tokenizer_max_length,
-                "plan_dropout_prob": policy_cfg.plan_dropout_prob,
-                "memory_dropout_prob": policy_cfg.memory_dropout_prob,
-                "subtask_dropout_prob": policy_cfg.subtask_dropout_prob,
-            },
-            "action_tokenizer_processor": {
-                "action_tokenizer_name": policy_cfg.action_tokenizer_name,
-                "max_action_tokens": policy_cfg.max_action_tokens,
-                "fast_skip_tokens": policy_cfg.fast_skip_tokens,
-            },
+        overrides = dict(kwargs.get("preprocessor_overrides") or {})
+        action_tokenizer_override = {
+            **overrides.get("action_tokenizer_processor", {}),
+            "action_tokenizer_name": resolve_fast_tokenizer(policy_cfg, kwargs.get("dataset_repo_id")),
         }
-        kwargs["preprocessor_overrides"] = {
-            **pi052_overrides,
-            **(kwargs.get("preprocessor_overrides") or {}),
-        }
+        overrides["action_tokenizer_processor"] = action_tokenizer_override
+        kwargs["preprocessor_overrides"] = overrides
 
     if pretrained_path:
         if isinstance(policy_cfg, GrootConfig):

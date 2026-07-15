@@ -14,8 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
+
 from lerobot.policies import factory
-from lerobot.policies.pi0_fast import processor_pi0_fast
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
 from lerobot.policies.pi052 import fit_fast_tokenizer as fit_module
 
@@ -47,17 +48,28 @@ def test_pi0_fast_resolves_dataset_specific_tokenizer(monkeypatch, tmp_path):
     }
 
 
-def test_pretrained_pi0_fast_rebuilds_processor_only_during_dataset_fit(monkeypatch):
+def test_pretrained_pi0_fast_overrides_only_fitted_tokenizer(monkeypatch):
     config = PI0FastConfig(auto_fit_fast_tokenizer=True)
-    expected = (object(), object())
+    calls = []
 
-    monkeypatch.setattr(processor_pi0_fast, "make_pi0_fast_pre_post_processors", lambda **_: expected)
-
-    assert (
-        factory.make_pre_post_processors(
-            config,
-            pretrained_path="checkpoint",
-            dataset_repo_id="user/dataset",
-        )
-        == expected
+    monkeypatch.setattr(
+        fit_module,
+        "resolve_fast_tokenizer",
+        lambda config, dataset_repo_id: "/cache/fitted-tokenizer",
     )
+
+    def fake_from_pretrained(cls, *args, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(steps=[])
+
+    monkeypatch.setattr(factory.PolicyProcessorPipeline, "from_pretrained", classmethod(fake_from_pretrained))
+
+    factory.make_pre_post_processors(
+        config,
+        pretrained_path="checkpoint",
+        dataset_repo_id="user/dataset",
+    )
+
+    assert calls[0]["overrides"] == {
+        "action_tokenizer_processor": {"action_tokenizer_name": "/cache/fitted-tokenizer"}
+    }
