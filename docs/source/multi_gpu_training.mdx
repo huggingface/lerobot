@@ -113,6 +113,19 @@ accelerate launch --num_processes=2 $(which lerobot-train) \
   --policy.type=act
 ```
 
+When the desired global batch is larger than the per-GPU batch that fits in memory, use gradient
+accumulation. `steps` continues to count optimizer updates:
+
+```bash
+# 8 samples/GPU × 4 GPUs × 2 microbatches = effective global batch 64.
+accelerate launch --num_processes=4 $(which lerobot-train) \
+  --batch_size=8 \
+  --gradient_accumulation_steps=2 \
+  --steps=80000 \
+  --dataset.repo_id=lerobot/pusht \
+  --policy.type=act
+```
+
 ## Training Large Models with FSDP
 
 DDP replicates the full model on every GPU, so a model that doesn't fit on one GPU won't fit under

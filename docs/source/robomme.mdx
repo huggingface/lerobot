@@ -149,18 +149,20 @@ For a sample-matched SmolVLA visual-memory ablation, use
 `examples/robomme/smolvla_visual_memory_ablation.sh`. `TARGET_SAMPLES` counts examples across all
 GPUs, and `NUM_PROCESSES` is included when the script converts that target into optimizer steps. For
 example, the following reproduces 5.12 million example exposures (the exposure of RoboMME's
-80,000-step, global-batch-64 memory-policy recipe) with four GPUs and a global batch of 48:
+80,000-step, global-batch-64 memory-policy recipe) with four GPUs, two accumulated microbatches,
+and an effective global batch of 64:
 
 ```bash
 TARGET_SAMPLES=5120000 \
 NUM_PROCESSES=4 \
-BATCH_SIZE=12 \
+BATCH_SIZE=8 \
+GRADIENT_ACCUMULATION_STEPS=2 \
 VARIANT=visual-memory \
 RUN_EVAL=false \
 bash examples/robomme/smolvla_visual_memory_ablation.sh
 ```
 
-This becomes 106,667 optimizer steps, or about 10.74 execution-target epochs. Run the baseline with
+This becomes 80,000 optimizer steps, or about 10.74 execution-target epochs. Run the baseline with
 the same `TARGET_SAMPLES`, effective batch size, seed, and scheduler settings to isolate the visual
 memory change. RoboMME's released baseline uses a different global batch (128), so its nominal
 80,000-step recipe is not sample-matched to its global-batch-64 memory recipe.

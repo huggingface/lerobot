@@ -6,10 +6,11 @@ set -euo pipefail
 
 BATCH_SIZE="${BATCH_SIZE:-4}"
 NUM_PROCESSES="${NUM_PROCESSES:-1}"
+GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-1}"
 # The published training split has 476,857 execution frames. By default, train on one
 # execution-frame epoch; set STEPS explicitly to use a different optimizer-step budget.
 TARGET_SAMPLES="${TARGET_SAMPLES:-476857}"
-EFFECTIVE_BATCH_SIZE=$((BATCH_SIZE * NUM_PROCESSES))
+EFFECTIVE_BATCH_SIZE=$((BATCH_SIZE * NUM_PROCESSES * GRADIENT_ACCUMULATION_STEPS))
 STEPS="${STEPS:-$(((TARGET_SAMPLES + EFFECTIVE_BATCH_SIZE - 1) / EFFECTIVE_BATCH_SIZE))}"
 SCHEDULER_WARMUP_STEPS="${SCHEDULER_WARMUP_STEPS:-$(((STEPS + 29) / 30))}"
 SCHEDULER_DECAY_STEPS="${SCHEDULER_DECAY_STEPS:-${STEPS}}"
@@ -58,6 +59,7 @@ COMMON_TRAIN_ARGS=(
   --dataset.training_target_start_feature=exec_start_idx
   '--rename_map={"image":"observation.images.camera1","wrist_image":"observation.images.camera2","state":"observation.state","actions":"action"}'
   --batch_size="${BATCH_SIZE}"
+  --gradient_accumulation_steps="${GRADIENT_ACCUMULATION_STEPS}"
   --steps="${STEPS}"
   --policy.scheduler_warmup_steps="${SCHEDULER_WARMUP_STEPS}"
   --policy.scheduler_decay_steps="${SCHEDULER_DECAY_STEPS}"

@@ -85,6 +85,7 @@ def update_policy(
     lock=None,
     sample_weighter=None,
     log_metrics: bool = True,
+    track_update_time: bool = True,
 ) -> tuple[MetricsTracker, dict | None]:
     """
     Performs a single training step to update the policy's weights.
@@ -148,13 +149,16 @@ def update_policy(
     # Use accelerator's backward method
     accelerator.backward(loss)
 
-    # Clip gradients if specified
-    if grad_clip_norm > 0:
-        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
-    else:
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            policy.parameters(), float("inf"), error_if_nonfinite=False
-        )
+    # Accelerate suppresses gradient synchronization and optimizer updates on intermediate
+    # microbatches. Clip and report the norm only when the accumulated update is complete.
+    grad_norm = None
+    if accelerator.sync_gradients:
+        if grad_clip_norm > 0:
+            grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
+        else:
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                policy.parameters(), float("inf"), error_if_nonfinite=False
+            )
 
     # Optimizer step
     with lock if lock is not None else nullcontext():
@@ -163,19 +167,24 @@ def update_policy(
     optimizer.zero_grad()
 
     # Step through pytorch scheduler at every batch instead of epoch
-    if lr_scheduler is not None:
+    if lr_scheduler is not None and accelerator.sync_gradients:
         lr_scheduler.step()
 
     # Update internal buffers if policy has update method
-    if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
+    if accelerator.sync_gradients and has_method(
+        accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"
+    ):
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
-    train_metrics.lr = optimizer.param_groups[0]["lr"]
-    if torch.cuda.is_available():
+    if accelerator.sync_gradients:
+        train_metrics.lr = optimizer.param_groups[0]["lr"]
+    if torch.cuda.is_available() and accelerator.sync_gradients:
         train_metrics.gpu_mem_gb = torch.cuda.max_memory_allocated() / (1024**3)
     train_metrics.accumulate_tensor("loss", loss)
-    train_metrics.accumulate_tensor("grad_norm", grad_norm)
-    train_metrics.update_s = time.perf_counter() - start_time
+    if grad_norm is not None:
+        train_metrics.accumulate_tensor("grad_norm", grad_norm)
+    if track_update_time:
+        train_metrics.update_s = time.perf_counter() - start_time
     # Synchronize accumulated GPU metrics only when logging.
     if log_metrics:
         train_metrics.materialize_tensors()
@@ -238,6 +247,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         mixed_precision = {"bfloat16": "bf16", "float16": "fp16", "float32": "no"}.get(policy_dtype)
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,
+            gradient_accumulation_steps=cfg.gradient_accumulation_steps,
             mixed_precision=mixed_precision,
             kwargs_handlers=[ddp_kwargs, ipg_kwargs],
             cpu=force_cpu,
@@ -439,8 +449,11 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
         num_processes = accelerator.num_processes
-        effective_bs = cfg.batch_size * num_processes
-        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
+        effective_bs = cfg.batch_size * num_processes * cfg.gradient_accumulation_steps
+        logging.info(
+            "Effective batch size: "
+            f"{cfg.batch_size} x {num_processes} x {cfg.gradient_accumulation_steps} = {effective_bs}"
+        )
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
@@ -520,7 +533,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     f"batch_size={saved_batch_size}. The data order resumes at the right epoch/offset, "
                     "but per-rank sample-exactness requires the same batch size."
                 )
-            sampler_state = compute_sampler_state(step, len(sampler), ckpt_batch_size, ckpt_num_processes)
+            sampler_state = compute_sampler_state(
+                step,
+                len(sampler),
+                ckpt_batch_size * cfg.gradient_accumulation_steps,
+                ckpt_num_processes,
+            )
             sampler.load_state_dict(sampler_state)
             if is_main_process:
                 logging.info(
@@ -617,9 +635,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         train_metrics["gpu_mem_gb"] = AverageMeter("mem_gb", ":.2f", reduction="max")
 
     # Keep global batch size for logging; MetricsTracker handles world size internally.
-    effective_batch_size = cfg.batch_size * accelerator.num_processes
+    effective_batch_size = cfg.batch_size * accelerator.num_processes * cfg.gradient_accumulation_steps
     train_tracker = MetricsTracker(
-        cfg.batch_size,
+        cfg.batch_size * cfg.gradient_accumulation_steps,
         dataset.num_frames,
         dataset.num_episodes,
         train_metrics,
@@ -641,30 +659,42 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         )
 
     for _ in range(step, cfg.steps):
-        start_time = time.perf_counter()
-        batch = next(dl_iter)
-        for cam_key in dataset.meta.camera_keys:
-            if cam_key in batch and batch[cam_key].dtype == torch.uint8:
-                batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
-        if cfg.rename_map:
-            batch = rename_transition_keys(batch, cfg.rename_map)
-        batch = preprocessor(batch)
-        train_tracker.dataloading_s = time.perf_counter() - start_time
+        update_start_time = time.perf_counter()
+        dataloading_s = 0.0
+        output_dict = None
+        for microbatch_idx in range(cfg.gradient_accumulation_steps):
+            start_time = time.perf_counter()
+            batch = next(dl_iter)
+            for cam_key in dataset.meta.camera_keys:
+                if cam_key in batch and batch[cam_key].dtype == torch.uint8:
+                    batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
+            if cfg.rename_map:
+                batch = rename_transition_keys(batch, cfg.rename_map)
+            batch = preprocessor(batch)
+            dataloading_s += time.perf_counter() - start_time
 
-        # Synchronize GPU metrics only for updates that will be logged.
-        log_metrics = cfg.log_freq > 0 and (step + 1) % cfg.log_freq == 0
+            # Synchronize GPU metrics only on the final microbatch of logged optimizer updates.
+            log_metrics = (
+                cfg.log_freq > 0
+                and (step + 1) % cfg.log_freq == 0
+                and microbatch_idx == cfg.gradient_accumulation_steps - 1
+            )
 
-        train_tracker, output_dict = update_policy(
-            train_tracker,
-            policy,
-            batch,
-            optimizer,
-            cfg.optimizer.grad_clip_norm,
-            accelerator=accelerator,
-            lr_scheduler=lr_scheduler,
-            sample_weighter=sample_weighter,
-            log_metrics=log_metrics,
-        )
+            with accelerator.accumulate(policy):
+                train_tracker, output_dict = update_policy(
+                    train_tracker,
+                    policy,
+                    batch,
+                    optimizer,
+                    cfg.optimizer.grad_clip_norm,
+                    accelerator=accelerator,
+                    lr_scheduler=lr_scheduler,
+                    sample_weighter=sample_weighter,
+                    log_metrics=log_metrics,
+                    track_update_time=False,
+                )
+        train_tracker.dataloading_s = dataloading_s
+        train_tracker.update_s = time.perf_counter() - update_start_time - dataloading_s
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
