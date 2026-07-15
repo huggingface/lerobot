@@ -23,6 +23,46 @@ logger = logging.getLogger(__name__)
 JsonLike = str | int | float | bool | None | list["JsonLike"] | dict[str, "JsonLike"] | tuple["JsonLike", ...]
 
 
+class StreamingVideoWriter:
+    """Incrementally encode RGB frames to an MP4 without retaining them in memory."""
+
+    def __init__(self, video_path: str | Path, fps: int) -> None:
+        from .import_utils import require_package
+
+        require_package("av", extra="av-dep")
+        import av
+
+        self._av = av
+        self._container = av.open(str(video_path), mode="w")
+        self._stream = self._container.add_stream("libx264", rate=fps)
+        self._shape: tuple[int, int] | None = None
+        self.frames_written = 0
+
+    def add_frame(self, frame_array) -> None:
+        orig_height, orig_width = frame_array.shape[:2]
+        height = orig_height - orig_height % 2
+        width = orig_width - orig_width % 2
+        if self._shape is None:
+            self._shape = (height, width)
+            self._stream.width = width
+            self._stream.height = height
+            self._stream.pix_fmt = "yuv420p"
+        elif self._shape != (height, width):
+            raise ValueError(f"Video frame shape changed from {self._shape} to {(height, width)}")
+        frame = self._av.VideoFrame.from_ndarray(frame_array[:height, :width], format="rgb24")
+        for packet in self._stream.encode(frame):
+            self._container.mux(packet)
+        self.frames_written += 1
+
+    def close(self) -> None:
+        if self._container is None:
+            return
+        for packet in self._stream.encode():
+            self._container.mux(packet)
+        self._container.close()
+        self._container = None
+
+
 def load_json(fpath: Path) -> Any:
     """Load data from a JSON file.
 
@@ -58,36 +98,12 @@ def write_video(video_path: str | Path, stacked_frames: list, fps: int) -> None:
         stacked_frames: List of HWC uint8 numpy arrays (RGB).
         fps: Frames per second for the output video.
     """
-    from .import_utils import require_package
-
-    require_package("av", extra="av-dep")
-    import av
-
-    with av.open(str(video_path), mode="w") as container:
-        orig_height, orig_width = stacked_frames[0].shape[:2]
-        # yuv420p requires even dimensions; crop by one pixel if needed
-        height = orig_height if orig_height % 2 == 0 else orig_height - 1
-        width = orig_width if orig_width % 2 == 0 else orig_width - 1
-        if height != orig_height or width != orig_width:
-            logger.warning(
-                "Frame dimensions %dx%d are not even; cropping to %dx%d for yuv420p compatibility.",
-                orig_width,
-                orig_height,
-                width,
-                height,
-            )
-        stream = container.add_stream("libx264", rate=fps)
-        stream.width = width
-        stream.height = height
-        stream.pix_fmt = "yuv420p"
+    writer = StreamingVideoWriter(video_path, fps)
+    try:
         for frame_array in stacked_frames:
-            if height != orig_height or width != orig_width:
-                frame_array = frame_array[:height, :width]
-            frame = av.VideoFrame.from_ndarray(frame_array, format="rgb24")
-            for packet in stream.encode(frame):
-                container.mux(packet)
-        for packet in stream.encode():
-            container.mux(packet)
+            writer.add_frame(frame_array)
+    finally:
+        writer.close()
 
 
 def deserialize_json_into_object[T: JsonLike](fpath: Path, obj: T) -> T:

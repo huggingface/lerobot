@@ -12,8 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PI052 configuration; model and processors are imported lazily by their factories."""
+import subprocess
+import sys
 
-from .configuration_pi052 import PI052Config
 
-__all__ = ["PI052Config"]
+def test_pi052_config_import_does_not_load_model_or_dataset_processor():
+    code = """
+import sys
+from lerobot.policies import PI052Config
+assert PI052Config.__name__ == "PI052Config"
+assert "lerobot.policies.pi052.modeling_pi052" not in sys.modules
+assert "lerobot.policies.pi052.processor_pi052" not in sys.modules
+"""
+    subprocess.run([sys.executable, "-c", code], check=True)

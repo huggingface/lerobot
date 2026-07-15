@@ -14,21 +14,21 @@
 
 """PI0.5 with joint flow/text training and hierarchical language inference."""
 
-# ruff: noqa: N806, N812
-
 from __future__ import annotations
 
+import json
 import logging
-import math
 import types
 from collections import deque
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, TypedDict, Unpack
+from typing import Any, Unpack
 
 import torch
-from torch import Tensor, nn
-from torch.nn import functional as F  # noqa: N812
+from safetensors.torch import load_file
+from torch import Tensor
+from torch.nn import functional
+from transformers.utils import cached_file
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import (
@@ -40,223 +40,98 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.import_utils import require_package
 
-from ..pi05.configuration_pi05 import PI05Config
-from ..pi_gemma import PaliGemmaWithExpertModel, get_gemma_config
+from ..pi05.modeling_pi05 import (
+    ActionSelectKwargs,
+    PI05Policy,
+    PI05Pytorch as PI05PytorchBase,
+    create_sinusoidal_pos_embedding,
+    make_att_2d_masks,
+)
 from ..pretrained import PreTrainedPolicy, T
-from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi052 import PI052Config
 
 logger = logging.getLogger(__name__)
 
-
-# Generic dual-expert transformer helpers live in ``lerobot.policies.pi_gemma``.
-
-
-class ActionSelectKwargs(TypedDict, total=False):
-    inference_delay: int | None
-    prev_chunk_left_over: Tensor | None
-    execution_horizon: int | None
+_SAFETENSORS_FILE = "model.safetensors"
+_SAFETENSORS_INDEX = "model.safetensors.index.json"
 
 
-def get_safe_dtype(target_dtype, device_type):
-    """Get a safe dtype for the given device type."""
-    if device_type == "mps" and target_dtype == torch.float64:
-        return torch.float32
-    if device_type == "cpu":
-        # CPU doesn't support bfloat16, use float32 instead
-        if target_dtype == torch.bfloat16:
-            return torch.float32
-        if target_dtype == torch.float64:
-            return torch.float64
-    return target_dtype
+def _resolve_weight_files(
+    pretrained_name_or_path: str | Path,
+    *,
+    force_download: bool,
+    resume_download: bool | None,
+    proxies: dict | None,
+    token: str | bool | None,
+    cache_dir: str | Path | None,
+    local_files_only: bool,
+    revision: str | None,
+) -> list[Path]:
+    model_id = str(pretrained_name_or_path)
+    local_dir = Path(model_id)
+    load_kwargs = {
+        "revision": revision,
+        "cache_dir": cache_dir,
+        "force_download": force_download,
+        "resume_download": resume_download,
+        "proxies": proxies,
+        "token": token,
+        "local_files_only": local_files_only,
+    }
 
-
-def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedding` (exact copy)
-    time: torch.Tensor, dimension: int, min_period: float, max_period: float, device="cpu"
-) -> Tensor:
-    """Computes sine-cosine positional embedding vectors for scalar positions."""
-    if dimension % 2 != 0:
-        raise ValueError(f"dimension ({dimension}) must be divisible by 2")
-
-    if time.ndim != 1:
-        raise ValueError("The time tensor is expected to be of shape `(batch_size, )`.")
-
-    dtype = get_safe_dtype(torch.float64, device.type)
-    fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=dtype, device=device)
-    period = min_period * (max_period / min_period) ** fraction
-
-    # Compute the outer product
-    scaling_factor = 1.0 / period * 2 * math.pi
-    sin_input = scaling_factor[None, :] * time[:, None]
-    return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
-
-
-def sample_beta(alpha, beta, bsize, device):  # see openpi `sample_beta` (exact copy)
-    # Beta sampling uses _sample_dirichlet which isn't implemented for MPS, so sample on CPU
-    alpha_t = torch.tensor(alpha, dtype=torch.float32)
-    beta_t = torch.tensor(beta, dtype=torch.float32)
-    dist = torch.distributions.Beta(alpha_t, beta_t)
-    return dist.sample((bsize,)).to(device)
-
-
-def make_att_2d_masks(pad_masks, att_masks):  # see openpi `make_att_2d_masks` (exact copy)
-    """Copied from big_vision.
-
-    Tokens can attend to valid inputs tokens which have a cumulative mask_ar
-    smaller or equal to theirs. This way `mask_ar` int[B, N] can be used to
-    setup several types of attention, for example:
-
-      [[1 1 1 1 1 1]]: pure causal attention.
-
-      [[0 0 0 1 1 1]]: prefix-lm attention. The first 3 tokens can attend between
-          themselves and the last 3 tokens have a causal attention. The first
-          entry could also be a 1 without changing behaviour.
-
-      [[1 0 1 0 1 0 0 1 0 0]]: causal attention between 4 blocks. Tokens of a
-          block can attend all previous blocks and all tokens on the same block.
-
-    Args:
-      input_mask: bool[B, N] true if its part of the input, false if padding.
-      mask_ar: int32[B, N] mask that's 1 where previous tokens cannot depend on
-        it and 0 where it shares the same attention mask as the previous token.
-    """
-    if att_masks.ndim != 2:
-        raise ValueError(att_masks.ndim)
-    if pad_masks.ndim != 2:
-        raise ValueError(pad_masks.ndim)
-
-    cumsum = torch.cumsum(att_masks, dim=1)
-    att_2d_masks = cumsum[:, None, :] <= cumsum[:, :, None]
-    pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
-    return att_2d_masks & pad_2d_masks
-
-
-def pad_vector(vector, new_dim):
-    """Pad the last dimension of a vector to new_dim with zeros.
-
-    Can be (batch_size x sequence_length x features_dimension)
-    or (batch_size x features_dimension)
-    """
-    if vector.shape[-1] >= new_dim:
-        return vector
-    return F.pad(vector, (0, new_dim - vector.shape[-1]))
-
-
-def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
-    images: torch.Tensor,
-    height: int,
-    width: int,
-    mode: str = "bilinear",
-) -> torch.Tensor:
-    """PyTorch version of resize_with_pad. Resizes an image to a target height and width without distortion
-    by padding with black. If the image is float32, it must be in the range [-1, 1].
-
-    Args:
-        images: Tensor of shape [*b, h, w, c] or [*b, c, h, w]
-        height: Target height
-        width: Target width
-        mode: Interpolation mode ('bilinear', 'nearest', etc.)
-
-    Returns:
-        Resized and padded tensor with same shape format as input
-    """
-    # Check if input is in channels-last format [*b, h, w, c] or channels-first [*b, c, h, w]
-    if images.shape[-1] <= 4:  # Assume channels-last format
-        channels_last = True
-        if images.dim() == 3:
-            images = images.unsqueeze(0)  # Add batch dimension
-        images = images.permute(0, 3, 1, 2)  # [b, h, w, c] -> [b, c, h, w]
+    if local_dir.is_dir():
+        index_path = local_dir / _SAFETENSORS_INDEX
+        single_path = local_dir / _SAFETENSORS_FILE
     else:
-        channels_last = False
-        if images.dim() == 3:
-            images = images.unsqueeze(0)  # Add batch dimension
-
-    batch_size, channels, cur_height, cur_width = images.shape
-
-    # Calculate resize ratio
-    ratio = max(cur_width / width, cur_height / height)
-    resized_height = int(cur_height / ratio)
-    resized_width = int(cur_width / ratio)
-
-    # Resize
-    resized_images = F.interpolate(
-        images,
-        size=(resized_height, resized_width),
-        mode=mode,
-        align_corners=False if mode == "bilinear" else None,
-    )
-
-    # Handle dtype-specific clipping
-    if images.dtype == torch.uint8:
-        resized_images = torch.round(resized_images).clamp(0, 255).to(torch.uint8)
-    elif images.dtype == torch.float32:
-        resized_images = resized_images.clamp(0.0, 1.0)
-    else:
-        raise ValueError(f"Unsupported image dtype: {images.dtype}")
-
-    # Calculate padding
-    pad_h0, remainder_h = divmod(height - resized_height, 2)
-    pad_h1 = pad_h0 + remainder_h
-    pad_w0, remainder_w = divmod(width - resized_width, 2)
-    pad_w1 = pad_w0 + remainder_w
-
-    # Pad
-    constant_value = 0 if images.dtype == torch.uint8 else 0.0
-    padded_images = F.pad(
-        resized_images,
-        (pad_w0, pad_w1, pad_h0, pad_h1),  # left, right, top, bottom
-        mode="constant",
-        value=constant_value,
-    )
-
-    # Convert back to original format if needed
-    if channels_last:
-        padded_images = padded_images.permute(0, 2, 3, 1)  # [b, c, h, w] -> [b, h, w, c]
-
-    return padded_images
-
-
-class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
-    """Core PI05 PyTorch model."""
-
-    def __init__(self, config: PI05Config, rtc_processor: RTCProcessor | None = None):
-        super().__init__()
-        self.config = config
-        self.rtc_processor = rtc_processor
-
-        paligemma_config = get_gemma_config(config.paligemma_variant)
-        action_expert_config = get_gemma_config(config.action_expert_variant)
-
-        if config.image_resolution[0] != config.image_resolution[1]:
-            raise ValueError(
-                f"PaliGemma expects square image resolution, invalid resolution: {config.image_resolution}"
-            )
-
-        self.paligemma_with_expert = PaliGemmaWithExpertModel(
-            paligemma_config,
-            action_expert_config,
-            use_adarms=[False, True],
-            precision=config.dtype,
-            image_size=config.image_resolution[0],
-            freeze_vision_encoder=config.freeze_vision_encoder,
-            train_expert_only=config.train_expert_only,
+        resolved_index = cached_file(
+            model_id,
+            _SAFETENSORS_INDEX,
+            _raise_exceptions_for_missing_entries=False,
+            **load_kwargs,
         )
+        index_path = Path(resolved_index) if resolved_index is not None else None
+        single_path = None
+        if index_path is None:
+            resolved_file = cached_file(model_id, _SAFETENSORS_FILE, **load_kwargs)
+            single_path = Path(resolved_file) if resolved_file is not None else None
 
-        self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
-        self.action_out_proj = nn.Linear(action_expert_config.width, config.max_action_dim)
+    if index_path is None or not index_path.is_file():
+        if single_path is None or not single_path.is_file():
+            raise FileNotFoundError(f"No {_SAFETENSORS_FILE} found in {model_id!r}.")
+        return [single_path]
 
-        self.time_mlp_in = nn.Linear(action_expert_config.width, action_expert_config.width)
-        self.time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
+    index = json.loads(index_path.read_text())
+    shard_names = sorted(set(index.get("weight_map", {}).values()))
+    if not shard_names:
+        raise ValueError(f"Invalid safetensors index without a weight_map: {index_path}")
+    if local_dir.is_dir():
+        files = [local_dir / name for name in shard_names]
+    else:
+        files = []
+        for name in shard_names:
+            resolved_file = cached_file(model_id, name, **load_kwargs)
+            if resolved_file is None:
+                raise FileNotFoundError(f"Checkpoint shard {name!r} not found in {model_id!r}.")
+            files.append(Path(resolved_file))
+    missing = [str(path) for path in files if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(f"Missing checkpoint shards: {missing}")
+    return files
 
-        # Initialize gradient checkpointing flag
-        self.gradient_checkpointing_enabled = False
 
-        # Compile model if requested
-        if config.compile_model:
-            torch.set_float32_matmul_precision("high")
-            self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
-            # Also compile the main forward pass used during training
-            self.forward = torch.compile(self.forward, mode=config.compile_mode)
+def _load_weight_files(files: list[Path]) -> dict[str, Tensor]:
+    state_dict: dict[str, Tensor] = {}
+    for path in files:
+        shard = load_file(path)
+        overlap = state_dict.keys() & shard.keys()
+        if overlap:
+            raise ValueError(f"Duplicate checkpoint keys in {path}: {sorted(overlap)[:5]}")
+        state_dict.update(shard)
+    return state_dict
+
+
+class PI05Pytorch(PI05PytorchBase):  # see openpi `PI0Pytorch`
+    """Core PI05 PyTorch model."""
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
@@ -276,17 +151,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = False
         logging.info("Disabled gradient checkpointing for PI05Pytorch model")
 
-    def _rtc_enabled(self):
-        return self.config.rtc_config is not None and self.config.rtc_config.enabled
-
-    def _apply_checkpoint(self, func, *args, **kwargs):
-        """Helper method to apply gradient checkpointing if enabled."""
-        if self.gradient_checkpointing_enabled and self.training:
-            return torch.utils.checkpoint.checkpoint(
-                func, *args, use_reentrant=False, preserve_rng_state=False, **kwargs
-            )
-        return func(*args, **kwargs)
-
     def _prepare_attention_masks_4d(self, att_2d_masks, dtype=None):
         """Helper method to prepare 4D attention masks for transformer."""
         att_2d_masks_4d = att_2d_masks[:, None, :, :]
@@ -294,22 +158,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         if dtype is not None:
             result = result.to(dtype=dtype)
         return result
-
-    def sample_noise(self, shape, device):
-        return torch.normal(
-            mean=0.0,
-            std=1.0,
-            size=shape,
-            dtype=torch.float32,
-            device=device,
-        )
-
-    def sample_time(self, bsize, device):
-        time_beta = sample_beta(
-            self.config.time_sampling_beta_alpha, self.config.time_sampling_beta_beta, bsize, device
-        )
-        time = time_beta * self.config.time_sampling_scale + self.config.time_sampling_offset
-        return time.to(dtype=torch.float32, device=device)
 
     def embed_prefix(
         self, images, img_masks, tokens, masks
@@ -374,9 +222,9 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         def time_mlp_func(time_emb):
             x = self.time_mlp_in(time_emb)
-            x = F.silu(x)
+            x = functional.silu(x)
             x = self.time_mlp_out(x)
-            return F.silu(x)
+            return functional.silu(x)
 
         time_emb = self._apply_checkpoint(time_mlp_func, time_emb)
         action_time_emb = action_emb
@@ -449,7 +297,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
 
-        return F.mse_loss(u_t, v_t, reduction="none")
+        return functional.mse_loss(u_t, v_t, reduction="none")
 
     @torch.no_grad()  # see openpi `sample_actions` (slightly adapted)
     def sample_actions(
@@ -610,11 +458,13 @@ def _enable_hf_kernels() -> None:
     logger.info("PI052: HF kernels (Liger) enabled — rope, geglu fused.")
 
 
-def _mask_per_sample(per_sample: Tensor, predict_actions_t: Tensor | None) -> Tensor:
-    """Mean over samples where ``predict_actions_t`` is True, else over all."""
+def _reduce_action_loss(per_sample: Tensor, predict_actions_t: Tensor | None, reduction: str) -> Tensor:
+    """Mask non-action samples and apply the requested batch reduction."""
     if predict_actions_t is None:
-        return per_sample.mean()
+        return per_sample if reduction == "none" else per_sample.mean()
     mask = predict_actions_t.to(per_sample.dtype)
+    if reduction == "none":
+        return per_sample * mask
     return (per_sample * mask).sum() / mask.sum().clamp(min=1.0)
 
 
@@ -631,7 +481,7 @@ def _lin_ce_small(
     """Small-N linear CE on materialized logits (see ``_lin_ce_flat``)."""
     logits = (flat_hidden @ lm_head_weight.t()).float()
     n_valid = (flat_labels != -100).sum().clamp(min=1)
-    loss = F.cross_entropy(logits, flat_labels, ignore_index=-100, reduction="sum") / n_valid
+    loss = functional.cross_entropy(logits, flat_labels, ignore_index=-100, reduction="sum") / n_valid
     if z_loss_weight > 0:
         lse = torch.logsumexp(logits, dim=-1)
         valid = (flat_labels != -100).to(lse.dtype)
@@ -666,9 +516,9 @@ def _lin_ce_flat(
 
         if compact_rows == 0:
             return _lin_ce_flat(
-                F.pad(compact_hidden, (0, 0, 0, 1)),
+                functional.pad(compact_hidden, (0, 0, 0, 1)),
                 lm_head_weight,
-                F.pad(compact_labels, (0, 1), value=-100),
+                functional.pad(compact_labels, (0, 1), value=-100),
                 z_loss_weight,
                 compiled=compiled,
             )
@@ -686,8 +536,8 @@ def _lin_ce_flat(
                 labels_chunk = compact_labels[start:end]
                 pad_rows = chunk_rows - rows
                 if pad_rows:
-                    hidden_chunk = F.pad(hidden_chunk, (0, 0, 0, pad_rows))
-                    labels_chunk = F.pad(labels_chunk, (0, pad_rows), value=-100)
+                    hidden_chunk = functional.pad(hidden_chunk, (0, 0, 0, pad_rows))
+                    labels_chunk = functional.pad(labels_chunk, (0, pad_rows), value=-100)
                 chunk_loss = _lin_ce_flat(
                     hidden_chunk,
                     lm_head_weight,
@@ -721,10 +571,24 @@ def _shifted_lin_ce(
     labels: Tensor,
     z_loss_weight: float = 0.0,
     compiled: bool = False,
+    reduction: str = "mean",
 ) -> Tensor:
     """Compute next-token CE through the shape-aware linear-CE dispatcher."""
     shift_hidden = hidden[:, :-1, :].contiguous()
     shift_labels = labels[:, 1:].contiguous().long()
+    if reduction == "none":
+        return torch.stack(
+            [
+                _lin_ce_flat(
+                    sample_hidden.to(lm_head_weight.dtype),
+                    lm_head_weight,
+                    sample_labels,
+                    z_loss_weight,
+                    compiled=compiled,
+                )
+                for sample_hidden, sample_labels in zip(shift_hidden, shift_labels, strict=True)
+            ]
+        )
     batch_size, target_length, hidden_size = shift_hidden.shape
     flat_hidden = shift_hidden.reshape(batch_size * target_length, hidden_size)
     flat_labels = shift_labels.reshape(batch_size * target_length)
@@ -755,6 +619,7 @@ def _fast_lin_ce(
     action_code_mask: Tensor,
     predict_actions_t: Tensor | None,
     compiled: bool = False,
+    reduction: str = "mean",
 ) -> Tensor:
     """Compute FAST token CE over the enabled action-code positions."""
     shift_hidden = hidden[:, :-1, :].contiguous()
@@ -766,6 +631,18 @@ def _fast_lin_ce(
     # Encode the mask with ignore_index to avoid a host sync and preserve graph capture.
     shift_targets = torch.where(shift_valid, shift_targets, torch.full_like(shift_targets, -100))
 
+    if reduction == "none":
+        return torch.stack(
+            [
+                _lin_ce_flat(
+                    sample_hidden.to(lm_head_weight.dtype),
+                    lm_head_weight,
+                    sample_labels,
+                    compiled=compiled,
+                )
+                for sample_hidden, sample_labels in zip(shift_hidden, shift_targets, strict=True)
+            ]
+        )
     batch_size, target_length, hidden_size = shift_hidden.shape
     flat_hidden = shift_hidden.reshape(batch_size * target_length, hidden_size).to(lm_head_weight.dtype)
     flat_labels = shift_targets.reshape(batch_size * target_length)
@@ -790,7 +667,9 @@ def _get_flex_kernel_options(device: torch.device) -> dict | None:
         return None
     device_index = device.index if device.index is not None else torch.cuda.current_device()
     if device_index not in _flex_kernel_options:
-        smem = torch.cuda.get_device_properties(device_index).shared_memory_per_block_optin
+        smem = torch.cuda.get_device_properties(
+            device_index
+        ).shared_memory_per_block_optin  # spellchecker:disable-line
         _flex_kernel_options[device_index] = _FLEX_SHRUNK_TILES if smem < 128 * 1024 else None
     return _flex_kernel_options[device_index]
 
@@ -1206,13 +1085,11 @@ def _paligemma_forward_ki(
     return [outputs_embeds[0], outputs_embeds[1]], None
 
 
-class PI052Policy(PreTrainedPolicy):
+class PI052Policy(PI05Policy):
     """π0.5 with the PaliGemma LM head re-enabled.
 
-    Self-contained: the PI0.5 backbone (PaliGemmaWithExpertModel / PI05Pytorch)
-    is vendored in ``pi05_backbone.py`` and the PI05Policy wrapper logic is
-    inlined directly here, so this policy does not depend on or inherit from
-    ``lerobot.policies.pi05`` (which stays identical to ``main``).
+    It inherits unchanged PI0.5 policy behavior and replaces the core model with
+    the joint flow/text implementation below.
     """
 
     config_class = PI052Config
@@ -1222,9 +1099,8 @@ class PI052Policy(PreTrainedPolicy):
         # Patch before constructing Gemma/SigLIP layers; the operation is optional and idempotent.
         _enable_hf_kernels()
 
-        # ---- inlined PI05Policy.__init__ ----------------------------------
         require_package("transformers", extra="pi")
-        super().__init__(config)
+        PreTrainedPolicy.__init__(self, config)
         config.validate_features()
         self.config = config
         self.init_rtc_processor()
@@ -1233,7 +1109,6 @@ class PI052Policy(PreTrainedPolicy):
             self.model.gradient_checkpointing_enable()
         self.model.to(config.device)
         self.reset()
-        # ---- end inlined PI05Policy.__init__ ------------------------------
 
         # Re-enable layers PI0.5 freezes when text supervision is requested.
         if config.text_loss_weight > 0 and config.unfreeze_lm_head:
@@ -1341,6 +1216,8 @@ class PI052Policy(PreTrainedPolicy):
         reduction: str = "mean",
     ) -> tuple[Tensor, dict]:
         """Compute the enabled flow, text and FAST training losses."""
+        if reduction not in {"mean", "none"}:
+            raise ValueError(f"Unsupported loss reduction: {reduction!r}")
         text_labels = batch.get("text_labels")
         predict_actions_t = batch.get("predict_actions")
 
@@ -1389,14 +1266,15 @@ class PI052Policy(PreTrainedPolicy):
                 action_mask=action_mask if run_fast else None,
                 action_code_mask=action_code_mask if run_fast else None,
                 predict_actions_t=predict_actions_t,
+                reduction=reduction,
             )
-            loss_dict["flow_loss"] = flow_loss.detach()
+            loss_dict["flow_loss"] = flow_loss.detach().mean()
             total = self.config.flow_loss_weight * flow_loss
             if text_loss is not None:
-                loss_dict["text_loss"] = text_loss.detach()
+                loss_dict["text_loss"] = text_loss.detach().mean()
                 total = total + self.config.text_loss_weight * text_loss
             if fast_loss is not None:
-                loss_dict["fast_action_loss"] = fast_loss.detach()
+                loss_dict["fast_action_loss"] = fast_loss.detach().mean()
                 total = total + self.config.fast_action_loss_weight * fast_loss
         elif run_text or run_fast:
             text_loss, fast_loss = self._compute_text_and_fast_loss(
@@ -1406,13 +1284,14 @@ class PI052Policy(PreTrainedPolicy):
                 action_mask=action_mask if run_fast else None,
                 action_code_mask=action_code_mask if run_fast else None,
                 predict_actions_t=predict_actions_t,
+                reduction=reduction,
             )
             if text_loss is not None:
-                loss_dict["text_loss"] = text_loss.detach()
+                loss_dict["text_loss"] = text_loss.detach().mean()
                 weighted = self.config.text_loss_weight * text_loss
                 total = weighted if total is None else total + weighted
             if fast_loss is not None:
-                loss_dict["fast_action_loss"] = fast_loss.detach()
+                loss_dict["fast_action_loss"] = fast_loss.detach().mean()
                 weighted = self.config.fast_action_loss_weight * fast_loss
                 total = weighted if total is None else total + weighted
 
@@ -1426,9 +1305,7 @@ class PI052Policy(PreTrainedPolicy):
             )
 
         # Keep metrics detached on-device until logging to avoid extra CUDA synchronization.
-        loss_dict["loss"] = total.detach() if total.dim() == 0 else float("nan")
-        if reduction == "none":
-            return total.expand(batch[OBS_LANGUAGE_TOKENS].shape[0]), loss_dict
+        loss_dict["loss"] = total.detach().mean()
         return total, loss_dict
 
     def _compute_all_losses_fused(
@@ -1439,6 +1316,7 @@ class PI052Policy(PreTrainedPolicy):
         action_mask: Tensor | None,
         action_code_mask: Tensor | None,
         predict_actions_t: Tensor | None = None,
+        reduction: str = "mean",
     ) -> tuple[Tensor, Tensor | None, Tensor | None]:
         """Compute flow, text and FAST losses from one shared prefix."""
         # ---- preamble (mirrors PI05Pytorch.forward) ------------------
@@ -1496,6 +1374,7 @@ class PI052Policy(PreTrainedPolicy):
                 predict_actions_t,
                 num_repeats,
                 suppress_prefix_grads=suppress_prefix_grads,
+                reduction=reduction,
             )
         else:
             prefix_out, flow_loss = self._combined_prefix_and_flow(
@@ -1507,10 +1386,17 @@ class PI052Policy(PreTrainedPolicy):
                 fast_len,
                 predict_actions_t,
                 suppress_prefix_grads=suppress_prefix_grads,
+                reduction=reduction,
             )
 
         text_loss, fast_loss = self._prefix_ce_losses(
-            prefix_out, text_labels, action_tokens, action_code_mask, fast_len, predict_actions_t
+            prefix_out,
+            text_labels,
+            action_tokens,
+            action_code_mask,
+            fast_len,
+            predict_actions_t,
+            reduction,
         )
         return flow_loss, text_loss, fast_loss
 
@@ -1524,6 +1410,7 @@ class PI052Policy(PreTrainedPolicy):
         fast_len: int,
         predict_actions_t: Tensor | None,
         suppress_prefix_grads: bool = False,
+        reduction: str = "mean",
     ) -> tuple[Tensor, Tensor]:
         """Run the single-repeat combined prefix and action path."""
         from lerobot.utils.constants import ACTION  # noqa: PLC0415
@@ -1576,13 +1463,13 @@ class PI052Policy(PreTrainedPolicy):
         # ---- flow loss (mirrors PI05Pytorch.forward) ----------------
         suffix_out_slice = suffix_out[:, -self.model.config.chunk_size :].to(dtype=torch.float32)
         v_t = self.model.action_out_proj(suffix_out_slice)
-        flow_per_dim = F.mse_loss(u_t, v_t, reduction="none")
+        flow_per_dim = functional.mse_loss(u_t, v_t, reduction="none")
         # Truncate to the actual action dimensionality (PI05 pads
         # internally to max_action_dim).
         original_action_dim = self.config.output_features[ACTION].shape[0]
         flow_per_dim = flow_per_dim[:, :, :original_action_dim]
         per_sample_flow = flow_per_dim.mean(dim=(1, 2))
-        flow_loss = _mask_per_sample(per_sample_flow, predict_actions_t)
+        flow_loss = _reduce_action_loss(per_sample_flow, predict_actions_t, reduction)
         return prefix_out, flow_loss
 
     def _ki_forward_kwargs(self, suppress_prefix_grads: bool = False, flex_masks=None) -> dict[str, Any]:
@@ -1609,6 +1496,7 @@ class PI052Policy(PreTrainedPolicy):
         predict_actions_t: Tensor | None,
         num_repeats: int,
         suppress_prefix_grads: bool = False,
+        reduction: str = "mean",
     ) -> tuple[Tensor, Tensor]:
         """Run K independent action draws against one shared VLM prefix."""
         from lerobot.utils.constants import ACTION  # noqa: PLC0415
@@ -1711,9 +1599,9 @@ class PI052Policy(PreTrainedPolicy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         v_t = model.action_out_proj(suffix_out.to(dtype=torch.float32))
         v_t = v_t.view(batch_size, k, chunk, -1)  # (B, k, chunk, motor)
-        flow_per_dim = F.mse_loss(u_t, v_t, reduction="none")[..., :original_action_dim]
+        flow_per_dim = functional.mse_loss(u_t, v_t, reduction="none")[..., :original_action_dim]
         per_sample_flow = flow_per_dim.mean(dim=(1, 2, 3))
-        flow_loss = _mask_per_sample(per_sample_flow, predict_actions_t)
+        flow_loss = _reduce_action_loss(per_sample_flow, predict_actions_t, reduction)
         return prefix_out, flow_loss
 
     def _prefix_ce_losses(
@@ -1724,6 +1612,7 @@ class PI052Policy(PreTrainedPolicy):
         action_code_mask: Tensor | None,
         fast_len: int,
         predict_actions_t: Tensor | None,
+        reduction: str = "mean",
     ) -> tuple[Tensor | None, Tensor | None]:
         """Compute enabled text and FAST losses from the shared prefix output."""
         lm_head = self.model.paligemma_with_expert.paligemma.lm_head
@@ -1742,6 +1631,7 @@ class PI052Policy(PreTrainedPolicy):
                 text_labels,
                 z_loss_weight=getattr(self.config, "text_ce_z_loss_weight", 0.0),
                 compiled=self.config.use_compiled_text_ce,
+                reduction=reduction,
             )
 
         fast_loss: Tensor | None = None
@@ -1754,6 +1644,7 @@ class PI052Policy(PreTrainedPolicy):
                 action_code_mask,
                 predict_actions_t,
                 compiled=self.config.use_compiled_text_ce,
+                reduction=reduction,
             )
 
         return text_loss, fast_loss
@@ -1766,6 +1657,7 @@ class PI052Policy(PreTrainedPolicy):
         action_mask: Tensor | None,
         action_code_mask: Tensor | None,
         predict_actions_t: Tensor | None = None,
+        reduction: str = "mean",
     ) -> tuple[Tensor | None, Tensor | None]:
         """Single prefix forward → text CE + FAST CE.
 
@@ -1848,6 +1740,7 @@ class PI052Policy(PreTrainedPolicy):
                 text_labels,
                 z_loss_weight=getattr(self.config, "text_ce_z_loss_weight", 0.0),
                 compiled=self.config.use_compiled_text_ce,
+                reduction=reduction,
             )
 
         fast_loss: Tensor | None = None
@@ -1860,6 +1753,7 @@ class PI052Policy(PreTrainedPolicy):
                 action_code_mask,
                 predict_actions_t,
                 compiled=self.config.use_compiled_text_ce,
+                reduction=reduction,
             )
 
         return text_loss, fast_loss
@@ -2249,16 +2143,10 @@ class PI052Policy(PreTrainedPolicy):
         strict: bool = True,
         **kwargs,
     ) -> T:
-        """Override the from_pretrained method to handle key remapping and display important disclaimer."""
-        print(
-            "The PI05 model is a direct port of the OpenPI implementation. \n"
-            "This implementation follows the original OpenPI structure for compatibility. \n"
-            "Original implementation: https://github.com/Physical-Intelligence/openpi"
-        )
+        """Load a PI05/PI052 checkpoint, including sharded safetensors checkpoints."""
         if pretrained_name_or_path is None:
             raise ValueError("pretrained_name_or_path is required")
 
-        # Use provided config if available, otherwise create default config
         if config is None:
             config = PreTrainedConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
@@ -2272,156 +2160,39 @@ class PI052Policy(PreTrainedPolicy):
                 **kwargs,
             )
 
-        # Initialize model without loading weights
-        # Check if dataset_stats were provided in kwargs
         model = cls(config, **kwargs)
+        files = _resolve_weight_files(
+            pretrained_name_or_path,
+            force_download=force_download,
+            resume_download=resume_download,
+            proxies=proxies,
+            token=token,
+            cache_dir=cache_dir,
+            local_files_only=local_files_only,
+            revision=revision,
+        )
+        fixed_state_dict = model._fix_pytorch_state_dict_keys(_load_weight_files(files), model.config)
+        remapped_state_dict = {
+            key if key.startswith("model.") else f"model.{key}": value
+            for key, value in fixed_state_dict.items()
+        }
 
-        # Load state dict (expects keys with "model." prefix)
-        try:
-            print(f"Loading model from: {pretrained_name_or_path}")
-            try:
-                from transformers.utils import cached_file
+        lm_head_key = "model.paligemma_with_expert.paligemma.lm_head.weight"
+        embed_tokens_key = "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+        if lm_head_key not in remapped_state_dict and embed_tokens_key in remapped_state_dict:
+            remapped_state_dict[lm_head_key] = remapped_state_dict[embed_tokens_key].clone().float()
+        elif lm_head_key in remapped_state_dict:
+            remapped_state_dict[lm_head_key] = remapped_state_dict[lm_head_key].float()
 
-                resolved_file = cached_file(
-                    pretrained_name_or_path,
-                    "model.safetensors",
-                    cache_dir=kwargs.get("cache_dir"),
-                    force_download=kwargs.get("force_download", False),
-                    resume_download=kwargs.get("resume_download"),
-                    proxies=kwargs.get("proxies"),
-                    token=kwargs.get("token"),
-                    revision=kwargs.get("revision"),
-                    local_files_only=kwargs.get("local_files_only", False),
-                )
-                from safetensors.torch import load_file
-
-                original_state_dict = load_file(resolved_file)
-                print("✓ Loaded state dict from model.safetensors")
-            except Exception as e:
-                print(f"Could not load state dict from remote files: {e}")
-                print("Returning model without loading pretrained weights")
-                return model
-
-            # First, fix any key differences (see openpi model.py, _fix_pytorch_state_dict_keys)
-            fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
-
-            # Then add "model." prefix for all keys that don't already have it
-            remapped_state_dict = {}
-            remap_count = 0
-
-            for key, value in fixed_state_dict.items():
-                if not key.startswith("model."):
-                    new_key = f"model.{key}"
-                    remapped_state_dict[new_key] = value
-                    remap_count += 1
-                else:
-                    remapped_state_dict[key] = value
-
-            if remap_count > 0:
-                print(f"Remapped {remap_count} state dict keys")
-
-            lm_head_key = "model.paligemma_with_expert.paligemma.lm_head.weight"
-            embed_tokens_key = (
-                "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
-            )
-            if lm_head_key not in remapped_state_dict and embed_tokens_key in remapped_state_dict:
-                remapped_state_dict[lm_head_key] = remapped_state_dict[embed_tokens_key].clone().float()
-                print("Initialized PaliGemma lm_head from language token embeddings")
-            elif lm_head_key in remapped_state_dict:
-                remapped_state_dict[lm_head_key] = remapped_state_dict[lm_head_key].float()
-
-            # Load the remapped state dict into the model
-            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
-
+        missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
+        if not strict:
             if missing_keys:
-                print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
-                if len(missing_keys) <= 5:
-                    for key in missing_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in missing_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(missing_keys) - 5} more")
-
+                logger.warning("Missing PI052 checkpoint keys: %s", missing_keys)
             if unexpected_keys:
-                print(f"Unexpected keys when loading state dict: {len(unexpected_keys)} keys")
-                if len(unexpected_keys) <= 5:
-                    for key in unexpected_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in unexpected_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(unexpected_keys) - 5} more")
-
-            if not missing_keys and not unexpected_keys:
-                print("All keys loaded successfully!")
-
-        except Exception as e:
-            print(f"Warning: Could not load state dict: {e}")
-
+                logger.warning("Unexpected PI052 checkpoint keys: %s", unexpected_keys)
+        model.to(config.device)
+        model.eval()
         return model
-
-    def _fix_pytorch_state_dict_keys(
-        self, state_dict, model_config
-    ):  # see openpi `BaseModelConfig, _fix_pytorch_state_dict_keys`
-        """Fix state dict keys to match current model architecture."""
-        import re
-
-        fixed_state_dict = {}
-
-        for key, value in state_dict.items():
-            new_key = key
-
-            # Handle layer norm structure changes: .weight -> .dense.weight + .dense.bias
-            # For gemma expert layers
-            if re.match(
-                r"paligemma_with_expert\.gemma_expert\.model\.layers\.\d+\.(input_layernorm|post_attention_layernorm)\.weight",
-                key,
-            ):
-                # Check if the model actually has adaRMS enabled for the expert
-                expert_uses_adarms = getattr(
-                    self.model.paligemma_with_expert.gemma_expert.config, "use_adarms", False
-                )
-                if expert_uses_adarms:
-                    logging.warning(f"Skipping layer norm key (adaRMS mismatch): {key}")
-                    continue
-
-            if re.match(r"paligemma_with_expert\.gemma_expert\.model\.norm\.weight", key):
-                # Check if the model actually has adaRMS enabled for the expert
-                expert_uses_adarms = getattr(
-                    self.model.paligemma_with_expert.gemma_expert.config, "use_adarms", False
-                )
-                if expert_uses_adarms:
-                    logging.warning(f"Skipping norm key (adaRMS mismatch): {key}")
-                    continue
-
-            # Handle MLP naming changes for pi05
-            # pi05 model expects time_mlp_*, but checkpoint might have action_time_mlp_*
-            if key.startswith("action_time_mlp_in."):
-                new_key = key.replace("action_time_mlp_in.", "time_mlp_in.")
-            elif key.startswith("action_time_mlp_out."):
-                new_key = key.replace("action_time_mlp_out.", "time_mlp_out.")
-            # Also handle state_proj which shouldn't exist in pi05
-            if key.startswith("state_proj."):
-                logging.warning(f"Skipping state_proj key in pi05 mode: {key}")
-                continue
-
-            # Handle vision tower embedding layer potential differences
-            if "patch_embedding" in key:
-                # Some checkpoints might have this, but current model expects different structure
-                logging.warning(f"Vision embedding key might need handling: {key}")
-
-            if (
-                key == "model.paligemma_with_expert.paligemma.lm_head.weight"
-                or key == "paligemma_with_expert.paligemma.lm_head.weight"
-            ):
-                fixed_state_dict[
-                    "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
-                ] = value.clone()
-
-            fixed_state_dict[new_key] = value
-
-        return fixed_state_dict
 
     def get_optim_params(self):
         """Return policy parameters, optionally split into LR-scaled groups.
@@ -2491,93 +2262,6 @@ class PI052Policy(PreTrainedPolicy):
         )
         return groups
 
-    def init_rtc_processor(self):
-        """Initialize RTC processor if RTC is enabled in config."""
-        self.rtc_processor = None
-
-        # Create processor if config provided
-        # If RTC is not enabled - we can still track the denoising data
-        if self.config.rtc_config is not None:
-            self.rtc_processor = RTCProcessor(self.config.rtc_config)
-
-            model_value = getattr(self, "model", None)
-            if model_value is not None:
-                model_value.rtc_processor = self.rtc_processor
-
-    def _rtc_enabled(self) -> bool:
-        return self.config.rtc_config is not None and self.config.rtc_config.enabled
-
-    def _preprocess_images(self, batch: dict[str, Tensor]) -> tuple[list[Tensor], list[Tensor]]:
-        """Preprocess images for the model.
-
-        Images from LeRobot are typically in [B, C, H, W] format and normalized to [0, 1].
-        PaliGemma expects images in [B, C, H, W] format and normalized to [-1, 1].
-        """
-        images = []
-        img_masks = []
-
-        # Get device from model parameters
-        device = next(self.parameters()).device
-
-        present_img_keys = [key for key in self.config.image_features if key in batch]
-        missing_img_keys = [key for key in self.config.image_features if key not in batch]
-
-        if len(present_img_keys) == 0:
-            raise ValueError(
-                f"All image features are missing from the batch. At least one expected. "
-                f"(batch: {batch.keys()}) (image_features: {self.config.image_features})"
-            )
-
-        # Preprocess image features present in the batch
-        for key in present_img_keys:
-            img = batch[key]
-
-            # Ensure tensor is on the same device as the model
-            if img.device != device:
-                img = img.to(device)
-
-            # Ensure float32 dtype for consistency
-            if img.dtype != torch.float32:
-                img = img.to(torch.float32)
-
-            # from openpi preprocess_observation_pytorch: Handle both [B, C, H, W] and [B, H, W, C] formats
-            is_channels_first = img.shape[1] == 3  # Check if channels are in dimension 1
-
-            if is_channels_first:
-                # Convert [B, C, H, W] to [B, H, W, C] for processing
-                img = img.permute(0, 2, 3, 1)
-
-            # from openpi preprocess_observation_pytorch: Resize with padding if needed
-            if img.shape[1:3] != self.config.image_resolution:
-                img = resize_with_pad_torch(img, *self.config.image_resolution)
-
-            # Normalize from [0,1] to [-1,1] as expected by siglip
-            img = img * 2.0 - 1.0
-
-            # from openpi preprocess_observation_pytorch: Convert back to [B, C, H, W] format if it was originally channels-first
-            if is_channels_first:
-                img = img.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
-
-            images.append(img)
-            # Create mask (all ones for real images)
-            bsize = img.shape[0]
-            mask = torch.ones(bsize, dtype=torch.bool, device=device)
-            img_masks.append(mask)
-
-        # Create image features not present in the batch as fully 0 padded images
-        for _num_empty_cameras in range(len(missing_img_keys)):
-            img = torch.ones_like(img) * -1  # Padded with -1 for SigLIP
-            mask = torch.zeros_like(mask)  # Mask is zero for empty cameras
-            images.append(img)
-            img_masks.append(mask)
-
-        return images, img_masks
-
-    def prepare_action(self, batch):
-        """Pad action"""
-        actions = pad_vector(batch[ACTION], self.config.max_action_dim)
-        return actions
-
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
@@ -2640,14 +2324,3 @@ class PI052Policy(PreTrainedPolicy):
             loss = losses.mean()
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
-
-    def _get_default_peft_targets(self) -> dict[str, any]:
-        """Return default PEFT target modules for PI0.5 fine-tuning."""
-        common_projections = (
-            "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
-        )
-        target_modules = rf"(.*\.gemma_expert\..*\.self_attn\.(q|v)_proj|model\.({common_projections}))"
-        return {
-            "target_modules": target_modules,
-            "modules_to_save": [],
-        }

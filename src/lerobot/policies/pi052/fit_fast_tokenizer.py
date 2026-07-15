@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 _CACHE_SENTINEL = "processor_config.json"
 
 
+def _is_local_leader() -> bool:
+    return int(os.environ.get("LOCAL_RANK", "0")) == 0
+
+
 def _dataset_signature(
     dataset_repo_id: str,
     base_tokenizer_name: str,
@@ -109,8 +113,8 @@ def fit_fast_tokenizer(
         )
         return str(out_dir)
 
-    # Only the local main process writes the tokenizer; other ranks wait on the cache sentinel.
-    is_leader = int(os.environ.get("RANK", "0")) == 0 and int(os.environ.get("LOCAL_RANK", "0")) == 0
+    # Each node fits its node-local cache once; its other local ranks wait.
+    is_leader = _is_local_leader()
     if not is_leader:
         timeout_s = 1800.0  # 30 min — covers ~1024-sample fits on cold caches
         start = time.monotonic()
@@ -243,14 +247,10 @@ def resolve_fast_tokenizer(config: Any, dataset_repo_id: str | None) -> str:
     if not getattr(config, "auto_fit_fast_tokenizer", False) or dataset_repo_id is None:
         return config.action_tokenizer_name
 
-    try:
-        return fit_fast_tokenizer(
-            dataset_repo_id=dataset_repo_id,
-            cache_dir=Path(config.fast_tokenizer_cache_dir).expanduser(),
-            base_tokenizer_name=config.action_tokenizer_name,
-            n_samples=config.fast_tokenizer_fit_samples,
-            chunk_size=config.chunk_size,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("FAST tokenizer fit failed (%s); using %r instead.", exc, config.action_tokenizer_name)
-        return config.action_tokenizer_name
+    return fit_fast_tokenizer(
+        dataset_repo_id=dataset_repo_id,
+        cache_dir=Path(config.fast_tokenizer_cache_dir).expanduser(),
+        base_tokenizer_name=config.action_tokenizer_name,
+        n_samples=config.fast_tokenizer_fit_samples,
+        chunk_size=config.chunk_size,
+    )

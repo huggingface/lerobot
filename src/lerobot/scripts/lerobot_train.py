@@ -24,6 +24,7 @@ import os
 import sys
 import time
 from contextlib import nullcontext
+from datetime import timedelta
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
 
@@ -171,11 +172,12 @@ def update_policy(
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     if torch.cuda.is_available():
         train_metrics.gpu_mem_gb = torch.cuda.max_memory_allocated() / (1024**3)
-    # Materialize GPU metrics only when logging to avoid synchronizing every step.
+    train_metrics.accumulate_tensor("loss", loss)
+    train_metrics.accumulate_tensor("grad_norm", grad_norm)
+    train_metrics.update_s = time.perf_counter() - start_time
+    # Synchronize accumulated GPU metrics only when logging.
     if log_metrics:
-        train_metrics.loss = loss.item()
-        train_metrics.grad_norm = grad_norm.item()
-        train_metrics.update_s = time.perf_counter() - start_time
+        train_metrics.materialize_tensors()
         # Materialize detached loss components during the same logging synchronization.
         if output_dict:
             output_dict = {
@@ -208,7 +210,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     require_package("accelerate", extra="training")
     from accelerate import Accelerator
-    from accelerate.utils import DistributedDataParallelKwargs, DistributedType
+    from accelerate.utils import DistributedDataParallelKwargs, DistributedType, InitProcessGroupKwargs
 
     cfg.validate()
 
@@ -217,10 +219,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting the lr_scheduler steps based on the num_processes
     # We set find_unused_parameters=True to handle models with conditional computation
     if accelerator is None:
-        from datetime import timedelta
-
-        from accelerate.utils import InitProcessGroupKwargs
-
         # Static graphs restore DDP overlap when conditional parameter usage is stable.
         # Environment flags retain the existing defaults.
         ddp_find_unused = os.environ.get("LEROBOT_DDP_FIND_UNUSED", "1") == "1"
@@ -336,22 +334,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     active_cfg = cfg.trainable_config
     processor_pretrained_path = active_cfg.pretrained_path
-    # Build PI052 processors from the current config so recipe and FAST labels are generated.
+    # A weight checkpoint may contain PI05 or differently configured PI052 processors.
     if cfg.policy.type == "pi052" and processor_pretrained_path is not None and not cfg.resume:
         logging.warning(
             "pi052 is loading pretrained weights from %s, but building processors from the current "
             "pi052 config so recipe text labels and FAST action labels are generated.",
             processor_pretrained_path,
-        )
-        processor_pretrained_path = None
-    if (
-        getattr(active_cfg, "use_relative_actions", False)
-        and processor_pretrained_path is not None
-        and not cfg.resume
-    ):
-        logging.warning(
-            "use_relative_actions=true with pretrained processors can skip relative transforms if "
-            "the checkpoint processors do not define them. Building processors from current policy config."
         )
         processor_pretrained_path = None
 

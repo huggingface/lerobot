@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from lerobot.runtime.sim_robocasa import RoboCasaSimBackend
 from lerobot.utils.video_annotation import annotate_frame
 
 
@@ -59,3 +60,23 @@ def test_overlay_draws_each_label_once(monkeypatch):
     assert all(color == (255, 255, 255) and thickness == 1 for _, color, thickness in put_text_calls)
     assert len(rectangle_calls) == 1
     assert not np.shares_memory(annotated, frame)
+
+
+def test_capture_updates_live_frame_when_recording_is_disabled(monkeypatch):
+    backend = object.__new__(RoboCasaSimBackend)
+    frame = np.full((8, 8, 3), 42, dtype=np.uint8)
+    written = []
+    backend.record = False
+    backend.runtime_state = None
+    backend._multiview_frame = lambda: frame
+    backend._current_task = lambda: "task"
+    backend._subtask_getter = None
+    backend._memory_getter = None
+    backend._latest_frame = None
+    backend._write_live_frame = written.append
+    monkeypatch.setattr("lerobot.runtime.sim_robocasa.annotate_frame", lambda image, labels: image)
+
+    backend._capture_frame()
+
+    assert backend._latest_frame is frame
+    assert written == [frame]

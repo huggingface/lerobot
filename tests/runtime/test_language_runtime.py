@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.runtime import (
-    LanguageConditionedRuntime,
-)
+import threading
+import time
+
+from lerobot.runtime import LanguageConditionedRuntime, Tick
 
 
 class FakeAdapter:
@@ -69,3 +70,31 @@ def test_runtime_handles_user_interjection():
 
     assert "please say ok" in adapter.interjections
     assert runtime.state.language_context["plan"] == "new plan"
+
+
+def test_prompt_change_discards_in_flight_action_chunk():
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingAdapter(FakeAdapter):
+        def select_action(self, observation, state):
+            started.set()
+            assert release.wait(timeout=2)
+            return ["stale"]
+
+    runtime = LanguageConditionedRuntime(
+        policy_adapter=BlockingAdapter(),
+        observation_provider=lambda: {"observation.state": 1},
+    )
+    runtime.set_task("old task")
+    runtime.state.tick = Tick(index=1, monotonic_seconds=time.monotonic())
+    inference = threading.Thread(target=runtime.maybe_enqueue_action_chunk, kwargs={"force": True})
+    inference.start()
+    assert started.wait(timeout=2)
+
+    runtime.set_task("new task")
+    release.set()
+    inference.join(timeout=2)
+
+    assert not inference.is_alive()
+    assert list(runtime.state.action_queue) == []

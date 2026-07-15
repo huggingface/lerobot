@@ -23,6 +23,7 @@ import argparse
 import logging
 import sys
 from collections.abc import Callable
+from contextlib import nullcontext
 from typing import Any
 
 from .adapter import GenerationConfig
@@ -389,7 +390,11 @@ def _load_policy_and_preprocessor(
     policy = policy_cls.from_pretrained(policy_path, config=cfg)
     policy.to(cfg.device)
     if load_processors_from_checkpoint:
-        preprocessor, postprocessor = make_pre_post_processors(cfg, pretrained_path=cfg.pretrained_path)
+        preprocessor, postprocessor = make_pre_post_processors(
+            cfg,
+            pretrained_path=cfg.pretrained_path,
+            preprocessor_overrides={"device_processor": {"device": str(cfg.device)}},
+        )
 
     policy.eval()
     return policy, preprocessor, postprocessor
@@ -540,9 +545,11 @@ def _strip_quotes(text: str) -> str:
 
 def _clear_action_queue(runtime: Any) -> None:
     """Drop any queued action chunk so nothing fires while paused."""
-    queue = runtime.state.get("action_queue")
-    if hasattr(queue, "clear"):
-        queue.clear()
+    lock = getattr(runtime.state, "lock", nullcontext())
+    with lock:
+        queue = runtime.state.get("action_queue")
+        if hasattr(queue, "clear"):
+            queue.clear()
 
 
 def _handle_slash_command(runtime: Any, line: str) -> bool:

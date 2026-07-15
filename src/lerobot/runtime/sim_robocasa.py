@@ -21,12 +21,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
 
+from lerobot.utils.io_utils import StreamingVideoWriter
 from lerobot.utils.video_annotation import annotate_frame
 
 logger = logging.getLogger(__name__)
@@ -197,7 +199,8 @@ class RoboCasaSimBackend:
         self.record = record
         self.output_dir = Path(output_dir) if output_dir else Path("outputs/runtime_sim")
 
-        self._frames: list[np.ndarray] = []
+        self._video_writer: StreamingVideoWriter | None = None
+        self._video_path: Path | None = None
         self._live_counter = 0
         self._latest_frame: np.ndarray | None = None
         self._stream_server: Any = None
@@ -287,8 +290,7 @@ class RoboCasaSimBackend:
             action_np = np.tile(action_row, (self.env.num_envs, 1))
             obs, _reward, terminated, truncated, _info = self.env.step(action_np)
             self._last_obs = obs
-            if self.record:
-                self._capture_frame()
+            self._capture_frame()
             # AsyncVectorEnv resets terminated sub-environments automatically.
             if bool(np.any(terminated)) or bool(np.any(truncated)):
                 logger.info("[sim] episode ended — scene auto-reset")
@@ -334,9 +336,23 @@ class RoboCasaSimBackend:
             frame,
             (("Task", self._current_task()), ("Subtask", subtask), ("Memory", memory)),
         )
-        self._frames.append(annotated)
         self._latest_frame = annotated  # served by the live MJPEG stream
         self._write_live_frame(annotated)
+        if self.record:
+            self._write_recording_frame(annotated)
+
+    def _write_recording_frame(self, frame: np.ndarray) -> None:
+        try:
+            if self._video_writer is None:
+                self.output_dir.mkdir(parents=True, exist_ok=True)
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                self._video_path = self.output_dir / f"sim_{stamp}.mp4"
+                fps = int((getattr(self.env, "metadata", None) or {}).get("render_fps", 20))
+                self._video_writer = StreamingVideoWriter(self._video_path, fps)
+            self._video_writer.add_frame(frame)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[sim] video encoding failed: %s", exc)
+            self.record = False
 
     def _write_live_frame(self, frame: np.ndarray) -> None:
         """Write a rolling latest.png every few frames for live viewing over SSH.
@@ -345,8 +361,6 @@ class RoboCasaSimBackend:
         the rollout in near-real-time without a GUI window. Written atomically
         (temp + replace) so a reader never sees a half-written file.
         """
-        if not self.record:
-            return
         self._live_counter += 1
         if self._live_counter % 3 != 0:
             return
@@ -363,22 +377,16 @@ class RoboCasaSimBackend:
             logger.debug("[sim] live frame write failed: %s", exc)
 
     def _flush_video(self) -> None:
-        if not self.record or not self._frames:
+        if self._video_writer is None:
             return
-        from datetime import datetime  # noqa: PLC0415
-
-        from lerobot.utils.io_utils import write_video  # noqa: PLC0415
-
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = self.output_dir / f"sim_{stamp}.mp4"
-        fps = int((getattr(self.env, "metadata", None) or {}).get("render_fps", 20))
+        writer = self._video_writer
+        self._video_writer = None
         try:
-            write_video(str(path), np.stack(self._frames), fps)
-            logger.info("[sim] wrote video (%d frames) to %s", len(self._frames), path)
-            print(f"[runtime] sim video saved to {path}", flush=True)
+            writer.close()
+            logger.info("[sim] wrote video (%d frames) to %s", writer.frames_written, self._video_path)
+            print(f"[runtime] sim video saved to {self._video_path}", flush=True)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("[sim] write_video failed: %s", exc)
+            logger.warning("[sim] video close failed: %s", exc)
 
     def attach_stream_server(self, server: Any) -> None:
         """Attach an already-running MJPEG server so disconnect() can stop it."""

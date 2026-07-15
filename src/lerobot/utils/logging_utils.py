@@ -104,6 +104,8 @@ class MetricsTracker:
         "episodes",
         "epochs",
         "accelerator",
+        "_tensor_sums",
+        "_tensor_counts",
     ]
 
     def __init__(
@@ -129,6 +131,8 @@ class MetricsTracker:
         self.episodes = self.samples / self._avg_samples_per_ep
         self.epochs = self.samples / self._num_frames
         self.accelerator = accelerator
+        self._tensor_sums: dict[str, torch.Tensor] = {}
+        self._tensor_counts: dict[str, int] = {}
 
     def __getattr__(self, name: str) -> int | dict[str, AverageMeter] | AverageMeter | Any:
         if name in self.__dict__:
@@ -155,6 +159,22 @@ class MetricsTracker:
         self.samples += self._batch_size * world_size
         self.episodes = self.samples / self._avg_samples_per_ep
         self.epochs = self.samples / self._num_frames
+
+    def accumulate_tensor(self, name: str, value: torch.Tensor) -> None:
+        """Accumulate a detached metric on-device until the next logging step."""
+        if name not in self.metrics:
+            raise KeyError(f"Unknown metric {name!r}.")
+        value = value.detach()
+        self._tensor_sums[name] = self._tensor_sums.get(name, torch.zeros_like(value)) + value
+        self._tensor_counts[name] = self._tensor_counts.get(name, 0) + 1
+
+    def materialize_tensors(self) -> None:
+        """Transfer pending tensor averages to their meters with one sync per metric."""
+        for name, total in self._tensor_sums.items():
+            count = self._tensor_counts[name]
+            self.metrics[name].update((total / count).item(), n=count)
+        self._tensor_sums.clear()
+        self._tensor_counts.clear()
 
     def reduce_across_ranks(self) -> None:
         """
@@ -227,3 +247,5 @@ class MetricsTracker:
         """Resets average meters."""
         for m in self.metrics.values():
             m.reset()
+        self._tensor_sums.clear()
+        self._tensor_counts.clear()

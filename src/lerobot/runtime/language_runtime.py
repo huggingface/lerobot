@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections import deque
 from collections.abc import Callable
@@ -41,6 +42,8 @@ class RuntimeState:
     actions_dispatched: int = 0
     action_deadline: float | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    revision: int = 0
+    lock: Any = field(default_factory=threading.RLock, repr=False)
 
     def emit(self, event_name: str) -> None:
         self.events.add(event_name)
@@ -55,16 +58,18 @@ class RuntimeState:
         self.log_lines.append(line)
 
     def set_context(self, key: str, value: str | None, *, label: str | None = None) -> bool:
-        previous = self.language_context.get(key)
-        if previous == value:
-            return False
-        if value is None:
-            self.language_context.pop(key, None)
-        else:
-            self.language_context[key] = value
-        if label is not None and value:
-            self.log(f"  {label}: {value}")
-        return True
+        with self.lock:
+            previous = self.language_context.get(key)
+            if previous == value:
+                return False
+            if value is None:
+                self.language_context.pop(key, None)
+            else:
+                self.language_context[key] = value
+            self.revision += 1
+            if label is not None and value:
+                self.log(f"  {label}: {value}")
+            return True
 
     def get(self, key: str, default: Any = None) -> Any:
         try:
@@ -87,10 +92,13 @@ class RuntimeState:
         raise KeyError(key)
 
     def __setitem__(self, key: str, value: Any) -> None:
-        if hasattr(self, key):
-            setattr(self, key, value)
-        else:
-            self.extra[key] = value
+        with self.lock:
+            if hasattr(self, key):
+                if key == "mode" and self.mode != value:
+                    self.revision += 1
+                setattr(self, key, value)
+            else:
+                self.extra[key] = value
 
 
 class LanguageConditionedPolicyAdapter(Protocol):
@@ -179,8 +187,11 @@ class LanguageConditionedRuntime:
         return getattr(self.policy_adapter, "policy", self.policy_adapter)
 
     def set_task(self, task: str) -> None:
-        self.state.task = task
-        self.state.log(f"Task: {task}")
+        with self.state.lock:
+            if self.state.task != task:
+                self.state.revision += 1
+            self.state.task = task
+            self.state.log(f"Task: {task}")
 
     def stop(self) -> None:
         self._stop = True
@@ -255,12 +266,14 @@ class LanguageConditionedRuntime:
         self.state.extra["recent_interjection"] = None
 
     def maybe_enqueue_action_chunk(self, *, force: bool = False) -> None:
-        if self.state.mode != "action" or not self.state.task:
-            return
-        if self.state.action_queue:
-            return
-        if self.state.tick is None or not self._chunk_gate.due(self.state.tick, force=force):
-            return
+        with self.state.lock:
+            if self.state.mode != "action" or not self.state.task:
+                return
+            if self.state.action_queue:
+                return
+            if self.state.tick is None or not self._chunk_gate.due(self.state.tick, force=force):
+                return
+            revision = self.state.revision
         observation = self._current_observation()
         if observation is None:
             return
@@ -270,7 +283,16 @@ class LanguageConditionedRuntime:
             logger.warning("select_action failed: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG))
             self.state.log(f"  [warn] select_action failed: {type(exc).__name__}: {exc}")
             return
-        self._enqueue_chunk(chunk)
+        with self.state.lock:
+            if (
+                self.state.revision != revision
+                or self.state.mode != "action"
+                or self.state.stop
+                or self._stop
+            ):
+                logger.info("Discarded an action chunk invalidated during inference.")
+                return
+            self._enqueue_chunk(chunk)
 
     def _enqueue_chunk(self, chunk: Any) -> None:
         if chunk is None:

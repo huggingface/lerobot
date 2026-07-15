@@ -16,6 +16,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from lerobot.policies import factory
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
 from lerobot.policies.pi052 import fit_fast_tokenizer as fit_module
@@ -46,6 +48,27 @@ def test_pi0_fast_resolves_dataset_specific_tokenizer(monkeypatch, tmp_path):
         "n_samples": 17,
         "chunk_size": 12,
     }
+
+
+def test_fast_fit_failure_is_not_silently_replaced(monkeypatch, tmp_path):
+    config = PI0FastConfig(auto_fit_fast_tokenizer=True, fast_tokenizer_cache_dir=str(tmp_path))
+    monkeypatch.setattr(
+        fit_module,
+        "fit_fast_tokenizer",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("fit failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="fit failed"):
+        fit_module.resolve_fast_tokenizer(config, "user/dataset")
+
+
+def test_each_node_uses_its_local_rank_zero_as_fit_leader(monkeypatch):
+    monkeypatch.setenv("RANK", "8")
+    monkeypatch.setenv("LOCAL_RANK", "0")
+    assert fit_module._is_local_leader()
+
+    monkeypatch.setenv("LOCAL_RANK", "1")
+    assert not fit_module._is_local_leader()
 
 
 def test_pretrained_pi0_fast_overrides_only_fitted_tokenizer(monkeypatch):
