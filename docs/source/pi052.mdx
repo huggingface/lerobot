@@ -141,8 +141,7 @@ pass.
 
 ## Training performance
 
-Pi052 includes the optimized training paths from
-[PR #3974](https://github.com/huggingface/lerobot/pull/3974). The default path:
+Pi052 uses optimized training paths by default:
 
 - batches repeated flow targets and suffix projections instead of replaying
   small operations in Python;
@@ -174,10 +173,10 @@ with Flex/manual attention and compiled vision disabled.
 
 ### Reported training benchmarks
 
-PR #3974 measured complete optimizer steps with three real camera inputs, BF16
-transformer/action execution, FP32 vision, fused AdamW, and no video decoding or
-network I/O. Results vary with GPU, batch shape, annotation mixture, and
-checkpointing:
+These benchmarks measure complete optimizer steps with three real camera
+inputs, BF16 transformer/action execution, FP32 vision, fused AdamW, and no
+video decoding or network I/O. Results vary with GPU, batch shape, annotation
+mixture, and checkpointing:
 
 | Workload                   |     RTX PRO 6000 Blackwell |                 A100 80 GB |
 | -------------------------- | -------------------------: | -------------------------: |
