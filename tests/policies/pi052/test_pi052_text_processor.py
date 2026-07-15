@@ -63,16 +63,9 @@ def test_flatten_leaves_messages_without_tool_calls_untouched():
 
 def test_flatten_drops_non_say_tool_calls_but_keeps_content():
     weather = {"type": "function", "function": {"name": "check_weather", "arguments": {}}}
-    out = _flatten_say_tool_calls(
-        {"role": "assistant", "content": "plan only", "tool_calls": [weather]}
-    )
+    out = _flatten_say_tool_calls({"role": "assistant", "content": "plan only", "tool_calls": [weather]})
     assert out["content"] == "plan only"
     assert "tool_calls" not in out
-
-
-# ---------------------------------------------------------------------------
-# EOS-termination supervision
-# ---------------------------------------------------------------------------
 
 
 def test_format_messages_appends_eos_to_target_turns_only():

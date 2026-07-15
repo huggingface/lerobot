@@ -12,18 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""RoboCasa simulation backend for the interactive language runtime.
+"""RoboCasa backend for interactive language-conditioned rollouts.
 
-Lets an operator type open-ended prompts (``/action <prompt>``) and have a
-language-conditioned policy (e.g. PI052) execute them inside a RoboCasa mujoco
-kitchen scene. The observation/action pipeline mirrors ``lerobot-eval`` exactly
-so behaviour matches offline evaluation; only the *source* of observations and
-the *sink* of actions differ from the real-robot backend, which is left
-untouched.
-
-A RoboCasa episode always instantiates a concrete scene (objects + layout) from
-its task name, so ``--sim.task`` selects the scene while the prompt typed at the
-prompt drives what the policy is asked to do inside it.
+It reuses the eval observation/action pipeline while prompts control a persistent selected scene.
 """
 
 from __future__ import annotations
@@ -63,10 +54,7 @@ def _label_panel(img: np.ndarray, label: str) -> np.ndarray:
     return img
 
 
-# RoboCasa's MuJoCo EGL offscreen renderer produces garbled/static frames when
-# only ONE worker env is running (reproducible with lerobot-eval --batch_size=1).
-# With >=2 workers the renderer is stable. We therefore run the interactive sim
-# with a small vec env, drive env 0 with the policy, and ignore the rest.
+# Two workers avoid broken single-worker EGL rendering; only env 0 is displayed.
 _SIM_N_ENVS = 2
 
 
@@ -78,19 +66,13 @@ def create_sim_env(
     seed: int | None,
     render_size: int = 384,
 ) -> tuple[Any, dict]:
-    """Create + reset a RoboCasa AsyncVectorEnv (n_envs=_SIM_N_ENVS), return (env, obs).
+    """Create and reset the vectorized RoboCasa environment before CUDA initializes.
 
-    MUST be called BEFORE the policy initialises CUDA in the parent process, so
-    the forkserver workers don't inherit a CUDA context (which corrupts EGL).
-    Uses >=2 workers because single-worker EGL rendering is broken on this stack
-    (garbled frames) — the same reason lerobot-eval renders cleanly only at
-    batch_size>=2. Only env 0 is driven/displayed.
+    Two workers keep EGL stable, while only env 0 is driven and displayed.
     """
     from lerobot.envs.configs import RoboCasaEnv as RoboCasaEnvConfig  # noqa: PLC0415
 
-    # Higher-res observation cameras => higher-quality display. The policy is
-    # unaffected: its preprocessor resizes images to 224 and VISUAL norm is
-    # identity, so only render cost (not behaviour) changes with render_size.
+    # The policy resizes inputs, so render_size only affects display quality and cost.
     env_cfg = RoboCasaEnvConfig(
         task=task,
         split=split,
@@ -98,8 +80,7 @@ def create_sim_env(
         observation_height=render_size,
         observation_width=render_size,
     )
-    # Persistent kitchen: never end/reset on task success, and use a huge horizon
-    # so the scene doesn't truncate. The user drives it with sequential prompts.
+    # Keep one kitchen alive across sequential prompts.
     envs = env_cfg.create_envs(
         n_envs=_SIM_N_ENVS,
         use_async_envs=True,
@@ -114,14 +95,7 @@ def create_sim_env(
 
 
 def start_mjpeg_server(port: int, get_frame: Callable[[], np.ndarray | None]) -> Any:
-    """Start an MJPEG server serving frames from ``get_frame()`` on ``port``.
-
-    Started early (before the ~60s policy load) so the port listens immediately
-    and browsers get a page instead of connection-refused. ``get_frame`` returns
-    the latest annotated frame or None (a "waiting" placeholder is shown until
-    frames arrive). The server thread only reads/encodes frames — no CUDA/EGL —
-    so it never affects rendering. Returns the server (for shutdown) or None.
-    """
+    """Start an MJPEG server that shows a placeholder until ``get_frame`` returns frames."""
     import io  # noqa: PLC0415
     import threading  # noqa: PLC0415
     import time  # noqa: PLC0415
@@ -189,14 +163,9 @@ def start_mjpeg_server(port: int, get_frame: Callable[[], np.ndarray | None]) ->
 
 
 class RoboCasaSimBackend:
-    """Drive a single RoboCasa gym env from the language runtime.
+    """Expose a RoboCasa environment through the runtime observation/action contract.
 
-    Exposes ``observation_provider`` / ``action_executor`` closures matching the
-    runtime's injected-callable contract, plus ``disconnect`` so the shared
-    The runtime cleanup path closes the env and flushes the video.
-
-    The env must be created via :func:`create_sim_env` *before* the policy
-    touches CUDA (see that function's note on the EGL/CUDA fork hazard).
+    The environment must be created before the policy initializes CUDA.
     """
 
     def __init__(
@@ -216,7 +185,6 @@ class RoboCasaSimBackend:
         self.env = env
         self._last_obs = last_obs
         self._scene_task = task
-        # Camera views to composite into the display frame (order = left→right).
         self._view_cams = view_cams or [
             "robot0_agentview_left",
             "robot0_eye_in_hand",
@@ -234,8 +202,7 @@ class RoboCasaSimBackend:
         self._latest_frame: np.ndarray | None = None
         self._stream_server: Any = None
         self._reset_count = 0
-        # State getters wired after the runtime exists (bind_runtime), so the
-        # video overlay can show the live task/subtask/memory.
+        # Bind these after runtime construction for live annotations.
         self._task_getter: Callable[[], str | None] | None = None
         self._subtask_getter: Callable[[], str | None] | None = None
         self._memory_getter: Callable[[], str | None] | None = None
@@ -293,9 +260,7 @@ class RoboCasaSimBackend:
         except Exception as exc:  # noqa: BLE001
             logger.warning("[sim] preprocess_observation failed: %s", exc)
             return None
-        # ``task`` feeds the recipe RenderMessagesStep; the PI052 adapter
-        # overwrites the language tokens with its generated subtask before the
-        # action forward pass, so this only needs to be present, not exact.
+        # The adapter later replaces this recipe input with its generated subtask.
         obs["task"] = [self._current_task()]
         if self.preprocessor is not None:
             try:
@@ -317,29 +282,21 @@ class RoboCasaSimBackend:
                 if action.ndim > 1 and action.shape[0] == 1:
                     action = action.squeeze(0)
                 action = action.detach().to("cpu").numpy()
-            # Only env 0 is policy-driven; tile its action across all workers so
-            # env.step gets a full (n_envs, action_dim) batch. The extra workers
-            # exist only to keep MuJoCo's EGL renderer stable (single-worker
-            # rendering is broken); their rollouts are ignored.
+            # Tile env 0's action because the extra workers exist only for EGL stability.
             action_row = np.asarray(action, dtype=np.float32).reshape(-1)
             action_np = np.tile(action_row, (self.env.num_envs, 1))
             obs, _reward, terminated, truncated, _info = self.env.step(action_np)
             self._last_obs = obs
             if self.record:
                 self._capture_frame()
-            # AsyncVectorEnv auto-resets a sub-env after it terminates, so the
-            # scene continues on its own — no manual reset needed here.
+            # AsyncVectorEnv resets terminated sub-environments automatically.
             if bool(np.any(terminated)) or bool(np.any(truncated)):
                 logger.info("[sim] episode ended — scene auto-reset")
         except Exception as exc:  # noqa: BLE001
             logger.error("[sim] env.step failed: %s", exc, exc_info=True)
 
     def _multiview_frame(self) -> np.ndarray | None:
-        """Composite the configured camera views (env 0) side by side, labeled.
-
-        Uses the policy's own high-res observation images (env.step already
-        rendered them), so there's no extra render cost and orientation matches.
-        """
+        """Label and compose env 0's existing observation views without extra rendering."""
         pixels = (self._last_obs or {}).get("pixels")
         if not isinstance(pixels, dict) or not pixels:
             return None

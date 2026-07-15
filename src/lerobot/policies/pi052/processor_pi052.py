@@ -12,25 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""π0.5 v2 pre/post-processor factory.
+"""PI052 processor factory with optional recipe rendering and text tokenization.
 
-When ``config.recipe_path`` is set, the pre-processor pipeline becomes:
-
-    rename observations
-    add batch dim
-    relative-action prep      (inherited from π0.5)
-    NormalizerProcessorStep
-    RenderMessagesStep        — recipe → messages, target_message_indices,
-                                message_streams (PR 1 of the steerable
-                                stack)
-    PI052TextTokenizerStep    — messages → input_ids + label mask +
-                                predict_actions
-    DeviceProcessorStep
-
-When ``recipe_path`` is ``None`` we delegate to the plain π0.5 pipeline
-so unannotated datasets keep working.
-
-Post-processor is unchanged from π0.5.
+Without a recipe it delegates to the standard PI0.5 pipeline.
 """
 
 from __future__ import annotations
@@ -55,9 +39,8 @@ from lerobot.processor import (
     policy_action_to_transition,
     transition_to_policy_action,
 )
-# RenderMessagesStep is intentionally not re-exported from
-# ``lerobot.processor`` because it pulls in optional language-stack deps;
-# import it directly.
+
+# Import directly to keep optional language dependencies out of ``lerobot.processor``.
 from lerobot.processor.render_messages_processor import RenderMessagesStep
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
@@ -108,21 +91,11 @@ def make_pi052_pre_post_processors(
         ),
     ]
 
-    # FAST tokenizer for discrete-action CE supervision (paper §III.C).
-    # Only inserted when explicitly enabled — keeps the post-training-
-    # style recipe (flow + text) as the default. When on, the step
-    # writes ACTION_TOKENS / ACTION_TOKEN_MASK into
-    # ``COMPLEMENTARY_DATA`` and the modeling forward picks them up.
+    # Add FAST action-token supervision only when explicitly enabled.
     if getattr(config, "enable_fast_action_loss", False):
-        # Per Pertsch et al. 2025 (FAST [64], π0.5 §III.C): fit the
-        # tokenizer on this dataset's action distribution rather than
-        # using the universal codebook off the shelf. We do this once
-        # and cache to disk, keyed on (dataset, base, n_samples).
+        # Fit once on this dataset and cache by dataset, base tokenizer, and sample count.
         action_tokenizer_path = config.action_tokenizer_name
-        if (
-            getattr(config, "auto_fit_fast_tokenizer", False)
-            and dataset_repo_id is not None
-        ):
+        if getattr(config, "auto_fit_fast_tokenizer", False) and dataset_repo_id is not None:
             from .fit_fast_tokenizer import fit_fast_tokenizer  # noqa: PLC0415
 
             cache_dir = Path(config.fast_tokenizer_cache_dir).expanduser()
@@ -141,7 +114,8 @@ def make_pi052_pre_post_processors(
                     "FAST tokenizer fit failed (%s) — falling back to "
                     "the universal base tokenizer %r. Train will still "
                     "work but compression will be suboptimal.",
-                    exc, config.action_tokenizer_name,
+                    exc,
+                    config.action_tokenizer_name,
                 )
 
         input_steps.append(

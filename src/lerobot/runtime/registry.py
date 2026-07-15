@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Registry mapping a policy type to its language-runtime adapter.
-
-Kept as import strings (resolved lazily) so ``lerobot-rollout --language``
-never imports a policy package until it actually loads that policy — the
-same pattern as :mod:`lerobot.policies.factory`.
-"""
+"""Lazy mapping from policy types to language-runtime adapters."""
 
 from __future__ import annotations
 

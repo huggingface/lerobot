@@ -12,15 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""π0.5 v2 policy — dual-head training & hierarchical inference.
+"""PI0.5 with joint flow/text training and hierarchical language inference."""
 
-π0.5 with the PaliGemma LM head re-enabled: adds a text CE loss on
-``text_labels`` next to the flow loss (L = H(x, f_θ_text) + α·flow, α via
-``config.flow_loss_weight``) and :meth:`select_message` for AR text
-generation. The multi-rate runtime in ``lerobot.policies.pi052.inference``
-(``lerobot-language-runtime`` CLI) drives ``predict_action_chunk`` +
-``select_message``. See :class:`PI052Config` for the knobs.
-"""
+# ruff: noqa: N806, N812
 
 from __future__ import annotations
 
@@ -54,9 +48,7 @@ from .configuration_pi052 import PI052Config
 logger = logging.getLogger(__name__)
 
 
-# PI0.5 flow-matching model + helpers (pi052-specific). The generic dual-expert
-# transformer (PaliGemmaWithExpertModel, sdpa_attention_forward,
-# compute_layer_complete, get_gemma_config) lives in lerobot.policies.pi_gemma.
+# Generic dual-expert transformer helpers live in ``lerobot.policies.pi_gemma``.
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -339,9 +331,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Process language tokens
         def lang_embed_func(tokens):
-            # embed_language_tokens -> Gemma embed_tokens, which is GemmaTextScaledWordEmbedding
-            # (transformers >=5.4.0): it already multiplies by sqrt(hidden_size) internally. Do NOT
-            # scale again here or text tokens get double-scaled (~45x) and break alignment.
+            # GemmaTextScaledWordEmbedding already applies sqrt(hidden_size); do not scale twice.
             return self.paligemma_with_expert.embed_language_tokens(tokens)
 
         lang_emb = self._apply_checkpoint(lang_embed_func, tokens)
@@ -402,9 +392,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
-        # The suffix mask is the constant [1, 0, ..., 0]; build it on-device
-        # rather than via torch.tensor(python_list, device=cuda), which is a
-        # host->device sync on every denoise step.
+        # Build the constant suffix mask on-device to avoid a per-step host sync.
         n = len(att_masks)
         att_masks = torch.zeros(n, dtype=embs.dtype, device=embs.device)
         att_masks[0] = 1
@@ -436,13 +424,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks, dtype=prefix_embs.dtype)
 
-        # Selective AC: rely on the per-layer checkpoint inside
-        # ``PaliGemmaWithExpertModel.forward`` (which wraps each
-        # transformer block individually). The previous outer
-        # ``_apply_checkpoint(forward_func, ...)`` doubled up — it
-        # re-ran the full backbone forward during backward *and* each
-        # block's own checkpoint re-ran during that recompute. Pure
-        # waste with SDPA, which already streams attention activations.
+        # The model already checkpoints each layer; an outer checkpoint would duplicate recomputation.
         (_, suffix_out), _ = self.paligemma_with_expert.forward(
             attention_mask=att_2d_masks_4d,
             position_ids=position_ids,
@@ -508,9 +490,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         dt = -1.0 / num_steps
 
-        # Precompute the whole timestep schedule on-device once, instead of
-        # rebuilding a tensor from a Python float every step
-        # (``torch.tensor(time, device=cuda)`` is a host->device sync ×num_steps).
+        # Precompute timesteps on-device to avoid a host sync per denoising step.
         times = torch.tensor([1.0 + s * dt for s in range(num_steps)], dtype=torch.float32, device=device)
 
         x_t = noise
@@ -573,12 +553,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks, dtype=suffix_embs.dtype)
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
 
-        # The expert forward appends the suffix K/V to the prefix cache in-place
-        # (GemmaAttention.update runs even with use_cache=False), so each step
-        # must start from a prefix-only cache. Instead of deep-copying the whole
-        # cache every step, let it append and crop back to the prefix length
-        # afterwards (the prefix K/V are read-only, so this is exact and keeps
-        # the loop a single graph).
+        # Crop appended suffix K/V after each step instead of copying the read-only prefix cache.
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks_4d,
             position_ids=position_ids,
@@ -595,14 +570,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         return self.action_out_proj(suffix_out)
 
 
-# FAST action-token vocab size (``lerobot/fast-action-tokenizer``). The
-# tokenizer maps a FAST BPE id ``t`` to the PaliGemma vocab id
-# ``vocab_size - 1 - fast_skip_tokens - t`` (see ``TokenizerProcessorStep``),
-# so action tokens occupy the top ``_FAST_ACTION_VOCAB_SIZE`` ids below the
-# ``fast_skip_tokens`` margin. The upper part collides with the reserved
-# ``<loc>`` block; the lower part sits just under it and otherwise leaks into
-# generated text as high-codepoint gibberish (the action-trained LM head puts
-# heavy mass on these ids), so ``select_message`` masks it.
+# FAST tokens occupy the high vocabulary range and must be masked during text generation.
 _FAST_ACTION_VOCAB_SIZE = 2048
 
 
@@ -645,11 +613,6 @@ def _enable_hf_kernels() -> None:
     logger.info("PI052: HF kernels (Liger) enabled — rope, geglu, layer_norm fused.")
 
 
-# ----------------------------------------------------------------------
-# Loss helpers (shared between fused and prefix-only paths)
-# ----------------------------------------------------------------------
-
-
 def _mask_per_sample(per_sample: Tensor, predict_actions_t: Tensor | None) -> Tensor:
     """Mean over samples where ``predict_actions_t`` is True, else over all."""
     if predict_actions_t is None:
@@ -683,9 +646,7 @@ def _shifted_lin_ce(
         (same ``z²·w`` formula on per-position logsumexp). Setting it
         to 0 disables the z-loss term at zero cost.
     """
-    # Liger is imported lazily so the module still imports on machines
-    # without liger-kernel — the call site only fires from the training
-    # forward, which always pulls in the kernel.
+    # Keep Liger optional until the training path needs it.
     from liger_kernel.transformers.fused_linear_cross_entropy import (  # noqa: PLC0415
         LigerFusedLinearCrossEntropyLoss,
     )
@@ -767,9 +728,7 @@ def _fast_lin_ce(
     if predict_actions_t is not None:
         sample_mask = predict_actions_t[:, None].expand_as(shift_valid)
         shift_valid = shift_valid & sample_mask
-    # Fold the boolean mask into the target via ignore_index. No
-    # ``.any().item()`` sync — Liger returns 0.0 when every position
-    # is ignored, preserving graph capture for CUDA graphs.
+    # Encode the mask with ignore_index to avoid a host sync and preserve graph capture.
     shift_targets = torch.where(shift_valid, shift_targets, torch.full_like(shift_targets, -100))
 
     B, T_1, H = shift_hidden.shape
@@ -783,15 +742,7 @@ def _fast_lin_ce(
     return loss_fn(lm_head_weight, flat_hidden, flat_labels)
 
 
-# ----------------------------------------------------------------------
-# Knowledge insulation — ported from pi05_full (branch ``feat/add-pi05``)
-# ----------------------------------------------------------------------
-#
-# Per-layer attention that splits the queries into VLM and action
-# parts, computing attention for action queries with .detach()'d VLM
-# K/V so the action loss's gradient cannot flow back into the VLM's K
-# and V projections. Forward output is bit-equivalent to the standard
-# layer; backward differs only on the path action_loss → VLM K/V.
+# Knowledge insulation keeps the forward equivalent while detaching VLM K/V for action-query gradients.
 
 
 def _compute_layer_ki(
@@ -805,9 +756,7 @@ def _compute_layer_ki(
 ):
     from transformers.models.gemma import modeling_gemma  # noqa: PLC0415
 
-    # ``_gated_residual`` is a lerobot helper (adaRMSNorm gated residual),
-    # not part of HF's ``modeling_gemma``. pi05's own layer code imports
-    # it from ``pi_gemma`` — mirror that here.
+    # ``_gated_residual`` is LeRobot's adaRMSNorm helper, not a Transformers symbol.
     from ..pi_gemma import _gated_residual  # noqa: PLC0415
 
     models = [paligemma.model.language_model, gemma_expert.model]
@@ -865,11 +814,7 @@ def _compute_layer_ki(
 
     mask_for_vlm = attention_mask[:, :, :vlm_len, :]
     mask_for_action = attention_mask[:, :, vlm_len:, :]
-    # ``_prepare_attention_masks_4d`` always returns fp32 (0.0 / -inf
-    # literals), but PaliGemma weights are bf16 when ``dtype=bfloat16``,
-    # making q bf16. SDPA's ``scaled_dot_product_attention`` then raises
-    # "invalid dtype for bias - should match query's dtype". Cast each
-    # mask slice to the corresponding query dtype right before use.
+    # SDPA requires each fp32-generated mask slice to match its query dtype.
     if mask_for_vlm.dtype != Q_vlm.dtype:
         mask_for_vlm = mask_for_vlm.to(dtype=Q_vlm.dtype)
     if mask_for_action.dtype != Q_action.dtype:
@@ -1005,10 +950,7 @@ class PI052Policy(PreTrainedPolicy):
     name = "pi052"
 
     def __init__(self, config: PI052Config, **kwargs: Any) -> None:
-        # Patch ops BEFORE the backbone is built (the backbone constructed
-        # below instantiates the Gemma/Siglip layers we want to swap).
-        # Always-on — the patch is process-global / idempotent and degrades
-        # gracefully if liger-kernel is missing.
+        # Patch before constructing Gemma/SigLIP layers; the operation is optional and idempotent.
         _enable_hf_kernels()
 
         # ---- inlined PI05Policy.__init__ ----------------------------------
@@ -1024,18 +966,11 @@ class PI052Policy(PreTrainedPolicy):
         self.reset()
         # ---- end inlined PI05Policy.__init__ ------------------------------
 
-        # ``PI05Policy.__init__`` zeroes the PaliGemma ``lm_head`` and
-        # freezes a few terminal layers when ``train_expert_only`` is
-        # the (default) True. We re-enable the head if the user
-        # wants text supervision.
+        # Re-enable layers PI0.5 freezes when text supervision is requested.
         if config.text_loss_weight > 0 and config.unfreeze_lm_head:
             self._unfreeze_lm_head()
 
-        # Knowledge insulation: bind a custom ``forward`` on the
-        # PaliGemmaWithExpertModel instance that uses
-        # :func:`_compute_layer_ki` for the dual-expert layer pass.
-        # The bind is per-instance, so this doesn't leak into stock
-        # ``pi05`` policies that share the same class.
+        # Bind knowledge insulation per instance so stock PI0.5 policies remain unchanged.
         if getattr(config, "knowledge_insulation", False):
             backbone = self.model.paligemma_with_expert
             backbone._pi052_orig_forward = backbone.forward
@@ -1044,11 +979,7 @@ class PI052Policy(PreTrainedPolicy):
                 "PI052: knowledge insulation enabled — action→VLM K/V gradients are blocked in attention."
             )
 
-        # Per-env hierarchical-inference state. Sized lazily on the first
-        # select_action() call once the batch size (number of parallel envs)
-        # is known. ``last_subtasks[i]`` is the subtask currently conditioning
-        # env ``i``'s action expert; scalar ``last_subtask`` mirrors env 0 for
-        # back-compat (e.g. the eval video overlay).
+        # Size per-environment inference state lazily; the scalar mirrors env 0 for compatibility.
         self.last_subtasks: list[str] | None = None
         self.last_subtasks_raw: list[str] | None = None
         self.last_subtasks_source: list[str] | None = None
@@ -1089,10 +1020,6 @@ class PI052Policy(PreTrainedPolicy):
 
         return apply_fp8_mlp(self, batch, safety=safety)
 
-    # ------------------------------------------------------------------
-    # Head unfreeze helper
-    # ------------------------------------------------------------------
-
     def _unfreeze_lm_head(self) -> None:
         """Walk the PaliGemma submodules and re-enable gradients on
         ``lm_head`` + the immediately preceding norm / last text-model
@@ -1101,10 +1028,7 @@ class PI052Policy(PreTrainedPolicy):
         if hasattr(backbone, "lm_head"):
             for p in backbone.lm_head.parameters():
                 p.requires_grad_(True)
-        # The text model's final norm and last transformer block —
-        # find them dynamically by walking up from the LM head so we
-        # don't hard-code module names that may drift across transformers
-        # versions.
+        # Discover terminal text layers dynamically across Transformers versions.
         text_model = getattr(backbone, "model", None)
         text_model = getattr(text_model, "language_model", text_model)
         if text_model is None:
@@ -1117,10 +1041,6 @@ class PI052Policy(PreTrainedPolicy):
         if isinstance(layers, (list, torch.nn.ModuleList)) and len(layers) > 0:
             for p in layers[-1].parameters():
                 p.requires_grad_(True)
-
-    # ------------------------------------------------------------------
-    # Forward (dual loss: flow + text)
-    # ------------------------------------------------------------------
 
     def forward(
         self,
@@ -1137,12 +1057,7 @@ class PI052Policy(PreTrainedPolicy):
         text_labels = batch.get("text_labels")
         predict_actions_t = batch.get("predict_actions")
 
-        # Fall through to PI05Policy only on fully unannotated batches
-        # (no recipe applied → no routing fields). For recipe-applied
-        # batches we keep control of the loss dispatch even if all
-        # samples are text-only — delegating would silently train flow
-        # on text-only frames (PI05Policy.forward ignores
-        # ``predict_actions``).
+        # Delegate only unannotated batches; PI0.5 ignores recipe action-routing masks.
         if (
             text_labels is None
             and predict_actions_t is None
@@ -1150,9 +1065,7 @@ class PI052Policy(PreTrainedPolicy):
         ):
             return self._pi05_flow_forward(batch, reduction=reduction)
 
-        # Whether any sample in the batch wants actions predicted. This is a data-dependent branch, so
-        # it needs a host-side bool (one CUDA sync); compute it once and reuse for both flow and FAST
-        # instead of syncing twice.
+        # Compute the host-side action-routing decision once for both flow and FAST.
         predict_any = predict_actions_t is None or bool(predict_actions_t.any().item())
         run_flow = self.config.flow_loss_weight > 0 and predict_any
         run_text = self.config.text_loss_weight > 0 and text_labels is not None
@@ -1180,19 +1093,7 @@ class PI052Policy(PreTrainedPolicy):
             if action_tokens is None or action_mask is None or action_code_mask is None:
                 run_fast = False
 
-        # ------------------------------------------------------------
-        # Dispatch: full fusion when flow is active, otherwise the
-        # prefix-only text+FAST helper (no suffix forward needed).
-        #
-        # Full fusion (flow ON):
-        #   ONE backbone forward with prefix=[images, lang, FAST] +
-        #   suffix=[noisy_actions], suffix→FAST attention masked out.
-        #   All three losses computed from slices of the single output.
-        #
-        # Prefix-only fusion (flow OFF, e.g. text-only recipes):
-        #   ONE prefix-only forward, both text + FAST losses computed
-        #   from slices. No suffix forward → cheaper.
-        # ------------------------------------------------------------
+        # Flow uses one fused prefix/suffix pass; text-only batches skip the suffix.
         if run_flow:
             flow_loss, text_loss, fast_loss = self._compute_all_losses_fused(
                 batch,
@@ -1237,16 +1138,11 @@ class PI052Policy(PreTrainedPolicy):
                 "nothing to train."
             )
 
-        # Keep loss components as detached tensors (no CUDA sync here); the training loop converts
-        # them to python floats only on logging steps (see update_policy's log_metrics gate).
+        # Keep metrics detached on-device until logging to avoid extra CUDA synchronization.
         loss_dict["loss"] = total.detach() if total.dim() == 0 else float("nan")
         if reduction == "none":
             return total.expand(batch[OBS_LANGUAGE_TOKENS].shape[0]), loss_dict
         return total, loss_dict
-
-    # ------------------------------------------------------------------
-    # Text loss
-    # ------------------------------------------------------------------
 
     def _compute_all_losses_fused(
         self,
@@ -1282,9 +1178,7 @@ class PI052Policy(PreTrainedPolicy):
         )
         non_fast_prefix_len = prefix_embs.shape[1]  # images + language only
 
-        # Causal-mask the supervised text-target span so the text-CE is
-        # genuine next-token prediction, not a bidirectional copy task
-        # (see ``_mark_target_span_causal``).
+        # Make supervised text causal rather than a bidirectional copy task.
         if text_labels is not None:
             lang_start = non_fast_prefix_len - text_labels.shape[1]
             if lang_start >= 0:
@@ -1294,8 +1188,7 @@ class PI052Policy(PreTrainedPolicy):
 
         fast_len = 0
         if action_tokens is not None and action_mask is not None:
-            # embed_language_tokens already applies the Gemma sqrt(hidden) scale (tf>=5.4.0);
-            # do not scale FAST action tokens again (would double-scale).
+            # Gemma embedding already applies its hidden-size scale.
             fast_emb = self.model.paligemma_with_expert.embed_language_tokens(action_tokens)
             fast_len = action_tokens.shape[1]
             ones_att = torch.ones(
@@ -1307,12 +1200,7 @@ class PI052Policy(PreTrainedPolicy):
             prefix_pad = torch.cat([prefix_pad, action_mask.to(prefix_pad.dtype)], dim=1)
             prefix_att = torch.cat([prefix_att, ones_att], dim=1)
 
-        # ---- flow: one combined forward, or amortized over K repeats ----
-        # ``flow_num_repeats == 1`` keeps the single combined [prefix; suffix]
-        # forward. ``> 1`` runs the VLM prefix once and replays the action
-        # expert K times against fresh noise/timestep draws, reusing the
-        # cached prefix KV (paper §III.B). Both return ``prefix_out`` for the
-        # shared text/FAST CE tail.
+        # Amortized flow reuses one VLM prefix across fresh denoising targets.
         num_repeats = int(getattr(self.config, "flow_num_repeats", 1))
         if num_repeats > 1:
             prefix_out, flow_loss = self._amortized_prefix_and_flow(
@@ -1373,18 +1261,11 @@ class PI052Policy(PreTrainedPolicy):
             suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
 
-        # ---- combined attention -------------------------------------
         pad_masks = torch.cat([prefix_pad, suffix_pad], dim=1)
         att_masks = torch.cat([prefix_att, suffix_att], dim=1)
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
 
-        # Critical: zero out suffix → FAST attention. Without this the
-        # action expert reads the FAST tokens and trivially decodes
-        # them back to the same continuous actions it's supposed to
-        # predict from noise. Cumulative-block attention from
-        # ``make_att_2d_masks`` doesn't enforce this on its own
-        # because suffix tokens have a strictly higher cumsum than
-        # FAST tokens and therefore attend to them by default.
+        # Block suffix-to-FAST attention to prevent trivial action leakage.
         if fast_len > 0:
             fast_start = non_fast_prefix_len
             fast_end = non_fast_prefix_len + fast_len  # = prefix_pad.shape[1]
@@ -1392,19 +1273,12 @@ class PI052Policy(PreTrainedPolicy):
 
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
         if fast_len > 0:
-            # The flow suffix is a PARALLEL action representation to the FAST
-            # block, not a continuation of it (the two never attend to each
-            # other). At inference there is no FAST block, so the suffix RoPE
-            # positions start at the valid image+language count. Match that here
-            # so flow->prefix relative positions are train==inference; otherwise
-            # the suffix is offset by n_fast (per-sample, 33-111) and the trained
-            # head reads the wrong RoPE conditioning at deploy time.
+            # Position flow parallel to FAST so its RoPE offsets match inference without FAST.
             non_fast_valid = prefix_pad[:, :non_fast_prefix_len].sum(dim=1, keepdim=True)
             suffix_pos = non_fast_valid + torch.cumsum(suffix_pad, dim=1) - 1
             position_ids = torch.cat([position_ids[:, : prefix_pad.shape[1]], suffix_pos], dim=1)
         att_2d_masks_4d = self.model._prepare_attention_masks_4d(att_2d_masks, dtype=prefix_embs.dtype)
 
-        # ---- forward (capture BOTH expert outputs) ------------------
         (prefix_out, suffix_out), _ = self.model.paligemma_with_expert.forward(
             attention_mask=att_2d_masks_4d,
             position_ids=position_ids,
@@ -1477,17 +1351,13 @@ class PI052Policy(PreTrainedPolicy):
             if use_bf16:
                 s_embs = s_embs.to(dtype=torch.bfloat16)
             suffix_blocks.append(s_embs)
-            # adaRMS time conditioning is per-sample; broadcast it across this
-            # block's chunk tokens so each block carries its own timestep.
+            # Broadcast each sample's timestep conditioning across its action chunk.
             adarms_blocks.append(adarms[:, None, :].expand(batch_size, chunk, adarms.shape[-1]))
 
         suffix_embs = torch.cat(suffix_blocks, dim=1)  # (B, k*chunk, D)
         adarms_cond = torch.cat(adarms_blocks, dim=1)  # (B, k*chunk, cond_dim)
 
-        # ---- block-diagonal attention over [prefix | block_1..k] ----
-        # Prefix rows keep their own (causal/text) attention and never see the
-        # action blocks. Each action block attends to the valid prefix (minus
-        # FAST) and only to itself.
+        # Each action block attends to the non-FAST prefix and itself, never other blocks.
         prefix_att_2d = make_att_2d_masks(prefix_pad, prefix_att)  # (B, P, P)
         device = prefix_pad.device
         prefix_rows = torch.cat(
@@ -1507,11 +1377,7 @@ class PI052Policy(PreTrainedPolicy):
         att_2d = torch.cat([prefix_rows, action_rows], dim=1)  # (B, P + k*chunk, P + k*chunk)
         att_2d_4d = model._prepare_attention_masks_4d(att_2d, dtype=prefix_embs.dtype)
 
-        # Positions: prefix as usual; every block restarts at the prefix offset
-        # (each block is an independent denoising of the same chunk). The flow
-        # blocks are PARALLEL to the FAST block, not a continuation, so offset by
-        # the valid image+language count (excluding FAST) — matching inference
-        # (no FAST block) so flow->prefix RoPE positions are train==inference.
+        # Restart every independent flow block after the non-FAST prefix to match inference RoPE.
         if fast_len > 0:
             prefix_offsets = prefix_pad[:, :non_fast_prefix_len].sum(dim=-1)[:, None]
         else:
@@ -1565,9 +1431,7 @@ class PI052Policy(PreTrainedPolicy):
                 text_hidden = prefix_out[:, -(fast_len + lang_len) : -fast_len, :]
             else:
                 text_hidden = prefix_out[:, -lang_len:, :]
-            # Liger fused linear-CE: skip the explicit ``lm_head(...)``
-            # materialisation; the kernel multiplies on-the-fly and
-            # never holds the full (B, T, 257k) logits tensor.
+            # Liger avoids materializing the full vocabulary logits tensor.
             text_loss = _shifted_lin_ce(
                 text_hidden,
                 lm_head.weight,
@@ -1619,9 +1483,7 @@ class PI052Policy(PreTrainedPolicy):
             images, img_masks, lang_tokens, lang_masks
         )
 
-        # Causal-mask the supervised text-target span (see
-        # ``_mark_target_span_causal``) before the FAST tokens are
-        # appended — same fix as ``_compute_all_losses_fused``.
+        # Make supervised text causal before appending FAST tokens.
         if text_labels is not None:
             lang_start = prefix_embs.shape[1] - text_labels.shape[1]
             if lang_start >= 0:
@@ -1693,10 +1555,6 @@ class PI052Policy(PreTrainedPolicy):
             )
 
         return text_loss, fast_loss
-
-    # ------------------------------------------------------------------
-    # Diagnostic: forward + argmax for supervised text positions
-    # ------------------------------------------------------------------
 
     @torch.no_grad()
     def debug_text_predictions(self, batch: dict[str, Tensor], max_samples: int = 5) -> dict[str, Tensor]:
@@ -1773,10 +1631,6 @@ class PI052Policy(PreTrainedPolicy):
             if was_training:
                 self.train()
 
-    # ------------------------------------------------------------------
-    # select_message — AR text generation at inference
-    # ------------------------------------------------------------------
-
     def select_message(
         self,
         batch: dict[str, Tensor],
@@ -1815,7 +1669,7 @@ class PI052Policy(PreTrainedPolicy):
             for sid in tokenizer.all_special_ids or []:
                 if sid is not None:
                     special_ids.add(int(sid))
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # nosec B110
             pass
         if eos_token_id is not None:
             special_ids.add(int(eos_token_id))
@@ -1838,42 +1692,24 @@ class PI052Policy(PreTrainedPolicy):
         generated: list[int] = []
         new_emb = None
 
-        # KV-cache decode: encode the (image-heavy) prefix once, then feed only
-        # the newly sampled token each step, attending to the cached keys. This
-        # turns an O(n_tokens * prefix_len) recompute into O(prefix_len + n_tokens)
-        # and is the dominant cost here (the prefix carries ~3*256 image tokens).
-        # With ``use_kv_cache=False`` the loop reduces exactly to the original
-        # recompute path (cache stays ``None`` so every step re-runs the full
-        # prefix), which we keep as a fallback / parity reference.
+        # Cache the image-heavy prefix; disabling the cache retains the full-recompute parity path.
         cache = None
 
         backbone = self.model.paligemma_with_expert
         lm_head = backbone.paligemma.lm_head
 
-        # ``_prepare_attention_masks_4d`` always returns fp32 (0.0 / -inf
-        # literals). When weights are bf16, HF's PaliGemma SDPA raises
-        # "invalid dtype for bias - should match query's dtype". Pull the
-        # dtype from an attention *projection* weight specifically:
-        # ``to_bfloat16_for_selected_params`` keeps norms / embeddings in
-        # fp32 even when the rest is bf16, so ``next(parameters())``
-        # would land on one of those and we'd skip the cast. q_proj is
-        # always cast with the rest, so its dtype is the one SDPA sees.
+        # Use q_proj's dtype because norms and embeddings may remain fp32 while SDPA queries are bf16.
         backbone_dtype = backbone.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
 
         for _ in range(max_new_tokens):
             if cache is None:
-                # First step (and every step when caching is disabled): run the
-                # full bidirectional-prefix forward. ``current_*`` already grow
-                # in the no-cache fallback below.
+                # Run the full bidirectional prefix initially or whenever caching is disabled.
                 step_embs = current_embs
                 att_2d = make_att_2d_masks(current_pad, current_att)
                 position_ids = torch.cumsum(current_pad, dim=1) - 1
                 att_2d_4d = self.model._prepare_attention_masks_4d(att_2d, dtype=backbone_dtype)
             else:
-                # Incremental step: only the last token. It attends to every
-                # valid cached key (``current_pad`` already includes this token),
-                # so pad positions in the prefix stay masked just like the
-                # recompute path.
+                # Incremental decoding feeds only the last token while retaining prefix padding masks.
                 step_embs = new_emb
                 att_2d = current_pad[:, None, :]
                 att_2d_4d = self.model._prepare_attention_masks_4d(att_2d, dtype=backbone_dtype)
@@ -1894,10 +1730,7 @@ class PI052Policy(PreTrainedPolicy):
             if special_ids and len(generated) < min_new_tokens:
                 for sid in special_ids:
                     logits_step[..., sid] = float("-inf")
-            # Mask FAST action tokens that fall *below* the ``<loc>`` block.
-            # They are never valid text, but the action-trained head leaks
-            # them as gibberish; unlike the loc/seg block this region is never
-            # legitimately emitted (even by VQA), so suppress it on every call.
+            # Suppress FAST-only vocabulary that otherwise leaks into generated text.
             vocab_size = logits_step.shape[-1]
             fast_skip = int(getattr(self.config, "fast_skip_tokens", 128))
             fast_lo = vocab_size - 1 - fast_skip - (_FAST_ACTION_VOCAB_SIZE - 1)
@@ -1913,9 +1746,7 @@ class PI052Policy(PreTrainedPolicy):
 
             # embed_language_tokens already applies the Gemma sqrt(hidden) scale (tf>=5.4.0).
             new_emb = backbone.embed_language_tokens(next_ids.unsqueeze(0))
-            # ``current_pad`` tracks valid keys for both paths (cache mask +
-            # position ids). Only the recompute path needs the full embedding /
-            # block-attention history re-fed each step.
+            # Both paths track valid keys, but only recompute retains full embedding history.
             current_pad = torch.cat([current_pad, ones_step], dim=1)
             if not use_kv_cache:
                 current_embs = torch.cat([current_embs, new_emb], dim=1)
@@ -1964,26 +1795,16 @@ class PI052Policy(PreTrainedPolicy):
         n = self._batch_size_from_observation(batch)
         self._ensure_subtask_state(n)
         tasks = self._tasks_from_batch(batch, n)
-        # Normalized state for the low-level action prompt (mirrors training:
-        # "User: {subtask}, State: {256-bin};"). batch state is already
-        # normalized by the eval preprocessor's NormalizerProcessorStep.
+        # Mirror training by appending the already normalized state to low-level prompts.
         state_all = batch.get(OBS_STATE)
 
-        # Decide whether to (re)generate subtasks this chunk or hold the last
-        # ones. Training conditions the action expert on the subtask active over
-        # an interval (seconds), not a fresh subtask every 0.25s; regenerating
-        # every chunk also makes the subtask thrash. With subtask_replan_steps>0
-        # we regenerate only every ~that many env steps and reuse the held
-        # subtask in between (state is still refreshed each chunk).
+        # Hold subtasks for the configured interval to match training and avoid rapid replanning.
         replan = int(getattr(self.config, "subtask_replan_steps", 0) or 0)
         hold_chunks = max(1, round(replan / self.config.n_action_steps)) if replan > 0 else 1
         regenerate = self._subtask_chunk_counter % hold_chunks == 0 or not any(self.last_subtasks or [])
         self._subtask_chunk_counter += 1
 
-        # Generate one subtask per parallel env, each conditioned on that env's
-        # own task + observation, then stack the per-env prompts into a single
-        # (n, L) batch for the action expert. This keeps batch_size > 1 correct
-        # (env i is conditioned on env i's subtask, not a broadcast of env 0).
+        # Generate and batch one independently conditioned subtask per environment.
         rows: list[tuple[Tensor, Tensor | None]] = []
         tokenizer = None
         for i in range(n):
@@ -2033,9 +1854,7 @@ class PI052Policy(PreTrainedPolicy):
             )
         self.last_subtasks_raw[i] = msg or ""
 
-        # Faithful hierarchical inference: condition the action expert on the
-        # model's own generated subtask verbatim (this is exactly what the
-        # ``low_level_execution`` recipe did at training — ``user: ${subtask}``).
+        # Feed the generated subtask verbatim, matching low-level training.
         if msg and not _looks_like_gibberish(msg):
             subtask = " ".join(msg.strip().split())
             self._last_good_subtasks[i] = subtask
@@ -2044,11 +1863,7 @@ class PI052Policy(PreTrainedPolicy):
             logger.info("PI052 eval subtask[%d]: %r (task=%r)", i, subtask, task)
             return subtask
 
-        # Generation unusable (empty / gibberish). Training never fed such a
-        # prompt to the action expert, so the least-OOD choice is to reuse this
-        # env's last accepted subtask; on the first chunk (none yet) derive one
-        # from the task so the action expert still gets an imperative command
-        # rather than the raw high-level instruction.
+        # Reuse the last valid subtask, or derive an initial imperative, when generation fails.
         debug = getattr(self, "_last_select_message_debug", "") or ""
         if not task:
             reason = "No task string was available in the batch."
@@ -2193,11 +2008,7 @@ class PI052Policy(PreTrainedPolicy):
             return sorted_ix.gather(-1, choice).squeeze(-1)
         return torch.multinomial(probs, num_samples=1).squeeze(-1)
 
-    # ------------------------------------------------------------------
-    # Inlined from PI05Policy (vendored; pi052 does not inherit pi05).
-    # Kept verbatim except PI05Policy.forward -> _pi05_flow_forward (the
-    # flow-only fallback used by PI052Policy.forward on unannotated batches).
-    # ------------------------------------------------------------------
+    # PI0.5 flow-only fallback for unannotated batches.
     @classmethod
     def from_pretrained(
         cls: type[T],
@@ -2406,9 +2217,7 @@ class PI052Policy(PreTrainedPolicy):
         if head_scale == 1.0 and backbone_scale == 1.0 and expert_scale == 1.0:
             return self.parameters()
 
-        # Both ``lm_head.weight`` and the tied ``embed_tokens.weight`` go in the
-        # head group — boosting only the projection without the embedding pulls
-        # them apart and breaks the tie PaliGemma was pre-trained with.
+        # Keep the tied LM projection and embeddings in the same optimizer group.
         head_substrings = (
             "paligemma_with_expert.paligemma.lm_head.",
             "paligemma_with_expert.paligemma.model.language_model.embed_tokens.",
@@ -2550,9 +2359,7 @@ class PI052Policy(PreTrainedPolicy):
         """Predict a chunk of actions given environment observations."""
         self.eval()
 
-        # Opt-in FlashRT FP8: calibrate static scales on the first real observation
-        # and swap the MLPs in place. Guard set before the call so the calibration
-        # forward (which re-enters predict_action_chunk) does not recurse.
+        # Guard before first-observation FP8 calibration to prevent recursive prediction.
         if self.config.use_flashrt_fp8_mlp and not getattr(self, "_fp8_applied", False):
             self._fp8_applied = True
             self.apply_flashrt_fp8_mlp(batch)

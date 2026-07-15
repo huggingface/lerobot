@@ -12,27 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dataset-specific FAST action tokenizer fitting.
+"""Fit and cache a FAST tokenizer for a dataset's action distribution.
 
-The published ``physical-intelligence/fast`` tokenizer is a *universal*
-codebook fitted on a heterogeneous mix of robot datasets. Per Pertsch
-et al. 2025 (the FAST paper, [64] in the π0.5 paper) and §III.C of
-π0.5 itself, the recommended practice is to **finetune the tokenizer on
-your specific dataset's action distribution** before training the
-policy — same way one would adapt a language tokenizer to a domain
-corpus. Without this finetune step, action sequences from your robot
-may require more tokens per chunk than necessary, lowering effective
-compression and slowing convergence of the action-CE loss.
-
-This module provides a single utility, :func:`fit_fast_tokenizer`,
-that does the finetune. The training entry point invokes it
-automatically when the policy's ``enable_fast_action_loss`` and
-``auto_fit_fast_tokenizer`` flags are both ``True`` and no cached
-fitted tokenizer is found at ``fast_tokenizer_cache_dir``.
-
-The fitted tokenizer is saved to
-``{cache_dir}/{dataset_hash}_{base_hash}/`` so successive training
-runs over the same dataset re-use it.
+Training invokes this automatically when FAST loss and automatic fitting are enabled.
 """
 
 from __future__ import annotations
@@ -47,11 +29,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Marker file the cache-hit check looks for. ``ProcessorMixin.save_pretrained``
-# writes ``processor_config.json`` (NOT ``preprocessor_config.json`` —
-# that's the image / feature-extractor convention). Centralised here so
-# the cache-hit check and the rank-N readiness wait agree on the same
-# sentinel.
+# ``ProcessorMixin.save_pretrained`` writes this shared cache sentinel.
 _CACHE_SENTINEL = "processor_config.json"
 
 
@@ -130,14 +108,7 @@ def fit_fast_tokenizer(
         )
         return str(out_dir)
 
-    # DDP-safe fit: only the (local) main process actually fits + saves;
-    # other ranks poll the cache sentinel until the leader is done.
-    # Without this guard, all N ranks fit concurrently and race on
-    # ``save_pretrained`` + ``AutoProcessor.from_pretrained`` (the latter
-    # copies ``processing_action_tokenizer.py`` into ``HF_MODULES_CACHE``
-    # and compiles a ``.pyc`` — concurrent writers occasionally produce
-    # a stale / partial ``.pyc`` and the subsequent ``from .. import
-    # UniversalActionProcessor`` raises ``AttributeError``.
+    # Only the local main process writes the tokenizer; other ranks wait on the cache sentinel.
     is_leader = int(os.environ.get("RANK", "0")) == 0 and int(os.environ.get("LOCAL_RANK", "0")) == 0
     if not is_leader:
         timeout_s = 1800.0  # 30 min — covers ~1024-sample fits on cold caches
@@ -164,28 +135,11 @@ def fit_fast_tokenizer(
 
     from transformers import AutoProcessor  # noqa: PLC0415
 
-    # Stream a single episode's worth of action chunks at a time so
-    # we don't blow memory on huge datasets. Random episode +
-    # random start offset gives a reasonable spread.
-    #
-    # Actions are read straight from the underlying HF dataset's
-    # ``action`` *column* — never via ``ds[i]``. ``ds[i]`` builds a full
-    # training item (delta-timestamp expansion + video decode + image
-    # transforms); a single bad video frame would then throw and, since
-    # the failure was swallowed at debug level, silently starve the fit
-    # of every chunk. The action column carries no video, so reading it
-    # directly is both faster and immune to decode errors.
+    # Read action columns directly to avoid video decoding and bound memory to sampled episodes.
     rng = np.random.default_rng(seed)
     actions_buf: list[np.ndarray] = []
 
-    # Resolve the dataset's data parquet shards directly, sidestepping
-    # ``LeRobotDataset(repo_id, episodes=[N])`` which on v3-format
-    # datasets routes through HF datasets'' split lookup and raises
-    # ``ValueError: Instruction "train" corresponds to no data!`` for
-    # every episode (job 22182985 looped through 13,293 skipped episodes
-    # for ~2.5 h before NCCL killed it). Reading the ``action`` column
-    # straight from the parquet shards is also faster: each per-episode
-    # ``LeRobotDataset`` instantiation re-parses every meta file.
+    # Read v3 parquet shards directly to avoid split lookup failures and repeated metadata parsing.
     import pyarrow as _pa  # noqa: PLC0415
     import pyarrow.parquet as _pq  # noqa: PLC0415
     from huggingface_hub import snapshot_download  # noqa: PLC0415
@@ -195,18 +149,12 @@ def fit_fast_tokenizer(
     if not data_files:
         raise RuntimeError(f"FAST fit: no ``data/chunk-*/file-*.parquet`` shards found under {snap!s}.")
 
-    # Read just the (episode_index, action) columns once across all
-    # shards. This is the same pattern used elsewhere in the codebase
-    # for whole-dataset audits and stays under ~2 GB even on 32 k-episode
-    # / 29 M-frame datasets because the action column is a fixed-length
-    # float vector.
+    # Load only episode indices and fixed-width actions across all shards.
     tables = [_pq.read_table(f, columns=["episode_index", "action"]) for f in data_files]
     table = _pa.concat_tables(tables)
     eps = table["episode_index"].to_numpy()
     acts_col = table["action"]
-    # ``action`` may be a fixed-shape ListArray or a 2-D NumericArray;
-    # ``to_numpy(zero_copy_only=False)`` produces an object array of
-    # 1-D NumPy actions either way, which we stack into (N, D).
+    # Normalize Arrow action representations into an (N, D) array.
     try:
         acts = np.stack(acts_col.to_numpy(zero_copy_only=False)).astype(np.float32)
     except Exception:  # noqa: BLE001
@@ -215,9 +163,7 @@ def fit_fast_tokenizer(
     if acts.ndim != 2:
         raise RuntimeError(f"FAST fit: expected ``action`` rows to be 1-D vectors; got shape {acts.shape}.")
 
-    # Episode index → slice (start, stop) into ``acts`` along axis 0.
-    # ``eps`` is monotonically increasing within each parquet shard but
-    # we make no assumption across shards — sort once and group.
+    # Sort once because episode order is only guaranteed within each shard.
     order = np.argsort(eps, kind="stable")
     eps_sorted = eps[order]
     boundaries = np.searchsorted(eps_sorted, np.arange(int(eps_sorted.max()) + 2))
@@ -269,18 +215,7 @@ def fit_fast_tokenizer(
         eps_visited,
     )
 
-    # Quantile-normalise per dimension before fitting.
-    #
-    # The FAST tokenizer DCT-transforms actions, scales by ``scale`` and
-    # rounds to integer tokens; the integer *range* must fit the
-    # codebook (vocab_size, default 1024). Raw motor units (e.g. encoder
-    # ticks) blow that range up — hence "Vocab size 1024 is too small".
-    # More importantly, at training time ``ActionTokenizerProcessorStep``
-    # runs *after* the QUANTILES ``NormalizerProcessorStep``, so it
-    # encodes normalised actions. Fitting on raw actions would mismatch
-    # that space. We replicate QUANTILES normalisation here (per-dim
-    # [q01, q99] → [-1, 1], clipped) so the fit and the training-time
-    # encode see the same distribution.
+    # Match training-time quantile normalization so FAST sees the same bounded action space.
     flat = actions.reshape(-1, actions.shape[-1])
     q01 = np.quantile(flat, 0.01, axis=0)
     q99 = np.quantile(flat, 0.99, axis=0)

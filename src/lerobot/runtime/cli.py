@@ -12,34 +12,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Interactive REPL for a language-conditioned robot policy.
+"""Interactive CLI for language-conditioned policy rollouts.
 
-Policy-agnostic CLI over :class:`lerobot.runtime.LanguageConditionedRuntime`.
-A policy wires it up with :func:`run`, passing an adapter factory
-(``policy -> LanguageConditionedPolicyAdapter``); see
-``lerobot.scripts.lerobot_language_runtime`` for the entry point.
-
-Stdin is the user channel: type a task, then natural-language
-interjections. The runtime prints state changes (plan / subtask /
-memory) as they happen.
-
-Examples
---------
-
-No-robot REPL on a Hub checkpoint — useful for sanity-checking text generation::
-
-    uv run lerobot-rollout --language \\
-        --policy.path=<repo-or-dir> \\
-        --no_robot \\
-        --task="please clean the kitchen"
-
-With a real robot::
-
-    uv run lerobot-rollout --language \\
-        --policy.path=... \\
-        --robot.type=so101 --robot.port=/dev/tty.usbmodem...
-
-``--policy.path`` accepts either a local directory or a Hugging Face Hub repo id.
+It supports a text-only REPL, real robots, and RoboCasa with local or Hub checkpoints.
 """
 
 from __future__ import annotations
@@ -104,14 +79,7 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         action="store_true",
         help="Skip robot connection and open a language-only REPL.",
     )
-    # --- Real-robot mode args ----------------------------------------
-    # Setting ``--robot.type`` flips the runtime into autonomous mode:
-    # it connects to the robot, builds an observation provider that
-    # reads ``robot.get_observation()``, and
-    # an action executor that postprocesses (denormalises) the policy's
-    # output and calls ``robot.send_action(...)`` at ``--ctrl_hz``. The
-    # high-level REPL-style stdin still works in a background thread
-    # for interjections.
+    # ``--robot.type`` enables real-time control while stdin remains interactive.
     p.add_argument(
         "--robot.type",
         dest="robot_type",
@@ -152,12 +120,7 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         help="Direct-subtask mode (sim OR robot): your typed text IS the subtask "
         "fed to the action expert; the LM subtask generator is disabled.",
     )
-    # --- RoboCasa simulation mode args -------------------------------
-    # Setting ``--sim`` flips the runtime into simulation mode: instead of
-    # a real robot it drives a single RoboCasa mujoco scene, feeding the
-    # eval observation/action pipeline. The operator still types prompts
-    # (/action <prompt>) that the policy executes inside the chosen scene.
-    # Mutually exclusive with ``--robot.type``.
+    # ``--sim`` uses the eval pipeline and is mutually exclusive with a robot.
     p.add_argument(
         "--sim",
         action="store_true",
@@ -359,10 +322,7 @@ def _strip_runtime_owned_language_cols(sample: dict) -> None:
         sample.pop(k, None)
 
 
-# Model-input keys some policies emit OUTSIDE the ``observation.*`` namespace and
-# still need at inference. MolmoAct2's processor packs its prompt + images into
-# these top-level keys; PI0-family policies never produce them, so keeping the
-# allowlist is a no-op for them.
+# Non-observation model inputs emitted by processors such as MolmoAct2's.
 _MODEL_INPUT_PASSTHROUGH_KEYS = (
     "input_ids",
     "attention_mask",
@@ -395,12 +355,7 @@ def _load_policy_and_preprocessor(
     fp8: bool = False,
     device: str | None = None,
 ) -> tuple[Any, Any, Any]:
-    """Load a policy checkpoint (local path or Hub repo id).
-
-    When ``load_processors_from_checkpoint`` is set, the pre/post processors
-    are loaded exactly like ``lerobot-eval``. RoboCasa uses this path so its
-    normalization and recipe match the checkpoint.
-    """
+    """Load a local or Hub policy, optionally with its eval processors."""
     from lerobot.configs import PreTrainedConfig  # noqa: PLC0415
     from lerobot.policies.factory import get_policy_class, make_pre_post_processors  # noqa: PLC0415
 
@@ -411,10 +366,7 @@ def _load_policy_and_preprocessor(
     if device:
         cfg.device = device
 
-    # Inference-only overrides (mirror lerobot-eval). torch.compile recompiles
-    # whenever the prompt length changes (every subtask switch) — catastrophic
-    # in the interactive runtime — and gradient checkpointing only slows the
-    # forward pass. Neither is wanted for serving.
+    # Variable prompts trigger recompilation, and checkpointing only adds inference overhead.
     if getattr(cfg, "compile_model", False):
         cfg.compile_model = False
     if getattr(cfg, "gradient_checkpointing", False):
@@ -453,9 +405,7 @@ def _build_language_rollout_context(args: argparse.Namespace) -> Any:
     from lerobot.configs import parser  # noqa: PLC0415
     from lerobot.rollout import RolloutConfig, build_rollout_context  # noqa: PLC0415
 
-    # Importing the rollout entry point registers every bundled camera and
-    # robot config choice used by Draccus. Third-party choices were registered
-    # by the top-level entry point before reaching this function.
+    # Import for bundled Draccus camera and robot registrations.
     from lerobot.scripts import lerobot_rollout as _rollout_registrations  # noqa: F401, PLC0415
 
     rollout_argv = [arg for arg in args.raw_argv if arg.startswith(("--policy.", "--robot."))]
@@ -712,9 +662,7 @@ def _make_state_panel_renderer(
         dispatched = int(st.get("actions_dispatched") or 0)
         console.print(f"  [dim]queued actions: {queue_len}    dispatched: {dispatched}[/]")
 
-        # Overfit / memorisation diagnostics from the adapter. High repeat
-        # + fully cycling queue ⇒ stuck on one subtask (memorised a phase);
-        # climbing gibberish ⇒ LM head collapsed to chat-template salads.
+        # Surface repeated or rejected generations as overfitting diagnostics.
         diag = getattr(runtime.policy_adapter, "diag", None)
         if diag is not None:
             raw_subtask = diag.last_raw.get("subtask")
@@ -733,9 +681,7 @@ def _make_state_panel_renderer(
             if mem_gib:
                 console.print(f"  [dim]gen rejects     memory:{mem_gib}[/]")
         console.rule(style="cyan")
-        # Runtime scrollback — log lines pushed from generation steps
-        # (warnings, gibberish rejections, plan speech). Last N lines,
-        # oldest first.
+        # Show recent generation warnings and speech oldest-first.
         if scrollback:
             for line in scrollback:
                 console.print(f"  [magenta]{line.rstrip()}[/]")
@@ -753,15 +699,7 @@ def _make_state_panel_renderer(
 
 
 def _silence_noisy_loggers() -> None:
-    """Drop chatty third-party loggers down to WARNING.
-
-    HuggingFace / httpx / urllib3 emit one log line per HTTP request,
-    which the REPL has to print between the state block and the
-    prompt — completely unreadable. We never need that detail in the
-    REPL and the user can opt back into it via ``-v`` (verbose mode
-    keeps DEBUG on the lerobot loggers but still gates the noisy ones
-    here unless they explicitly want them).
-    """
+    """Keep request-level third-party logs out of the interactive prompt."""
     for name in (
         "httpcore",
         "httpcore.connection",
@@ -781,14 +719,7 @@ def _silence_noisy_loggers() -> None:
     ):
         logging.getLogger(name).setLevel(logging.WARNING)
 
-    # The robot's relative-goal-position clamp warning fires *every*
-    # dispatch tick on a memorised model — the LM is trying to jump
-    # the wrist far past where max_relative_target allows, so the
-    # warning floods the panel at ~30 Hz. Promote it from WARNING to
-    # DEBUG: the dispatch counter on the panel already tells the
-    # operator the loop is running, and the panel itself shows
-    # whether motion is happening. If anyone needs the per-action
-    # clamp detail, ``-v`` puts it back via DEBUG.
+    # Clamp warnings can fire every control tick and flood the panel.
     logging.getLogger("lerobot.robots.utils").setLevel(logging.ERROR)
 
 
@@ -824,9 +755,7 @@ def run(
             file=sys.stderr,
         )
         return 2
-    # Create the sim env subprocess BEFORE the policy initialises CUDA — the
-    # env worker inherits a corrupt EGL/GL context if forked from a CUDA parent
-    # (dark/garbled renders). This mirrors eval's make_env-before-make_policy.
+    # Fork the simulator before CUDA initialization to avoid inherited EGL corruption.
     sim_env = None
     sim_obs = None
     sim_stream_server = None
@@ -877,10 +806,7 @@ def run(
     if panel_label is None:
         panel_label = str(policy_type or "runtime").upper()
 
-    # No startup prompts — the runtime is command-driven. It comes up at
-    # the command line in ``paused`` mode (robot idle) unless ``--mode``
-    # forces a mode. The operator drives it with /action, /pause and
-    # /question.
+    # Default to idle until the operator supplies a command.
     startup_mode = args.mode or "paused"
 
     observation_provider: Callable[[], dict | None] | None = None
@@ -936,10 +862,7 @@ def run(
             rerun_log=bool(args.rerun),
             get_task=_live_task,
         )
-    # Text-generation knobs are fixed config, passed to the adapter at
-    # construction — not smuggled through per-tick runtime state. Lets the
-    # operator try e.g. ``--text_temperature=0.6 --subtask_chunks_per_gen=5``
-    # on an under-trained checkpoint without recompiling.
+    # Generation settings belong to the adapter rather than mutable runtime state.
     gen_config = GenerationConfig(
         min_new_tokens=int(args.text_min_new_tokens or 0),
         temperature=float(args.text_temperature or 0.0),
@@ -952,10 +875,6 @@ def run(
         policy_adapter=adapter_factory(policy, gen_config),
         observation_provider=observation_provider,
         action_executor=robot_executor,
-        # No background event collector — the REPL drives ticks
-        # synchronously after each user input (REPL mode). Autonomous
-        # mode runs ``runtime.run()`` in a thread; stdin events are
-        # injected from the foreground.
         event_collector=None,
         chunk_hz=args.chunk_hz,
         ctrl_hz=args.ctrl_hz,
@@ -971,8 +890,7 @@ def run(
     # Let the sim backend read live task/subtask/memory for the video overlay.
     if sim_backend is not None:
         sim_backend.bind_runtime(runtime)
-        # Sim runs its control/render loop in the MAIN thread (see
-        # _run_sim_interactive) — background-thread rendering corrupts EGL.
+        # Keep EGL rendering on the main thread.
         return _run_sim_interactive(
             runtime,
             sim_backend,
@@ -1008,14 +926,7 @@ def _run_sim_interactive(
     panel_label: str = "Runtime",
     direct_subtask: bool = False,
 ) -> int:
-    """Main-thread control loop for the RoboCasa sim backend.
-
-    The tick loop — and therefore MuJoCo's EGL rendering — runs in the MAIN
-    thread. Driving the sim render from a background thread intermittently
-    corrupts the offscreen GL context (dark/garbled frames); main-thread
-    stepping matches ``lerobot-eval`` and renders cleanly. Stdin is polled
-    non-blockingly so typed commands still work while the sim runs.
-    """
+    """Keep RoboCasa rendering on the main thread while polling stdin."""
     import select  # noqa: PLC0415
     import time  # noqa: PLC0415
 
@@ -1028,10 +939,7 @@ def _run_sim_interactive(
         runtime.state["current_subtask"] = initial_task if direct_subtask else None
         runtime.state["mode"] = "action"
 
-    # Clean chat-style prompt. The control loop steps in the MAIN thread (clean
-    # EGL rendering); the browser live-view shows the rollout, so the terminal
-    # stays a quiet command line. Nothing is printed mid-step, so typing is never
-    # clobbered — you can queue the next command any time.
+    # Keep the terminal quiet while the browser renders the rollout.
     _mode_line = (
         "  Mode: DIRECT subtask (your text drives the action expert as-is)\n"
         if direct_subtask
@@ -1082,10 +990,7 @@ def _run_sim_interactive(
                                 runtime.policy.reset()
                             print("[reset] new kitchen scene", flush=True)
                         else:
-                            # A bare line is a new command: switch the robot to it
-                            # immediately (clear the in-flight chunk + subtask) and
-                            # force the subtask to regenerate on the very next tick
-                            # (reset the adapter throttle + high-level rate gate).
+                            # Clear queued actions and rearm generation for a new command.
                             runtime.set_task(cmd)
                             # Direct mode: the typed text is the subtask itself;
                             # otherwise clear it so the model regenerates one.
@@ -1101,8 +1006,7 @@ def _run_sim_interactive(
                             print(f"[running] {cmd}", flush=True)
                     _prompt()
 
-            # One tick in the MAIN thread: subtask/action gen + env.step + render.
-            # inference_mode matches lerobot-eval's forward context.
+            # Match lerobot-eval's inference context on the main thread.
             if runtime.state.get("mode", "paused") == "action":
                 with torch.inference_mode():
                     runtime.step_once()
@@ -1133,23 +1037,14 @@ def _run_robot_interactive(
     direct_subtask: bool = False,
     panel_label: str = "Runtime",
 ) -> int:
-    """Real-robot interactive loop.
-
-    The control loop runs at real-time rates in a background thread
-    (``runtime.run()`` — a robot must be driven at a steady ``ctrl_hz``), while
-    the foreground is a clean chat prompt: type a command to run it (generate- or
-    direct-subtask mode), ``/pause`` / ``/resume`` / ``stop``. Starts PAUSED so
-    the arm doesn't move until you issue a command.
-    """
+    """Run steady robot control in the background and commands in the foreground."""
     import threading  # noqa: PLC0415
     import time  # noqa: PLC0415
 
     if initial_task:
         runtime.set_task(initial_task)
         runtime.state["current_subtask"] = initial_task if direct_subtask else None
-        # A task was given (via --task or the startup picker) => start running it
-        # immediately. Without an initial task we stay paused until the first
-        # typed command (which switches to action). No flag needed.
+        # An explicit initial task starts immediately; otherwise the robot stays paused.
         runtime.state["mode"] = "action"
 
     mode_line = (
@@ -1226,15 +1121,7 @@ def _run_robot_interactive(
 def _run_repl(
     runtime: Any, *, initial_task: str | None, max_ticks: int | None, panel_label: str = "Runtime"
 ) -> int:
-    """Claude-Code-style block REPL.
-
-    Each turn redraws a status block (task / subtask / plan / memory)
-    at the top, prints any robot log lines that came in since the last
-    turn, then asks for input on a clean ``> `` prompt at the bottom.
-    No live region, no panel re-renders, no rendering races with HTTP
-    log lines — just clear-screen + reprint each turn, the way a
-    chat-style REPL is meant to look.
-    """
+    """Redraw the status block and logs once per REPL turn."""
     try:
         from rich.console import Console  # noqa: PLC0415
     except ImportError:
@@ -1245,8 +1132,6 @@ def _run_repl(
         return 2
 
     _redraw = _make_state_panel_renderer(runtime, mode_label="no robot", panel_label=panel_label)
-    # Keep a local ``console`` just for the styled input prompt; the
-    # state panel is owned by the shared renderer.
     console = Console(highlight=False)
 
     last_logs: list[str] = []
@@ -1268,9 +1153,7 @@ def _run_repl(
             if lower in {"stop", "quit", "exit"}:
                 break
 
-            # Command-driven: /action "task", /pause, /question "...",
-            # /help. ``_handle_slash_command`` runs the VQA query inline
-            # for /question (single-threaded REPL — no concurrency).
+            # Slash commands, including VQA questions, run inline.
             if _handle_slash_command(runtime, line):
                 last_logs = list(runtime.state.get("log_lines") or [])
                 _redraw(last_logs)

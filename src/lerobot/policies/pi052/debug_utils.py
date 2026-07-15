@@ -20,22 +20,8 @@ from typing import Any
 
 
 def print_debug_text_predictions(policy: Any, batch: dict[str, Any], step: int, n_samples: int = 5) -> None:
-    """Forward the current batch and print head-argmax vs label per supervised position.
-
-    Opt-in via ``LEROBOT_DEBUG_PREDS_EVERY=<step_interval>``. Only the
-    policy types that expose ``debug_text_predictions`` participate
-    (currently PI052); others are silently skipped. Pretty-prints up to
-    ``n_samples`` samples from the current batch, showing the prompt,
-    every supervised position's (label, prediction, ✓/✗), and a
-    per-sample token-accuracy summary — the cheapest "is text training
-    actually learning anything" signal.
-    """
-    # Accelerator/DDP wraps the policy in a ``module`` attribute and
-    # doesn't proxy custom methods through, so a naive
-    # ``hasattr(policy, "debug_text_predictions")`` returns False on the
-    # wrapper — and the helper would silently no-op. Walk through any
-    # ``.module`` indirection (DDP, FSDP, ``accelerator.prepare`` wrappers)
-    # to reach the raw policy that actually defines the method.
+    """Print supervised text predictions and token accuracy for up to ``n_samples`` rows."""
+    # Unwrap distributed wrappers that do not proxy custom policy methods.
     inner = policy
     while hasattr(inner, "module") and not hasattr(inner, "debug_text_predictions"):
         inner = inner.module

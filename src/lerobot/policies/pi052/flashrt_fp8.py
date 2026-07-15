@@ -12,18 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Optional FP8 MLP swap for PI052 using the FlashRT Hugging Face Kernel Hub.
+"""Optional FlashRT FP8 MLP kernels for PI052.
 
-Replaces every Gemma GeGLU MLP (action expert + prefix language model) with the
-fused ``fp8_geglu_mlp_bf16`` kernel and the SigLIP vision-tower MLP with
-``fp8_gelu_mlp_bf16``. Static activation scales are calibrated once on a real
-observation; weights are quantized once. This is opt-in and degrades gracefully
-to the BF16 path if ``kernels`` or the FlashRT packages are unavailable.
-
-Use:
-    policy = PI052Policy.from_pretrained(...)
-    batch = preprocessor(observation)        # one representative observation
-    policy.apply_flashrt_fp8_mlp(batch)       # calibrate + swap in place
+The opt-in swap calibrates once on a real observation and falls back to BF16 when unavailable.
 """
 
 from __future__ import annotations
@@ -32,7 +23,7 @@ import logging
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +34,8 @@ def _roundtrip_fp8(x: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     """Quantize->dequantize an activation through FP8 E4M3 at ``scale`` (f32)."""
     q = torch.clamp(x.float() / scale.float(), -_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
     return q.float() * scale.float()
+
+
 _SWIGLU_REPO = "flashrt/flashrt-fp8-swiglu-ffn"
 _GELU_REPO = "flashrt/flashrt-fp8-ffn"
 _GEMM_REPO = "flashrt/flashrt-gemm-epilogues"
@@ -75,16 +68,10 @@ class _FlashRTGeGLU(nn.Module):
         self.in_features = mlp.gate_proj.weight.shape[1]
         device = mlp.gate_proj.weight.device
         gate_up = torch.cat([mlp.gate_proj.weight, mlp.up_proj.weight], dim=0).float()
-        # Fold the preceding RMSNorm weight (1 + w) into the gate/up GEMM and feed
-        # the kernel channel_scale = 1/(1+w). This is exact (it just moves the
-        # per-channel (1+w) from the activation to the weight) and is what keeps
-        # FP8 accurate: the normed activation rms(x) is uniform, while
-        # rms(x)*(1+w) has per-channel outliers that per-tensor FP8 quantizes
-        # poorly. Mirrors the FlashRT runtime (norm runs with ones, weight folds
-        # 1+w). Only the fixed-weight (non-adaptive) norms fold; adaptive-RMSNorm
-        # layers pass fuse_weight=None (channel_scale = ones).
+        # Fold fixed RMSNorm weights into the GEMM to avoid FP8 activation outliers.
+        # Adaptive RMSNorm instead uses an identity channel scale.
         if fuse_weight is not None:
-            f = (1.0 + fuse_weight.detach().float())
+            f = 1.0 + fuse_weight.detach().float()
             gate_up = gate_up * f[None, :]
             channel_scale = (1.0 / f).to(torch.bfloat16)
         else:
@@ -122,10 +109,17 @@ class _FlashRTGeGLU(nn.Module):
             self._calibrate_step(x)
         shape = x.shape
         flat = x.reshape(-1, self.in_features).to(torch.bfloat16)
-        x_fp8 = self.quant_ops.channel_scale_quantize_fp8_static_bf16(flat, self.channel_scale, self.input_scale)
+        x_fp8 = self.quant_ops.channel_scale_quantize_fp8_static_bf16(
+            flat, self.channel_scale, self.input_scale
+        )
         out = self.ffn_ops.fp8_geglu_mlp_bf16(
-            x_fp8, self.gate_up_fp8, self.down_fp8,
-            self.input_scale, self.gate_up_scale, self.hidden_scale, self.down_scale,
+            x_fp8,
+            self.gate_up_fp8,
+            self.down_fp8,
+            self.input_scale,
+            self.gate_up_scale,
+            self.hidden_scale,
+            self.down_scale,
         )
         return out.reshape(shape)
 
@@ -150,7 +144,9 @@ class _FlashRTGeluMLP(nn.Module):
         self.register_buffer("down_bias", mlp.fc2.bias.detach().to(torch.bfloat16))
         self.register_buffer("input_scale", _static_scale(in_amax, safety).to(device))
         self.register_buffer("hidden_scale", _static_scale(hid_amax, safety).to(device))
-        self.register_buffer("channel_scale", torch.ones(self.in_features, device=device, dtype=torch.bfloat16))
+        self.register_buffer(
+            "channel_scale", torch.ones(self.in_features, device=device, dtype=torch.bfloat16)
+        )
         self.safety = safety
         self.calibrating = False
         self._ia = 0.0
@@ -172,10 +168,19 @@ class _FlashRTGeluMLP(nn.Module):
         shape = x.shape
         dtype = x.dtype
         flat = x.reshape(-1, self.in_features).to(torch.bfloat16)
-        x_fp8 = self.quant_ops.channel_scale_quantize_fp8_static_bf16(flat, self.channel_scale, self.input_scale)
+        x_fp8 = self.quant_ops.channel_scale_quantize_fp8_static_bf16(
+            flat, self.channel_scale, self.input_scale
+        )
         out = self.ffn_ops.fp8_gelu_mlp_bf16(
-            x_fp8, self.up_fp8, self.up_bias, self.down_fp8, self.down_bias,
-            self.input_scale, self.up_scale, self.hidden_scale, self.down_scale,
+            x_fp8,
+            self.up_fp8,
+            self.up_bias,
+            self.down_fp8,
+            self.down_bias,
+            self.input_scale,
+            self.up_scale,
+            self.hidden_scale,
+            self.down_scale,
         )
         return out.reshape(*shape[:-1], self.out_features).to(dtype)
 
@@ -192,7 +197,9 @@ def _run_forward(policy, batches) -> None:
     saved = {name: vars(model).pop(name) for name in ("sample_actions", "forward") if name in vars(model)}
     with torch.inference_mode():
         for batch in batches:
-            policy.predict_action_chunk({k: (v.clone() if torch.is_tensor(v) else v) for k, v in batch.items()})
+            policy.predict_action_chunk(
+                {k: (v.clone() if torch.is_tensor(v) else v) for k, v in batch.items()}
+            )
     torch.cuda.synchronize()
     vars(model).update(saved)
 
@@ -244,9 +251,8 @@ def apply_fp8_mlp(policy, batch, *, safety: float = 1.05) -> bool:
     model = policy.model
     calibrating = []
 
-    gemma_layers = (
-        list(model.paligemma_with_expert.gemma_expert.model.layers)
-        + list(model.paligemma_with_expert.paligemma.model.language_model.layers)
+    gemma_layers = list(model.paligemma_with_expert.gemma_expert.model.layers) + list(
+        model.paligemma_with_expert.paligemma.model.language_model.layers
     )
     for layer in gemma_layers:
         fw = _fixed_norm_weight(layer.post_attention_layernorm)
@@ -267,6 +273,7 @@ def apply_fp8_mlp(policy, batch, *, safety: float = 1.05) -> bool:
 
     logger.info(
         "PI052: FlashRT FP8 enabled (%d Gemma + %d SigLIP MLPs).",
-        len(gemma_layers), len(siglip),
+        len(gemma_layers),
+        len(siglip),
     )
     return True

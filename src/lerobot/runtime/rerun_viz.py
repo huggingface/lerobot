@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Rerun live visualisation for the interactive runtime (real-robot camera view).
-
-Starts a headless rerun gRPC server + web viewer so a remote operator can watch
-the robot's cameras (and state / subtask) over SSH by forwarding two ports and
-opening the web viewer in a browser. Logging is best-effort — a rerun failure
-never interrupts robot control.
-"""
+"""Best-effort Rerun camera visualization for local or SSH-forwarded robot rollouts."""
 
 from __future__ import annotations
 
@@ -41,9 +35,7 @@ def start_rerun(app_name: str = "lerobot_runtime", grpc_port: int = 9876, web_po
         url = rr.serve_grpc(grpc_port=grpc_port)
         rr.serve_web_viewer(web_port=web_port, open_browser=False, connect_to=url)
         _ENABLED = True
-        # Open the viewer with the data URL as a query param so it auto-connects
-        # to the gRPC stream (plain http://host:web_port shows only the welcome
-        # screen — the web app needs the ?url= to know where the data is).
+        # Include the stream URL so the web viewer connects automatically.
         view_url = f"http://localhost:{web_port}/?url={url}"
         print(
             f"[runtime] rerun live view: {view_url}\n"

@@ -12,21 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""π0.5 v2 — full reproduction of the π0.5 paper's hierarchical
-inference recipe on lerobot.
+"""π0.5 with recipe-driven language supervision and hierarchical inference.
 
-Extends :class:`lerobot.policies.pi05.PI05Policy` with:
-
-* recipe-driven training (PR 1's :class:`RenderMessagesStep`),
-* PaliGemma ``lm_head`` cross-entropy on supervised subtask spans
-  (the "high-level subtask prediction" of the paper, §IV.D),
-* AR text generation at inference (:meth:`PI052Policy.select_message`),
-* per-component prompt dropout (Pi 0.7 §V.E) for regularising the
-  text head against missing context at inference.
-
-See ``src/lerobot/configs/recipes/subtask_mem.yaml`` for the compact
-training recipe and
-``examples/training/pi052_hirobot.slurm`` for the launcher.
+PI052 adds supervised PaliGemma text generation, prompt dropout, and autoregressive inference to PI0.5.
 """
 
 from .configuration_pi052 import PI052Config

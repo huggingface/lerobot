@@ -18,7 +18,7 @@
 
 import pytest
 import torch
-from torch.nn import functional as F
+from torch.nn import functional as F  # noqa: N812
 
 pytest.importorskip("transformers")
 pytest.importorskip("liger_kernel")
@@ -40,9 +40,7 @@ def _fast_ce(logits, action_tokens, action_code_mask, predict_actions_t):
     vocab_size = logits.shape[-1]
     eye = torch.eye(vocab_size, dtype=logits.dtype, device="cuda")
     predict = predict_actions_t.cuda() if predict_actions_t is not None else None
-    loss = _fast_lin_ce(
-        logits.cuda(), eye, action_tokens.cuda(), action_code_mask.cuda(), predict
-    )
+    loss = _fast_lin_ce(logits.cuda(), eye, action_tokens.cuda(), action_code_mask.cuda(), predict)
     return loss.cpu()
 
 
@@ -67,9 +65,7 @@ def test_fast_ce_supervises_only_discrete_action_codes():
         reduction="mean",
     )
 
-    # Looser tolerance: the fused Triton kernel (GPU) differs from CPU eager
-    # F.cross_entropy at the ~1e-7 level, which exceeds the default rtol on
-    # these very small (~1e-4) losses.
+    # Allow the fused GPU kernel's ~1e-7 difference on small losses.
     assert torch.allclose(loss, expected, atol=1e-5, rtol=1e-3)
 
 
@@ -77,9 +73,7 @@ def test_fast_ce_masks_non_action_samples():
     """Recipe samples with predict_actions=False do not contribute FAST loss."""
     vocab_size = 8
     action_tokens = torch.tensor([[1, 2, 3, 4], [1, 2, 5, 6]])
-    action_code_mask = torch.tensor(
-        [[False, False, True, True], [False, False, True, True]]
-    )
+    action_code_mask = torch.tensor([[False, False, True, True], [False, False, True, True]])
     predict_actions = torch.tensor([True, False])
 
     logits = torch.zeros(2, action_tokens.shape[1], vocab_size)
@@ -96,9 +90,7 @@ def test_fast_ce_masks_non_action_samples():
         reduction="mean",
     )
 
-    # Looser tolerance: the fused Triton kernel (GPU) differs from CPU eager
-    # F.cross_entropy at the ~1e-7 level, which exceeds the default rtol on
-    # these very small (~1e-4) losses.
+    # Allow the fused GPU kernel's ~1e-7 difference on small losses.
     assert torch.allclose(loss, expected, atol=1e-5, rtol=1e-3)
 
 

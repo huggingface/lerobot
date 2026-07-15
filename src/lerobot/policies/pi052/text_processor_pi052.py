@@ -12,25 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""π0.5 v2 text-tokenisation step.
+"""Tokenize PI052's plain-text rendered messages and build text/action supervision masks.
 
-PaliGemma is *not* chat-pretrained, so we can't lean on
-``tokenizer.apply_chat_template``. Instead we concatenate the rendered
-messages as plain text with simple ``User: ... Assistant: ...`` role
-delimiters — matching the prompt format π0.5 uses in the paper
-(``Task: ... State: ... Action: ...``).
-
-Outputs:
-
-* ``OBS_LANGUAGE_TOKENS`` / ``OBS_LANGUAGE_ATTENTION_MASK`` — the
-  concatenated prompt tokenised by the PaliGemma tokenizer (the same
-  one ``processor_pi05`` already uses).
-* ``text_labels`` — same shape as token ids, ``-100`` everywhere except
-  positions belonging to messages whose index is in
-  ``target_message_indices``. ``modeling_pi052`` runs cross-entropy on
-  those positions via the PaliGemma ``lm_head``.
-* ``predict_actions`` — bool tensor, ``True`` iff any of the rendered
-  target messages has ``message_streams[i] == "low_level"``.
+PaliGemma is not chat-trained, so messages use explicit role delimiters instead of a chat template.
 """
 
 from __future__ import annotations
@@ -182,11 +166,7 @@ def _sample_indices(value: Any, batch_size: int) -> list[int | None]:
     return [int(value)] * batch_size
 
 
-# VQA spatial answers → PaliGemma <loc> format (PI052 only).
-# Dataset JSON uses Qwen2.5-VL's 0–1000 *normalized* grounding coords (not
-# pixels — verified empirically); PaliGemma's <locNNNN> vocab is [0, 1023], so
-# ``loc_idx = round(coord / 1000 * 1023)`` is resolution-independent. Converted
-# here, not in the dataset, so the raw JSON stays backbone-agnostic.
+# Convert normalized Qwen2.5-VL coordinates to PaliGemma's resolution-independent <loc> range.
 
 _VQA_COORD_SCALE = 1000.0
 
@@ -333,14 +313,9 @@ def _format_messages(
     for i, m in enumerate(messages):
         role = m.get("role", "user")
         content = m.get("content", "") or ""
-        # Role tag + newline. The model has to learn to emit the same
-        # role tokens at generation time, which is fine for greedy
-        # decoding because the chat template is implicit in the
-        # supervised target span.
+        # Supervise the explicit role format used again during generation.
         header = f"{role.capitalize()}: "
-        # A supervised target turn ends with EOS so the model learns to
-        # terminate; the span below covers content + EOS. Non-target
-        # turns (and inference) carry no EOS.
+        # Include EOS only in supervised target spans so generation learns to stop.
         body = content + eos_token if (eos_token and i in targets) else content
         # span covers the content (+ EOS) portion only — never the role
         # tag — so labels are computed over the supervised payload.
@@ -383,29 +358,19 @@ class PI052TextTokenizerStep(ProcessorStep):
         self._tokenizer = register_paligemma_loc_tokens(AutoTokenizer.from_pretrained(self.tokenizer_name))
         return self._tokenizer
 
-    # ------------------------------------------------------------------
-    # Pipeline step
-    # ------------------------------------------------------------------
-
     def __call__(self, transition: EnvTransition) -> EnvTransition | None:
         transition = transition.copy()
         complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}) or {}
         messages = complementary.get("messages") or []
 
         if not messages:
-            # No recipe was rendered — caller will fall back to the
-            # plain Pi0.5 prompt path. We pass the transition through
-            # unmodified.
+            # Preserve the transition for the plain PI0.5 prompt fallback.
             return transition
 
         tokenizer = self._ensure_tokenizer()
-        # Normalized proprioceptive state (set by NormalizerProcessorStep, which
-        # runs before this step). Injected into low-level action prompts so the
-        # action expert sees proprioception, matching pi05's discretized State:.
+        # Add normalized proprioception to low-level prompts, matching PI0.5.
         state_all = (transition.get(TransitionKey.OBSERVATION) or {}).get(OBS_STATE)
-        # VQA coords are 0–1000 normalized (Qwen2.5-VL convention) — the
-        # <loc> conversion is camera-resolution-independent and needs no
-        # observation lookup here.
+        # Normalized VQA coordinates need no camera lookup.
         if _is_batched_messages(messages):
             indices_iter = _sample_indices(complementary.get("index"), len(messages))
             encoded = [
@@ -464,9 +429,7 @@ class PI052TextTokenizerStep(ProcessorStep):
         sample_idx: int | None = None,
         state_row: Any = None,
     ) -> tuple[Tensor, Tensor, Tensor, Tensor, str]:
-        # Optional: drop non-target messages per the dropout config.
-        # Keeps the supervised-target indices stable by re-mapping
-        # after removal.
+        # Remap target indices after optional context dropout.
         if (
             self.plan_dropout_prob
             or self.memory_dropout_prob
@@ -480,19 +443,12 @@ class PI052TextTokenizerStep(ProcessorStep):
                 sample_idx=sample_idx,
             )
 
-        # Rewrite bbox / keypoint VQA target answers from JSON to
-        # PaliGemma <loc> text. Coords are 0–1000 normalized so this is
-        # camera-independent.
+        # Rewrite normalized VQA answers as PaliGemma <loc> text.
         messages = _messages_vqa_to_loc(messages, target_indices)
 
-        # Flatten ``say`` tool calls into ``<say>...</say>`` text before
-        # stripping, so the spoken reply is actually tokenized and
-        # supervised (PaliGemma's flat prompt has no structured calls).
+        # Flatten ``say`` calls because PaliGemma receives plain text.
         messages = [_strip_blocks(_flatten_say_tool_calls(m)) for m in messages]
-        # Low-level (action-conditioning) samples get the discretized state
-        # appended to their user message, mirroring pi05's
-        # "..., State: {256-bin};" so the action expert sees proprioception.
-        # Higher-level text streams (subtask/memory generation) stay state-free.
+        # Add state only to low-level action prompts; keep higher-level streams state-free.
         if state_row is not None and any(s == "low_level" for s in message_streams):
             state_str = discretize_state_str(state_row)
             for m in reversed(messages):
@@ -533,19 +489,12 @@ class PI052TextTokenizerStep(ProcessorStep):
                     continue
                 labels[token_pos] = input_ids[token_pos]
 
-        # Scan ALL message streams (not just targets): the
-        # ``low_level_execution`` recipe drops ``target: true`` on
-        # the assistant to avoid trivial copy-from-user text-CE; the
-        # flow loss still needs to fire, gated by ``stream: low_level``.
+        # Scan all streams because low-level flow may intentionally have no text target.
         predict_actions = torch.tensor(
             bool(any(s == "low_level" for s in message_streams)),
             dtype=torch.bool,
         )
         return input_ids, attention_mask, labels, predict_actions, prompt
-
-    # ------------------------------------------------------------------
-    # Per-component prompt dropout (Pi0.7 §V.E)
-    # ------------------------------------------------------------------
 
     def _apply_prompt_dropout(
         self,
@@ -563,10 +512,7 @@ class PI052TextTokenizerStep(ProcessorStep):
 
         seed = self.dropout_seed
         if seed is None:
-            # Canonical row-index key set by ``BatchProcessor`` /
-            # ``render_messages_processor``. Falling back to other
-            # keys silently gave every sample seed=0 → identical
-            # dropout pattern across the whole epoch.
+            # Use the canonical row index to avoid identical dropout across an epoch.
             seed_src = sample_idx if sample_idx is not None else complementary.get("index", 0)
             try:
                 if hasattr(seed_src, "item"):

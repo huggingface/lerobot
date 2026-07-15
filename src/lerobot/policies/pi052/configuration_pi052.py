@@ -12,28 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""π0.5 v2 (with text head) — reproduction of the π0.5 paper's
-hierarchical inference recipe.
+"""PI0.5 with its PaliGemma text head enabled for hierarchical language/action training.
 
-Same architecture as the existing ``PI05Policy`` (PaliGemma 2B VLM +
-~300M Gemma action expert, joint training with FAST tokens during
-pre-train and flow matching during post-train), but with the
-PaliGemma ``lm_head`` re-enabled so the same model can be supervised
-to predict both:
-
-  * **subtask strings** at the high level (cross-entropy on the LM
-    head), and
-  * **action chunks** at the low level (flow matching on the
-    action-expert tokens).
-
-This is the dual-head co-training pattern from the paper:
-
-    L = H(x, f_θ_text) + α * ‖ω - a - f_θ_action(a_τ, o, ℓ)‖²
-
-with α = 10.0 per § IV.D of arxiv:2504.16054. The π0.5 model splits
-inference into a text-prediction step followed by an action-prediction
-step, which the multi-rate runtime (``lerobot.runtime``, via the
-``lerobot-language-runtime`` CLI) drives at separate rates.
+The runtime generates high-level text and low-level flow-matched actions at separate rates.
 """
 
 from dataclasses import dataclass
@@ -47,12 +28,7 @@ from ..pi05.configuration_pi05 import PI05Config
 @PreTrainedConfig.register_subclass("pi052")
 @dataclass
 class PI052Config(PI05Config):
-    """π0.5 with the PaliGemma LM head re-enabled for subtask prediction.
-
-    Recipe-driven dual-head training: the flow head supervises actions,
-    the LM head supervises subtask / plan / memory / VQA text. The
-    flow:text loss split is the milder 5:1 (see ``flow_loss_weight``).
-    """
+    """PI0.5 configuration for recipe-driven text and action supervision."""
 
     # Recipe / language stack ---------------------------------------------
     recipe_path: str | None = "recipes/subtask_mem.yaml"
@@ -67,12 +43,7 @@ class PI052Config(PI05Config):
     mirroring how the π0.5 paper's high-level inference samples text
     auto-regressively after the prefix."""
 
-    # Loss weights --------------------------------------------------------
-    # Paper §IV.D uses α=10 between the flow and text terms, assuming
-    # text is a rare auxiliary task. With the recipe stack the flow-only
-    # `low_level` branch fires on a large share of samples, so α=10
-    # swamps the LM head and collapses generation into degenerate
-    # repetition. We use the milder 5:1 split here.
+    # Balance frequent recipe text supervision against the paper's α=10 flow weight.
     text_loss_weight: float = 1.0
     """Weight on the LM-head cross-entropy term. Set to ``0`` to disable
     text training entirely (reverts to flow-only / π0.5 behaviour)."""
@@ -90,23 +61,12 @@ class PI052Config(PI05Config):
     because it never reads from it. Must be ``True`` for π0.5-style
     hierarchical inference."""
 
-    # Per-component prompt dropout (Pi0.7 §V.E) ---------------------------
-    # Randomly drop non-target context messages so the LM head learns
-    # to handle missing /
-    # stale plan / memory at inference. Defaults to 0.0 so behaviour
-    # is identical until explicitly enabled.
+    # Optional context dropout improves tolerance to missing or stale language state.
     plan_dropout_prob: float = 0.0
     memory_dropout_prob: float = 0.0
     subtask_dropout_prob: float = 0.0
 
-    # FAST discrete-action supervision — paper §III.B-C ------------------
-    # When enabled, actions are *also* tokenised via the FAST tokenizer
-    # ("physical-intelligence/fast") and supervised with cross-entropy
-    # on the PaliGemma LM head — exactly as in the paper's pre-training
-    # objective (Eq. 1 mixes FAST CE + flow MSE + subtask CE). The
-    # ActionTokenizerProcessorStep is wired into the preprocessor
-    # pipeline when this flag is set; the loss is computed in
-    # PI052Policy.forward.
+    # FAST adds discrete-action CE to the text and flow objectives from paper §III.B-C.
     enable_fast_action_loss: bool = True
     """If True, tokenise actions with the FAST tokenizer and add a
     cross-entropy loss on the LM head. On by default to match the
@@ -158,76 +118,25 @@ class PI052Config(PI05Config):
     """Number of action chunks to sample for the fit. The FAST paper uses
     a few thousand; 1024 is a reasonable default for medium datasets."""
 
-    # Knowledge insulation — paper §III.B --------------------------------
-    # When enabled, gradients from the action expert's flow loss are
-    # blocked from flowing back into the VLM's K/V projections. This
-    # prevents the action loss from over-fitting the language backbone
-    # to robot-specific features. Implemented in ``modeling_pi052`` as
-    # a per-instance monkey-patch on ``paligemma_with_expert.forward``
-    # that splits queries into VLM and action halves and ``.detach()``-s
-    # the VLM K/V tensors used in the action-half's attention.
+    # Knowledge insulation detaches VLM K/V from action-loss gradients (paper §III.B).
     knowledge_insulation: bool = True
     """If True, route every transformer layer through the KI
     attention path that blocks action→VLM gradient flow on K/V."""
 
-    # Learning-rate defaults --------------------------------------------
-    # pi052 inherits π0.5's openpi-validated optimizer config (peak LR
-    # 2.5e-5, cosine→2.5e-6, 1k warmup, AdamW (0.9, 0.95), wd=0.01,
-    # grad_clip=1.0). The only place pi052 needs to diverge from pi05
-    # is the LM-head LR multiplier: pi05 has no text supervision so the
-    # head doesn't get gradients; pi052 always has text supervision
-    # (subtask / memory / VQA) via the recipe, and under KI the LM head
-    # only sees gradients on ~30–45% of the batch (the text-CE mask
-    # share of the recipe). Under aggressive cosine decay this is too
-    # weak to keep the head pinned, so it drifts back toward PaliGemma's
-    # pretrained ``<loc>`` first-token bias. 5x is the documented fix
-    # (see ``PI05Config.lm_head_lr_scale`` docstring); the wiring is
-    # already in ``PI05Policy.get_optim_params`` — it splits the LM head
-    # + tied ``embed_tokens`` into their own param group while sharing
-    # the same cosine lambda, so the 5x ratio is preserved across decay.
+    # Boost sparse text-head updates while retaining PI0.5's optimizer schedule.
     lm_head_lr_scale: float = 5.0
 
-    # Separate LRs for the VLM backbone vs the action expert (paper §III.B).
-    # The backbone is a pretrained PaliGemma; the action expert is trained
-    # from scratch, so their initialisation scales differ and a single global
-    # LR under-trains one of them. These multipliers scale the base
-    # ``optimizer_lr`` for each group; the cosine scheduler applies the same
-    # lambda to every group so the ratios hold across decay. ``backbone_lr_scale``
-    # covers the PaliGemma tower (except the LM head / tied embeddings, which keep
-    # their own ``lm_head_lr_scale``); ``action_expert_lr_scale`` covers the Gemma
-    # expert plus the action/time projection heads. Defaults of 1.0 reproduce the
-    # single-LR behaviour (back-compat with existing checkpoints/configs).
+    # Scale pretrained backbone and new action-expert groups independently; 1.0 preserves legacy behavior.
     backbone_lr_scale: float = 1.0
     action_expert_lr_scale: float = 1.0
 
-    # Amortized flow training (paper §III.B, K_repeat). The VLM/backbone forward
-    # dominates step cost; to extract more learning signal per VLM pass the action
-    # expert runs ``flow_num_repeats`` denoising targets per sample, each with an
-    # independent noise + timestep draw, all attending to the single shared VLM
-    # prefix. The per-repeat flow losses are averaged, so the backbone gradient
-    # stays well-scaled. Pairs naturally with ``knowledge_insulation`` (which
-    # additionally detaches the prefix K/V on the action path), the paper's
-    # setting — but the amortized path is also correct without it. Set to 1 to
-    # recover the original single-draw combined forward.
+    # Reuse each VLM prefix across independent denoising draws; 1 restores single-draw flow.
     flow_num_repeats: int = 5
 
-    # PaLM-style z-loss on text CE. Penalises the log-partition function
-    # ``z = log Σ exp(logits)`` drifting away from zero — without it, large-
-    # vocab models (PaliGemma is 257k) can let ``logsumexp`` grow unbounded
-    # while CE stays low, because a uniform additive logit bias cancels in
-    # softmax. PaLM appendix B / Chinchilla report z-loss is essential for
-    # stable large-vocab CE; it especially helps under ``lm_head_lr_scale=
-    # 5.0`` which amplifies drift risk on the LM head. ``1e-4`` is the
-    # commonly cited weight; set 0 to disable entirely.
+    # PaLM-style z-loss stabilizes large-vocabulary CE; 0 disables it.
     text_ce_z_loss_weight: float = 1e-4
 
-    # Liger Triton kernels (rope + geglu + layer_norm) are now patched
-    # unconditionally at model build time — see ``_enable_hf_kernels``
-    # in ``modeling_pi052``. The patch is process-global, idempotent
-    # and degrades gracefully if ``liger-kernel`` is missing. Measured
-    # at -4.5% step time on H100 (bench job 22161421); peak memory
-    # unchanged. ``fused_linear_cross_entropy`` ships separately via
-    # ``_shifted_lin_ce`` / ``_fast_lin_ce``.
+    # Liger patches are optional, process-global, and idempotent.
     use_flashrt_fp8_mlp: bool = False
     """Opt-in: swap every Gemma GeGLU MLP (action expert + prefix LM) and the
     SigLIP vision MLP to FlashRT fused FP8 kernels (Hugging Face Kernel Hub
@@ -255,10 +164,7 @@ class PI052Config(PI05Config):
     checkpoints load instead of raising ``DecodingError: The fields
     use_flex_attention are not valid for PI052Config``."""
 
-    # Optimizer foreach/fused. pi052 carries these locally because the shared
-    # PI05Config (kept identical to upstream main) does not define them; the
-    # checkpoints we train serialize both keys into config.json, so they must
-    # be valid PI052Config fields and flow into the AdamW preset below.
+    # Keep serialized PI052 AdamW options local because PI05Config lacks them.
     optimizer_foreach: bool | None = False
     optimizer_fused: bool | None = True
 
@@ -275,10 +181,7 @@ class PI052Config(PI05Config):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        # Backbone needs gradients flowing through the text head when
-        # we're training it. Override the π0.5 default
-        # (``train_expert_only=True``) unless the user explicitly opts
-        # out of text training via ``text_loss_weight=0``.
+        # Override PI0.5's expert-only default when training text.
         if self.text_loss_weight > 0 and self.unfreeze_lm_head:
             self.train_expert_only = False
         if self.flow_num_repeats < 1:

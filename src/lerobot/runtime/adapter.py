@@ -12,19 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Policy adapter base class for the language-conditioned runtime.
+"""Policy adapters for the language runtime.
 
-The runtime loop drives the *control algorithm* (throttling, output
-rejection, the subtask -> memory cascade, diagnostics) and delegates the
-*policy primitives* (act, generate text) to an adapter. :class:`BaseLanguageAdapter`
-implements the algorithm once; a policy subclasses it and supplies:
-
-* :meth:`select_action` — observation + language context -> action chunk
-* :meth:`generate_text` — a text stream (``kind``) -> decoded string
-* :meth:`build_messages` — the prompt for each ``kind``
-
-A policy that needs full control can instead satisfy the
-:class:`LanguageConditionedPolicyAdapter` protocol directly.
+The base adapter owns generation control and diagnostics while subclasses provide policy-specific actions and text.
 """
 
 from __future__ import annotations
@@ -41,11 +31,7 @@ _SAY_RE = re.compile(r"<\s*say\s*>(.*?)<\s*/\s*say\s*>", re.IGNORECASE | re.DOTA
 
 @dataclass
 class GenerationConfig:
-    """Text-generation knobs, fixed for the lifetime of an adapter.
-
-    These are configuration (set once from the CLI), not per-tick runtime
-    state — they live on the adapter, never in :class:`RuntimeState`.
-    """
+    """Text-generation settings fixed for the adapter's lifetime."""
 
     min_new_tokens: int = 0
     temperature: float = 0.0
@@ -57,11 +43,7 @@ class GenerationConfig:
 
 @dataclass
 class LanguageDiagnostics:
-    """Rejection / repeat counters surfaced in the runtime panel.
-
-    Keyed by text ``kind`` (``subtask`` / ``memory`` / ...) so the same
-    accounting works for any cascade shape.
-    """
+    """Runtime-panel rejection and repeat counters keyed by text kind."""
 
     last_raw: dict[str, str] = field(default_factory=dict)
     empty: dict[str, int] = field(default_factory=dict)
@@ -82,8 +64,6 @@ class BaseLanguageAdapter(ABC):
         self.diag = LanguageDiagnostics()
         self._chunks_until_regen = 0
 
-    # --- policy primitives (subclass supplies) ---------------------------
-
     @abstractmethod
     def select_action(self, observation: dict[str, Any], state: RuntimeState) -> Any:
         """Produce an action chunk from the observation + current language context."""
@@ -97,8 +77,6 @@ class BaseLanguageAdapter(ABC):
         user_text: str | None = None,
     ) -> str:
         """Generate one text stream (``kind``) and return the decoded string."""
-
-    # --- generic control algorithm (runtime calls these) ----------------
 
     def update_language_state(self, observation: dict[str, Any] | None, state: RuntimeState) -> None:
         """Throttled regeneration of the language context (subtask / memory / ...)."""
@@ -122,16 +100,13 @@ class BaseLanguageAdapter(ABC):
         plan, _speech = split_plan_and_say(text)
         return "" if looks_like_gibberish(plan) else plan
 
-    # --- overridable cascade + shared helpers ---------------------------
-
     def _regenerate_context(self, observation: dict[str, Any] | None, state: RuntimeState) -> None:
         """Default hierarchy: regenerate the subtask, then memory when it changes.
 
         Override for a policy with a different language hierarchy.
         """
         if not self.gen.enable_subtask:
-            # Direct-subtask mode: the operator supplies the subtask; don't
-            # generate (and thus don't overwrite) it.
+            # Preserve operator-provided subtasks in direct mode.
             return
         subtask = self._generate_filtered("subtask", observation, state)
         if subtask is None:
@@ -169,12 +144,7 @@ class BaseLanguageAdapter(ABC):
 
 
 class DirectTaskPolicyAdapter(BaseLanguageAdapter):
-    """Adapter for flat policies conditioned directly on the operator's task text.
-
-    Policies such as PI0.5 and MolmoAct2 do not expose a language-generation
-    head. Their preprocessors pack the current task into the model inputs, so
-    the runtime only needs to request an action chunk.
-    """
+    """Adapter for flat policies whose preprocessors condition actions on the operator's task."""
 
     def select_action(self, observation: dict[str, Any], state: RuntimeState) -> Any:
         return self.policy.predict_action_chunk(observation)

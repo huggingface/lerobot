@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PI052 adapter for the generic language-conditioned runtime.
-
-Supplies only the PI052-specific primitives — acting, text generation,
-and prompt templates. The high-level control loop (throttling, output
-rejection, the subtask -> memory cascade) is inherited from
-:class:`lerobot.runtime.adapter.BaseLanguageAdapter`.
-"""
+"""PI052 actions and text generation for the generic language runtime."""
 
 from __future__ import annotations
 
@@ -46,9 +40,7 @@ class PI052PolicyAdapter(BaseLanguageAdapter):
         )
 
         subtask = state.language_context.get("subtask") or state.task or ""
-        # Condition the action expert on subtask + discretized state, matching
-        # training and lerobot-eval's low-level prompt ("{subtask}, State: {..};").
-        # Without the state the action expert is off-distribution.
+        # Match the training prompt by conditioning on both subtask and discretized state.
         content = subtask
         obs_state = observation.get(OBS_STATE)
         if isinstance(obs_state, torch.Tensor) and obs_state.numel() > 0:

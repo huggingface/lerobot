@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PI052 bridge to the generic language-conditioned runtime.
-
-The runtime, REPL, and CLI are policy-agnostic and live in
-:mod:`lerobot.runtime`. PI052 supplies only :class:`PI052PolicyAdapter`;
-the ``lerobot-rollout --language`` entry point wires it into
-:func:`lerobot.runtime.cli.run`.
-"""
+"""PI052 adapter for the policy-agnostic language runtime."""
 
 from .pi052_adapter import PI052PolicyAdapter
 

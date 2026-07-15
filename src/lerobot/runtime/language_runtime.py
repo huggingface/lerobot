@@ -117,12 +117,7 @@ class RuntimeState:
 
 
 class LanguageConditionedPolicyAdapter(Protocol):
-    """The contract the runtime loop depends on.
-
-    :class:`lerobot.runtime.adapter.BaseLanguageAdapter` provides a
-    batteries-included implementation; a policy can satisfy this protocol
-    directly for full control.
-    """
+    """Runtime policy contract, implemented directly or through ``BaseLanguageAdapter``."""
 
     def select_action(self, observation: dict[str, Any], state: RuntimeState) -> Any: ...
 

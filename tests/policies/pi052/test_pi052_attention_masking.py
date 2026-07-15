@@ -56,17 +56,9 @@ def _shifted_ce(logits, labels):
     eye = torch.eye(vocab_size, dtype=logits.dtype, device="cuda")
     return _shifted_lin_ce(logits.cuda(), eye, labels.cuda()).cpu()
 
-# ---------------------------------------------------------------------------
-# A synthetic PI052 prefix layout: [images, prompt-lang, target-lang]
-#
-#   indices 0-1  : 2 image tokens          (att = 0)
-#   indices 2-4  : 3 user-prompt lang      (att = 0)
-#   indices 5-8  : 4 supervised target lang(att = 0 from embed_prefix)
-#
-# ``text_labels`` covers the 7 language tokens; -100 on the prompt span,
-# real ids on the 4-token target span. PaliGemma's prefix has no state
-# token (unlike SmolVLA), so the lang span ends at the prefix end.
-# ---------------------------------------------------------------------------
+
+# Synthetic prefix: two image tokens, three prompt tokens, and four supervised target tokens.
+# Text labels mask the prompt with -100 and cover the target through the prefix end.
 N_IMAGE = 2
 N_PROMPT = 3
 N_TARGET = 4
@@ -95,9 +87,7 @@ def _attends(prefix_att_masks: torch.Tensor) -> torch.Tensor:
 
 def test_mark_sets_att_on_targets_only():
     """Only the supervised target language positions flip to att=1."""
-    marked = _mark_target_span_causal(
-        _embed_prefix_att_masks(), _text_labels(), LANG_START, LANG_END
-    )
+    marked = _mark_target_span_causal(_embed_prefix_att_masks(), _text_labels(), LANG_START, LANG_END)
     expected = [False] * PREFIX_LEN
     for i in range(LANG_START + N_PROMPT, LANG_END):  # target span
         expected[i] = True
@@ -107,9 +97,7 @@ def test_mark_sets_att_on_targets_only():
 def test_target_tokens_attend_causally_among_themselves():
     """A target token must NOT attend to later targets, but must attend
     to earlier ones — genuine causal next-token prediction."""
-    marked = _mark_target_span_causal(
-        _embed_prefix_att_masks(), _text_labels(), LANG_START, LANG_END
-    )
+    marked = _mark_target_span_causal(_embed_prefix_att_masks(), _text_labels(), LANG_START, LANG_END)
     attends = _attends(marked)
     tgt = range(LANG_START + N_PROMPT, LANG_END)
     for i in tgt:
@@ -122,9 +110,7 @@ def test_target_tokens_attend_causally_among_themselves():
 
 def test_target_tokens_attend_prompt_and_images_bidirectionally():
     """Targets keep full visibility of images + the user prompt."""
-    marked = _mark_target_span_causal(
-        _embed_prefix_att_masks(), _text_labels(), LANG_START, LANG_END
-    )
+    marked = _mark_target_span_causal(_embed_prefix_att_masks(), _text_labels(), LANG_START, LANG_END)
     attends = _attends(marked)
     context = list(range(0, LANG_START + N_PROMPT))  # images + prompt
     for i in range(LANG_START + N_PROMPT, LANG_END):
@@ -136,9 +122,7 @@ def test_non_target_subtask_stays_bidirectional():
     """A flow-only / non-target language span (all -100 labels) leaves the
     mask untouched — the action expert reads it bidirectionally."""
     all_ignored = torch.full((1, N_PROMPT + N_TARGET), -100, dtype=torch.long)
-    marked = _mark_target_span_causal(
-        _embed_prefix_att_masks(), all_ignored, LANG_START, LANG_END
-    )
+    marked = _mark_target_span_causal(_embed_prefix_att_masks(), all_ignored, LANG_START, LANG_END)
     assert torch.equal(marked, _embed_prefix_att_masks())
 
 
