@@ -120,8 +120,8 @@ class PI052Config(PI05Config):
     """If True, route every transformer layer through the KI
     attention path that blocks action→VLM gradient flow on K/V."""
 
-    # Boost sparse text-head updates while retaining PI0.5's optimizer schedule.
-    lm_head_lr_scale: float = 5.0
+    # Scale language-head updates relative to the base optimizer schedule.
+    lm_head_lr_scale: float = 1.0
 
     # Scale pretrained backbone and new action-expert groups independently; 1.0 preserves legacy behavior.
     backbone_lr_scale: float = 1.0
