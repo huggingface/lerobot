@@ -171,71 +171,12 @@ _SKELETON_J = np.array(
 )
 
 
-# ── quaternion helpers (scalar-first w, x, y, z) ─────────────────────────────
-
-
-def aa_to_quat(aa: np.ndarray) -> np.ndarray:
-    aa = np.asarray(aa, np.float64)
-    angle = np.linalg.norm(aa, axis=-1, keepdims=True)
-    small = angle < 1e-8
-    safe = np.where(small, 1.0, angle)
-    axis = np.where(small, 0.0, aa / safe)
-    half = angle * 0.5
-    return np.concatenate([np.cos(half), axis * np.sin(half)], axis=-1)
-
-
-def quat_to_aa(q: np.ndarray) -> np.ndarray:
-    q = np.asarray(q, np.float64)
-    w = q[..., 0:1]
-    xyz = q[..., 1:]
-    n = np.linalg.norm(xyz, axis=-1, keepdims=True)
-    angle = 2.0 * np.arctan2(n, w)
-    small = n < 1e-8
-    safe = np.where(small, 1.0, n)
-    axis = np.where(small, 0.0, xyz / safe)
-    return axis * angle
-
-
-def quat_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    aw, ax, ay, az = a[..., 0], a[..., 1], a[..., 2], a[..., 3]
-    bw, bx, by, bz = b[..., 0], b[..., 1], b[..., 2], b[..., 3]
-    return np.stack(
-        [
-            aw * bw - ax * bx - ay * by - az * bz,
-            aw * bx + ax * bw + ay * bz - az * by,
-            aw * by - ax * bz + ay * bw + az * bx,
-            aw * bz + ax * by - ay * bx + az * bw,
-        ],
-        axis=-1,
-    )
-
-
-def quat_conj(q: np.ndarray) -> np.ndarray:
-    return np.concatenate([q[..., 0:1], -q[..., 1:]], axis=-1)
-
-
-def quat_inv(q: np.ndarray) -> np.ndarray:
-    c = quat_conj(q)
-    return c / (np.linalg.norm(c, axis=-1, keepdims=True) + 1e-12)
-
-
-def quat_apply(q: np.ndarray, v: np.ndarray) -> np.ndarray:
-    xyz = q[..., 1:]
-    w = q[..., 0:1]
-    t = 2.0 * np.cross(xyz, v)
-    return v + w * t + np.cross(xyz, t)
-
-
-def smpl_root_ytoz_up(root_quat: np.ndarray) -> np.ndarray:
-    """Rotate the root quaternion 90 deg about X to map SMPL Y-up to robot Z-up."""
-    base = aa_to_quat(np.array([np.pi / 2.0, 0.0, 0.0]))
-    return quat_mul(base, root_quat)
-
-
-def remove_smpl_base_rot(root_quat: np.ndarray) -> np.ndarray:
-    """Conjugate out SMPL's default rest orientation ([0.5, 0.5, 0.5, 0.5])."""
-    base_conj = quat_conj(np.array([0.5, 0.5, 0.5, 0.5]))
-    return quat_mul(root_quat, base_conj)
+# ── fixed frame corrections (shared by FK + canonicalization) ────────────────
+# Both mirror the SONIC deploy transform. ``_YTOZ_UP`` maps SMPL's Y-up world to the
+# robot's Z-up (a 90 deg rotation about X); ``_SMPL_BASE`` is SMPL's rest-pose base
+# orientation, conjugated out during canonicalization.
+_YTOZ_UP = R.from_euler("x", 90, degrees=True)
+_SMPL_BASE = R.from_quat([0.5, 0.5, 0.5, 0.5])  # scalar-last; symmetric so wxyz==xyzw
 
 
 # ── forward kinematics ───────────────────────────────────────────────────────
@@ -255,11 +196,9 @@ def canonicalize_smpl_joints(smpl_joints: np.ndarray, root_aa: np.ndarray) -> np
     Returns:
         (T, 24, 3) per-frame root-orientation-removed joints.
     """
-    rx90 = R.from_euler("x", 90, degrees=True)  # smpl_root_ytoz_up
-    base120 = R.from_quat([0.5, 0.5, 0.5, 0.5])  # remove_smpl_base_rot
-    a = rx90 * R.from_rotvec(root_aa)
-    b_inv = base120 * a.inv()
-    return np.einsum("tij,tkj->tki", b_inv.as_matrix(), smpl_joints).astype(np.float32)
+    root = _YTOZ_UP * R.from_rotvec(root_aa)
+    inv = _SMPL_BASE * root.inv()
+    return np.einsum("tij,tkj->tki", inv.as_matrix(), smpl_joints).astype(np.float32)
 
 
 def root_quats_from_aa(root_aa: np.ndarray) -> np.ndarray:
@@ -267,11 +206,8 @@ def root_quats_from_aa(root_aa: np.ndarray) -> np.ndarray:
 
     Same convention as the headset stream: ytoz-up then base-rotation removed.
     """
-    rx90 = R.from_euler("x", 90, degrees=True)
-    base120 = R.from_quat([0.5, 0.5, 0.5, 0.5])
-    r = (rx90 * R.from_rotvec(root_aa)) * base120.inv()
-    q = r.as_quat()  # xyzw
-    return np.concatenate([q[:, 3:4], q[:, :3]], axis=1).astype(np.float32)  # -> wxyz
+    root = (_YTOZ_UP * R.from_rotvec(root_aa)) * _SMPL_BASE.inv()
+    return root.as_quat(scalar_first=True).astype(np.float32)  # wxyz
 
 
 class SmplForwardKinematics:
@@ -334,9 +270,8 @@ class SmplForwardKinematics:
         body_pose = local_aa[1:].reshape(-1)[:63]  # 21 body joints
 
         # Root: Y-up -> Z-up, then run FK with the transformed root.
-        root_quat = aa_to_quat(global_orient)
-        root_quat = smpl_root_ytoz_up(root_quat)
-        global_orient_new = quat_to_aa(root_quat)
+        root = _YTOZ_UP * R.from_rotvec(global_orient)
+        global_orient_new = root.as_rotvec()
 
         full_pose = np.concatenate([global_orient_new, body_pose, np.zeros(3 * self.n_joints - 66)]).reshape(
             self.n_joints, 3
@@ -344,12 +279,11 @@ class SmplForwardKinematics:
         joints = self._fk(full_pose)  # (24, 3)
 
         # Canonicalize: strip SMPL base rot and the root orientation.
-        root_quat = remove_smpl_base_rot(root_quat)
-        inv = np.broadcast_to(quat_inv(root_quat), (joints.shape[0], 4))
-        smpl_joints_local = quat_apply(inv, joints)
+        root = root * _SMPL_BASE.inv()
+        smpl_joints_local = root.inv().apply(joints)
 
         return {
             "smpl_joints_local": smpl_joints_local.astype(np.float32),
-            "root_quat": root_quat.astype(np.float32),
+            "root_quat": root.as_quat(scalar_first=True).astype(np.float32),  # wxyz
             "root_transl": positions[0].astype(np.float32),
         }
