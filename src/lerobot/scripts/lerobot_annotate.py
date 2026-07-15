@@ -34,6 +34,7 @@ from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConf
 from lerobot.annotations.steerable_pipeline.executor import Executor
 from lerobot.annotations.steerable_pipeline.frames import make_frame_provider
 from lerobot.annotations.steerable_pipeline.modules import (
+    EcotReasoningModule,
     GeneralVqaModule,
     InterjectionsAndSpeechModule,
     PlanSubtasksMemoryModule,
@@ -86,6 +87,7 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
         vlm=vlm, config=cfg.interjections, seed=cfg.seed, frame_provider=frame_provider
     )
     vqa = GeneralVqaModule(vlm=vlm, config=cfg.vqa, seed=cfg.seed, frame_provider=frame_provider)
+    ecot = EcotReasoningModule(vlm=vlm, config=cfg.ecot, frame_provider=frame_provider)
     writer = LanguageColumnsWriter()
     validator = StagingValidator(
         dataset_camera_keys=tuple(getattr(frame_provider, "camera_keys", []) or []) or None,
@@ -98,6 +100,7 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
         vqa=vqa,
         writer=writer,
         validator=validator,
+        ecot=ecot,
     )
     summary = executor.run(root)
     logger.info("annotate: wrote %d shard(s)", len(summary.written_paths))
