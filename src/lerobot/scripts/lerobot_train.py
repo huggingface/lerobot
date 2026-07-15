@@ -100,9 +100,7 @@ def update_policy(
         lr_scheduler: An optional learning rate scheduler.
         lock: An optional lock for thread-safe optimizer updates.
         sample_weighter: Optional SampleWeighter instance for per-sample loss weighting.
-        log_metrics: When True, read loss/grad_norm/update_s off the GPU via `.item()` (a CUDA sync).
-            On non-logging steps set False so the step stays fully async — letting the next batch's
-            dataloading and enqueue overlap GPU compute instead of stalling on a per-step sync.
+        log_metrics: Whether to synchronize and record GPU metrics this step.
 
     Returns:
         A tuple containing:
@@ -173,17 +171,12 @@ def update_policy(
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     if torch.cuda.is_available():
         train_metrics.gpu_mem_gb = torch.cuda.max_memory_allocated() / (1024**3)
-    # `loss.item()` / `grad_norm.item()` each block on a CUDA sync. Only pay that on logging steps;
-    # on the other steps the readouts are never consumed, so skipping them keeps the step async and
-    # lets CPU-side dataloading/enqueue overlap GPU compute. update_s is only accurate under that
-    # sync, so it too is recorded on logging steps only.
+    # Materialize GPU metrics only when logging to avoid synchronizing every step.
     if log_metrics:
         train_metrics.loss = loss.item()
         train_metrics.grad_norm = grad_norm.item()
         train_metrics.update_s = time.perf_counter() - start_time
-        # Policies may hand back loss components as detached tensors to keep the forward async on
-        # non-logging steps (e.g. pi052). Materialize them to python floats here, on logging steps only,
-        # so the per-step CUDA sync is paid 1-in-log_freq rather than every step.
+        # Materialize detached loss components during the same logging synchronization.
         if output_dict:
             output_dict = {
                 k: (v.item() if isinstance(v, torch.Tensor) else v) for k, v in output_dict.items()
@@ -228,25 +221,15 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
         from accelerate.utils import InitProcessGroupKwargs
 
-        # find_unused_parameters=True is needed for conditional computation but
-        # breaks DDP's gradient/backward overlap and bucket coalescing, which is
-        # cheap intra-node (NVLink) but very costly across nodes (EFA). When the
-        # set of used params is stable, static_graph=True keeps unused-param
-        # support AND restores overlap. Env-gated; defaults preserve old behavior.
+        # Static graphs restore DDP overlap when conditional parameter usage is stable.
+        # Environment flags retain the existing defaults.
         ddp_find_unused = os.environ.get("LEROBOT_DDP_FIND_UNUSED", "1") == "1"
         ddp_static_graph = os.environ.get("LEROBOT_DDP_STATIC_GRAPH", "0") == "1"
         ddp_kwargs = DistributedDataParallelKwargs(
             find_unused_parameters=ddp_find_unused and not ddp_static_graph,
             static_graph=ddp_static_graph,
         )
-        # Bump the c10d store-get / barrier timeout so the rank-0-only
-        # ``make_dataset`` block below doesn't trigger a barrier crash on
-        # large datasets. Default is 10 min (``store->get`` 600 s); a
-        # 32 k-episode v3 dataset (e.g. ``robocasa_pretrain_human300_v4``)
-        # spends >13 min on rank 0 building the episode/frame index
-        # while ranks 1-N idle at ``wait_for_everyone()`` and crash with
-        # ``DistBackendError: ... wait timeout after 600000ms``. 2 h is
-        # plenty of headroom; fast paths are unaffected.
+        # Allow rank 0 enough time to index large datasets before other ranks leave the barrier.
         ipg_kwargs = InitProcessGroupKwargs(timeout=timedelta(hours=2))
         # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
         # Force the device to be CPU when the active config's device is set to CPU (works for both policy and reward model training).
@@ -353,10 +336,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     active_cfg = cfg.trainable_config
     processor_pretrained_path = active_cfg.pretrained_path
-    # pi052: even when loading pretrained weights, build the processors
-    # from the current pi052 config so the recipe text-label and FAST
-    # action-label steps are generated and not silently swapped for the
-    # checkpoint's older processor stack.
+    # Build PI052 processors from the current config so recipe and FAST labels are generated.
     if cfg.policy.type == "pi052" and processor_pretrained_path is not None and not cfg.resume:
         logging.warning(
             "pi052 is loading pretrained weights from %s, but building processors from the current "
@@ -382,7 +362,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if cfg.is_reward_model_training:
         processor_kwargs["dataset_meta"] = dataset.meta
 
-    # Policies that optionally fit dataset-specific processor artifacts need the repo id.
     if cfg.policy.type in {"pi0_fast", "pi052"}:
         processor_kwargs["dataset_repo_id"] = cfg.dataset.repo_id
 
@@ -530,10 +509,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # declares language columns; otherwise stay on PyTorch's default
     # collate so non-language training runs are unaffected.
     collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
-    # On multi-node EFA clusters, forking workers from a multi-GB rank process can
-    # fail with OSError(ENOMEM) because fork() reserve-charges the parent's full
-    # virtual footprint. Allow opting into "forkserver"/"spawn" so workers come
-    # from a clean process instead. Unset => default "fork" (unchanged behavior).
+    # Allow spawn/forkserver workers where forking large rank processes exhausts memory.
     mp_context = os.environ.get("LEROBOT_DATALOADER_MP_CONTEXT") or None
     dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -647,8 +623,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
-        # This update produces step number `step + 1`; only sync metrics off the GPU when that step
-        # will be logged (mirrors the is_log_step gate below). Everything else stays async.
+        # Synchronize GPU metrics only for updates that will be logged.
         log_metrics = cfg.log_freq > 0 and (step + 1) % cfg.log_freq == 0
 
         train_tracker, output_dict = update_policy(
