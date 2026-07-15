@@ -127,9 +127,7 @@ class TrainPipelineConfig(HubMixin):
     # final model is pushed regardless. Works the same locally and remotely.
     save_checkpoint_to_hub: bool = False
 
-    # Sample weighting configuration (e.g., for RA-BC training). Old
-    # inline ``use_rabc`` / ``rabc_*`` params are migrated to this
-    # field by ``_migrate_legacy_rabc_keys`` above.
+    # Sample weighting configuration (e.g., for RA-BC training)
     sample_weighting: SampleWeightingConfig | None = None
 
     # Rename map for the observation to override the image and state keys
