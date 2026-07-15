@@ -41,16 +41,13 @@ from collections import deque
 import numpy as np
 import zmq
 
+from .smpl_constants import JOINT_DIM, N_JOINTS, SMPL_OBS_DIM, WINDOW
+
 logger = logging.getLogger(__name__)
 
 SMPL_TOPIC = "rt/smpl"
 DEFAULT_SMPL_HOST = "127.0.0.1"
 DEFAULT_SMPL_PORT = 5560
-
-WINDOW = 10  # frames per encoder window (smpl_joints_10frame_step1)
-N_JOINTS = 24
-JOINT_DIM = 3
-SMPL_OBS_DIM = WINDOW * N_JOINTS * JOINT_DIM  # 720
 
 
 class SmplStream:

@@ -19,21 +19,14 @@
 import logging
 from typing import Any
 
-from lerobot.robots.unitree_g1.smpl_stream import SMPL_OBS_DIM, SmplStream
 from lerobot.types import RobotAction
 
 from ..teleoperator import Teleoperator
 from .config_pico_headset import PicoHeadsetConfig
+from .smpl_constants import ROOT_ACTION_DIM, ROOT_ACTION_PREFIX, SMPL_ACTION_PREFIX, SMPL_OBS_DIM
+from .smpl_stream import SmplStream
 
 logger = logging.getLogger(__name__)
-
-# Flat action keys carrying the 720-vec SONIC whole-body reference window. Kept as
-# scalar floats so the reference flows unchanged through the standard lerobot action
-# pipeline; SonicWholeBodyController reassembles them into smpl_joints_10frame_step1.
-SMPL_ACTION_PREFIX = "smpl."
-# Per-frame SMPL root orientation (wxyz) that steers the SONIC mode-2 anchor/heading.
-ROOT_ACTION_PREFIX = "root."
-ROOT_ACTION_DIM = 4
 
 
 class PicoHeadset(Teleoperator):
