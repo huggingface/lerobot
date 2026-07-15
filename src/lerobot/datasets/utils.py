@@ -26,6 +26,7 @@ import numpy as np
 import packaging.version
 import torch
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
+from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.utils.utils import flatten_dict, unflatten_dict
 
@@ -358,7 +359,7 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
         str: The safe version string (e.g., "v1.2.3") to use as a revision.
 
     Raises:
-        RuntimeError: If the repo has no version tags.
+        RevisionNotFoundError: If the repo has no version tags.
         BackwardCompatibilityError: If only older major versions are available.
         ForwardCompatibilityError: If only newer major versions are available.
     """
@@ -368,15 +369,17 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
     hub_versions = get_repo_versions(repo_id)
 
     if not hub_versions:
-        msg = (
-            f"Repo {repo_id!r} has no codebase-version tags. The dataset "
-            f"either doesn't exist on the Hub yet, or it was uploaded "
-            f"without a ``v3.x``-style tag. To tag an existing dataset run:\n"
-            f"  from huggingface_hub import HfApi\n"
-            f"  HfApi().create_tag({repo_id!r}, tag='v3.0', repo_type='dataset', exist_ok=True)"
+        raise RevisionNotFoundError(
+            f"""Your dataset must be tagged with a codebase version.
+            Assuming _version_ is the codebase_version value in the info.json, you can run this:
+            ```python
+            from huggingface_hub import HfApi
+
+            hub_api = HfApi()
+            hub_api.create_tag("{repo_id}", tag="_version_", repo_type="dataset")
+            ```
+            """
         )
-        # This is a configuration error; RevisionNotFoundError requires a real HTTP response.
-        raise RuntimeError(msg)
 
     if target_version in hub_versions:
         return f"v{target_version}"
