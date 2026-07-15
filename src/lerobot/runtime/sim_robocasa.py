@@ -47,9 +47,7 @@ def _label_panel(img: np.ndarray, label: str) -> np.ndarray:
     return img
 
 
-def _overlay_text(
-    frame: np.ndarray, task: str | None, subtask: str | None, memory: str | None
-) -> np.ndarray:
+def _overlay_text(frame: np.ndarray, task: str | None, subtask: str | None, memory: str | None) -> np.ndarray:
     """Draw task / subtask / memory lines onto an (H, W, 3) uint8 frame.
 
     Best-effort: returns the frame unchanged if OpenCV is unavailable.
@@ -59,31 +57,41 @@ def _overlay_text(
     except ImportError:
         return frame
 
-    lines = [f"{label}: {val}" for label, val in
-             (("Task", task), ("Subtask", subtask), ("Memory", memory)) if val]
+    lines = [
+        f"{label}: {val}" for label, val in (("Task", task), ("Subtask", subtask), ("Memory", memory)) if val
+    ]
     if not lines:
         return frame
 
-    img = np.ascontiguousarray(frame)
+    img = np.ascontiguousarray(frame).copy()
     font, scale, margin = cv2.FONT_HERSHEY_SIMPLEX, 0.5, 6
     max_width = img.shape[1] - 2 * margin
-    y = 18
+    wrapped_lines: list[str] = []
     for text in lines:
         # naive width-based wrap so long memory strings stay on-frame
         words, cur = text.split(), ""
-        wrapped: list[str] = []
         for w in words:
             cand = f"{cur} {w}".strip()
             if cv2.getTextSize(cand, font, scale, 1)[0][0] > max_width and cur:
-                wrapped.append(cur)
+                wrapped_lines.append(cur)
                 cur = w
             else:
                 cur = cand
-        wrapped.append(cur)
-        for line in wrapped:
-            cv2.putText(img, line, (margin, y), font, scale, (0, 0, 0), 3, cv2.LINE_AA)
-            cv2.putText(img, line, (margin, y), font, scale, (255, 255, 255), 1, cv2.LINE_AA)
-            y += 20
+        wrapped_lines.append(cur)
+
+    # Use a dark translucent header for contrast, then draw each label once.
+    # The previous black-outline + white-foreground technique rendered every
+    # glyph twice and looked like offset duplicate text in the MJPEG stream.
+    line_height = 20
+    header_height = min(img.shape[0], len(wrapped_lines) * line_height + 6)
+    backdrop = img.copy()
+    cv2.rectangle(backdrop, (0, 0), (img.shape[1], header_height), (0, 0, 0), -1)
+    cv2.addWeighted(backdrop, 0.55, img, 0.45, 0, dst=img)
+
+    y = 18
+    for line in wrapped_lines:
+        cv2.putText(img, line, (margin, y), font, scale, (255, 255, 255), 1, cv2.LINE_AA)
+        y += line_height
     return img
 
 
@@ -196,7 +204,9 @@ def start_mjpeg_server(port: int, get_frame: Callable[[], np.ndarray | None]) ->
                 pass
 
     try:
-        server = ThreadingHTTPServer(("0.0.0.0", port), _Handler)
+        # Bind all interfaces intentionally so the viewer remains reachable
+        # through the documented SSH port-forwarding workflow.
+        server = ThreadingHTTPServer(("0.0.0.0", port), _Handler)  # nosec B104
     except OSError as exc:
         logger.warning("[sim] could not start live stream on port %d: %s", port, exc)
         print(f"[runtime] WARNING: live stream port {port} unavailable ({exc})", flush=True)
