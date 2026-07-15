@@ -349,7 +349,12 @@ class SonicWholeBodyController:
                 self._enter_wholebody()
             self.controller.smpl_joints_10frame_step1 = smpl
             # Root orientation (if provided) steers the mode-2 anchor/heading.
-            self.controller.smpl_root_quat = root_quat
+            # Temporarily disabled: feeding the per-frame SMPL root quaternion produced
+            # root-acceleration spikes (NaN QACC at DOF 0, sim unstable) mid-episode.
+            # Keep the anchor self-driven until the reference root trajectory is
+            # smoothed/rate-matched (30 Hz dataset -> 50 Hz control).
+            self.controller.smpl_root_quat = None
+            _ = root_quat
             return self._runtime.tick(obs, debug=False, use_joystick=False)
 
         # No (or stale) SMPL: fall back to locomotion so the robot stays balanced.
