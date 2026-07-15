@@ -76,6 +76,37 @@ Fine-tuning is an art. For a complete overview of the options for finetuning, ru
 lerobot-train --help
 ```
 
+### Experimental MEM visual memory
+
+SmolVLA can optionally fuse a short history of camera frames using the
+space-time separable vision encoder from [MEM](https://arxiv.org/abs/2603.03596).
+Every fourth SigLIP layer adds causal attention across time for matching image
+patches. Historical tokens are discarded inside the vision tower, so the VLM
+receives the same number of image tokens as the baseline policy.
+
+The option is disabled by default. The following example uses six observations
+spaced one second apart for a 10 fps dataset:
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/smolvla_base \
+  --policy.use_visual_memory=true \
+  --policy.visual_memory_frames=6 \
+  --policy.visual_memory_stride=10 \
+  --policy.visual_memory_temporal_attention_every=4 \
+  --policy.freeze_vision_encoder=false \
+  --policy.train_expert_only=false \
+  --dataset.repo_id=${HF_USER}/mydataset \
+  --output_dir=outputs/train/my_smolvla_mem
+```
+
+`visual_memory_stride` is measured in dataset or environment steps. Keep all
+other settings and the random seed fixed when comparing against a baseline.
+Because the public SmolVLA checkpoint was not pretrained with this temporal
+attention pattern, this is a post-training-only MEM ablation; the MEM paper
+reports that memory-aware pretraining performs better than introducing visual
+memory only during task-specific fine-tuning.
+
 <p align="center">
   <img
     src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/S-3vvVCulChREwHDkquoc.gif"

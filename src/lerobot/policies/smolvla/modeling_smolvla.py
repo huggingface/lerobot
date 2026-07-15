@@ -71,6 +71,7 @@ from ..utils import (
 )
 from .configuration_smolvla import SmolVLAConfig
 from .smolvlm_with_expert import SmolVLMWithExpertModel
+from .visual_memory import sample_visual_history
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -253,6 +254,10 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
+        if self.config.use_visual_memory:
+            history_length = (self.config.visual_memory_frames - 1) * self.config.visual_memory_stride + 1
+            self._queues.update({key: deque(maxlen=history_length) for key in self.config.image_features})
+            self._visual_memory_steps_seen = 0
 
     def init_rtc_processor(self):
         """Initialize RTC processor if RTC is enabled in config."""
@@ -281,9 +286,15 @@ class SmolVLAPolicy(PreTrainedPolicy):
         # In the case of offline inference, we have the action in the batch
         # that why without the k != ACTION check, it will raise an error because we are trying to stack
         # on an empty container.
-        for k in batch:
+        for k in list(batch):
             if k in self._queues and k != ACTION:
-                batch[k] = torch.stack(list(self._queues[k]), dim=1)
+                history = list(self._queues[k])
+                batch[k], batch[f"{k}_is_pad"] = sample_visual_history(
+                    history,
+                    num_frames=self.config.visual_memory_frames,
+                    stride=self.config.visual_memory_stride,
+                    steps_seen=self._visual_memory_steps_seen,
+                )
 
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
@@ -309,6 +320,11 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         return batch
 
+    def _populate_observation_queues(self, batch: dict[str, Tensor]) -> None:
+        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
+        if self.config.use_visual_memory:
+            self._visual_memory_steps_seen += 1
+
     @torch.no_grad()
     def predict_action_chunk(
         self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
@@ -316,7 +332,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.eval()
 
         batch = self._prepare_batch(batch)
-        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
+        self._populate_observation_queues(batch)
 
         actions = self._get_action_chunk(batch, noise, **kwargs)
         return actions
@@ -338,7 +354,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         self.eval()
         batch = self._prepare_batch(batch)
-        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
+        self._populate_observation_queues(batch)
 
         if self._check_get_actions_condition():
             actions = self._get_action_chunk(batch, noise)
@@ -427,19 +443,30 @@ class SmolVLAPolicy(PreTrainedPolicy):
             )
         # Preprocess image features present in the batch
         for key in present_img_keys:
-            img = batch[key][:, -1, :, :, :] if batch[key].ndim == 5 else batch[key]
+            img = batch[key]
+            if img.ndim == 5 and not self.config.use_visual_memory:
+                img = img[:, -1, :, :, :]
             if self.config.resize_imgs_with_padding is not None:
-                img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0)
+                if img.ndim == 5:
+                    batch_size, num_frames = img.shape[:2]
+                    img = resize_with_pad(
+                        img.flatten(0, 1), *self.config.resize_imgs_with_padding, pad_value=0
+                    ).unflatten(0, (batch_size, num_frames))
+                else:
+                    img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0)
 
             # Normalize from range [0,1] to [-1,1] as expacted by siglip
             img = img * 2.0 - 1.0
 
             bsize = img.shape[0]
             device = img.device
-            if f"{key}_padding_mask" in batch:
+            if f"{key}_is_pad" in batch:
+                mask = ~batch[f"{key}_is_pad"].bool()
+            elif f"{key}_padding_mask" in batch:
                 mask = batch[f"{key}_padding_mask"].bool()
             else:
-                mask = torch.ones(bsize, dtype=torch.bool, device=device)
+                mask_shape = img.shape[:2] if img.ndim == 5 else (bsize,)
+                mask = torch.ones(mask_shape, dtype=torch.bool, device=device)
             images.append(img)
             img_masks.append(mask)
 
@@ -662,7 +689,11 @@ class VLAFlowMatching(nn.Module):
                 embs.append(image_start_token)
                 pad_masks.append(image_start_mask)
 
-            img_emb = self.vlm_with_expert.embed_image(img)
+            img_emb = self.vlm_with_expert.embed_image(
+                img,
+                frame_mask=img_mask if img.ndim == 5 else None,
+                temporal_attention_every=self.config.visual_memory_temporal_attention_every,
+            )
             img_emb = img_emb
 
             # Normalize image embeddings
@@ -670,6 +701,8 @@ class VLAFlowMatching(nn.Module):
             img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
 
             bsize, num_img_embs = img_emb.shape[:2]
+            if img_mask.ndim == 2:
+                img_mask = img_mask[:, -1]
             img_mask = img_mask[:, None].expand(bsize, num_img_embs)
 
             embs.append(img_emb)

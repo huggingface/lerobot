@@ -20,6 +20,8 @@ from torch import nn
 
 from lerobot.utils.import_utils import _transformers_available, require_package
 
+from .visual_memory import encode_video_with_mem
+
 if TYPE_CHECKING or _transformers_available:
     from transformers import (
         AutoConfig,
@@ -188,17 +190,31 @@ class SmolVLMWithExpertModel(nn.Module):
         if self.train_expert_only:
             self.vlm.eval()
 
-    def embed_image(self, image: torch.Tensor):
+    def embed_image(
+        self,
+        image: torch.Tensor,
+        *,
+        frame_mask: torch.Tensor | None = None,
+        temporal_attention_every: int = 4,
+    ):
         patch_attention_mask = None
         # Get sequence from the vision encoder
-        image_hidden_states = (
-            self.get_vlm_model()
-            .vision_model(
-                pixel_values=image.to(dtype=self.get_vlm_model().vision_model.dtype),
-                patch_attention_mask=patch_attention_mask,
+        vision_model = self.get_vlm_model().vision_model
+        image = image.to(dtype=vision_model.dtype)
+        if image.ndim == 5:
+            if frame_mask is None:
+                frame_mask = torch.ones(image.shape[:2], dtype=torch.bool, device=image.device)
+            image_hidden_states = encode_video_with_mem(
+                vision_model,
+                image,
+                frame_mask,
+                temporal_attention_every=temporal_attention_every,
             )
-            .last_hidden_state
-        )
+        else:
+            image_hidden_states = vision_model(
+                pixel_values=image,
+                patch_attention_mask=patch_attention_mask,
+            ).last_hidden_state
         # Modality projection & resampling
         image_hidden_states = self.get_vlm_model().connector(image_hidden_states)
         return image_hidden_states

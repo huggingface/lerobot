@@ -44,6 +44,14 @@ class SmolVLAConfig(PreTrainedConfig):
     # Image preprocessing
     resize_imgs_with_padding: tuple[int, int] = (512, 512)
 
+    # MEM short-horizon visual memory (https://arxiv.org/abs/2603.03596).
+    # Past frames are fused inside the vision tower and dropped before the VLM,
+    # keeping the number of prefix tokens identical to single-frame SmolVLA.
+    use_visual_memory: bool = False
+    visual_memory_frames: int = 6
+    visual_memory_stride: int = 10
+    visual_memory_temporal_attention_every: int = 4
+
     # Add empty images. Used by smolvla_aloha_sim which adds the empty
     # left and right wrist cameras in addition to the top camera.
     empty_cameras: int = 0
@@ -119,6 +127,12 @@ class SmolVLAConfig(PreTrainedConfig):
             raise NotImplementedError(
                 "`use_delta_joint_actions_aloha` is used by smolvla for aloha real models. It is not ported yet in LeRobot."
             )
+        if self.visual_memory_frames < 1:
+            raise ValueError("visual_memory_frames must be at least 1")
+        if self.visual_memory_stride < 1:
+            raise ValueError("visual_memory_stride must be at least 1")
+        if self.visual_memory_temporal_attention_every < 1:
+            raise ValueError("visual_memory_temporal_attention_every must be at least 1")
 
     def validate_features(self) -> None:
         for i in range(self.empty_cameras):
@@ -148,7 +162,10 @@ class SmolVLAConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list:
-        return [0]
+        if not self.use_visual_memory:
+            return [0]
+        horizon = (self.visual_memory_frames - 1) * self.visual_memory_stride
+        return list(range(-horizon, 1, self.visual_memory_stride))
 
     @property
     def action_delta_indices(self) -> list:

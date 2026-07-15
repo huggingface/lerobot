@@ -111,7 +111,21 @@ dataset = LeRobotDataset("lerobot/robomme")
 
 The env wrapper exposes `pixels/image` and `pixels/wrist_image` as observation keys. The `features_map` in `RoboMMEEnv` maps these to `observation.images.image` and `observation.images.wrist_image` for the policy. State is exposed as `agent_pos` and maps to `observation.state`.
 
-The dataset's `image` and `wrist_image` columns already align with the policy input keys, so no renaming is needed when fine-tuning.
+The published dataset uses the raw keys shown above. Policies that expect canonical LeRobot keys should map them at training time. For example, the pretrained SmolVLA checkpoint expects three cameras, while RoboMME provides two:
+
+```bash
+uv run lerobot-train \
+  --policy.path=lerobot/smolvla_base \
+  --policy.empty_cameras=1 \
+  --dataset.repo_id=lerobot/robomme \
+  '--rename_map={"image":"observation.images.camera1","wrist_image":"observation.images.camera2","state":"observation.state","actions":"action"}'
+```
+
+At evaluation time the environment wrapper has already converted observations to canonical keys. Only the two camera suffixes need to be aligned with the checkpoint:
+
+```bash
+'--rename_map={"observation.images.image":"observation.images.camera1","observation.images.wrist_image":"observation.images.camera2"}'
+```
 
 ## Action Spaces
 

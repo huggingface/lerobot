@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Matched SmolVLA ablation for the 10 fps lerobot/robomme dataset.
+# Run from the LeRobot repository root on a CUDA machine.
+
+set -euo pipefail
+
+STEPS="${STEPS:-30000}"
+BATCH_SIZE="${BATCH_SIZE:-4}"
+SEED="${SEED:-1000}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/robomme-smolvla-mem-ablation}"
+WANDB_ENABLE="${WANDB_ENABLE:-false}"
+RUN_TRAIN="${RUN_TRAIN:-true}"
+RUN_EVAL="${RUN_EVAL:-true}"
+TASKS="BinFill,PickXtimes,SwingXtimes,StopCube,VideoUnmask,VideoUnmaskSwap,ButtonUnmask,ButtonUnmaskSwap,PickHighlight,VideoRepick,VideoPlaceButton,VideoPlaceOrder,MoveCube,InsertPeg,PatternLock,RouteStick"
+TASK_IDS="[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49]"
+
+COMMON_TRAIN_ARGS=(
+  --policy.path=lerobot/smolvla_base
+  --policy.device=cuda
+  --policy.push_to_hub=false
+  --policy.empty_cameras=1
+  --policy.freeze_vision_encoder=false
+  --policy.train_expert_only=false
+  --dataset.repo_id=lerobot/robomme
+  '--rename_map={"image":"observation.images.camera1","wrist_image":"observation.images.camera2","state":"observation.state","actions":"action"}'
+  --batch_size="${BATCH_SIZE}"
+  --steps="${STEPS}"
+  --seed="${SEED}"
+  --env_eval_freq=0
+  --save_freq=5000
+  --wandb.enable="${WANDB_ENABLE}"
+)
+
+if [[ "${RUN_TRAIN}" == "true" ]]; then
+  uv run lerobot-train \
+    "${COMMON_TRAIN_ARGS[@]}" \
+    --policy.use_visual_memory=false \
+    --output_dir="${OUTPUT_ROOT}/baseline" \
+    --job_name=robomme-smolvla-baseline
+
+  uv run lerobot-train \
+    "${COMMON_TRAIN_ARGS[@]}" \
+    --policy.use_visual_memory=true \
+    --policy.visual_memory_frames=6 \
+    --policy.visual_memory_stride=10 \
+    --policy.visual_memory_temporal_attention_every=4 \
+    --output_dir="${OUTPUT_ROOT}/visual-memory" \
+    --job_name=robomme-smolvla-visual-memory
+fi
+
+if [[ "${RUN_EVAL}" == "true" ]]; then
+  for variant in baseline visual-memory; do
+    uv run lerobot-eval \
+      --policy.path="${OUTPUT_ROOT}/${variant}/checkpoints/last/pretrained_model" \
+      --env.type=robomme \
+      --env.task="${TASKS}" \
+      --env.dataset_split=test \
+      --env.task_ids="${TASK_IDS}" \
+      '--rename_map={"observation.images.image":"observation.images.camera1","observation.images.wrist_image":"observation.images.camera2"}' \
+      --eval.batch_size=1 \
+      --eval.n_episodes=50 \
+      --seed="${SEED}" \
+      --output_dir="${OUTPUT_ROOT}/eval-${variant}"
+  done
+fi
+
+uv run python - "${OUTPUT_ROOT}" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+for variant in ("baseline", "visual-memory"):
+    result_path = root / f"eval-{variant}" / "eval_info.json"
+    if not result_path.exists():
+        continue
+    with result_path.open() as handle:
+        info = json.load(handle)
+    overall = info["aggregated"]
+    print(
+        f"{variant}: success={overall['pc_success']:.2f}% "
+        f"avg_reward={overall['avg_sum_reward']:.4f}"
+    )
+PY

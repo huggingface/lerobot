@@ -343,9 +343,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         )
         processor_pretrained_path = None
 
+    dataset_stats = {cfg.rename_map.get(key, key): value for key, value in dataset.meta.stats.items()}
     processor_kwargs = {}
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
-        processor_kwargs["dataset_stats"] = dataset.meta.stats
+        processor_kwargs["dataset_stats"] = dataset_stats
 
     if cfg.is_reward_model_training:
         processor_kwargs["dataset_meta"] = dataset.meta
@@ -357,7 +358,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         preprocessor_overrides = {
             "device_processor": {"device": device.type},
             "normalizer_processor": {
-                "stats": dataset.meta.stats,
+                "stats": dataset_stats,
                 "features": {**policy.config.input_features, **policy.config.output_features},
                 "norm_map": policy.config.normalization_mapping,
             },
@@ -365,7 +366,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         }
         postprocessor_overrides = {
             "unnormalizer_processor": {
-                "stats": dataset.meta.stats,
+                "stats": dataset_stats,
                 "features": policy.config.output_features,
                 "norm_map": policy.config.normalization_mapping,
             },
@@ -608,6 +609,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         for cam_key in dataset.meta.camera_keys:
             if cam_key in batch and batch[cam_key].dtype == torch.uint8:
                 batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
+        if cfg.rename_map:
+            batch = {cfg.rename_map.get(key, key): value for key, value in batch.items()}
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
