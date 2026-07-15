@@ -678,14 +678,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         is_env_eval_step = cfg.env_eval_freq > 0 and step % cfg.env_eval_freq == 0
         is_eval_step = cfg.eval_steps > 0 and eval_dataloader is not None and step % cfg.eval_steps == 0
 
-        # Optional LM-head diagnostic (``LEROBOT_DEBUG_PREDS_EVERY=<steps>``): prints
-        # per-token (label, argmax) for a few samples to check the text head is learning.
-        _debug_preds_every = int(os.environ.get("LEROBOT_DEBUG_PREDS_EVERY", "0"))
-        if _debug_preds_every > 0 and step % _debug_preds_every == 0 and is_main_process:
-            from lerobot.policies.pi052.debug_utils import print_debug_text_predictions  # noqa: PLC0415
-
-            print_debug_text_predictions(policy, batch, step, n_samples=5)
-
         if is_log_step:
             # Collective reduce must run on every rank, before the main-process gate below.
             train_tracker.reduce_across_ranks()
