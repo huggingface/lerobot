@@ -16,237 +16,41 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import types
-from collections import deque
 from contextlib import nullcontext
-from pathlib import Path
 from typing import Any, Unpack
 
 import torch
-from safetensors.torch import load_file
 from torch import Tensor
 from torch.nn import functional
-from transformers.utils import cached_file
 
-from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
     OBS_STATE,
-    OPENPI_ATTENTION_MASK_VALUE,
 )
-from lerobot.utils.import_utils import require_package
 
 from ..pi05.modeling_pi05 import (
     ActionSelectKwargs,
     PI05Policy,
     PI05Pytorch as PI05PytorchBase,
-    create_sinusoidal_pos_embedding,
     make_att_2d_masks,
 )
-from ..pretrained import PreTrainedPolicy, T
 from .configuration_pi052 import PI052Config
 
 logger = logging.getLogger(__name__)
-
-_SAFETENSORS_FILE = "model.safetensors"
-_SAFETENSORS_INDEX = "model.safetensors.index.json"
-
-
-def _resolve_weight_files(
-    pretrained_name_or_path: str | Path,
-    *,
-    force_download: bool,
-    resume_download: bool | None,
-    proxies: dict | None,
-    token: str | bool | None,
-    cache_dir: str | Path | None,
-    local_files_only: bool,
-    revision: str | None,
-) -> list[Path]:
-    model_id = str(pretrained_name_or_path)
-    local_dir = Path(model_id)
-    load_kwargs = {
-        "revision": revision,
-        "cache_dir": cache_dir,
-        "force_download": force_download,
-        "resume_download": resume_download,
-        "proxies": proxies,
-        "token": token,
-        "local_files_only": local_files_only,
-    }
-
-    if local_dir.is_dir():
-        index_path = local_dir / _SAFETENSORS_INDEX
-        single_path = local_dir / _SAFETENSORS_FILE
-    else:
-        resolved_index = cached_file(
-            model_id,
-            _SAFETENSORS_INDEX,
-            _raise_exceptions_for_missing_entries=False,
-            **load_kwargs,
-        )
-        index_path = Path(resolved_index) if resolved_index is not None else None
-        single_path = None
-        if index_path is None:
-            resolved_file = cached_file(model_id, _SAFETENSORS_FILE, **load_kwargs)
-            single_path = Path(resolved_file) if resolved_file is not None else None
-
-    if index_path is None or not index_path.is_file():
-        if single_path is None or not single_path.is_file():
-            raise FileNotFoundError(f"No {_SAFETENSORS_FILE} found in {model_id!r}.")
-        return [single_path]
-
-    index = json.loads(index_path.read_text())
-    shard_names = sorted(set(index.get("weight_map", {}).values()))
-    if not shard_names:
-        raise ValueError(f"Invalid safetensors index without a weight_map: {index_path}")
-    if local_dir.is_dir():
-        files = [local_dir / name for name in shard_names]
-    else:
-        files = []
-        for name in shard_names:
-            resolved_file = cached_file(model_id, name, **load_kwargs)
-            if resolved_file is None:
-                raise FileNotFoundError(f"Checkpoint shard {name!r} not found in {model_id!r}.")
-            files.append(Path(resolved_file))
-    missing = [str(path) for path in files if not path.is_file()]
-    if missing:
-        raise FileNotFoundError(f"Missing checkpoint shards: {missing}")
-    return files
-
-
-def _load_weight_files(files: list[Path]) -> dict[str, Tensor]:
-    state_dict: dict[str, Tensor] = {}
-    for path in files:
-        shard = load_file(path)
-        overlap = state_dict.keys() & shard.keys()
-        if overlap:
-            raise ValueError(f"Duplicate checkpoint keys in {path}: {sorted(overlap)[:5]}")
-        state_dict.update(shard)
-    return state_dict
 
 
 class PI05Pytorch(PI05PytorchBase):  # see openpi `PI0Pytorch`
     """Core PI05 PyTorch model."""
 
-    def gradient_checkpointing_enable(self):
-        """Enable gradient checkpointing for memory optimization."""
-        self.gradient_checkpointing_enabled = True
-        self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing = True
-        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing_enable(
-            gradient_checkpointing_kwargs={"use_reentrant": False}
-        )
-        self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = True
-        logging.info("Enabled gradient checkpointing for PI05Pytorch model")
-
-    def gradient_checkpointing_disable(self):
-        """Disable gradient checkpointing."""
-        self.gradient_checkpointing_enabled = False
-        self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing = False
-        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing_disable()
-        self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = False
-        logging.info("Disabled gradient checkpointing for PI05Pytorch model")
-
-    def _prepare_attention_masks_4d(self, att_2d_masks, dtype=None):
-        """Helper method to prepare 4D attention masks for transformer."""
-        att_2d_masks_4d = att_2d_masks[:, None, :, :]
-        result = torch.where(att_2d_masks_4d, 0.0, OPENPI_ATTENTION_MASK_VALUE)
-        if dtype is not None:
-            result = result.to(dtype=dtype)
-        return result
-
-    def embed_prefix(
-        self, images, img_masks, tokens, masks
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Embed images with SigLIP and language tokens with embedding layer."""
-        embs = []
-        pad_masks = []
-        att_masks = []
-
-        # SigLIP checkpoints its encoder layers internally. An outer tower
-        # checkpoint would recreate every layer activation at once in backward.
-        img_embs = [self.paligemma_with_expert.embed_image(img) for img in images]
-
-        for img_emb, img_mask in zip(img_embs, img_masks, strict=True):
-            bsize, num_img_embs = img_emb.shape[:2]
-            embs.append(img_emb)
-            pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
-            att_masks += [0] * num_img_embs
-
-        # Process language tokens
-        def lang_embed_func(tokens):
-            # GemmaTextScaledWordEmbedding already applies sqrt(hidden_size); do not scale twice.
-            return self.paligemma_with_expert.embed_language_tokens(tokens)
-
-        lang_emb = self._apply_checkpoint(lang_embed_func, tokens)
-        embs.append(lang_emb)
-        pad_masks.append(masks)
-
-        num_lang_embs = lang_emb.shape[1]
-        att_masks += [0] * num_lang_embs
-
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
-
-        bsize = pad_masks.shape[0]
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-
-        return embs, pad_masks, att_masks
-
-    def embed_suffix(self, noisy_actions, timestep):
-        """Embed noisy_actions, timestep to prepare for Expert Gemma processing."""
-        embs = []
-        pad_masks = []
-        att_masks = []
-
-        # Embed timestep using sine-cosine positional encoding
-        time_emb = create_sinusoidal_pos_embedding(
-            timestep,
-            self.action_in_proj.out_features,
-            min_period=self.config.min_period,
-            max_period=self.config.max_period,
-            device=timestep.device,
-        )
-        time_emb = time_emb.type(dtype=timestep.dtype)
-
-        # Fuse timestep + action information using an MLP
-        def action_proj_func(noisy_actions):
-            return self.action_in_proj(noisy_actions)
-
-        action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
-
-        def time_mlp_func(time_emb):
-            x = self.time_mlp_in(time_emb)
-            x = functional.silu(x)
-            x = self.time_mlp_out(x)
-            return functional.silu(x)
-
-        time_emb = self._apply_checkpoint(time_mlp_func, time_emb)
-        action_time_emb = action_emb
-        adarms_cond = time_emb
-
-        embs.append(action_time_emb)
-        bsize, action_time_dim = action_time_emb.shape[:2]
-        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
-        pad_masks.append(action_time_mask)
-
-        # Set attention masks so that image, language and state inputs do not attend to action tokens
-        att_masks += [1] + ([0] * (self.config.chunk_size - 1))
-
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
-        # Build the constant suffix mask on-device to avoid a per-step host sync.
-        n = len(att_masks)
-        att_masks = torch.zeros(n, dtype=embs.dtype, device=embs.device)
-        att_masks[0] = 1
-        att_masks = att_masks[None, :].expand(bsize, n)
-
-        return embs, pad_masks, att_masks, adarms_cond
+    use_hf_vision_checkpointing_api = True
+    checkpoint_vision_embeddings = False
+    use_typed_attention_masks = True
+    use_on_device_suffix_mask = True
+    precompute_denoise_times = True
 
     def forward(self, images, img_masks, tokens, masks, actions, noise, time) -> Tensor:
         """Do a full training forward pass and compute the loss."""
@@ -298,91 +102,6 @@ class PI05Pytorch(PI05PytorchBase):  # see openpi `PI0Pytorch`
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
 
         return functional.mse_loss(u_t, v_t, reduction="none")
-
-    @torch.no_grad()  # see openpi `sample_actions` (slightly adapted)
-    def sample_actions(
-        self,
-        images,
-        img_masks,
-        tokens,
-        masks,
-        noise=None,
-        num_steps=None,
-        **kwargs: Unpack[ActionSelectKwargs],
-    ) -> Tensor:
-        """Do a full inference forward and compute the action."""
-        if num_steps is None:
-            num_steps = self.config.num_inference_steps
-
-        bsize = tokens.shape[0]
-        device = tokens.device
-
-        if noise is None:
-            # Sample noise with padded dimension as expected by action_in_proj
-            actions_shape = (
-                bsize,
-                self.config.chunk_size,
-                self.config.max_action_dim,
-            )  # Use config max_action_dim for internal processing
-            noise = self.sample_noise(actions_shape, device)
-
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
-        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-
-        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(
-            prefix_att_2d_masks, dtype=prefix_embs.dtype
-        )
-        self.paligemma_with_expert.paligemma.model.language_model.config._attn_implementation = "eager"  # noqa: SLF001
-
-        _, past_key_values = self.paligemma_with_expert.forward(
-            attention_mask=prefix_att_2d_masks_4d,
-            position_ids=prefix_position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],
-            use_cache=True,
-        )
-
-        dt = -1.0 / num_steps
-
-        # Precompute timesteps on-device to avoid a host sync per denoising step.
-        times = torch.tensor([1.0 + s * dt for s in range(num_steps)], dtype=torch.float32, device=device)
-
-        x_t = noise
-        for step in range(num_steps):
-            time = 1.0 + step * dt  # Python float kept for the RTC branch below
-            time_tensor = times[step].expand(bsize)
-
-            def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
-                return self.denoise_step(
-                    prefix_pad_masks=prefix_pad_masks,
-                    past_key_values=past_key_values,
-                    x_t=input_x_t,
-                    timestep=current_timestep,
-                )
-
-            if self._rtc_enabled():
-                inference_delay = kwargs.get("inference_delay")
-                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
-                execution_horizon = kwargs.get("execution_horizon")
-
-                v_t = self.rtc_processor.denoise_step(
-                    x_t=x_t,
-                    prev_chunk_left_over=prev_chunk_left_over,
-                    inference_delay=inference_delay,
-                    time=time,
-                    original_denoise_step_partial=denoise_step_partial_call,
-                    execution_horizon=execution_horizon,
-                )
-            else:
-                v_t = denoise_step_partial_call(x_t)
-
-            x_t = x_t + dt * v_t
-
-            if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
-                self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
-
-        return x_t
 
     def denoise_step(
         self,
@@ -1094,21 +813,14 @@ class PI052Policy(PI05Policy):
 
     config_class = PI052Config
     name = "pi052"
+    model_class = PI05Pytorch
+    eval_after_pretrained_load = True
+    show_openpi_disclaimer = False
 
     def __init__(self, config: PI052Config, **kwargs: Any) -> None:
         # Patch before constructing Gemma/SigLIP layers; the operation is optional and idempotent.
         _enable_hf_kernels()
-
-        require_package("transformers", extra="pi")
-        PreTrainedPolicy.__init__(self, config)
-        config.validate_features()
-        self.config = config
-        self.init_rtc_processor()
-        self.model = PI05Pytorch(config, rtc_processor=self.rtc_processor)
-        if config.gradient_checkpointing:
-            self.model.gradient_checkpointing_enable()
-        self.model.to(config.device)
-        self.reset()
+        super().__init__(config, **kwargs)
 
         # Re-enable layers PI0.5 freezes when text supervision is requested.
         if config.text_loss_weight > 0 and config.unfreeze_lm_head:
@@ -1155,19 +867,9 @@ class PI052Policy(PI05Policy):
                 persistent=False,
             )
 
-        # Size per-environment inference state lazily.
-        self.last_subtasks: list[str] | None = None
-        self.last_subtasks_raw: list[str] | None = None
-        self.last_subtasks_source: list[str] | None = None
-        self._last_good_subtasks: list[str | None] | None = None
-
     def reset(self):
         """Reset action and high-level inference state."""
-        # inlined PI05Policy.reset
-        self._action_queue = deque(maxlen=self.config.n_action_steps)
-        self._queues = {
-            ACTION: deque(maxlen=self.config.n_action_steps),
-        }
+        super().reset()
         self.last_subtasks = None
         self.last_subtasks_raw = None
         self.last_subtasks_source = None
@@ -1227,7 +929,7 @@ class PI052Policy(PI05Policy):
             and predict_actions_t is None
             and not getattr(self.config, "enable_fast_action_loss", False)
         ):
-            return self._pi05_flow_forward(batch, reduction=reduction)
+            return super().forward(batch, reduction=reduction)
 
         # Compute the host-side action-routing decision once for both flow and FAST.
         predict_any = predict_actions_t is None or bool(predict_actions_t.any().item())
@@ -1413,7 +1115,6 @@ class PI052Policy(PI05Policy):
         reduction: str = "mean",
     ) -> tuple[Tensor, Tensor]:
         """Run the single-repeat combined prefix and action path."""
-        from lerobot.utils.constants import ACTION  # noqa: PLC0415
 
         noise = self.model.sample_noise(actions.shape, actions.device)
         time = self.model.sample_time(actions.shape[0], actions.device)
@@ -1499,7 +1200,6 @@ class PI052Policy(PI05Policy):
         reduction: str = "mean",
     ) -> tuple[Tensor, Tensor]:
         """Run K independent action draws against one shared VLM prefix."""
-        from lerobot.utils.constants import ACTION  # noqa: PLC0415
 
         model = self.model
         k = num_repeats
@@ -1892,30 +1592,7 @@ class PI052Policy(PI05Policy):
             self._last_select_message_debug = ""
         return decoded
 
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select an action via PI052's high-level → low-level inference path.
-
-        At action-chunk boundaries, first generate a low-level subtask from
-        the high-level task prompt. Then retokenize that subtask as the
-        low-level action prompt before sampling the action chunk. This keeps
-        the public policy API identical to PI05 (`Tensor` action out), while
-        matching the PI052 training/runtime conditioning more closely.
-        """
-        assert not self._rtc_enabled(), (
-            "RTC is not supported for select_action, use it with predict_action_chunk"
-        )
-
-        self.eval()
-
-        if len(self._action_queue) == 0:
-            action_batch = self._with_low_level_subtask_prompt(batch)
-            actions = self.predict_action_chunk(action_batch)[:, : self.config.n_action_steps]
-            self._action_queue.extend(actions.transpose(0, 1))
-
-        return self._action_queue.popleft()
-
-    def _with_low_level_subtask_prompt(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+    def _prepare_action_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         from .inference.pi052_adapter import _build_text_batch  # noqa: PLC0415
         from .text_processor_pi052 import discretize_state_str  # noqa: PLC0415
 
@@ -2126,73 +1803,14 @@ class PI052Policy(PI05Policy):
             return sorted_ix.gather(-1, choice).squeeze(-1)
         return torch.multinomial(probs, num_samples=1).squeeze(-1)
 
-    # PI0.5 flow-only fallback for unannotated batches.
-    @classmethod
-    def from_pretrained(
-        cls: type[T],
-        pretrained_name_or_path: str | Path,
-        *,
-        config: PreTrainedConfig | None = None,
-        force_download: bool = False,
-        resume_download: bool | None = None,
-        proxies: dict | None = None,
-        token: str | bool | None = None,
-        cache_dir: str | Path | None = None,
-        local_files_only: bool = False,
-        revision: str | None = None,
-        strict: bool = True,
-        **kwargs,
-    ) -> T:
-        """Load a PI05/PI052 checkpoint, including sharded safetensors checkpoints."""
-        if pretrained_name_or_path is None:
-            raise ValueError("pretrained_name_or_path is required")
-
-        if config is None:
-            config = PreTrainedConfig.from_pretrained(
-                pretrained_name_or_path=pretrained_name_or_path,
-                force_download=force_download,
-                resume_download=resume_download,
-                proxies=proxies,
-                token=token,
-                cache_dir=cache_dir,
-                local_files_only=local_files_only,
-                revision=revision,
-                **kwargs,
-            )
-
-        model = cls(config, **kwargs)
-        files = _resolve_weight_files(
-            pretrained_name_or_path,
-            force_download=force_download,
-            resume_download=resume_download,
-            proxies=proxies,
-            token=token,
-            cache_dir=cache_dir,
-            local_files_only=local_files_only,
-            revision=revision,
-        )
-        fixed_state_dict = model._fix_pytorch_state_dict_keys(_load_weight_files(files), model.config)
-        remapped_state_dict = {
-            key if key.startswith("model.") else f"model.{key}": value
-            for key, value in fixed_state_dict.items()
-        }
-
+    def _prepare_pretrained_state_dict(self, remapped_state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
         lm_head_key = "model.paligemma_with_expert.paligemma.lm_head.weight"
         embed_tokens_key = "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
         if lm_head_key not in remapped_state_dict and embed_tokens_key in remapped_state_dict:
             remapped_state_dict[lm_head_key] = remapped_state_dict[embed_tokens_key].clone().float()
         elif lm_head_key in remapped_state_dict:
             remapped_state_dict[lm_head_key] = remapped_state_dict[lm_head_key].float()
-
-        missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
-        if not strict:
-            if missing_keys:
-                logger.warning("Missing PI052 checkpoint keys: %s", missing_keys)
-            if unexpected_keys:
-                logger.warning("Unexpected PI052 checkpoint keys: %s", unexpected_keys)
-        model.to(config.device)
-        model.eval()
-        return model
+        return remapped_state_dict
 
     def get_optim_params(self):
         """Return policy parameters, optionally split into LR-scaled groups.
@@ -2264,63 +1882,8 @@ class PI052Policy(PI05Policy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
-        self.eval()
-
         # Guard before first-observation FP8 calibration to prevent recursive prediction.
         if self.config.use_flashrt_fp8_mlp and not getattr(self, "_fp8_applied", False):
             self._fp8_applied = True
             self.apply_flashrt_fp8_mlp(batch)
-
-        # Prepare inputs
-        images, img_masks = self._preprocess_images(batch)
-        tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-
-        # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
-        actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)
-
-        # Unpad actions to actual action dimension
-        original_action_dim = self.config.output_features[ACTION].shape[0]
-        actions = actions[:, :, :original_action_dim]
-
-        return actions
-
-    def _pi05_flow_forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
-        """Run the batch through the model and compute the loss for training.
-
-        Args:
-            batch: Training batch containing observations and actions.
-            reduction: How to reduce the loss. Options:
-                - "mean": Return scalar mean loss (default, backward compatible)
-                - "none": Return per-sample losses of shape (batch_size,) for RA-BC weighting
-        """
-        # Prepare inputs
-        images, img_masks = self._preprocess_images(batch)
-        tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-
-        actions = self.prepare_action(batch)
-
-        noise = self.model.sample_noise(actions.shape, actions.device)
-        time = self.model.sample_time(actions.shape[0], actions.device)
-
-        # Compute loss (no separate state needed for PI05)
-        losses = self.model.forward(images, img_masks, tokens, masks, actions, noise, time)
-
-        # Truncate losses to actual action dimensions
-        original_action_dim = self.config.output_features[ACTION].shape[0]
-        losses = losses[:, :, :original_action_dim]
-
-        loss_dict = {
-            "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
-        }
-
-        if reduction == "none":
-            # Return per-sample losses (B,) by averaging over time and action dims
-            per_sample_loss = losses.mean(dim=(1, 2))
-            loss_dict["loss"] = per_sample_loss.mean().item()
-            return per_sample_loss, loss_dict
-        else:
-            # Default: return scalar mean loss
-            loss = losses.mean()
-            loss_dict["loss"] = loss.item()
-            return loss, loss_dict
+        return super().predict_action_chunk(batch, **kwargs)

@@ -37,7 +37,7 @@ def test_shifted_ce_none_retains_distinct_per_sample_losses():
 
 
 def test_checkpoint_resolution_forwards_explicit_hub_options(monkeypatch, tmp_path):
-    import lerobot.policies.pi052.modeling_pi052 as modeling_pi052
+    import lerobot.policies.pi05.modeling_pi05 as modeling_pi05
 
     checkpoint = tmp_path / "model.safetensors"
     checkpoint.touch()
@@ -47,8 +47,8 @@ def test_checkpoint_resolution_forwards_explicit_hub_options(monkeypatch, tmp_pa
         calls.append((model_id, filename, kwargs))
         return None if filename.endswith("index.json") else str(checkpoint)
 
-    monkeypatch.setattr(modeling_pi052, "cached_file", fake_cached_file)
-    files = modeling_pi052._resolve_weight_files(
+    monkeypatch.setattr(modeling_pi05, "cached_file", fake_cached_file)
+    files = modeling_pi05._resolve_weight_files(
         "org/model",
         force_download=True,
         resume_download=True,
@@ -71,10 +71,10 @@ def test_checkpoint_resolution_forwards_explicit_hub_options(monkeypatch, tmp_pa
 
 
 def test_checkpoint_resolution_rejects_local_directory_without_weights(tmp_path):
-    import lerobot.policies.pi052.modeling_pi052 as modeling_pi052
+    import lerobot.policies.pi05.modeling_pi05 as modeling_pi05
 
     with pytest.raises(FileNotFoundError, match="model.safetensors"):
-        modeling_pi052._resolve_weight_files(
+        modeling_pi05._resolve_weight_files(
             tmp_path,
             force_download=False,
             resume_download=None,

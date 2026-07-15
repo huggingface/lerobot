@@ -41,14 +41,12 @@ def _checkpoint_model():
     tower = _MockVisionTower()
     language_model = SimpleNamespace(gradient_checkpointing=False)
     expert_model = SimpleNamespace(gradient_checkpointing=False)
-    model = SimpleNamespace(
-        gradient_checkpointing_enabled=False,
-        paligemma_with_expert=SimpleNamespace(
-            paligemma=SimpleNamespace(
-                model=SimpleNamespace(language_model=language_model, vision_tower=tower)
-            ),
-            gemma_expert=SimpleNamespace(model=expert_model),
-        ),
+    model = PI05Pytorch.__new__(PI05Pytorch)
+    nn.Module.__init__(model)
+    model.gradient_checkpointing_enabled = False
+    model.paligemma_with_expert = SimpleNamespace(
+        paligemma=SimpleNamespace(model=SimpleNamespace(language_model=language_model, vision_tower=tower)),
+        gemma_expert=SimpleNamespace(model=expert_model),
     )
     return model, tower, language_model, expert_model
 
