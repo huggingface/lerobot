@@ -137,11 +137,13 @@ class RTCInferenceEngine(InferenceEngine):
         self._flow_estimator = None
         self._predictor_camera: str | None = None
         self._predictor_mode: str = "image_shift"
+        self._predictor_lead_s: float = 0.0
         self._latent_mask_threshold: float = 0.0
         self._flow_motion_threshold: float = 0.0
         if predictor_config is not None and predictor_config.enabled:
             self._predictor_camera = predictor_config.camera
             self._predictor_mode = predictor_config.mode
+            self._predictor_lead_s = predictor_config.lead_s
             self._latent_mask_threshold = predictor_config.latent_mask_threshold
             self._flow_motion_threshold = predictor_config.flow_motion_threshold
             if self._predictor_mode == "latent_flow":
@@ -158,9 +160,11 @@ class RTCInferenceEngine(InferenceEngine):
                     type(policy).__name__,
                 )
             logger.info(
-                "RTC overhead predictor enabled: camera=%s mode=%s (time-advanced observation)",
+                "RTC overhead predictor enabled: camera=%s mode=%s lead_s=%.3f "
+                "(time-advanced observation; advance = latency + lead_s)",
                 predictor_config.camera,
                 self._predictor_mode,
+                self._predictor_lead_s,
             )
 
         self._action_queue: ActionQueue | None = None
@@ -296,17 +300,21 @@ class RTCInferenceEngine(InferenceEngine):
     # ------------------------------------------------------------------
 
     def _time_advanced_obs(self, obs: dict, delay: int, time_per_chunk: float) -> dict:
-        """Advance the cube in the RGB frame by the inference latency (``image_shift``).
+        """Advance the cube in the RGB frame by the effective lead (``image_shift``).
 
         Runs the cube predictor on the configured camera, extrapolates the cube to
-        where it will be after ``delay`` control steps (``lead_s = delay *
-        time_per_chunk``) and shifts it there, returning a shallow copy with only the
-        predictor camera replaced (the shared observation holder is never mutated).
-        The latent modes advance in feature space instead (:meth:`_latent_warp_context`),
-        so this is a no-op for them. Falls back to the original ``obs`` when disabled,
-        the frame is missing, the cube is not tracked yet, or ``delay`` is zero.
+        where it will be after ``lead_s = delay * time_per_chunk + predictor.lead_s``
+        seconds and shifts it there, returning a shallow copy with only the predictor
+        camera replaced (the shared observation holder is never mutated). ``delay *
+        time_per_chunk`` compensates for the inference latency (PE gap); the extra
+        ``predictor.lead_s`` aims ahead of the cube over the open-loop execution
+        window and the arm's reach (see :class:`PredictorConfig`). The latent modes
+        advance in feature space instead (:meth:`_latent_warp_context`), so this is a
+        no-op for them. Falls back to the original ``obs`` when disabled, the frame is
+        missing, the cube is not tracked yet, or the effective lead is zero.
         """
-        if self._predictor is None or self._predictor_mode != "image_shift" or delay <= 0:
+        lead_s = delay * time_per_chunk + self._predictor_lead_s
+        if self._predictor is None or self._predictor_mode != "image_shift" or lead_s <= 0:
             return obs
         frame = obs.get(self._predictor_camera)
         if frame is None:
@@ -315,7 +323,6 @@ class RTCInferenceEngine(InferenceEngine):
             output = self._predictor(frame)
             if output.center_px is None or output.velocity_px_s is None:
                 return obs
-            lead_s = delay * time_per_chunk
             offset = (output.velocity_px_s[0] * lead_s, output.velocity_px_s[1] * lead_s)
             shifted = shift_cube_in_frame(frame, self._predictor.red_mask(frame), offset)
         except Exception as e:  # noqa: BLE001 - predictor must never crash the RTC loop
@@ -334,7 +341,8 @@ class RTCInferenceEngine(InferenceEngine):
         modes, when the policy lacks the hook, or when the warp can't be built (it must
         never crash the RTC loop).
         """
-        if self._predictor_mode not in ("latent_warp", "latent_flow") or delay <= 0:
+        lead_s = delay * time_per_chunk + self._predictor_lead_s
+        if self._predictor_mode not in ("latent_warp", "latent_flow") or lead_s <= 0:
             return nullcontext()
         if not hasattr(self._policy, "set_latent_warp"):
             return nullcontext()
@@ -342,7 +350,7 @@ class RTCInferenceEngine(InferenceEngine):
         if frame is None:
             return nullcontext()
         try:
-            warp_fns = self._build_latent_warp_fns(frame, delay * time_per_chunk, preprocessed)
+            warp_fns = self._build_latent_warp_fns(frame, lead_s, preprocessed)
         except Exception as e:  # noqa: BLE001 - latent warp must never crash the RTC loop
             logger.debug("RTC latent warp skipped frame: %s", e)
             return nullcontext()

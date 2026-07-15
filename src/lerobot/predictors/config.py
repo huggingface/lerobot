@@ -84,6 +84,17 @@ class PredictorConfig:
     enabled: bool = False
     camera: str = "overall"
     mode: PredictorMode = "image_shift"
+    # Extra look-ahead (seconds of control time) added on top of the inference-
+    # latency compensation when advancing the cube. The latency ``delay`` alone
+    # only covers the PE gap (~a single inference); on a conveyor the cube keeps
+    # moving through the whole open-loop execution window *and* the arm's multi-
+    # second reach, so latency-only advance leaves the aim point trailing the
+    # cube. Set this to roughly that horizon (e.g. the replan interval plus the
+    # reach-to-grasp time) to aim ahead of the cube. The total advance is
+    # ``delay * (1/fps) + lead_s``. Defaults to a small non-zero lead because the
+    # latency term alone is far too short for a conveyor; set 0.0 to restore the
+    # latency-only behaviour.
+    lead_s: float = 0.5
     # latent_warp only: a patch is treated as cube when its fractional cube
     # coverage exceeds this threshold (0.0 -> any overlap counts).
     latent_mask_threshold: float = 0.0
@@ -100,6 +111,8 @@ class PredictorConfig:
             raise ValueError(
                 f"mode must be 'image_shift', 'latent_warp', or 'latent_flow', got {self.mode!r}"
             )
+        if self.lead_s < 0:
+            raise ValueError(f"lead_s must be >= 0, got {self.lead_s}")
         if not 0 <= self.latent_mask_threshold < 1:
             raise ValueError(f"latent_mask_threshold must be in [0, 1), got {self.latent_mask_threshold}")
         if self.flow_algorithm not in ("dis", "farneback"):
