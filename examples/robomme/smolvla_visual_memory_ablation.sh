@@ -58,7 +58,7 @@ if [[ "${RUN_EVAL}" == "true" ]]; then
       --env.task_ids="${TASK_IDS}" \
       '--rename_map={"observation.images.image":"observation.images.camera1","observation.images.wrist_image":"observation.images.camera2"}' \
       --eval.batch_size=1 \
-      --eval.n_episodes=50 \
+      --eval.n_episodes=1 \
       --seed="${SEED}" \
       --output_dir="${OUTPUT_ROOT}/eval-${variant}"
   done

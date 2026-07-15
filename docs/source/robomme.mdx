@@ -61,7 +61,7 @@ lerobot-eval \
 
 ### Multi-task evaluation
 
-Evaluate multiple tasks in one run by comma-separating task names. Use `task_ids` to control which episodes are evaluated per task. Recommended: 50 episodes per task for the test split.
+Evaluate multiple tasks in one run by comma-separating task names. Use `task_ids` to select the dataset-backed episodes evaluated for every task. For the standard 50-episode test protocol, select IDs 0 through 49 and run each selected episode once.
 
 ```bash
 lerobot-eval \
@@ -69,20 +69,22 @@ lerobot-eval \
     --env.type=robomme \
     --env.task=PickXtimes,BinFill,StopCube,MoveCube,InsertPeg \
     --env.dataset_split=test \
-    --env.task_ids=[0,1,2,3,4,5,6,7,8,9] \
+    --env.task_ids=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49] \
     --eval.batch_size=1 \
-    --eval.n_episodes=50
+    --eval.n_episodes=1
 ```
 
 ### Key CLI options for `env.type=robomme`
 
-| Option               | Default       | Description                                        |
-| -------------------- | ------------- | -------------------------------------------------- |
-| `env.task`           | `PickXtimes`  | Any of the 16 task names above (comma-separated)   |
-| `env.dataset_split`  | `test`        | `train`, `val`, or `test`                          |
-| `env.action_space`   | `joint_angle` | `joint_angle` (8-D) or `ee_pose` (7-D)             |
-| `env.episode_length` | `300`         | Max steps per episode                              |
-| `env.task_ids`       | `null`        | List of episode indices to evaluate (null = `[0]`) |
+| Option               | Default       | Description                                      |
+| -------------------- | ------------- | ------------------------------------------------ |
+| `env.task`           | `PickXtimes`  | Any of the 16 task names above (comma-separated) |
+| `env.dataset_split`  | `test`        | `train`, `val`, or `test`                        |
+| `env.action_space`   | `joint_angle` | `joint_angle` (8-D) or `ee_pose` (7-D)           |
+| `env.episode_length` | `300`         | Max steps per episode                            |
+| `env.task_ids`       | `null`        | Dataset episode indices (null = `[0]`)           |
+
+`eval.n_episodes` repeats each selected `task_id`; it does not advance to the next dataset episode. Keep it at `1` when enumerating the 50 distinct test episodes with `env.task_ids`.
 
 ## Dataset
 
