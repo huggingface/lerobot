@@ -30,6 +30,10 @@ from lerobot.teleoperators.pico_headset.smpl_constants import (
     ROOT_ACTION_PREFIX,
     SMPL_ACTION_PREFIX,
     SMPL_OBS_DIM as SMPL_ACTION_DIM,
+    VR3_ORN_DIM,
+    VR3_ORN_PREFIX,
+    VR3_POS_DIM,
+    VR3_POS_PREFIX,
 )
 from lerobot.utils.import_utils import _onnxruntime_available, require_package
 
@@ -94,6 +98,28 @@ def _extract_root_from_action(action: dict | None) -> np.ndarray | None:
     if n < 1e-6:
         return None
     return q / n
+
+
+def _extract_vr3_from_action(action: dict | None) -> tuple[np.ndarray, np.ndarray] | None:
+    """Reassemble the 3-point VR targets from ``vr3_pos.{i}`` / ``vr3_orn.{i}`` keys.
+
+    Returns ``(pos (9,), orn (12,))`` for the [l-wrist, r-wrist, neck] keypoints, or
+    None when no VR3 reference was sent this tick. Presence of ``vr3_pos.0`` is the
+    sentinel that a full 3-point frame is available (mirrors the SMPL sentinel).
+    """
+    if not action or f"{VR3_POS_PREFIX}0" not in action:
+        return None
+    pos = np.fromiter(
+        (float(action.get(f"{VR3_POS_PREFIX}{i}", 0.0)) for i in range(VR3_POS_DIM)),
+        dtype=np.float32,
+        count=VR3_POS_DIM,
+    )
+    orn = np.fromiter(
+        (float(action.get(f"{VR3_ORN_PREFIX}{i}", 0.0)) for i in range(VR3_ORN_DIM)),
+        dtype=np.float32,
+        count=VR3_ORN_DIM,
+    )
+    return pos, orn
 
 
 class SonicRuntime:
@@ -240,8 +266,20 @@ class SonicWholeBodyController:
         self.controller.reinit_heading = True
         logger.info("SONIC: SMPL stream active -> whole-body tracking (mode 2)")
 
+    def _enter_3point(self) -> None:
+        """Switch into 3-point VR upper-body teleop (encode_mode 1).
+
+        The upper body tracks the VR wrist/neck targets while the lower body /
+        locomotion keeps running off the planner (joystick/keyboard-driven).
+        """
+        self.controller.encode_mode = 1
+        self.controller.playing = True
+        self.controller.reinit_heading = True
+        self.ms.needs_replan = True
+        logger.info("SONIC: 3-point VR active -> upper-body tracking + planner locomotion (mode 1)")
+
     def _exit_wholebody(self) -> None:
-        """Revert to locomotion/standing (encode_mode 0) after SMPL is lost.
+        """Revert to locomotion/standing (encode_mode 0) after a teleop reference is lost.
 
         Mirrors the 'M' toggle in sonic.py so the handoff is clean: the robot holds
         a standing reference and (if a joystick teleop is attached) can be driven.
@@ -250,7 +288,7 @@ class SonicWholeBodyController:
         self.controller.playing = True
         self.controller.reinit_heading = True
         self.ms.needs_replan = True
-        logger.warning("SONIC: SMPL stream lost/stale -> reverting to locomotion (standing)")
+        logger.warning("SONIC: teleop reference lost/stale -> reverting to locomotion (standing)")
 
     def _process_keyboard(self, action: dict | None) -> None:
         """Translate a native KeyboardTeleop's held-key set into MovementState.
@@ -348,11 +386,14 @@ class SonicWholeBodyController:
         # robot doesn't stay frozen tracking the last pose.
         smpl = _extract_smpl_from_action(action)
         root_quat = _extract_root_from_action(action)
-        if smpl is None and self._smpl_stream is not None:
+        vr3 = _extract_vr3_from_action(action)
+        if smpl is None and vr3 is None and self._smpl_stream is not None:
             window = self._smpl_stream.step()
             if self._smpl_stream.has_data and not self._smpl_stream.is_stale:
                 smpl = window
                 root_quat = np.asarray(self._smpl_stream.root_quat, np.float32)
+                if self._smpl_stream.has_vr3:
+                    vr3 = (self._smpl_stream.vr3_pos, self._smpl_stream.vr3_orn)
 
         if smpl is not None:
             # Full-body whole-body tracking: SMPL drives the reference, not joystick.
@@ -366,8 +407,18 @@ class SonicWholeBodyController:
             self.controller.smpl_root_quat = root_quat if self.enable_smpl_root else None
             return self._runtime.tick(obs, debug=False, use_joystick=False)
 
-        # No (or stale) SMPL: fall back to locomotion so the robot stays balanced.
-        if self.controller.encode_mode == 2:
+        if vr3 is not None:
+            # 3-point VR teleop: upper body tracks the wrist/neck targets; the lower
+            # body / locomotion keeps running off the planner, so the joystick (and
+            # keyboard) still steer walking/turning underneath.
+            if self.controller.encode_mode != 1:
+                self._enter_3point()
+            self.controller.vr_3point_local_target = vr3[0]
+            self.controller.vr_3point_local_orn_target = vr3[1]
+            return self._runtime.tick(obs, debug=False, use_joystick=True)
+
+        # No (or stale) teleop reference: fall back to locomotion so the robot stays balanced.
+        if self.controller.encode_mode != 0:
             self.controller.smpl_root_quat = None
             self._exit_wholebody()
         return self._runtime.tick(obs, debug=False)

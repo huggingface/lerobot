@@ -1153,6 +1153,22 @@ class PlannerController(StandingEncoderDecoder):
                     obs[1642 + 6 * f : 1642 + 6 * (f + 1)] = anchor
                     obs[1702 + 6 * f : 1702 + 6 * (f + 1)] = wrist
                 return obs
+            if self.encode_mode == 1:
+                # 3-point VR teleop: the upper body tracks the VR wrist/neck targets
+                # while the planner reference supplies the lower body + anchor. Lower
+                # body is per-frame (step 5) like mode 0; the VR targets are current.
+                rf = min(self.ref_cursor, self.motion_timesteps - 1)
+                obs[595:601] = self._anchor_6d(self.h_quat[0], self.motion_body_quats[rf].astype(np.float32))
+                for f in range(10):
+                    tf = min(
+                        self.ref_cursor + f * 5 if self.playing else self.ref_cursor,
+                        self.motion_timesteps - 1,
+                    )
+                    ref_lower = self.motion_joint_positions[tf].astype(np.float32)[LOWER_BODY_IL]
+                    obs[661 + 12 * f : 661 + 12 * (f + 1)] = ref_lower
+                obs[901:910] = self.vr_3point_local_target
+                obs[910:922] = self.vr_3point_local_orn_target
+                return obs
             for f in range(10):
                 tf = min(
                     self.ref_cursor + f * 5 if self.playing else self.ref_cursor, self.motion_timesteps - 1
