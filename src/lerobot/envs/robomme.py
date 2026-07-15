@@ -63,6 +63,8 @@ class RoboMMEGymEnv(gym.Env):
         from robomme.env_record_wrapper import BenchmarkEnvBuilder
 
         self._task = task
+        self.task = task
+        self.task_description = task
         self._action_space_type = action_space_type
         self._dataset = dataset
         self._episode_idx = episode_idx
@@ -105,6 +107,12 @@ class RoboMMEGymEnv(gym.Env):
         )
         obs, info = self._env.reset()
         self._last_raw_obs = obs
+        task_goal = info.get("task_goal")
+        # RoboMME returns [simple_subgoal, grounded_subgoal]. The published
+        # LeRobot training dataset uses the simple subgoal as its `task` text.
+        if isinstance(task_goal, (list, tuple)):
+            task_goal = task_goal[0] if task_goal else ""
+        self.task_description = str(task_goal or self._task)
         return self._convert_obs(obs), self._convert_info(info)
 
     def step(self, action):

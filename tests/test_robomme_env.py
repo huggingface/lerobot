@@ -44,7 +44,10 @@ def _install_robomme_stub():
                 "joint_state_list": [np.zeros(7, dtype=np.float32)],
                 "gripper_state_list": [np.zeros(2, dtype=np.float32)],
             }
-            env.reset.return_value = (obs, {"status": "ongoing", "task_goal": "pick the cube"})
+            env.reset.return_value = (
+                obs,
+                {"status": "ongoing", "task_goal": ["pick the cube", "pick the blue cube"]},
+            )
             env.step.return_value = (obs, 0.0, False, False, {"status": "ongoing", "task_goal": ""})
             return env
 
@@ -114,6 +117,21 @@ def test_robomme_features_action_dim_ee_pose():
 # ---------------------------------------------------------------------------
 # Obs conversion (pure Python, no sim)
 # ---------------------------------------------------------------------------
+
+
+def test_reset_exposes_episode_task_description():
+    """VLA evaluation receives the episode-specific language instruction."""
+    _install_robomme_stub()
+    try:
+        from lerobot.envs.robomme import RoboMMEGymEnv
+
+        env = RoboMMEGymEnv(task="PickXtimes")
+        env.reset()
+
+        assert env.task == "PickXtimes"
+        assert env.task_description == "pick the cube"
+    finally:
+        _uninstall_robomme_stub()
 
 
 def test_convert_obs_list_format():
