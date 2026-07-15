@@ -285,6 +285,8 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
             "max_tokens": max_tok,
             "temperature": temp,
         }
+        if config.reasoning_effort:
+            kwargs["reasoning_effort"] = config.reasoning_effort
         extra_body: dict[str, Any] = {}
         if send_mm_kwargs and mm_kwargs:
             extra_body["mm_processor_kwargs"] = {**mm_kwargs, "do_sample_frames": True}
@@ -296,7 +298,13 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
             chosen = clients[rr_counter["i"] % len(clients)]
             rr_counter["i"] += 1
         response = chosen.chat.completions.create(**kwargs)
-        return response.choices[0].message.content or ""
+        # Some OpenAI-compatible servers can return a choice with no message
+        # (safety filter, or a "thinking" model that spends the whole budget
+        # before emitting content). Treat that as an empty reply so the
+        # JSON-retry path handles it instead of crashing the run.
+        choice = response.choices[0] if response.choices else None
+        message = choice.message if choice is not None else None
+        return (message.content if message is not None else None) or ""
 
     def _gen(batch: Sequence[Sequence[dict[str, Any]]], max_tok: int, temp: float) -> list[str]:
         if len(batch) <= 1 or config.client_concurrency <= 1:

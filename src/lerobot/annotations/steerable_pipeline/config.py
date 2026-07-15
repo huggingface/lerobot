@@ -65,6 +65,14 @@ class PlanConfig:
     # invented from the task text (+1 VLM call/episode).
     subtask_describe_first: bool = True
 
+    # Seeded relabeling: after segmentation, re-label each span with a focused
+    # pass that sees the previous / current / next segment contact sheets and
+    # minimally corrects the seed label (macrodata's best end-to-end labeling
+    # step). Costs +1 VLM call per subtask; off by default.
+    subtask_seeded_relabel: bool = False
+    # Frames sampled uniformly per segment sheet in the relabel pass.
+    subtask_relabel_frames: int = 5
+
     # Emit ``style="plan"`` rows at each boundary; False = subtasks + memory only.
     emit_plan: bool = True
 
@@ -159,6 +167,11 @@ class VlmConfig:
     camera_key: str | None = None
     # Forwarded as extra_body.chat_template_kwargs (e.g. {"enable_thinking": false}).
     chat_template_kwargs: dict[str, Any] | None = None
+
+    # OpenAI-style thinking budget hint ("low"/"medium"/"high"); forwarded to
+    # the server when set. Used to cap a thinking model's reasoning so it
+    # leaves tokens for the actual JSON answer on OpenAI-compatible endpoints.
+    reasoning_effort: str | None = None
 
 
 @dataclass
