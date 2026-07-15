@@ -1,0 +1,256 @@
+# π₀.₅ with language supervision (Pi052)
+
+Pi052 extends [Pi05](./pi05) with a trainable PaliGemma language head and a
+runtime that alternates language generation with action generation. A single
+checkpoint can predict a low-level subtask, optionally update memory or answer
+visual questions, and condition its flow-matching action expert on that text.
+
+Use Pi05 when you only need task-conditioned actions. Use Pi052 when the policy
+must generate or consume intermediate language during a rollout.
+
+## How Pi052 differs from Pi05
+
+| Capability          | Pi05                                                   | Pi052                                                                             |
+| ------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| Action model        | PaliGemma vision-language prefix + Gemma action expert | Same base architecture                                                            |
+| Language head       | Not trained for runtime generation                     | Re-enabled and trained with text cross-entropy                                    |
+| Action conditioning | Episode task                                           | Active low-level subtask plus normalized robot state                              |
+| Training targets    | Flow-matching actions                                  | Flow actions, recipe-selected text, and optional FAST action tokens               |
+| Dataset requirement | Standard images, state, actions, and task              | The same fields plus language annotations for every language capability you train |
+| Rollout             | Direct task-to-action policy                           | Hierarchical task → subtask → action loop, with optional memory and VQA           |
+
+Pi052 can initialize from a Pi05 checkpoint. The policy architecture remains
+compatible, while Pi052 builds its own processors so recipe labels and FAST
+labels are not silently replaced by the Pi05 processor stack.
+
+## Install
+
+Install LeRobot with the PI dependencies:
+
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[pi]"
+```
+
+The `pi` extra includes the PaliGemma/FAST dependencies. Install
+`liger-kernel` for the supported fused training kernels; optional FlashRT
+backends also require the Hugging Face `kernels` package and a supported CUDA
+GPU.
+
+## Prepare language-annotated data
+
+Pi052 does not infer supervised subtasks from a normal LeRobot dataset during
+training. The dataset must contain the language targets used by the selected
+recipe in the optional `language_persistent` and `language_events` columns.
+
+At minimum, annotate a continuous `subtask` timeline so each training frame has
+an active low-level instruction. Add `memory`, VQA, interjections, and speech
+annotations only if the recipe trains those capabilities.
+
+The provided recipes are:
+
+| Recipe                                | Required annotations                                                    | Trains                                             |
+| ------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------- |
+| `recipes/subtask.yaml`                | `subtask`                                                               | Subtask prediction and subtask-conditioned actions |
+| `recipes/subtask_mem.yaml`            | `subtask`, `memory`                                                     | Subtasks, actions, and memory updates              |
+| `recipes/subtask_mem_vqa_speech.yaml` | `subtask`, `memory`, `vqa`; interjection/speech rows for those branches | Subtasks, actions, memory, VQA, and spoken replies |
+
+Use `lerobot-annotate` to generate these columns. The repository includes a
+Hugging Face Jobs launcher that you can edit for your source and destination
+datasets. For a local annotation run, first install
+`pip install -e ".[annotations]"`:
+
+```bash
+HF_TOKEN=hf_... uv run python examples/annotations/run_hf_job.py
+```
+
+Before a long training run, inspect several episodes and verify that subtasks
+are temporally correct and cover the full demonstration. See
+[Annotation Pipeline](./annotation_pipeline) for generation and validation, and
+[Language Columns and Recipes](./language_and_recipes) for the schema and
+recipe resolver.
+
+<Tip>
+  If a dataset has no language columns, recipe rendering becomes a no-op and
+  Pi052 falls back to the plain Pi05 prompt path. This is useful for
+  compatibility but does not train the language planner.
+</Tip>
+
+## Train Pi052
+
+This example initializes Pi052 from the public Pi05 base checkpoint and trains
+the default subtask-and-memory recipe:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/my_language_annotated_dataset \
+    --policy.type=pi052 \
+    --policy.pretrained_path=lerobot/pi05_base \
+    --policy.recipe_path=recipes/subtask_mem.yaml \
+    --policy.dtype=bfloat16 \
+    --policy.device=cuda \
+    --policy.freeze_vision_encoder=false \
+    --policy.gradient_checkpointing=true \
+    --batch_size=8 \
+    --steps=30000 \
+    --output_dir=outputs/pi052 \
+    --job_name=pi052 \
+    --wandb.enable=true
+```
+
+For subtask-only data, change the recipe to `recipes/subtask.yaml` and disable
+memory during rollout. Start with a small run and confirm that W&B examples show
+the expected prompt, text target, and action endpoints before scaling up.
+
+### Main training controls
+
+| Option                           |                    Default | Purpose                                                            |
+| -------------------------------- | -------------------------: | ------------------------------------------------------------------ |
+| `policy.recipe_path`             | `recipes/subtask_mem.yaml` | Selects the language/action objective mixture                      |
+| `policy.text_loss_weight`        |                      `1.0` | Language-head cross-entropy weight; `0` disables text training     |
+| `policy.flow_loss_weight`        |                      `5.0` | Continuous action flow-loss weight                                 |
+| `policy.enable_fast_action_loss` |                     `true` | Adds discrete FAST action-token supervision                        |
+| `policy.fast_action_loss_weight` |                      `1.0` | FAST cross-entropy weight                                          |
+| `policy.knowledge_insulation`    |                     `true` | Blocks action-loss gradients through the VLM K/V path              |
+| `policy.flow_num_repeats`        |                        `5` | Reuses one VLM prefix for independent denoising targets            |
+| `policy.lm_head_lr_scale`        |                      `5.0` | Gives the sparsely supervised language head a larger learning rate |
+
+The loss weights are starting points, not dataset-independent constants. Track
+flow loss and text/FAST losses separately, and inspect generated subtasks rather
+than selecting a checkpoint from total loss alone.
+
+### Dataset-specific FAST tokenizer
+
+The universal FAST tokenizer works out of the box. For a large or
+embodiment-specific dataset, Pi052 can fit and cache a tokenizer on normalized
+actions before training:
+
+```bash
+lerobot-train \
+    ... \
+    --policy.auto_fit_fast_tokenizer=true \
+    --policy.fast_tokenizer_fit_samples=4096
+```
+
+The fit runs once per dataset/tokenizer configuration. Keep
+`auto_fit_fast_tokenizer=false` when you do not want the extra preprocessing
+pass.
+
+## Training performance
+
+Pi052 includes the optimized training paths from
+[PR #3974](https://github.com/huggingface/lerobot/pull/3974). The default path:
+
+- batches repeated flow targets and suffix projections instead of replaying
+  small operations in Python;
+- caches constant action masks and computes RoPE positions once per forward;
+- selects the text/FAST cross-entropy implementation from target shape and
+  sparsity;
+- skips the mathematically dead VLM/vision backward on knowledge-insulated,
+  flow-only batches;
+- uses native non-reentrant SigLIP layer checkpointing when gradient
+  checkpointing is enabled; and
+- retains the Liger RoPE/GeGLU kernels while avoiding the slower LayerNorm
+  patch at SigLIP shapes.
+
+Optional training backends are disabled by default:
+
+| Option                                 | When to try it                                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `policy.use_flashrt_adarms=true`       | Fused adaptive RMSNorm and gated residuals on supported CUDA GPUs                                 |
+| `policy.use_compiled_text_ce=true`     | Compiled materialized-logit CE buckets                                                            |
+| `policy.use_compiled_vision=true`      | Compiled vision only when the vision pass has no gradients                                        |
+| `policy.use_flex_attention=true`       | Profiled CUDA setups with knowledge insulation and `flow_num_repeats > 1`; otherwise SDPA is used |
+| `policy.use_manual_attention=true`     | Explicitly profiled shapes where materialized attention is faster                                 |
+| `policy.manual_attention_scope=action` | Restricts manual attention to action queries                                                      |
+
+Do not enable every backend blindly. Flex and manual attention are mutually
+exclusive, and attention/AdaRMS alternatives require knowledge insulation.
+The benchmark-best configuration used compiled text CE and FlashRT AdaRMS,
+with Flex/manual attention and compiled vision disabled.
+
+### Reported training benchmarks
+
+PR #3974 measured complete optimizer steps with three real camera inputs, BF16
+transformer/action execution, FP32 vision, fused AdamW, and no video decoding or
+network I/O. Results vary with GPU, batch shape, annotation mixture, and
+checkpointing:
+
+| Workload                   |     RTX PRO 6000 Blackwell |                 A100 80 GB |
+| -------------------------- | -------------------------: | -------------------------: |
+| Full flow + text, batch 1  | 4.75× vs checkpointing off | 3.33× vs checkpointing off |
+| Full flow + text, batch 8  | 2.16× vs checkpointing off | 1.66× vs checkpointing off |
+| Full flow + text, batch 64 |  1.24× vs checkpointing on |  1.15× vs checkpointing on |
+| Flow-only, batch 1         | 3.70× vs checkpointing off | 3.58× vs checkpointing off |
+| Flow-only, batch 64        |  3.76× vs checkpointing on |  3.61× vs checkpointing on |
+
+On those 80 GB GPUs, full training was fastest without gradient checkpointing
+through batch 8, then required checkpointing at batch 16 and above. Treat that
+as a tuning rule to test on your hardware, not a universal threshold. Flow-only
+means both text and FAST supervision are disabled; it is useful for action-only
+ablation or post-training but does not learn the language runtime.
+
+## Inference performance
+
+Pi052 has two inference loops, and both avoid repeatedly encoding the expensive
+multimodal prefix:
+
+1. **Action denoising** encodes the image/language prefix once, reuses its KV
+   cache across flow steps, precomputes the timestep schedule on-device, and
+   crops temporary suffix K/V instead of cloning the prefix cache.
+2. **Language decoding** uses autoregressive KV caching, so each new token only
+   processes the sampled token against cached image/language keys instead of
+   rerunning the full prefix.
+
+The runtime also runs language and actions at different rates. Increase
+`--subtask_chunks_per_gen` when a subtask remains valid across several action
+chunks, lower `--high_level_hz`, or use `--direct_subtask` to bypass language
+generation entirely. These settings reduce compute but also slow replanning.
+
+`--fp8` enables the optional FlashRT inference MLP swap on supported CUDA GPUs.
+It calibrates on the first observation and falls back to BF16 when unavailable;
+because FP8 can change outputs slightly, validate task success before using it
+for production rollouts.
+
+## Run a checkpoint
+
+RoboCasa:
+
+```bash
+MUJOCO_GL=egl lerobot-rollout \
+    --policy.path=lerobot/pi052_robocasa \
+    --sim --sim.task=CloseFridge --sim.split=pretrain \
+    --task="close the fridge" \
+    --disable_memory \
+    --sim.render_size=384 \
+    --sim.views=robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right \
+    --mode=action --ctrl_hz=20
+```
+
+Open `http://localhost:8010` for the live view. Without
+`--sim.direct_subtask`, Pi052 generates the low-level subtask; with it, each
+prompt becomes the action policy's subtask directly.
+
+The same runtime supports real robots. See [Interactive language
+control](./inference#interactive-language-control) for the real-arm command,
+safety behavior, and runtime controls.
+
+## Troubleshooting
+
+- **No text loss or generated subtasks:** confirm the selected recipe can bind
+  the annotations on sampled frames and that `policy.text_loss_weight > 0`.
+- **Subtasks look plausible but actions fail:** verify subtask boundaries,
+  normalized state/action statistics, and that low-level recipe samples are
+  present.
+- **Text collapses to repeated or location tokens:** inspect text-target
+  coverage, language-head learning rate, and the balance between flow, FAST,
+  and text losses.
+- **Out of memory:** reduce batch size first, then enable gradient
+  checkpointing. Do not enable compiled or alternative attention backends
+  without profiling their memory on your camera count.
+- **Slow rollout:** separate action latency from language latency, then tune
+  `--subtask_chunks_per_gen`, `--high_level_hz`, and the number of flow
+  inference steps.
