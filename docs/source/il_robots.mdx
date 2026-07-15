@@ -126,7 +126,7 @@ import time
 from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 from lerobot.cameras.opencv import OpenCVCameraConfig
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, shutdown_rerun
+from lerobot.utils.visualization_utils import init_visualization, log_visualization_data, shutdown_visualization
 
 robot_config = SO101FollowerConfig(
     port="/dev/tty.usbmodem5AB90687491",
@@ -142,7 +142,7 @@ teleop_config = SO101LeaderConfig(
     id="my_leader_arm",
 )
 
-init_rerun(session_name="teleoperation")
+init_visualization("rerun", session_name="teleoperation")  # pass "foxglove" to stream to Foxglove instead
 
 robot = SO101Follower(robot_config)
 teleop_device = SO101Leader(teleop_config)
@@ -158,7 +158,7 @@ while True:
     observation = robot.get_observation()
     action = teleop_device.get_action()
     robot.send_action(action)
-    log_rerun_data(observation=observation, action=action)
+    log_visualization_data("rerun", observation=observation, action=action)
 
     elapsed_time = time.perf_counter() - start_time
     sleep_time = TIME_PER_FRAME - elapsed_time
@@ -207,7 +207,7 @@ lerobot-record \
     --dataset.num_episodes=5 \
     --dataset.single_task="Grab the black cube" \
     --dataset.streaming_encoding=true \
-    # --dataset.camera_encoder.vcodec=auto \
+    # --dataset.rgb_encoder.vcodec=auto \
     --dataset.encoder_threads=2
 ```
 </hfoption>
@@ -223,7 +223,7 @@ from lerobot.teleoperators.so_leader.config_so_leader import SO101LeaderConfig
 from lerobot.teleoperators.so_leader.so_leader import SO101Leader
 from lerobot.common.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import init_rerun
+from lerobot.utils.visualization_utils import init_visualization
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.processor import make_default_processors
 
@@ -270,7 +270,7 @@ def main():
 
     # Initialize the keyboard listener and rerun visualization
     _, events = init_keyboard_listener()
-    init_rerun(session_name="recording")
+    init_visualization("rerun", session_name="recording")
 
     # Connect the robot and teleoperator
     robot.connect()
@@ -390,9 +390,17 @@ Set the flow of data recording using command-line arguments:
 
 Control the data recording flow using keyboard shortcuts:
 
-- Press **Right Arrow (`→`)**: Early stop the current episode or reset time and move to the next.
-- Press **Left Arrow (`←`)**: Cancel the current episode and re-record it.
-- Press **Escape (`ESC`)**: Immediately stop the session, encode videos, and upload the dataset.
+- Press **Right Arrow (`→`)** or **`n`**: Early stop the current episode or reset time and move to the next.
+- Press **Left Arrow (`←`)** or **`r`**: Cancel the current episode and re-record it.
+- Press **Escape (`ESC`)** or **`q`**: Immediately stop the session, encode videos, and upload the dataset.
+
+<Tip>
+
+These control-flow shortcuts work on **X11, Wayland, and headless/SSH** sessions. When a global keyboard backend isn't available (Wayland, a headless machine, or macOS without Accessibility permission), `lerobot-record` automatically reads the same keys from the terminal — launch it from an interactive terminal and keep it focused. You can also use the letter equivalents **`n`** (next, same as `→`), **`r`** (re-record, same as `←`) and **`q`** (quit, same as `ESC`). No `$DISPLAY` setup is required.
+
+This applies to the recording control flow only. Keyboard **teleoperation** (driving the robot with the keyboard) still needs a global key backend, so it works only on an X11 session, a Windows desktop, or macOS with Accessibility/Input Monitoring granted — not on Wayland or headless sessions.
+
+</Tip>
 
 #### Tips for gathering data
 
@@ -406,7 +414,7 @@ If you want to dive deeper into this important topic, you can check out the [blo
 
 #### Troubleshooting:
 
-- On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
+- On Linux, the recording control-flow keys (arrow keys, Escape) work on X11, Wayland, and headless/SSH sessions as long as `lerobot-record` runs in an interactive terminal — no `$DISPLAY` setup is needed. If the keys have no effect, make sure you are in an interactive (TTY) terminal, not a piped/non-TTY session, and that it is focused; the letter equivalents `n` / `r` / `q` also work. Keyboard _teleoperation_ (as opposed to the recording control flow) still requires a global key backend — an X11 session, a Windows desktop, or macOS with Accessibility/Input Monitoring granted — and is unavailable on Wayland or headless machines. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
 
 ## Visualize a dataset
 
@@ -506,6 +514,12 @@ lerobot-train \
   --resume=true
 ```
 
+`--config_path` also accepts a **Hub repo id**: if a run pushed its checkpoints to the Hub (with `--save_checkpoint_to_hub=true`), you can resume straight from the repo — its latest checkpoint is downloaded and training continues, restoring the optimizer, scheduler, step counter and data order:
+
+```bash
+lerobot-train --config_path=${HF_USER}/my_policy --resume=true
+```
+
 If you do not want to push your model to the hub after training use `--policy.push_to_hub=false`.
 
 Additionally you can provide extra `tags` or specify a `license` for your model or make the model repo `private` by adding this: `--policy.private=true --policy.tags=\[ppo,rl\] --policy.license=mit`
@@ -518,78 +532,48 @@ If your local computer doesn't have a powerful GPU you could utilize Google Cola
 
 Hugging Face jobs let's you easily select hardware and run the training in the cloud. So if you don't have a powerful GPU or you need more VRAM or just want to train a model much faster use HF Jobs! It's pay as you go and you simply pay for each second of use, you can see the pricing and additional information [here](https://huggingface.co/docs/hub/jobs).
 
-To run the training use this command:
+`lerobot-train` runs locally by default. To run on a HuggingFace GPU, pass `--job.target` with a hardware flavor name:
 
-<hfoptions id="train_with_hf_jobs">
-<hfoption id="Command">
 ```bash
-hf jobs run \
-  --flavor a10g-small \
-  --timeout 4h \
-  --secrets HF_TOKEN \
-  huggingface/lerobot-gpu:latest \
-  -- \
-  python -m lerobot.scripts.lerobot_train \
-    --dataset.repo_id=username/dataset \
-    --policy.type=act \
-    --steps=5000 \
-    --batch_size=16 \
-    --policy.device=cuda \
-    --policy.repo_id=username/your_policy \
-    --log_freq=100
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/so101_test \
+  --policy.type=act \
+  --policy.repo_id=${HF_USER}/my_policy \
+  --job.target=a10g-small
 ```
-</hfoption>
-<hfoption id="API example">
 
-<!-- prettier-ignore-start -->
-```python
-from huggingface_hub import run_job, get_token
+List available flavors and pricing with `hf jobs hardware`. The run streams its logs to your terminal; press Ctrl-C to detach (the job keeps running in the cloud). Re-attach or cancel with:
 
-run_name = "act_so101_hf_jobs"
-dataset_id = "username/dataset"
-user_hub_id = "username"
-
-command_args = [
-    "python", "-m", "lerobot.scripts.lerobot_train",
-    "--dataset.repo_id", dataset_id,
-    "--policy.type", "act",
-    "--steps", "5000",
-    "--batch_size", "16",
-    "--num_workers", "4",
-    "--policy.device", "cuda",
-    "--log_freq", "100",
-    "--save_freq", "1000",
-    "--save_checkpoint", "true",
-    "--wandb.enable", "false",
-    "--policy.repo_id", f"{user_hub_id}/{run_name}"
-]
-
-print(f"Submitting job '{run_name}' to Hugging Face Infrastructure...")
-
-job_info = run_job(
-    image="huggingface/lerobot-gpu:latest",
-    command=command_args,
-    flavor="a10g-small",
-    timeout="4h",
-    secrets={"HF_TOKEN": get_token()}
-)
-
-print("\n🚀 Job successfully launched!")
-print(f"🔹 Job ID: {job_info.id}")
-print(f"🔗 Live UI Dashboard & Logs: {job_info.url}")
+```bash
+hf jobs logs <job-id>
+hf jobs cancel <job-id>
 ```
-<!-- prettier-ignore-end -->
 
-</hfoption>
-</hfoptions>
+If your dataset exists only locally (not yet on the Hub), it is automatically pushed to a **private** Hub repo so the job can download it by `repo_id` (nothing is made public). The trained model is pushed to the model repo at the end of the run. To also push every intermediate checkpoint to the Hub as it is saved (so you can monitor progress mid-run), add `--save_checkpoint_to_hub=true` — this requires a runtime image that includes this feature.
 
-You can modify the `--flavor` to use different hardware, for example: `t4-small`, `a100-large`, `h200`. Use `hf jobs hardware` to see the full list with pricing.
-Depending on the model you want to train and the hardware you selected you can also modify the `--batch_size` and `--number_of_workers`.
-For longer training sessions increase the timeout.
+Every job (and any dataset pushed by the run) is tagged `lerobot` so it's easy to find on the Hub. Add your own with `--job.tags '["my-tag"]'`.
 
-Once the training is started you can go to [Jobs](https://huggingface.co/settings/jobs) and see if your jobs is running as well as all the outputs. Sometimes it takes a few minutes to schedule your job so be patient.
+By default the job is capped at `2d` (48h) of wall-clock. Override it with an HF Jobs duration string, e.g. `--job.timeout=4h` to fail faster or `--job.timeout=7d` for a longer run.
 
-After training the model will be pushed to hub and you can use it as any other model with LeRobot.
+> **Note:** the model repo is created up front (it holds the staged training config the job runs from). If a run fails before the model is pushed, that repo is left on the Hub so you can inspect it — it is not deleted automatically, so repeated failures can leave empty repos behind. Remove one with `hf repo delete <repo-id>`.
+
+**Prerequisites:** run `hf auth login` before submitting. For Weights & Biases integration, run `wandb login` or set `WANDB_API_KEY` on your machine — the key is forwarded to the job automatically.
+
+**Resuming on a job.** Adding `--job.target` to a resume command runs the resume in the cloud — the same command works locally or remotely. The checkpoint repo is the source of truth, and new checkpoints continue the lineage in the same repo:
+
+```bash
+# resume a Hub run on a job (its checkpoints are already on the Hub)
+lerobot-train --config_path=${HF_USER}/my_policy --resume=true --job.target=a10g-small
+
+# resume a LOCAL run on a job — the checkpoint is uploaded to a private Hub repo first,
+# then the job resumes from it (a local-only dataset is uploaded the same way)
+lerobot-train \
+  --config_path=outputs/train/act_so101_test/checkpoints/last/pretrained_model/train_config.json \
+  --resume=true \
+  --job.target=a10g-small
+```
+
+Job settings come from the current command, so override `--job.target`, `--job.timeout`, etc. as needed; for the resumed run to itself be resumable later, keep `--save_checkpoint_to_hub=true`.
 
 #### Upload policy checkpoints
 
@@ -611,6 +595,8 @@ hf upload ${HF_USER}/act_so101_test${CKPT} \
 ## Run inference and evaluate your policy
 
 Use `lerobot-rollout` to deploy a trained policy on your robot. You can choose different strategies depending on your needs:
+
+The examples below load the model from `--policy.path`. To pin a specific pushed version — useful once `--save_checkpoint_to_hub=true` has committed several checkpoints — add `--policy.pretrained_revision` with a commit hash, branch, or tag. Each pushed checkpoint is tagged with its step (e.g. `--policy.pretrained_revision=010000`), so you can recover a checkpoint by step without looking up its commit sha.
 
 <hfoptions id="eval">
 <hfoption id="Base mode (no recording)">
@@ -647,5 +633,6 @@ The `--strategy.type` flag selects the execution mode:
 - `sentry`: Continuous recording with auto-upload (useful for large-scale evaluation)
 - `highlight`: Ring buffer recording with keystroke save (useful for capturing interesting events)
 - `dagger`: Human-in-the-loop data collection (see [HIL Data Collection](./hil_data_collection))
+- `episodic`: Episode-oriented policy recording with reset phases between episodes
 
 All strategies support `--inference.type=rtc` for smooth execution with slow VLA models (Pi0, Pi0.5, SmolVLA).

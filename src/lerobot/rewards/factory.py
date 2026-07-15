@@ -25,6 +25,7 @@ from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 
 from .classifier.configuration_classifier import RewardClassifierConfig
 from .pretrained import PreTrainedRewardModel
+from .robometer.configuration_robometer import RobometerConfig
 from .sarm.configuration_sarm import SARMConfig
 from .topreward.configuration_topreward import TOPRewardConfig
 
@@ -38,7 +39,7 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
 
     Args:
         name: The name of the reward model. Supported names are "reward_classifier",
-              "sarm", "topreward".
+              "sarm", "robometer", "topreward".
 
     Returns:
         The reward model class corresponding to the given name.
@@ -54,6 +55,10 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
         from lerobot.rewards.sarm.modeling_sarm import SARMRewardModel
 
         return SARMRewardModel
+    elif name == "robometer":
+        from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
+
+        return RobometerRewardModel
     elif name == "topreward":
         from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
 
@@ -74,7 +79,7 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
 
     Args:
         reward_type: The type of the reward model. Supported types include
-                     "reward_classifier", "sarm", "topreward".
+                     "reward_classifier", "sarm", "robometer", "topreward".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -87,6 +92,8 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
         return RewardClassifierConfig(**kwargs)
     elif reward_type == "sarm":
         return SARMConfig(**kwargs)
+    elif reward_type == "robometer":
+        return RobometerConfig(**kwargs)
     elif reward_type == "topreward":
         return TOPRewardConfig(**kwargs)
     else:
@@ -117,6 +124,7 @@ def make_reward_model(cfg: RewardModelConfig, **kwargs) -> PreTrainedRewardModel
 
     if cfg.pretrained_path:
         kwargs["pretrained_name_or_path"] = cfg.pretrained_path
+        kwargs["revision"] = cfg.pretrained_revision
         reward_model = reward_cls.from_pretrained(**kwargs)
     else:
         reward_model = reward_cls(**kwargs)
@@ -167,6 +175,13 @@ def make_reward_pre_post_processors(
             config=reward_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
             dataset_meta=kwargs.get("dataset_meta"),
+        )
+    elif isinstance(reward_cfg, RobometerConfig):
+        from lerobot.rewards.robometer.processor_robometer import make_robometer_pre_post_processors
+
+        return make_robometer_pre_post_processors(
+            config=reward_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
         )
 
     elif isinstance(reward_cfg, TOPRewardConfig):

@@ -18,7 +18,8 @@ import logging
 from functools import cached_property
 
 from lerobot.types import RobotAction, RobotObservation
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.bimanual import BimanualMixin
+from lerobot.utils.decorators import check_if_not_connected
 
 from ..robot import Robot
 from ..so_follower import SOFollower, SOFollowerRobotConfig
@@ -27,7 +28,7 @@ from .config_bi_so_follower import BiSOFollowerConfig
 logger = logging.getLogger(__name__)
 
 
-class BiSOFollower(Robot):
+class BiSOFollower(BimanualMixin, Robot):
     """
     [Bimanual SO Follower Arms](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
     """
@@ -39,6 +40,18 @@ class BiSOFollower(Robot):
         super().__init__(config)
         self.config = config
 
+        # Top-level cameras are opened by `left_arm` for convenience, but their
+        # keys stay unprefixed in observations (tracked via `_top_level_cam_keys`).
+        self._top_level_cam_keys = set(config.cameras)
+        _collisions = self._top_level_cam_keys & set(
+            config.left_arm_config.cameras
+        ) | self._top_level_cam_keys & set(config.right_arm_config.cameras)
+        if _collisions:
+            raise ValueError(
+                f"Top-level camera names collide with per-arm camera names: {sorted(_collisions)}"
+            )
+        left_arm_cameras = {**config.left_arm_config.cameras, **config.cameras}
+
         left_arm_config = SOFollowerRobotConfig(
             id=f"{config.id}_left" if config.id else None,
             calibration_dir=config.calibration_dir,
@@ -46,7 +59,7 @@ class BiSOFollower(Robot):
             disable_torque_on_disconnect=config.left_arm_config.disable_torque_on_disconnect,
             max_relative_target=config.left_arm_config.max_relative_target,
             use_degrees=config.left_arm_config.use_degrees,
-            cameras=config.left_arm_config.cameras,
+            cameras=left_arm_cameras,
         )
 
         right_arm_config = SOFollowerRobotConfig(
@@ -77,13 +90,12 @@ class BiSOFollower(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        left_arm_cameras_ft = self.left_arm._cameras_ft
-        right_arm_cameras_ft = self.right_arm._cameras_ft
-
-        return {
-            **{f"left_{k}": v for k, v in left_arm_cameras_ft.items()},
-            **{f"right_{k}": v for k, v in right_arm_cameras_ft.items()},
-        }
+        out: dict[str, tuple] = {}
+        for k, v in self.left_arm._cameras_ft.items():
+            out[k if k in self._top_level_cam_keys else f"left_{k}"] = v
+        for k, v in self.right_arm._cameras_ft.items():
+            out[f"right_{k}"] = v
+        return out
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -93,42 +105,21 @@ class BiSOFollower(Robot):
     def action_features(self) -> dict[str, type]:
         return self._motors_ft
 
-    @property
-    def is_connected(self) -> bool:
-        return self.left_arm.is_connected and self.right_arm.is_connected
-
-    @check_if_already_connected
-    def connect(self, calibrate: bool = True) -> None:
-        self.left_arm.connect(calibrate)
-        self.right_arm.connect(calibrate)
-
-    @property
-    def is_calibrated(self) -> bool:
-        return self.left_arm.is_calibrated and self.right_arm.is_calibrated
-
-    def calibrate(self) -> None:
-        self.left_arm.calibrate()
-        self.right_arm.calibrate()
-
-    def configure(self) -> None:
-        self.left_arm.configure()
-        self.right_arm.configure()
-
     def setup_motors(self) -> None:
         self.left_arm.setup_motors()
         self.right_arm.setup_motors()
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        obs_dict = {}
+        obs_dict: RobotObservation = {}
 
-        # Add "left_" prefix
-        left_obs = self.left_arm.get_observation()
-        obs_dict.update({f"left_{key}": value for key, value in left_obs.items()})
+        # Add "left_" prefix to per-arm keys; keep top-level camera keys unprefixed.
+        for key, value in self.left_arm.get_observation().items():
+            obs_dict[key if key in self._top_level_cam_keys else f"left_{key}"] = value
 
         # Add "right_" prefix
-        right_obs = self.right_arm.get_observation()
-        obs_dict.update({f"right_{key}": value for key, value in right_obs.items()})
+        for key, value in self.right_arm.get_observation().items():
+            obs_dict[f"right_{key}"] = value
 
         return obs_dict
 
@@ -151,8 +142,3 @@ class BiSOFollower(Robot):
         prefixed_sent_action_right = {f"right_{key}": value for key, value in sent_action_right.items()}
 
         return {**prefixed_sent_action_left, **prefixed_sent_action_right}
-
-    @check_if_not_connected
-    def disconnect(self):
-        self.left_arm.disconnect()
-        self.right_arm.disconnect()
