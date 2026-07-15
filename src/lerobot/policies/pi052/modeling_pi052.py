@@ -22,12 +22,13 @@ import logging
 import math
 import types
 from collections import deque
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, TypedDict, Unpack
 
 import torch
 from torch import Tensor, nn
-from torch.nn import functional as F
+from torch.nn import functional as F  # noqa: N812
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import (
@@ -261,7 +262,9 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         """Enable gradient checkpointing for memory optimization."""
         self.gradient_checkpointing_enabled = True
         self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing = True
-        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing = True
+        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False}
+        )
         self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = True
         logging.info("Enabled gradient checkpointing for PI05Pytorch model")
 
@@ -269,7 +272,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         """Disable gradient checkpointing."""
         self.gradient_checkpointing_enabled = False
         self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing = False
-        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing = False
+        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing_disable()
         self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = False
         logging.info("Disabled gradient checkpointing for PI05Pytorch model")
 
@@ -316,15 +319,12 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         pad_masks = []
         att_masks = []
 
-        # Process images
-        for img, img_mask in zip(images, img_masks, strict=True):
+        # SigLIP checkpoints its encoder layers internally. An outer tower
+        # checkpoint would recreate every layer activation at once in backward.
+        img_embs = [self.paligemma_with_expert.embed_image(img) for img in images]
 
-            def image_embed_func(img):
-                return self.paligemma_with_expert.embed_image(img)
-
-            img_emb = self._apply_checkpoint(image_embed_func, img)
+        for img_emb, img_mask in zip(img_embs, img_masks, strict=True):
             bsize, num_img_embs = img_emb.shape[:2]
-
             embs.append(img_emb)
             pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
             att_masks += [0] * num_img_embs
@@ -406,7 +406,12 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
+        # The prefix has no gradient path to a flow-only loss under KI.
+        suppress_prefix = bool(getattr(self.config, "knowledge_insulation", False))
+        with torch.no_grad() if suppress_prefix else nullcontext():
+            prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+                images, img_masks, tokens, masks
+            )
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
 
         if (
@@ -424,7 +429,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks, dtype=prefix_embs.dtype)
 
-        # The model already checkpoints each layer; an outer checkpoint would duplicate recomputation.
+        # Transformer and vision layers own their checkpoint boundaries.
+        ki_kwargs = {"suppress_prefix_grads": True} if suppress_prefix else {}
         (_, suffix_out), _ = self.paligemma_with_expert.forward(
             attention_mask=att_2d_masks_4d,
             position_ids=position_ids,
@@ -432,6 +438,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             inputs_embeds=[prefix_embs, suffix_embs],
             use_cache=False,
             adarms_cond=[None, adarms_cond],
+            **ki_kwargs,
         )
 
         suffix_out = suffix_out[:, -self.config.chunk_size :]
@@ -578,17 +585,7 @@ _HF_KERNELS_ENABLED = False
 
 
 def _enable_hf_kernels() -> None:
-    """Patch PaliGemma / Gemma / Siglip layers with Liger fused kernels.
-
-    Must run BEFORE ``PaliGemmaWithExpertModel`` is built — the patch
-    replaces classes in ``transformers.models.{gemma,paligemma,siglip}``,
-    so any model constructed after this picks up the fused forwards.
-    Idempotent (process-global). ``cross_entropy`` / ``fused_linear_*``
-    are deliberately skipped — pi052 uses ``F.cross_entropy`` directly
-    and never traverses ``PaliGemmaForConditionalGeneration.forward``,
-    so those Liger paths wouldn't fire without model-code changes.
-    See bench job 22161421 in ``examples/benchmark/`` for the numbers.
-    """
+    """Patch supported PaliGemma operations before constructing the model."""
     global _HF_KERNELS_ENABLED
     if _HF_KERNELS_ENABLED:
         return
@@ -597,20 +594,20 @@ def _enable_hf_kernels() -> None:
     except ImportError:
         logger.warning(
             "PI052: liger-kernel is not installed; skipping fused Triton "
-            "kernels (rope/geglu/layer_norm). Install with "
-            "``pip install liger-kernel`` for a ~4.5%% step speedup."
+            "kernels. Install with ``pip install liger-kernel``."
         )
         return
     apply_liger_kernel_to_paligemma(
         rope=True,
         geglu=True,
-        layer_norm=True,
+        # Liger LayerNorm regresses at SigLIP shapes; RoPE and GeGLU remain enabled.
+        layer_norm=False,
         rms_norm=False,
         cross_entropy=False,
         fused_linear_cross_entropy=False,
     )
     _HF_KERNELS_ENABLED = True
-    logger.info("PI052: HF kernels (Liger) enabled — rope, geglu, layer_norm fused.")
+    logger.info("PI052: HF kernels (Liger) enabled — rope, geglu fused.")
 
 
 def _mask_per_sample(per_sample: Tensor, predict_actions_t: Tensor | None) -> Tensor:
@@ -621,44 +618,95 @@ def _mask_per_sample(per_sample: Tensor, predict_actions_t: Tensor | None) -> Te
     return (per_sample * mask).sum() / mask.sum().clamp(min=1.0)
 
 
-def _shifted_lin_ce(
-    hidden: Tensor,
+# Materialized logits win at VLA token counts; larger dense targets use Liger.
+_LOGITS_CE_MAX_POSITIONS = 2048
+
+
+def _lin_ce_small(
+    flat_hidden: Tensor,
     lm_head_weight: Tensor,
-    labels: Tensor,
+    flat_labels: Tensor,
     z_loss_weight: float = 0.0,
 ) -> Tensor:
-    """Liger-fused (hidden @ W.T → softmax → CE) on shifted labels.
+    """Small-N linear CE on materialized logits (see ``_lin_ce_flat``)."""
+    logits = (flat_hidden @ lm_head_weight.t()).float()
+    n_valid = (flat_labels != -100).sum().clamp(min=1)
+    loss = F.cross_entropy(logits, flat_labels, ignore_index=-100, reduction="sum") / n_valid
+    if z_loss_weight > 0:
+        lse = torch.logsumexp(logits, dim=-1)
+        valid = (flat_labels != -100).to(lse.dtype)
+        loss = loss + float(z_loss_weight) * (lse.square() * valid).sum() / n_valid
+    return loss
 
-    Replaces the explicit ``lm_head(hidden) → F.cross_entropy(...)``
-    pair with Liger's ``LigerFusedLinearCrossEntropyLoss``: the full
-    ``(B, T, V)`` logits tensor is never materialised — the kernel
-    chunks over the (B*T) axis, computing matmul + logsumexp + CE
-    in fused Triton blocks. On a 257k-vocab head this saves ~10 GB
-    of activation memory per CE branch and ~30 % step time vs the
-    eager ``F.cross_entropy`` path.
 
-    Semantics:
-      * Shift convention identical to the eager version — hidden at
-        position ``t`` predicts label at ``t+1``; ``ignore_index=-100``.
-      * No ``.any().item()`` sync — Liger returns 0.0 cleanly when
-        every label is ignored.
-      * ``z_loss_weight`` maps directly to Liger's ``lse_square_scale``
-        (same ``z²·w`` formula on per-position logsumexp). Setting it
-        to 0 disables the z-loss term at zero cost.
-    """
-    # Keep Liger optional until the training path needs it.
+# Built lazily so importing this module does not invoke Dynamo.
+_compiled_lin_ce_small = None
+
+
+def _get_compiled_lin_ce_small():
+    global _compiled_lin_ce_small
+    if _compiled_lin_ce_small is None:
+        _compiled_lin_ce_small = torch.compile(_lin_ce_small, dynamic=False)
+    return _compiled_lin_ce_small
+
+
+def _lin_ce_flat(
+    flat_hidden: Tensor,
+    lm_head_weight: Tensor,
+    flat_labels: Tensor,
+    z_loss_weight: float = 0.0,
+    compiled: bool = False,
+) -> Tensor:
+    """Dispatch sparse targets to fixed logits buckets and dense targets to Liger."""
+    if flat_hidden.shape[0] > _LOGITS_CE_MAX_POSITIONS:
+        valid = flat_labels != -100
+        compact_hidden = flat_hidden[valid]
+        compact_labels = flat_labels[valid]
+        compact_rows = compact_hidden.shape[0]
+
+        if compact_rows == 0:
+            return _lin_ce_flat(
+                F.pad(compact_hidden, (0, 0, 0, 1)),
+                lm_head_weight,
+                F.pad(compact_labels, (0, 1), value=-100),
+                z_loss_weight,
+                compiled=compiled,
+            )
+
+        # Fixed power-of-two buckets avoid shape churn while keeping sparse
+        # supervision on the materialized-logits path.
+        bucket_rows = 1 << (compact_rows - 1).bit_length()
+        if bucket_rows < flat_hidden.shape[0]:
+            weighted_losses = []
+            for start in range(0, compact_rows, _LOGITS_CE_MAX_POSITIONS):
+                end = min(start + _LOGITS_CE_MAX_POSITIONS, compact_rows)
+                rows = end - start
+                chunk_rows = 1 << (rows - 1).bit_length()
+                hidden_chunk = compact_hidden[start:end]
+                labels_chunk = compact_labels[start:end]
+                pad_rows = chunk_rows - rows
+                if pad_rows:
+                    hidden_chunk = F.pad(hidden_chunk, (0, 0, 0, pad_rows))
+                    labels_chunk = F.pad(labels_chunk, (0, pad_rows), value=-100)
+                chunk_loss = _lin_ce_flat(
+                    hidden_chunk,
+                    lm_head_weight,
+                    labels_chunk,
+                    z_loss_weight,
+                    compiled=compiled,
+                )
+                weighted_losses.append(chunk_loss * rows)
+            return torch.stack(weighted_losses).sum() / compact_rows
+
+    if flat_hidden.shape[0] <= _LOGITS_CE_MAX_POSITIONS:
+        fn = _get_compiled_lin_ce_small() if compiled else _lin_ce_small
+        return fn(flat_hidden, lm_head_weight, flat_labels, z_loss_weight)
+
+    # Keep Liger optional for inference-only installations.
     from liger_kernel.transformers.fused_linear_cross_entropy import (  # noqa: PLC0415
         LigerFusedLinearCrossEntropyLoss,
     )
 
-    shift_hidden = hidden[:, :-1, :].contiguous()
-    shift_labels = labels[:, 1:].contiguous().long()
-    B, T_1, H = shift_hidden.shape
-    flat_hidden = shift_hidden.reshape(B * T_1, H)
-    flat_labels = shift_labels.reshape(B * T_1)
-    # Match the dtype the eager path used: cast hidden to the lm_head's
-    # weight dtype so bf16 weights see bf16 activations.
-    flat_hidden = flat_hidden.to(lm_head_weight.dtype)
     loss_fn = LigerFusedLinearCrossEntropyLoss(
         ignore_index=-100,
         lse_square_scale=float(z_loss_weight),
@@ -667,31 +715,29 @@ def _shifted_lin_ce(
     return loss_fn(lm_head_weight, flat_hidden, flat_labels)
 
 
+def _shifted_lin_ce(
+    hidden: Tensor,
+    lm_head_weight: Tensor,
+    labels: Tensor,
+    z_loss_weight: float = 0.0,
+    compiled: bool = False,
+) -> Tensor:
+    """Compute next-token CE through the shape-aware linear-CE dispatcher."""
+    shift_hidden = hidden[:, :-1, :].contiguous()
+    shift_labels = labels[:, 1:].contiguous().long()
+    batch_size, target_length, hidden_size = shift_hidden.shape
+    flat_hidden = shift_hidden.reshape(batch_size * target_length, hidden_size)
+    flat_labels = shift_labels.reshape(batch_size * target_length)
+    # Match the dtype the eager path used: cast hidden to the lm_head's
+    # weight dtype so bf16 weights see bf16 activations.
+    flat_hidden = flat_hidden.to(lm_head_weight.dtype)
+    return _lin_ce_flat(flat_hidden, lm_head_weight, flat_labels, z_loss_weight, compiled=compiled)
+
+
 def _mark_target_span_causal(
     prefix_att_masks: Tensor, text_labels: Tensor, lang_start: int, lang_end: int
 ) -> Tensor:
-    """Make the supervised text-target span causally masked.
-
-    ``embed_prefix`` lays the PaliGemma prefix out as ``[images,
-    language]`` with the language block flagged ``att=0`` — which
-    ``make_att_2d_masks`` turns into one fully *bidirectional* block.
-    A supervised target token's hidden state then attends to the very
-    tokens it is trained to predict, so the text cross-entropy
-    degenerates into a copy task (loss → ~0) and the LM head never
-    learns causal next-token prediction. At inference ``select_message``
-    decodes autoregressively (causally) and the head collapses to
-    repeated/garbage tokens.
-
-    Fix: set ``att=1`` on the language positions that are supervised
-    targets (``text_labels != -100``). Under ``make_att_2d_masks``'s
-    cumulative-block rule each target token then attends bidirectionally
-    to images + the user prompt and causally to *earlier* targets only —
-    genuine next-token prediction, matching inference. Non-target
-    language (the user prompt, the flow-only ``low_level`` subtask) stays
-    ``att=0`` / bidirectional. The action expert / FAST tokens are
-    unaffected: they sit at a strictly higher cumsum and still attend to
-    every prefix token.
-    """
+    """Make supervised language targets causal while leaving prompts bidirectional."""
     att = prefix_att_masks.clone()
     n = min(text_labels.shape[1], lang_end - lang_start)
     if n <= 0:
@@ -708,20 +754,9 @@ def _fast_lin_ce(
     action_tokens: Tensor,
     action_code_mask: Tensor,
     predict_actions_t: Tensor | None,
+    compiled: bool = False,
 ) -> Tensor:
-    """Liger-fused FAST action-code CE with span masking + sample gating.
-
-    Mirrors ``_shifted_lin_ce`` but with FAST-specific masking: only
-    the discrete action-code positions (``action_code_mask``) are
-    supervised, and samples whose recipe sets ``predict_actions=False``
-    get all code positions masked. Masked positions are folded into
-    Liger's ``ignore_index=-100`` so the kernel skips them without
-    a CPU-side gather (which would synchronise + break CUDA graphs).
-    """
-    from liger_kernel.transformers.fused_linear_cross_entropy import (  # noqa: PLC0415
-        LigerFusedLinearCrossEntropyLoss,
-    )
-
+    """Compute FAST token CE over the enabled action-code positions."""
     shift_hidden = hidden[:, :-1, :].contiguous()
     shift_targets = action_tokens[:, 1:].contiguous().long()
     shift_valid = action_code_mask[:, 1:].contiguous().bool()
@@ -731,33 +766,202 @@ def _fast_lin_ce(
     # Encode the mask with ignore_index to avoid a host sync and preserve graph capture.
     shift_targets = torch.where(shift_valid, shift_targets, torch.full_like(shift_targets, -100))
 
-    B, T_1, H = shift_hidden.shape
-    flat_hidden = shift_hidden.reshape(B * T_1, H).to(lm_head_weight.dtype)
-    flat_labels = shift_targets.reshape(B * T_1)
+    batch_size, target_length, hidden_size = shift_hidden.shape
+    flat_hidden = shift_hidden.reshape(batch_size * target_length, hidden_size).to(lm_head_weight.dtype)
+    flat_labels = shift_targets.reshape(batch_size * target_length)
+    return _lin_ce_flat(flat_hidden, lm_head_weight, flat_labels, compiled=compiled)
 
-    loss_fn = LigerFusedLinearCrossEntropyLoss(
-        ignore_index=-100,
-        reduction="mean",
+
+# ----------------------------------------------------------------------
+# Knowledge insulation helpers
+# ----------------------------------------------------------------------
+# Action queries consume detached VLM K/V. Flow-only callers may additionally
+# suppress the now-dead prefix graph without changing forward values.
+
+
+# Consumer GPUs need smaller FlexAttention backward tiles at head_dim=256.
+_FLEX_SHRUNK_TILES = {"BLOCK_M1": 32, "BLOCK_N1": 64, "BLOCK_M2": 64, "BLOCK_N2": 32}
+_flex_kernel_options: dict[int, dict | None] = {}
+_flex_fns: tuple | None | bool = None
+
+
+def _get_flex_kernel_options(device: torch.device) -> dict | None:
+    if device.type != "cuda" or not torch.cuda.is_available():
+        return None
+    device_index = device.index if device.index is not None else torch.cuda.current_device()
+    if device_index not in _flex_kernel_options:
+        smem = torch.cuda.get_device_properties(device_index).shared_memory_per_block_optin
+        _flex_kernel_options[device_index] = _FLEX_SHRUNK_TILES if smem < 128 * 1024 else None
+    return _flex_kernel_options[device_index]
+
+
+def _get_flex_fns(device: torch.device):
+    """Return compiled FlexAttention helpers when available."""
+    global _flex_fns
+    if device.type != "cuda" or not torch.cuda.is_available():
+        return None
+    if _flex_fns is None:
+        try:
+            from torch.nn.attention.flex_attention import (  # noqa: PLC0415
+                create_block_mask,
+                flex_attention,
+            )
+
+            _flex_fns = (
+                torch.compile(flex_attention, dynamic=False),
+                torch.compile(create_block_mask, dynamic=False),
+            )
+            _get_flex_kernel_options(device)
+        except Exception as exc:
+            logger.warning("PI052: FlexAttention unavailable (%s); using SDPA.", exc)
+            _flex_fns = False
+    return _flex_fns or None
+
+
+class _FlexMaskBuilder:
+    """Build KI masks while retaining stable compiled mask callables."""
+
+    def __init__(self):
+        self._key = None
+
+    def build(self, prefix_pad, prefix_att, non_fast_prefix_len, k, chunk):
+        _, create_bm = _get_flex_fns(prefix_pad.device)
+        b, p = prefix_pad.shape
+        a = k * chunk
+        device = prefix_pad.device
+        key = (b, p, a, int(non_fast_prefix_len), device)
+        if self._key != key:
+            self._key = key
+            self._pad = torch.empty(b, p, dtype=torch.bool, device=device)
+            self._cum = torch.empty(b, p, dtype=torch.long, device=device)
+            pad, cum = self._pad, self._cum
+            nf = int(non_fast_prefix_len)
+
+            def vlm_rows(bi, h, q_idx, kv_idx):
+                kv_p = kv_idx.clamp(max=p - 1)
+                ok = (cum[bi, kv_p] <= cum[bi, q_idx]) & pad[bi, kv_p] & pad[bi, q_idx]
+                return (kv_idx < p) & ok
+
+            def action_rows(bi, h, q_idx, kv_idx):
+                kv_p = kv_idx.clamp(max=p - 1)
+                to_prefix = (kv_idx < nf) & pad[bi, kv_p]
+                same_block = (q_idx // chunk) == ((kv_idx - p) // chunk)
+                return to_prefix | ((kv_idx >= p) & same_block)
+
+            self._vlm_mod, self._action_mod = vlm_rows, action_rows
+
+        self._pad.copy_(prefix_pad)
+        self._cum.copy_(torch.cumsum(prefix_att.to(torch.long), dim=1))
+        s = p + a
+        bm_vlm = create_bm(self._vlm_mod, B=b, H=None, Q_LEN=p, KV_LEN=s, device=device)
+        bm_action = create_bm(self._action_mod, B=b, H=None, Q_LEN=a, KV_LEN=s, device=device)
+        return bm_vlm, bm_action
+
+
+# Lazily loaded FlashRT AdaRMS backend; unsupported cases use eager PyTorch.
+_flashrt_adarms_cache = None
+
+
+def _get_adarms_backend():
+    global _flashrt_adarms_cache
+    if _flashrt_adarms_cache is None:
+        try:
+            from kernels import get_kernel  # noqa: PLC0415
+
+            _flashrt_adarms_cache = get_kernel("flashrt/flashrt-adarms-train", revision="v1")
+        except Exception as exc:
+            logger.warning(
+                "PI052: flashrt-adarms-train unavailable (%s); using the eager norm path.",
+                exc,
+            )
+            _flashrt_adarms_cache = False
+    return _flashrt_adarms_cache or None
+
+
+def _adarms_norm(backend, norm, x, cond):
+    """PiGemmaRMSNorm through the fused kernel when a backend is present."""
+    if backend is not None:
+        if cond is not None and norm.dense is not None:
+            return backend.adarms(x, norm.dense(cond), norm.eps, True)
+        if norm.dense is None:
+            return backend.adarms(x, norm.weight, norm.eps, False)
+    return norm(x, cond=cond)
+
+
+def _manual_attention_part(qs, ks, vs, m, scale):
+    """Materialized-logits GQA with an FP32 softmax."""
+    batch_size, num_heads, query_length, head_dim = qs.shape
+    num_kv_heads = ks.shape[1]
+    if num_kv_heads != num_heads:
+        groups = num_heads // num_kv_heads
+        grouped_queries = qs.reshape(batch_size, num_kv_heads, groups * query_length, head_dim)
+        logits = (grouped_queries @ ks.transpose(-1, -2)).reshape(batch_size, num_heads, query_length, -1)
+    else:
+        logits = qs @ ks.transpose(-1, -2)
+    logits = logits * scale + m
+    p = logits.float().softmax(dim=-1).to(qs.dtype)
+    out = (
+        (p.reshape(batch_size, num_kv_heads, groups * query_length, -1) @ vs).reshape(
+            batch_size, num_heads, query_length, head_dim
+        )
+        if num_kv_heads != num_heads
+        else p @ vs
     )
-    return loss_fn(lm_head_weight, flat_hidden, flat_labels)
+    return out.transpose(1, 2).contiguous()
 
 
 # Knowledge insulation keeps the forward equivalent while detaching VLM K/V for action-query gradients.
+_manual_attention = None
+
+
+def _get_manual_attention():
+    """Load the Hub implementation, with the inline function as fallback."""
+    global _manual_attention
+    if _manual_attention is None:
+        part = _manual_attention_part
+        try:
+            from kernels import get_kernel  # noqa: PLC0415
+
+            _hub = getattr(
+                get_kernel("flashrt/flashrt-flex-attention-train"),
+                "manual_attention_part",
+                None,
+            )
+            if _hub is not None:
+
+                def part(qs, ks, vs, m, scale, _hub=_hub):
+                    return _hub(qs, ks, vs, m, scale).transpose(1, 2).contiguous()
+
+                logger.info("PI052: manual attention backed by flashrt-flex-attention-train (Hub).")
+        except Exception as exc:
+            logger.info(
+                "PI052: flashrt-flex-attention-train unavailable (%s); using the inline manual-attention path.",
+                exc,
+            )
+        _manual_attention = torch.compile(part, dynamic=False)
+    return _manual_attention
 
 
 def _compute_layer_ki(
     layer_idx,
     inputs_embeds,
     attention_mask,
-    position_ids,
+    position_embeddings,
     adarms_cond,
     paligemma,
     gemma_expert,
+    suppress_prefix_grads=False,
+    flex_masks=None,
+    adarms_backend=None,
+    manual_attention=False,
 ):
     from transformers.models.gemma import modeling_gemma  # noqa: PLC0415
 
     # ``_gated_residual`` is LeRobot's adaRMSNorm helper, not a Transformers symbol.
     from ..pi_gemma import _gated_residual  # noqa: PLC0415
+
+    def _vlm_ctx(i):
+        return torch.no_grad() if (i == 0 and suppress_prefix_grads) else nullcontext()
 
     models = [paligemma.model.language_model, gemma_expert.model]
     query_states, key_states, value_states, gates = [], [], [], []
@@ -766,13 +970,16 @@ def _compute_layer_ki(
 
     for i, hidden_states in enumerate(inputs_embeds):
         layer = models[i].layers[layer_idx]
-        hidden_states, gate = layer.input_layernorm(hidden_states, cond=adarms_cond[i])
-        gates.append(gate)
-        input_shape = hidden_states.shape[:-1]
-        hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
-        q = layer.self_attn.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        k = layer.self_attn.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        v = layer.self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        with _vlm_ctx(i):
+            hidden_states, gate = _adarms_norm(
+                adarms_backend, layer.input_layernorm, hidden_states, adarms_cond[i]
+            )
+            gates.append(gate)
+            input_shape = hidden_states.shape[:-1]
+            hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
+            q = layer.self_attn.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            k = layer.self_attn.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            v = layer.self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         query_states.append(q)
         key_states.append(k)
         value_states.append(v)
@@ -781,14 +988,7 @@ def _compute_layer_ki(
     key_states = torch.cat(key_states, dim=2)
     value_states = torch.cat(value_states, dim=2)
 
-    dummy = torch.zeros(
-        query_states.shape[0],
-        query_states.shape[2],
-        query_states.shape[-1],
-        device=query_states.device,
-        dtype=query_states.dtype,
-    )
-    cos, sin = paligemma.model.language_model.rotary_emb(dummy, position_ids)
+    cos, sin = position_embeddings
     query_states, key_states = modeling_gemma.apply_rotary_pos_emb(
         query_states, key_states, cos, sin, unsqueeze_dim=1
     )
@@ -797,47 +997,89 @@ def _compute_layer_ki(
     scaling = paligemma.model.language_model.layers[layer_idx].self_attn.scaling
 
     # Split queries / K / V at the VLM-vs-action boundary.
-    Q_vlm = query_states[:, :, :vlm_len, :]
-    Q_action = query_states[:, :, vlm_len:, :]
-    K_vlm = key_states[:, :, :vlm_len, :]
-    K_action = key_states[:, :, vlm_len:, :]
-    V_vlm = value_states[:, :, :vlm_len, :]
-    V_action = value_states[:, :, vlm_len:, :]
+    q_vlm = query_states[:, :, :vlm_len, :]
+    q_action = query_states[:, :, vlm_len:, :]
+    k_vlm = key_states[:, :, :vlm_len, :]
+    k_action = key_states[:, :, vlm_len:, :]
+    v_vlm = value_states[:, :, :vlm_len, :]
+    v_action = value_states[:, :, vlm_len:, :]
 
     # Detach VLM K/V *only* on the path the action queries use.
-    K_vlm_det = K_vlm.detach()
-    V_vlm_det = V_vlm.detach()
-    K_for_vlm = key_states  # full (gradients flow)
-    V_for_vlm = value_states
-    K_for_action = torch.cat([K_vlm_det, K_action], dim=2)
-    V_for_action = torch.cat([V_vlm_det, V_action], dim=2)
+    k_for_vlm = key_states
+    v_for_vlm = value_states
+    k_for_action = torch.cat([k_vlm.detach(), k_action], dim=2)
+    v_for_action = torch.cat([v_vlm.detach(), v_action], dim=2)
 
-    mask_for_vlm = attention_mask[:, :, :vlm_len, :]
-    mask_for_action = attention_mask[:, :, vlm_len:, :]
-    # SDPA requires each fp32-generated mask slice to match its query dtype.
-    if mask_for_vlm.dtype != Q_vlm.dtype:
-        mask_for_vlm = mask_for_vlm.to(dtype=Q_vlm.dtype)
-    if mask_for_action.dtype != Q_action.dtype:
-        mask_for_action = mask_for_action.to(dtype=Q_action.dtype)
+    if flex_masks is not None:
+        flex_attn, _ = _get_flex_fns(query_states.device)
+        bm_vlm, bm_action = flex_masks
+        n_rep = paligemma.model.language_model.layers[layer_idx].self_attn.num_key_value_groups
+        with _vlm_ctx(0):
+            att_vlm = flex_attn(
+                q_vlm,
+                k_for_vlm,
+                v_for_vlm,
+                block_mask=bm_vlm,
+                scale=scaling,
+                enable_gqa=n_rep > 1,
+                kernel_options=_get_flex_kernel_options(query_states.device),
+            ).transpose(1, 2)
+        att_action = flex_attn(
+            q_action,
+            k_for_action,
+            v_for_action,
+            block_mask=bm_action,
+            scale=scaling,
+            enable_gqa=n_rep > 1,
+            kernel_options=_get_flex_kernel_options(query_states.device),
+        ).transpose(1, 2)
+    else:
+        mask_for_vlm = attention_mask[:, :, :vlm_len, :]
+        mask_for_action = attention_mask[:, :, vlm_len:, :]
+        # SDPA requires the additive bias to match each query dtype.
+        if mask_for_vlm.dtype != q_vlm.dtype:
+            mask_for_vlm = mask_for_vlm.to(dtype=q_vlm.dtype)
+        if mask_for_action.dtype != q_action.dtype:
+            mask_for_action = mask_for_action.to(dtype=q_action.dtype)
 
-    from ..pi_gemma import sdpa_attention_forward  # noqa: PLC0415
+        if manual_attention:
+            manual_fn = _get_manual_attention()
+            if manual_attention == "action":
+                from ..pi_gemma import sdpa_attention_forward  # noqa: PLC0415
 
-    att_vlm, _ = sdpa_attention_forward(
-        paligemma.model.language_model.layers[layer_idx].self_attn,
-        Q_vlm,
-        K_for_vlm,
-        V_for_vlm,
-        mask_for_vlm,
-        scaling,
-    )
-    att_action, _ = sdpa_attention_forward(
-        paligemma.model.language_model.layers[layer_idx].self_attn,
-        Q_action,
-        K_for_action,
-        V_for_action,
-        mask_for_action,
-        scaling,
-    )
+                with _vlm_ctx(0):
+                    att_vlm, _ = sdpa_attention_forward(
+                        paligemma.model.language_model.layers[layer_idx].self_attn,
+                        q_vlm,
+                        k_for_vlm,
+                        v_for_vlm,
+                        mask_for_vlm,
+                        scaling,
+                    )
+            else:
+                with _vlm_ctx(0):
+                    att_vlm = manual_fn(q_vlm, k_for_vlm, v_for_vlm, mask_for_vlm, scaling)
+            att_action = manual_fn(q_action, k_for_action, v_for_action, mask_for_action, scaling)
+        else:
+            from ..pi_gemma import sdpa_attention_forward  # noqa: PLC0415
+
+            with _vlm_ctx(0):
+                att_vlm, _ = sdpa_attention_forward(
+                    paligemma.model.language_model.layers[layer_idx].self_attn,
+                    q_vlm,
+                    k_for_vlm,
+                    v_for_vlm,
+                    mask_for_vlm,
+                    scaling,
+                )
+            att_action, _ = sdpa_attention_forward(
+                paligemma.model.language_model.layers[layer_idx].self_attn,
+                q_action,
+                k_for_action,
+                v_for_action,
+                mask_for_action,
+                scaling,
+            )
     att = torch.cat([att_vlm, att_action], dim=1)
 
     head_dim = paligemma.model.language_model.layers[layer_idx].self_attn.head_dim
@@ -850,14 +1092,31 @@ def _compute_layer_ki(
         end = start + hidden_states.shape[1]
         if att.dtype != layer.self_attn.o_proj.weight.dtype:
             att = att.to(layer.self_attn.o_proj.weight.dtype)
-        out_emb = layer.self_attn.o_proj(att[:, start:end])
-        out_emb = _gated_residual(hidden_states, out_emb, gates[i])
-        after_first = out_emb.clone()
-        out_emb, gate = layer.post_attention_layernorm(out_emb.clone(), cond=adarms_cond[i])
-        if layer.mlp.up_proj.weight.dtype == torch.bfloat16:
-            out_emb = out_emb.to(dtype=torch.bfloat16)
-        out_emb = layer.mlp(out_emb)
-        out_emb = _gated_residual(after_first, out_emb, gate)
+        with _vlm_ctx(i):
+            out_emb = layer.self_attn.o_proj(att[:, start:end])
+            pa_norm = layer.post_attention_layernorm
+            if adarms_backend is not None:
+                if adarms_cond[i] is not None and pa_norm.dense is not None:
+                    after_first, out_emb, gate = adarms_backend.resgate_adarms(
+                        hidden_states,
+                        out_emb,
+                        gates[i],
+                        pa_norm.dense(adarms_cond[i]),
+                        pa_norm.eps,
+                        True,
+                    )
+                else:
+                    after_first, out_emb, gate = adarms_backend.resgate_adarms(
+                        hidden_states, out_emb, gates[i], pa_norm.weight, pa_norm.eps, False
+                    )
+            else:
+                out_emb = _gated_residual(hidden_states, out_emb, gates[i])
+                after_first = out_emb
+                out_emb, gate = pa_norm(out_emb, cond=adarms_cond[i])
+            if layer.mlp.up_proj.weight.dtype == torch.bfloat16:
+                out_emb = out_emb.to(dtype=torch.bfloat16)
+            out_emb = layer.mlp(out_emb)
+            out_emb = _gated_residual(after_first, out_emb, gate)
         outputs_embeds.append(out_emb)
         start = end
     return outputs_embeds
@@ -871,15 +1130,12 @@ def _paligemma_forward_ki(
     inputs_embeds=None,
     use_cache=None,
     adarms_cond=None,
+    suppress_prefix_grads=False,
+    flex_masks=None,
+    adarms_backend=None,
+    manual_attention=False,
 ):
-    """Replacement ``PaliGemmaWithExpertModel.forward`` that routes the
-    dual-expert layer pass through :func:`_compute_layer_ki`.
-
-    Bound onto the model instance when ``config.knowledge_insulation``
-    is True (see ``PI052Policy.__init__``). Single-expert branches
-    (VLM-only or action-only) defer back to the original forward —
-    KI only matters when actions and VLM tokens are forwarded together.
-    """
+    """Run dual-expert layers through KI and defer single-expert calls."""
     from ..pi_gemma import layernorm_forward  # noqa: PLC0415
 
     if adarms_cond is None:
@@ -899,6 +1155,10 @@ def _paligemma_forward_ki(
 
     models = [self.paligemma.model.language_model, self.gemma_expert.model]
     num_layers = self.paligemma.config.text_config.num_hidden_layers
+
+    # RoPE values are shared by every layer.
+    position_embeddings = self.paligemma.model.language_model.rotary_emb(inputs_embeds[0], position_ids)
+
     use_gc = (
         hasattr(self.gemma_expert.model, "gradient_checkpointing")
         and self.gemma_expert.model.gradient_checkpointing
@@ -912,27 +1172,36 @@ def _paligemma_forward_ki(
                 layer_idx,
                 inputs_embeds,
                 attention_mask,
-                position_ids,
+                position_embeddings,
                 adarms_cond,
                 use_reentrant=False,
                 preserve_rng_state=False,
                 paligemma=self.paligemma,
                 gemma_expert=self.gemma_expert,
+                suppress_prefix_grads=suppress_prefix_grads,
+                flex_masks=flex_masks,
+                adarms_backend=adarms_backend,
+                manual_attention=manual_attention,
             )
         else:
             inputs_embeds = _compute_layer_ki(
                 layer_idx,
                 inputs_embeds,
                 attention_mask,
-                position_ids,
+                position_embeddings,
                 adarms_cond,
                 paligemma=self.paligemma,
                 gemma_expert=self.gemma_expert,
+                suppress_prefix_grads=suppress_prefix_grads,
+                flex_masks=flex_masks,
+                adarms_backend=adarms_backend,
+                manual_attention=manual_attention,
             )
 
     outputs_embeds = []
     for i, hidden_states in enumerate(inputs_embeds):
-        out_emb, _ = layernorm_forward(models[i].norm, hidden_states, adarms_cond[i])
+        with torch.no_grad() if (i == 0 and suppress_prefix_grads) else nullcontext():
+            out_emb, _ = layernorm_forward(models[i].norm, hidden_states, adarms_cond[i])
         outputs_embeds.append(out_emb)
     return [outputs_embeds[0], outputs_embeds[1]], None
 
@@ -977,6 +1246,38 @@ class PI052Policy(PreTrainedPolicy):
             backbone.forward = types.MethodType(_paligemma_forward_ki, backbone)
             logger.info(
                 "PI052: knowledge insulation enabled — action→VLM K/V gradients are blocked in attention."
+            )
+            if config.use_flashrt_adarms:
+                self._flashrt_adarms = _get_adarms_backend()
+                if self._flashrt_adarms is not None:
+                    logger.info("PI052: FlashRT adaRMS training kernels enabled.")
+
+        if config.use_compiled_vision:
+            _tower = self.model.paligemma_with_expert.paligemma.model.vision_tower
+            _tower_eager_fwd = _tower.forward
+            _tower_compiled_fwd = torch.compile(_tower_eager_fwd, dynamic=False)
+
+            def _tower_dispatch(*args, _e=_tower_eager_fwd, _c=_tower_compiled_fwd, **kwargs):
+                if torch.is_grad_enabled():
+                    return _e(*args, **kwargs)
+                return _c(*args, **kwargs)
+
+            _tower.forward = _tower_dispatch
+            logger.info("PI052: SigLIP vision tower compiled for no-grad passes.")
+
+        # Cache the fixed K-repeat action mask outside the training step.
+        if config.flow_num_repeats > 1:
+            self.register_buffer(
+                "_flow_block_diag",
+                torch.block_diag(
+                    *[
+                        torch.ones(
+                            config.chunk_size, config.chunk_size, dtype=torch.bool, device=config.device
+                        )
+                        for _ in range(config.flow_num_repeats)
+                    ]
+                ),
+                persistent=False,
             )
 
         # Size per-environment inference state lazily.
@@ -1039,13 +1340,7 @@ class PI052Policy(PreTrainedPolicy):
         batch: dict[str, Tensor],
         reduction: str = "mean",
     ) -> tuple[Tensor, dict]:
-        """Dual-head forward: flow-matching loss + text-CE loss.
-
-        When ``text_labels`` isn't present in the batch (e.g. the
-        recipe wasn't applied), we delegate to ``PI05Policy.forward``
-        unchanged. Otherwise we compute both losses and sum them with
-        ``flow_loss_weight`` / ``text_loss_weight``.
-        """
+        """Compute the enabled flow, text and FAST training losses."""
         text_labels = batch.get("text_labels")
         predict_actions_t = batch.get("predict_actions")
 
@@ -1145,29 +1440,25 @@ class PI052Policy(PreTrainedPolicy):
         action_code_mask: Tensor | None,
         predict_actions_t: Tensor | None = None,
     ) -> tuple[Tensor, Tensor | None, Tensor | None]:
-        """Flow + text + FAST losses, sharing a single VLM prefix forward.
-
-        Embeds ``prefix = [images, language, FAST (when provided)]`` once, then
-        computes the flow loss via either a single combined forward
-        (``flow_num_repeats == 1``) or the amortized K-repeat path
-        (``> 1``); both keep the discrete FAST tokens invisible to the action
-        expert. The text/FAST CE losses are sliced from the shared
-        ``prefix_out``.
-
-        Returns ``(flow_loss, text_loss, fast_loss)`` where text/fast
-        can be ``None`` when the caller didn't supply the
-        corresponding inputs.
-        """
+        """Compute flow, text and FAST losses from one shared prefix."""
         # ---- preamble (mirrors PI05Pytorch.forward) ------------------
         actions = self.prepare_action(batch)
+
+        # Flow-only KI steps have no live gradient path through the prefix.
+        suppress_prefix_grads = (
+            text_labels is None
+            and action_tokens is None
+            and getattr(self.config, "knowledge_insulation", False)
+        )
 
         # ---- prefix: images + language + (optional FAST) -------------
         images, img_masks = self._preprocess_images(batch)
         lang_tokens = batch[OBS_LANGUAGE_TOKENS]
         lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
-        prefix_embs, prefix_pad, prefix_att = self.model.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks
-        )
+        with torch.no_grad() if suppress_prefix_grads else nullcontext():
+            prefix_embs, prefix_pad, prefix_att = self.model.embed_prefix(
+                images, img_masks, lang_tokens, lang_masks
+            )
         non_fast_prefix_len = prefix_embs.shape[1]  # images + language only
 
         # Make supervised text causal rather than a bidirectional copy task.
@@ -1204,6 +1495,7 @@ class PI052Policy(PreTrainedPolicy):
                 fast_len,
                 predict_actions_t,
                 num_repeats,
+                suppress_prefix_grads=suppress_prefix_grads,
             )
         else:
             prefix_out, flow_loss = self._combined_prefix_and_flow(
@@ -1214,6 +1506,7 @@ class PI052Policy(PreTrainedPolicy):
                 non_fast_prefix_len,
                 fast_len,
                 predict_actions_t,
+                suppress_prefix_grads=suppress_prefix_grads,
             )
 
         text_loss, fast_loss = self._prefix_ce_losses(
@@ -1230,12 +1523,9 @@ class PI052Policy(PreTrainedPolicy):
         non_fast_prefix_len: int,
         fast_len: int,
         predict_actions_t: Tensor | None,
+        suppress_prefix_grads: bool = False,
     ) -> tuple[Tensor, Tensor]:
-        """Single combined [prefix; suffix] forward → (prefix_out, flow_loss).
-
-        This is the original (``flow_num_repeats == 1``) path: one noise/time
-        draw, one backbone forward producing both the VLM prefix hidden states
-        (for text/FAST CE) and the action-expert suffix hidden states (flow)."""
+        """Run the single-repeat combined prefix and action path."""
         from lerobot.utils.constants import ACTION  # noqa: PLC0415
 
         noise = self.model.sample_noise(actions.shape, actions.device)
@@ -1271,6 +1561,8 @@ class PI052Policy(PreTrainedPolicy):
             position_ids = torch.cat([position_ids[:, : prefix_pad.shape[1]], suffix_pos], dim=1)
         att_2d_masks_4d = self.model._prepare_attention_masks_4d(att_2d_masks, dtype=prefix_embs.dtype)
 
+        # ---- forward (capture BOTH expert outputs) ------------------
+        ki_kwargs = self._ki_forward_kwargs(suppress_prefix_grads=suppress_prefix_grads)
         (prefix_out, suffix_out), _ = self.model.paligemma_with_expert.forward(
             attention_mask=att_2d_masks_4d,
             position_ids=position_ids,
@@ -1278,6 +1570,7 @@ class PI052Policy(PreTrainedPolicy):
             inputs_embeds=[prefix_embs, suffix_embs],
             use_cache=False,
             adarms_cond=[None, adarms_cond],
+            **ki_kwargs,
         )
 
         # ---- flow loss (mirrors PI05Pytorch.forward) ----------------
@@ -1292,6 +1585,19 @@ class PI052Policy(PreTrainedPolicy):
         flow_loss = _mask_per_sample(per_sample_flow, predict_actions_t)
         return prefix_out, flow_loss
 
+    def _ki_forward_kwargs(self, suppress_prefix_grads: bool = False, flex_masks=None) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {}
+        if suppress_prefix_grads:
+            kwargs["suppress_prefix_grads"] = True
+        if flex_masks is not None:
+            kwargs["flex_masks"] = flex_masks
+        adarms_backend = getattr(self, "_flashrt_adarms", None)
+        if adarms_backend is not None:
+            kwargs["adarms_backend"] = adarms_backend
+        if self.config.use_manual_attention:
+            kwargs["manual_attention"] = self.config.manual_attention_scope
+        return kwargs
+
     def _amortized_prefix_and_flow(
         self,
         actions: Tensor,
@@ -1302,20 +1608,9 @@ class PI052Policy(PreTrainedPolicy):
         fast_len: int,
         predict_actions_t: Tensor | None,
         num_repeats: int,
+        suppress_prefix_grads: bool = False,
     ) -> tuple[Tensor, Tensor]:
-        """Amortized flow: one VLM prefix forward, K action-expert replays.
-
-        The VLM/backbone forward dominates step cost, so we keep a *single*
-        combined forward but tile the action suffix into ``num_repeats`` blocks,
-        each with an independent noise/timestep draw against the same action
-        chunk (paper §III.B, K_repeat). The blocks attend to the shared prefix
-        (FAST columns masked, exactly like the combined path) and are
-        block-diagonal among themselves, so the expensive prefix K/V is computed
-        once while the cheap action expert runs K times. Knowledge insulation
-        (``_compute_layer_ki``) detaches the prefix K/V for the action queries,
-        so this is gradient-equivalent to K independent draws sharing one VLM
-        forward. Per-block flow losses are averaged.
-        """
+        """Run K independent action draws against one shared VLM prefix."""
         from lerobot.utils.constants import ACTION  # noqa: PLC0415
 
         model = self.model
@@ -1329,45 +1624,68 @@ class PI052Policy(PreTrainedPolicy):
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
 
         # ---- K suffix blocks: independent noise/time draws ----------
-        suffix_blocks: list[Tensor] = []
-        adarms_blocks: list[Tensor] = []
-        u_t_blocks: list[Tensor] = []
-        suffix_pad = suffix_att = None
-        for _ in range(k):
-            noise = model.sample_noise(actions.shape, actions.device)
-            time = model.sample_time(actions.shape[0], actions.device)
-            time_expanded = time[:, None, None]
-            x_t = time_expanded * noise + (1 - time_expanded) * actions
-            u_t_blocks.append(noise - actions)
-            s_embs, suffix_pad, suffix_att, adarms = model.embed_suffix(x_t, time)
-            if use_bf16:
-                s_embs = s_embs.to(dtype=torch.bfloat16)
-            suffix_blocks.append(s_embs)
-            # Broadcast each sample's timestep conditioning across its action chunk.
-            adarms_blocks.append(adarms[:, None, :].expand(batch_size, chunk, adarms.shape[-1]))
+        # Embed all independent K draws in one flattened batch.
+        noise = model.sample_noise((k * batch_size, *actions.shape[1:]), actions.device)
+        time = model.sample_time(k * batch_size, actions.device)
+        actions_rep = actions.repeat(k, 1, 1)  # (k*B, chunk, motor_dim)
+        time_expanded = time[:, None, None]
+        x_t = time_expanded * noise + (1 - time_expanded) * actions_rep
+        u_t = (noise - actions_rep).view(k, batch_size, chunk, -1).transpose(0, 1)  # (B, k, chunk, motor)
+        s_embs, suffix_pad, suffix_att, adarms = model.embed_suffix(x_t, time)
+        if use_bf16:
+            s_embs = s_embs.to(dtype=torch.bfloat16)
+        suffix_pad = suffix_pad[:batch_size]
+        suffix_att = suffix_att[:batch_size]
+        suffix_embs = (
+            s_embs.view(k, batch_size, chunk, -1).transpose(0, 1).reshape(batch_size, k * chunk, -1)
+        )  # (B, k*chunk, D)
+        # Broadcast each draw's AdaRMS condition over its action chunk.
+        adarms_cond = (
+            adarms.view(k, batch_size, 1, adarms.shape[-1])
+            .expand(k, batch_size, chunk, adarms.shape[-1])
+            .transpose(0, 1)
+            .reshape(batch_size, k * chunk, adarms.shape[-1])
+        )  # (B, k*chunk, cond_dim)
 
-        suffix_embs = torch.cat(suffix_blocks, dim=1)  # (B, k*chunk, D)
-        adarms_cond = torch.cat(adarms_blocks, dim=1)  # (B, k*chunk, cond_dim)
-
-        # Each action block attends to the non-FAST prefix and itself, never other blocks.
-        prefix_att_2d = make_att_2d_masks(prefix_pad, prefix_att)  # (B, P, P)
-        device = prefix_pad.device
-        prefix_rows = torch.cat(
-            [prefix_att_2d, torch.zeros(batch_size, prefix_len, k * chunk, dtype=torch.bool, device=device)],
-            dim=2,
+        # Prefix rows cannot see action blocks; each action block sees only itself and the prefix.
+        use_flex = (
+            self.config.use_flex_attention
+            and getattr(self.config, "knowledge_insulation", False)
+            and not getattr(self, "_flex_attention_disabled", False)
+            and _get_flex_fns(prefix_pad.device) is not None
         )
+        flex_masks = None
+        if use_flex:
+            try:
+                if not hasattr(self, "_flex_mask_builder"):
+                    self._flex_mask_builder = _FlexMaskBuilder()
+                flex_masks = self._flex_mask_builder.build(
+                    prefix_pad, prefix_att, non_fast_prefix_len, k, chunk
+                )
+            except Exception as exc:
+                logger.warning("PI052: FlexAttention initialization failed (%s); using SDPA.", exc)
+                self._flex_attention_disabled = True
+        if flex_masks is not None:
+            att_2d_4d = None
+        else:
+            device = prefix_pad.device
+            prefix_att_2d = make_att_2d_masks(prefix_pad, prefix_att)  # (B, P, P)
+            prefix_rows = torch.cat(
+                [
+                    prefix_att_2d,
+                    torch.zeros(batch_size, prefix_len, k * chunk, dtype=torch.bool, device=device),
+                ],
+                dim=2,
+            )
 
-        action_to_prefix = prefix_pad[:, None, :].expand(batch_size, k * chunk, prefix_len).clone()
-        if fast_len > 0:
-            action_to_prefix[:, :, non_fast_prefix_len:prefix_len] = False
-        block_diag = torch.block_diag(
-            *[torch.ones(chunk, chunk, dtype=torch.bool, device=device) for _ in range(k)]
-        )
-        action_to_action = block_diag[None].expand(batch_size, k * chunk, k * chunk)
-        action_rows = torch.cat([action_to_prefix, action_to_action], dim=2)
+            action_to_prefix = prefix_pad[:, None, :].expand(batch_size, k * chunk, prefix_len).clone()
+            if fast_len > 0:
+                action_to_prefix[:, :, non_fast_prefix_len:prefix_len] = False
+            action_to_action = self._flow_block_diag[None].expand(batch_size, k * chunk, k * chunk)
+            action_rows = torch.cat([action_to_prefix, action_to_action], dim=2)
 
-        att_2d = torch.cat([prefix_rows, action_rows], dim=1)  # (B, P + k*chunk, P + k*chunk)
-        att_2d_4d = model._prepare_attention_masks_4d(att_2d, dtype=prefix_embs.dtype)
+            att_2d = torch.cat([prefix_rows, action_rows], dim=1)  # (B, P + k*chunk, P + k*chunk)
+            att_2d_4d = model._prepare_attention_masks_4d(att_2d, dtype=prefix_embs.dtype)
 
         # Restart every independent flow block after the non-FAST prefix to match inference RoPE.
         if fast_len > 0:
@@ -1377,6 +1695,7 @@ class PI052Policy(PreTrainedPolicy):
         block_positions = prefix_offsets + torch.cumsum(suffix_pad, dim=1) - 1  # (B, chunk)
         position_ids = torch.cat([torch.cumsum(prefix_pad, dim=1) - 1, block_positions.repeat(1, k)], dim=1)
 
+        ki_kwargs = self._ki_forward_kwargs(suppress_prefix_grads, flex_masks)
         (prefix_out, suffix_out), _ = model.paligemma_with_expert.forward(
             attention_mask=att_2d_4d,
             position_ids=position_ids,
@@ -1384,19 +1703,16 @@ class PI052Policy(PreTrainedPolicy):
             inputs_embeds=[prefix_embs, suffix_embs],
             use_cache=False,
             adarms_cond=[None, adarms_cond],
+            **ki_kwargs,
         )
 
         # ---- flow loss averaged over the K blocks -------------------
+        # Project all blocks together before averaging their losses.
         original_action_dim = self.config.output_features[ACTION].shape[0]
-        flow_accum: Tensor | None = None
-        for i in range(k):
-            block_out = suffix_out[:, i * chunk : (i + 1) * chunk].to(dtype=torch.float32)
-            v_t = model.action_out_proj(block_out)
-            flow_per_dim = F.mse_loss(u_t_blocks[i], v_t, reduction="none")[:, :, :original_action_dim]
-            per_sample_flow = flow_per_dim.mean(dim=(1, 2))
-            flow_accum = per_sample_flow if flow_accum is None else flow_accum + per_sample_flow
-
-        per_sample_flow = flow_accum / k
+        v_t = model.action_out_proj(suffix_out.to(dtype=torch.float32))
+        v_t = v_t.view(batch_size, k, chunk, -1)  # (B, k, chunk, motor)
+        flow_per_dim = F.mse_loss(u_t, v_t, reduction="none")[..., :original_action_dim]
+        per_sample_flow = flow_per_dim.mean(dim=(1, 2, 3))
         flow_loss = _mask_per_sample(per_sample_flow, predict_actions_t)
         return prefix_out, flow_loss
 
@@ -1409,11 +1725,7 @@ class PI052Policy(PreTrainedPolicy):
         fast_len: int,
         predict_actions_t: Tensor | None,
     ) -> tuple[Tensor | None, Tensor | None]:
-        """Text-CE + FAST-CE from the VLM prefix hidden states.
-
-        Shared by the combined and amortized flow paths: slices the language
-        and FAST token positions out of ``prefix_out`` and runs the fused
-        linear-CE heads. Either loss is ``None`` when its inputs are absent."""
+        """Compute enabled text and FAST losses from the shared prefix output."""
         lm_head = self.model.paligemma_with_expert.paligemma.lm_head
 
         text_loss: Tensor | None = None
@@ -1429,6 +1741,7 @@ class PI052Policy(PreTrainedPolicy):
                 lm_head.weight,
                 text_labels,
                 z_loss_weight=getattr(self.config, "text_ce_z_loss_weight", 0.0),
+                compiled=self.config.use_compiled_text_ce,
             )
 
         fast_loss: Tensor | None = None
@@ -1440,6 +1753,7 @@ class PI052Policy(PreTrainedPolicy):
                 action_tokens,
                 action_code_mask,
                 predict_actions_t,
+                compiled=self.config.use_compiled_text_ce,
             )
 
         return text_loss, fast_loss
@@ -1533,6 +1847,7 @@ class PI052Policy(PreTrainedPolicy):
                 lm_head.weight,
                 text_labels,
                 z_loss_weight=getattr(self.config, "text_ce_z_loss_weight", 0.0),
+                compiled=self.config.use_compiled_text_ce,
             )
 
         fast_loss: Tensor | None = None
@@ -1544,6 +1859,7 @@ class PI052Policy(PreTrainedPolicy):
                 action_tokens,
                 action_code_mask,
                 predict_actions_t,
+                compiled=self.config.use_compiled_text_ce,
             )
 
         return text_loss, fast_loss
