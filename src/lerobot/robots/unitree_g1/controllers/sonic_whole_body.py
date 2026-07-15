@@ -26,6 +26,12 @@ from typing import TYPE_CHECKING
 import numpy as np
 from huggingface_hub import hf_hub_download
 
+from lerobot.teleoperators.pico_headset.smpl_constants import (
+    ROOT_ACTION_DIM,
+    ROOT_ACTION_PREFIX,
+    SMPL_ACTION_PREFIX,
+    SMPL_OBS_DIM as SMPL_ACTION_DIM,
+)
 from lerobot.utils.import_utils import _onnxruntime_available, require_package
 
 from ..g1_utils import KEYBOARD_KEYS_FIELD, lowstate_to_obs
@@ -55,15 +61,6 @@ else:
     ort = None
 
 logger = logging.getLogger(__name__)
-
-# Length of the flattened SONIC whole-body reference window
-# (10 frames x 24 SMPL joints x 3 coords). Matches smpl_joints_10frame_step1.
-SMPL_ACTION_DIM = 720
-# Prefix for per-element SMPL floats carried on the teleop action dict.
-SMPL_ACTION_PREFIX = "smpl."
-# Optional per-frame SMPL root orientation (wxyz) for the mode-2 anchor.
-ROOT_ACTION_DIM = 4
-ROOT_ACTION_PREFIX = "root."
 
 
 def _extract_smpl_from_action(action: dict | None) -> np.ndarray | None:
@@ -212,7 +209,7 @@ class SonicWholeBodyController:
 
     def _init_smpl_stream(self) -> None:
         # Lazy import so the zmq dependency is only required when streaming is on.
-        from lerobot.robots.unitree_g1.smpl_stream import (
+        from lerobot.teleoperators.pico_headset.smpl_stream import (
             DEFAULT_SMPL_HOST,
             DEFAULT_SMPL_PORT,
             SmplStream,
@@ -352,7 +349,8 @@ class SonicWholeBodyController:
             # Temporarily disabled: feeding the per-frame SMPL root quaternion produced
             # root-acceleration spikes (NaN QACC at DOF 0, sim unstable) mid-episode.
             # Keep the anchor self-driven until the reference root trajectory is
-            # smoothed/rate-matched (30 Hz dataset -> 50 Hz control).
+            # smoothed/rate-matched (30 Hz dataset -> 50 Hz control). See
+            # docs/SONIC_REPLAY_DEBUGGING.md.
             self.controller.smpl_root_quat = None
             _ = root_quat
             return self._runtime.tick(obs, debug=False, use_joystick=False)

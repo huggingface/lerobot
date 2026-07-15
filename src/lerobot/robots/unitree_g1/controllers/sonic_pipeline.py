@@ -134,13 +134,14 @@ def _action_scale(k):
     return 0.25 * EFFORT[k] / (ARMATURE[k] * NATURAL_FREQ**2)
 
 
-# Per-joint motor model (IsaacLab order): legs, waist, then arms.
-_J = (
+# Per-joint motor model (IsaacLab order): legs, waist, then arms. Single source of
+# truth for both ACTION_SCALE and compute_kp_kd().
+MOTOR_MODELS = (
     ["7520_22", "7520_22", "7520_14", "7520_22", "5020", "5020"] * 2
     + ["7520_14", "5020", "5020"]
     + ["5020", "5020", "5020", "5020", "5020", "4010", "4010"] * 2
 )
-ACTION_SCALE = np.array([_action_scale(k) for k in _J], dtype=np.float32)  # (29,) IsaacLab order
+ACTION_SCALE = np.array([_action_scale(k) for k in MOTOR_MODELS], dtype=np.float32)  # (29,) IsaacLab order
 
 CONTROL_DT = 0.02  # 50 Hz control period (s)
 DEFAULT_HEIGHT = 0.788740  # nominal pelvis height (m)
@@ -260,15 +261,9 @@ def compute_kp_kd():
     def d(k):
         return 2.0 * 2.0 * ARMATURE[k] * NATURAL_FREQ
 
-    _kp_keys = (
-        ["7520_22", "7520_22", "7520_14", "7520_22", "5020", "5020"] * 2
-        + ["7520_14", "5020", "5020"]
-        + ["5020", "5020", "5020", "5020", "5020", "4010", "4010"] * 2
-    )
-    _kd_keys = _kp_keys
     _double = {4, 5, 10, 11, 13, 14}  # ankle + waist indices with factor 2
-    kp = np.array([2 * s(k) if i in _double else s(k) for i, k in enumerate(_kp_keys)], dtype=np.float32)
-    kd = np.array([2 * d(k) if i in _double else d(k) for i, k in enumerate(_kd_keys)], dtype=np.float32)
+    kp = np.array([2 * s(k) if i in _double else s(k) for i, k in enumerate(MOTOR_MODELS)], dtype=np.float32)
+    kd = np.array([2 * d(k) if i in _double else d(k) for i, k in enumerate(MOTOR_MODELS)], dtype=np.float32)
     return kp, kd
 
 

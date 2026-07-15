@@ -19,7 +19,7 @@
 Reads 24 body-joint poses from the XRoboToolkit SDK, runs pure-numpy SMPL forward
 kinematics + canonicalization (``smpl_fk.py``), and publishes one canonical
 ``(24, 3)`` SMPL frame per tick over ZMQ on the ``rt/smpl`` topic — the exact
-message ``lerobot.robots.unitree_g1.smpl_stream.SmplStream`` consumes.
+message ``lerobot.teleoperators.pico_headset.smpl_stream.SmplStream`` consumes.
 
 This makes the LeRobot side self-contained: the only runtime dependency to drive
 SONIC whole-body teleop from the headset is the ``xrobotoolkit_sdk`` Python package
