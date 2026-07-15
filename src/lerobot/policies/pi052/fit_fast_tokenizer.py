@@ -24,6 +24,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -235,3 +236,21 @@ def fit_fast_tokenizer(
     fitted.save_pretrained(str(out_dir))
     logger.info("FAST fit: saved fitted tokenizer to %s", out_dir)
     return str(out_dir)
+
+
+def resolve_fast_tokenizer(config: Any, dataset_repo_id: str | None) -> str:
+    """Return the configured tokenizer, fitting a cached dataset-specific one when requested."""
+    if not getattr(config, "auto_fit_fast_tokenizer", False) or dataset_repo_id is None:
+        return config.action_tokenizer_name
+
+    try:
+        return fit_fast_tokenizer(
+            dataset_repo_id=dataset_repo_id,
+            cache_dir=Path(config.fast_tokenizer_cache_dir).expanduser(),
+            base_tokenizer_name=config.action_tokenizer_name,
+            n_samples=config.fast_tokenizer_fit_samples,
+            chunk_size=config.chunk_size,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("FAST tokenizer fit failed (%s); using %r instead.", exc, config.action_tokenizer_name)
+        return config.action_tokenizer_name

@@ -61,6 +61,9 @@ class PI0FastConfig(PreTrainedConfig):
     tokenizer_max_length: int = 200  # see openpi `__post_init__`
     text_tokenizer_name: str = "google/paligemma-3b-pt-224"
     action_tokenizer_name: str = "lerobot/fast-action-tokenizer"
+    auto_fit_fast_tokenizer: bool = False
+    fast_tokenizer_cache_dir: str = "~/.cache/lerobot/fast_tokenizers"
+    fast_tokenizer_fit_samples: int = 1024
     temperature: float = 0.0
     max_decoding_steps: int = 256
     fast_skip_tokens: int = 128

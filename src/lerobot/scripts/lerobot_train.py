@@ -382,12 +382,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if cfg.is_reward_model_training:
         processor_kwargs["dataset_meta"] = dataset.meta
 
-    # For pi052 (and any future policy that auto-fits part of its
-    # preprocessing per-dataset), pass the dataset repo id so the
-    # processor factory can locate/refresh dataset-specific artifacts
-    # (e.g. fitted FAST tokenizers per Pertsch et al. 2025 [64],
-    # π0.5 §III.C).
-    if cfg.policy.type == "pi052":
+    # Policies that optionally fit dataset-specific processor artifacts need the repo id.
+    if cfg.policy.type in {"pi0_fast", "pi052"}:
         processor_kwargs["dataset_repo_id"] = cfg.dataset.repo_id
 
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:

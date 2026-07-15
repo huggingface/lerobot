@@ -408,6 +408,20 @@ def make_pre_post_processors(
         _reconnect_relative_absolute_steps(preprocessor, postprocessor)
         return preprocessor, postprocessor
 
+    if (
+        pretrained_path
+        and getattr(policy_cfg, "type", None) == "pi0_fast"
+        and getattr(policy_cfg, "auto_fit_fast_tokenizer", False)
+        and kwargs.get("dataset_repo_id") is not None
+    ):
+        from .pi0_fast.processor_pi0_fast import make_pi0_fast_pre_post_processors
+
+        return make_pi0_fast_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_repo_id=kwargs.get("dataset_repo_id"),
+        )
+
     if pretrained_path:
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
@@ -507,6 +521,15 @@ def make_pre_post_processors(
         processors = make_pi0_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif policy_cfg.type == "pi0_fast":
+        from .pi0_fast.processor_pi0_fast import make_pi0_fast_pre_post_processors
+
+        processors = make_pi0_fast_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_repo_id=kwargs.get("dataset_repo_id"),
         )
 
     elif policy_cfg.type == "pi052":

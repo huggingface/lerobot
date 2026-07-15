@@ -93,34 +93,11 @@ def make_pi052_pre_post_processors(
 
     # Add FAST action-token supervision only when explicitly enabled.
     if getattr(config, "enable_fast_action_loss", False):
-        # Fit once on this dataset and cache by dataset, base tokenizer, and sample count.
-        action_tokenizer_path = config.action_tokenizer_name
-        if getattr(config, "auto_fit_fast_tokenizer", False) and dataset_repo_id is not None:
-            from .fit_fast_tokenizer import fit_fast_tokenizer  # noqa: PLC0415
-
-            cache_dir = Path(config.fast_tokenizer_cache_dir).expanduser()
-            try:
-                action_tokenizer_path = fit_fast_tokenizer(
-                    dataset_repo_id=dataset_repo_id,
-                    cache_dir=cache_dir,
-                    base_tokenizer_name=config.action_tokenizer_name,
-                    n_samples=config.fast_tokenizer_fit_samples,
-                    chunk_size=config.chunk_size,
-                )
-            except Exception as exc:  # noqa: BLE001
-                import logging  # noqa: PLC0415
-
-                logging.getLogger(__name__).warning(
-                    "FAST tokenizer fit failed (%s) — falling back to "
-                    "the universal base tokenizer %r. Train will still "
-                    "work but compression will be suboptimal.",
-                    exc,
-                    config.action_tokenizer_name,
-                )
+        from .fit_fast_tokenizer import resolve_fast_tokenizer  # noqa: PLC0415
 
         input_steps.append(
             ActionTokenizerProcessorStep(
-                action_tokenizer_name=action_tokenizer_path,
+                action_tokenizer_name=resolve_fast_tokenizer(config, dataset_repo_id),
                 max_action_tokens=config.max_action_tokens,
                 fast_skip_tokens=config.fast_skip_tokens,
                 paligemma_tokenizer_name="google/paligemma-3b-pt-224",
