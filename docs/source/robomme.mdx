@@ -145,6 +145,26 @@ execution boundary while preserving earlier frames for temporal observation delt
 training split this keeps 476,857 execution targets out of 768,897 total frames. One execution-target
 epoch therefore takes `ceil(476857 / effective_batch_size)` optimizer steps.
 
+For a sample-matched SmolVLA visual-memory ablation, use
+`examples/robomme/smolvla_visual_memory_ablation.sh`. `TARGET_SAMPLES` counts examples across all
+GPUs, and `NUM_PROCESSES` is included when the script converts that target into optimizer steps. For
+example, the following reproduces 5.12 million example exposures (the exposure of RoboMME's
+80,000-step, global-batch-64 memory-policy recipe) with four GPUs and a global batch of 48:
+
+```bash
+TARGET_SAMPLES=5120000 \
+NUM_PROCESSES=4 \
+BATCH_SIZE=12 \
+VARIANT=visual-memory \
+RUN_EVAL=false \
+bash examples/robomme/smolvla_visual_memory_ablation.sh
+```
+
+This becomes 106,667 optimizer steps, or about 10.74 execution-target epochs. Run the baseline with
+the same `TARGET_SAMPLES`, effective batch size, seed, and scheduler settings to isolate the visual
+memory change. RoboMME's released baseline uses a different global batch (128), so its nominal
+80,000-step recipe is not sample-matched to its global-batch-64 memory recipe.
+
 At evaluation time the environment wrapper has already converted observations to canonical keys. Only the two camera suffixes need to be aligned with the checkpoint:
 
 ```bash
