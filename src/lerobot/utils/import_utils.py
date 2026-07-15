@@ -114,6 +114,10 @@ _dynamixel_sdk_available = is_package_available("dynamixel-sdk", import_name="dy
 _feetech_sdk_available = is_package_available("feetech-servo-sdk", import_name="scservo_sdk")
 _reachy2_sdk_available = is_package_available("reachy2_sdk")
 _can_available = is_package_available("python-can", "can")
+_motorbridge_available = is_package_available("motorbridge")
+_motorbridge_smart_servo_available = is_package_available(
+    "motorbridge-smart-servo", import_name="motorbridge_smart_servo"
+)
 _unitree_sdk_available = is_package_available("unitree-sdk2py", "unitree_sdk2py")
 _pyrealsense2_available = is_package_available("pyrealsense2") or is_package_available(
     "pyrealsense2-macosx", import_name="pyrealsense2"
@@ -125,6 +129,7 @@ _placo_available = is_package_available("placo")
 _hidapi_available = is_package_available("hidapi", import_name="hid")
 
 # Data / serialization
+_datasets_available = is_package_available("datasets")
 _pandas_available = is_package_available("pandas")
 _faker_available = is_package_available("faker")
 
@@ -212,9 +217,15 @@ def register_third_party_plugins() -> None:
 
     This function uses `importlib.metadata` to find packages installed in the environment
     (including editable installs) starting with 'lerobot_robot_', 'lerobot_camera_',
-    'lerobot_teleoperator_', or 'lerobot_policy_' and imports them.
+    'lerobot_teleoperator_', 'lerobot_policy_', or 'lerobot_env_' and imports them.
     """
-    prefixes = ("lerobot_robot_", "lerobot_camera_", "lerobot_teleoperator_", "lerobot_policy_")
+    prefixes = (
+        "lerobot_robot_",
+        "lerobot_camera_",
+        "lerobot_teleoperator_",
+        "lerobot_policy_",
+        "lerobot_env_",
+    )
     imported: list[str] = []
     failed: list[str] = []
 
