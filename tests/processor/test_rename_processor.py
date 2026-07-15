@@ -27,7 +27,7 @@ from lerobot.processor import (
     TransitionKey,
 )
 from lerobot.processor.converters import create_transition, identity_transition
-from lerobot.processor.rename_processor import rename_stats
+from lerobot.processor.rename_processor import rename_stats, rename_transition_keys
 from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from tests.conftest import assert_contract_is_typed
 
@@ -62,6 +62,22 @@ def test_basic_renaming():
 
     # Check unchanged key is preserved
     assert processed_obs["unchanged_key"] == "keep_me"
+
+
+def test_renaming_preserves_feature_suffixes_for_sampling_metadata():
+    data = {
+        "image": torch.zeros(1),
+        "image_is_pad": torch.ones(1, dtype=torch.bool),
+        "image_padding_mask": torch.ones(1, dtype=torch.bool),
+    }
+
+    result = rename_transition_keys(data, {"image": "observation.images.camera1"})
+
+    assert set(result) == {
+        "observation.images.camera1",
+        "observation.images.camera1_is_pad",
+        "observation.images.camera1_padding_mask",
+    }
 
 
 def test_empty_rename_map():

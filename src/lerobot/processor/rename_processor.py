@@ -21,6 +21,23 @@ from lerobot.configs import PipelineFeatureType, PolicyFeature
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
+_AUXILIARY_KEY_SUFFIXES = ("_is_pad", "_padding_mask")
+
+
+def rename_transition_key(key: str, rename_map: dict[str, str]) -> str:
+    """Rename a feature key and any sampling metadata derived from it."""
+    if key in rename_map:
+        return rename_map[key]
+    for suffix in _AUXILIARY_KEY_SUFFIXES:
+        if key.endswith(suffix) and key[: -len(suffix)] in rename_map:
+            return f"{rename_map[key[: -len(suffix)]]}{suffix}"
+    return key
+
+
+def rename_transition_keys(data: dict[str, Any], rename_map: dict[str, str]) -> dict[str, Any]:
+    """Rename all transition keys, including delta-sampling padding masks."""
+    return {rename_transition_key(key, rename_map): value for key, value in data.items()}
+
 
 @dataclass
 @ProcessorStepRegistry.register(name="rename_observations_processor")
@@ -41,14 +58,7 @@ class RenameObservationsProcessorStep(ObservationProcessorStep):
     rename_map: dict[str, str] = field(default_factory=dict)
 
     def observation(self, observation):
-        processed_obs = {}
-        for key, value in observation.items():
-            if key in self.rename_map:
-                processed_obs[self.rename_map[key]] = value
-            else:
-                processed_obs[key] = value
-
-        return processed_obs
+        return rename_transition_keys(observation, self.rename_map)
 
     def get_config(self) -> dict[str, Any]:
         return {"rename_map": self.rename_map}

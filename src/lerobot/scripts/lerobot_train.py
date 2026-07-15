@@ -57,6 +57,7 @@ from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.jobs import submit_to_hf
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
+from lerobot.processor.rename_processor import rename_transition_keys
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -610,7 +611,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             if cam_key in batch and batch[cam_key].dtype == torch.uint8:
                 batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
         if cfg.rename_map:
-            batch = {cfg.rename_map.get(key, key): value for key, value in batch.items()}
+            batch = rename_transition_keys(batch, cfg.rename_map)
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
