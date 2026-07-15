@@ -730,23 +730,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 if wandb_logger:
                     wandb_logger.log_dict({"eval_loss": eval_loss}, step=step, mode="eval")
 
-        # Periodic W&B example table (camera images + text fields + action endpoints).
-        if (
-            wandb_logger is not None
-            and cfg.wandb.log_examples_freq > 0
-            and step % cfg.wandb.log_examples_freq == 0
-            and is_main_process
-        ):
-            try:
-                wandb_logger.log_training_examples(
-                    batch=batch,
-                    step=step,
-                    camera_keys=list(dataset.meta.camera_keys),
-                    n_samples=cfg.wandb.log_examples_n,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logging.warning("wandb log_training_examples failed: %s", exc)
-
         if cfg.save_checkpoint and is_saving_step:
             # Under FSDP, gathering the full model + optimizer state dicts is a cross-rank collective,
             # so all ranks must participate; rank 0 then writes the materialized dicts. For DDP /

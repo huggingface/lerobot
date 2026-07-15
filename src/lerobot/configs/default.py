@@ -75,9 +75,6 @@ class WandBConfig:
     run_id: str | None = None
     mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
     add_tags: bool = True  # If True, save configuration as tags in the WandB run.
-    # Periodic W&B table with sampled images/text and action endpoints. Set to 0 to disable.
-    log_examples_freq: int = 5000
-    log_examples_n: int = 4
 
 
 @dataclass
