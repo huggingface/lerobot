@@ -48,11 +48,8 @@ class PI052Config(PI05Config):
     """Weight on the LM-head cross-entropy term. Set to ``0`` to disable
     text training entirely (reverts to flow-only / π0.5 behaviour)."""
 
-    flow_loss_weight: float = 5.0
-    """Weight on the action-expert flow-matching term. ``5.0`` — a milder
-    flow:text split than the paper's α=10, since the flow-only
-    ``low_level`` recipe already gives the action expert frequent
-    gradient. Lower it further if the LM head still underfits."""
+    flow_loss_weight: float = 10.0
+    """Weight on action-expert flow matching relative to text supervision."""
 
     # Backbone training ---------------------------------------------------
     unfreeze_lm_head: bool = True

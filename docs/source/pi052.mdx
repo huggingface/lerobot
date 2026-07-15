@@ -111,7 +111,7 @@ the expected prompt, text target, and action endpoints before scaling up.
 | -------------------------------- | -------------------------: | ------------------------------------------------------------------ |
 | `policy.recipe_path`             | `recipes/subtask_mem.yaml` | Selects the language/action objective mixture                      |
 | `policy.text_loss_weight`        |                      `1.0` | Language-head cross-entropy weight; `0` disables text training     |
-| `policy.flow_loss_weight`        |                      `5.0` | Continuous action flow-loss weight                                 |
+| `policy.flow_loss_weight`        |                     `10.0` | Continuous action flow-loss weight                                 |
 | `policy.enable_fast_action_loss` |                     `true` | Adds discrete FAST action-token supervision                        |
 | `policy.fast_action_loss_weight` |                      `1.0` | FAST cross-entropy weight                                          |
 | `policy.knowledge_insulation`    |                     `true` | Blocks action-loss gradients through the VLM K/V path              |
