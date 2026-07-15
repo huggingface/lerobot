@@ -72,9 +72,7 @@ def test_cube_predictor_resets_track_when_cube_disappears():
 
 
 def test_predict_center_is_constant_velocity_extrapolation():
-    assert CubePredictor.predict_center((10.0, 5.0), (200.0, -50.0), lead_s=0.1) == pytest.approx(
-        (30.0, 0.0)
-    )
+    assert CubePredictor.predict_center((10.0, 5.0), (200.0, -50.0), lead_s=0.1) == pytest.approx((30.0, 0.0))
 
 
 # --- shift_cube_in_frame -----------------------------------------------------
@@ -193,7 +191,9 @@ def test_warp_token_grid_by_flow_uniform_flow_translates_grid():
     flow[..., 0] = 1.0  # +1 patch in x for every cell
     out = warp_token_grid_by_flow(tokens, (4, 4), flow).reshape(4, 4)
     # Column c now holds what column c-1 held (border-replicated at the left edge).
-    expected = torch.tensor([[r * 4 + max(c - 1, 0) for c in range(4)] for r in range(4)], dtype=torch.float32)
+    expected = torch.tensor(
+        [[r * 4 + max(c - 1, 0) for c in range(4)] for r in range(4)], dtype=torch.float32
+    )
     assert torch.allclose(out, expected)
 
 
@@ -216,7 +216,9 @@ def test_make_flow_token_warp_fn_pools_field_and_warps():
     warp = make_flow_token_warp_fn(flow_px, image_hw=(8, 8))
     tokens = torch.arange(16, dtype=torch.float32).reshape(1, 16, 1)
     out = warp(tokens).reshape(4, 4)
-    expected = torch.tensor([[r * 4 + max(c - 1, 0) for c in range(4)] for r in range(4)], dtype=torch.float32)
+    expected = torch.tensor(
+        [[r * 4 + max(c - 1, 0) for c in range(4)] for r in range(4)], dtype=torch.float32
+    )
     assert torch.allclose(out, expected)
 
 
@@ -289,6 +291,13 @@ def test_predictor_config_defaults_to_image_shift():
 def test_predictor_config_validates_mode_and_threshold():
     PredictorConfig(mode="latent_warp", latent_mask_threshold=0.3)
     PredictorConfig(mode="latent_flow", flow_algorithm="farneback", flow_motion_threshold=0.5)
+    PredictorConfig(
+        mode="engage_gate",
+        engage_axis="y",
+        engage_threshold=0.4,
+        engage_direction="negative",
+        engage_lead_s=0.2,
+    )
     with pytest.raises(ValueError):
         PredictorConfig(mode="latent_shift")  # typo / unknown mode
     with pytest.raises(ValueError):
@@ -297,6 +306,10 @@ def test_predictor_config_validates_mode_and_threshold():
         PredictorConfig(flow_algorithm="raft")  # unsupported backend
     with pytest.raises(ValueError):
         PredictorConfig(flow_motion_threshold=-0.1)
+    with pytest.raises(ValueError):
+        PredictorConfig(engage_threshold=1.1)
+    with pytest.raises(ValueError):
+        PredictorConfig(engage_lead_s=-0.1)
 
 
 def test_predictor_config_make_flow_builds_estimator():

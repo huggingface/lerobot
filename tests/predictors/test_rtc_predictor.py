@@ -54,6 +54,18 @@ def _engine_with_predictor(predictor, camera="overall") -> RTCInferenceEngine:
     return eng
 
 
+def _engine_with_engage_gate(predictor, *, threshold=0.5, direction="positive"):
+    eng = _engine_with_predictor(predictor)
+    eng._predictor_mode = "engage_gate"
+    eng._engaged = False
+    eng._last_engage_frame_id = None
+    eng._engage_axis = "x"
+    eng._engage_threshold = threshold
+    eng._engage_direction = direction
+    eng._engage_lead_s = 0.5
+    return eng
+
+
 def test_time_advanced_obs_shifts_cube_by_velocity_times_lead():
     pred = _ScriptedPredictor(
         PredictorOutput(target_visible=True, center_px=(14.5, 24.5), velocity_px_s=(200.0, 0.0))
@@ -96,3 +108,27 @@ def test_time_advanced_obs_noop_when_disabled_or_camera_missing():
     pred = _ScriptedPredictor(PredictorOutput(center_px=(1.0, 2.0), velocity_px_s=(1.0, 0.0)))
     eng = _engine_with_predictor(pred, camera="missing")
     assert eng._time_advanced_obs(obs, delay=2, time_per_chunk=0.05) is obs
+
+
+def test_engage_gate_opens_from_predicted_center_and_latches():
+    pred = _ScriptedPredictor(
+        PredictorOutput(target_visible=True, center_px=(20.0, 24.0), velocity_px_s=(30.0, 0.0))
+    )
+    eng = _engine_with_engage_gate(pred, threshold=0.5)
+    first = _frame_with_red_square(10)
+
+    # Predicted x = 20 + 30 * 0.5 = 35; 35 / 63 > 0.5.
+    assert eng._evaluate_engage_gate({"overall": first}) is True
+    assert eng._engaged is True
+    # Once opened, the gate stays open even if the target later disappears.
+    pred.output = PredictorOutput(target_visible=False)
+    assert eng._evaluate_engage_gate({"overall": np.zeros_like(first)}) is True
+
+
+def test_engage_gate_waits_when_target_is_missing_or_before_line():
+    pred = _ScriptedPredictor(PredictorOutput(target_visible=False))
+    eng = _engine_with_engage_gate(pred, threshold=0.8)
+    assert eng._evaluate_engage_gate({"overall": _frame_with_red_square(10)}) is False
+
+    pred.output = PredictorOutput(target_visible=True, center_px=(20.0, 24.0))
+    assert eng._evaluate_engage_gate({"overall": _frame_with_red_square(11)}) is False

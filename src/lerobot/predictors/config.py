@@ -40,7 +40,7 @@ from typing import Literal
 
 from .cube_predictor import CubePredictor
 
-PredictorMode = Literal["image_shift", "latent_warp", "latent_flow"]
+PredictorMode = Literal["image_shift", "latent_warp", "latent_flow", "engage_gate"]
 
 
 @dataclass
@@ -102,14 +102,23 @@ class PredictorConfig:
     # magnitude below which a patch is held static (0.0 -> warp every patch).
     flow_algorithm: str = "dis"
     flow_motion_threshold: float = 0.0
+    # engage_gate only: keep RTC inference idle until the cube's predicted
+    # normalized image coordinate crosses this line. This lets an overhead
+    # camera supervise *when* a wrist-camera policy starts without becoming a
+    # policy input itself.
+    engage_axis: Literal["x", "y"] = "x"
+    engage_threshold: float = 0.5
+    engage_direction: Literal["positive", "negative"] = "positive"
+    engage_lead_s: float = 0.5
     cube: CubePredictorConfig = field(default_factory=CubePredictorConfig)
 
     def __post_init__(self):
         if self.enabled and not self.camera:
             raise ValueError("camera must be set when the predictor is enabled")
-        if self.mode not in ("image_shift", "latent_warp", "latent_flow"):
+        if self.mode not in ("image_shift", "latent_warp", "latent_flow", "engage_gate"):
             raise ValueError(
-                f"mode must be 'image_shift', 'latent_warp', or 'latent_flow', got {self.mode!r}"
+                "mode must be 'image_shift', 'latent_warp', 'latent_flow', or "
+                f"'engage_gate', got {self.mode!r}"
             )
         if self.lead_s < 0:
             raise ValueError(f"lead_s must be >= 0, got {self.lead_s}")
@@ -119,6 +128,10 @@ class PredictorConfig:
             raise ValueError(f"flow_algorithm must be 'dis' or 'farneback', got {self.flow_algorithm!r}")
         if self.flow_motion_threshold < 0:
             raise ValueError(f"flow_motion_threshold must be >= 0, got {self.flow_motion_threshold}")
+        if not 0 <= self.engage_threshold <= 1:
+            raise ValueError(f"engage_threshold must be in [0, 1], got {self.engage_threshold}")
+        if self.engage_lead_s < 0:
+            raise ValueError(f"engage_lead_s must be >= 0, got {self.engage_lead_s}")
 
     def make(self) -> CubePredictor:
         """Instantiate the cube predictor callable described by this config."""

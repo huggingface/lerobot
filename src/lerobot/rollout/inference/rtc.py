@@ -138,12 +138,23 @@ class RTCInferenceEngine(InferenceEngine):
         self._predictor_camera: str | None = None
         self._predictor_mode: str = "image_shift"
         self._predictor_lead_s: float = 0.0
+        self._engage_axis: str = "x"
+        self._engage_threshold: float = 0.5
+        self._engage_direction: str = "positive"
+        self._engage_lead_s: float = 0.0
+        self._engaged: bool = True
+        self._last_engage_frame_id: int | None = None
         self._latent_mask_threshold: float = 0.0
         self._flow_motion_threshold: float = 0.0
         if predictor_config is not None and predictor_config.enabled:
             self._predictor_camera = predictor_config.camera
             self._predictor_mode = predictor_config.mode
             self._predictor_lead_s = predictor_config.lead_s
+            self._engage_axis = predictor_config.engage_axis
+            self._engage_threshold = predictor_config.engage_threshold
+            self._engage_direction = predictor_config.engage_direction
+            self._engage_lead_s = predictor_config.engage_lead_s
+            self._engaged = self._predictor_mode != "engage_gate"
             self._latent_mask_threshold = predictor_config.latent_mask_threshold
             self._flow_motion_threshold = predictor_config.flow_motion_threshold
             if self._predictor_mode == "latent_flow":
@@ -279,6 +290,8 @@ class RTCInferenceEngine(InferenceEngine):
                 self._flow_estimator = self._predictor_config.make_flow()
             else:
                 self._predictor = self._predictor_config.make()
+        self._engaged = self._predictor_mode != "engage_gate"
+        self._last_engage_frame_id = None
 
     # ------------------------------------------------------------------
     # Action production (called from main thread)
@@ -298,6 +311,53 @@ class RTCInferenceEngine(InferenceEngine):
     # ------------------------------------------------------------------
     # Overhead cube-position prediction (optional)
     # ------------------------------------------------------------------
+
+    def _evaluate_engage_gate(self, obs: dict) -> bool:
+        """Latch open when the cube reaches the predicted overhead engage line.
+
+        The configured threshold is normalized to the frame width/height. Before
+        velocity is available the current center is used; afterwards constant-
+        velocity extrapolation by ``engage_lead_s`` starts the arm shortly before
+        the cube physically crosses the line.
+        """
+        if self._predictor_mode != "engage_gate" or self._engaged:
+            return True
+        frame = obs.get(self._predictor_camera)
+        if frame is None:
+            return False
+        frame_id = id(frame)
+        if frame_id == self._last_engage_frame_id:
+            return False
+        self._last_engage_frame_id = frame_id
+        try:
+            output = self._predictor(frame)
+        except Exception as e:  # noqa: BLE001 - supervisor must not crash RTC
+            logger.debug("RTC engage gate skipped frame: %s", e)
+            return False
+        if output.target_visible is not True or output.center_px is None:
+            return False
+
+        center = output.center_px
+        if output.velocity_px_s is not None:
+            center = self._predictor.predict_center(center, output.velocity_px_s, self._engage_lead_s)
+        axis_index = 0 if self._engage_axis == "x" else 1
+        axis_size = int(frame.shape[1] if axis_index == 0 else frame.shape[0])
+        coordinate = center[axis_index] / max(axis_size - 1, 1)
+        crossed = (
+            coordinate >= self._engage_threshold
+            if self._engage_direction == "positive"
+            else coordinate <= self._engage_threshold
+        )
+        if crossed:
+            self._engaged = True
+            logger.info(
+                "RTC engage gate opened: camera=%s axis=%s coordinate=%.3f threshold=%.3f",
+                self._predictor_camera,
+                self._engage_axis,
+                coordinate,
+                self._engage_threshold,
+            )
+        return self._engaged
 
     def _time_advanced_obs(self, obs: dict, delay: int, time_per_chunk: float) -> dict:
         """Advance the cube in the RGB frame by the effective lead (``image_shift``).
@@ -417,9 +477,7 @@ class RTCInferenceEngine(InferenceEngine):
                 scale = min(target_w / w0, target_h / h0)  # aspect-preserving resize
                 flow = (f * scale).permute(1, 2, 0)
                 image_hw = (target_h, target_w)
-            warp_fn = make_flow_token_warp_fn(
-                flow, image_hw, motion_threshold=self._flow_motion_threshold
-            )
+            warp_fn = make_flow_token_warp_fn(flow, image_hw, motion_threshold=self._flow_motion_threshold)
 
         fns: list = [None] * len(present)
         fns[idx] = warp_fn
@@ -452,6 +510,10 @@ class RTCInferenceEngine(InferenceEngine):
                     time.sleep(_RTC_IDLE_SLEEP_S)
                     continue
 
+                if not self._evaluate_engage_gate(obs):
+                    time.sleep(_RTC_IDLE_SLEEP_S)
+                    continue
+
                 if queue.qsize() <= self._rtc_queue_threshold:
                     try:
                         current_time = time.perf_counter()
@@ -464,7 +526,9 @@ class RTCInferenceEngine(InferenceEngine):
                         # Advance the cube forward by the inference latency (PE gap)
                         # so the policy plans against the cube's execution-time pose.
                         inference_obs = self._time_advanced_obs(obs, delay, time_per_chunk)
-                        obs_batch = build_dataset_frame(self._hw_features, inference_obs, prefix="observation")
+                        obs_batch = build_dataset_frame(
+                            self._hw_features, inference_obs, prefix="observation"
+                        )
                         obs_batch = prepare_observation_for_inference(
                             obs_batch, policy_device, self._task, self._robot.robot_type
                         )
