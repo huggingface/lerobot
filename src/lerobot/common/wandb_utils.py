@@ -19,6 +19,8 @@ import re
 from glob import glob
 from pathlib import Path
 
+import numpy as np
+import torch
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from termcolor import colored
 
@@ -218,11 +220,6 @@ class WandBLogger:
         mode: str = "train",
     ) -> None:
         """Log a small W&B table with sampled images/text and action endpoints."""
-        import logging  # noqa: PLC0415
-
-        import numpy as np  # noqa: PLC0415
-        import torch  # noqa: PLC0415
-
         if mode not in {"train", "eval"}:
             raise ValueError(mode)
 
