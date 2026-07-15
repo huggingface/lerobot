@@ -565,6 +565,8 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         config = {
             "trust_remote_code": self.trust_remote_code,
             "max_action_tokens": self.max_action_tokens,
+            "fast_skip_tokens": self.fast_skip_tokens,
+            "paligemma_tokenizer_name": self.paligemma_tokenizer_name,
         }
 
         # Only save tokenizer_name if it was used to create the tokenizer
