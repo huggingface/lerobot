@@ -96,6 +96,33 @@ The teleoperate command will automatically:
 1. Identify any missing calibrations and initiate the calibration procedure.
 2. Connect the robot and teleop device and start teleoperation.
 
+### Teleoperate SO-100/SO-101 with keyboard
+
+If you do not have a leader arm available, you can also move an SO-100 or SO-101 follower directly
+from your keyboard. Keyboard teleoperation uses small incremental joint-position commands; it is a
+sanity-check and simple-control mode, not end-effector control or inverse kinematics.
+
+```bash
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.id=my_awesome_follower_arm \
+    --teleop.type=keyboard
+```
+
+| Keys | Joint |
+| --- | --- |
+| `a` / `d` | shoulder pan - / + |
+| `w` / `s` | shoulder lift + / - |
+| `i` / `k` | elbow flex + / - |
+| `j` / `l` | wrist flex - / + |
+| `u` / `o` | wrist roll - / + |
+| `r` / `f` | gripper target + / - |
+
+The arm holds its current position when no mapped keys are pressed. Keyboard input uses `pynput`,
+so your terminal or Python process may need permission to receive keyboard events depending on your
+operating system.
+
 ## Cameras
 
 To add cameras to your setup, follow this [Guide](./cameras#setup-cameras).
