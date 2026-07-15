@@ -23,15 +23,26 @@ supervised target span must end with an EOS token so the LM head learns
 to stop instead of rambling to ``max_length`` at inference).
 """
 
+from types import SimpleNamespace
+
 import torch
 
+from lerobot.configs.recipe import MessageTurn, TrainingRecipe
+from lerobot.policies import factory
+from lerobot.policies.pi052.configuration_pi052 import PI052Config
 from lerobot.policies.pi052.text_processor_pi052 import (
     PI052TextTokenizerStep,
     _flatten_say_tool_calls,
     _format_messages,
 )
+from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor.render_messages_processor import RenderMessagesStep
 from lerobot.types import TransitionKey
-from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
+from lerobot.utils.constants import (
+    OBS_LANGUAGE_ATTENTION_MASK,
+    OBS_LANGUAGE_TOKENS,
+    POLICY_PREPROCESSOR_DEFAULT_NAME,
+)
 
 
 def _say_call(text):
@@ -86,6 +97,51 @@ def test_format_messages_without_eos_args_is_unchanged():
     prompt, spans = _format_messages([{"role": "user", "content": "hi"}])
     assert prompt == "User: hi\n"
     assert prompt[spans[0][0] : spans[0][1]] == "hi"
+
+
+def test_pi052_steps_roundtrip_through_standard_pipeline_loader(tmp_path):
+    recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
+    pipeline = PolicyProcessorPipeline(
+        steps=[
+            RenderMessagesStep(recipe),
+            PI052TextTokenizerStep(
+                tokenizer_name="custom-tokenizer",
+                max_length=77,
+                plan_dropout_prob=0.2,
+                dropout_seed=3,
+            ),
+        ],
+        name=POLICY_PREPROCESSOR_DEFAULT_NAME,
+    )
+    pipeline.save_pretrained(tmp_path)
+
+    loaded = PolicyProcessorPipeline.from_pretrained(
+        tmp_path, config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+    )
+
+    assert loaded.steps[0].recipe == recipe
+    assert loaded.steps[1].tokenizer_name == "custom-tokenizer"
+    assert loaded.steps[1].max_length == 77
+    assert loaded.steps[1].plan_dropout_prob == 0.2
+    assert loaded.steps[1].dropout_seed == 3
+
+
+def test_pi052_legacy_checkpoint_uses_standard_loader_with_rebuild_overrides(monkeypatch):
+    calls = []
+
+    def fake_from_pretrained(cls, *args, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(steps=[])
+
+    monkeypatch.setattr(PolicyProcessorPipeline, "from_pretrained", classmethod(fake_from_pretrained))
+    config = PI052Config(recipe_path="recipes/subtask_mem.yaml", auto_fit_fast_tokenizer=False)
+
+    factory.make_pre_post_processors(config, pretrained_path="checkpoint")
+
+    overrides = calls[0]["overrides"]
+    assert isinstance(overrides["render_messages_processor"]["recipe"], TrainingRecipe)
+    assert overrides["pi052_text_tokenizer"]["max_length"] == config.tokenizer_max_length
+    assert overrides["action_tokenizer_processor"]["action_tokenizer_name"] == config.action_tokenizer_name
 
 
 def _eos_char_id() -> int:

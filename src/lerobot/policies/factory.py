@@ -66,90 +66,6 @@ from .wall_x.configuration_wall_x import WallXConfig
 from .xvla.configuration_xvla import XVLAConfig
 
 
-def _restore_pi052_pretrained_state(
-    preprocessor: PolicyProcessorPipeline,
-    postprocessor: PolicyProcessorPipeline,
-    pretrained_path: str,
-) -> None:
-    """Restore checkpoint state into fresh PI052 pipelines that cannot JSON-roundtrip.
-
-    Steps are paired by position and registry name to prevent loading state into the wrong processor.
-    """
-    import json  # noqa: PLC0415
-    import logging  # noqa: PLC0415
-    from pathlib import Path  # noqa: PLC0415
-
-    from safetensors.torch import load_file  # noqa: PLC0415
-
-    log = logging.getLogger(__name__)
-
-    base = Path(pretrained_path)
-    if not base.exists():
-        # Resolve Hub processor configs and state files for the fresh PI052 pipelines.
-        try:
-            from huggingface_hub import snapshot_download  # noqa: PLC0415
-
-            base = Path(
-                snapshot_download(
-                    repo_id=str(pretrained_path),
-                    allow_patterns=["policy_preprocessor*", "policy_postprocessor*"],
-                )
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "PI052 state restore: %s is not a local dir and could not be resolved "
-                "as a hub repo (%s); normalizer stats left at fresh init",
-                pretrained_path,
-                exc,
-            )
-            return
-
-    for pipeline, config_filename in [
-        (preprocessor, f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"),
-        (postprocessor, f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"),
-    ]:
-        config_path = base / config_filename
-        if not config_path.exists():
-            continue
-        saved = json.loads(config_path.read_text())
-
-        for idx, (saved_step, fresh_step) in enumerate(
-            zip(saved.get("steps", []), pipeline.steps, strict=False)
-        ):
-            state_file = saved_step.get("state_file")
-            if not state_file:
-                continue
-            saved_name = saved_step.get("registry_name")
-            fresh_name = getattr(type(fresh_step), "_registry_name", None)
-            if saved_name and fresh_name and saved_name != fresh_name:
-                log.warning(
-                    "PI052 state restore: %s step %d registry name mismatch "
-                    "(saved=%s, fresh=%s); skipping %s",
-                    config_filename,
-                    idx,
-                    saved_name,
-                    fresh_name,
-                    state_file,
-                )
-                continue
-            state_path = base / state_file
-            if not state_path.exists():
-                log.warning(
-                    "PI052 state restore: %s missing at %s; %s left at fresh init",
-                    state_file,
-                    base,
-                    fresh_name,
-                )
-                continue
-            fresh_step.load_state_dict(load_file(str(state_path)))
-            log.info(
-                "PI052 state restore: loaded %s into %s (step %d)",
-                state_file,
-                fresh_name,
-                idx,
-            )
-
-
 def _reconnect_relative_absolute_steps(
     preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline
 ) -> None:
@@ -395,32 +311,53 @@ def make_pre_post_processors(
         NotImplementedError: If a processor factory is not implemented for the given
             policy configuration type.
     """
-    if pretrained_path and getattr(policy_cfg, "type", None) == "pi052":
-        # Rebuild non-serializable PI052 steps, then restore their saved state.
-        from .pi052.processor_pi052 import make_pi052_pre_post_processors
-
-        preprocessor, postprocessor = make_pi052_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-            dataset_repo_id=kwargs.get("dataset_repo_id"),
-        )
-        _restore_pi052_pretrained_state(preprocessor, postprocessor, pretrained_path)
-        _reconnect_relative_absolute_steps(preprocessor, postprocessor)
-        return preprocessor, postprocessor
-
     if (
         pretrained_path
-        and getattr(policy_cfg, "type", None) == "pi0_fast"
+        and getattr(policy_cfg, "type", None) in {"pi0_fast", "pi052"}
         and getattr(policy_cfg, "auto_fit_fast_tokenizer", False)
         and kwargs.get("dataset_repo_id") is not None
     ):
-        from .pi0_fast.processor_pi0_fast import make_pi0_fast_pre_post_processors
+        if policy_cfg.type == "pi052":
+            from .pi052.processor_pi052 import make_pi052_pre_post_processors
 
-        return make_pi0_fast_pre_post_processors(
+            factory = make_pi052_pre_post_processors
+        else:
+            from .pi0_fast.processor_pi0_fast import make_pi0_fast_pre_post_processors
+
+            factory = make_pi0_fast_pre_post_processors
+
+        return factory(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
             dataset_repo_id=kwargs.get("dataset_repo_id"),
         )
+
+    if (
+        pretrained_path
+        and getattr(policy_cfg, "type", None) == "pi052"
+        and getattr(policy_cfg, "recipe_path", None)
+    ):
+        from .pi052.processor_pi052 import _load_recipe
+
+        pi052_overrides = {
+            "render_messages_processor": {"recipe": _load_recipe(policy_cfg.recipe_path)},
+            "pi052_text_tokenizer": {
+                "tokenizer_name": "google/paligemma-3b-pt-224",
+                "max_length": policy_cfg.tokenizer_max_length,
+                "plan_dropout_prob": policy_cfg.plan_dropout_prob,
+                "memory_dropout_prob": policy_cfg.memory_dropout_prob,
+                "subtask_dropout_prob": policy_cfg.subtask_dropout_prob,
+            },
+            "action_tokenizer_processor": {
+                "action_tokenizer_name": policy_cfg.action_tokenizer_name,
+                "max_action_tokens": policy_cfg.max_action_tokens,
+                "fast_skip_tokens": policy_cfg.fast_skip_tokens,
+            },
+        }
+        kwargs["preprocessor_overrides"] = {
+            **pi052_overrides,
+            **(kwargs.get("preprocessor_overrides") or {}),
+        }
 
     if pretrained_path:
         if isinstance(policy_cfg, GrootConfig):

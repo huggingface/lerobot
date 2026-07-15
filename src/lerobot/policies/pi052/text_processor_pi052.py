@@ -12,10 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tokenize PI052's plain-text rendered messages and build text/action supervision masks.
-
-PaliGemma is not chat-trained, so messages use explicit role delimiters instead of a chat template.
-"""
+"""Tokenize PI052 messages and build text/action supervision masks."""
 
 from __future__ import annotations
 
@@ -37,13 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 def discretize_state_str(state_row: Any) -> str:
-    """Discretize a single normalized state vector into 256 bins, space-joined.
-
-    Mirrors pi05's ``Pi05PrepareStateTokenizerProcessorStep`` (same bins /
-    convention) so pi052's low-level action prompt carries proprioception in
-    the exact format pi05 was trained on. Expects state already normalized by
-    the upstream ``NormalizerProcessorStep``.
-    """
+    """Format one normalized state row with PI0.5's 256-bin convention."""
     arr = state_row.detach().cpu().numpy() if hasattr(state_row, "detach") else np.asarray(state_row)
     disc = np.digitize(arr, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
     return " ".join(str(int(x)) for x in disc.reshape(-1).tolist())
@@ -73,16 +64,7 @@ def _content_to_text(content: Any) -> str:
 
 
 def _flatten_say_tool_calls(message: dict[str, Any]) -> dict[str, Any]:
-    """Serialize assistant ``say`` tool calls into a ``<say>...</say>`` marker.
-
-    PaliGemma's flat text prompt has no notion of structured tool calls,
-    and ``_format_messages`` only reads ``role`` / ``content`` — so
-    without this a ``say`` tool call is dropped entirely and never
-    supervised. Rewriting it into the content text as a ``<say>...</say>``
-    marker lets the LM head learn to emit it; the runtime parses it back
-    via ``_split_plan_and_say``. Messages without ``say`` tool calls are
-    returned unchanged (the structured calls, if any, are still dropped).
-    """
+    """Move ``say`` tool calls into text markers that PaliGemma can learn."""
     tool_calls = message.get("tool_calls")
     if not tool_calls:
         return message
@@ -115,15 +97,7 @@ def _flatten_say_tool_calls(message: dict[str, Any]) -> dict[str, Any]:
 
 
 def _strip_blocks(message: dict[str, Any]) -> dict[str, Any]:
-    """Normalise a message's content to a plain string.
-
-    The recipe renderer can emit ``content`` as a string OR as a list
-    of HF-style multimodal blocks (``{type: text, text: ...}``,
-    ``{type: image, feature: ...}``). PaliGemma's text tokenizer can
-    only consume strings, so we flatten: drop image blocks (cameras
-    flow through ``observation.images.*`` separately) and join text
-    block texts.
-    """
+    """Flatten text blocks and drop image blocks handled by observation inputs."""
     new = dict(message)
     new.pop("stream", None)
     new.pop("target", None)
@@ -166,24 +140,13 @@ def _sample_indices(value: Any, batch_size: int) -> list[int | None]:
     return [int(value)] * batch_size
 
 
-# Convert normalized Qwen2.5-VL coordinates to PaliGemma's resolution-independent <loc> range.
-
 _VQA_COORD_SCALE = 1000.0
 
 
 def register_paligemma_loc_tokens(tokenizer: Any) -> Any:
-    """Make PaliGemma's ``<locDDDD>`` ids match on raw text — single tokens.
+    """Register PaliGemma's reserved ``<locDDDD>`` strings as single tokens.
 
-    PaliGemma reserves vocab ids [256000, 257023] for ``<locDDDD>``
-    (detection / pointing) tokens, but the *stock* tokenizer does NOT
-    match them when encoding raw text — it BPE-splits ``<loc0162>`` into
-    7 pieces (``<``, ``loc``, ``0``, ``1``, ``6``, ``2``, ``>``). Training
-    the LM head on a ``<loc>`` target then supervises those 7 generic
-    BPE pieces instead of one detection-vocab id, the LM head learns to
-    emit the *character sequence*, and those pieces' logits dominate
-    other turns (the ``<loc>``-salad on subtasks). Registering the loc
-    tokens once makes them tokenize as their single ids (256000+idx),
-    leveraging PaliGemma's detection prior properly. Idempotent.
+    Without registration, the stock tokenizer splits each location into generic text pieces.
     """
     if "<loc0000>" in getattr(tokenizer, "added_tokens_encoder", {}):
         return tokenizer
@@ -198,26 +161,9 @@ def _loc_token(coord: float, scale: float = _VQA_COORD_SCALE) -> str:
 
 
 def _vqa_answer_to_loc(answer: dict[str, Any]) -> str | None:
-    """Convert a bbox / keypoint VQA answer dict to PaliGemma ``<loc>`` text.
+    """Convert normalized bbox/keypoint answers to label-first PaliGemma locations.
 
-    Input coordinates are in Qwen2.5-VL's 0–1000 normalized space (see
-    module-level note). y is emitted before x for each coordinate pair
-    (PaliGemma convention), with the integer indices in [0, 1023].
-
-    **Format: label first, locs after.** PaliGemma's pretraining puts
-    locs first (``<loc><loc> label``), but for our small-dataset VQA
-    blend that turns the LM head into a loc-emission attractor at every
-    ``Assistant:`` position — VQA targets share their first supervised
-    token with ~25% of all text samples, and the head collapses to
-    emitting ``<loc>`` regardless of the prompt. Putting the label
-    first (``label <locY><locX>``) means every text sample (subtask,
-    memory, VQA, …) starts the supervised target with a real word,
-    breaking the attractor. The model still learns the loc vocabulary
-    for the *spatial* portion of the answer; it just can't fire it as
-    the first generation step from a clean prompt.
-
-    Returns ``None`` for non-spatial answers (count / attribute /
-    spatial-relation) — those keep their JSON form.
+    Label-first targets prevent location tokens from dominating every assistant turn; non-spatial answers return ``None``.
     """
     point = answer.get("point")
     if isinstance(point, list | tuple) and len(point) == 2 and "point_format" in answer:
@@ -256,13 +202,7 @@ def _messages_vqa_to_loc(
     messages: list[dict[str, Any]],
     target_indices: list[int],
 ) -> list[dict[str, Any]]:
-    """Rewrite bbox / keypoint VQA *target* answers from JSON to ``<loc>`` text.
-
-    Each target turn whose content parses as a spatial VQA answer is
-    converted. Non-spatial answers and subtask / memory targets (plain
-    text → not JSON) are left untouched. Camera-independent: VQA coords
-    are 0–1000 normalized, so no observation lookup is needed.
-    """
+    """Rewrite spatial VQA target JSON as camera-independent ``<loc>`` text."""
     if not target_indices:
         return messages
     out = list(messages)
@@ -275,7 +215,7 @@ def _messages_vqa_to_loc(
         try:
             answer = json.loads(content)
         except (ValueError, TypeError):
-            continue  # subtask / memory targets are plain text — skip
+            continue
         if not isinstance(answer, dict):
             continue
         loc_text = _vqa_answer_to_loc(answer)
@@ -289,22 +229,9 @@ def _format_messages(
     target_indices: list[int] | None = None,
     eos_token: str | None = None,
 ) -> tuple[str, list[tuple[int, int]]]:
-    """Concatenate messages into the π0.5-style flat prompt.
+    """Build the flat PI0.5 prompt and each message's payload span.
 
-    When both ``target_indices`` and ``eos_token`` are given, the EOS
-    string is appended to each supervised target turn's content and the
-    returned span covers it — so the label builder marks the EOS token
-    as a supervised label. That teaches the LM head where the answer
-    *ends*: without an EOS in the target span the model is never given a
-    stop signal and rambles to ``max_length`` at inference. Inference
-    callers omit both args (no EOS baked into the prompt — the model
-    generates it and ``select_message`` stops on it).
-
-    Returns:
-        prompt:       the full text the tokenizer will consume.
-        msg_spans:    list of ``(char_start, char_end)`` covering each
-                      message's supervised payload (content, plus the
-                      appended EOS for target turns) within ``prompt``.
+    Supervised targets include EOS so generation learns when to stop.
     """
     targets = set(target_indices or [])
     parts: list[str] = []
@@ -313,12 +240,8 @@ def _format_messages(
     for i, m in enumerate(messages):
         role = m.get("role", "user")
         content = m.get("content", "") or ""
-        # Supervise the explicit role format used again during generation.
         header = f"{role.capitalize()}: "
-        # Include EOS only in supervised target spans so generation learns to stop.
         body = content + eos_token if (eos_token and i in targets) else content
-        # span covers the content (+ EOS) portion only — never the role
-        # tag — so labels are computed over the supervised payload.
         full = header + body + "\n"
         start = cursor + len(header)
         end = start + len(body)
@@ -331,11 +254,7 @@ def _format_messages(
 @dataclass
 @ProcessorStepRegistry.register(name="pi052_text_tokenizer")
 class PI052TextTokenizerStep(ProcessorStep):
-    """Render messages → token ids + label mask + predict_actions flag.
-
-    No chat template; concatenates messages as
-    ``User: ... \\nAssistant: ...`` text.
-    """
+    """Convert flat role-delimited messages into tokens and supervision masks."""
 
     tokenizer_name: str = "google/paligemma-3b-pt-224"
     max_length: int = 200
@@ -349,6 +268,19 @@ class PI052TextTokenizerStep(ProcessorStep):
 
     def __post_init__(self) -> None:
         self._tokenizer: Any = None
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "tokenizer_name": self.tokenizer_name,
+            "max_length": self.max_length,
+            "padding": self.padding,
+            "padding_side": self.padding_side,
+            "plan_dropout_prob": self.plan_dropout_prob,
+            "memory_dropout_prob": self.memory_dropout_prob,
+            "subtask_dropout_prob": self.subtask_dropout_prob,
+            "interjection_dropout_prob": self.interjection_dropout_prob,
+            "dropout_seed": self.dropout_seed,
+        }
 
     def _ensure_tokenizer(self) -> Any:
         if self._tokenizer is not None:
@@ -364,13 +296,10 @@ class PI052TextTokenizerStep(ProcessorStep):
         messages = complementary.get("messages") or []
 
         if not messages:
-            # Preserve the transition for the plain PI0.5 prompt fallback.
             return transition
 
         tokenizer = self._ensure_tokenizer()
-        # Add normalized proprioception to low-level prompts, matching PI0.5.
         state_all = (transition.get(TransitionKey.OBSERVATION) or {}).get(OBS_STATE)
-        # Normalized VQA coordinates need no camera lookup.
         if _is_batched_messages(messages):
             indices_iter = _sample_indices(complementary.get("index"), len(messages))
             encoded = [
@@ -429,7 +358,6 @@ class PI052TextTokenizerStep(ProcessorStep):
         sample_idx: int | None = None,
         state_row: Any = None,
     ) -> tuple[Tensor, Tensor, Tensor, Tensor, str]:
-        # Remap target indices after optional context dropout.
         if (
             self.plan_dropout_prob
             or self.memory_dropout_prob
@@ -443,12 +371,10 @@ class PI052TextTokenizerStep(ProcessorStep):
                 sample_idx=sample_idx,
             )
 
-        # Rewrite normalized VQA answers as PaliGemma <loc> text.
         messages = _messages_vqa_to_loc(messages, target_indices)
 
-        # Flatten ``say`` calls because PaliGemma receives plain text.
         messages = [_strip_blocks(_flatten_say_tool_calls(m)) for m in messages]
-        # Add state only to low-level action prompts; keep higher-level streams state-free.
+        # Only low-level prompts carry PI0.5-style proprioception.
         if state_row is not None and any(s == "low_level" for s in message_streams):
             state_str = discretize_state_str(state_row)
             for m in reversed(messages):
@@ -456,8 +382,6 @@ class PI052TextTokenizerStep(ProcessorStep):
                     base = _content_to_text(m.get("content", ""))
                     m["content"] = f"{base}, State: {state_str};"
                     break
-        # Append EOS to supervised target turns so the LM head learns to
-        # stop (the span covers it → it becomes a supervised label).
         prompt, spans = _format_messages(messages, target_indices, getattr(tokenizer, "eos_token", None))
 
         encoded = tokenizer(
@@ -472,10 +396,8 @@ class PI052TextTokenizerStep(ProcessorStep):
 
         input_ids = encoded["input_ids"][0]
         attention_mask = encoded["attention_mask"][0].bool()
-        offsets = encoded["offset_mapping"][0]  # (seq, 2), char (start,end)
+        offsets = encoded["offset_mapping"][0]
 
-        # Build label mask: -100 everywhere except over supervised
-        # target message char ranges.
         labels = torch.full_like(input_ids, fill_value=-100)
         for idx in target_indices:
             if idx >= len(spans):
@@ -489,7 +411,6 @@ class PI052TextTokenizerStep(ProcessorStep):
                     continue
                 labels[token_pos] = input_ids[token_pos]
 
-        # Scan all streams because low-level flow may intentionally have no text target.
         predict_actions = torch.tensor(
             bool(any(s == "low_level" for s in message_streams)),
             dtype=torch.bool,
@@ -503,16 +424,11 @@ class PI052TextTokenizerStep(ProcessorStep):
         complementary: dict[str, Any],
         sample_idx: int | None = None,
     ) -> tuple[list[dict[str, Any]], list[int]]:
-        """Drop messages classified as plan/memory/subtask context.
-
-        Targets are *never* dropped (they're the supervised payload).
-        Re-maps target_indices to the new positions after drops.
-        """
+        """Drop sampled context messages and remap the retained target positions."""
         import random  # noqa: PLC0415
 
         seed = self.dropout_seed
         if seed is None:
-            # Use the canonical row index to avoid identical dropout across an epoch.
             seed_src = sample_idx if sample_idx is not None else complementary.get("index", 0)
             try:
                 if hasattr(seed_src, "item"):
@@ -538,7 +454,6 @@ class PI052TextTokenizerStep(ProcessorStep):
                 continue
             keep_indices.append(idx)
 
-        # Build remap and apply
         new_messages = [messages[i] for i in keep_indices]
         old_to_new = {old: new for new, old in enumerate(keep_indices)}
         new_targets = [old_to_new[t] for t in target_indices if t in old_to_new]
@@ -551,7 +466,7 @@ class PI052TextTokenizerStep(ProcessorStep):
 
 
 def _classify_for_dropout(message: dict[str, Any]) -> str | None:
-    """Heuristic content-prefix classifier (plan / memory / subtask)."""
+    """Classify context from its rendered text prefix."""
     content = message.get("content")
     if isinstance(content, list):
         text_parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
