@@ -81,6 +81,12 @@ merged. Both prompts also carry a causal **event-boundary** definition (a
 new event starts when an object becomes held / is released / reaches a new
 location / a lid changes state / contents move) to sharpen where cuts land.
 
+Optionally, a third **seeded-relabel** pass (`--plan.subtask_seeded_relabel`)
+revisits each span with its previous/current/next segment contact sheets and
+minimally corrects the label, using the first label as a prior — it keeps the
+boundaries fixed and only sharpens wording, at the cost of one extra call per
+subtask.
+
 The resulting spans are then stitched into a gap-free, full-episode
 cover, so **every frame has exactly one active subtask**. See
 [`run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotations/run_hf_job.py)
@@ -157,30 +163,33 @@ Every module is on by default and can be toggled independently (set to
 
 ### The VLM (`--vlm.*`)
 
-| Flag                       | Default            | What it does                                                                        |
-| -------------------------- | ------------------ | ----------------------------------------------------------------------------------- |
-| `--vlm.model_id`           | `Qwen/Qwen3.6-27B` | The model to serve and prompt.                                                      |
-| `--vlm.camera_key`         | first `images.*`   | Which camera every prompt is grounded on.                                           |
-| `--vlm.serve_command`      | auto               | The exact `vllm serve …` command (set TP size, GPU memory, `--max-model-len` here). |
-| `--vlm.parallel_servers`   | `1`                | Independent servers for round-robin routing (one per GPU).                          |
-| `--vlm.num_gpus`           | `0`                | GPUs per server (`0` = one each).                                                   |
-| `--vlm.client_concurrency` | `16`               | In-flight requests across all servers.                                              |
-| `--vlm.max_new_tokens`     | `512`              | Generation cap per call.                                                            |
-| `--vlm.temperature`        | `0.2`              | Sampling temperature.                                                               |
+| Flag                       | Default            | What it does                                                                         |
+| -------------------------- | ------------------ | ------------------------------------------------------------------------------------ |
+| `--vlm.model_id`           | `Qwen/Qwen3.6-27B` | The model to serve and prompt.                                                       |
+| `--vlm.camera_key`         | first `images.*`   | Which camera every prompt is grounded on.                                            |
+| `--vlm.serve_command`      | auto               | The exact `vllm serve …` command (set TP size, GPU memory, `--max-model-len` here).  |
+| `--vlm.parallel_servers`   | `1`                | Independent servers for round-robin routing (one per GPU).                           |
+| `--vlm.num_gpus`           | `0`                | GPUs per server (`0` = one each).                                                    |
+| `--vlm.client_concurrency` | `16`               | In-flight requests across all servers.                                               |
+| `--vlm.max_new_tokens`     | `512`              | Generation cap per call.                                                             |
+| `--vlm.temperature`        | `0.2`              | Sampling temperature.                                                                |
+| `--vlm.reasoning_effort`   | `null`             | Thinking-budget hint (`low`/`medium`/`high`) forwarded to OpenAI-compatible servers. |
 
 ### Subtasks / plan / memory (`--plan.*`)
 
-| Flag                            | Default    | What it does                                                                                                              |
-| ------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `--plan.frames_per_second`      | `2.0`      | Frame sampling rate for the contact sheets (`2.0` = one frame every 0.5s).                                                |
-| `--plan.max_frames_per_prompt`  | `60`       | Frame budget per VLM call. Episodes whose sampling exceeds this are auto-windowed at the same density, then stitched.     |
-| `--plan.contact_sheet_columns`  | `5`        | Columns per contact-sheet grid (`contact_sheet_frames_per_sheet` tiles, time row-major).                                  |
-| `--plan.plan_max_steps`         | `8`        | Upper bound on subtasks per episode.                                                                                      |
-| `--plan.subtask_describe_first` | `true`     | Run the describe→segment grounding pass (best subtask quality; +1 call/episode).                                          |
-| `--plan.emit_plan`              | `true`     | Emit the numbered `plan` rows (`false` = subtasks + memory only).                                                         |
-| `--plan.emit_memory`            | `true`     | Emit the `memory` rows (`false` = subtasks + plan only); symmetric to `emit_plan`.                                        |
-| `--plan.n_task_rephrasings`     | `10`       | How many `task_aug` rephrasings to emit (`0` disables).                                                                   |
-| `--plan.derive_task_from_video` | `if_short` | Use the dataset task as-is (`off`), only when it's missing/short (`if_short`), or always re-derive from video (`always`). |
+| Flag                            | Default    | What it does                                                                                                                 |
+| ------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `--plan.frames_per_second`      | `2.0`      | Frame sampling rate for the contact sheets (`2.0` = one frame every 0.5s).                                                   |
+| `--plan.max_frames_per_prompt`  | `60`       | Frame budget per VLM call. Episodes whose sampling exceeds this are auto-windowed at the same density, then stitched.        |
+| `--plan.contact_sheet_columns`  | `5`        | Columns per contact-sheet grid (`contact_sheet_frames_per_sheet` tiles, time row-major).                                     |
+| `--plan.plan_max_steps`         | `8`        | Upper bound on subtasks per episode.                                                                                         |
+| `--plan.subtask_describe_first` | `true`     | Run the describe→segment grounding pass (best subtask quality; +1 call/episode).                                             |
+| `--plan.subtask_seeded_relabel` | `false`    | Second pass: re-label each subtask from its prev/current/next contact sheets, seeded with the first label (+1 call/subtask). |
+| `--plan.subtask_relabel_frames` | `5`        | Frames sampled uniformly per segment sheet in the relabel pass (only used when `subtask_seeded_relabel=true`).               |
+| `--plan.emit_plan`              | `true`     | Emit the numbered `plan` rows (`false` = subtasks + memory only).                                                            |
+| `--plan.emit_memory`            | `true`     | Emit the `memory` rows (`false` = subtasks + plan only); symmetric to `emit_plan`.                                           |
+| `--plan.n_task_rephrasings`     | `10`       | How many `task_aug` rephrasings to emit (`0` disables).                                                                      |
+| `--plan.derive_task_from_video` | `if_short` | Use the dataset task as-is (`off`), only when it's missing/short (`if_short`), or always re-derive from video (`always`).    |
 
 ### Interjections + VQA
 
