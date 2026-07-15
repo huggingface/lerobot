@@ -71,7 +71,7 @@ from .configuration_qwen2_5_vl import Qwen2_5_VLConfig, Qwen2_5_VLTextConfig
 
 
 @dataclass
-class Qwen2_5_VLACausalLMOutputWithPast(ModelOutput):
+class Qwen2_5_VLACausalLMOutputWithPast(ModelOutput):  # noqa: N801
     loss: torch.FloatTensor | None = None
     flow_loss: torch.FloatTensor | None = None
     cross_entropy_loss: torch.FloatTensor | None = None
@@ -202,7 +202,7 @@ class Qwen2_5_VLDecoderLayer_with_MoE(Qwen2_5_VLDecoderLayer):  # noqa: N801
         return hidden_states
 
 
-class Qwen2_5_VLMoEModel(Qwen2_5_VLTextModel):
+class Qwen2_5_VLMoEModel(Qwen2_5_VLTextModel):  # noqa: N801
     """Qwen2.5-VL text model with Mixture of Experts (MoE) decoder layers.
 
     Extends the native ``Qwen2_5_VLTextModel`` with per-token-type expert routing and a causal-mask

@@ -413,10 +413,7 @@ def get_task_instruction(
         }
     )
 
-    if priority_order is not None:
-        priority_order = OrderedDict(priority_order)
-    else:
-        priority_order = default_priority_order
+    priority_order = OrderedDict(priority_order) if priority_order is not None else default_priority_order
 
     got_instruction = False
     task_instruction = ""
@@ -424,9 +421,8 @@ def get_task_instruction(
     # Sample instruction components based on priority probabilities
     for key, prob in priority_order.items():
         if key in frame_instruction_info and frame_instruction_info[key] != "":
-            if got_instruction:
-                if random.random() >= prob:
-                    continue
+            if got_instruction and random.random() >= prob:
+                continue
 
             task_instruction += f"\n{frame_instruction_info[key]}"
             got_instruction = True
@@ -538,10 +534,7 @@ def img_key_mapping(img_keys: list[str]) -> list[str]:
         if key in CAMERA_NAME_MAPPING:
             key = CAMERA_NAME_MAPPING[key]
         else:
-            if "view" in key:
-                key = key.replace("_", " ")
-            else:
-                key = key + " view"
+            key = key.replace("_", " ") if "view" in key else key + " view"
         processed_img_keys.append(key)
     return processed_img_keys
 

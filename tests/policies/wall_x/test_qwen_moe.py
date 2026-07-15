@@ -18,15 +18,20 @@ import hashlib
 
 import pytest
 import torch
-from transformers import StaticCache
-from transformers.models.qwen2_5_vl.configuration_qwen2_5_vl import (
+
+pytest.importorskip("transformers")
+
+from transformers import StaticCache  # noqa: E402
+from transformers.models.qwen2_5_vl.configuration_qwen2_5_vl import (  # noqa: E402
     Qwen2_5_VLConfig as TransformersQwen2_5_VLConfig,
     Qwen2_5_VLTextConfig as TransformersQwen2_5_VLTextConfig,
 )
 
-from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
-from lerobot.policies.wall_x.qwen_model.configuration_qwen2_5_vl import Qwen2_5_VLConfig
-from lerobot.policies.wall_x.qwen_model.qwen2_5_vl_moe import Qwen2_5_VLMoEModel
+from lerobot.policies.wall_x.configuration_wall_x import WallXConfig  # noqa: E402
+from lerobot.policies.wall_x.qwen_model.configuration_qwen2_5_vl import (  # noqa: E402
+    Qwen2_5_VLConfig,
+)
+from lerobot.policies.wall_x.qwen_model.qwen2_5_vl_moe import Qwen2_5_VLMoEModel  # noqa: E402
 
 
 def make_tiny_config(**overrides) -> Qwen2_5_VLConfig:

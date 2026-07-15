@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as functional
 from PIL import Image
 from safetensors.torch import load_file
 from torch import Tensor
@@ -246,7 +246,7 @@ class ActionHead(nn.Module):
         flow = flow.to(torch.float32)
 
         action_pred = self.action_proj_back(action_hidden_states)
-        loss = F.mse_loss(action_pred, flow, reduction="none")
+        loss = functional.mse_loss(action_pred, flow, reduction="none")
 
         if dof_mask is not None:
             dof_mask = dof_mask.reshape(-1, dof_mask.shape[-1]).to(torch.float32)
@@ -281,7 +281,7 @@ class ActionHead(nn.Module):
 _Qwen2_5_VLForAction_Base = Qwen2_5_VLForConditionalGeneration if _wallx_deps_available else nn.Module
 
 
-class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
+class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
     """
     Qwen2.5 Vision-Language Mixture of Experts model for action processing.
 
@@ -382,7 +382,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
         state_dict = {}
         # filter normalizer statistic params
         del_keys = []
-        for key in sd.keys():
+        for key in sd:
             if "action_preprocessor.normalizer" in key:
                 del_keys.append(key)
         for key in del_keys:
@@ -456,7 +456,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
 
         params_to_keep_float32 = []
 
-        for name, param in self.named_parameters():
+        for name, _param in self.named_parameters():
             if "input_layernorm" in name or "post_attention_layernorm" in name or "model.norm" in name:
                 params_to_keep_float32.append(name)
             if "action_preprocessor" in name:
@@ -490,7 +490,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             "action_token_id": action_token_id,
         }
 
-    def add_lora(self, r=8, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.1):
+    def add_lora(self, r=8, lora_alpha=32, target_modules=None, lora_dropout=0.1):
         """
         Add LoRA (Low-Rank Adaptation) adapters to the model.
 
@@ -500,6 +500,9 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             target_modules (list): List of module names to apply LoRA to
             lora_dropout (float): Dropout probability for LoRA layers
         """
+        if target_modules is None:
+            target_modules = ["q_proj", "v_proj"]
+
         config = LoraConfig(
             r=r,
             lora_alpha=lora_alpha,
@@ -1255,7 +1258,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
                 use_cache=True,
                 pad_token_id=self.processor.tokenizer.pad_token_id,
                 temperature=(1.0 if not re_generate else 0.7),  # Higher temperature for regeneration
-                do_sample=(False if not re_generate else True),  # Enable sampling for regeneration
+                do_sample=re_generate,  # Enable sampling for regeneration
             )
 
             # Decode generated and ground truth text

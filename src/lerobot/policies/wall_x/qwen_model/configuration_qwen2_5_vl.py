@@ -72,7 +72,7 @@ _LEGACY_TEXT_ATTRIBUTES = {
 
 
 @strict
-class Qwen2_5_VLTextConfig(TransformersQwen2_5_VLTextConfig):
+class Qwen2_5_VLTextConfig(TransformersQwen2_5_VLTextConfig):  # noqa: N801
     """Native Qwen2.5-VL text config plus Wall-X's hard-routed MoE settings."""
 
     num_experts: int = 4
@@ -89,7 +89,7 @@ class Qwen2_5_VLTextConfig(TransformersQwen2_5_VLTextConfig):
 
 
 @strict
-class Qwen2_5_VLConfig(TransformersQwen2_5_VLConfig):
+class Qwen2_5_VLConfig(TransformersQwen2_5_VLConfig):  # noqa: N801
     """Native composite Qwen2.5-VL config with a Wall-X text sub-config.
 
     The native composite loader supports both current nested configs and the
