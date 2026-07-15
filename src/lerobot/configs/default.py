@@ -33,6 +33,10 @@ class DatasetConfig:
     # looked up under $HF_LEROBOT_HOME/repo_id and Hub downloads use a revision-safe cache under $HF_LEROBOT_HOME/hub.
     root: str | None = None
     episodes: list[int] | None = None
+    # Optional per-frame feature containing the episode-relative index of the first frame that may be
+    # sampled as a training target. Earlier frames remain in the dataset and can still be loaded through
+    # temporal observation deltas. This is useful for datasets with demonstration/context prefixes.
+    training_target_start_feature: str | None = None
     image_transforms: ImageTransformsConfig = field(default_factory=ImageTransformsConfig)
     revision: str | None = None
     use_imagenet_stats: bool = True

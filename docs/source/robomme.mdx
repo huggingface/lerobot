@@ -110,16 +110,18 @@ dataset = LeRobotDataset("lerobot/robomme")
 
 ### Dataset features
 
-| Feature            | Shape         | Description                     |
-| ------------------ | ------------- | ------------------------------- |
-| `image`            | (256, 256, 3) | Front camera RGB                |
-| `wrist_image`      | (256, 256, 3) | Wrist camera RGB                |
-| `actions`          | (8,)          | Joint angles + gripper          |
-| `state`            | (8,)          | Joint positions + gripper state |
-| `simple_subgoal`   | str           | High-level language annotation  |
-| `grounded_subgoal` | str           | Grounded language annotation    |
-| `episode_index`    | int           | Episode ID                      |
-| `frame_index`      | int           | Frame within episode            |
+| Feature            | Shape         | Description                      |
+| ------------------ | ------------- | -------------------------------- |
+| `image`            | (256, 256, 3) | Front camera RGB                 |
+| `wrist_image`      | (256, 256, 3) | Wrist camera RGB                 |
+| `actions`          | (8,)          | Joint angles + gripper           |
+| `state`            | (8,)          | Joint positions + gripper state  |
+| `simple_subgoal`   | str           | High-level language annotation   |
+| `grounded_subgoal` | str           | Grounded language annotation     |
+| `exec_start_idx`   | scalar        | First action-execution frame     |
+| `is_demo`          | bool          | Video-demonstration prefix frame |
+| `episode_index`    | int           | Episode ID                       |
+| `frame_index`      | int           | Frame within episode             |
 
 ### Feature key alignment (training)
 
@@ -132,8 +134,16 @@ uv run lerobot-train \
   --policy.path=lerobot/smolvla_base \
   --policy.empty_cameras=1 \
   --dataset.repo_id=lerobot/robomme \
+  --dataset.training_target_start_feature=exec_start_idx \
   '--rename_map={"image":"observation.images.camera1","wrist_image":"observation.images.camera2","state":"observation.state","actions":"action"}'
 ```
+
+RoboMME episodes begin with video-demonstration/context frames that should remain available to a
+memory policy but should not be sampled as action-training targets. Setting
+`dataset.training_target_start_feature=exec_start_idx` starts target sampling at each episode's
+execution boundary while preserving earlier frames for temporal observation deltas. In the published
+training split this keeps 476,857 execution targets out of 768,897 total frames. One execution-target
+epoch therefore takes `ceil(476857 / effective_batch_size)` optimizer steps.
 
 At evaluation time the environment wrapper has already converted observations to canonical keys. Only the two camera suffixes need to be aligned with the checkpoint:
 

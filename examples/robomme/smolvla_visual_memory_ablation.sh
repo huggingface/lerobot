@@ -4,8 +4,11 @@
 
 set -euo pipefail
 
-STEPS="${STEPS:-30000}"
 BATCH_SIZE="${BATCH_SIZE:-4}"
+# The published training split has 476,857 execution frames. By default, train on one
+# execution-frame epoch; set STEPS explicitly to use a different optimizer-step budget.
+TARGET_SAMPLES="${TARGET_SAMPLES:-476857}"
+STEPS="${STEPS:-$(((TARGET_SAMPLES + BATCH_SIZE - 1) / BATCH_SIZE))}"
 SEED="${SEED:-1000}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/robomme-smolvla-mem-ablation}"
 WANDB_ENABLE="${WANDB_ENABLE:-false}"
@@ -22,6 +25,7 @@ COMMON_TRAIN_ARGS=(
   --policy.freeze_vision_encoder=false
   --policy.train_expert_only=false
   --dataset.repo_id=lerobot/robomme
+  --dataset.training_target_start_feature=exec_start_idx
   '--rename_map={"image":"observation.images.camera1","wrist_image":"observation.images.camera2","state":"observation.state","actions":"action"}'
   --batch_size="${BATCH_SIZE}"
   --steps="${STEPS}"

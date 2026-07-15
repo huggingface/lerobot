@@ -15,7 +15,7 @@
 # limitations under the License.
 import logging
 import math
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 
 import numpy as np
 import torch
@@ -49,7 +49,7 @@ class EpisodeAwareSampler:
         dataset_from_indices: list[int],
         dataset_to_indices: list[int],
         episode_indices_to_use: list | None = None,
-        drop_n_first_frames: int = 0,
+        drop_n_first_frames: int | Sequence[int] = 0,
         drop_n_last_frames: int = 0,
         shuffle: bool = False,
         seed: int = 0,
@@ -60,13 +60,12 @@ class EpisodeAwareSampler:
             dataset_from_indices: Start index of each episode in the dataset.
             dataset_to_indices: End index of each episode in the dataset.
             episode_indices_to_use: Episode indices to use; None means all.
-            drop_n_first_frames: Frames to drop from the start of each episode.
+            drop_n_first_frames: Frames to drop from the start of each episode. An integer applies the
+                same offset to every episode; a sequence supplies one offset per episode.
             drop_n_last_frames: Frames to drop from the end of each episode.
             shuffle: Whether to shuffle the indices.
             seed: Seed the permutation is derived from (together with the epoch).
         """
-        if drop_n_first_frames < 0:
-            raise ValueError(f"drop_n_first_frames must be >= 0, got {drop_n_first_frames}")
         if drop_n_last_frames < 0:
             raise ValueError(f"drop_n_last_frames must be >= 0, got {drop_n_last_frames}")
 
@@ -78,12 +77,27 @@ class EpisodeAwareSampler:
                 f"got {len(from_indices)} and {len(to_indices)}"
             )
 
+        if isinstance(drop_n_first_frames, int):
+            first_frame_offsets = np.full(len(from_indices), drop_n_first_frames, dtype=np.int64)
+        else:
+            first_frame_offsets = np.asarray(drop_n_first_frames, dtype=np.int64)
+            if first_frame_offsets.shape != from_indices.shape:
+                raise ValueError(
+                    "drop_n_first_frames must be an integer or have one value per episode; "
+                    f"got {len(first_frame_offsets)} values for {len(from_indices)} episodes"
+                )
+        if np.any(first_frame_offsets < 0):
+            raise ValueError(
+                "drop_n_first_frames must be >= 0, got "
+                f"{first_frame_offsets[first_frame_offsets < 0].tolist()}"
+            )
+
         used = np.ones(len(from_indices), dtype=bool)
         if episode_indices_to_use is not None:
             used = np.zeros(len(from_indices), dtype=bool)
             used[np.asarray(episode_indices_to_use, dtype=np.int64)] = True
 
-        starts = from_indices + drop_n_first_frames
+        starts = from_indices + first_frame_offsets
         lengths = to_indices - drop_n_last_frames - starts
         for episode_idx in np.flatnonzero(used & (lengths <= 0)):
             logger.warning(
@@ -91,7 +105,7 @@ class EpisodeAwareSampler:
                 "drop_n_last_frames=%d removes all frames. Skipping.",
                 episode_idx,
                 to_indices[episode_idx] - from_indices[episode_idx],
-                drop_n_first_frames,
+                first_frame_offsets[episode_idx],
                 drop_n_last_frames,
             )
         used &= lengths > 0

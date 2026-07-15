@@ -455,10 +455,46 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         to_indices = dataset.meta.episodes["dataset_to_index"]
         seed = cfg.seed if cfg.seed is not None else 0
 
+        drop_n_first_frames: int | list[int] = 0
+        target_start_feature = cfg.dataset.training_target_start_feature
+        if target_start_feature is not None:
+            if not hasattr(dataset, "hf_dataset"):
+                raise ValueError(
+                    "dataset.training_target_start_feature is only supported for a single map-style "
+                    "LeRobotDataset."
+                )
+            if target_start_feature not in dataset.hf_dataset.column_names:
+                raise ValueError(
+                    f"Training target start feature {target_start_feature!r} is not present in the dataset. "
+                    f"Available features: {dataset.hf_dataset.column_names}"
+                )
+            start_column = dataset.hf_dataset.data.column(target_start_feature)
+            absolute_to_relative_idx = dataset.absolute_to_relative_idx
+            episode_indices = dataset.episodes if dataset.episodes is not None else range(len(from_indices))
+            drop_n_first_frames = [0] * len(from_indices)
+            for episode_index in episode_indices:
+                absolute_index = int(from_indices[episode_index])
+                relative_index = (
+                    absolute_to_relative_idx[absolute_index]
+                    if absolute_to_relative_idx is not None
+                    else absolute_index
+                )
+                drop_n_first_frames[episode_index] = int(start_column[relative_index].as_py())
+            logging.info(
+                "Restricting training targets with %s: keeping %d of %d frames",
+                target_start_feature,
+                sum(
+                    int(to_indices[index]) - int(from_indices[index]) - drop_n_first_frames[index]
+                    for index in episode_indices
+                ),
+                sum(int(to_indices[index]) - int(from_indices[index]) for index in episode_indices),
+            )
+
         sampler = EpisodeAwareSampler(
             from_indices,
             to_indices,
             episode_indices_to_use=dataset.episodes,
+            drop_n_first_frames=drop_n_first_frames,
             drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
             shuffle=True,
             seed=seed,

@@ -60,6 +60,26 @@ def test_drop_n_first_frames():
     assert list(sampler) == [1, 4, 5]
 
 
+def test_drop_different_number_of_first_frames_per_episode():
+    sampler = EpisodeAwareSampler(
+        dataset_from_indices=[0, 3, 5],
+        dataset_to_indices=[3, 5, 9],
+        drop_n_first_frames=[1, 0, 3],
+    )
+    assert sampler.indices == [1, 2, 3, 4, 8]
+    assert len(sampler) == 5
+
+
+def test_drop_first_frames_sequence_must_match_episode_count():
+    with pytest.raises(ValueError, match="one value per episode"):
+        EpisodeAwareSampler([0, 3], [3, 6], drop_n_first_frames=[1])
+
+
+def test_drop_first_frames_sequence_must_be_non_negative():
+    with pytest.raises(ValueError, match="must be >= 0"):
+        EpisodeAwareSampler([0, 3], [3, 6], drop_n_first_frames=[1, -1])
+
+
 def test_drop_n_last_frames():
     dataset = Dataset.from_dict(
         {
