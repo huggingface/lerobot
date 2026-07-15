@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 import torch
 
 from lerobot.runtime.cli import _build_rollout_runtime_io, _parse_args
@@ -17,6 +18,11 @@ def test_parse_args_preserves_rollout_robot_overrides():
 
     assert args.robot_type == "so101_follower"
     assert "--robot.calibration_dir=/tmp/calibration" in args.raw_argv
+
+
+def test_parse_args_rejects_removed_dataset_replay_flags():
+    with pytest.raises(SystemExit):
+        _parse_args(["--policy.path=checkpoint", "--dataset.repo_id=dataset"])
 
 
 def test_rollout_runtime_io_uses_context_processors():

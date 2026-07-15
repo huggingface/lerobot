@@ -44,7 +44,7 @@ def test_rollout_language_cli_smoke_does_not_load_model(monkeypatch):
     monkeypatch.setattr(
         cli,
         "_load_policy_and_preprocessor",
-        lambda policy_path, dataset_repo_id, **kwargs: (fake_policy, None, None, None),
+        lambda policy_path, **kwargs: (fake_policy, None, None),
     )
     monkeypatch.setattr(cli, "_run_repl", lambda runtime, **kwargs: 0)
 

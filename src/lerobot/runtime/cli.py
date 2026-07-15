@@ -26,21 +26,10 @@ memory) as they happen.
 Examples
 --------
 
-Dry run on a Hub checkpoint, no robot connected — useful for sanity-
-checking text generation::
+No-robot REPL on a Hub checkpoint — useful for sanity-checking text generation::
 
     uv run lerobot-rollout --language \\
         --policy.path=<repo-or-dir> \\
-        --no_robot \\
-        --task="please clean the kitchen"
-
-Same, but feed real frames from an annotated dataset so plan / subtask
-/ memory generation runs against actual video + state::
-
-    uv run lerobot-rollout --language \\
-        --policy.path=<repo-or-dir> \\
-        --dataset.repo_id=<annotated-dataset> \\
-        --dataset.episode=0 \\
         --no_robot \\
         --task="please clean the kitchen"
 
@@ -50,8 +39,7 @@ With a real robot::
         --policy.path=... \\
         --robot.type=so101 --robot.port=/dev/tty.usbmodem...
 
-``--policy.path`` accepts either a local directory or a Hugging Face
-Hub repo id. ``--dataset.repo_id`` likewise.
+``--policy.path`` accepts either a local directory or a Hugging Face Hub repo id.
 """
 
 from __future__ import annotations
@@ -93,69 +81,11 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         ),
     )
     p.add_argument(
-        "--dataset.repo_id",
-        dest="dataset_repo_id",
-        type=str,
-        default=None,
-        help=(
-            "Optional dataset (local path or Hub repo id) used to drive "
-            "observations during dry-run inference. When set, the runtime "
-            "reads camera frames + state from the chosen episode and feeds "
-            "them into all forward passes — so plan / subtask / memory "
-            "generation see the same visual context the policy was "
-            "trained on."
-        ),
-    )
-    p.add_argument(
-        "--dataset.episode",
-        dest="dataset_episode",
-        type=int,
-        default=0,
-        help="Episode index to walk through (default: 0).",
-    )
-    p.add_argument(
-        "--dataset.start_frame",
-        dest="dataset_start_frame",
-        type=int,
-        default=0,
-        help="Frame index within the episode to start from (default: 0).",
-    )
-    p.add_argument(
-        "--dataset.advance_per_tick",
-        dest="dataset_advance_per_tick",
-        type=int,
-        default=1,
-        help=(
-            "How many dataset frames to advance per runtime tick. The "
-            "default of 1 means the runtime walks the episode forward "
-            "frame by frame; set to 0 to freeze on ``start_frame``."
-        ),
-    )
-    p.add_argument(
-        "--dataset.augment_at_inference",
-        dest="dataset_augment_at_inference",
-        action="store_true",
-        help=(
-            "Apply the same torchvision-v2 ColorJitter / SharpnessJitter "
-            "/ RandomAffine pipeline that training used to each dataset "
-            "frame fed to the policy. Use to test whether the LM head "
-            "generalises under the augmentation distribution it was "
-            "supervised on — if dry-run still produces coherent subtask "
-            "text with this flag on, the head has learned beyond exact "
-            "frames; if it collapses to '\\n' the head is hyper-specific "
-            "to the unperturbed training samples."
-        ),
-    )
-    p.add_argument(
         "--task",
         dest="task",
         type=str,
         default=None,
-        help=(
-            "Initial task. When given, the startup task picker is skipped "
-            "and this task is used directly. If omitted, the picker is "
-            "shown (or the first stdin line is treated as the task)."
-        ),
+        help=("Initial task. If omitted, enter a task at the interactive prompt."),
     )
     p.add_argument(
         "--mode",
@@ -172,12 +102,12 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
     p.add_argument(
         "--no_robot",
         action="store_true",
-        help="Skip robot connection — language-only / dry-run mode.",
+        help="Skip robot connection and open a language-only REPL.",
     )
     # --- Real-robot mode args ----------------------------------------
     # Setting ``--robot.type`` flips the runtime into autonomous mode:
     # it connects to the robot, builds an observation provider that
-    # reads ``robot.get_observation()`` instead of dataset frames, and
+    # reads ``robot.get_observation()``, and
     # an action executor that postprocesses (denormalises) the policy's
     # output and calls ``robot.send_action(...)`` at ``--ctrl_hz``. The
     # high-level REPL-style stdin still works in a background thread
@@ -190,8 +120,8 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         help=(
             "Robot config choice (e.g. ``so101``, ``so101_follower``). "
             "When set, the runtime drives the actual robot at "
-            "``--ctrl_hz`` instead of running the dataset-driven dry-run "
-            "REPL. Implies ``--autonomous`` unless ``--no_robot`` is also "
+            "``--ctrl_hz`` instead of the no-robot REPL. Implies "
+            "``--autonomous`` unless ``--no_robot`` is also "
             "passed (in which case the flag is ignored). See "
             "``lerobot.robots`` for available choices."
         ),
@@ -460,27 +390,19 @@ def _select_observation_to_device(sample: dict, device: Any) -> dict:
 
 def _load_policy_and_preprocessor(
     policy_path: str,
-    dataset_repo_id: str | None,
     *,
     load_processors_from_checkpoint: bool = False,
     fp8: bool = False,
     device: str | None = None,
-) -> tuple[Any, Any, Any, Any]:
+) -> tuple[Any, Any, Any]:
     """Load a policy checkpoint (local path or Hub repo id).
 
-    Returns ``(policy, preprocessor, postprocessor, ds_meta)``.
-    ``preprocessor`` / ``postprocessor`` / ``ds_meta`` are ``None``
-    when no dataset is provided (rare — needed for autonomous robot
-    mode to have action-denormalisation stats).
-
-    When ``load_processors_from_checkpoint`` is set and no dataset is
-    given, the pre/post processors are loaded from the checkpoint exactly
-    like ``lerobot-eval`` (normalizer stats from the saved safetensors,
-    recipe from ``cfg.recipe_path``). This is what the RoboCasa sim
-    backend uses so it needs no dataset to match eval-time processing.
+    When ``load_processors_from_checkpoint`` is set, the pre/post processors
+    are loaded exactly like ``lerobot-eval``. RoboCasa uses this path so its
+    normalization and recipe match the checkpoint.
     """
     from lerobot.configs import PreTrainedConfig  # noqa: PLC0415
-    from lerobot.policies.factory import make_policy, make_pre_post_processors  # noqa: PLC0415
+    from lerobot.policies.factory import get_policy_class, make_pre_post_processors  # noqa: PLC0415
 
     cfg = PreTrainedConfig.from_pretrained(policy_path)
     cfg.pretrained_path = policy_path
@@ -510,231 +432,16 @@ def _load_policy_and_preprocessor(
                 cfg.type,
             )
 
-    ds_meta = None
     preprocessor = None
     postprocessor = None
-    if dataset_repo_id is not None:
-        from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata  # noqa: PLC0415
-
-        ds_meta = LeRobotDatasetMetadata(dataset_repo_id)
-        policy = make_policy(cfg, ds_meta=ds_meta)
-        # ``pretrained_path=None`` rebuilds fresh — the saved
-        # ``policy_preprocessor.json`` doesn't round-trip
-        # ``RenderMessagesStep.recipe``. Stats come from the dataset
-        # the user is feeding through, so normalisation is consistent.
-        preprocessor, postprocessor = make_pre_post_processors(
-            cfg,
-            pretrained_path=None,
-            dataset_stats=ds_meta.stats,
-        )
-    else:
-        from lerobot.policies.factory import get_policy_class  # noqa: PLC0415
-
-        policy_cls = get_policy_class(cfg.type)
-        policy = policy_cls.from_pretrained(policy_path, config=cfg)
-        policy.to(cfg.device)
-        if load_processors_from_checkpoint:
-            # Eval-matching processors: stats from the checkpoint safetensors,
-            # recipe from cfg.recipe_path. No dataset needed.
-            preprocessor, postprocessor = make_pre_post_processors(cfg, pretrained_path=cfg.pretrained_path)
+    policy_cls = get_policy_class(cfg.type)
+    policy = policy_cls.from_pretrained(policy_path, config=cfg)
+    policy.to(cfg.device)
+    if load_processors_from_checkpoint:
+        preprocessor, postprocessor = make_pre_post_processors(cfg, pretrained_path=cfg.pretrained_path)
 
     policy.eval()
-    return policy, preprocessor, postprocessor, ds_meta
-
-
-def _build_observation_provider(
-    *,
-    dataset_repo_id: str,
-    episode: int,
-    start_frame: int,
-    advance_per_tick: int,
-    preprocessor: Any,
-    device: str,
-    augment: bool = False,
-) -> Callable[[], dict | None]:
-    """Closure feeding preprocessed dataset frames to the runtime, advancing
-    ``advance_per_tick`` frames per call and looping at episode end.
-
-    Language columns are stripped first — the runtime supplies its own
-    messages from current state, not the dataset's annotations.
-    """
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: PLC0415
-
-    ds = LeRobotDataset(dataset_repo_id, episodes=[episode])
-    if len(ds) == 0:
-        raise ValueError(f"Dataset {dataset_repo_id!r} episode {episode} is empty.")
-
-    # Optional: replay training's augmentation pipeline so dry-run probes the
-    # augmented support region — coherent text under jitter means the LM head
-    # generalized; collapse to "\n" means it memorised unperturbed frames.
-    inference_aug = None
-    if augment:
-        from lerobot.transforms import (  # noqa: PLC0415
-            ImageTransforms,
-            ImageTransformsConfig,
-        )
-
-        aug_cfg = ImageTransformsConfig(enable=True)
-        inference_aug = ImageTransforms(aug_cfg)
-        ds.set_image_transforms(inference_aug)
-        logger.warning(
-            "dry-run augmentation ENABLED — frames will be jittered "
-            "(brightness/contrast/saturation/hue/sharpness/affine) "
-            "before going to the policy"
-        )
-
-    state = {"cursor": max(0, min(start_frame, len(ds) - 1))}
-
-    def _provider() -> dict | None:
-        idx = state["cursor"]
-        if advance_per_tick > 0:
-            state["cursor"] = (idx + advance_per_tick) % len(ds)
-
-        sample = ds[idx]
-        _strip_runtime_owned_language_cols(sample)
-
-        if preprocessor is not None:
-            sample = preprocessor(sample)
-
-        return _select_observation_to_device(sample, device)
-
-    return _provider
-
-
-def _bootstrap_state_from_dataset(
-    *,
-    dataset_repo_id: str,
-    episode: int,
-    start_frame: int,
-) -> dict[str, str]:
-    """Pull task / active plan / memory / subtask at ``start_frame``, so the
-    runtime's first prompt matches the canonical training prompts (an OOD
-    prompt makes the model fall back to its dominant training mode).
-    """
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: PLC0415
-
-    ds = LeRobotDataset(dataset_repo_id, episodes=[episode])
-    if len(ds) == 0:
-        return {}
-    idx = max(0, min(start_frame, len(ds) - 1))
-    sample = ds[idx]
-
-    out: dict[str, str] = {}
-    task = sample.get("task")
-    if isinstance(task, str) and task.strip():
-        out["task"] = task
-
-    persistent = sample.get("language_persistent") or []
-    # ``persistent`` is the broadcast slice of the episode; pick the
-    # *latest* row of each style whose ``timestamp`` is ≤ the
-    # frame's timestamp (matches the renderer's ``active_at``
-    # semantics).
-    try:
-        frame_ts = (
-            float(sample["timestamp"])
-            if not hasattr(sample["timestamp"], "item")
-            else sample["timestamp"].item()
-        )
-    except Exception:  # noqa: BLE001
-        frame_ts = float("inf")
-
-    by_style: dict[str, tuple[float, str]] = {}
-    for row in persistent:
-        style = row.get("style")
-        ts = row.get("timestamp")
-        content = row.get("content")
-        if not (style and content) or ts is None:
-            continue
-        try:
-            ts_f = float(ts)
-        except (TypeError, ValueError):
-            continue
-        if ts_f > frame_ts:
-            continue
-        prev = by_style.get(style)
-        if prev is None or ts_f >= prev[0]:
-            by_style[style] = (ts_f, content)
-    for style, (_, content) in by_style.items():
-        if style in {"plan", "memory", "subtask"}:
-            out[style] = content
-    return out
-
-
-def _select_task_interactively(
-    *,
-    ds_meta: Any,
-    bootstrap_task: str | None,
-) -> str | None:
-    """Interactive task picker: numbered menu of dataset tasks (bootstrap task
-    as default) plus a custom-input option; plain prompt without a dataset.
-    Non-TTY runs skip the prompt and return the bootstrap task. Returns
-    ``None`` when the operator declines (Ctrl-D / empty + no default).
-    """
-    options: list[str] = []
-    seen: set[str] = set()
-    if bootstrap_task:
-        options.append(bootstrap_task)
-        seen.add(bootstrap_task)
-    if ds_meta is not None and getattr(ds_meta, "tasks", None) is not None:
-        try:
-            for t in list(ds_meta.tasks.index):
-                if isinstance(t, str) and t and t not in seen:
-                    options.append(t)
-                    seen.add(t)
-        except Exception as exc:  # noqa: BLE001 — defensive: tasks shape varies
-            logger.debug("could not enumerate dataset tasks: %s", exc)
-
-    if not sys.stdin.isatty():
-        # Scripted / piped run: no interactive prompt; fall back to the
-        # bootstrap default (may be None — REPL handles that).
-        return bootstrap_task
-
-    print("\n[runtime] Select startup task:", flush=True)
-    if options:
-        for i, opt in enumerate(options, 1):
-            marker = "  (dataset default)" if opt == bootstrap_task else ""
-            print(f"  [{i}] {opt}{marker}", flush=True)
-        print("  [c] type a custom task", flush=True)
-        prompt = "Choice [1]: " if bootstrap_task else "Choice: "
-    else:
-        print("  (no tasks available from dataset)", flush=True)
-        prompt = "Enter task: "
-
-    while True:
-        try:
-            choice = input(prompt).strip()
-        except EOFError:
-            print(flush=True)
-            return bootstrap_task
-
-        # No dataset options at all: the entered line *is* the task.
-        if not options:
-            return choice or None
-
-        # Empty input: take the default (item 1) when there is one.
-        if not choice:
-            return options[0] if bootstrap_task else None
-
-        if choice.lower() in ("c", "custom"):
-            try:
-                free = input("Enter task: ").strip()
-            except EOFError:
-                print(flush=True)
-                return bootstrap_task
-            if free:
-                return free
-            # Empty free-form input → loop back to the menu.
-            continue
-
-        if choice.isdigit():
-            idx = int(choice)
-            if 1 <= idx <= len(options):
-                return options[idx - 1]
-
-        print(
-            f"  invalid choice {choice!r}; pick 1–{len(options)} or 'c'.",
-            flush=True,
-        )
+    return policy, preprocessor, postprocessor
 
 
 def _build_language_rollout_context(args: argparse.Namespace) -> Any:
@@ -966,7 +673,7 @@ def _make_state_panel_renderer(
 ) -> Callable[[list[str] | None], None]:
     """Return a closure that prints the task/subtask/plan/memory panel.
 
-    Used by ``_run_repl`` for dataset-driven dry runs.
+    Used by ``_run_repl`` for the no-robot language REPL.
     """
     from rich.console import Console  # noqa: PLC0415
 
@@ -1117,17 +824,6 @@ def run(
             file=sys.stderr,
         )
         return 2
-    # Autonomous robot mode can run without a dataset: normalization stats are
-    # loaded from the checkpoint (same as lerobot-rollout and sim mode) and the
-    # observation/action feature schema is derived from the connected robot. A
-    # dataset is still honoured when given — its stats then take precedence.
-    if autonomous_mode and not args.dataset_repo_id:
-        logger.info(
-            "autonomous robot mode without --dataset.repo_id: loading "
-            "normalization stats from the checkpoint and deriving the feature "
-            "schema from the robot."
-        )
-
     # Create the sim env subprocess BEFORE the policy initialises CUDA — the
     # env worker inherits a corrupt EGL/GL context if forked from a CUDA parent
     # (dark/garbled renders). This mirrors eval's make_env-before-make_policy.
@@ -1164,16 +860,10 @@ def run(
         policy = rollout_ctx.policy.policy
         preprocessor = rollout_ctx.policy.preprocessor
         postprocessor = rollout_ctx.policy.postprocessor
-        ds_meta = None
-        if args.dataset_repo_id is not None:
-            from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata  # noqa: PLC0415
-
-            ds_meta = LeRobotDatasetMetadata(args.dataset_repo_id)
     else:
         print(f"[runtime] loading policy from {args.policy_path}", flush=True)
-        policy, preprocessor, postprocessor, ds_meta = _load_policy_and_preprocessor(
+        policy, preprocessor, postprocessor = _load_policy_and_preprocessor(
             args.policy_path,
-            args.dataset_repo_id,
             load_processors_from_checkpoint=sim_mode,
             fp8=args.fp8,
             device=args.policy_device,
@@ -1186,33 +876,6 @@ def run(
         adapter_factory = get_language_adapter_factory(policy_type)
     if panel_label is None:
         panel_label = str(policy_type or "runtime").upper()
-
-    # Bootstrap the canonical task from the dataset whenever one is
-    # provided, so the interactive picker below can offer it as the
-    # default. The model is memorised on the exact training wording, so
-    # matching it is what gets recall to fire.
-    bootstrap_state: dict[str, str] = {}
-    if args.dataset_repo_id is not None:
-        bootstrap_state = _bootstrap_state_from_dataset(
-            dataset_repo_id=args.dataset_repo_id,
-            episode=args.dataset_episode,
-            start_frame=args.dataset_start_frame,
-        )
-
-    # Interactive task picker. Skipped when ``--task`` is already set on
-    # the CLI (scripted runs and explicit overrides win). When no task
-    # was passed, prompt the operator: pick from the dataset's tasks or
-    # type a custom one. Non-TTY runs fall back to the bootstrap task
-    # silently — the existing "first stdin line becomes task" flow in
-    # ``_run_repl`` still handles the no-default case.
-    if not args.task:
-        chosen = _select_task_interactively(
-            ds_meta=ds_meta,
-            bootstrap_task=bootstrap_state.get("task"),
-        )
-        if chosen:
-            args.task = chosen
-            print(f"[runtime] task: {args.task!r}", flush=True)
 
     # No startup prompts — the runtime is command-driven. It comes up at
     # the command line in ``paused`` mode (robot idle) unless ``--mode``
@@ -1273,23 +936,6 @@ def run(
             rerun_log=bool(args.rerun),
             get_task=_live_task,
         )
-    elif args.dataset_repo_id is not None:
-        print(
-            f"[runtime] streaming observations from {args.dataset_repo_id} "
-            f"episode={args.dataset_episode} "
-            f"start_frame={args.dataset_start_frame}",
-            flush=True,
-        )
-        observation_provider = _build_observation_provider(
-            dataset_repo_id=args.dataset_repo_id,
-            episode=args.dataset_episode,
-            start_frame=args.dataset_start_frame,
-            advance_per_tick=args.dataset_advance_per_tick,
-            preprocessor=preprocessor,
-            device=str(getattr(policy.config, "device", "cpu")),
-            augment=getattr(args, "dataset_augment_at_inference", False),
-        )
-
     # Text-generation knobs are fixed config, passed to the adapter at
     # construction — not smuggled through per-tick runtime state. Lets the
     # operator try e.g. ``--text_temperature=0.6 --subtask_chunks_per_gen=5``
@@ -1317,19 +963,10 @@ def run(
     )
     # Let the robot observation provider read the live task/subtask each frame.
     runtime_box["rt"] = runtime
-    # Apply the startup mode chosen above the task picker.
+    # Apply the configured startup mode.
     runtime.state["mode"] = startup_mode
     if args.task:
         runtime.set_task(args.task)
-    # Seed the current subtask from the dataset so the first chunk —
-    # before the adapter has generated one — has a real subtask to
-    # condition the action expert on instead of falling back to the
-    # bare task. Plan and memory are NOT seeded: the current recipe
-    # trains neither, no inference step consumes them, and seeding
-    # them only put a stale plan in the status panel that does
-    # nothing.
-    if bootstrap_state.get("subtask"):
-        runtime.state["current_subtask"] = bootstrap_state["subtask"]
 
     # Let the sim backend read live task/subtask/memory for the video overlay.
     if sim_backend is not None:
@@ -1354,21 +991,6 @@ def run(
             direct_subtask=_direct_subtask_enabled(args),
             panel_label=panel_label,
         )
-    # Fire one full pipeline tick at startup so the obs diagnostic
-    # *and* the subtask generation actually run before the REPL
-    # blocks on stdin. The REPL otherwise only ticks on user input,
-    # which made the dry-run bisection test (does the LM head produce
-    # text at start_frame=0?) require typing something. Doing
-    # ``step_once`` here means the diag row populates without any
-    # manual interaction.
-    if observation_provider is not None:
-        try:
-            startup_logs = runtime.step_once()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("startup tick failed: %s", exc)
-            startup_logs = []
-        for line in startup_logs or []:
-            print(f"[runtime] {line}", flush=True)
     return _run_repl(runtime, initial_task=args.task, max_ticks=args.max_ticks, panel_label=panel_label)
 
 
@@ -1622,7 +1244,7 @@ def _run_repl(
         )
         return 2
 
-    _redraw = _make_state_panel_renderer(runtime, mode_label="dry-run", panel_label=panel_label)
+    _redraw = _make_state_panel_renderer(runtime, mode_label="no robot", panel_label=panel_label)
     # Keep a local ``console`` just for the styled input prompt; the
     # state panel is owned by the shared renderer.
     console = Console(highlight=False)
