@@ -34,11 +34,14 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import time
 from collections import deque
 
 import numpy as np
 import zmq
+
+logger = logging.getLogger(__name__)
 
 SMPL_TOPIC = "rt/smpl"
 DEFAULT_SMPL_HOST = "127.0.0.1"
@@ -185,9 +188,10 @@ class SmplStream:
                 and not self._warned_stale
                 and (now - self._last_recv_t) > self.stale_after_s
             ):
-                print(
-                    f"[SmplStream] no {SMPL_TOPIC} frame for "
-                    f"{now - self._last_recv_t:.2f}s (holding last pose)"
+                logger.warning(
+                    "[SmplStream] no %s frame for %.2fs (holding last pose)",
+                    SMPL_TOPIC,
+                    now - self._last_recv_t,
                 )
                 self._warned_stale = True
 

@@ -55,6 +55,7 @@ worker · ``SonicPlanner`` · ``PlannerController`` · joystick input.
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import queue
@@ -77,6 +78,8 @@ if TYPE_CHECKING or _onnxruntime_available:
     import onnxruntime as ort
 else:
     ort = None
+
+logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 # Robot/motor physical constants and the joint-order permutation tables. All
@@ -799,27 +802,38 @@ class StandingEncoderDecoder:
         target = DEFAULT_ANGLES + action_mj[ISAACLAB_TO_MUJOCO] * ACTION_SCALE
         if debug:
             delta = target - q
-            print(
-                f"token_norm={np.linalg.norm(self.token):.4f} action_norm={np.linalg.norm(action_mj):.4f} "
-                f"delta_max={np.max(np.abs(delta)):.4f} delta_rms={np.sqrt(np.mean(delta**2)):.4f}"
+            logger.debug(
+                "token_norm=%.4f action_norm=%.4f delta_max=%.4f delta_rms=%.4f",
+                np.linalg.norm(self.token),
+                np.linalg.norm(action_mj),
+                np.max(np.abs(delta)),
+                np.sqrt(np.mean(delta**2)),
             )
         return {f"{m.name}.q": float(target[m.value]) for m in G1_29_JointIndex}
 
     def print_input_diagnostics(self):
-        """Print sanity checks on the reference/anchor/gravity terms (debugging aid)."""
-        print("\n[Diag] Standing reference checks")
+        """Log sanity checks on the reference/anchor/gravity terms (debugging aid)."""
         names = {0: "g1", 1: "teleop", 2: "smpl"}
-        print(f"  encoder mode: {self.encode_mode} ({names.get(self.encode_mode, 'unknown')})")
-        print(f"  DEFAULT_ANGLES range: [{DEFAULT_ANGLES.min():+.4f}, {DEFAULT_ANGLES.max():+.4f}]")
-        print(
-            f"  anchor_6d(identity): {self._anchor_6d(np.array([1, 0, 0, 0], np.float32), np.array([1, 0, 0, 0], np.float32))}"
-        )
-        print(
-            f"  gravity(identity): {get_gravity_orientation(np.array([1, 0, 0, 0], np.float32))} (expect [0,0,-1])"
-        )
+        anchor = self._anchor_6d(np.array([1, 0, 0, 0], np.float32), np.array([1, 0, 0, 0], np.float32))
+        gravity = get_gravity_orientation(np.array([1, 0, 0, 0], np.float32))
         dec0 = self.build_decoder_obs()
-        print(f"  decoder q-delta max: {np.max(np.abs(dec0[94:384])):.6f}")
-        print(f"  decoder dq max:      {np.max(np.abs(dec0[384:674])):.6f}")
+        logger.debug(
+            "[Diag] Standing reference checks\n"
+            "  encoder mode: %d (%s)\n"
+            "  DEFAULT_ANGLES range: [%+.4f, %+.4f]\n"
+            "  anchor_6d(identity): %s\n"
+            "  gravity(identity): %s (expect [0,0,-1])\n"
+            "  decoder q-delta max: %.6f\n"
+            "  decoder dq max:      %.6f",
+            self.encode_mode,
+            names.get(self.encode_mode, "unknown"),
+            DEFAULT_ANGLES.min(),
+            DEFAULT_ANGLES.max(),
+            anchor,
+            gravity,
+            np.max(np.abs(dec0[94:384])),
+            np.max(np.abs(dec0[384:674])),
+        )
 
 
 # ── Planner motion buffer ─────────────────────────────────────────────────────
@@ -923,9 +937,11 @@ def _planner_worker(path, req_q, res_q, stop_evt, version, seed, use_gpu):
                 continue
             motion = _resample_30_to_50(qpos, n)
             motion["gen_frame"] = gf
-            print(
-                f"[Planner] inf={1000 * (t_inf - t0):.1f}ms total={1000 * (time.time() - t0):.1f}ms frames={n}",
-                flush=True,
+            logger.debug(
+                "[Planner] inf=%.1fms total=%.1fms frames=%d",
+                1000 * (t_inf - t0),
+                1000 * (time.time() - t0),
+                n,
             )
             while not res_q.empty():
                 try:
@@ -933,8 +949,8 @@ def _planner_worker(path, req_q, res_q, stop_evt, version, seed, use_gpu):
                 except queue.Empty:
                     break
             res_q.put(motion)
-        except Exception as e:
-            print(f"[Planner] Error: {e}", flush=True)
+        except Exception:
+            logger.exception("[Planner] worker error")
 
 
 # ── SonicPlanner ──────────────────────────────────────────────────────────────
@@ -1033,9 +1049,9 @@ class SonicPlanner:
         qpos = qpos_out[0, :n]
         if np.any(np.isnan(qpos)):
             raise RuntimeError("Planner initial output contains NaN")
-        print(f"[Planner] Init: {n} frames @ 30 Hz")
+        logger.info("[Planner] Init: %d frames @ 30 Hz", n)
         self._load_motion_in_place(qpos, n)
-        print(f"[Planner] Resampled to {self.motion_50hz.timesteps} frames @ 50 Hz")
+        logger.info("[Planner] Resampled to %d frames @ 50 Hz", self.motion_50hz.timesteps)
         return self.motion_50hz
 
     def request_replan(self, cursor, ms):
@@ -1099,7 +1115,7 @@ class SonicPlanner:
             name="sonic-planner",
         )
         self._planner_thread.start()
-        print(f"[Planner] Background thread started ({'GPU' if use_gpu else 'CPU'})")
+        logger.info("[Planner] Background thread started (%s)", "GPU" if use_gpu else "CPU")
 
     def stop_subprocess(self):
         """Signal the planner thread to stop and join it."""
@@ -1107,7 +1123,7 @@ class SonicPlanner:
             self._stop_evt.set()
         if self._planner_thread is not None:
             self._planner_thread.join(timeout=3.0)
-            print("[Planner] Background thread stopped")
+            logger.info("[Planner] Background thread stopped")
         self._planner_thread = None
         self._req_q = self._res_q = self._stop_evt = None
 
@@ -1294,7 +1310,7 @@ class PlannerController(StandingEncoderDecoder):
                 self.delta_heading = 0.0
                 self.first_motion = False
                 self.reinit_heading = False
-                print(f"[Heading] init quat: {self.heading_init_base_quat}")
+                logger.debug("[Heading] init quat: %s", self.heading_init_base_quat)
         return super().step(robot_obs, update_encoder=update_encoder, debug=debug)
 
     def advance_cursor(self):
