@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 from lerobot.configs import NormalizationMode, PreTrainedConfig
 from lerobot.optim import AdamConfig, DiffuserSchedulerConfig
@@ -147,7 +148,11 @@ class DiffusionConfig(PreTrainedConfig):
 
     # Optimization
     compile_model: bool = False
-    compile_mode: str = "reduce-overhead"
+    compile_mode: str | None = None  # Torch compile mode (None = use DEFAULT_COMPILE_MODE / SAFE_COMPILE_MODE)
+    # "reduce-overhead" is preferred for the small-batch repetitive loops common in diffusion inference.
+    # When gradient accumulation is enabled, fall back to plain "default" (no CUDAGraphs, no autotune).
+    DEFAULT_COMPILE_MODE: ClassVar[str] = "reduce-overhead"
+    SAFE_COMPILE_MODE: ClassVar[str] = "default"
 
     # Loss computation
     do_mask_loss_for_padding: bool = False

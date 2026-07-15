@@ -168,6 +168,57 @@ LeRobot gathers the full state dict across all ranks and the main process writes
   sample-exact when the world size and batch size match the original run (a warning is logged
   otherwise); the optimizer/model state itself is unaffected.
 
+## Gradient Accumulation
+
+Gradient accumulation lets you simulate a larger effective batch size without increasing GPU memory usage. Instead of processing all samples in one forward pass, it splits the batch into smaller micro-batches and accumulates gradients before updating.
+
+### Usage
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your_dataset \
+  --policy.type=pi05 \
+  --batch_size=16 \
+  --gradient_accumulation_steps=2 \
+  --steps=30000
+```
+
+This gives an effective batch size of 16 × 2 = 32, while only using memory for batch size 16.
+
+### `compile_mode` Compatibility
+
+When using `gradient_accumulation_steps > 1` with `compile_model=true`, CUDAGraphs-based compile modes (`max-autotune`, `reduce-overhead`) are incompatible because multiple forward passes before backward overwrite tensors captured in the graph.
+
+LeRobot handles this automatically. Each policy declares its own preferred and safe compile modes:
+
+| Policy | `DEFAULT_COMPILE_MODE` | `SAFE_COMPILE_MODE` (used with grad. accumulation) |
+|---|---|---|
+| `pi0`, `pi05`, `pi0_fast`, `smolvla` | `max-autotune` | `max-autotune-no-cudagraphs` |
+| `diffusion` | `reduce-overhead` | `default` |
+
+Resolution rules:
+
+| `compile_mode` | `gradient_accumulation_steps > 1` | Behavior |
+|---|---|---|
+| Not set (default) | No | Policy's `DEFAULT_COMPILE_MODE` |
+| Not set (default) | Yes | Policy's `SAFE_COMPILE_MODE` (logged as a warning) |
+| `max-autotune` or `reduce-overhead` | Yes | `ValueError` — pick a non-CUDAGraphs mode |
+| `max-autotune-no-cudagraphs` or `default` | Yes | Used as-is |
+
+### Combining with Multi-GPU
+
+Gradient accumulation works with multi-GPU training. The effective batch size becomes `batch_size × num_gpus × gradient_accumulation_steps`:
+
+```bash
+accelerate launch --num_processes=2 $(which lerobot-train) \
+  --batch_size=8 \
+  --gradient_accumulation_steps=4 \
+  --dataset.repo_id=your_dataset \
+  --policy.type=pi05
+```
+
+Effective batch size: 8 × 2 × 4 = 64.
+
 ## Notes
 
 - The `--policy.use_amp` flag in `lerobot-train` is only used when **not** running with accelerate. When using accelerate, mixed precision is controlled by accelerate's configuration.

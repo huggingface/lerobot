@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
@@ -80,7 +81,9 @@ class PI05Config(PreTrainedConfig):
     # Training settings
     gradient_checkpointing: bool = False  # Enable gradient checkpointing for memory optimization
     compile_model: bool = False  # Whether to use torch.compile for model optimization
-    compile_mode: str = "max-autotune"  # Torch compile mode
+    compile_mode: str | None = None  # Torch compile mode (None = use DEFAULT_COMPILE_MODE / SAFE_COMPILE_MODE)
+    DEFAULT_COMPILE_MODE: ClassVar[str] = "max-autotune"
+    SAFE_COMPILE_MODE: ClassVar[str] = "max-autotune-no-cudagraphs"
     device: str | None = None  # Device to use for the model (None = auto-detect)
 
     # Finetuning settings

@@ -211,7 +211,8 @@ class DiffusionModel(nn.Module):
         if config.compile_model:
             # Compile the U-Net. "reduce-overhead" is preferred for the small-batch repetitive loops
             # common in diffusion inference.
-            self.unet = torch.compile(self.unet, mode=config.compile_mode)
+            compile_mode = config.compile_mode or config.DEFAULT_COMPILE_MODE
+            self.unet = torch.compile(self.unet, mode=compile_mode)
 
         self.noise_scheduler = _make_noise_scheduler(
             config.noise_scheduler_type,
