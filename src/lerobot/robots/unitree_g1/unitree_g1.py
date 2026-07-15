@@ -35,7 +35,6 @@ from .g1_kinematics import G1_29_ArmIK
 from .g1_utils import (
     KEYBOARD_KEYS_FIELD,
     REMOTE_AXES,
-    REMOTE_KEYS,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
     default_remote_input,
@@ -477,29 +476,29 @@ class UnitreeG1(Robot):
         return action
 
     def _update_controller_action(self, action: RobotAction) -> None:
-        """Update controller input state from incoming teleop action."""
+        """Update controller input state from an incoming teleop action.
+
+        Controller-agnostic: every value-carrying key is forwarded verbatim into
+        ``controller_input`` (joystick ``remote.*``, whole-body ``smpl.*``/``root.*``
+        from pico_headset, or whatever a future controller expects), and each
+        controller extracts only the keys it understands. The robot deliberately does
+        not enumerate any controller's key schema here.
+
+        KeyboardTeleop is the one special case: it emits the currently-pressed keys as
+        bare action keys with a ``None`` value (``dict.fromkeys(pressed, None)``), so
+        those are collected into a single held-key set under ``KEYBOARD_KEYS_FIELD``,
+        rebuilt each tick so releases clear. Special keys arrive as pynput objects and
+        are normalised to their name ("space", ...).
+        """
         with self._controller_action_lock:
-            for key in REMOTE_KEYS:
-                if key in action:
-                    self.controller_input[key] = action[key]
-            # Forward the whole-body SMPL reference (pico_headset teleop) to the
-            # controller. Carried as flat smpl.{i} floats so it passes untouched
-            # through the standard action pipeline; SonicWholeBodyController
-            # reassembles it into the 720-vec encoder window.
-            for key in action:
-                if isinstance(key, str) and (key.startswith("smpl.") or key.startswith("root.")):
-                    self.controller_input[key] = action[key]
-            # Forward the KeyboardTeleop state. That teleop emits the set of
-            # currently-pressed keys as bare action keys with a None value
-            # (dict.fromkeys(pressed, None)); collect them into a single set so the
-            # SONIC controller sees the full held-key state each tick (and releases
-            # clear, unlike the persistent merge above). Special keys arrive as
-            # pynput objects, so normalise them to their name ("space", ...).
             self.controller_input[KEYBOARD_KEYS_FIELD] = {
                 (k if isinstance(k, str) else getattr(k, "name", str(k)))
                 for k, value in action.items()
                 if value is None
             }
+            for key, value in action.items():
+                if isinstance(key, str) and value is not None:
+                    self.controller_input[key] = value
 
     @property
     def is_calibrated(self) -> bool:

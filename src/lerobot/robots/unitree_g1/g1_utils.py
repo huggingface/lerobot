@@ -23,6 +23,18 @@ import numpy as np
 
 NUM_MOTORS = 29
 
+# Joint-order permutations between the two 29-DoF layouts used across the G1 stack:
+# IsaacLab (policy/training order) and MuJoCo (deploy order). ``a[ISAACLAB_TO_MUJOCO]``
+# reorders an IsaacLab-ordered vector into MuJoCo order, and vice-versa.
+ISAACLAB_TO_MUJOCO = np.array(
+    [0, 3, 6, 9, 13, 17, 1, 4, 7, 10, 14, 18, 2, 5, 8, 11, 15, 19, 21, 23, 25, 27, 12, 16, 20, 22, 24, 26, 28],
+    dtype=np.int32,
+)
+MUJOCO_TO_ISAACLAB = np.array(
+    [0, 6, 12, 1, 7, 13, 2, 8, 14, 3, 9, 15, 22, 4, 10, 16, 23, 5, 11, 17, 24, 18, 25, 19, 26, 20, 27, 21, 28],
+    dtype=np.int32,
+)
+
 REMOTE_AXES = ("remote.lx", "remote.ly", "remote.rx", "remote.ry")
 REMOTE_BUTTONS = tuple(f"remote.button.{i}" for i in range(16))
 REMOTE_KEYS = REMOTE_AXES + REMOTE_BUTTONS

@@ -57,7 +57,6 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 import queue
 import threading
 import time
@@ -70,6 +69,8 @@ import numpy as np
 from lerobot.utils.import_utils import _onnxruntime_available
 
 from ..g1_utils import (
+    ISAACLAB_TO_MUJOCO,
+    MUJOCO_TO_ISAACLAB,
     G1_29_JointIndex,
     get_gravity_orientation,
 )
@@ -157,77 +158,6 @@ BLEND_FRAMES = 8  # cross-fade length when swapping in a freshly planned motion
 
 # Seconds between automatic replans, per motion class (faster for dynamic motions).
 REPLAN_INTERVAL = {"running": 0.1, "crawling": 0.2, "boxing": 1.0, "default": 1.0}
-
-# Joint-order permutations between IsaacLab (policy) and MuJoCo (deploy) layouts.
-ISAACLAB_TO_MUJOCO = np.array(
-    [
-        0,
-        3,
-        6,
-        9,
-        13,
-        17,
-        1,
-        4,
-        7,
-        10,
-        14,
-        18,
-        2,
-        5,
-        8,
-        11,
-        15,
-        19,
-        21,
-        23,
-        25,
-        27,
-        12,
-        16,
-        20,
-        22,
-        24,
-        26,
-        28,
-    ],
-    dtype=np.int32,
-)
-
-MUJOCO_TO_ISAACLAB = np.array(
-    [
-        0,
-        6,
-        12,
-        1,
-        7,
-        13,
-        2,
-        8,
-        14,
-        3,
-        9,
-        15,
-        22,
-        4,
-        10,
-        16,
-        23,
-        5,
-        11,
-        17,
-        24,
-        18,
-        25,
-        19,
-        26,
-        20,
-        27,
-        21,
-        28,
-    ],
-    dtype=np.int32,
-)
 
 
 def _to_mujoco(a):
@@ -505,23 +435,10 @@ def ort_providers(force_cpu: bool = False) -> list[str]:
     return ["CPUExecutionProvider"]
 
 
-# Number of intra-op threads each ONNX session may use. SONIC runs THREE CPU
-# sessions concurrently (async planner thread + per-tick encoder + decoder), and
-# ONNX Runtime otherwise defaults to one thread PER CORE per session, which
-# massively oversubscribes the CPU and starves the 50 Hz control loop (especially
-# alongside the MuJoCo sim). Capping keeps total ORT threads well under the core
-# count so the control loop stays real-time. Override with SONIC_ORT_THREADS.
-ORT_INTRA_OP_THREADS = int(os.environ.get("SONIC_ORT_THREADS", "2"))
-
-
 def make_ort_session_options():
-    """Build ONNX Runtime SessionOptions with capped, non-oversubscribing threading."""
+    """Build ONNX Runtime SessionOptions (quiet logging, default threading)."""
     so = ort.SessionOptions()
     so.log_severity_level = 3
-    # inter_op=1: these graphs are sequential, parallel op scheduling only adds
-    # contention. intra_op capped so N concurrent sessions don't fight for cores.
-    so.inter_op_num_threads = 1
-    so.intra_op_num_threads = max(1, ORT_INTRA_OP_THREADS)
     return so
 
 
@@ -805,30 +722,6 @@ class StandingEncoderDecoder:
                 np.sqrt(np.mean(delta**2)),
             )
         return {f"{m.name}.q": float(target[m.value]) for m in G1_29_JointIndex}
-
-    def print_input_diagnostics(self):
-        """Log sanity checks on the reference/anchor/gravity terms (debugging aid)."""
-        names = {0: "g1", 1: "teleop", 2: "smpl"}
-        anchor = self._anchor_6d(np.array([1, 0, 0, 0], np.float32), np.array([1, 0, 0, 0], np.float32))
-        gravity = get_gravity_orientation(np.array([1, 0, 0, 0], np.float32))
-        dec0 = self.build_decoder_obs()
-        logger.debug(
-            "[Diag] Standing reference checks\n"
-            "  encoder mode: %d (%s)\n"
-            "  DEFAULT_ANGLES range: [%+.4f, %+.4f]\n"
-            "  anchor_6d(identity): %s\n"
-            "  gravity(identity): %s (expect [0,0,-1])\n"
-            "  decoder q-delta max: %.6f\n"
-            "  decoder dq max:      %.6f",
-            self.encode_mode,
-            names.get(self.encode_mode, "unknown"),
-            DEFAULT_ANGLES.min(),
-            DEFAULT_ANGLES.max(),
-            anchor,
-            gravity,
-            np.max(np.abs(dec0[94:384])),
-            np.max(np.abs(dec0[384:674])),
-        )
 
 
 # ── Planner motion buffer ─────────────────────────────────────────────────────
