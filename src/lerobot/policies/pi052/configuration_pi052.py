@@ -103,7 +103,7 @@ class PI052Config(PI05Config):
     """Compile the SigLIP tower for no-grad flow and inference passes."""
 
     use_flex_attention: bool = False
-    """Use FlexAttention BlockMasks for KI where supported."""
+    """Use FlexAttention for amortized KI, with SDPA fallback where unsupported."""
 
     use_manual_attention: bool = False
     """Use materialized-logits attention for explicitly profiled KI shapes."""
@@ -157,6 +157,8 @@ class PI052Config(PI05Config):
             )
         if self.use_flex_attention and self.use_manual_attention:
             raise ValueError("use_flex_attention and use_manual_attention are mutually exclusive")
+        if self.use_flex_attention and self.flow_num_repeats == 1:
+            raise ValueError("use_flex_attention requires flow_num_repeats > 1")
         if not self.knowledge_insulation and (
             self.use_flex_attention or self.use_manual_attention or self.use_flashrt_adarms
         ):

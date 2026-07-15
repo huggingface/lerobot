@@ -781,34 +781,40 @@ def _fast_lin_ce(
 
 # Consumer GPUs need smaller FlexAttention backward tiles at head_dim=256.
 _FLEX_SHRUNK_TILES = {"BLOCK_M1": 32, "BLOCK_N1": 64, "BLOCK_M2": 64, "BLOCK_N2": 32}
-_flex_kernel_options: dict | None | bool = False  # False = not resolved yet
+_flex_kernel_options: dict[int, dict | None] = {}
 _flex_fns: tuple | None | bool = None
 
 
-def _get_flex_kernel_options() -> dict | None:
-    global _flex_kernel_options
-    if _flex_kernel_options is False:
-        smem = torch.cuda.get_device_properties(torch.cuda.current_device()).shared_memory_per_block_optin
-        _flex_kernel_options = _FLEX_SHRUNK_TILES if smem < 128 * 1024 else None
-    return _flex_kernel_options
+def _get_flex_kernel_options(device: torch.device) -> dict | None:
+    if device.type != "cuda" or not torch.cuda.is_available():
+        return None
+    device_index = device.index if device.index is not None else torch.cuda.current_device()
+    if device_index not in _flex_kernel_options:
+        smem = torch.cuda.get_device_properties(device_index).shared_memory_per_block_optin
+        _flex_kernel_options[device_index] = _FLEX_SHRUNK_TILES if smem < 128 * 1024 else None
+    return _flex_kernel_options[device_index]
 
 
-def _get_flex_fns():
+def _get_flex_fns(device: torch.device):
     """Return compiled FlexAttention helpers when available."""
     global _flex_fns
+    if device.type != "cuda" or not torch.cuda.is_available():
+        return None
     if _flex_fns is None:
         try:
             from torch.nn.attention.flex_attention import (  # noqa: PLC0415
                 create_block_mask,
                 flex_attention,
             )
-        except ImportError:
-            _flex_fns = False
-        else:
+
             _flex_fns = (
                 torch.compile(flex_attention, dynamic=False),
                 torch.compile(create_block_mask, dynamic=False),
             )
+            _get_flex_kernel_options(device)
+        except Exception as exc:
+            logger.warning("PI052: FlexAttention unavailable (%s); using SDPA.", exc)
+            _flex_fns = False
     return _flex_fns or None
 
 
@@ -819,7 +825,7 @@ class _FlexMaskBuilder:
         self._key = None
 
     def build(self, prefix_pad, prefix_att, non_fast_prefix_len, k, chunk):
-        _, create_bm = _get_flex_fns()
+        _, create_bm = _get_flex_fns(prefix_pad.device)
         b, p = prefix_pad.shape
         a = k * chunk
         device = prefix_pad.device
@@ -1005,7 +1011,7 @@ def _compute_layer_ki(
     v_for_action = torch.cat([v_vlm.detach(), v_action], dim=2)
 
     if flex_masks is not None:
-        flex_attn, _ = _get_flex_fns()
+        flex_attn, _ = _get_flex_fns(query_states.device)
         bm_vlm, bm_action = flex_masks
         n_rep = paligemma.model.language_model.layers[layer_idx].self_attn.num_key_value_groups
         with _vlm_ctx(0):
@@ -1016,7 +1022,7 @@ def _compute_layer_ki(
                 block_mask=bm_vlm,
                 scale=scaling,
                 enable_gqa=n_rep > 1,
-                kernel_options=_get_flex_kernel_options(),
+                kernel_options=_get_flex_kernel_options(query_states.device),
             ).transpose(1, 2)
         att_action = flex_attn(
             q_action,
@@ -1025,7 +1031,7 @@ def _compute_layer_ki(
             block_mask=bm_action,
             scale=scaling,
             enable_gqa=n_rep > 1,
-            kernel_options=_get_flex_kernel_options(),
+            kernel_options=_get_flex_kernel_options(query_states.device),
         ).transpose(1, 2)
     else:
         mask_for_vlm = attention_mask[:, :, :vlm_len, :]
@@ -1645,15 +1651,23 @@ class PI052Policy(PreTrainedPolicy):
         use_flex = (
             self.config.use_flex_attention
             and getattr(self.config, "knowledge_insulation", False)
-            and _get_flex_fns() is not None
+            and not getattr(self, "_flex_attention_disabled", False)
+            and _get_flex_fns(prefix_pad.device) is not None
         )
+        flex_masks = None
         if use_flex:
-            if not hasattr(self, "_flex_mask_builder"):
-                self._flex_mask_builder = _FlexMaskBuilder()
-            flex_masks = self._flex_mask_builder.build(prefix_pad, prefix_att, non_fast_prefix_len, k, chunk)
+            try:
+                if not hasattr(self, "_flex_mask_builder"):
+                    self._flex_mask_builder = _FlexMaskBuilder()
+                flex_masks = self._flex_mask_builder.build(
+                    prefix_pad, prefix_att, non_fast_prefix_len, k, chunk
+                )
+            except Exception as exc:
+                logger.warning("PI052: FlexAttention initialization failed (%s); using SDPA.", exc)
+                self._flex_attention_disabled = True
+        if flex_masks is not None:
             att_2d_4d = None
         else:
-            flex_masks = None
             device = prefix_pad.device
             prefix_att_2d = make_att_2d_masks(prefix_pad, prefix_att)  # (B, P, P)
             prefix_rows = torch.cat(
