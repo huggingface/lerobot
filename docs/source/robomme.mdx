@@ -44,6 +44,18 @@ docker build -f docker/Dockerfile.benchmark.robomme -t lerobot-robomme .
 
 The `docker/Dockerfile.benchmark.robomme` image overrides `gymnasium==0.29.1` and `numpy==1.26.4` after lerobot's install. Both versions are runtime-safe for lerobot's actual API usage.
 
+When evaluating a checkpoint saved on the host, run the container with the host UID. Checkpoint weights are intentionally private by default (`0600`), so the image's built-in user cannot otherwise read a bind-mounted `model.safetensors` file. Mount the Hugging Face cache at an accessible path as well:
+
+```bash
+docker run --gpus all --rm --ipc=host \
+  --user "$(id -u):$(id -g)" \
+  -e HF_HOME=/tmp/hf-cache \
+  -v "$HOME/.cache/huggingface:/tmp/hf-cache:ro" \
+  -v "$PWD/outputs:/results" \
+  lerobot-robomme \
+  lerobot-eval --policy.path=/results/<checkpoint>/pretrained_model # ...
+```
+
 ## Running Evaluation
 
 ### Default (single task, single episode)
