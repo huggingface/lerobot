@@ -14,7 +14,7 @@
 
 """Registry mapping a policy type to its language-runtime adapter.
 
-Kept as import strings (resolved lazily) so ``lerobot-language-runtime``
+Kept as import strings (resolved lazily) so ``lerobot-rollout --language``
 never imports a policy package until it actually loads that policy — the
 same pattern as :mod:`lerobot.policies.factory`.
 """

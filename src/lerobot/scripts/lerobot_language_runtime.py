@@ -13,12 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Entry point for ``lerobot-language-runtime``.
+"""Compatibility entry point for ``lerobot-language-runtime``.
 
 Policy-agnostic: the runtime resolves the right adapter from the loaded
 policy's type via :mod:`lerobot.runtime.registry`. A new
 language-conditioned policy just registers its adapter there — no new
-script needed.
+script needed. New commands should use ``lerobot-rollout --language`` (or
+``lerobot-rollout --sim``); this alias remains so existing scripts do not
+break.
 """
 
 from __future__ import annotations

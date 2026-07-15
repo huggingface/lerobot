@@ -17,7 +17,7 @@
 The tick loop, REPL, and interactive CLI here are policy-independent. A
 policy plugs in by subclassing :class:`BaseLanguageAdapter` (or satisfying
 :class:`LanguageConditionedPolicyAdapter` directly) and registering it in
-:mod:`lerobot.runtime.registry`; ``lerobot-language-runtime`` then serves it.
+:mod:`lerobot.runtime.registry`; ``lerobot-rollout --language`` then serves it.
 """
 
 from .adapter import BaseLanguageAdapter, GenerationConfig, LanguageDiagnostics

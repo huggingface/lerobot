@@ -34,21 +34,38 @@ def test_pi052_adapter_strips_say_markers_from_plan_text():
     assert adapter.plan_from_text(text) == "Move to the sink."
 
 
-def test_language_runtime_cli_smoke_does_not_load_model(monkeypatch):
-    """The general entry resolves the pi052 adapter from the registry by policy type."""
+def test_rollout_language_cli_smoke_does_not_load_model(monkeypatch):
+    """lerobot-rollout dispatches language flags to the adapter-based runtime."""
     from lerobot.runtime import cli
-    from lerobot.scripts import lerobot_language_runtime
+    from lerobot.scripts import lerobot_rollout
 
     fake_policy = SimpleNamespace(config=SimpleNamespace(device="cpu", type="pi052"))
 
     monkeypatch.setattr(
         cli,
         "_load_policy_and_preprocessor",
-        lambda policy_path, dataset_repo_id: (fake_policy, None, None, None),
+        lambda policy_path, dataset_repo_id, **kwargs: (fake_policy, None, None, None),
     )
     monkeypatch.setattr(cli, "_run_repl", lambda runtime, **kwargs: 0)
 
-    assert (
-        lerobot_language_runtime.main(["--policy.path=fake", "--no_robot", "--task=clean", "--max_ticks=0"])
-        == 0
-    )
+    assert lerobot_rollout.main(["--policy.path=fake", "--no_robot", "--task=clean", "--max_ticks=0"]) == 0
+
+
+def test_rollout_language_dispatch_preserves_standard_molmoact2_path(monkeypatch):
+    """MolmoAct2 only opts into open prompting when a language flag is present."""
+    from lerobot.scripts import lerobot_rollout
+
+    standard = [
+        "--policy.path=lerobot/MolmoAct2-SO100_101-LeRobot",
+        "--robot.type=so101_follower",
+        "--task=pick up the cube",
+    ]
+    assert not lerobot_rollout._uses_language_runtime(standard)
+    assert lerobot_rollout._uses_language_runtime([*standard, "--direct_subtask"])
+    assert lerobot_rollout._uses_language_runtime(["--policy.path=lerobot/pi052_robocasa", "--sim"])
+
+    standard_calls = []
+    monkeypatch.setattr(lerobot_rollout, "register_third_party_plugins", lambda: None)
+    monkeypatch.setattr(lerobot_rollout, "rollout", lambda: standard_calls.append(True))
+    lerobot_rollout.main(standard)
+    assert standard_calls == [True]

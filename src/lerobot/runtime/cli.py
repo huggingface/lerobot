@@ -29,7 +29,7 @@ Examples
 Dry run on a Hub checkpoint, no robot connected — useful for sanity-
 checking text generation::
 
-    uv run lerobot-language-runtime \\
+    uv run lerobot-rollout --language \\
         --policy.path=<repo-or-dir> \\
         --no_robot \\
         --task="please clean the kitchen"
@@ -37,7 +37,7 @@ checking text generation::
 Same, but feed real frames from an annotated dataset so plan / subtask
 / memory generation runs against actual video + state::
 
-    uv run lerobot-language-runtime \\
+    uv run lerobot-rollout --language \\
         --policy.path=<repo-or-dir> \\
         --dataset.repo_id=<annotated-dataset> \\
         --dataset.episode=0 \\
@@ -46,7 +46,7 @@ Same, but feed real frames from an annotated dataset so plan / subtask
 
 With a real robot::
 
-    uv run lerobot-language-runtime \\
+    uv run lerobot-rollout --language \\
         --policy.path=... \\
         --robot.type=so101 --robot.port=/dev/tty.usbmodem...
 
@@ -1561,7 +1561,7 @@ def run(
     ``adapter_factory`` turns ``(policy, GenerationConfig)`` into a
     :class:`LanguageConditionedPolicyAdapter` (typically the adapter class).
     When ``None`` it is resolved from :mod:`lerobot.runtime.registry` by the
-    loaded policy's type, so a single ``lerobot-language-runtime`` entry
+    loaded policy's type, so the ``lerobot-rollout`` entry
     point serves every registered policy. ``panel_label`` defaults to the
     policy type.
     """
