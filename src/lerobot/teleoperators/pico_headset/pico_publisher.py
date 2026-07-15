@@ -50,6 +50,7 @@ import zmq
 from lerobot.teleoperators.pico_headset.smpl_fk import (
     SmplForwardKinematics,
     canonicalize_smpl_joints,
+    compute_3point,
     root_quats_from_aa,
 )
 
@@ -63,8 +64,15 @@ def pack_message(
     stamp_ns: int,
     root_quat: np.ndarray | None = None,
     root_transl: np.ndarray | None = None,
+    vr3_pos: np.ndarray | None = None,
+    vr3_orn: np.ndarray | None = None,
 ) -> bytes:
-    """Build the rt/smpl JSON message (single frame, topic embedded in payload)."""
+    """Build the rt/smpl JSON message (single frame, topic embedded in payload).
+
+    Carries the SMPL whole-body window (``smpl_joints_local`` + ``root_*``) and,
+    when available, the sparse 3-point VR targets (``vr3_pos`` (9,), ``vr3_orn`` (12,))
+    so a single stream can drive either SONIC ``encode_mode`` 1 or 2.
+    """
     data = {
         "smpl_joints_local": np.asarray(smpl_joints_local, np.float32).reshape(-1).tolist(),
         "frame_index": int(frame_index),
@@ -74,6 +82,10 @@ def pack_message(
         data["root_quat"] = np.asarray(root_quat, np.float32).reshape(-1).tolist()
     if root_transl is not None:
         data["root_transl"] = np.asarray(root_transl, np.float32).reshape(-1).tolist()
+    if vr3_pos is not None:
+        data["vr3_pos"] = np.asarray(vr3_pos, np.float32).reshape(-1).tolist()
+    if vr3_orn is not None:
+        data["vr3_orn"] = np.asarray(vr3_orn, np.float32).reshape(-1).tolist()
     return json.dumps({"topic": SMPL_TOPIC, "data": data}).encode("utf-8")
 
 
@@ -157,6 +169,7 @@ def main() -> None:
     try:
         while True:
             loop_start = time.time()
+            vr3_pos = vr3_orn = None
             if clip is not None:
                 n = clip["joints"].shape[0]
                 if args.no_loop and frame_index >= n:
@@ -181,9 +194,20 @@ def main() -> None:
                 joints = out["smpl_joints_local"]
                 root_quat = out["root_quat"]
                 root_transl = out["root_transl"]
+                # Also emit the sparse 3-point VR targets so the same stream can
+                # drive encode_mode 1 (3-point teleop) without a second producer.
+                vr3_pos, vr3_orn = compute_3point(body_poses)
 
             sock.send(
-                pack_message(joints, frame_index, stamp_ns, root_quat=root_quat, root_transl=root_transl)
+                pack_message(
+                    joints,
+                    frame_index,
+                    stamp_ns,
+                    root_quat=root_quat,
+                    root_transl=root_transl,
+                    vr3_pos=vr3_pos,
+                    vr3_orn=vr3_orn,
+                )
             )
             frame_index += 1
             if frame_index % int(max(1, args.fps)) == 0:

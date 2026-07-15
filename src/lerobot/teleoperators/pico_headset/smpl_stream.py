@@ -41,7 +41,7 @@ from collections import deque
 import numpy as np
 import zmq
 
-from .smpl_constants import JOINT_DIM, N_JOINTS, SMPL_OBS_DIM, WINDOW
+from .smpl_constants import JOINT_DIM, N_JOINTS, SMPL_OBS_DIM, VR3_ORN_DIM, VR3_POS_DIM, WINDOW
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,10 @@ class SmplStream:
         # Latest root/torso pose (updated every received frame).
         self.root_quat = np.array([1.0, 0.0, 0.0, 0.0], np.float32)  # (w, x, y, z)
         self.root_transl = np.zeros(3, np.float32)
+        # Latest sparse 3-point VR targets (encode_mode 1), if the producer sends them.
+        self.vr3_pos = np.zeros(VR3_POS_DIM, np.float32)
+        self.vr3_orn = np.tile([1.0, 0.0, 0.0, 0.0], VR3_ORN_DIM // 4).astype(np.float32)
+        self._got_vr3 = False
         self._last_index = -1
         self._last_recv_t = 0.0
         self._warned_stale = False
@@ -113,6 +117,11 @@ class SmplStream:
         return self._got_first
 
     @property
+    def has_vr3(self) -> bool:
+        """True once the producer has sent at least one 3-point VR frame."""
+        return self._got_vr3
+
+    @property
     def seconds_since_last(self) -> float:
         """Wall-clock seconds since the last real frame (inf before the first)."""
         if not self._got_first:
@@ -133,6 +142,7 @@ class SmplStream:
     def reset(self):
         self._buf.clear()
         self._got_first = False
+        self._got_vr3 = False
 
     # -- core ----------------------------------------------------------------
     def _drain_latest(self) -> np.ndarray | None:
@@ -156,6 +166,12 @@ class SmplStream:
             rt = data.get("root_transl")
             if rt is not None and len(rt) == 3:
                 self.root_transl = np.asarray(rt, np.float32)
+            vp = data.get("vr3_pos")
+            vo = data.get("vr3_orn")
+            if vp is not None and vo is not None and len(vp) == VR3_POS_DIM and len(vo) == VR3_ORN_DIM:
+                self.vr3_pos = np.asarray(vp, np.float32)
+                self.vr3_orn = np.asarray(vo, np.float32)
+                self._got_vr3 = True
         return frame
 
     def step(self) -> np.ndarray:

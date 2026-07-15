@@ -35,6 +35,8 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation as R  # noqa: N817
 
+from .smpl_constants import VR3_N_POINTS, VR3_ORN_DIM, VR3_POS_DIM
+
 # 24-joint parent tree used by the headset body-pose stream (SMPL-X body subset).
 # Matches PoseStreamer.parent_indices in gear_sonic's pico_manager_thread_server.py.
 BODY24_PARENTS = np.array(
@@ -208,6 +210,70 @@ def root_quats_from_aa(root_aa: np.ndarray) -> np.ndarray:
     """
     root = (_YTOZ_UP * R.from_rotvec(root_aa)) * _SMPL_BASE.inv()
     return root.as_quat(scalar_first=True).astype(np.float32)  # wxyz
+
+
+# ── 3-point VR teleop keypoints (SONIC encode_mode 1) ────────────────────────
+# SMPL body-joint indices for the 3 tracked keypoints, plus the root/pelvis (0)
+# used as the reference frame. Mirrors gear_sonic ``_process_3pt_pose``: neck
+# (joint 12) is used rather than head (15) — it is more rigidly coupled to the
+# torso and less noisy than the free-looking head.
+_VR3_JOINTS = (22, 23, 12)  # left wrist, right wrist, neck
+
+# Per-keypoint rotation offsets aligning each SMPL joint frame to the robot
+# convention (root, left wrist, right wrist, neck), ported verbatim from
+# gear_sonic ``pico_manager_thread_server.OFFSETS`` (extrinsic xyz euler, degrees).
+_VR3_OFFSETS = [
+    R.from_euler("xyz", [0, 0, -90], degrees=True),  # root
+    R.from_euler("xyz", [90, 0, 0], degrees=True),  # left wrist
+    R.from_euler("xyz", [-90, 0, 180], degrees=True),  # right wrist
+    R.from_euler("xyz", [0, 0, -90], degrees=True),  # neck
+]
+
+# Unity (X-right, Y-up, Z-forward, left-handed) -> robot (X-forward, Y-left,
+# Z-up, right-handed) axis remap: Unity [x, y, z] -> robot [-x, z, y].
+_UNITY_TO_ROBOT = np.array([[-1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+
+
+def compute_3point(body_poses_np: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Extract the SONIC 3-point VR targets from headset body poses.
+
+    Mirrors gear_sonic ``_process_3pt_pose``: transforms the tracked joints from the
+    Unity frame to the robot frame, applies the per-keypoint rotation offsets, then
+    expresses the left-wrist / right-wrist / neck keypoints relative to the root
+    (pelvis) frame. This is the ``encode_mode == 1`` counterpart to :func:`compute`.
+
+    Note: physical wrist/neck position offsets and the operator calibration done in
+    gear_sonic's ``ThreePointPose.apply_calibration`` are not applied here; the raw
+    tracked joint poses are used.
+
+    Args:
+        body_poses_np: (24, 7) rows of ``[x, y, z, qx, qy, qz, qw]`` (scalar-last),
+            in the Unity frame, as returned by ``xrt.get_body_joints_pose()``.
+
+    Returns:
+        (pos, orn):
+          - pos: (9,) float32, root-relative ``[x, y, z]`` for [l-wrist, r-wrist, neck]
+          - orn: (12,) float32, root-relative ``[w, x, y, z]`` for the same order
+    """
+    body = np.asarray(body_poses_np, np.float64)
+    q = _UNITY_TO_ROBOT
+    # Root (index 0) + the 3 tracked keypoints, each transformed to the robot frame
+    # and rotation-offset-corrected.
+    positions = np.zeros((4, 3), np.float64)
+    rotations: list[R] = []
+    for out_i, j in enumerate((0, *_VR3_JOINTS)):
+        positions[out_i] = q @ body[j, :3]
+        rot = R.from_quat(body[j, 3:7]).as_matrix()  # scalar-last input
+        rotations.append(R.from_matrix(q @ rot @ q.T) * _VR3_OFFSETS[out_i])
+
+    root_inv = rotations[0].inv()
+    root_pos = positions[0]
+    pos = np.zeros(VR3_POS_DIM, np.float32)
+    orn = np.zeros(VR3_ORN_DIM, np.float32)
+    for k in range(VR3_N_POINTS):
+        pos[k * 3 : k * 3 + 3] = root_inv.apply(positions[k + 1] - root_pos)
+        orn[k * 4 : k * 4 + 4] = (root_inv * rotations[k + 1]).as_quat(scalar_first=True)  # wxyz
+    return pos, orn
 
 
 class SmplForwardKinematics:

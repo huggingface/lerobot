@@ -35,3 +35,7 @@ class PicoHeadsetConfig(TeleoperatorConfig):
     """Port of the rt/smpl publisher."""
     stale_after_s: float = 0.5
     """Warn if no fresh headset frame arrives within this many seconds."""
+    mode: str = "smpl"
+    """Teleop reference to emit: ``"smpl"`` for whole-body imitation (SONIC
+    encode_mode 2) or ``"vr3"`` for sparse 3-point upper-body teleop (encode_mode 1,
+    lower body driven by the joystick/keyboard planner)."""

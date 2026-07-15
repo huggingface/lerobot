@@ -23,7 +23,16 @@ from lerobot.types import RobotAction
 
 from ..teleoperator import Teleoperator
 from .config_pico_headset import PicoHeadsetConfig
-from .smpl_constants import ROOT_ACTION_DIM, ROOT_ACTION_PREFIX, SMPL_ACTION_PREFIX, SMPL_OBS_DIM
+from .smpl_constants import (
+    ROOT_ACTION_DIM,
+    ROOT_ACTION_PREFIX,
+    SMPL_ACTION_PREFIX,
+    SMPL_OBS_DIM,
+    VR3_ORN_DIM,
+    VR3_ORN_PREFIX,
+    VR3_POS_DIM,
+    VR3_POS_PREFIX,
+)
 from .smpl_stream import SmplStream
 
 logger = logging.getLogger(__name__)
@@ -48,6 +57,10 @@ class PicoHeadset(Teleoperator):
 
     @property
     def action_features(self) -> dict:
+        if self.config.mode == "vr3":
+            feats = {f"{VR3_POS_PREFIX}{i}": float for i in range(VR3_POS_DIM)}
+            feats.update({f"{VR3_ORN_PREFIX}{i}": float for i in range(VR3_ORN_DIM)})
+            return feats
         feats = {f"{SMPL_ACTION_PREFIX}{i}": float for i in range(SMPL_OBS_DIM)}
         feats.update({f"{ROOT_ACTION_PREFIX}{i}": float for i in range(ROOT_ACTION_DIM)})
         return feats
@@ -89,12 +102,21 @@ class PicoHeadset(Teleoperator):
         if self._stream is None:
             raise RuntimeError(f"{self} is not connected")
         window = self._stream.step()
-        # Emit SMPL only while the headset is actively streaming: hold back before
-        # the first frame (so the controller doesn't track an all-zero collapsed
-        # pose) and once the stream goes stale (so the controller falls back to a
-        # safe standing/locomotion mode instead of freezing on the last pose).
+        # Emit a reference only while the headset is actively streaming: hold back
+        # before the first frame (so the controller doesn't track an all-zero
+        # collapsed pose) and once the stream goes stale (so the controller falls
+        # back to a safe standing/locomotion mode instead of freezing on the last
+        # pose).
         if not self._stream.has_data or self._stream.is_stale:
             return {}
+        if self.config.mode == "vr3":
+            # Sparse 3-point upper-body teleop (encode_mode 1). Needs the producer to
+            # be sending vr3_* fields; otherwise emit nothing and stay in locomotion.
+            if not self._stream.has_vr3:
+                return {}
+            action = {f"{VR3_POS_PREFIX}{i}": float(v) for i, v in enumerate(self._stream.vr3_pos)}
+            action.update({f"{VR3_ORN_PREFIX}{i}": float(v) for i, v in enumerate(self._stream.vr3_orn)})
+            return action
         action = {f"{SMPL_ACTION_PREFIX}{i}": float(v) for i, v in enumerate(window)}
         action.update({f"{ROOT_ACTION_PREFIX}{i}": float(v) for i, v in enumerate(self._stream.root_quat)})
         return action
