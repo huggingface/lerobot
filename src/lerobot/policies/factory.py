@@ -54,6 +54,7 @@ from .groot.configuration_groot import GrootConfig
 from .lingbot_va.configuration_lingbot_va import LingBotVAConfig
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
+from .openeai.configuration_openeai import OpenEAIVLAConfig
 from .pi0.configuration_pi0 import PI0Config
 from .pi05.configuration_pi05 import PI05Config
 from .pretrained import PreTrainedPolicy
@@ -177,6 +178,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .evo1.modeling_evo1 import Evo1Policy
 
         return Evo1Policy
+    elif name == "openeai":
+        from .openeai.modeling_openeai import OpenEAIPolicy
+
+        return OpenEAIPolicy
     else:
         try:
             return _get_policy_cls_from_policy_name(name=name)
@@ -239,6 +244,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return FastWAMConfig(**kwargs)
     elif policy_type == "evo1":
         return Evo1Config(**kwargs)
+    elif policy_type == "openeai":
+        return OpenEAIVLAConfig(**kwargs)
     else:
         try:
             config_cls = PreTrainedConfig.get_choice_class(policy_type)
@@ -497,6 +504,14 @@ def make_pre_post_processors(
         from .fastwam.processor_fastwam import make_fastwam_pre_post_processors
 
         processors = make_fastwam_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, OpenEAIVLAConfig):
+        from .openeai.processor_openeai import make_openeai_pre_post_processors
+
+        processors = make_openeai_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
