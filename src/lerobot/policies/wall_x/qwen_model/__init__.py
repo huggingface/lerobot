@@ -26,6 +26,10 @@ from .qwen2_5_vl_moe import (
     Qwen2_5_VLMoEModel,
     SparseMoeBlock,
 )
+from .vision_attention import (
+    WallXVisionAttention,
+    configure_wall_x_vision_attention,
+)
 
 __all__ = [
     "BlockSparseMLP",
@@ -36,4 +40,6 @@ __all__ = [
     "Qwen2_5_VLTextConfig",
     "Qwen2_5_VLVisionConfig",
     "SparseMoeBlock",
+    "WallXVisionAttention",
+    "configure_wall_x_vision_attention",
 ]

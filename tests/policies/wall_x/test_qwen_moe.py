@@ -251,7 +251,7 @@ def test_static_cache_matches_full_sequence(tiny_model):
 
 
 @pytest.mark.parametrize("attn_implementation", ["sdpa", "flash_attention_2"])
-def test_non_eager_attention_backends_are_rejected(attn_implementation):
+def test_non_eager_text_attention_backends_are_rejected(attn_implementation):
     config = make_tiny_config()
     config._attn_implementation = attn_implementation
 
@@ -260,3 +260,16 @@ def test_non_eager_attention_backends_are_rejected(attn_implementation):
 
     with pytest.raises(ValueError, match="supports only attn_implementation='eager'"):
         WallXConfig(attn_implementation=attn_implementation)
+
+
+@pytest.mark.parametrize("vision_attn_implementation", ["auto", "sdpa", "varlen"])
+def test_wall_x_config_accepts_supported_vision_attention_backends(vision_attn_implementation):
+    config = WallXConfig(vision_attn_implementation=vision_attn_implementation)
+
+    assert config.attn_implementation == "eager"
+    assert config.vision_attn_implementation == vision_attn_implementation
+
+
+def test_wall_x_config_rejects_unknown_vision_attention_backend():
+    with pytest.raises(ValueError, match="vision_attn_implementation must be one of"):
+        WallXConfig(vision_attn_implementation="flash_attention_2")

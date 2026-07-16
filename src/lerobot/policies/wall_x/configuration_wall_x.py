@@ -61,6 +61,11 @@ class WallXConfig(PreTrainedConfig):
     # Wall-X's bidirectional action-token islands currently require eager attention.
     attn_implementation: str = "eager"
 
+    # Vision attention is independent from the text action-token mask. ``auto`` uses
+    # PyTorch's packed variable-length attention when the runtime supports it and
+    # otherwise falls back to the native per-chunk SDPA implementation.
+    vision_attn_implementation: str = "auto"
+
     # ==================== Optimizer Presets ====================
     optimizer_lr: float = 2e-5
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
@@ -89,6 +94,12 @@ class WallXConfig(PreTrainedConfig):
             raise ValueError(
                 "Wall-X currently supports only attn_implementation='eager' because its "
                 "bidirectional action-token islands require an explicit attention mask."
+            )
+
+        if self.vision_attn_implementation not in {"auto", "sdpa", "varlen"}:
+            raise ValueError(
+                "vision_attn_implementation must be one of 'auto', 'sdpa', or 'varlen', got "
+                f"{self.vision_attn_implementation!r}"
             )
 
         # Assign use_fast_tokenizer based on prediction_mode

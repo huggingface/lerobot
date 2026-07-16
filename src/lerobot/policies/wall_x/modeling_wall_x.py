@@ -86,6 +86,7 @@ if TYPE_CHECKING or _wallx_deps_available:
         Qwen2_5_VLACausalLMOutputWithPast,
         Qwen2_5_VLConfig,
         Qwen2_5_VLMoEModel,
+        configure_wall_x_vision_attention,
     )
 else:
     LoraConfig = None
@@ -101,6 +102,7 @@ else:
     Qwen2_5_VisionTransformerPretrainedModel = None
     Qwen2_5_VLACausalLMOutputWithPast = None
     Qwen2_5_VLMoEModel = None
+    configure_wall_x_vision_attention = None
 
 from .utils import (
     get_wallx_normal_text,
@@ -375,6 +377,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         config=None,
         action_tokenizer_path=None,
         attn_implementation: str = "eager",
+        vision_attn_implementation: str = "auto",
         cache_dir: str | PathLike | None = None,
         force_download: bool = False,
         local_files_only: bool = False,
@@ -391,6 +394,8 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
             config_path (str, optional): Configuration file path, if None will look for qwen25_config.json in pretrained_model_path
             action_tokenizer_path (str, optional): Action tokenizer path, if None will load from default config
             attn_implementation (str, optional): Attention implementation, if None will load from default config
+            vision_attn_implementation (str, optional): Vision attention backend. ``auto`` uses packed
+                variable-length attention when supported and otherwise falls back to SDPA.
             **kwargs: Additional arguments
 
         Returns:
@@ -422,7 +427,13 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         config.text_config.pad_token_id = processor.tokenizer.pad_token_id
 
         # Initialize model with configuration and processor
-        model = cls(config, processor=processor, action_tokenizer=action_tokenizer, **kwargs)
+        model = cls(
+            config,
+            processor=processor,
+            action_tokenizer=action_tokenizer,
+            vision_attn_implementation=vision_attn_implementation,
+            **kwargs,
+        )
 
         # Resize token embeddings to match processor tokenizer vocabulary size
         model.resize_token_embeddings(len(processor.tokenizer))
@@ -471,6 +482,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         action_tokenizer=None,
         action_mapper=None,
         flow_loss_weight=1.0,
+        vision_attn_implementation: str = "auto",
     ):
         """
         Initialize the Qwen2.5 VLMoE model for action processing.
@@ -485,10 +497,14 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         """
         Qwen2_5_VLMoEModel._require_eager_attention(config._attn_implementation)
         config._attn_implementation = "eager"
+        # Text needs eager attention for action-token islands. Vision has no such
+        # constraint, so keep its portable native fallback on SDPA.
+        config.vision_config._attn_implementation = "sdpa"
         super().__init__(config)
 
         # Initialize vision transformer and language model components
         self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(config.vision_config)
+        configure_wall_x_vision_attention(self.visual, vision_attn_implementation)
         self.model = Qwen2_5_VLMoEModel(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
@@ -1804,6 +1820,7 @@ class WallXPolicy(PreTrainedPolicy):
             pretrained_name_or_path=config.pretrained_name_or_path,
             action_tokenizer_path=config.action_tokenizer_path,
             attn_implementation=config.attn_implementation,
+            vision_attn_implementation=config.vision_attn_implementation,
         )
         self.model.to(config.device)
         self.model.to_bfloat16_for_selected_params()
