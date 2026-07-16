@@ -1,0 +1,80 @@
+"""Rewrite observation.state / action to degrees in a LOCAL v2.1 SO-arm dataset, then
+regenerate meta/episodes_stats.jsonl (action & state only; other features preserved).
+Run this BEFORE the stock v2.1->v3.0 converter so its stats aggregation stays correct.
+"""
+import json
+from pathlib import Path
+import numpy as np
+import pandas as pd
+
+from classify import classify
+from so_arm_frame import to_degrees
+
+VALUE_COLS = ("observation.state", "action")
+
+
+def _stack(col_values) -> np.ndarray:
+    return np.stack([np.asarray(v, dtype=np.float64) for v in col_values])  # (N, D)
+
+
+def _rewrite_parquet(root: Path, encoding: str) -> None:
+    for pq in sorted((root / "data").glob("*/*.parquet")):
+        df = pd.read_parquet(pq)
+        changed = False
+        for col in VALUE_COLS:
+            if col in df.columns:
+                conv = to_degrees(_stack(df[col].values), encoding, n_joints_per_arm=6)
+                df[col] = list(conv.astype(np.float32))
+                changed = True
+        if changed:
+            df.to_parquet(pq, index=False)
+
+
+def _regen_episode_stats(root: Path) -> None:
+    stats_path = root / "meta" / "episodes_stats.jsonl"
+    orig = {}
+    with open(stats_path) as f:
+        for line in f:
+            e = json.loads(line)
+            orig[e["episode_index"]] = e
+    for pq in sorted((root / "data").glob("*/*.parquet")):
+        df = pd.read_parquet(pq)
+        for ep in np.unique(df["episode_index"].values):
+            ep = int(ep)
+            sub = df[df["episode_index"] == ep]
+            entry = orig.get(ep)
+            if entry is None:
+                continue
+            for col in VALUE_COLS:
+                if col in sub.columns:
+                    a = _stack(sub[col].values)  # (n, D)
+                    entry["stats"][col] = {
+                        "min": a.min(0).tolist(), "max": a.max(0).tolist(),
+                        "mean": a.mean(0).tolist(), "std": a.std(0).tolist(),
+                        "count": [int(a.shape[0])],
+                    }
+    with open(stats_path, "w") as f:
+        for ep in sorted(orig):
+            f.write(json.dumps(orig[ep]) + "\n")
+
+
+def fix_dataset_in_place(root) -> dict:
+    """Returns the classification dict augmented with the action taken."""
+    root = Path(root)
+    cls = classify(root)
+    enc = cls.get("encoding")
+    if not cls.get("is_so") or enc in ("radians", "unknown", "non_so"):
+        reason = {
+            "non_so": "not an SO-100/101 dataset",
+            "radians": "SO-arm joints already in radians",
+            "unknown": "SO-arm but joint encoding could not be determined",
+        }.get(enc, "no joint conversion applicable")
+        return {**cls, "converted": False,
+                "action": f"structural v2.1->v3.0 only ({reason}); joint values left unchanged"}
+    # drop stray files that would otherwise be uploaded
+    for junk in (root / "meta").glob("info.json.bak"):
+        junk.unlink()
+    _rewrite_parquet(root, enc)
+    _regen_episode_stats(root)
+    return {**cls, "converted": True,
+            "action": f"structural v2.1->v3.0 + joint values converted ({enc} -> degrees)"}
