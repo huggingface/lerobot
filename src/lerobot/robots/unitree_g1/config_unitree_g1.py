@@ -71,3 +71,8 @@ class UnitreeG1Config(RobotConfig):
     # Locomotion controller class name, e.g. "GrootLocomotionController",
     # "HolosomaLocomotionController", or "SonicWholeBodyController". None disables it.
     controller: str | None = None
+
+    # On disconnect (e.g. Ctrl-C), seconds to hold the current pose while ramping joint
+    # stiffness (kp) to zero — a soft, damped settle instead of an instant limp /
+    # free-fall. 0 disables it (immediate zero-torque). Real robot only.
+    graceful_stop_s: float = 1.5

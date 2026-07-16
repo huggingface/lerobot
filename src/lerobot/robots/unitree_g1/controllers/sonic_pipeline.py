@@ -1244,16 +1244,15 @@ def _parse_wireless(wr):
     return lx, ly, rx, ry
 
 
-def process_joystick(obs, ms, controller=None):
-    """Joystick mirrors keyboard: left stick=WASD, right stick X=Q/E, right stick Y=height."""
-    wr = obs.get("wireless_remote")
-    if wr is None:
-        return
-    parsed = _parse_wireless(wr)
-    if parsed is None:
-        return
-    lx, ly, rx, ry = parsed
+def apply_joystick_axes(lx, ly, rx, ry, ms, controller=None):
+    """Map raw stick axes onto ``MovementState`` (left stick=WASD, right stick X=Q/E,
+    right stick Y=height).
 
+    Shared by the G1 wireless remote (:func:`process_joystick`) and the PICO
+    controller sticks (3-point teleop), so both drive the planner identically. Axes
+    are expected pre-negated to the same convention as the parsed wireless remote:
+    ``ly`` and ``ry`` already flipped, dead zone not yet applied.
+    """
     # Dead zone + negate both Y axes (bridge already flips them once)
     lx = 0.0 if abs(lx) < DEADZONE else lx
     ly = 0.0 if abs(ly) < DEADZONE else -ly
@@ -1284,3 +1283,15 @@ def process_joystick(obs, ms, controller=None):
     if abs(ry) > 0:
         step = -0.005 * ry
         ms.height = max(0.1, min(1.0, (ms.height if ms.height >= 0 else DEFAULT_HEIGHT) + step))
+
+
+def process_joystick(obs, ms, controller=None):
+    """Drive ``MovementState`` from the G1 wireless remote in ``obs``."""
+    wr = obs.get("wireless_remote")
+    if wr is None:
+        return
+    parsed = _parse_wireless(wr)
+    if parsed is None:
+        return
+    lx, ly, rx, ry = parsed
+    apply_joystick_axes(lx, ly, rx, ry, ms, controller)

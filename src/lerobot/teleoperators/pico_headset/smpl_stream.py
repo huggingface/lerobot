@@ -41,7 +41,16 @@ from collections import deque
 import numpy as np
 import zmq
 
-from .smpl_constants import JOINT_DIM, N_JOINTS, SMPL_OBS_DIM, VR3_ORN_DIM, VR3_POS_DIM, WINDOW
+from .smpl_constants import (
+    JOINT_DIM,
+    LOCO_N_AXES,
+    LOCO_N_BTN,
+    N_JOINTS,
+    SMPL_OBS_DIM,
+    VR3_ORN_DIM,
+    VR3_POS_DIM,
+    WINDOW,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +104,12 @@ class SmplStream:
         self.vr3_pos = np.zeros(VR3_POS_DIM, np.float32)
         self.vr3_orn = np.tile([1.0, 0.0, 0.0, 0.0], VR3_ORN_DIM // 4).astype(np.float32)
         self._got_vr3 = False
+        self._last_vr3_t = 0.0
+        # Latest controller-stick locomotion (encode_mode 1): [lx, ly, rx, ry] + [A,B,X,Y].
+        self.loco_axes = np.zeros(LOCO_N_AXES, np.float32)
+        self.loco_buttons = np.zeros(LOCO_N_BTN, np.float32)
+        self._got_loco = False
+        self._last_loco_t = 0.0
         self._last_index = -1
         self._last_recv_t = 0.0
         self._warned_stale = False
@@ -122,6 +137,29 @@ class SmplStream:
         return self._got_vr3
 
     @property
+    def has_fresh_vr3(self) -> bool:
+        """True when a 3-point VR frame arrived within ``stale_after_s``.
+
+        Unlike :attr:`has_data`, this is independent of the SMPL window, so the
+        controller-state source (head + controllers only, empty SMPL) still drives
+        ``encode_mode 1`` without a whole-body reference.
+        """
+        if not self._got_vr3:
+            return False
+        if not self.stale_after_s:
+            return True
+        return (time.time() - self._last_vr3_t) <= self.stale_after_s
+
+    @property
+    def has_fresh_loco(self) -> bool:
+        """True when controller-stick locomotion arrived within ``stale_after_s``."""
+        if not self._got_loco:
+            return False
+        if not self.stale_after_s:
+            return True
+        return (time.time() - self._last_loco_t) <= self.stale_after_s
+
+    @property
     def seconds_since_last(self) -> float:
         """Wall-clock seconds since the last real frame (inf before the first)."""
         if not self._got_first:
@@ -143,6 +181,9 @@ class SmplStream:
         self._buf.clear()
         self._got_first = False
         self._got_vr3 = False
+        self._last_vr3_t = 0.0
+        self._got_loco = False
+        self._last_loco_t = 0.0
 
     # -- core ----------------------------------------------------------------
     def _drain_latest(self) -> np.ndarray | None:
@@ -155,6 +196,28 @@ class SmplStream:
         while dict(self._poller.poll(0)).get(self._sock) == zmq.POLLIN:
             payload = self._sock.recv()
             data = json.loads(payload.decode("utf-8")).get("data", {})
+
+            # Sparse 3-point VR targets (encode_mode 1). Parsed independently of the
+            # SMPL window so the controller-state source (head + controllers, empty
+            # SMPL) is still handled.
+            vp = data.get("vr3_pos")
+            vo = data.get("vr3_orn")
+            if vp is not None and vo is not None and len(vp) == VR3_POS_DIM and len(vo) == VR3_ORN_DIM:
+                self.vr3_pos = np.asarray(vp, np.float32)
+                self.vr3_orn = np.asarray(vo, np.float32)
+                self._got_vr3 = True
+                self._last_vr3_t = time.time()
+
+            # Controller-stick locomotion (encode_mode 1), also independent of SMPL.
+            la = data.get("loco_axes")
+            lb = data.get("loco_buttons")
+            if la is not None and lb is not None and len(la) == LOCO_N_AXES and len(lb) == LOCO_N_BTN:
+                self.loco_axes = np.asarray(la, np.float32)
+                self.loco_buttons = np.asarray(lb, np.float32)
+                self._got_loco = True
+                self._last_loco_t = time.time()
+
+            # SMPL whole-body window (encode_mode 2), optional on this stream.
             joints = np.asarray(data.get("smpl_joints_local", []), np.float32)
             if joints.size != N_JOINTS * JOINT_DIM:
                 continue
@@ -166,12 +229,6 @@ class SmplStream:
             rt = data.get("root_transl")
             if rt is not None and len(rt) == 3:
                 self.root_transl = np.asarray(rt, np.float32)
-            vp = data.get("vr3_pos")
-            vo = data.get("vr3_orn")
-            if vp is not None and vo is not None and len(vp) == VR3_POS_DIM and len(vo) == VR3_ORN_DIM:
-                self.vr3_pos = np.asarray(vp, np.float32)
-                self.vr3_orn = np.asarray(vo, np.float32)
-                self._got_vr3 = True
         return frame
 
     def step(self) -> np.ndarray:

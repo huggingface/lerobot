@@ -24,6 +24,10 @@ from lerobot.types import RobotAction
 from ..teleoperator import Teleoperator
 from .config_pico_headset import PicoHeadsetConfig
 from .smpl_constants import (
+    LOCO_AXES_PREFIX,
+    LOCO_BTN_PREFIX,
+    LOCO_N_AXES,
+    LOCO_N_BTN,
     ROOT_ACTION_DIM,
     ROOT_ACTION_PREFIX,
     SMPL_ACTION_PREFIX,
@@ -60,6 +64,9 @@ class PicoHeadset(Teleoperator):
         if self.config.mode == "vr3":
             feats = {f"{VR3_POS_PREFIX}{i}": float for i in range(VR3_POS_DIM)}
             feats.update({f"{VR3_ORN_PREFIX}{i}": float for i in range(VR3_ORN_DIM)})
+            # Controller-stick locomotion travels alongside the VR targets.
+            feats.update({f"{LOCO_AXES_PREFIX}{i}": float for i in range(LOCO_N_AXES)})
+            feats.update({f"{LOCO_BTN_PREFIX}{i}": float for i in range(LOCO_N_BTN)})
             return feats
         feats = {f"{SMPL_ACTION_PREFIX}{i}": float for i in range(SMPL_OBS_DIM)}
         feats.update({f"{ROOT_ACTION_PREFIX}{i}": float for i in range(ROOT_ACTION_DIM)})
@@ -107,16 +114,27 @@ class PicoHeadset(Teleoperator):
         # collapsed pose) and once the stream goes stale (so the controller falls
         # back to a safe standing/locomotion mode instead of freezing on the last
         # pose).
-        if not self._stream.has_data or self._stream.is_stale:
-            return {}
         if self.config.mode == "vr3":
-            # Sparse 3-point upper-body teleop (encode_mode 1). Needs the producer to
-            # be sending vr3_* fields; otherwise emit nothing and stay in locomotion.
-            if not self._stream.has_vr3:
+            # Sparse 3-point upper-body teleop (encode_mode 1). Gated on fresh vr3_*
+            # frames only (independent of the SMPL window), so the controller-state
+            # source (head + controllers, no body tracking) works. Emit nothing
+            # otherwise and stay in locomotion.
+            if not self._stream.has_fresh_vr3:
                 return {}
             action = {f"{VR3_POS_PREFIX}{i}": float(v) for i, v in enumerate(self._stream.vr3_pos)}
             action.update({f"{VR3_ORN_PREFIX}{i}": float(v) for i, v in enumerate(self._stream.vr3_orn)})
+            # Forward controller-stick locomotion when present, so the planner can
+            # steer walking/turning under the upper-body tracking (encode_mode 1).
+            if self._stream.has_fresh_loco:
+                action.update(
+                    {f"{LOCO_AXES_PREFIX}{i}": float(v) for i, v in enumerate(self._stream.loco_axes)}
+                )
+                action.update(
+                    {f"{LOCO_BTN_PREFIX}{i}": float(v) for i, v in enumerate(self._stream.loco_buttons)}
+                )
             return action
+        if not self._stream.has_data or self._stream.is_stale:
+            return {}
         action = {f"{SMPL_ACTION_PREFIX}{i}": float(v) for i, v in enumerate(window)}
         action.update({f"{ROOT_ACTION_PREFIX}{i}": float(v) for i, v in enumerate(self._stream.root_quat)})
         return action

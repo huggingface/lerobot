@@ -60,8 +60,18 @@ def is_package_available(
                     # If the package can't be imported, it's not available
                     package_exists = False
             else:
-                # For packages other than "torch", don't attempt the fallback and set as not available
-                package_exists = False
+                # The distribution may be published under a name that differs from the
+                # import name (e.g. ``onnxruntime`` imports from ``onnxruntime-gpu`` /
+                # ``onnxruntime-silicon``). Resolve the import name to its actual
+                # distribution(s) and read the version from there before giving up.
+                try:
+                    dists = importlib.metadata.packages_distributions().get(import_name, [])
+                    if dists:
+                        package_version = importlib.metadata.version(dists[0])
+                    else:
+                        package_exists = False
+                except importlib.metadata.PackageNotFoundError:
+                    package_exists = False
         logging.debug(f"Detected {pkg_name} version: {package_version}")
     if return_version:
         return package_exists, package_version

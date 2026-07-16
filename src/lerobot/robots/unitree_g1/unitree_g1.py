@@ -375,13 +375,47 @@ class UnitreeG1(Robot):
         except Exception as e:
             logger.warning(f"Failed to send zero-torque on disconnect: {e}")
 
-    def disconnect(self):
-        # Put robot in passive mode before stopping threads
-        if not self.config.is_simulation:
-            self._send_zero_torque()
+    def _graceful_stop(self) -> None:
+        """Soft shutdown: hold the current pose and ramp joint stiffness (kp) to zero
+        over ``graceful_stop_s`` while keeping damping (kd), then go passive.
 
-        # Signal thread to stop and unblock any waits
+        Prevents the robot from collapsing the instant control ends (a bare
+        zero-torque command is kp=kd=0 ≈ free-fall). Must run after the controller
+        loop has stopped so the two aren't publishing at once.
+        """
+        if self.config.graceful_stop_s <= 0:
+            self._send_zero_torque()
+            return
+        with self._lowstate_lock:
+            lowstate = self._lowstate
+        if lowstate is None:
+            self._send_zero_torque()
+            return
+        q_hold = {f"{motor.name}.q": lowstate.motor_state[motor.value].q for motor in G1_29_JointIndex}
+        kp = np.array(self.kp, dtype=np.float32)
+        kd = np.array(self.kd, dtype=np.float32)
+        zeros = np.zeros(29, dtype=np.float32)
+        dt = self.controller.control_dt if self.controller is not None else self.config.control_dt
+        steps = max(1, int(self.config.graceful_stop_s / dt))
+        logger.info("Graceful stop: damping down over %.1fs", self.config.graceful_stop_s)
+        for i in range(steps):
+            ratio = (i + 1) / steps
+            self.publish_lowcmd(q_hold, kp=kp * (1.0 - ratio), kd=kd, tau=zeros)
+            time.sleep(dt)
+        self._send_zero_torque()
+
+    def disconnect(self):
+        # Stop the controller loop first so it isn't fighting the shutdown ramp.
         self._shutdown_event.set()
+        if self._controller_thread is not None:
+            self._controller_thread.join(timeout=2.0)
+            if self._controller_thread.is_alive():
+                logger.warning("Controller thread did not stop cleanly")
+
+        # Soft, damped settle instead of an instant limp (real robot only; the
+        # subscribe thread is still alive here to supply the current pose).
+        if not self.config.is_simulation:
+            self._graceful_stop()
 
         if self.controller is not None and hasattr(self.controller, "shutdown"):
             self.controller.shutdown()
@@ -391,12 +425,6 @@ class UnitreeG1(Robot):
             self.subscribe_thread.join(timeout=2.0)
             if self.subscribe_thread.is_alive():
                 logger.warning("Subscribe thread did not stop cleanly")
-
-        # Wait for controller thread to finish
-        if self._controller_thread is not None:
-            self._controller_thread.join(timeout=2.0)
-            if self._controller_thread.is_alive():
-                logger.warning("Controller thread did not stop cleanly")
 
         # Close simulation environment
         if self.config.is_simulation and self.sim_env is not None:
