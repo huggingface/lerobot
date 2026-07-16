@@ -30,7 +30,9 @@ def test_push_to_hub_tags_uploaded_dataset_revision(tmp_path, monkeypatch):
 
     root = tmp_path / "dataset"
     (root / "meta").mkdir(parents=True)
-    (root / "meta" / "info.json").write_text(json.dumps({"codebase_version": "v3.0"}))
+    (root / "meta" / "info.json").write_text(
+        json.dumps({"codebase_version": "v3.0", "fps": 30, "features": {}})
+    )
 
     calls = {}
 
@@ -55,6 +57,11 @@ def test_push_to_hub_tags_uploaded_dataset_revision(tmp_path, monkeypatch):
 
     monkeypatch.setattr("huggingface_hub.HfApi", FakeHfApi)
 
+    def fake_card_push(self, **kwargs):
+        calls["card_push"] = {"content": str(self), **kwargs}
+
+    monkeypatch.setattr("huggingface_hub.DatasetCard.push_to_hub", fake_card_push)
+
     cfg = SimpleNamespace(
         repo_id="source/dataset",
         new_repo_id="annotated/dataset",
@@ -71,6 +78,13 @@ def test_push_to_hub_tags_uploaded_dataset_revision(tmp_path, monkeypatch):
         "exist_ok": True,
     }
     assert calls["upload_folder"]["repo_id"] == "annotated/dataset"
+    # The source README must not be copied over: its links (e.g. the
+    # visualize badge) point at the source dataset. A card regenerated for
+    # the target repo is pushed instead.
+    assert "README.md" in calls["upload_folder"]["ignore_patterns"]
+    assert calls["card_push"]["repo_id"] == "annotated/dataset"
+    assert "visualize_dataset?path=annotated/dataset" in calls["card_push"]["content"]
+    assert "source/dataset" not in calls["card_push"]["content"]
     # A stale tag (e.g. from a previous annotation run) is deleted first so
     # the new tag always points at the upload we just made.
     assert calls["delete_tag"] == {

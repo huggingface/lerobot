@@ -104,6 +104,7 @@ class MetricsTracker:
         "episodes",
         "epochs",
         "accelerator",
+        "_caller_metrics",
     ]
 
     def __init__(
@@ -129,6 +130,9 @@ class MetricsTracker:
         self.episodes = self.samples / self._avg_samples_per_ep
         self.epochs = self.samples / self._num_frames
         self.accelerator = accelerator
+        # Meter names the caller registered up front. update_metrics() leaves these untouched, so a
+        # policy that echoes e.g. "loss" in its output dict can't clobber the aggregated meter.
+        self._caller_metrics: set[str] = set(self.metrics)
 
     def __getattr__(self, name: str) -> int | dict[str, AverageMeter] | AverageMeter | Any:
         if name in self.__dict__:
@@ -155,6 +159,21 @@ class MetricsTracker:
         self.samples += self._batch_size * world_size
         self.episodes = self.samples / self._avg_samples_per_ep
         self.epochs = self.samples / self._num_frames
+
+    def update_metrics(self, values: dict[str, Any]) -> None:
+        """Accumulate a dict of scalar metrics, auto-registering a meter for each new key.
+
+        Non-numeric values and bools are ignored.
+        Caller-registered metrics (those passed to the constructor) are never overridden.
+        """
+        for name, value in values.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            if name in self._caller_metrics:
+                continue
+            if name not in self.metrics:
+                self.metrics[name] = AverageMeter(name, ":.3f", reduction="mean")
+            self.metrics[name].update(float(value))
 
     def reduce_across_ranks(self) -> None:
         """
