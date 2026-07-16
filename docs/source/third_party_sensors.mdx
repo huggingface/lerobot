@@ -1,0 +1,25 @@
+# Third-Party Cameras & Sensors
+
+Beyond the cameras natively supported by LeRobot (OpenCV, Intel RealSense, ZMQ, Reachy 2), the community has published drop-in camera plugins using the `lerobot_camera_` package convention. Because LeRobot auto-discovers any installed package prefixed with `lerobot_camera_` and registers its `CameraConfig` subclass, these work with unmodified LeRobot — just `pip install` and reference the new camera `type` from the CLI. This page collects community-maintained camera and sensor integrations.
+
+<Tip>
+These projects are developed and maintained by third parties. Please refer to each repository for installation instructions, hardware requirements, and support.
+</Tip>
+
+## Cameras & Vision Sensors
+
+**[lerobot-camera-xense](https://github.com/xensedyl/lerobot-camera-xense)** — by xensedyl
+
+A drop-in camera plugin (registers the `xense` camera type) for Xense vision-based tactile sensors via `xensesdk>=2.0.0`. Exposes rectified/difference images for the standard image observation path, plus richer outputs — depth, 2D markers, force fields, force resultants, and 3D mesh — with a per-sensor process backend for multi-sensor setups.
+
+**[hex_lerobot_drivers cameras](https://github.com/hexfellow/hex_lerobot_drivers)** — by hexfellow
+
+Part of HEXFELLOW's LeRobot plugin suite, providing two camera plugins published on PyPI: [`lerobot_camera_berxel`](https://pypi.org/project/lerobot-camera-berxel/) for Berxel (depth) cameras, and [`lerobot_camera_dummy`](https://pypi.org/project/lerobot-camera-dummy/), a simulated MuJoCo camera for the Hex Arm useful for teleoperation and recording without physical camera hardware. (The same repo also ships Hex Arm robots and leader teleoperators — see the [Robots & Teleoperators](./third_party_robots) page.)
+
+**[lerobot_camera_imageclient](https://github.com/CoNG-harvard/lerobot_camera_imageclient)** — by CoNG-harvard
+
+A LeRobot camera plugin that sources frames from an external image client, following the `lerobot_camera_` auto-discovery convention.
+
+## Contributing
+
+Built your own LeRobot camera or sensor integration? Package it as an installable `lerobot_camera_<name>` plugin and it will be auto-discovered by the LeRobot CLI — see the [Bring Your Own Hardware](./integrate_hardware) guide and the [Cameras](./cameras) reference to get started, then share your project with the community!

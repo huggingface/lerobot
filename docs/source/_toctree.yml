@@ -166,7 +166,11 @@
   - local: rebot_b601
     title: reBot B601-DM
   - local: third_party_robots
+<<<<<<< Updated upstream
     title: Third-Party Robots Packages
+=======
+    title: Third-Party Robots & Teleoperators
+>>>>>>> Stashed changes
   title: "Robots"
 - sections:
   - local: phone_teleop
@@ -177,6 +181,8 @@
 - sections:
   - local: cameras
     title: Cameras
+  - local: third_party_sensors
+    title: Third-Party Cameras & Sensors
   title: "Sensors"
 - sections:
   - local: notebooks
