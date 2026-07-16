@@ -75,6 +75,28 @@
     title: 在模擬中控制與訓練機器人（LeIsaac）
   title: "模擬（Simulation）"
 - sections:
+  - local: adding_benchmarks
+    title: 新增基準測試（Adding a New Benchmark）
+  - local: libero
+    title: LIBERO
+  - local: libero_plus
+    title: LIBERO-plus
+  - local: metaworld
+    title: Meta-World
+  - local: robotwin
+    title: RoboTwin 2.0
+  - local: robocasa
+    title: RoboCasa365
+  - local: robocerebra
+    title: RoboCerebra
+  - local: robomme
+    title: RoboMME
+  - local: envhub_isaaclab_arena
+    title: NVIDIA IsaacLab Arena Environments
+  - local: vlabench
+    title: VLABench
+  title: "基準測試（Benchmarks）"
+- sections:
   - local: introduction_processors
     title: 處理器簡介（introduction to processors）
   - local: debug_processor_pipeline
