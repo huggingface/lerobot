@@ -26,6 +26,10 @@ import numpy as np
 from huggingface_hub import hf_hub_download
 
 from lerobot.teleoperators.pico_headset.smpl_constants import (
+    LOCO_AXES_PREFIX,
+    LOCO_BTN_PREFIX,
+    LOCO_N_AXES,
+    LOCO_N_BTN,
     ROOT_ACTION_DIM,
     ROOT_ACTION_PREFIX,
     SMPL_ACTION_PREFIX,
@@ -37,7 +41,7 @@ from lerobot.teleoperators.pico_headset.smpl_constants import (
 )
 from lerobot.utils.import_utils import _onnxruntime_available, require_package
 
-from ..g1_utils import KEYBOARD_KEYS_FIELD, lowstate_to_obs
+from ..g1_utils import KEYBOARD_KEYS_FIELD, G1_29_JointIndex, lowstate_to_obs
 from .sonic_pipeline import (
     CONTROL_DT,
     DEBUG_PRINT_EVERY,
@@ -49,6 +53,7 @@ from .sonic_pipeline import (
     MovementState,
     PlannerController,
     SonicPlanner,
+    apply_joystick_axes,
     clamp_mode_params,
     compute_kp_kd,
     make_ort_session_options,
@@ -64,6 +69,11 @@ else:
     ort = None
 
 logger = logging.getLogger(__name__)
+
+# Startup blend duration: over the first control ticks, linearly interpolate every joint
+# from the robot's initial measured pose into the policy's commanded target, so control
+# eases in without a snap on the first command.
+INIT_RAMP_S = 3.0
 
 
 def _extract_smpl_from_action(action: dict | None) -> np.ndarray | None:
@@ -120,6 +130,27 @@ def _extract_vr3_from_action(action: dict | None) -> tuple[np.ndarray, np.ndarra
         count=VR3_ORN_DIM,
     )
     return pos, orn
+
+
+def _extract_loco_from_action(action: dict | None) -> tuple[np.ndarray, np.ndarray] | None:
+    """Reassemble controller-stick locomotion from ``loco_axes.{i}`` / ``loco_btn.{i}``.
+
+    Returns ``(axes (4,) = [lx, ly, rx, ry], buttons (4,) = [A, B, X, Y])`` or None
+    when no locomotion state was sent this tick (sentinel: ``loco_axes.0``).
+    """
+    if not action or f"{LOCO_AXES_PREFIX}0" not in action:
+        return None
+    axes = np.fromiter(
+        (float(action.get(f"{LOCO_AXES_PREFIX}{i}", 0.0)) for i in range(LOCO_N_AXES)),
+        dtype=np.float32,
+        count=LOCO_N_AXES,
+    )
+    buttons = np.fromiter(
+        (float(action.get(f"{LOCO_BTN_PREFIX}{i}", 0.0)) for i in range(LOCO_N_BTN)),
+        dtype=np.float32,
+        count=LOCO_N_BTN,
+    )
+    return axes, buttons
 
 
 class SonicRuntime:
@@ -230,6 +261,14 @@ class SonicWholeBodyController:
         # motion set, replan, e-stop, WASD direction) fire once per physical press
         # instead of every 50 Hz tick while the key is held.
         self._prev_keys: set[str] = set()
+        # Edge state for the PICO A+B / X+Y locomotion-mode cycle (3-point teleop).
+        self._prev_loco_mode_pair: tuple[bool, bool] = (False, False)
+
+        # Startup blend: ease from the robot's initial pose into the first commanded
+        # policy targets over INIT_RAMP_S (captured on the first control tick).
+        self._init_ramp_steps = max(1, round(INIT_RAMP_S / CONTROL_DT))
+        self._init_step = 0
+        self._start_pose: dict[str, float] = {}
 
         # Optional: subscribe directly to the rt/smpl headset stream so full-body
         # teleop works with ANY teleoperator (e.g. --teleop.type=unitree_g1 for the
@@ -370,6 +409,61 @@ class SonicWholeBodyController:
         if "-" in held:
             ms.height = max(0.1, (ms.height if ms.height >= 0 else DEFAULT_HEIGHT) - 0.005)
 
+    def _process_pico_loco(self, axes: np.ndarray, buttons: np.ndarray) -> None:
+        """Drive locomotion from the PICO controller sticks/buttons (encode_mode 1).
+
+        Mirrors gear_sonic's ``PlannerLoop`` VR-3PT tick: left/right sticks steer
+        movement/facing/height (via the shared :func:`apply_joystick_axes`, identical
+        to the G1 remote), and A+B / X+Y edge-cycle the locomotion mode within the
+        current motion set.
+        """
+        lx, ly, rx, ry = (float(v) for v in axes)
+        apply_joystick_axes(lx, ly, rx, ry, self.ms, self.controller)
+
+        # Mode cycling: step linearly through the LocomotionMode enum (A+B = next,
+        # X+Y = previous), exactly like gear_sonic's PlannerLoop — so the operator can
+        # reach squat/kneel/crawl, not just the modes in one UI motion set.
+        a, b, x, y = (v > 0.5 for v in buttons)
+        ab_now, xy_now = (a and b), (x and y)
+        ab_prev, xy_prev = self._prev_loco_mode_pair
+        mode = int(self.ms.mode)
+        if ab_now and not ab_prev:
+            mode = min(int(LM.INJURED_WALK), mode + 1)
+        elif xy_now and not xy_prev:
+            mode = max(int(LM.IDLE), mode - 1)
+        if mode != int(self.ms.mode):
+            self.ms.mode = LM(mode)
+            self.ms.needs_replan = True
+            self.controller.playing = True
+            logger.info("SONIC 3-point: locomotion mode -> %s", LM(self.ms.mode).name)
+        self._prev_loco_mode_pair = (ab_now, xy_now)
+
+    def _startup_blend(self, obs: dict, out: dict) -> dict:
+        """Ease into policy control at startup: for the first ``INIT_RAMP_S`` seconds,
+        interpolate between the robot's pose captured on the first tick and the policy's
+        live commanded target, so the handoff has no snap.
+
+        ``out`` is the policy's ``<joint>.q`` target dict for this tick; the blend ratio
+        climbs 0->1 over the ramp, after which the raw policy target passes through.
+        """
+        if self._init_step >= self._init_ramp_steps or not out:
+            return out
+        if self._init_step == 0:
+            # Capture the robot's actual pose as the interpolation start point.
+            self._start_pose = {
+                f"{m.name}.q": float(obs.get(f"{m.name}.q", DEFAULT_ANGLES[m.value]))
+                for m in G1_29_JointIndex
+            }
+        self._init_step += 1
+        ratio = min(1.0, self._init_step / self._init_ramp_steps)
+        blended = {
+            k: self._start_pose.get(k, float(tgt)) * (1.0 - ratio) + float(tgt) * ratio
+            for k, tgt in out.items()
+        }
+        if self._init_step >= self._init_ramp_steps:
+            logger.info("SONIC startup blend complete -> full policy control")
+        return blended
+
     def run_step(self, action: dict, lowstate) -> dict:
         if lowstate is None:
             return {}
@@ -387,13 +481,18 @@ class SonicWholeBodyController:
         smpl = _extract_smpl_from_action(action)
         root_quat = _extract_root_from_action(action)
         vr3 = _extract_vr3_from_action(action)
+        loco = _extract_loco_from_action(action)
         if smpl is None and vr3 is None and self._smpl_stream is not None:
             window = self._smpl_stream.step()
             if self._smpl_stream.has_data and not self._smpl_stream.is_stale:
                 smpl = window
                 root_quat = np.asarray(self._smpl_stream.root_quat, np.float32)
-                if self._smpl_stream.has_vr3:
-                    vr3 = (self._smpl_stream.vr3_pos, self._smpl_stream.vr3_orn)
+            # VR3 is independent of the SMPL window: the controller-state source
+            # (head + controllers only) sends 3-point targets with no SMPL frame.
+            elif self._smpl_stream.has_fresh_vr3:
+                vr3 = (self._smpl_stream.vr3_pos, self._smpl_stream.vr3_orn)
+                if self._smpl_stream.has_fresh_loco:
+                    loco = (self._smpl_stream.loco_axes, self._smpl_stream.loco_buttons)
 
         if smpl is not None:
             # Full-body whole-body tracking: SMPL drives the reference, not joystick.
@@ -405,9 +504,8 @@ class SonicWholeBodyController:
             # self-driven to avoid root-acceleration spikes from an unsmoothed
             # reference trajectory.
             self.controller.smpl_root_quat = root_quat if self.enable_smpl_root else None
-            return self._runtime.tick(obs, debug=False, use_joystick=False)
-
-        if vr3 is not None:
+            out = self._runtime.tick(obs, debug=False, use_joystick=False)
+        elif vr3 is not None:
             # 3-point VR teleop: upper body tracks the wrist/neck targets; the lower
             # body / locomotion keeps running off the planner, so the joystick (and
             # keyboard) still steer walking/turning underneath.
@@ -415,16 +513,29 @@ class SonicWholeBodyController:
                 self._enter_3point()
             self.controller.vr_3point_local_target = vr3[0]
             self.controller.vr_3point_local_orn_target = vr3[1]
-            return self._runtime.tick(obs, debug=False, use_joystick=True)
+            # Replicate the original encode_mode-1 handling: when the PICO controller
+            # sticks are forwarded, drive locomotion from them directly (and skip the
+            # wireless-remote joystick read). Otherwise leave the remote/keyboard path.
+            if loco is not None:
+                self._process_pico_loco(loco[0], loco[1])
+                out = self._runtime.tick(obs, debug=False, use_joystick=False)
+            else:
+                out = self._runtime.tick(obs, debug=False, use_joystick=True)
+        else:
+            # No (or stale) teleop reference: fall back to locomotion so the robot stays balanced.
+            if self.controller.encode_mode != 0:
+                self.controller.smpl_root_quat = None
+                self._exit_wholebody()
+            out = self._runtime.tick(obs, debug=False)
 
-        # No (or stale) teleop reference: fall back to locomotion so the robot stays balanced.
-        if self.controller.encode_mode != 0:
-            self.controller.smpl_root_quat = None
-            self._exit_wholebody()
-        return self._runtime.tick(obs, debug=False)
+        # Startup interpolation: blend from the robot's initial pose into the policy's
+        # commanded target over INIT_RAMP_S, regardless of mode.
+        return self._startup_blend(obs, out)
 
     def reset(self):
         self._runtime.reset()
+        self._init_step = 0  # re-run the startup blend after a reset
+        self._start_pose = {}
 
     def shutdown(self):
         if self._smpl_stream is not None:

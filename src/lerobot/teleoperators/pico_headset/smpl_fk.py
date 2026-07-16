@@ -30,6 +30,7 @@ plus the root orientation quaternion and pelvis translation.
 Quaternions are scalar-first (w, x, y, z) unless noted.
 """
 
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -234,6 +235,19 @@ _VR3_OFFSETS = [
 _UNITY_TO_ROBOT = np.array([[-1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
 
 
+def _safe_quat(quats: np.ndarray) -> np.ndarray:
+    """Replace zero-norm quaternions with the scalar-last identity.
+
+    The headset reports ``[0, 0, 0, 0]`` for joints it isn't currently tracking;
+    ``scipy.Rotation.from_quat`` rejects zero-norm quaternions, so we substitute the
+    identity ``[0, 0, 0, 1]`` (no rotation) for those rows to keep FK robust.
+    """
+    quats = np.asarray(quats, np.float64).copy()
+    bad = np.linalg.norm(quats, axis=-1) < 1e-8
+    quats[bad] = (0.0, 0.0, 0.0, 1.0)  # scalar-last identity
+    return quats
+
+
 def compute_3point(body_poses_np: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Extract the SONIC 3-point VR targets from headset body poses.
 
@@ -261,9 +275,10 @@ def compute_3point(body_poses_np: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     # and rotation-offset-corrected.
     positions = np.zeros((4, 3), np.float64)
     rotations: list[R] = []
+    quats = _safe_quat(body[:, 3:7])
     for out_i, j in enumerate((0, *_VR3_JOINTS)):
         positions[out_i] = q @ body[j, :3]
-        rot = R.from_quat(body[j, 3:7]).as_matrix()  # scalar-last input
+        rot = R.from_quat(quats[j]).as_matrix()  # scalar-last input
         rotations.append(R.from_matrix(q @ rot @ q.T) * _VR3_OFFSETS[out_i])
 
     root_inv = rotations[0].inv()
@@ -274,6 +289,159 @@ def compute_3point(body_poses_np: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         pos[k * 3 : k * 3 + 3] = root_inv.apply(positions[k + 1] - root_pos)
         orn[k * 4 : k * 4 + 4] = (root_inv * rotations[k + 1]).as_quat(scalar_first=True)  # wxyz
     return pos, orn
+
+
+# ── 3-point VR teleop from raw device poses (no body trackers) ───────────────
+# PICO Y-up (X-right, Y-up, Z-back) -> robot Z-up world. Ported verbatim from
+# gear_sonic's controller path (``decoupled_wbc`` ``PicoStreamer.R_HEADSET_TO_WORLD``).
+_HEADSET_TO_WORLD = np.array([[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+
+
+def _device_pose_to_world(pose: np.ndarray) -> tuple[np.ndarray, R]:
+    """Convert a raw (7,) device pose ``[x, y, z, qx, qy, qz, qw]`` (PICO Y-up frame)
+    to a Z-up world ``(position, Rotation)`` pair.
+
+    Handles the all-zero quaternion the SDK emits when a device is momentarily
+    untracked by substituting the identity, matching ``PicoStreamer._process_xr_pose``.
+    """
+    pose = np.asarray(pose, np.float64)
+    xyz = _HEADSET_TO_WORLD @ pose[:3]
+    quat = pose[3:7]  # scalar-last
+    if np.linalg.norm(quat) < 1e-8:
+        quat = np.array([0.0, 0.0, 0.0, 1.0])
+    rot = _HEADSET_TO_WORLD @ R.from_quat(quat).as_matrix() @ _HEADSET_TO_WORLD.T
+    return xyz, R.from_matrix(rot)
+
+
+def compute_3point_from_devices(
+    head_pose: np.ndarray,
+    left_pose: np.ndarray,
+    right_pose: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build the SONIC 3-point VR targets from raw head + controller poses.
+
+    This is the controller-state path (no PICO Motion Trackers / body tracking
+    required): the 3 keypoints are the left controller, right controller, and the
+    headset, each expressed relative to the **headset yaw frame** — mirroring
+    gear_sonic's ``decoupled_wbc`` ``PicoStreamer._process_xr_pose`` (Y-up -> Z-up,
+    then de-headed by the headset yaw). The headset stands in for the "neck" point,
+    so its root-relative position is ~0 and its orientation carries pitch/roll.
+
+    Args:
+        head_pose, left_pose, right_pose: (7,) ``[x, y, z, qx, qy, qz, qw]`` device
+            poses (scalar-last) from ``xrt.get_headset_pose()`` /
+            ``xrt.get_left_controller_pose()`` / ``xrt.get_right_controller_pose()``.
+
+    Returns:
+        (pos, orn):
+          - pos: (9,) float32, headset-yaw-relative ``[x, y, z]`` for [l-wrist, r-wrist, head]
+          - orn: (12,) float32, headset-yaw-relative ``[w, x, y, z]`` for the same order
+    """
+    head_pos, head_rot = _device_pose_to_world(head_pose)
+    left_pos, left_rot = _device_pose_to_world(left_pose)
+    right_pos, right_rot = _device_pose_to_world(right_pose)
+
+    # De-head: cancel the headset yaw so targets are expressed in a heading-local frame.
+    head_yaw = head_rot.as_euler("xyz")[2]
+    inv_yaw = R.from_euler("z", -head_yaw)
+
+    points = ((left_pos, left_rot), (right_pos, right_rot), (head_pos, head_rot))
+    pos = np.zeros(VR3_POS_DIM, np.float32)
+    orn = np.zeros(VR3_ORN_DIM, np.float32)
+    for k, (p_pos, p_rot) in enumerate(points):
+        pos[k * 3 : k * 3 + 3] = inv_yaw.apply(p_pos - head_pos)
+        orn[k * 4 : k * 4 + 4] = (inv_yaw * p_rot).as_quat(scalar_first=True)  # wxyz
+    return pos, orn
+
+
+# ── operator calibration for the 3-point targets ────────────────────────────
+# G1 neutral (zero-q) key-frame targets, pelvis-relative [x, y, z] in metres, from
+# MuJoCo FK on g1_29dof with gear_sonic's local offsets (wrists +0.18x ∓0.025y,
+# torso +0.35z). These are the poses the operator's rest pose is mapped onto so the
+# robot starts at its neutral stance. Orientations are identity at neutral.
+_G1_NEUTRAL_WRIST_POS = np.array([[0.3798, 0.1237, 0.0952], [0.3798, -0.1237, 0.0952]], np.float64)
+# Neck reconstruction chain (mirrors ThreePointPose._apply_calibration): torso link
+# +0.05 z, then +0.35 along the neck's local Z.
+_NECK_TORSO_OFFSET_Z = 0.05
+_NECK_LINK_LENGTH = 0.35
+
+
+@dataclass
+class ThreePointCalibrator:
+    """Aligns raw 3-point VR targets to the G1's neutral stance.
+
+    Ports gear_sonic ``ThreePointPose._capture_calibration`` / ``_apply_calibration``:
+    on :meth:`capture` (operator holding a neutral rest pose) it records (a) the
+    inverse of the head/neck orientation, used to de-tilt all points to upright, and
+    (b) per-wrist position + orientation offsets that map the corrected rest pose onto
+    the fixed G1 neutral wrist targets. :meth:`apply` then transforms every subsequent
+    frame by those offsets, and reconstructs the head/neck position from the calibrated
+    neck orientation via the torso->neck kinematic chain.
+
+    All quaternions are scalar-first (w, x, y, z), matching :func:`compute_3point`.
+    """
+
+    _neck_quat_inv: R | None = field(default=None, init=False)
+    _wrist_pos_offset: np.ndarray | None = field(default=None, init=False)
+    _wrist_rot_offset: list[R] = field(default_factory=list, init=False)
+
+    @property
+    def is_calibrated(self) -> bool:
+        return self._neck_quat_inv is not None
+
+    def reset(self) -> None:
+        self._neck_quat_inv = None
+        self._wrist_pos_offset = None
+        self._wrist_rot_offset = []
+
+    def capture(self, pos: np.ndarray, orn: np.ndarray) -> None:
+        """Capture calibration offsets from a neutral-pose frame.
+
+        Args:
+            pos: (9,) root-relative ``[x, y, z]`` for [l-wrist, r-wrist, head].
+            orn: (12,) root-relative ``[w, x, y, z]`` for the same order.
+        """
+        pos = np.asarray(pos, np.float64).reshape(3, 3)
+        orn = np.asarray(orn, np.float64).reshape(3, 4)
+        neck_rot = R.from_quat(orn[2], scalar_first=True)
+        neck_inv = neck_rot.inv()
+
+        self._wrist_pos_offset = np.zeros((2, 3), np.float64)
+        self._wrist_rot_offset = []
+        for k in range(2):
+            corrected_pos = neck_inv.apply(pos[k])
+            corrected_rot = neck_inv * R.from_quat(orn[k], scalar_first=True)
+            self._wrist_pos_offset[k] = corrected_pos - _G1_NEUTRAL_WRIST_POS[k]
+            self._wrist_rot_offset.append(corrected_rot.inv())  # g1 neutral rot = identity
+        self._neck_quat_inv = neck_inv
+
+    def apply(self, pos: np.ndarray, orn: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Apply the stored calibration; returns calibrated ``(pos (9,), orn (12,))``.
+
+        A no-op (returns the inputs unchanged) until :meth:`capture` has been called.
+        """
+        if self._neck_quat_inv is None:
+            return (
+                np.asarray(pos, np.float32).reshape(-1),
+                np.asarray(orn, np.float32).reshape(-1),
+            )
+        pos = np.asarray(pos, np.float64).reshape(3, 3)
+        orn = np.asarray(orn, np.float64).reshape(3, 4)
+        neck_inv = self._neck_quat_inv
+
+        out_pos = np.zeros((3, 3), np.float64)
+        out_orn = np.zeros((3, 4), np.float64)
+        for k in range(2):  # wrists
+            out_pos[k] = neck_inv.apply(pos[k]) - self._wrist_pos_offset[k]
+            corrected_rot = neck_inv * R.from_quat(orn[k], scalar_first=True)
+            out_orn[k] = (self._wrist_rot_offset[k] * corrected_rot).as_quat(scalar_first=True)
+
+        # Head/neck: orientation de-tilted, position from the torso->neck chain.
+        neck_rot = neck_inv * R.from_quat(orn[2], scalar_first=True)
+        out_orn[2] = neck_rot.as_quat(scalar_first=True)
+        neck_z = neck_rot.apply([0.0, 0.0, 1.0])
+        out_pos[2] = np.array([0.0, 0.0, _NECK_TORSO_OFFSET_Z]) + _NECK_LINK_LENGTH * neck_z
+        return out_pos.reshape(-1).astype(np.float32), out_orn.reshape(-1).astype(np.float32)
 
 
 class SmplForwardKinematics:
@@ -323,7 +491,7 @@ class SmplForwardKinematics:
 
         # Global joint rotations from the headset (scalar-last), with the SMPL
         # +180 deg-about-Y frame fix, converted to per-joint local axis-angle.
-        global_rots = R.from_quat(body_poses_np[:, 3:7]) * R.from_euler("y", 180, degrees=True)
+        global_rots = R.from_quat(_safe_quat(body_poses_np[:, 3:7])) * R.from_euler("y", 180, degrees=True)
         gm = global_rots.as_matrix()  # (24, 3, 3)
 
         local_aa = np.zeros((24, 3), np.float64)

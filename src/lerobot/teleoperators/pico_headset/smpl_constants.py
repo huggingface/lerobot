@@ -49,3 +49,13 @@ VR3_ORN_DIM = VR3_N_POINTS * 4  # 12 (3 x wxyz)
 # Flat action-dict keys: ``vr3_pos.0 .. vr3_pos.8`` and ``vr3_orn.0 .. vr3_orn.11``.
 VR3_POS_PREFIX = "vr3_pos."
 VR3_ORN_PREFIX = "vr3_orn."
+
+# ── Controller-stick locomotion (SONIC encode_mode 1, replicated exactly) ────
+# In the original 3-point teleop the same tick that sends the VR targets also drives
+# locomotion from the PICO controller sticks/buttons (left stick -> move, right stick
+# -> yaw, A+B / X+Y -> cycle locomotion mode). We forward that raw controller state so
+# the consumer's planner can steer walking/turning underneath the upper-body tracking.
+LOCO_N_AXES = 4  # [left_x, left_y, right_x, right_y]
+LOCO_N_BTN = 4  # [A, B, X, Y]
+LOCO_AXES_PREFIX = "loco_axes."
+LOCO_BTN_PREFIX = "loco_btn."
