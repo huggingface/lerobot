@@ -538,6 +538,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             collate_fn=eval_collate_fn,
             prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
             persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
+            multiprocessing_context=mp_context if cfg.num_workers > 0 else None,
         )
 
     # Prepare everything with accelerator
