@@ -104,6 +104,8 @@ class MetricsTracker:
         "episodes",
         "epochs",
         "accelerator",
+        "_tensor_sums",
+        "_tensor_counts",
     ]
 
     def __init__(
@@ -129,6 +131,8 @@ class MetricsTracker:
         self.episodes = self.samples / self._avg_samples_per_ep
         self.epochs = self.samples / self._num_frames
         self.accelerator = accelerator
+        self._tensor_sums: dict[str, torch.Tensor] = {}
+        self._tensor_counts: dict[str, int] = {}
 
     def __getattr__(self, name: str) -> int | dict[str, AverageMeter] | AverageMeter | Any:
         if name in self.__dict__:
@@ -156,6 +160,22 @@ class MetricsTracker:
         self.episodes = self.samples / self._avg_samples_per_ep
         self.epochs = self.samples / self._num_frames
 
+    def accumulate_tensor(self, name: str, value: torch.Tensor) -> None:
+        """Accumulate a detached metric on-device until the next logging step."""
+        if name not in self.metrics:
+            raise KeyError(f"Unknown metric {name!r}.")
+        value = value.detach()
+        self._tensor_sums[name] = self._tensor_sums.get(name, torch.zeros_like(value)) + value
+        self._tensor_counts[name] = self._tensor_counts.get(name, 0) + 1
+
+    def materialize_tensors(self) -> None:
+        """Transfer pending tensor averages to their meters with one sync per metric."""
+        for name, total in self._tensor_sums.items():
+            count = self._tensor_counts[name]
+            self.metrics[name].update((total / count).item(), n=count)
+        self._tensor_sums.clear()
+        self._tensor_counts.clear()
+
     def reduce_across_ranks(self) -> None:
         """
         Synchronises the running averages of every metric whose ``reduction`` is not ``"none"``
@@ -176,10 +196,21 @@ class MetricsTracker:
         if not buckets:
             return
 
+        # NB: don't use ``accelerator.reduce(..., reduction="max")`` — accelerate only implements
+        # "sum"/"mean" (it always all-reduces with SUM and divides for "mean"), so "max" silently
+        # returns the SUM across ranks, inflating every "max" metric by ``num_processes`` (e.g. a
+        # 3.5s step reported as 28s on 8 GPUs). Gather per-rank values and reduce them explicitly.
         device = self.accelerator.device
+        num_processes = self.accelerator.num_processes
         for reduction, names in buckets.items():
-            tensor = torch.tensor([self.metrics[n].avg for n in names], dtype=torch.float32, device=device)
-            reduced = self.accelerator.reduce(tensor, reduction=reduction)
+            local = torch.tensor([self.metrics[n].avg for n in names], dtype=torch.float32, device=device)
+            gathered = self.accelerator.gather(local).view(num_processes, len(names))
+            if reduction == "max":
+                reduced = gathered.amax(dim=0)
+            elif reduction == "sum":
+                reduced = gathered.sum(dim=0)
+            else:  # "mean"
+                reduced = gathered.mean(dim=0)
             for name, value in zip(names, reduced.tolist(), strict=True):
                 meter = self.metrics[name]
                 # Preserve avg == sum / count so a later .update() on this meter accumulates
@@ -216,3 +247,5 @@ class MetricsTracker:
         """Resets average meters."""
         for m in self.metrics.values():
             m.reset()
+        self._tensor_sums.clear()
+        self._tensor_counts.clear()

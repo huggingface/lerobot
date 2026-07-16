@@ -63,6 +63,8 @@
     title: π₀-FAST (Pi0Fast)
   - local: pi05
     title: π₀.₅ (Pi05)
+  - local: pi052
+    title: π₀.₅ with language supervision (Pi052)
   - local: molmoact2
     title: MolmoAct2
   - local: vla_jepa

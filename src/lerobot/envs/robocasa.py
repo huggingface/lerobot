@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 
 # Dimensions for the flat action/state vectors used by the LeRobot wrapper.
 # These correspond to the PandaOmron robot in RoboCasa365.
-OBS_STATE_DIM = 16  # base_pos(3) + base_quat(4) + ee_pos_rel(3) + ee_quat_rel(4) + gripper_qpos(2)
-ACTION_DIM = 12  # base_motion(4) + control_mode(1) + ee_pos(3) + ee_rot(3) + gripper(1)
+OBS_STATE_DIM = 16  # ee_pos_rel(3) + ee_quat_rel(4) + base_pos(3) + base_quat(4) + gripper_qpos(2)
+ACTION_DIM = 12  # ee_pos(3) + ee_rot(3) + gripper(1) + base_motion(4) + control_mode(1)
 ACTION_LOW = -1.0
 ACTION_HIGH = 1.0
 
@@ -101,14 +101,15 @@ def _resolve_tasks(task: str) -> tuple[list[str], str | None]:
 def convert_action(flat_action: np.ndarray) -> dict[str, Any]:
     """Split a flat (12,) action vector into a RoboCasa action dict.
 
-    Layout: base_motion(4) + control_mode(1) + ee_pos(3) + ee_rot(3) + gripper(1)
+    Layout (openpi / robocasa.utils.env_utils.convert_action order):
+        ee_pos(3) + ee_rot(3) + gripper(1) + base_motion(4) + control_mode(1)
     """
     return {
-        "action.base_motion": flat_action[0:4],
-        "action.control_mode": flat_action[4:5],
-        "action.end_effector_position": flat_action[5:8],
-        "action.end_effector_rotation": flat_action[8:11],
-        "action.gripper_close": flat_action[11:12],
+        "action.end_effector_position": flat_action[0:3],
+        "action.end_effector_rotation": flat_action[3:6],
+        "action.gripper_close": flat_action[6:7],
+        "action.base_motion": flat_action[7:11],
+        "action.control_mode": flat_action[11:12],
     }
 
 
@@ -136,9 +137,16 @@ class RoboCasaEnv(gym.Env):
         episode_length: int | None = None,
         obj_registries: Sequence[str] = DEFAULT_OBJ_REGISTRIES,
         episode_index: int = 0,
+        terminate_on_success: bool = True,
+        horizon: int | None = None,
     ):
         super().__init__()
         self.task = task
+        # When False, a task-success does NOT end/reset the episode — used by the
+        # interactive sim so one kitchen persists across sequential prompts.
+        self.terminate_on_success = terminate_on_success
+        # Underlying robosuite horizon (steps before truncation). None -> default.
+        self.horizon = horizon
         self.obs_type = obs_type
         self.render_mode = render_mode
         self.observation_width = observation_width
@@ -210,12 +218,16 @@ class RoboCasaEnv(gym.Env):
         # (only None/"all"/"pretrain"/"target" are valid). Always pass a
         # valid value so we don't hit that default. Extra kwargs are
         # forwarded to the underlying kitchen env via create_env/robosuite.make.
+        extra_kwargs: dict[str, Any] = {}
+        if self.horizon is not None:
+            extra_kwargs["horizon"] = int(self.horizon)
         self._env = RoboCasaGymEnv(
             env_name=self.task,
             camera_widths=self.observation_width,
             camera_heights=self.observation_height,
             split=self.split if self.split is not None else "all",
             obj_registries=self.obj_registries,
+            **extra_kwargs,
         )
 
         ep_meta = self._env.env.get_ep_meta()
@@ -230,12 +242,14 @@ class RoboCasaEnv(gym.Env):
             return {"pixels": images}
 
         # `state.*` keys come from PandaOmronKeyConverter inside the wrapper.
+        # openpi state order: ee first, then base, then gripper (matches the
+        # openpi robocasa pipeline / examples/robocasa/main.py state layout).
         agent_pos = np.concatenate(
             [
-                raw_obs.get("state.base_position", np.zeros(3)),
-                raw_obs.get("state.base_rotation", np.zeros(4)),
                 raw_obs.get("state.end_effector_position_relative", np.zeros(3)),
                 raw_obs.get("state.end_effector_rotation_relative", np.zeros(4)),
+                raw_obs.get("state.base_position", np.zeros(3)),
+                raw_obs.get("state.base_rotation", np.zeros(4)),
                 raw_obs.get("state.gripper_qpos", np.zeros(2)),
             ],
             axis=-1,
@@ -280,7 +294,7 @@ class RoboCasaEnv(gym.Env):
         raw_obs, reward, done, truncated, info = self._env.step(action_dict)
 
         is_success = bool(info.get("success", False))
-        terminated = done or is_success
+        terminated = done or (is_success and self.terminate_on_success)
         info.update({"task": self.task, "done": done, "is_success": is_success})
 
         observation = self._format_raw_obs(raw_obs)
@@ -313,6 +327,8 @@ def _make_env_fns(
     split: str | None,
     episode_length: int | None,
     obj_registries: Sequence[str],
+    terminate_on_success: bool = True,
+    horizon: int | None = None,
 ) -> list[Callable[[], RoboCasaEnv]]:
     """Build n_envs factory callables for a single task.
 
@@ -335,6 +351,8 @@ def _make_env_fns(
             episode_length=episode_length,
             obj_registries=obj_registries,
             episode_index=episode_index,
+            terminate_on_success=terminate_on_success,
+            horizon=horizon,
         )
 
     return [partial(_make_env, i) for i in range(n_envs)]
@@ -348,6 +366,8 @@ def create_robocasa_envs(
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
     episode_length: int | None = None,
     obj_registries: Sequence[str] = DEFAULT_OBJ_REGISTRIES,
+    terminate_on_success: bool = True,
+    horizon: int | None = None,
 ) -> dict[str, dict[int, Any]]:
     """Create vectorized RoboCasa365 environments with a consistent return shape.
 
@@ -409,6 +429,8 @@ def create_robocasa_envs(
             split=split,
             episode_length=episode_length,
             obj_registries=obj_registries,
+            terminate_on_success=terminate_on_success,
+            horizon=horizon,
         )
 
         if is_async:

@@ -109,15 +109,21 @@ lerobot-train \
 
 ### Key Training Parameters
 
-| Parameter                              | Description                                        | Default                         |
-| -------------------------------------- | -------------------------------------------------- | ------------------------------- |
-| `--policy.gradient_checkpointing=true` | Reduces memory usage significantly during training | `false`                         |
-| `--policy.dtype=bfloat16`              | Use mixed precision training for efficiency        | `float32`                       |
-| `--policy.chunk_size`                  | Number of action steps to predict (action horizon) | `50`                            |
-| `--policy.n_action_steps`              | Number of action steps to execute                  | `50`                            |
-| `--policy.max_action_tokens`           | Maximum number of FAST tokens per action chunk     | `256`                           |
-| `--policy.action_tokenizer_name`       | FAST tokenizer to use                              | `lerobot/fast-action-tokenizer` |
-| `--policy.compile_model=true`          | Enable torch.compile for faster training           | `false`                         |
+| Parameter                               | Description                                        | Default                         |
+| --------------------------------------- | -------------------------------------------------- | ------------------------------- |
+| `--policy.gradient_checkpointing=true`  | Reduces memory usage significantly during training | `false`                         |
+| `--policy.dtype=bfloat16`               | Use mixed precision training for efficiency        | `float32`                       |
+| `--policy.chunk_size`                   | Number of action steps to predict (action horizon) | `50`                            |
+| `--policy.n_action_steps`               | Number of action steps to execute                  | `50`                            |
+| `--policy.max_action_tokens`            | Maximum number of FAST tokens per action chunk     | `256`                           |
+| `--policy.action_tokenizer_name`        | FAST tokenizer to use                              | `lerobot/fast-action-tokenizer` |
+| `--policy.auto_fit_fast_tokenizer=true` | Fit and cache a tokenizer for the training dataset | `false`                         |
+| `--policy.compile_model=true`           | Enable torch.compile for faster training           | `false`                         |
+
+Set `--policy.auto_fit_fast_tokenizer=true` to sample action chunks from the
+training dataset and cache a fitted tokenizer under
+`~/.cache/lerobot/fast_tokenizers`. This also works when fine-tuning with
+`--policy.path`; leave it disabled to retain the checkpoint's tokenizer.
 
 ## Inference
 

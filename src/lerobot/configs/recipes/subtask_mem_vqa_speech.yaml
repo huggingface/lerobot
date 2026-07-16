@@ -1,0 +1,70 @@
+# Adds memory, spoken interjection responses, and camera-grounded VQA to subtask/action training.
+# Missing optional annotations skip only their sub-recipe; `say` tool calls tokenize as `<say>...</say>`.
+
+blend:
+
+  high_level_subtask:
+    weight: 0.25
+    messages:
+      - {role: user, content: "${task}", stream: high_level}
+      - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
+
+  low_level_execution:
+    weight: 0.40
+    messages:
+      # The low-level stream trains action flow on the generated or annotated subtask.
+      - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
+
+  memory_update:
+    # `active_at` densifies sparse boundaries while preserving the prior-memory/subtask mapping.
+    # Inference controls update timing through `subtask_change` events.
+    weight: 0.10
+    bindings:
+      prior_memory: "nth_prev(style=memory, offset=1)"
+      current_memory: "active_at(t, style=memory)"
+      completed_subtask: "nth_prev(style=subtask, offset=1)"
+    messages:
+      - {role: user, content: "${task}", stream: high_level}
+      - {role: assistant, content: "Previous memory: ${prior_memory}", stream: high_level, if_present: prior_memory}
+      - {role: user, content: "Completed subtask: ${completed_subtask}", stream: high_level, if_present: completed_subtask}
+      - {role: assistant, content: "${current_memory}", stream: high_level, target: true, if_present: current_memory}
+
+  user_interjection_response:
+    weight: 0.10
+    bindings:
+      interjection: "emitted_at(t, style=interjection)"
+      speech: "emitted_at(t, role=assistant, tool_name=say)"
+    messages:
+      - {role: user, content: "${task}", stream: high_level}
+      - {role: user, content: "${interjection}", stream: high_level, if_present: interjection}
+      # The assistant target is a `say` tool call flattened to a `<say>...</say>` marker.
+      - {role: assistant, stream: high_level, target: true, if_present: speech, tool_calls_from: speech}
+
+  # Each camera uses a separate VQA sub-recipe for view-specific binding.
+  ask_vqa_top:
+    weight: 0.075
+    bindings:
+      vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.front)"
+      vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.front)"
+    messages:
+      - role: user
+        stream: high_level
+        if_present: vqa_query
+        content:
+          - {type: image, feature: observation.images.front}
+          - {type: text, text: "${vqa_query}"}
+      - {role: assistant, content: "${vqa}", stream: high_level, target: true, if_present: vqa}
+
+  ask_vqa_wrist:
+    weight: 0.075
+    bindings:
+      vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.wrist)"
+      vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.wrist)"
+    messages:
+      - role: user
+        stream: high_level
+        if_present: vqa_query
+        content:
+          - {type: image, feature: observation.images.wrist}
+          - {type: text, text: "${vqa_query}"}
+      - {role: assistant, content: "${vqa}", stream: high_level, target: true, if_present: vqa}

@@ -94,6 +94,19 @@ from lerobot.utils.utils import (
     init_logging,
     inside_slurm,
 )
+from lerobot.utils.video_annotation import annotate_frame
+
+
+def _annotate_eval_frames(frames: np.ndarray, task: str | None, subtask: str | None) -> np.ndarray:
+    """Overlay the high-level task and predicted subtask onto rendered frames.
+
+    ``frames`` is ``(n_envs, H, W, C)`` uint8. Best-effort: if OpenCV isn't
+    available the frames are returned unchanged so eval never fails over a
+    visualization concern.
+    """
+    if frames.ndim != 4 or frames.shape[-1] != 3:
+        return frames
+    return np.stack([annotate_frame(frame, (("Task", task), ("Subtask", subtask))) for frame in frames])
 
 
 def _env_features_to_dataset_features(env_features: dict) -> dict:
@@ -474,11 +487,36 @@ def eval_policy(
             return
         n_to_render_now = min(max_episodes_rendered - n_episodes_rendered, env.num_envs)
         if isinstance(env, gym.vector.SyncVectorEnv):
-            ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
+            frames = np.stack([env.envs[i].render() for i in range(n_to_render_now)])  # noqa: B023
         elif hasattr(env, "call"):
             # Here we must render all frames and discard any we don't need.
             # Covers AsyncVectorEnv and _LazyAsyncVectorEnv (which wraps one).
-            ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
+            frames = np.stack(env.call("render")[:n_to_render_now])
+        else:
+            return
+
+        # Overlay the high-level task and (for hierarchical policies like
+        # pi052) the predicted low-level subtask onto each frame. Both are
+        # best-effort: missing values just skip that line.
+        try:
+            tasks = list(env.call("task_description"))
+        except (AttributeError, NotImplementedError):
+            try:
+                tasks = list(env.call("task"))
+            except (AttributeError, NotImplementedError):
+                tasks = None
+        subtasks = getattr(policy, "last_subtasks", None)
+        annotated = []
+        for i in range(frames.shape[0]):
+            subtask_i = subtasks[i] if subtasks is not None and i < len(subtasks) else None
+            annotated.append(
+                _annotate_eval_frames(
+                    frames[i : i + 1],
+                    tasks[i] if tasks is not None and i < len(tasks) else None,
+                    subtask_i,
+                )[0]
+            )
+        ep_frames.append(np.stack(annotated))
 
     if max_episodes_rendered > 0:
         video_paths: list[str] = []

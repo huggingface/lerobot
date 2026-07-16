@@ -20,9 +20,11 @@ Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wand
 
 import dataclasses
 import logging
+import os
 import sys
 import time
 from contextlib import nullcontext
+from datetime import timedelta
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
 
@@ -81,6 +83,7 @@ def update_policy(
     lr_scheduler=None,
     lock=None,
     sample_weighter=None,
+    log_metrics: bool = True,
 ) -> tuple[MetricsTracker, dict | None]:
     """
     Performs a single training step to update the policy's weights.
@@ -98,6 +101,7 @@ def update_policy(
         lr_scheduler: An optional learning rate scheduler.
         lock: An optional lock for thread-safe optimizer updates.
         sample_weighter: Optional SampleWeighter instance for per-sample loss weighting.
+        log_metrics: Whether to synchronize and record GPU metrics this step.
 
     Returns:
         A tuple containing:
@@ -165,12 +169,20 @@ def update_policy(
     if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
-    train_metrics.loss = loss.item()
-    train_metrics.grad_norm = grad_norm.item()
     train_metrics.lr = optimizer.param_groups[0]["lr"]
-    train_metrics.update_s = time.perf_counter() - start_time
     if torch.cuda.is_available():
         train_metrics.gpu_mem_gb = torch.cuda.max_memory_allocated() / (1024**3)
+    train_metrics.accumulate_tensor("loss", loss)
+    train_metrics.accumulate_tensor("grad_norm", grad_norm)
+    train_metrics.update_s = time.perf_counter() - start_time
+    # Synchronize accumulated GPU metrics only when logging.
+    if log_metrics:
+        train_metrics.materialize_tensors()
+        # Materialize detached loss components during the same logging synchronization.
+        if output_dict:
+            output_dict = {
+                k: (v.item() if isinstance(v, torch.Tensor) else v) for k, v in output_dict.items()
+            }
     return train_metrics, output_dict
 
 
@@ -198,7 +210,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     require_package("accelerate", extra="training")
     from accelerate import Accelerator
-    from accelerate.utils import DistributedDataParallelKwargs, DistributedType
+    from accelerate.utils import DistributedDataParallelKwargs, DistributedType, InitProcessGroupKwargs
 
     cfg.validate()
 
@@ -207,7 +219,16 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting the lr_scheduler steps based on the num_processes
     # We set find_unused_parameters=True to handle models with conditional computation
     if accelerator is None:
-        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        # Static graphs restore DDP overlap when conditional parameter usage is stable.
+        # Environment flags retain the existing defaults.
+        ddp_find_unused = os.environ.get("LEROBOT_DDP_FIND_UNUSED", "1") == "1"
+        ddp_static_graph = os.environ.get("LEROBOT_DDP_STATIC_GRAPH", "0") == "1"
+        ddp_kwargs = DistributedDataParallelKwargs(
+            find_unused_parameters=ddp_find_unused and not ddp_static_graph,
+            static_graph=ddp_static_graph,
+        )
+        # Allow rank 0 enough time to index large datasets before other ranks leave the barrier.
+        ipg_kwargs = InitProcessGroupKwargs(timeout=timedelta(hours=2))
         # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
         # Force the device to be CPU when the active config's device is set to CPU (works for both policy and reward model training).
         force_cpu = cfg.trainable_config.device == "cpu"
@@ -217,7 +238,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,
             mixed_precision=mixed_precision,
-            kwargs_handlers=[ddp_kwargs],
+            kwargs_handlers=[ddp_kwargs, ipg_kwargs],
             cpu=force_cpu,
         )
 
@@ -313,6 +334,14 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     active_cfg = cfg.trainable_config
     processor_pretrained_path = active_cfg.pretrained_path
+    # A weight checkpoint may contain PI05 or differently configured PI052 processors.
+    if cfg.policy.type == "pi052" and processor_pretrained_path is not None and not cfg.resume:
+        logging.warning(
+            "pi052 is loading pretrained weights from %s, but building processors from the current "
+            "pi052 config so recipe text labels and FAST action labels are generated.",
+            processor_pretrained_path,
+        )
+        processor_pretrained_path = None
 
     processor_kwargs = {}
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
@@ -320,6 +349,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     if cfg.is_reward_model_training:
         processor_kwargs["dataset_meta"] = dataset.meta
+
+    if cfg.policy.type in {"pi0_fast", "pi052"}:
+        processor_kwargs["dataset_repo_id"] = cfg.dataset.repo_id
 
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:
         preprocessor_overrides = {
@@ -417,13 +449,17 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         # same permutation. accelerate then shards it disjointly across ranks via BatchSamplerShard
         # without needing a `generator` attribute to synchronize an RNG, and resume is sample-exact.
         shuffle = False
+        from_indices = dataset.meta.episodes["dataset_from_index"]
+        to_indices = dataset.meta.episodes["dataset_to_index"]
+        seed = cfg.seed if cfg.seed is not None else 0
+
         sampler = EpisodeAwareSampler(
-            dataset.meta.episodes["dataset_from_index"],
-            dataset.meta.episodes["dataset_to_index"],
+            from_indices,
+            to_indices,
             episode_indices_to_use=dataset.episodes,
             drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
             shuffle=True,
-            seed=cfg.seed if cfg.seed is not None else 0,
+            seed=seed,
             absolute_to_relative_idx=dataset.absolute_to_relative_idx,
         )
         if cfg.resume and step > 0:
@@ -461,6 +497,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # declares language columns; otherwise stay on PyTorch's default
     # collate so non-language training runs are unaffected.
     collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
+    # Allow spawn/forkserver workers where forking large rank processes exhausts memory.
+    mp_context = os.environ.get("LEROBOT_DATALOADER_MP_CONTEXT") or None
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=cfg.num_workers,
@@ -472,6 +510,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         collate_fn=collate_fn,
         prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
         persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
+        multiprocessing_context=mp_context if cfg.num_workers > 0 else None,
     )
 
     # Build eval dataloader if a held-out split exists
@@ -572,6 +611,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
+        # Synchronize GPU metrics only for updates that will be logged.
+        log_metrics = cfg.log_freq > 0 and (step + 1) % cfg.log_freq == 0
+
         train_tracker, output_dict = update_policy(
             train_tracker,
             policy,
@@ -581,6 +623,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
             sample_weighter=sample_weighter,
+            log_metrics=log_metrics,
         )
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
@@ -680,10 +723,11 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             if is_main_process:
                 step_id = get_step_identifier(step, cfg.steps)
                 logging.info(f"Eval policy at step {step}")
+                eval_target_policy = accelerator.unwrap_model(policy)
                 with torch.no_grad(), accelerator.autocast():
                     eval_info = eval_policy_all(
                         envs=eval_env,  # dict[suite][task_id] -> vec_env
-                        policy=accelerator.unwrap_model(policy),
+                        policy=eval_target_policy,
                         env_preprocessor=env_preprocessor,
                         env_postprocessor=env_postprocessor,
                         preprocessor=preprocessor,

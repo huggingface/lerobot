@@ -343,6 +343,84 @@ def test_resolve_task_explicit_override_beats_rephrasings():
     assert rendered["messages"][0]["content"] == "explicit override wins"
 
 
+def test_flow_only_low_level_recipe_renders_without_target():
+    """Regression: a flow-only ``low_level`` recipe has no ``target`` turn —
+    its supervision is the action-expert flow loss, not text-CE. It must
+    still render (not ``None``), otherwise every blend draw of it is dropped
+    and the action expert never receives a flow loss."""
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(
+                role="user",
+                content="${subtask}",
+                stream="low_level",
+                if_present="subtask",
+            ),
+        ],
+        bindings={"subtask": "active_at(t, style=subtask)"},
+    )
+
+    rendered = render_sample(
+        recipe=recipe,
+        persistent=PERSISTENT,
+        events=[],
+        t=0.5,
+        sample_idx=0,
+        task="clean kitchen",
+    )
+
+    assert rendered is not None
+    assert rendered["messages"] == [{"role": "user", "content": "subtask 0"}]
+    assert rendered["message_streams"] == ["low_level"]
+    assert rendered["target_message_indices"] == []
+
+
+def test_vqa_frame_is_consumed_over_the_weighted_blend():
+    """A frame carrying a VQA annotation renders the ``ask_vqa*`` sub-recipe
+    even when its blend weight is tiny — VQA annotations are sparse and must
+    never be wasted on a subtask/action draw."""
+    recipe = TrainingRecipe(
+        blend={
+            "high_level_subtask": TrainingRecipe(
+                weight=0.99,
+                messages=[
+                    MessageTurn(role="user", content="${task}", stream="high_level"),
+                    MessageTurn(role="assistant", content="a subtask", stream="high_level", target=True),
+                ],
+            ),
+            "ask_vqa_top": TrainingRecipe(
+                weight=0.01,
+                bindings={
+                    "vqa_query": "emitted_at(t, style=vqa, role=user, camera=observation.images.top)",
+                    "vqa": "emitted_at(t, style=vqa, role=assistant, camera=observation.images.top)",
+                },
+                messages=[
+                    MessageTurn(
+                        role="user", content="${vqa_query}", stream="high_level", if_present="vqa_query"
+                    ),
+                    MessageTurn(
+                        role="assistant",
+                        content="${vqa}",
+                        stream="high_level",
+                        target=True,
+                        if_present="vqa",
+                    ),
+                ],
+            ),
+        }
+    )
+    # A frame WITH a vqa event renders VQA on every sample_idx, despite the
+    # ask_vqa weight being only 0.01.
+    for sample_idx in range(20):
+        rendered = render_sample(
+            recipe=recipe, persistent=PERSISTENT, events=EVENTS_AT_1, t=1.0, sample_idx=sample_idx, task="x"
+        )
+        assert rendered["messages"][-1]["content"] == '{"count": 2}', sample_idx
+    # A frame WITHOUT a vqa event falls back to the normal weighted blend.
+    rendered = render_sample(recipe=recipe, persistent=PERSISTENT, events=[], t=1.0, sample_idx=0, task="x")
+    assert rendered["messages"][-1]["content"] == "a subtask"
+
+
 def test_emitted_at_persistent_tolerates_small_timestamp_drift():
     """Persistent ``emitted_at`` should match within EMITTED_AT_TOLERANCE_S
     so callers that derive ``t`` arithmetically (``frame_idx / fps``) still

@@ -133,6 +133,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .pi05.modeling_pi05 import PI05Policy
 
         return PI05Policy
+    elif name == "pi052":
+        from .pi052.modeling_pi052 import PI052Policy
+
+        return PI052Policy
     elif name == "gaussian_actor":
         from .gaussian_actor.modeling_gaussian_actor import GaussianActorPolicy
 
@@ -193,8 +197,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
 
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
-                     "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05", "gaussian_actor",
-                     "smolvla", "wall_x", "molmoact2", "eo1", "evo1".
+                     "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05", "pi052",
+                     "gaussian_actor", "smolvla", "wall_x", "molmoact2", "eo1", "evo1".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -217,6 +221,10 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI0Config(**kwargs)
     elif policy_type == "pi05":
         return PI05Config(**kwargs)
+    elif policy_type == "pi052":
+        from .pi052.configuration_pi052 import PI052Config
+
+        return PI052Config(**kwargs)
     elif policy_type == "gaussian_actor":
         return GaussianActorConfig(**kwargs)
     elif policy_type == "smolvla":
@@ -267,6 +275,8 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     preprocessor_overrides: dict[str, Any] | None
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
+    # Dataset repo used for optional processor fitting; omit it to use universal tokenizers.
+    dataset_repo_id: str | None
     dataset_meta: Any | None
 
 
@@ -301,6 +311,22 @@ def make_pre_post_processors(
         NotImplementedError: If a processor factory is not implemented for the given
             policy configuration type.
     """
+    if (
+        pretrained_path
+        and getattr(policy_cfg, "type", None) in {"pi0_fast", "pi052"}
+        and getattr(policy_cfg, "auto_fit_fast_tokenizer", False)
+        and kwargs.get("dataset_repo_id") is not None
+    ):
+        from .pi052.fit_fast_tokenizer import resolve_fast_tokenizer
+
+        overrides = dict(kwargs.get("preprocessor_overrides") or {})
+        action_tokenizer_override = {
+            **overrides.get("action_tokenizer_processor", {}),
+            "action_tokenizer_name": resolve_fast_tokenizer(policy_cfg, kwargs.get("dataset_repo_id")),
+        }
+        overrides["action_tokenizer_processor"] = action_tokenizer_override
+        kwargs["preprocessor_overrides"] = overrides
+
     if pretrained_path:
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
@@ -400,6 +426,26 @@ def make_pre_post_processors(
         processors = make_pi0_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif policy_cfg.type == "pi0_fast":
+        from .pi0_fast.processor_pi0_fast import make_pi0_fast_pre_post_processors
+
+        processors = make_pi0_fast_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_repo_id=kwargs.get("dataset_repo_id"),
+        )
+
+    elif policy_cfg.type == "pi052":
+        # PI052 must precede PI05 because its config subclasses PI05Config.
+        from .pi052.processor_pi052 import make_pi052_pre_post_processors
+
+        processors = make_pi052_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            # Without a dataset repo, FAST auto-fit falls back to the universal tokenizer.
+            dataset_repo_id=kwargs.get("dataset_repo_id"),
         )
 
     elif isinstance(policy_cfg, PI05Config):

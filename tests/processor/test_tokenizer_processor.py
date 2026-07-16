@@ -25,7 +25,7 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.processor import DataProcessorPipeline, TokenizerProcessorStep
+from lerobot.processor import ActionTokenizerProcessorStep, DataProcessorPipeline, TokenizerProcessorStep
 from lerobot.processor.converters import create_transition, identity_transition
 from lerobot.types import TransitionKey
 from lerobot.utils.constants import (
@@ -86,6 +86,24 @@ class MockTokenizer:
             result = {k: v.squeeze(0) for k, v in result.items()}
 
         return result
+
+
+def test_action_tokenizer_config_preserves_token_mapping():
+    processor = object.__new__(ActionTokenizerProcessorStep)
+    processor.trust_remote_code = True
+    processor.max_action_tokens = 384
+    processor.fast_skip_tokens = 64
+    processor.paligemma_tokenizer_name = "custom/paligemma"
+    processor.action_tokenizer_name = "custom/fast"
+    processor.action_tokenizer_input_object = None
+
+    assert processor.get_config() == {
+        "trust_remote_code": True,
+        "max_action_tokens": 384,
+        "fast_skip_tokens": 64,
+        "paligemma_tokenizer_name": "custom/paligemma",
+        "action_tokenizer_name": "custom/fast",
+    }
 
 
 @pytest.fixture

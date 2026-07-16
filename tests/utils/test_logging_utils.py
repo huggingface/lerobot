@@ -37,6 +37,12 @@ class MockAccelerator:
             return self._reduce_fn(tensor, reduction)
         return tensor
 
+    def gather(self, tensor):
+        if self._reduce_fn is None:
+            return tensor.repeat(self.num_processes)
+        reduced = self._reduce_fn(tensor, "max")
+        return torch.cat([tensor.repeat(self.num_processes - 1), reduced])
+
 
 def test_average_meter_initialization():
     meter = AverageMeter("loss", ":.2f")
@@ -166,6 +172,18 @@ def test_metrics_tracker_reset_averages(mock_metrics):
     tracker.reset_averages()
     assert tracker.loss.avg == 0.0
     assert tracker.accuracy.avg == 0.0
+
+
+def test_metrics_tracker_materializes_full_tensor_window(mock_metrics):
+    tracker = MetricsTracker(batch_size=2, num_frames=10, num_episodes=2, metrics=mock_metrics)
+    tracker.accumulate_tensor("loss", torch.tensor(1.0))
+    tracker.accumulate_tensor("loss", torch.tensor(3.0))
+
+    assert tracker.loss.count == 0
+    tracker.materialize_tensors()
+
+    assert tracker.loss.avg == pytest.approx(2.0)
+    assert tracker.loss.count == 2
 
 
 def test_average_meter_invalid_reduction():

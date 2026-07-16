@@ -25,7 +25,7 @@ from datasets import Dataset  # noqa: E402
 from lerobot.datasets.io_utils import (
     hf_transform_to_torch,
 )
-from lerobot.datasets.sampler import EpisodeAwareSampler
+from lerobot.datasets.sampler import EpisodeAwareSampler, compute_sampler_state
 
 
 def calculate_episode_data_index(hf_dataset: Dataset) -> dict[str, torch.Tensor]:
@@ -153,8 +153,6 @@ def test_partial_episode_drop_warns(caplog):
 
 
 # --- seeded (seed, epoch) shuffling, resume, and state ---
-
-from lerobot.datasets.sampler import compute_sampler_state  # noqa: E402
 
 EPISODE_BOUNDS = ([0, 2, 3], [2, 3, 6])  # episodes of 2, 1 and 3 frames
 
