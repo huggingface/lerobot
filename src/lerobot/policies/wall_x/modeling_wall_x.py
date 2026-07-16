@@ -44,11 +44,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as functional
-from PIL import Image
 from safetensors.torch import load_file
 from torch import Tensor
 from torch.distributions import Beta
 from torch.nn import CrossEntropyLoss
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms.v2 import functional as tv_functional
 
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import (
@@ -109,6 +110,75 @@ from .utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _wall_x_resize_dimensions(height: int, width: int) -> tuple[int, int, int, int]:
+    """Return the intermediate and final Wall-X resize dimensions as ``(H, W, H, W)``."""
+    if RESOLUTION == -1:
+        intermediate_height, intermediate_width = height, width
+    elif width > height:
+        intermediate_width = RESOLUTION
+        intermediate_height = int(RESOLUTION * height / width)
+    else:
+        intermediate_height = RESOLUTION
+        intermediate_width = int(RESOLUTION * width / height)
+
+    resized_height, resized_width = smart_resize(
+        intermediate_height,
+        intermediate_width,
+        factor=IMAGE_FACTOR,
+        min_pixels=MIN_PIXELS,
+        max_pixels=MAX_PIXELS,
+    )
+    return intermediate_height, intermediate_width, resized_height, resized_width
+
+
+def _resize_wall_x_image_batch(images: Tensor) -> tuple[Tensor, tuple[int, int, int, int]]:
+    """Quantize and resize a BCHW camera batch without leaving its current device."""
+    if images.ndim != 4:
+        raise ValueError(f"Wall-X images must be BCHW tensors, got shape {tuple(images.shape)}")
+
+    original_height, original_width = images.shape[-2:]
+    intermediate_height, intermediate_width, resized_height, resized_width = _wall_x_resize_dimensions(
+        original_height, original_width
+    )
+
+    if images.is_floating_point():
+        # Match the previous PIL path, which quantized via `(image * 255).to(torch.uint8)`.
+        images = (images * 255).to(torch.uint8)
+    elif images.dtype != torch.uint8:
+        raise TypeError(f"Wall-X images must be floating point or uint8, got {images.dtype}")
+
+    if images.shape[-2:] != (intermediate_height, intermediate_width):
+        images = tv_functional.resize(
+            images,
+            [intermediate_height, intermediate_width],
+            interpolation=InterpolationMode.BICUBIC,
+            antialias=True,
+        )
+    if images.shape[-2:] != (resized_height, resized_width):
+        images = tv_functional.resize(
+            images,
+            [resized_height, resized_width],
+            interpolation=InterpolationMode.BICUBIC,
+            antialias=True,
+        )
+
+    return images, (original_height, original_width, resized_height, resized_width)
+
+
+def _prepare_wall_x_image_inputs(
+    batch: dict[str, Any], img_keys: list[str]
+) -> tuple[list[list[Tensor]], dict[str, tuple[int, int, int, int]]]:
+    """Resize each camera as a batch, then restore sample-major/camera-minor ordering."""
+    resized_by_key: dict[str, Tensor] = {}
+    dimensions_by_key: dict[str, tuple[int, int, int, int]] = {}
+    for key in img_keys:
+        resized_by_key[key], dimensions_by_key[key] = _resize_wall_x_image_batch(batch[key])
+
+    batch_size = batch[img_keys[0]].shape[0]
+    image_inputs = [[resized_by_key[key][i] for key in img_keys] for i in range(batch_size)]
+    return image_inputs, dimensions_by_key
 
 
 class SinusoidalPosEmb(nn.Module):
@@ -796,6 +866,9 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        if rope_deltas is not None:
+            self.rope_deltas = rope_deltas
 
         # Calculate RoPE position IDs if not provided
         # Note: Cannot calculate rope deltas with 4D attention mask. TODO: Fix this limitation
@@ -1750,6 +1823,8 @@ class WallXPolicy(PreTrainedPolicy):
     def preprocess_inputs(
         self,
         batch: dict[str, Any],
+        *,
+        compute_position_ids: bool = False,
     ) -> BatchFeature:
         """
         Convert a batch of LeRobot dataset items to Wall-X model input format.
@@ -1771,50 +1846,21 @@ class WallXPolicy(PreTrainedPolicy):
         # Get batch size from state tensor
         batch_size = batch[OBS_STATE].shape[0]
 
-        # ==================== PROCESS ALL SAMPLES ====================
-        all_image_inputs = []
-        all_texts = []
-
         # Find image keys in batch
         img_keys = [key for key in self.config.image_features if key in batch]
+        if not img_keys:
+            raise ValueError("Wall-X requires at least one image feature in each batch")
+
+        # Resize one camera batch at a time on the tensors' current device. Reassembling
+        # sample-major keeps image_grid_thw aligned with each sample's image placeholders.
+        all_image_inputs, dimensions_by_key = _prepare_wall_x_image_inputs(batch, img_keys)
+        all_texts = []
+
+        # Preserve the existing grounding behavior for multi-camera inputs: the old camera
+        # loop left these values set to the final configured camera's dimensions.
+        orig_height, orig_width, resized_height, resized_width = dimensions_by_key[img_keys[-1]]
 
         for i in range(batch_size):
-            # Vision preprocessing per sample
-            processed_frames = []
-            orig_height, orig_width = None, None
-            resized_height, resized_width = None, None
-
-            for key in img_keys:
-                current_obs = batch[key][i].clone()  # (C, H, W)
-                if current_obs.dim() == 3:
-                    current_obs = current_obs.permute(1, 2, 0)  # (H, W, C)
-
-                img_pil = Image.fromarray((current_obs * 255).to(torch.uint8).cpu().numpy())
-                orig_width, orig_height = img_pil.size
-
-                target_size = RESOLUTION
-                if target_size != -1:
-                    if orig_width > orig_height:
-                        new_width = target_size
-                        new_height = int(target_size * orig_height / orig_width)
-                    else:
-                        new_height = target_size
-                        new_width = int(target_size * orig_width / orig_height)
-                    img_pil = img_pil.resize((new_width, new_height))
-
-                current_width, current_height = img_pil.size
-                resized_height, resized_width = smart_resize(
-                    current_height,
-                    current_width,
-                    factor=IMAGE_FACTOR,
-                    min_pixels=MIN_PIXELS,
-                    max_pixels=MAX_PIXELS,
-                )
-                resized_img = img_pil.resize((resized_width, resized_height))
-                processed_frames.append(resized_img)
-
-            all_image_inputs.append(processed_frames)
-
             # Text preprocessing
             task_text = batch["task"][i] if isinstance(batch["task"], list) else batch["task"]
             instruction_info = {"instruction": task_text}
@@ -1912,11 +1958,25 @@ class WallXPolicy(PreTrainedPolicy):
             text=all_texts,
             images=all_image_inputs,
             videos=None,
+            device=batch[OBS_STATE].device,
             padding=True,
             truncation=True,
             return_tensors="pt",
             max_length=TOKENIZER_MAX_LENGTH,
         )
+
+        if compute_position_ids:
+            # Qwen's RoPE indexing uses Python list/scalar conversions. Run it while the
+            # tokenizer and grid metadata are still on CPU, then move the compact result.
+            position_ids, rope_deltas = self.model.get_rope_index(
+                inputs.input_ids,
+                inputs.get("image_grid_thw"),
+                inputs.get("video_grid_thw"),
+                inputs.get("second_per_grid_ts"),
+                inputs.attention_mask,
+            )
+            inputs["position_ids"] = position_ids
+            inputs["rope_deltas"] = rope_deltas
 
         # ==================== ADDITIONAL INPUTS ====================
         action_token_id = self.model.processor.tokenizer.convert_tokens_to_ids("<|action|>")
@@ -1934,7 +1994,7 @@ class WallXPolicy(PreTrainedPolicy):
         )
 
         # Move all tensors to the correct device
-        device = self.config.device
+        device = batch[OBS_STATE].device
         for key, value in inputs.items():
             if isinstance(value, torch.Tensor):
                 inputs[key] = value.to(device)
@@ -1954,9 +2014,7 @@ class WallXPolicy(PreTrainedPolicy):
         Returns:
             tuple: (loss, loss_dict)
         """
-        batch = self.preprocess_inputs(
-            batch,
-        )
+        batch = self.preprocess_inputs(batch, compute_position_ids=True)
 
         # Call the underlying model's forward with mode="train"
         outputs = self.model(**batch, mode="train")
@@ -1964,19 +2022,19 @@ class WallXPolicy(PreTrainedPolicy):
         # Extract losses from output
         loss = outputs.loss
         loss_dict = {
-            "loss": loss.item() if loss is not None else 0.0,
+            "loss": loss.detach() if loss is not None else 0.0,
         }
 
         if outputs.flow_loss is not None:
-            loss_dict["flow_loss"] = outputs.flow_loss.item()
+            loss_dict["flow_loss"] = outputs.flow_loss.detach()
         if outputs.cross_entropy_loss is not None:
-            loss_dict["cross_entropy_loss"] = outputs.cross_entropy_loss.item()
+            loss_dict["cross_entropy_loss"] = outputs.cross_entropy_loss.detach()
 
         # Add channel losses if available
         if outputs.channel_loss_dict is not None:
             for key, value in outputs.channel_loss_dict.items():
                 if isinstance(value, torch.Tensor):
-                    loss_dict[f"channel_{key}"] = value.item()
+                    loss_dict[f"channel_{key}"] = value.detach()
 
         return loss, loss_dict
 

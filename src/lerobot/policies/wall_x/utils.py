@@ -116,6 +116,7 @@ def preprocesser_call(
     images: list | Any | None = None,
     text: str | list[str] | None = None,
     videos: list | Any | None = None,
+    device: torch.device | str | None = None,
     padding: bool | str = False,
     truncation: bool | None = None,
     max_length: int | None = None,
@@ -134,6 +135,7 @@ def preprocesser_call(
         images: Input images (PIL, numpy arrays, or torch tensors)
         text: Text or list of texts to tokenize
         videos: Input videos (numpy arrays or torch tensors)
+        device: Device on which image/video preprocessing should run
         padding: Whether to pad sequences to same length
         truncation: Whether to truncate sequences longer than max_length
         max_length: Maximum length for truncation/padding
@@ -151,7 +153,11 @@ def preprocesser_call(
     """
     # Process image inputs
     if images is not None and len(images) > 0:
-        image_inputs = processor.image_processor(images=images, return_tensors=return_tensors)
+        image_inputs = processor.image_processor(
+            images=images,
+            return_tensors=return_tensors,
+            device=device,
+        )
         image_grid_thw = image_inputs["image_grid_thw"]
     else:
         image_inputs = {}
@@ -159,7 +165,11 @@ def preprocesser_call(
 
     # Process video inputs
     if videos is not None:
-        videos_inputs = processor.image_processor(videos=videos, return_tensors=return_tensors)
+        videos_inputs = processor.image_processor(
+            videos=videos,
+            return_tensors=return_tensors,
+            device=device,
+        )
         video_grid_thw = videos_inputs["video_grid_thw"]
     else:
         videos_inputs = {}
