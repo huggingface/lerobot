@@ -14,7 +14,7 @@ Example (numeric smoke test on one namespace, no SLURM):
     python slurm_migrate.py --slurm 0 --workers 1 \
         --dst-repo HuggingFaceVLA/community_dataset_v3_degrees \
         --work-dir ./cdv3_work --manifest-dir ./cdv3_manifests \
-        --folder-name Beegbrain --allow-uncalibrated
+        --folder-name Beegbrain
 
 Full run on the cluster:
     python slurm_migrate.py \
@@ -24,7 +24,6 @@ Full run on the cluster:
         --logs-dir /fsx/$USER/logs/cdv3_migrate \
         --workers 64 --partition hopper-cpu --qos normal \
         --cpus-per-task 4 --mem-per-cpu 4G \
-        --allow-uncalibrated \
         --env-command "source /fsx/$USER/venvs/lerobot/bin/activate; export HF_TOKEN=<token>"
 
 IMPORTANT: workers must reach the internet (HF download + upload) and have a write-scoped
@@ -54,7 +53,6 @@ class MigrateShard(PipelineStep):
         migration_dir,
         no_push=False,
         only_classify=False,
-        allow_uncalibrated=False,
     ):
         super().__init__()
         self.subs = subs
@@ -64,7 +62,6 @@ class MigrateShard(PipelineStep):
         self.migration_dir = migration_dir
         self.no_push = no_push
         self.only_classify = only_classify
-        self.allow_uncalibrated = allow_uncalibrated
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         # Pickled onto the worker: keep self-contained. The migration package dir must be on
@@ -80,16 +77,13 @@ class MigrateShard(PipelineStep):
         if self.migration_dir not in sys.path:
             sys.path.insert(0, self.migration_dir)
 
-        import so_arm_frame
         from classify import classify
         from huggingface_hub import HfApi
-        from run_migration import SRC_REPO, already_done, migrate_one
+        from run_migration import already_done, download_subfolder, migrate_one
 
         from lerobot.utils.utils import init_logging
 
         init_logging()
-        if self.allow_uncalibrated:
-            so_arm_frame.CANON_IS_CALIBRATED = True
 
         my_subs = self.subs[rank::world_size]
         if not my_subs:
@@ -122,14 +116,7 @@ class MigrateShard(PipelineStep):
             for i, sub in enumerate(my_subs):
                 try:
                     if self.only_classify:
-                        from huggingface_hub import snapshot_download
-
-                        snapshot_download(
-                            SRC_REPO,
-                            repo_type="dataset",
-                            allow_patterns=[f"{sub}/meta/*"],
-                            local_dir=work_dir,
-                        )
+                        download_subfolder(sub, work_dir, patterns=[f"{sub}/meta/*"])
                         row = {"root": sub, **classify(Path(work_dir) / sub)}
                         shutil.rmtree(Path(work_dir) / sub.split("/")[0], ignore_errors=True)
                     elif not self.no_push and already_done(api, self.dst_repo, sub, dst_files):
@@ -205,7 +192,6 @@ def main():
     p.add_argument("--limit", type=int, default=None, help="Only the first N sub-datasets (ignored with --folder-name).")
     p.add_argument("--only-classify", action="store_true", help="Only classify + write manifest; no convert/upload.")
     p.add_argument("--no-push", action="store_true", help="Fix + convert locally, keep output, do not upload.")
-    p.add_argument("--allow-uncalibrated", action="store_true", help="Accept placeholder CANON ranges.")
     args = p.parse_args()
 
     if not args.no_push and not args.only_classify and not args.dst_repo:
@@ -236,7 +222,6 @@ def main():
                 MIGRATION_DIR,
                 no_push=args.no_push,
                 only_classify=args.only_classify,
-                allow_uncalibrated=args.allow_uncalibrated,
             )
         ],
         logs_dir=args.logs_dir,

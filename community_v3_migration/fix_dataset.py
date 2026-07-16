@@ -7,8 +7,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import so_arm_frame
 from classify import classify
-from so_arm_frame import to_degrees
 
 VALUE_COLS = ("observation.state", "action")
 
@@ -23,7 +23,7 @@ def _rewrite_parquet(root: Path, encoding: str) -> None:
         changed = False
         for col in VALUE_COLS:
             if col in df.columns:
-                conv = to_degrees(_stack(df[col].values), encoding, n_joints_per_arm=6)
+                conv = so_arm_frame.to_degrees(_stack(df[col].values), encoding, n_joints_per_arm=6)
                 df[col] = list(conv.astype(np.float32))
                 changed = True
         if changed:
@@ -71,6 +71,13 @@ def fix_dataset_in_place(root) -> dict:
         }.get(enc, "no joint conversion applicable")
         return {**cls, "converted": False,
                 "action": f"structural v2.1->v3.0 only ({reason}); joint values left unchanged"}
+    if enc == "normalized" and not so_arm_frame.CANON_IS_CALIBRATED:
+        # Without per-robot calibration the un-normalization is an identity (placeholder
+        # spans == 100), so rewriting is pointless. Keep the normalized values as-is and let
+        # the dataset card flag them APPROXIMATE instead.
+        return {**cls, "converted": False,
+                "action": "structural v2.1->v3.0 only; joint values kept in normalized units "
+                          "(-100..100 / 0..100), NOT converted to degrees (uncalibrated -> APPROXIMATE)"}
     # drop stray files that would otherwise be uploaded
     for junk in (root / "meta").glob("info.json.bak"):
         junk.unlink()

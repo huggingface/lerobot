@@ -7,18 +7,41 @@ result under the same path into a NEW repo, then delete the local copy. Resumabl
   uv run python run_migration.py --dst-repo HuggingFaceVLA/community_dataset_v3_degrees \
       --work-dir /big/disk/cdv3_work --manifest manifest.csv
 Flags: --only-classify (just write manifest), --no-push (fix+convert locally, keep output,
-       no upload), --folder-name A [B ...] (target specific dataset folders), --limit N,
-       --allow-uncalibrated (accept placeholder CANON ranges).
+       no upload), --folder-name A [B ...] (target specific dataset folders), --limit N.
+Uncalibrated `normalized` datasets keep their normalized joint units (flagged APPROXIMATE on
+the card); paste fitted CANON ranges in so_arm_frame.py to convert them to degrees instead.
 """
 import argparse, csv, json, shutil, sys, traceback
 from pathlib import Path
-from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub import HfApi
 
 import so_arm_frame
 from classify import classify, load_info
 from fix_dataset import fix_dataset_in_place
 
 SRC_REPO = "HuggingFaceVLA/community_dataset_v3"
+
+
+def download_subfolder(sub: str, work_dir: str, patterns: list[str] | None = None) -> None:
+    """Download only ``SRC_REPO/{sub}/...`` into ``work_dir``.
+
+    ``snapshot_download`` walks the entire repo tree (``list_repo_tree(recursive=True)``
+    with no path scope) before applying ``allow_patterns``. On this 791-dataset monorepo
+    that whole-repo enumeration is pathologically slow and looks like a hang. Listing the
+    scoped ``path_in_repo=sub`` subtree and fetching its files directly avoids it.
+    """
+    from fnmatch import fnmatch
+
+    from huggingface_hub import hf_hub_download
+    from huggingface_hub.hf_api import RepoFile
+
+    api = HfApi()
+    for entry in api.list_repo_tree(SRC_REPO, path_in_repo=sub, repo_type="dataset", recursive=True):
+        if not isinstance(entry, RepoFile):
+            continue
+        if patterns and not any(fnmatch(entry.path, pat) for pat in patterns):
+            continue
+        hf_hub_download(SRC_REPO, filename=entry.path, repo_type="dataset", local_dir=work_dir)
 
 
 def list_datasets(api: HfApi, repo: str) -> list[str]:
@@ -69,7 +92,9 @@ def _write_dataset_card(local: Path, sub: str, result: dict) -> None:
     joint_actions = {
         "degrees_old": "per-joint offsets and axis directions corrected to the post-#777 frame (values stay in degrees)",
         "degrees_new": "already in the post-#777 degrees frame; values unchanged",
-        "normalized": "un-normalized to physical degrees using canonical joint ranges",
+        "normalized": ("un-normalized to physical degrees using calibrated joint ranges"
+                       if converted_degrees else
+                       "left in normalized units (-100..100 joints, 0..100 gripper); NOT converted to degrees"),
         "radians": "left unchanged (already in radians)",
         "unknown": "left unchanged (encoding could not be determined)",
     }
@@ -94,8 +119,9 @@ def _write_dataset_card(local: Path, sub: str, result: dict) -> None:
     else:
         lines += ["- Joint values: not applicable (not an SO-100/101 dataset)"]
     if approx:
-        lines += ["", "> **Note:** normalized (-100..100 / 0..100) joint values were un-normalized "
-                  "using *placeholder* canonical joint ranges (uncalibrated). These values are APPROXIMATE."]
+        lines += ["", "> **Note:** per-robot calibration was unavailable, so joint state/action were "
+                  "left in their original *normalized* units (-100..100 joints, 0..100 gripper) rather "
+                  "than converted to physical degrees. Treat these joint values as APPROXIMATE."]
     if result.get("ambiguous"):
         lines += ["", "> **Note:** joint-encoding detection was flagged ambiguous; conversion used the "
                   "best-guess encoding above and may warrant manual review."]
@@ -134,8 +160,7 @@ def migrate_one(api, dst_repo, sub, work_dir, no_upload) -> dict:
     local = Path(work_dir) / sub
     if local.parent.exists():
         shutil.rmtree(local.parent, ignore_errors=True)  # clean any partial
-    snapshot_download(SRC_REPO, repo_type="dataset", revision="main",
-                      allow_patterns=[f"{sub}/*"], local_dir=work_dir)
+    download_subfolder(sub, work_dir)
 
     info = load_info(local)
     if info.get("codebase_version") != "v2.1":
@@ -191,17 +216,11 @@ def main():
     ap.add_argument("--no-push", action="store_true",
                     help="Fix + convert locally but do NOT upload; the converted v3.0 output is "
                          "kept under --work-dir for inspection instead of being deleted.")
-    ap.add_argument("--allow-uncalibrated", action="store_true",
-                    help="Permit converting 'normalized' (-100..100) datasets using the PLACEHOLDER "
-                         "canonical joint ranges in so_arm_frame.py. Omit this to force running "
-                         "calibrate_canonical_ranges.py first (recommended for a real run).")
     args = ap.parse_args()
     no_upload = args.no_push
     if not no_upload and not args.only_classify and not args.dst_repo:
         ap.error("--dst-repo is required unless --no-push or --only-classify is set.")
 
-    if args.allow_uncalibrated:
-        so_arm_frame.CANON_IS_CALIBRATED = True
     api = HfApi()
     if args.folder_name:
         subs = resolve_folders(api, SRC_REPO, args.folder_name)
@@ -224,8 +243,7 @@ def main():
             try:
                 if args.only_classify:
                     # classify without full download: fetch just the meta/ of this sub
-                    snapshot_download(SRC_REPO, repo_type="dataset",
-                                      allow_patterns=[f"{sub}/meta/*"], local_dir=args.work_dir)
+                    download_subfolder(sub, args.work_dir, patterns=[f"{sub}/meta/*"])
                     row = {"root": sub, **classify(Path(args.work_dir) / sub)}
                     shutil.rmtree(Path(args.work_dir) / sub.split("/")[0], ignore_errors=True)
                 elif not no_upload and already_done(api, args.dst_repo, sub, dst_files):
