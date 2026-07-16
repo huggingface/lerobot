@@ -21,7 +21,7 @@ import os
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, ClassVar, TypedDict, TypeVar, Unpack
 
 from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
@@ -32,6 +32,7 @@ from torch import Tensor, nn
 from lerobot.__version__ import __version__
 from lerobot.configs import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.types import ImageInputFormat
 from lerobot.utils.hub import HubMixin
 
 from .utils import log_model_loading_keys
@@ -100,6 +101,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     config_class: None
     name: None
+    input_image_format: ClassVar[ImageInputFormat] = ImageInputFormat.FLOAT32_0_1
 
     def __init__(self, config: PreTrainedConfig, *inputs, **kwargs):
         super().__init__()

@@ -106,7 +106,8 @@ def test_crop_position_corners_differ_from_center():
 
 
 def _video(img, views=2):
-    return np.stack([img] * views, axis=0).reshape(1, 1, views, *img.shape)
+    frame = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).unsqueeze(0)
+    return tuple(frame.clone() for _ in range(views))
 
 
 def _step(training):
@@ -121,31 +122,23 @@ def _step(training):
 
 def test_training_crop_replays_one_window_across_views():
     video = _video(_structured_image())
-    frames = _step(training=True)._build_sample_images(video, batch_size=1, target_device=None)[0]
+    frames = _step(training=True)._build_sample_images(video, target_device=None)[0]
     np.testing.assert_array_equal(np.asarray(frames[0]), np.asarray(frames[1]))
 
 
 def test_training_crop_differs_from_eval_center_crop():
     video = _video(_structured_image())
     random.seed(3)  # a draw that is not the exact center
-    train_frame = np.asarray(
-        _step(training=True)._build_sample_images(video, batch_size=1, target_device=None)[0][0]
-    )
-    eval_frame = np.asarray(
-        _step(training=False)._build_sample_images(video, batch_size=1, target_device=None)[0][0]
-    )
+    train_frame = np.asarray(_step(training=True)._build_sample_images(video, target_device=None)[0][0])
+    eval_frame = np.asarray(_step(training=False)._build_sample_images(video, target_device=None)[0][0])
     assert not np.array_equal(train_frame, eval_frame)
 
 
 def test_training_crop_is_disabled_under_no_grad():
     video = _video(_structured_image())
     with torch.no_grad():
-        no_grad_frame = np.asarray(
-            _step(training=True)._build_sample_images(video, batch_size=1, target_device=None)[0][0]
-        )
-    eval_frame = np.asarray(
-        _step(training=False)._build_sample_images(video, batch_size=1, target_device=None)[0][0]
-    )
+        no_grad_frame = np.asarray(_step(training=True)._build_sample_images(video, target_device=None)[0][0])
+    eval_frame = np.asarray(_step(training=False)._build_sample_images(video, target_device=None)[0][0])
     np.testing.assert_array_equal(no_grad_frame, eval_frame)
 
 
@@ -162,8 +155,6 @@ def test_training_crop_respects_global_seed():
 
     def draw():
         random.seed(11)
-        return np.asarray(
-            _step(training=True)._build_sample_images(video, batch_size=1, target_device=None)[0][0]
-        )
+        return np.asarray(_step(training=True)._build_sample_images(video, target_device=None)[0][0])
 
     np.testing.assert_array_equal(draw(), draw())

@@ -224,9 +224,6 @@ def infer_n1_7_batch_size_and_device(
     for value in list(obs.values()) + [action]:
         if isinstance(value, torch.Tensor):
             return value.shape[0], value.device
-    video = obs.get("video")
-    if isinstance(video, np.ndarray):
-        return video.shape[0], torch.device("cpu")
     return 1, torch.device("cpu")
 
 
