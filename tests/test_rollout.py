@@ -98,6 +98,38 @@ def test_inference_config_types():
     assert rtc.rtc is not None
 
 
+def test_trained_rtc_retries_chunk_when_measured_delay_exceeds_conditioning():
+    from lerobot.rollout.inference.rtc import _trained_rtc_chunk_can_merge
+
+    assert not _trained_rtc_chunk_can_merge(
+        conditioned_delay=2,
+        measured_delay=3,
+        training_max_delay=4,
+        has_previous_actions=True,
+    )
+    assert _trained_rtc_chunk_can_merge(
+        conditioned_delay=2,
+        measured_delay=3,
+        training_max_delay=4,
+        has_previous_actions=False,
+    )
+
+
+def test_trained_rtc_rejects_measured_delay_above_checkpoint_support():
+    from lerobot.rollout.inference.rtc import (
+        _trained_rtc_chunk_can_merge,
+        _TrainedRTCDelayExceededError,
+    )
+
+    with pytest.raises(_TrainedRTCDelayExceededError, match="rtc_training_max_delay"):
+        _trained_rtc_chunk_can_merge(
+            conditioned_delay=3,
+            measured_delay=5,
+            training_max_delay=4,
+            has_previous_actions=True,
+        )
+
+
 def test_sentry_config_defaults():
     from lerobot.rollout import SentryStrategyConfig
 

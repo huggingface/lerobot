@@ -123,12 +123,7 @@ class PI052Config(PI05Config):
 
     # Training-time RTC (arXiv:2512.05964). Zero preserves standard flow matching.
     rtc_training_max_delay: int = 0
-    """Largest clean action-prefix length sampled during training.
-
-    A value greater than zero enables training-time action conditioning. Each
-    flow draw samples a delay uniformly from ``[0, rtc_training_max_delay]``;
-    the corresponding action prefix stays clean and is excluded from the loss.
-    """
+    """Maximum clean-prefix delay sampled for training-time RTC; zero disables it."""
 
     # PaLM-style z-loss stabilizes large-vocabulary CE; 0 disables it.
     text_ce_z_loss_weight: float = 1e-4

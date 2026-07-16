@@ -177,16 +177,6 @@ def _enable_hf_kernels() -> None:
     logger.info("PI052: HF kernels (Liger) enabled — rope, geglu fused.")
 
 
-def _reduce_action_loss(per_sample: Tensor, predict_actions_t: Tensor | None, reduction: str) -> Tensor:
-    """Mask non-action samples and apply the requested batch reduction."""
-    if predict_actions_t is None:
-        return per_sample if reduction == "none" else per_sample.mean()
-    mask = predict_actions_t.to(per_sample.dtype)
-    if reduction == "none":
-        return per_sample * mask
-    return (per_sample * mask).sum() / mask.sum().clamp(min=1.0)
-
-
 def _sample_training_rtc_prefix_mask(
     batch_size: int,
     action_horizon: int,
@@ -224,15 +214,42 @@ def _build_flow_matching_inputs(
     return x_t, model_time
 
 
-def _flow_loss_per_sample(flow_per_dim: Tensor, prefix_mask: Tensor | None) -> Tensor:
-    """Average each draw over postfix action positions and dimensions only."""
+def _flow_loss_components(flow_per_dim: Tensor, prefix_mask: Tensor | None) -> tuple[Tensor, Tensor]:
+    """Return each sample's postfix loss sum and valid-element count."""
     if prefix_mask is None:
-        return flow_per_dim.flatten(start_dim=1).mean(dim=1)
-    postfix = (~prefix_mask).unsqueeze(-1).expand_as(flow_per_dim)
+        flattened = flow_per_dim.flatten(start_dim=1)
+        numerator = flattened.sum(dim=1)
+        denominator = torch.full_like(numerator, flattened.shape[1])
+        return numerator, denominator
+
+    postfix = (~prefix_mask).unsqueeze(-1).expand_as(flow_per_dim).to(flow_per_dim.dtype)
     reduce_dims = tuple(range(1, flow_per_dim.ndim))
     numerator = (flow_per_dim * postfix).sum(dim=reduce_dims)
-    denominator = postfix.sum(dim=reduce_dims).clamp(min=1)
-    return numerator / denominator
+    denominator = postfix.sum(dim=reduce_dims)
+    return numerator, denominator
+
+
+def _flow_loss_per_sample(flow_per_dim: Tensor, prefix_mask: Tensor | None) -> Tensor:
+    """Average each sample over postfix action positions and dimensions only."""
+    numerator, denominator = _flow_loss_components(flow_per_dim, prefix_mask)
+    return numerator / denominator.clamp(min=1)
+
+
+def _reduce_flow_loss(
+    flow_per_dim: Tensor,
+    prefix_mask: Tensor | None,
+    predict_actions_t: Tensor | None,
+    reduction: str,
+) -> Tensor:
+    """Apply action routing and RLDX-compatible postfix normalization."""
+    numerator, denominator = _flow_loss_components(flow_per_dim, prefix_mask)
+    if predict_actions_t is not None:
+        action_mask = predict_actions_t.to(numerator.dtype)
+        numerator = numerator * action_mask
+        denominator = denominator * action_mask
+    if reduction == "none":
+        return numerator / denominator.clamp(min=1)
+    return numerator.sum() / denominator.sum().clamp(min=1)
 
 
 # Materialized logits win at VLA token counts; larger dense targets use Liger.
@@ -1223,8 +1240,7 @@ class PI052Policy(PI05Policy):
         # internally to max_action_dim).
         original_action_dim = self.config.output_features[ACTION].shape[0]
         flow_per_dim = flow_per_dim[:, :, :original_action_dim]
-        per_sample_flow = _flow_loss_per_sample(flow_per_dim, prefix_mask)
-        flow_loss = _reduce_action_loss(per_sample_flow, predict_actions_t, reduction)
+        flow_loss = _reduce_flow_loss(flow_per_dim, prefix_mask, predict_actions_t, reduction)
         return prefix_out, flow_loss
 
     def _ki_forward_kwargs(self, suppress_prefix_grads: bool = False, flex_masks=None) -> dict[str, Any]:
@@ -1363,8 +1379,7 @@ class PI052Policy(PI05Policy):
         prefix_mask = None
         if prefix_mask_flat is not None:
             prefix_mask = prefix_mask_flat.view(k, batch_size, chunk).transpose(0, 1)
-        per_sample_flow = _flow_loss_per_sample(flow_per_dim, prefix_mask)
-        flow_loss = _reduce_action_loss(per_sample_flow, predict_actions_t, reduction)
+        flow_loss = _reduce_flow_loss(flow_per_dim, prefix_mask, predict_actions_t, reduction)
         return prefix_out, flow_loss
 
     def _prefix_ce_losses(

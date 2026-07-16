@@ -57,6 +57,10 @@ _RTC_MAX_CONSECUTIVE_ERRORS: int = 10
 _RTC_JOIN_TIMEOUT_S: float = 3.0
 
 
+class _TrainedRTCDelayExceededError(RuntimeError):
+    """Raised when measured latency exceeds a trained RTC checkpoint's support."""
+
+
 # ---------------------------------------------------------------------------
 # RTC helpers
 # ---------------------------------------------------------------------------
@@ -74,6 +78,22 @@ def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int
     padded = torch.zeros((target_steps, action_dim), dtype=prev_actions.dtype, device=prev_actions.device)
     padded[:steps] = prev_actions
     return padded
+
+
+def _trained_rtc_chunk_can_merge(
+    *,
+    conditioned_delay: int,
+    measured_delay: int,
+    training_max_delay: int,
+    has_previous_actions: bool,
+) -> bool:
+    """Check that a trained RTC chunk covers the overlap observed during inference."""
+    if measured_delay > training_max_delay:
+        raise _TrainedRTCDelayExceededError(
+            f"Measured RTC inference delay ({measured_delay}) exceeds the checkpoint's "
+            f"rtc_training_max_delay ({training_max_delay})."
+        )
+    return not has_previous_actions or measured_delay <= conditioned_delay
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +292,7 @@ class RTCInferenceEngine(InferenceEngine):
                         current_time = time.perf_counter()
                         idx_before = queue.get_action_index()
                         prev_actions = queue.get_left_over()
+                        has_previous_actions = prev_actions is not None and prev_actions.numel() > 0
 
                         latency = latency_tracker.max()
                         delay = math.ceil(latency / time_per_chunk) if latency else 0
@@ -321,6 +342,24 @@ class RTCInferenceEngine(InferenceEngine):
                         else:
                             latency_tracker.add(new_latency)
 
+                        if not is_warmup and self._rtc_config.mode == "trained":
+                            training_max_delay = int(
+                                getattr(self._policy.config, "rtc_training_max_delay", 0)
+                            )
+                            if not _trained_rtc_chunk_can_merge(
+                                conditioned_delay=delay,
+                                measured_delay=new_delay,
+                                training_max_delay=training_max_delay,
+                                has_previous_actions=has_previous_actions,
+                            ):
+                                logger.warning(
+                                    "Discarding trained RTC chunk: measured delay %d exceeded "
+                                    "conditioned delay %d; retrying with updated latency",
+                                    new_delay,
+                                    delay,
+                                )
+                                continue
+
                         queue.merge(original, processed, new_delay, idx_before)
 
                         if (
@@ -333,6 +372,8 @@ class RTCInferenceEngine(InferenceEngine):
 
                         logger.debug("RTC inference latency=%.2fs, queue=%d", new_latency, queue.qsize())
 
+                    except _TrainedRTCDelayExceededError:
+                        raise
                     except Exception as e:
                         consecutive_errors += 1
                         logger.error(

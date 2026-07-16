@@ -94,6 +94,8 @@ def _prepare_trained_rtc_prefix(
         )
 
     previous = prev_chunk_left_over.to(device=x_t.device, dtype=x_t.dtype)
+    if not torch.isfinite(previous).all():
+        raise ValueError("RTC prefix contains NaN or Inf values.")
     if previous.ndim == 2:
         previous = previous.unsqueeze(0)
     if previous.ndim != 3:

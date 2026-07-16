@@ -24,6 +24,7 @@ from lerobot.policies.pi052.modeling_pi052 import (  # noqa: E402
     PI05Pytorch as PI052Pytorch,
     _build_flow_matching_inputs,
     _flow_loss_per_sample,
+    _reduce_flow_loss,
 )
 
 
@@ -47,6 +48,25 @@ def test_training_rtc_loss_averages_over_postfix_only():
     per_sample = _flow_loss_per_sample(flow_loss, prefix_mask)
 
     assert per_sample.tolist() == [3.0]
+
+
+def test_training_rtc_mean_loss_uses_global_postfix_normalization():
+    flow_loss = torch.tensor(
+        [
+            [[1.0], [1.0], [1.0], [1.0]],
+            [[9.0], [9.0], [9.0], [9.0]],
+        ]
+    )
+    prefix_mask = torch.tensor(
+        [
+            [False, False, False, False],
+            [True, True, True, False],
+        ]
+    )
+
+    loss = _reduce_flow_loss(flow_loss, prefix_mask, predict_actions_t=None, reduction="mean")
+
+    assert loss.item() == pytest.approx(13 / 5)
 
 
 def test_per_token_time_embedding_preserves_action_axis():
@@ -96,6 +116,20 @@ def test_trained_rtc_rejects_delay_outside_training_distribution():
             torch.randn(1, 5, 4),
             torch.randn(4, 2),
             inference_delay=4,
+            training_max_delay=3,
+        )
+
+
+@pytest.mark.parametrize("non_finite", [float("nan"), float("inf")])
+def test_trained_rtc_rejects_non_finite_prefix(non_finite):
+    previous = torch.randn(4, 2)
+    previous[0, 0] = non_finite
+
+    with pytest.raises(ValueError, match="NaN or Inf"):
+        _prepare_trained_rtc_prefix(
+            torch.randn(1, 5, 4),
+            previous,
+            inference_delay=2,
             training_max_delay=3,
         )
 
