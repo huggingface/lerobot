@@ -444,7 +444,7 @@ def _make_processors_from_policy_config(
         raise
     function = getattr(module, function_name, None)
     if function is None:
-        raise ValueError(f"Processor for policy type '{policy_type}' is not implemented.") from None
+        raise ValueError(f"Processor for policy type '{policy_type}' is not implemented.")
     call_kwargs: dict[str, Any] = {"dataset_stats": dataset_stats}
     if "dataset_meta" in inspect.signature(function).parameters:
         call_kwargs["dataset_meta"] = dataset_meta
