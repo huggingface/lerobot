@@ -71,14 +71,6 @@ from lerobot.utils.utils import (
 from .lerobot_eval import eval_policy_all
 
 
-def _output_dict_for_logging(output_dict: dict) -> dict:
-    """Convert detached scalar tensors only when a log entry is emitted."""
-    return {
-        key: value.item() if isinstance(value, torch.Tensor) and value.numel() == 1 else value
-        for key, value in output_dict.items()
-    }
-
-
 def update_policy(
     train_metrics: MetricsTracker,
     policy: PreTrainedPolicy,
@@ -620,8 +612,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     # tracker by update_policy, so to_dict() already carries their windowed,
                     # rank-reduced averages — no per-step output_dict passthrough needed.
                     wandb_log_dict = train_tracker.to_dict()
-                    if output_dict:
-                        wandb_log_dict.update(_output_dict_for_logging(output_dict))
                     # Log sample weighting statistics if enabled
                     if sample_weighter is not None:
                         weighter_stats = sample_weighter.get_stats()
