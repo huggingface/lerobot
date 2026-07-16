@@ -401,8 +401,21 @@ def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedPolicy]:
         "configuration_", "modeling_"
     )  # e.g., configuration_diffusion -> modeling_diffusion
 
-    module = importlib.import_module(module_path)
-    policy_cls = getattr(module, cls_name)
+    try:
+        module = importlib.import_module(module_path)
+    except ModuleNotFoundError as e:
+        if e.name == module_path:
+            # The modeling_* module itself does not exist for this policy type. A missing
+            # optional dependency inside an existing module propagates unchanged instead,
+            # so its actionable install hint stays visible.
+            raise ValueError(f"Policy class for '{name}' is not implemented.") from e
+        raise
+    policy_cls = getattr(module, cls_name, None)
+    if policy_cls is None:
+        raise ValueError(
+            f"Policy class '{cls_name}' not found in '{module_path}'. "
+            f"Policies must expose '<Name>Policy' in the sibling 'modeling_*' module by naming convention."
+        )
     return policy_cls
 
 
