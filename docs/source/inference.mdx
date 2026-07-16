@@ -274,12 +274,13 @@ lerobot-rollout \
     --device=cuda
 ```
 
-| Flag                                        | Description                                                    |
-| ------------------------------------------- | -------------------------------------------------------------- |
-| `--inference.rtc.execution_horizon`         | Steps to blend with previous chunk (default: varies by policy) |
-| `--inference.rtc.max_guidance_weight`       | Consistency enforcement strength (default: varies by policy)   |
-| `--inference.rtc.prefix_attention_schedule` | Blend schedule: `LINEAR`, `EXP`, `ONES`, `ZEROS`               |
-| `--inference.queue_threshold`               | Max queue size before backpressure (default: 30)               |
+| Flag                                        | Description                                                                     |
+| ------------------------------------------- | ------------------------------------------------------------------------------- |
+| `--inference.rtc.execution_horizon`         | Steps to blend with previous chunk (default: varies by policy)                  |
+| `--inference.rtc.mode`                      | `guided` (default) or trained-prefix `trained` for compatible Pi052 checkpoints |
+| `--inference.rtc.max_guidance_weight`       | Consistency enforcement strength (default: varies by policy)                    |
+| `--inference.rtc.prefix_attention_schedule` | Blend schedule: `LINEAR`, `EXP`, `ONES`, `ZEROS`                                |
+| `--inference.queue_threshold`               | Max queue size before backpressure (default: 30)                                |
 
 See the [Real-Time Chunking](./rtc) guide for details on tuning RTC parameters.
 

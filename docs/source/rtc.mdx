@@ -1,6 +1,6 @@
 # Real-Time Chunking (RTC)
 
-Real-Time Chunking (RTC) is an inference-time method that allows large, flow-matching based robotic policies, such as [Pi0](./pi0), [Pi0.5](./pi05), and [SmolVLA](./smolvla), to produce smooth, continuous, and reactive motion despite having high inference latency.
+Real-Time Chunking (RTC) allows large, flow-matching based robotic policies, such as [Pi0](./pi0), [Pi0.5](./pi05), and [SmolVLA](./smolvla), to produce smooth, continuous, and reactive motion despite having high inference latency. LeRobot provides the original inference-time guided mode and, for compatible Pi052 checkpoints, training-time action conditioning with cheap hard-prefix inference.
 
 These policies generate chunks of future actions (e.g., 50 steps at a time) instead of single actions.
 Because the models are large, producing each chunk takes longer than the time it takes the robot to execute it.
@@ -92,6 +92,11 @@ for step in range(num_steps):
 
 `RTCConfig` has the following parameters to tune:
 
+**`mode`** selects the action-prefix conditioning method:
+
+- `guided` (default) applies the original Jacobian guidance during denoising and works with ordinary flow-matching checkpoints.
+- `trained` hard-inpaints the previous chunk's prefix with per-action flow timesteps. It currently requires a Pi052 checkpoint trained with `policy.rtc_training_max_delay > 0` and avoids the guidance backward pass.
+
 **`execution_horizon`**: How many timesteps from the previous chunk to maintain consistency with. Higher values mean smoother transitions but potentially less reactivity.
 
 Typical values: 8-12 steps
@@ -141,11 +146,30 @@ lerobot-rollout \
     --strategy.type=base \
     --policy.path=${HF_USERNAME}/policy_repo_id \
     --inference.type=rtc \
+    --inference.rtc.mode=guided \
     --inference.rtc.execution_horizon=10 \
     --inference.rtc.max_guidance_weight=10.0 \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58FA0834591 \
     --robot.cameras="{ gripper: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="Move green small object into the purple platform" \
+    --duration=120 \
+    --device=cuda
+```
+
+For a training-time RTC Pi052 checkpoint, change the mode to `trained`. The
+checkpoint records its maximum supported delay, and rollout validates measured
+latency against it:
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USERNAME}/pi052_training_rtc \
+    --inference.type=rtc \
+    --inference.rtc.mode=trained \
+    --inference.rtc.execution_horizon=10 \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58FA0834591 \
     --task="Move green small object into the purple platform" \
     --duration=120 \
     --device=cuda
@@ -189,3 +213,5 @@ See `examples/rtc/eval_dataset.py` for a complete example of offline RTC visuali
 - [Smooth-As-Butter Robot Policies](https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html) - Excellent technical explanation with real robot results
 - [Physical Intelligence - Real-Time Chunking](https://www.physicalintelligence.company/research/real_time_chunking) - Original paper and research
 - [Kinetix RTC Implementation](https://github.com/Physical-Intelligence/real-time-chunking-kinetix) - Reference implementation from Physical Intelligence
+- [Training-Time Action Conditioning](https://arxiv.org/abs/2512.05964) - Efficient RTC with clean-prefix conditioning during training
+- [RLDX-1](https://github.com/RLWRLD/RLDX-1) - PyTorch reference used for the training-time RTC integration

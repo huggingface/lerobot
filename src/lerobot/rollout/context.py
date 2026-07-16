@@ -178,6 +178,18 @@ def build_rollout_context(
     policy_config = cfg.policy
     policy_class = get_policy_class(policy_config.type)
 
+    if is_rtc and cfg.inference.rtc.enabled and cfg.inference.rtc.mode == "trained":
+        if policy_config.type != "pi052":
+            raise ValueError(
+                "--inference.rtc.mode=trained currently requires a Pi052 checkpoint; "
+                f"got policy type {policy_config.type!r}."
+            )
+        if int(getattr(policy_config, "rtc_training_max_delay", 0)) <= 0:
+            raise ValueError(
+                "--inference.rtc.mode=trained requires a checkpoint trained with "
+                "--policy.rtc_training_max_delay > 0."
+            )
+
     if hasattr(policy_config, "compile_model"):
         policy_config.compile_model = cfg.use_torch_compile
 

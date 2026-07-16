@@ -116,11 +116,70 @@ the expected prompt, text target, and action endpoints before scaling up.
 | `policy.fast_action_loss_weight` |                      `1.0` | FAST cross-entropy weight                                      |
 | `policy.knowledge_insulation`    |                     `true` | Blocks action-loss gradients through the VLM K/V path          |
 | `policy.flow_num_repeats`        |                        `5` | Reuses one VLM prefix for independent denoising targets        |
+| `policy.rtc_training_max_delay`  |                        `0` | Maximum clean-prefix delay; `0` disables training-time RTC     |
 | `policy.lm_head_lr_scale`        |                      `1.0` | Scales language-head learning rate; `1.0` uses the base rate   |
 
 The loss weights are starting points, not dataset-independent constants. Track
 flow loss and text/FAST losses separately, and inspect generated subtasks rather
 than selecting a checkpoint from total loss alone.
+
+### Training-time RTC
+
+Pi052 optionally supports training-time action conditioning from
+[Training-Time Action Conditioning for Efficient Real-Time Chunking](https://arxiv.org/abs/2512.05964).
+It simulates inference latency by sampling a clean action prefix for every flow
+draw, passing a per-action flow timestep to the action expert, and computing the
+flow loss only on the remaining postfix. The default value of `0` leaves the
+standard Pi052 objective unchanged.
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/my_language_annotated_dataset \
+    --policy.type=pi052 \
+    --policy.pretrained_path=lerobot/pi05_base \
+    --policy.recipe_path=recipes/subtask_mem.yaml \
+    --policy.rtc_training_max_delay=10 \
+    --policy.dtype=bfloat16 \
+    --policy.device=cuda \
+    --batch_size=8 \
+    --steps=30000 \
+    --output_dir=outputs/pi052_rtc \
+    --job_name=pi052_rtc
+```
+
+`rtc_training_max_delay` is measured in controller steps and must be smaller
+than `chunk_size`. Choose it to cover the largest inference latency expected at
+deployment: at 50 Hz, for example, 10 steps correspond to 200 ms. A delay of
+zero is included in the uniform sampling distribution, so the checkpoint also
+continues to receive ordinary flow-matching examples. Set rollout's
+`inference.rtc.execution_horizon` to at least this maximum so the previous
+chunk cache retains enough actions to construct every supported prefix.
+
+Run the resulting checkpoint with the asynchronous `lerobot-rollout` backend
+and select the trained-prefix path explicitly:
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=outputs/pi052_rtc/checkpoints/last/pretrained_model \
+    --inference.type=rtc \
+    --inference.rtc.mode=trained \
+    --inference.rtc.execution_horizon=10 \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --task="pick up the cube" \
+    --fps=50 \
+    --device=cuda
+```
+
+The rollout engine measures latency continuously, carries the still-unexecuted
+actions from the previous chunk into the next prediction, and discards the
+prefix that elapsed during inference. If the measured delay exceeds the
+checkpoint's `rtc_training_max_delay`, rollout stops with an explicit error
+instead of silently extrapolating beyond the training distribution. Use
+`--inference.rtc.mode=guided` for the original Jacobian-guided RTC path; it does
+not require a training-time RTC checkpoint but adds backward-pass work during
+denoising.
 
 ### Dataset-specific FAST tokenizer
 

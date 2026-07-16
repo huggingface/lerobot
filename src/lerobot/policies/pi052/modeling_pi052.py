@@ -187,6 +187,54 @@ def _reduce_action_loss(per_sample: Tensor, predict_actions_t: Tensor | None, re
     return (per_sample * mask).sum() / mask.sum().clamp(min=1.0)
 
 
+def _sample_training_rtc_prefix_mask(
+    batch_size: int,
+    action_horizon: int,
+    max_delay: int,
+    device: torch.device,
+) -> Tensor | None:
+    """Sample per-draw clean prefixes for training-time RTC."""
+    if max_delay <= 0:
+        return None
+    delays = torch.randint(0, max_delay + 1, (batch_size,), device=device)
+    positions = torch.arange(action_horizon, device=device)
+    return positions.unsqueeze(0) < delays.unsqueeze(1)
+
+
+def _build_flow_matching_inputs(
+    actions: Tensor,
+    noise: Tensor,
+    time: Tensor,
+    prefix_mask: Tensor | None,
+) -> tuple[Tensor, Tensor]:
+    """Build noisy actions and scalar/per-token flow times.
+
+    LeRobot's PI0.5 flow uses ``t=0`` for clean data and ``t=1`` for
+    noise, the reverse of the notation in arXiv:2512.05964. Consequently,
+    clean RTC prefix tokens receive ``t=0`` here.
+    """
+    if prefix_mask is None:
+        model_time = time
+        expanded_time = time[:, None, None]
+    else:
+        model_time = time[:, None].expand_as(prefix_mask)
+        model_time = torch.where(prefix_mask, torch.zeros_like(model_time), model_time)
+        expanded_time = model_time.unsqueeze(-1)
+    x_t = expanded_time * noise + (1 - expanded_time) * actions
+    return x_t, model_time
+
+
+def _flow_loss_per_sample(flow_per_dim: Tensor, prefix_mask: Tensor | None) -> Tensor:
+    """Average each draw over postfix action positions and dimensions only."""
+    if prefix_mask is None:
+        return flow_per_dim.flatten(start_dim=1).mean(dim=1)
+    postfix = (~prefix_mask).unsqueeze(-1).expand_as(flow_per_dim)
+    reduce_dims = tuple(range(1, flow_per_dim.ndim))
+    numerator = (flow_per_dim * postfix).sum(dim=reduce_dims)
+    denominator = postfix.sum(dim=reduce_dims).clamp(min=1)
+    return numerator / denominator
+
+
 # Materialized logits win at VLA token counts; larger dense targets use Liger.
 _LOGITS_CE_MAX_POSITIONS = 2048
 
@@ -928,6 +976,7 @@ class PI052Policy(PI05Policy):
             text_labels is None
             and predict_actions_t is None
             and not getattr(self.config, "enable_fast_action_loss", False)
+            and self.config.rtc_training_max_delay == 0
         ):
             return super().forward(batch, reduction=reduction)
 
@@ -1118,12 +1167,17 @@ class PI052Policy(PI05Policy):
 
         noise = self.model.sample_noise(actions.shape, actions.device)
         time = self.model.sample_time(actions.shape[0], actions.device)
-        time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        prefix_mask = _sample_training_rtc_prefix_mask(
+            actions.shape[0],
+            actions.shape[1],
+            self.config.rtc_training_max_delay,
+            actions.device,
+        )
+        x_t, model_time = _build_flow_matching_inputs(actions, noise, time, prefix_mask)
         u_t = noise - actions
 
         # ---- suffix: noisy actions ----------------------------------
-        suffix_embs, suffix_pad, suffix_att, adarms_cond = self.model.embed_suffix(x_t, time)
+        suffix_embs, suffix_pad, suffix_att, adarms_cond = self.model.embed_suffix(x_t, model_time)
 
         # ---- bf16 alignment (mirrors PI05Pytorch.forward) -----------
         first_layer = self.model.paligemma_with_expert.paligemma.model.language_model.layers[0]
@@ -1169,7 +1223,7 @@ class PI052Policy(PI05Policy):
         # internally to max_action_dim).
         original_action_dim = self.config.output_features[ACTION].shape[0]
         flow_per_dim = flow_per_dim[:, :, :original_action_dim]
-        per_sample_flow = flow_per_dim.mean(dim=(1, 2))
+        per_sample_flow = _flow_loss_per_sample(flow_per_dim, prefix_mask)
         flow_loss = _reduce_action_loss(per_sample_flow, predict_actions_t, reduction)
         return prefix_out, flow_loss
 
@@ -1216,10 +1270,15 @@ class PI052Policy(PI05Policy):
         noise = model.sample_noise((k * batch_size, *actions.shape[1:]), actions.device)
         time = model.sample_time(k * batch_size, actions.device)
         actions_rep = actions.repeat(k, 1, 1)  # (k*B, chunk, motor_dim)
-        time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions_rep
+        prefix_mask_flat = _sample_training_rtc_prefix_mask(
+            k * batch_size,
+            chunk,
+            self.config.rtc_training_max_delay,
+            actions.device,
+        )
+        x_t, model_time = _build_flow_matching_inputs(actions_rep, noise, time, prefix_mask_flat)
         u_t = (noise - actions_rep).view(k, batch_size, chunk, -1).transpose(0, 1)  # (B, k, chunk, motor)
-        s_embs, suffix_pad, suffix_att, adarms = model.embed_suffix(x_t, time)
+        s_embs, suffix_pad, suffix_att, adarms = model.embed_suffix(x_t, model_time)
         if use_bf16:
             s_embs = s_embs.to(dtype=torch.bfloat16)
         suffix_pad = suffix_pad[:batch_size]
@@ -1228,9 +1287,10 @@ class PI052Policy(PI05Policy):
             s_embs.view(k, batch_size, chunk, -1).transpose(0, 1).reshape(batch_size, k * chunk, -1)
         )  # (B, k*chunk, D)
         # Broadcast each draw's AdaRMS condition over its action chunk.
+        if adarms.ndim == 2:
+            adarms = adarms[:, None, :].expand(-1, chunk, -1)
         adarms_cond = (
-            adarms.view(k, batch_size, 1, adarms.shape[-1])
-            .expand(k, batch_size, chunk, adarms.shape[-1])
+            adarms.view(k, batch_size, chunk, adarms.shape[-1])
             .transpose(0, 1)
             .reshape(batch_size, k * chunk, adarms.shape[-1])
         )  # (B, k*chunk, cond_dim)
@@ -1300,7 +1360,10 @@ class PI052Policy(PI05Policy):
         v_t = model.action_out_proj(suffix_out.to(dtype=torch.float32))
         v_t = v_t.view(batch_size, k, chunk, -1)  # (B, k, chunk, motor)
         flow_per_dim = functional.mse_loss(u_t, v_t, reduction="none")[..., :original_action_dim]
-        per_sample_flow = flow_per_dim.mean(dim=(1, 2, 3))
+        prefix_mask = None
+        if prefix_mask_flat is not None:
+            prefix_mask = prefix_mask_flat.view(k, batch_size, chunk).transpose(0, 1)
+        per_sample_flow = _flow_loss_per_sample(flow_per_dim, prefix_mask)
         flow_loss = _reduce_action_loss(per_sample_flow, predict_actions_t, reduction)
         return prefix_out, flow_loss
 
