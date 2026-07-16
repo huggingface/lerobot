@@ -10,11 +10,11 @@ deploy stack (no `gear_sonic`/torch dependency).
 
 Selected with `--robot.controller=<ClassName>`:
 
-| Controller | Purpose |
-|---|---|
-| `SonicWholeBodyController` | SONIC whole-body: locomotion, keyboard, and SMPL imitation (mode 2) |
-| `GrootLocomotionController` | GR00T locomotion policy |
-| `HolosomaLocomotionController` | Holosoma locomotion policy |
+| Controller                     | Purpose                                                             |
+| ------------------------------ | ------------------------------------------------------------------- |
+| `SonicWholeBodyController`     | SONIC whole-body: locomotion, keyboard, and SMPL imitation (mode 2) |
+| `GrootLocomotionController`    | GR00T locomotion policy                                             |
+| `HolosomaLocomotionController` | Holosoma locomotion policy                                          |
 
 ## Requirements
 
@@ -32,6 +32,7 @@ Selected with `--robot.controller=<ClassName>`:
 ## Running
 
 **Replay an SMPL dataset (motion imitation):**
+
 ```bash
 lerobot-replay \
   --robot.type=unitree_g1 --robot.controller=SonicWholeBodyController \
@@ -39,20 +40,24 @@ lerobot-replay \
 ```
 
 **Keyboard teleop** (drives locomotion via the native keyboard teleoperator):
+
 ```bash
 lerobot-teleoperate \
   --robot.type=unitree_g1 --robot.controller=SonicWholeBodyController \
   --teleop.type=keyboard
 ```
+
 Controls: `WASD` move · `Q`/`E` turn · `1`–`8` mode · `9`/`0` speed · `-`/`=` height ·
 `R` replan · `Space` emergency-stop.
 
 **PICO headset teleop** (live SMPL whole-body):
+
 ```bash
 lerobot-teleoperate \
   --robot.type=unitree_g1 --robot.controller=SonicWholeBodyController \
   --teleop.type=pico_headset
 ```
+
 This requires the XRoboToolkit stack — see below.
 
 ## PICO headset / XRoboToolkit install
@@ -84,12 +89,12 @@ Summary:
 
 ### Platform support
 
-| Platform | Live headset teleop | Notes |
-|---|---|---|
-| Linux x86_64 | ✅ | Guided `install_pico.sh` (SONIC repo) |
-| Linux aarch64 (Jetson Orin) | ✅ | `setup_orin.sh` builds the native lib |
-| Windows x64 | ✅ (manual) | `setup_windows.bat`; no one-shot env script |
-| macOS | ❌ | No PC Service / SDK build for Darwin |
+| Platform                    | Live headset teleop | Notes                                       |
+| --------------------------- | ------------------- | ------------------------------------------- |
+| Linux x86_64                | ✅                  | Guided `install_pico.sh` (SONIC repo)       |
+| Linux aarch64 (Jetson Orin) | ✅                  | `setup_orin.sh` builds the native lib       |
+| Windows x64                 | ✅ (manual)         | `setup_windows.bat`; no one-shot env script |
+| macOS                       | ❌                  | No PC Service / SDK build for Darwin        |
 
 ### No hardware required (any platform, incl. macOS/Windows)
 
