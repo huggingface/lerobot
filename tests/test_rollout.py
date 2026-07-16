@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import dataclasses
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -128,6 +129,38 @@ def test_trained_rtc_rejects_measured_delay_above_checkpoint_support():
             training_max_delay=4,
             has_previous_actions=True,
         )
+
+
+def test_trained_rtc_rejects_prefix_shorter_than_conditioned_delay():
+    from lerobot.rollout.inference.rtc import (
+        _TrainedRTCPrefixUnavailableError,
+        _validate_trained_rtc_prefix_available,
+    )
+
+    with pytest.raises(_TrainedRTCPrefixUnavailableError, match="only 2"):
+        _validate_trained_rtc_prefix_available(conditioned_delay=4, available_steps=2)
+
+
+@pytest.mark.parametrize(
+    ("execution_horizon", "queue_threshold", "match"),
+    [
+        (3, 4, "execution_horizon"),
+        (4, 3, "queue_threshold"),
+    ],
+)
+def test_trained_rtc_rollout_requires_capacity_for_max_delay(execution_horizon, queue_threshold, match):
+    from lerobot.policies.rtc.configuration_rtc import RTCConfig
+    from lerobot.rollout.context import _validate_trained_rtc_rollout_config
+    from lerobot.rollout.inference import RTCInferenceConfig
+
+    policy_config = SimpleNamespace(type="pi052", rtc_training_max_delay=4)
+    inference_config = RTCInferenceConfig(
+        rtc=RTCConfig(mode="trained", execution_horizon=execution_horizon),
+        queue_threshold=queue_threshold,
+    )
+
+    with pytest.raises(ValueError, match=match):
+        _validate_trained_rtc_rollout_config(policy_config, inference_config)
 
 
 def test_sentry_config_defaults():

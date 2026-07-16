@@ -97,6 +97,10 @@ for step in range(num_steps):
 - `guided` (default) applies the original Jacobian guidance during denoising and works with ordinary flow-matching checkpoints.
 - `trained` hard-inpaints the previous chunk's prefix with per-action flow timesteps. It currently requires a Pi052 checkpoint trained with `policy.rtc_training_max_delay > 0` and avoids the guidance backward pass.
 
+For trained mode, both `execution_horizon` and the rollout backend's
+`inference.queue_threshold` must be at least the checkpoint's
+`rtc_training_max_delay`; rollout validates this before connecting the robot.
+
 **`execution_horizon`**: How many timesteps from the previous chunk to maintain consistency with. Higher values mean smoother transitions but potentially less reactivity.
 
 Typical values: 8-12 steps
@@ -128,6 +132,10 @@ python examples/rtc/eval_dataset.py \
     --rtc.max_guidance_weight=10.0 \
     --device=cuda
 ```
+
+Add `--rtc.mode=trained` when evaluating a compatible training-time RTC Pi052
+checkpoint. Unsupported policies reject trained mode instead of falling back to
+guided RTC.
 
 The script generates a visualization of the denoising process, comparing standard generation (left) with RTC (right). In the RTC plots, you can see how the first few steps (blue/purple lines) are guided to match the red ground truth trajectory (previous chunk's tail), ensuring a smooth transition between chunks.
 

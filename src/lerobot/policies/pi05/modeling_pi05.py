@@ -1284,7 +1284,10 @@ class PI05Policy(PreTrainedPolicy):
         # Create processor if config provided
         # If RTC is not enabled - we can still track the denoising data
         if self.config.rtc_config is not None:
-            self.rtc_processor = RTCProcessor(self.config.rtc_config)
+            self.rtc_processor = RTCProcessor(
+                self.config.rtc_config,
+                trained_mode_supported=int(getattr(self.config, "rtc_training_max_delay", 0)) > 0,
+            )
 
             model_value = getattr(self, "model", None)
             if model_value is not None:

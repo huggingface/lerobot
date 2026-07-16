@@ -152,8 +152,9 @@ than `chunk_size`. Choose it to cover the largest inference latency expected at
 deployment: at 50 Hz, for example, 10 steps correspond to 200 ms. A delay of
 zero is included in the uniform sampling distribution, so the checkpoint also
 continues to receive ordinary flow-matching examples. Set rollout's
-`inference.rtc.execution_horizon` to at least this maximum so the previous
-chunk cache retains enough actions to construct every supported prefix.
+`inference.rtc.execution_horizon` and `inference.queue_threshold` to at least
+this maximum so inference starts early enough and the previous chunk retains
+every action needed for the committed prefix.
 
 Run the resulting checkpoint with the asynchronous `lerobot-rollout` backend
 and select the trained-prefix path explicitly:

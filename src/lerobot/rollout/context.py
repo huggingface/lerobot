@@ -60,6 +60,35 @@ from .robot_wrapper import ThreadSafeRobot
 logger = logging.getLogger(__name__)
 
 
+def _validate_trained_rtc_rollout_config(policy_config, inference_config: RTCInferenceConfig) -> None:
+    """Fail fast when rollout cannot retain every trained RTC prefix."""
+    rtc = inference_config.rtc
+    if not rtc.enabled or rtc.mode != "trained":
+        return
+    if policy_config.type != "pi052":
+        raise ValueError(
+            "--inference.rtc.mode=trained currently requires a Pi052 checkpoint; "
+            f"got policy type {policy_config.type!r}."
+        )
+
+    training_max_delay = int(getattr(policy_config, "rtc_training_max_delay", 0))
+    if training_max_delay <= 0:
+        raise ValueError(
+            "--inference.rtc.mode=trained requires a checkpoint trained with "
+            "--policy.rtc_training_max_delay > 0."
+        )
+    if rtc.execution_horizon < training_max_delay:
+        raise ValueError(
+            f"--inference.rtc.execution_horizon ({rtc.execution_horizon}) must be at least the "
+            f"checkpoint's rtc_training_max_delay ({training_max_delay})."
+        )
+    if inference_config.queue_threshold < training_max_delay:
+        raise ValueError(
+            f"--inference.queue_threshold ({inference_config.queue_threshold}) must be at least the "
+            f"checkpoint's rtc_training_max_delay ({training_max_delay})."
+        )
+
+
 def _resolve_action_key_order(
     policy_action_names: list[str] | None, dataset_action_names: list[str]
 ) -> list[str]:
@@ -178,17 +207,8 @@ def build_rollout_context(
     policy_config = cfg.policy
     policy_class = get_policy_class(policy_config.type)
 
-    if is_rtc and cfg.inference.rtc.enabled and cfg.inference.rtc.mode == "trained":
-        if policy_config.type != "pi052":
-            raise ValueError(
-                "--inference.rtc.mode=trained currently requires a Pi052 checkpoint; "
-                f"got policy type {policy_config.type!r}."
-            )
-        if int(getattr(policy_config, "rtc_training_max_delay", 0)) <= 0:
-            raise ValueError(
-                "--inference.rtc.mode=trained requires a checkpoint trained with "
-                "--policy.rtc_training_max_delay > 0."
-            )
+    if is_rtc:
+        _validate_trained_rtc_rollout_config(policy_config, cfg.inference)
 
     if hasattr(policy_config, "compile_model"):
         policy_config.compile_model = cfg.use_torch_compile

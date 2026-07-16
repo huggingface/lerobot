@@ -57,8 +57,16 @@ _RTC_MAX_CONSECUTIVE_ERRORS: int = 10
 _RTC_JOIN_TIMEOUT_S: float = 3.0
 
 
-class _TrainedRTCDelayExceededError(RuntimeError):
+class _FatalRTCInferenceError(RuntimeError):
+    """Base class for RTC errors that cannot become valid after a retry."""
+
+
+class _TrainedRTCDelayExceededError(_FatalRTCInferenceError):
     """Raised when measured latency exceeds a trained RTC checkpoint's support."""
+
+
+class _TrainedRTCPrefixUnavailableError(_FatalRTCInferenceError):
+    """Raised when the queue cannot provide the prefix used for conditioning."""
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +102,16 @@ def _trained_rtc_chunk_can_merge(
             f"rtc_training_max_delay ({training_max_delay})."
         )
     return not has_previous_actions or measured_delay <= conditioned_delay
+
+
+def _validate_trained_rtc_prefix_available(*, conditioned_delay: int, available_steps: int) -> None:
+    """Reject hard-prefix inference when the real queue is shorter than its delay."""
+    if conditioned_delay > available_steps:
+        raise _TrainedRTCPrefixUnavailableError(
+            f"Trained RTC needs {conditioned_delay} committed prefix actions, but the queue has "
+            f"only {available_steps}. Increase --inference.queue_threshold and "
+            "--inference.rtc.execution_horizon."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +314,12 @@ class RTCInferenceEngine(InferenceEngine):
 
                         latency = latency_tracker.max()
                         delay = math.ceil(latency / time_per_chunk) if latency else 0
+                        if self._rtc_config.mode == "trained" and delay > 0:
+                            available_steps = 0 if prev_actions is None else prev_actions.shape[0]
+                            _validate_trained_rtc_prefix_available(
+                                conditioned_delay=delay,
+                                available_steps=available_steps,
+                            )
 
                         obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
                         obs_batch = prepare_observation_for_inference(
@@ -372,7 +396,7 @@ class RTCInferenceEngine(InferenceEngine):
 
                         logger.debug("RTC inference latency=%.2fs, queue=%d", new_latency, queue.qsize())
 
-                    except _TrainedRTCDelayExceededError:
+                    except _FatalRTCInferenceError:
                         raise
                     except Exception as e:
                         consecutive_errors += 1
