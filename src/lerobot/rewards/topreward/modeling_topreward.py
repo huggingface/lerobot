@@ -77,6 +77,7 @@ from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING:
     from lerobot.configs.train import TrainPipelineConfig
+    from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import Qwen3VLForConditionalGeneration
@@ -206,8 +207,18 @@ class TOPRewardModel(PreTrainedRewardModel):
         instance.eval()
         return instance
 
-    def push_model_to_hub(self, cfg: TrainPipelineConfig):
-        """Push the TOPReward ``config.json`` + model card to the Hub."""
+    def push_model_to_hub(
+        self,
+        cfg: TrainPipelineConfig,
+        state_dict: dict[str, Tensor] | None = None,
+        dataset_meta: LeRobotDatasetMetadata | None = None,
+    ):
+        """Push the TOPReward ``config.json`` + model card to the Hub.
+
+        `state_dict` and `dataset_meta` are accepted for caller compatibility with
+        `PreTrainedPolicy.push_model_to_hub`; TOPReward pushes no tensors (the base
+        VLM weights are referenced by name), so they are unused.
+        """
         api = HfApi()
         repo_id = api.create_repo(
             repo_id=self.config.repo_id, private=self.config.private, exist_ok=True

@@ -445,3 +445,56 @@ def test_reward_model_push_model_to_hub_uploads_expected_files(monkeypatch, _off
     assert TRAIN_CONFIG_NAME in uploaded["files"]  # train_config.json
     assert "README.md" in uploaded["files"]
     assert any(name.endswith(".safetensors") for name in uploaded["files"])
+
+
+def test_reward_model_push_model_to_hub_accepts_trainer_kwargs(monkeypatch, _offline_model_card):
+    """Regression test for #4011: ``lerobot-train`` calls ``push_model_to_hub`` with
+    the policy-style ``state_dict``/``dataset_meta`` keywords. Reward models must
+    accept them (and write a pre-gathered state dict directly, as under FSDP)."""
+    from lerobot.configs.default import DatasetConfig
+    from lerobot.configs.train import TrainPipelineConfig
+
+    model, _ = _make_dummy_reward_model(
+        repo_id="user/my_reward",
+        license="apache-2.0",
+    )
+    train_cfg = TrainPipelineConfig(
+        dataset=DatasetConfig(repo_id="user/my_dataset"),
+        reward_model=model.config,
+    )
+
+    uploaded: dict = {}
+    fake_commit_info = SimpleNamespace(repo_url=SimpleNamespace(url="https://huggingface.co/user/my_reward"))
+
+    class _FakeHfApi:
+        def create_repo(self, repo_id, private=None, exist_ok=False):
+            return SimpleNamespace(repo_id=repo_id)
+
+        def upload_folder(self, *, folder_path, **_kwargs):
+            uploaded["files"] = sorted(p.name for p in Path(folder_path).iterdir())
+            return fake_commit_info
+
+    from lerobot.rewards import pretrained as reward_pretrained
+
+    monkeypatch.setattr(reward_pretrained, "HfApi", lambda *a, **kw: _FakeHfApi())
+
+    # Exact call shape used by the end-of-training block in lerobot_train.py.
+    model.push_model_to_hub(train_cfg, state_dict=model.state_dict(), dataset_meta=None)
+
+    assert any(name.endswith(".safetensors") for name in uploaded["files"])
+
+
+def test_reward_model_save_pretrained_writes_supplied_state_dict(tmp_path):
+    """A pre-gathered state dict passed to ``save_pretrained`` must be written
+    verbatim (single ``model.safetensors``), bypassing ``self.state_dict()``."""
+    import safetensors.torch
+
+    model, _ = _make_dummy_reward_model()
+    state_dict = {k: torch.full_like(v, 7.0) for k, v in model.state_dict().items()}
+
+    model.save_pretrained(tmp_path, state_dict=state_dict)
+
+    saved = safetensors.torch.load_file(tmp_path / "model.safetensors")
+    assert set(saved) == set(state_dict)
+    for key, tensor in saved.items():
+        assert torch.equal(tensor, state_dict[key])
