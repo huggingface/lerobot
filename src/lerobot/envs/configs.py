@@ -503,7 +503,7 @@ class MetaworldEnv(EnvConfig):
 class RoboCasaEnv(EnvConfig):
     task: str = "CloseFridge"
     fps: int = 20
-    episode_length: int = 1000
+    episode_length: int | None = None
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     camera_name: str = "robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right"
