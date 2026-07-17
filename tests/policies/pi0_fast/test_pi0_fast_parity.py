@@ -18,8 +18,8 @@ pytest.importorskip("scipy")
 from lerobot.configs import NormalizationMode  # noqa: E402
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig  # noqa: E402
 from lerobot.policies.pi0_fast.modeling_pi0_fast import (  # noqa: E402
-    PI0FastPytorch,
     PI0FastPolicy,
+    PI0FastPytorch,
     _gather_last_valid_language_hidden,
     _reduce_fast_token_loss,
 )
@@ -129,9 +129,7 @@ class _TokenFromHiddenHead(nn.Module):
 class _ScriptedPaliGemma:
     def __init__(self):
         q_proj = SimpleNamespace(weight=torch.empty(1))
-        language_model = SimpleNamespace(
-            layers=[SimpleNamespace(self_attn=SimpleNamespace(q_proj=q_proj))]
-        )
+        language_model = SimpleNamespace(layers=[SimpleNamespace(self_attn=SimpleNamespace(q_proj=q_proj))])
         self.paligemma = SimpleNamespace(
             lm_head=_TokenFromHiddenHead(),
             model=SimpleNamespace(language_model=language_model),
@@ -177,9 +175,7 @@ def test_fast_generators_stop_each_sample_at_eos_without_boundary_bos(sampler_na
     tokens = torch.tensor([[2, 3, 0, 0], [2, 3, 4, 0]])
     masks = torch.tensor([[True, True, False, False], [True, True, True, False]])
 
-    generated = getattr(model, sampler_name)(
-        [], [], tokens, masks, max_decoding_steps=4, temperature=0.0
-    )
+    generated = getattr(model, sampler_name)([], [], tokens, masks, max_decoding_steps=4, temperature=0.0)
 
     assert torch.equal(generated, torch.tensor([[5, 1, 0, 0], [6, 7, 1, 0]]))
     assert torch.equal(captured[0], tokens)
