@@ -362,10 +362,27 @@ def _fast_lin_ce(
                 for sample_hidden, sample_labels in zip(shift_hidden, shift_targets, strict=True)
             ]
         )
-    batch_size, target_length, hidden_size = shift_hidden.shape
-    flat_hidden = shift_hidden.reshape(batch_size * target_length, hidden_size).to(lm_head_weight.dtype)
-    flat_labels = shift_targets.reshape(batch_size * target_length)
-    return _lin_ce_flat(flat_hidden, lm_head_weight, flat_labels, compiled=compiled)
+
+    valid_counts = shift_valid.sum(dim=1)
+    active_samples = valid_counts > 0
+    if not bool(active_samples.any().item()):
+        return shift_hidden.sum() * 0.0
+
+    weighted_losses = []
+    active_count = active_samples.sum()
+    for token_count in torch.unique(valid_counts[active_samples]).tolist():
+        group = active_samples & valid_counts.eq(token_count)
+        group_size = group.sum()
+        group_hidden = shift_hidden[group].reshape(-1, shift_hidden.shape[-1]).to(lm_head_weight.dtype)
+        group_labels = shift_targets[group].reshape(-1)
+        group_loss = _lin_ce_flat(
+            group_hidden,
+            lm_head_weight,
+            group_labels,
+            compiled=compiled,
+        )
+        weighted_losses.append(group_loss * group_size)
+    return torch.stack(weighted_losses).sum() / active_count
 
 
 # ----------------------------------------------------------------------
@@ -957,7 +974,19 @@ class PI052Policy(PI05Policy):
             action_mask = batch.get(ACTION_TOKEN_MASK)
             action_code_mask = batch.get(ACTION_CODE_TOKEN_MASK)
             if action_tokens is None or action_mask is None or action_code_mask is None:
-                run_fast = False
+                missing = [
+                    key
+                    for key, value in (
+                        (ACTION_TOKENS, action_tokens),
+                        (ACTION_TOKEN_MASK, action_mask),
+                        (ACTION_CODE_TOKEN_MASK, action_code_mask),
+                    )
+                    if value is None
+                ]
+                raise ValueError(
+                    "PI052 FAST action loss is enabled, but the preprocessor did not produce "
+                    f"required batch keys: {missing}."
+                )
 
         # Flow uses one fused prefix/suffix pass; text-only batches skip the suffix.
         if run_flow:

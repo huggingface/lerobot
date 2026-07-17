@@ -352,6 +352,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     if cfg.policy.type in {"pi0_fast", "pi052"}:
         processor_kwargs["dataset_repo_id"] = cfg.dataset.repo_id
+        processor_kwargs["dataset_revision"] = cfg.dataset.revision
+        processor_kwargs["dataset_episodes"] = cfg.dataset.episodes
+        processor_kwargs["dataset_exclude_episodes"] = cfg.dataset.exclude_episodes
+        processor_kwargs["dataset_root"] = cfg.dataset.root
 
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:
         preprocessor_overrides = {

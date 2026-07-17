@@ -147,6 +147,8 @@ class PI052Config(PI05Config):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if self.enable_fast_action_loss and not self.recipe_path:
+            raise ValueError("PI052 FAST action loss requires recipe_path to build action supervision.")
         if self.text_loss_weight > 0 and self.unfreeze_lm_head:
             self.train_expert_only = False
         if self.flow_num_repeats < 1:

@@ -102,6 +102,10 @@ def make_pi0_fast_pre_post_processors(
     config: PI0FastConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     dataset_repo_id: str | None = None,
+    dataset_root: str | None = None,
+    dataset_revision: str | None = None,
+    episodes: list[int] | None = None,
+    exclude_episodes: list[int] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -146,7 +150,15 @@ def make_pi0_fast_pre_post_processors(
     # continues to receive normalized state in [-1, 1] as expected.
     from ..pi052.fit_fast_tokenizer import resolve_fast_tokenizer  # noqa: PLC0415
 
-    action_tokenizer_path = resolve_fast_tokenizer(config, dataset_repo_id)
+    action_tokenizer_path = resolve_fast_tokenizer(
+        config,
+        dataset_repo_id,
+        dataset_root,
+        dataset_stats,
+        dataset_revision,
+        episodes,
+        exclude_episodes,
+    )
 
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one

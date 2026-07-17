@@ -20,8 +20,10 @@ Training invokes this automatically when FAST loss and automatic fitting are ena
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -34,8 +36,20 @@ logger = logging.getLogger(__name__)
 _CACHE_SENTINEL = "processor_config.json"
 
 
-def _is_local_leader() -> bool:
-    return int(os.environ.get("LOCAL_RANK", "0")) == 0
+def _is_global_leader() -> bool:
+    return int(os.environ.get("RANK", "0")) == 0
+
+
+def _jsonable(value: Any) -> Any:
+    if hasattr(value, "detach"):
+        value = value.detach().cpu().numpy()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, dict):
+        return {key: _jsonable(item) for key, item in sorted(value.items())}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    return value
 
 
 def _dataset_signature(
@@ -43,22 +57,95 @@ def _dataset_signature(
     base_tokenizer_name: str,
     n_samples: int,
     chunk_size: int,
+    normalization_mode: str,
+    dataset_revision: str | None = None,
+    episodes: list[int] | None = None,
+    exclude_episodes: list[int] | None = None,
+    action_stats: dict | None = None,
+    use_relative_actions: bool = False,
+    relative_action_mask: list[bool] | None = None,
 ) -> str:
-    """Deterministic short hash for naming the cache directory.
+    """Hash every input that changes the fitted action distribution."""
+    payload = {
+        "dataset_repo_id": dataset_repo_id,
+        "dataset_revision": dataset_revision,
+        "base_tokenizer_name": base_tokenizer_name,
+        "n_samples": n_samples,
+        "chunk_size": chunk_size,
+        "normalization_mode": normalization_mode,
+        "episodes": episodes,
+        "exclude_episodes": exclude_episodes,
+        "action_stats": action_stats,
+        "use_relative_actions": use_relative_actions,
+        "relative_action_mask": relative_action_mask,
+    }
+    encoded = json.dumps(_jsonable(payload), sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()[:16]
 
-    Keys on (dataset, base tokenizer, sample count, chunk size) so any
-    of those changing re-runs the fit. ``chunk_size`` matters because
-    the tokenizer is fit on chunks of that length.
-    """
-    h = hashlib.sha256()
-    h.update(dataset_repo_id.encode("utf-8"))
-    h.update(b"\0")
-    h.update(base_tokenizer_name.encode("utf-8"))
-    h.update(b"\0")
-    h.update(str(n_samples).encode("utf-8"))
-    h.update(b"\0")
-    h.update(str(chunk_size).encode("utf-8"))
-    return h.hexdigest()[:16]
+
+def _select_episode_indices(
+    available_episodes: list[int],
+    episodes: list[int] | None,
+    exclude_episodes: list[int] | None,
+) -> list[int]:
+    allowed = set(episodes) if episodes is not None else set(available_episodes)
+    excluded = set(exclude_episodes or [])
+    return [episode for episode in available_episodes if episode in allowed and episode not in excluded]
+
+
+def _apply_relative_actions(
+    actions: np.ndarray,
+    states: np.ndarray,
+    relative_action_mask: list[bool] | None,
+) -> np.ndarray:
+    """Match RelativeActionsProcessorStep before tokenizer fitting."""
+    action_dim = actions.shape[-1]
+    mask = list(relative_action_mask) if relative_action_mask is not None else [True] * action_dim
+    if len(mask) < action_dim:
+        mask.extend([True] * (action_dim - len(mask)))
+    mask_array = np.asarray(mask[:action_dim], dtype=np.float32)
+    relative = actions.copy()
+    relative -= states[:, None, :action_dim] * mask_array
+    return relative
+
+
+def _normalize_actions(
+    actions: np.ndarray,
+    normalization_mode: str,
+    action_stats: dict | None = None,
+) -> np.ndarray:
+    """Match the action normalization applied by the training preprocessor."""
+    mode = getattr(normalization_mode, "value", normalization_mode).upper()
+    flat = actions.reshape(-1, actions.shape[-1])
+    stats = action_stats or {}
+
+    def stat(name: str, fallback) -> np.ndarray:
+        value = stats.get(name)
+        if value is None:
+            value = fallback()
+        if hasattr(value, "detach"):
+            value = value.detach().cpu().numpy()
+        return np.asarray(value, dtype=np.float32)
+
+    if mode == "IDENTITY":
+        return actions
+    if mode == "MEAN_STD":
+        mean = stat("mean", lambda: flat.mean(axis=0))
+        std = stat("std", lambda: flat.std(axis=0))
+        return ((actions - mean) / np.where(std == 0, 1e-8, std)).astype(np.float32)
+    if mode in {"QUANTILES", "QUANTILE10"}:
+        low_name, high_name, low_q, high_q = (
+            ("q01", "q99", 0.01, 0.99) if mode == "QUANTILES" else ("q10", "q90", 0.10, 0.90)
+        )
+        low = stat(low_name, lambda: np.quantile(flat, low_q, axis=0))
+        high = stat(high_name, lambda: np.quantile(flat, high_q, axis=0))
+    elif mode == "MIN_MAX":
+        low = stat("min", lambda: flat.min(axis=0))
+        high = stat("max", lambda: flat.max(axis=0))
+    else:
+        raise ValueError(f"Unsupported FAST tokenizer normalization mode: {mode}")
+
+    return (2.0 * (actions - low) / np.where(high == low, 1e-8, high - low) - 1.0).astype(np.float32)
 
 
 def fit_fast_tokenizer(
@@ -69,6 +156,14 @@ def fit_fast_tokenizer(
     n_samples: int = 1024,
     chunk_size: int = 50,
     seed: int = 42,
+    dataset_root: str | Path | None = None,
+    dataset_revision: str | None = None,
+    episodes: list[int] | None = None,
+    exclude_episodes: list[int] | None = None,
+    normalization_mode: str = "QUANTILES",
+    action_stats: dict | None = None,
+    use_relative_actions: bool = False,
+    relative_action_mask: list[bool] | None = None,
 ) -> str:
     """Fit a FAST tokenizer on a LeRobot dataset's action distribution.
 
@@ -100,7 +195,20 @@ def fit_fast_tokenizer(
         FileNotFoundError: If the dataset can't be loaded.
     """
     cache_dir = Path(cache_dir)
-    sig = _dataset_signature(dataset_repo_id, base_tokenizer_name, n_samples, chunk_size)
+    normalization_mode = getattr(normalization_mode, "value", normalization_mode).upper()
+    sig = _dataset_signature(
+        dataset_repo_id,
+        base_tokenizer_name,
+        n_samples,
+        chunk_size,
+        normalization_mode,
+        dataset_revision,
+        episodes,
+        exclude_episodes,
+        action_stats,
+        use_relative_actions,
+        relative_action_mask,
+    )
     out_dir = cache_dir / sig
 
     if out_dir.exists() and (out_dir / _CACHE_SENTINEL).exists():
@@ -113,8 +221,8 @@ def fit_fast_tokenizer(
         )
         return str(out_dir)
 
-    # Each node fits its node-local cache once; its other local ranks wait.
-    is_leader = _is_local_leader()
+    # One global rank populates the shared cache; every other rank waits for the atomic publish.
+    is_leader = _is_global_leader()
     if not is_leader:
         timeout_s = 1800.0  # 30 min — covers ~1024-sample fits on cold caches
         start = time.monotonic()
@@ -147,15 +255,23 @@ def fit_fast_tokenizer(
     # Read v3 parquet shards directly to avoid split lookup failures and repeated metadata parsing.
     import pyarrow as _pa  # noqa: PLC0415
     import pyarrow.parquet as _pq  # noqa: PLC0415
-    from huggingface_hub import snapshot_download  # noqa: PLC0415
 
-    snap = Path(snapshot_download(repo_id=dataset_repo_id, repo_type="dataset"))
+    if dataset_root is not None:
+        snap = Path(dataset_root)
+    else:
+        from huggingface_hub import snapshot_download  # noqa: PLC0415
+
+        snap = Path(
+            snapshot_download(repo_id=dataset_repo_id, repo_type="dataset", revision=dataset_revision)
+        )
     data_files = sorted((snap / "data").glob("chunk-*/file-*.parquet"))
     if not data_files:
         raise RuntimeError(f"FAST fit: no ``data/chunk-*/file-*.parquet`` shards found under {snap!s}.")
 
-    # Load only episode indices and fixed-width actions across all shards.
-    tables = [_pq.read_table(f, columns=["episode_index", "action"]) for f in data_files]
+    columns = ["episode_index", "action"]
+    if use_relative_actions:
+        columns.append("observation.state")
+    tables = [_pq.read_table(f, columns=columns) for f in data_files]
     table = _pa.concat_tables(tables)
     eps = table["episode_index"].to_numpy()
     acts_col = table["action"]
@@ -167,6 +283,16 @@ def fit_fast_tokenizer(
         acts = np.asarray(acts_col.to_pylist(), dtype=np.float32)
     if acts.ndim != 2:
         raise RuntimeError(f"FAST fit: expected ``action`` rows to be 1-D vectors; got shape {acts.shape}.")
+    states = None
+    if use_relative_actions:
+        try:
+            states = np.stack(table["observation.state"].to_numpy(zero_copy_only=False)).astype(np.float32)
+        except Exception:  # noqa: BLE001
+            states = np.asarray(table["observation.state"].to_pylist(), dtype=np.float32)
+        if states.ndim != 2:
+            raise RuntimeError(
+                f"FAST fit: expected ``observation.state`` rows to be 1-D vectors; got {states.shape}."
+            )
 
     # Sort once because episode order is only guaranteed within each shard.
     order = np.argsort(eps, kind="stable")
@@ -181,12 +307,17 @@ def fit_fast_tokenizer(
     # ``acts`` is in original (un-sorted-by-episode) row order; reorder
     # so per-episode slices are contiguous.
     acts = acts[order]
+    if states is not None:
+        states = states[order]
 
-    samples_per_episode = max(1, n_samples // max(num_episodes, 1))
+    ep_indices = _select_episode_indices(list(ep_to_slice), episodes, exclude_episodes)
+    if not ep_indices:
+        raise RuntimeError("FAST fit: episode selection is empty after applying exclusions.")
+    samples_per_episode = max(1, n_samples // len(ep_indices))
     collected = 0
     eps_visited = 0
     short_episodes = 0
-    ep_indices = list(ep_to_slice.keys())
+    states_buf: list[np.ndarray] = []
     for ep_idx in rng.permutation(ep_indices):
         if collected >= n_samples:
             break
@@ -198,6 +329,8 @@ def fit_fast_tokenizer(
         starts = rng.integers(0, ep_actions.shape[0] - chunk_size + 1, size=samples_per_episode)
         for s in starts:
             actions_buf.append(ep_actions[int(s) : int(s) + chunk_size])
+            if states is not None:
+                states_buf.append(states[start + int(s)])
             collected += 1
             if collected >= n_samples:
                 break
@@ -213,6 +346,8 @@ def fit_fast_tokenizer(
         )
 
     actions = np.stack(actions_buf, axis=0).astype(np.float32)  # (N, H, D)
+    if states is not None:
+        actions = _apply_relative_actions(actions, np.stack(states_buf), relative_action_mask)
     logger.info(
         "FAST fit: collected %d chunks of shape %s from %d episodes",
         actions.shape[0],
@@ -220,12 +355,7 @@ def fit_fast_tokenizer(
         eps_visited,
     )
 
-    # Match training-time quantile normalization so FAST sees the same bounded action space.
-    flat = actions.reshape(-1, actions.shape[-1])
-    q01 = np.quantile(flat, 0.01, axis=0)
-    q99 = np.quantile(flat, 0.99, axis=0)
-    span = np.where((q99 - q01) > 1e-6, q99 - q01, 1.0)
-    actions = np.clip((actions - q01) / span * 2.0 - 1.0, -1.0, 1.0).astype(np.float32)
+    actions = _normalize_actions(actions, normalization_mode, action_stats)
 
     base = AutoProcessor.from_pretrained(base_tokenizer_name, trust_remote_code=True)
     if not hasattr(base, "fit"):
@@ -236,16 +366,41 @@ def fit_fast_tokenizer(
         )
 
     fitted = base.fit(actions)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    fitted.save_pretrained(str(out_dir))
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    staging_dir = cache_dir / f".{sig}.tmp-{os.getpid()}"
+    shutil.rmtree(staging_dir, ignore_errors=True)
+    fitted.save_pretrained(str(staging_dir))
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    staging_dir.replace(out_dir)
     logger.info("FAST fit: saved fitted tokenizer to %s", out_dir)
     return str(out_dir)
 
 
-def resolve_fast_tokenizer(config: Any, dataset_repo_id: str | None) -> str:
+def resolve_fast_tokenizer(
+    config: Any,
+    dataset_repo_id: str | None,
+    dataset_root: str | Path | None = None,
+    dataset_stats: dict | None = None,
+    dataset_revision: str | None = None,
+    episodes: list[int] | None = None,
+    exclude_episodes: list[int] | None = None,
+) -> str:
     """Return the configured tokenizer, fitting a cached dataset-specific one when requested."""
     if not getattr(config, "auto_fit_fast_tokenizer", False) or dataset_repo_id is None:
         return config.action_tokenizer_name
+
+    relative_action_mask = None
+    if getattr(config, "use_relative_actions", False):
+        action_names = getattr(config, "action_feature_names", None)
+        exclude_tokens = [
+            str(name).lower() for name in getattr(config, "relative_exclude_joints", []) if name
+        ]
+        if action_names is not None and exclude_tokens:
+            relative_action_mask = [
+                not any(token == str(name).lower() or token in str(name).lower() for token in exclude_tokens)
+                for name in action_names
+            ]
 
     return fit_fast_tokenizer(
         dataset_repo_id=dataset_repo_id,
@@ -253,4 +408,12 @@ def resolve_fast_tokenizer(config: Any, dataset_repo_id: str | None) -> str:
         base_tokenizer_name=config.action_tokenizer_name,
         n_samples=config.fast_tokenizer_fit_samples,
         chunk_size=config.chunk_size,
+        dataset_root=dataset_root,
+        dataset_revision=dataset_revision,
+        episodes=episodes,
+        exclude_episodes=exclude_episodes,
+        normalization_mode=config.normalization_mapping.get("ACTION", "QUANTILES"),
+        action_stats=(dataset_stats or {}).get("action"),
+        use_relative_actions=getattr(config, "use_relative_actions", False),
+        relative_action_mask=relative_action_mask,
     )

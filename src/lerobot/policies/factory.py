@@ -277,6 +277,10 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
     # Dataset repo used for optional processor fitting; omit it to use universal tokenizers.
     dataset_repo_id: str | None
+    dataset_root: str | None
+    dataset_revision: str | None
+    dataset_episodes: list[int] | None
+    dataset_exclude_episodes: list[int] | None
     dataset_meta: Any | None
 
 
@@ -322,7 +326,15 @@ def make_pre_post_processors(
         overrides = dict(kwargs.get("preprocessor_overrides") or {})
         action_tokenizer_override = {
             **overrides.get("action_tokenizer_processor", {}),
-            "action_tokenizer_name": resolve_fast_tokenizer(policy_cfg, kwargs.get("dataset_repo_id")),
+            "action_tokenizer_name": resolve_fast_tokenizer(
+                policy_cfg,
+                kwargs.get("dataset_repo_id"),
+                kwargs.get("dataset_root"),
+                kwargs.get("dataset_stats"),
+                kwargs.get("dataset_revision"),
+                kwargs.get("dataset_episodes"),
+                kwargs.get("dataset_exclude_episodes"),
+            ),
         }
         overrides["action_tokenizer_processor"] = action_tokenizer_override
         kwargs["preprocessor_overrides"] = overrides
@@ -435,6 +447,10 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
             dataset_repo_id=kwargs.get("dataset_repo_id"),
+            dataset_root=kwargs.get("dataset_root"),
+            dataset_revision=kwargs.get("dataset_revision"),
+            episodes=kwargs.get("dataset_episodes"),
+            exclude_episodes=kwargs.get("dataset_exclude_episodes"),
         )
 
     elif policy_cfg.type == "pi052":
@@ -446,6 +462,10 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
             # Without a dataset repo, FAST auto-fit falls back to the universal tokenizer.
             dataset_repo_id=kwargs.get("dataset_repo_id"),
+            dataset_root=kwargs.get("dataset_root"),
+            dataset_revision=kwargs.get("dataset_revision"),
+            episodes=kwargs.get("dataset_episodes"),
+            exclude_episodes=kwargs.get("dataset_exclude_episodes"),
         )
 
     elif isinstance(policy_cfg, PI05Config):

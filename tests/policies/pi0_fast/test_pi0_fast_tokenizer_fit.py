@@ -47,6 +47,14 @@ def test_pi0_fast_resolves_dataset_specific_tokenizer(monkeypatch, tmp_path):
         "base_tokenizer_name": "base-tokenizer",
         "n_samples": 17,
         "chunk_size": 12,
+        "dataset_root": None,
+        "dataset_revision": None,
+        "episodes": None,
+        "exclude_episodes": None,
+        "normalization_mode": config.normalization_mapping["ACTION"],
+        "action_stats": None,
+        "use_relative_actions": False,
+        "relative_action_mask": None,
     }
 
 
@@ -62,13 +70,13 @@ def test_fast_fit_failure_is_not_silently_replaced(monkeypatch, tmp_path):
         fit_module.resolve_fast_tokenizer(config, "user/dataset")
 
 
-def test_each_node_uses_its_local_rank_zero_as_fit_leader(monkeypatch):
+def test_only_global_rank_zero_fits_shared_tokenizer(monkeypatch):
     monkeypatch.setenv("RANK", "8")
     monkeypatch.setenv("LOCAL_RANK", "0")
-    assert fit_module._is_local_leader()
+    assert not fit_module._is_global_leader()
 
-    monkeypatch.setenv("LOCAL_RANK", "1")
-    assert not fit_module._is_local_leader()
+    monkeypatch.setenv("RANK", "0")
+    assert fit_module._is_global_leader()
 
 
 def test_pretrained_pi0_fast_overrides_only_fitted_tokenizer(monkeypatch):
@@ -78,7 +86,7 @@ def test_pretrained_pi0_fast_overrides_only_fitted_tokenizer(monkeypatch):
     monkeypatch.setattr(
         fit_module,
         "resolve_fast_tokenizer",
-        lambda config, dataset_repo_id: "/cache/fitted-tokenizer",
+        lambda config, dataset_repo_id, *args: "/cache/fitted-tokenizer",
     )
 
     def fake_from_pretrained(cls, *args, **kwargs):

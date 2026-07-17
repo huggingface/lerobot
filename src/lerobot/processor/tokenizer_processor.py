@@ -350,6 +350,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
     max_action_tokens: int = 256
     fast_skip_tokens: int = 128
     paligemma_tokenizer_name: str = "google/paligemma-3b-pt-224"
+    allow_truncation: bool = True
     # Internal tokenizer instance (not part of the config)
     action_tokenizer: Any = field(default=None, init=False, repr=False)
     _paligemma_tokenizer: Any = field(default=None, init=False, repr=False)
@@ -502,6 +503,11 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
 
             # Truncate or pad to max_action_tokens
             if len(tokens) > self.max_action_tokens:
+                if not self.allow_truncation:
+                    raise ValueError(
+                        f"FAST action sequence has {len(tokens)} tokens, exceeding "
+                        f"max_action_tokens={self.max_action_tokens}."
+                    )
                 logging.warning(
                     f"Token length ({len(tokens)}) exceeds max length ({self.max_action_tokens}), truncating. "
                     "Consider increasing the `max_action_tokens` in your model config if this happens frequently."
@@ -567,6 +573,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             "max_action_tokens": self.max_action_tokens,
             "fast_skip_tokens": self.fast_skip_tokens,
             "paligemma_tokenizer_name": self.paligemma_tokenizer_name,
+            "allow_truncation": self.allow_truncation,
         }
 
         # Only save tokenizer_name if it was used to create the tokenizer

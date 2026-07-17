@@ -53,6 +53,10 @@ def make_pi052_pre_post_processors(
     config: PI052Config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     dataset_repo_id: str | None = None,
+    dataset_root: str | None = None,
+    dataset_revision: str | None = None,
+    episodes: list[int] | None = None,
+    exclude_episodes: list[int] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -62,6 +66,8 @@ def make_pi052_pre_post_processors(
     Falls through to π0.5's stock pipeline when ``recipe_path`` is unset.
     """
     if not config.recipe_path:
+        if getattr(config, "enable_fast_action_loss", False):
+            raise ValueError("PI052 FAST action loss requires recipe_path to build action supervision.")
         return make_pi05_pre_post_processors(config, dataset_stats=dataset_stats)
 
     recipe = _load_recipe(config.recipe_path)
@@ -97,10 +103,19 @@ def make_pi052_pre_post_processors(
 
         input_steps.append(
             ActionTokenizerProcessorStep(
-                action_tokenizer_name=resolve_fast_tokenizer(config, dataset_repo_id),
+                action_tokenizer_name=resolve_fast_tokenizer(
+                    config,
+                    dataset_repo_id,
+                    dataset_root,
+                    dataset_stats,
+                    dataset_revision,
+                    episodes,
+                    exclude_episodes,
+                ),
                 max_action_tokens=config.max_action_tokens,
                 fast_skip_tokens=config.fast_skip_tokens,
                 paligemma_tokenizer_name="google/paligemma-3b-pt-224",
+                allow_truncation=False,
             )
         )
 
