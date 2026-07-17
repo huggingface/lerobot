@@ -8,20 +8,13 @@ import numpy as np
 import pandas as pd
 
 import so_arm_frame
-from classify import classify, load_info
+from classify import classify
 
 VALUE_COLS = ("observation.state", "action")
 
 
 def _stack(col_values) -> np.ndarray:
     return np.stack([np.asarray(v, dtype=np.float64) for v in col_values])  # (N, D)
-
-
-def _set_robot_type(root: Path, robot_type: str) -> None:
-    info_path = root / "meta" / "info.json"
-    info = json.loads(info_path.read_text())
-    info["robot_type"] = robot_type
-    info_path.write_text(json.dumps(info, indent=4))
 
 
 def _rewrite_parquet(root: Path, encoding: str) -> None:
@@ -85,18 +78,6 @@ def fix_dataset_in_place(root) -> dict:
         return {**cls, "converted": False,
                 "action": "structural v2.1->v3.0 only; joint values kept in normalized units "
                           "(-100..100 / 0..100), NOT converted to degrees (uncalibrated -> APPROXIMATE)"}
-    feats = load_info(root).get("features", {})
-    dims = [feats[c]["shape"][0] for c in VALUE_COLS if c in feats and feats[c].get("shape")]
-    if any(d % 6 != 0 for d in dims):
-        # Not a plain stack of 6-joint SO arms (e.g. a 7-joint variant): the degrees mapping
-        # doesn't apply. Keep the original robot_type but flag it '_nonstandard' so the SO
-        # lineage is preserved while making clear it isn't a canonical 6-DOF arm.
-        rt = cls.get("robot_type") or "so"
-        new_rt = rt if rt.endswith("_nonstandard") else f"{rt}_nonstandard"
-        _set_robot_type(root, new_rt)
-        return {**cls, "robot_type": new_rt, "converted": False,
-                "action": f"structural v2.1->v3.0 only; joint dims {dims} not a multiple of 6 "
-                          f"(non-standard arm), robot_type set to '{new_rt}', joint values left unchanged"}
     # drop stray files that would otherwise be uploaded
     for junk in (root / "meta").glob("info.json.bak"):
         junk.unlink()

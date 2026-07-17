@@ -16,7 +16,7 @@ from pathlib import Path
 from huggingface_hub import HfApi
 
 import so_arm_frame
-from classify import classify, is_end_effector, load_info
+from classify import classify, is_end_effector, is_so_robot_type, load_info
 from fix_dataset import fix_dataset_in_place
 
 SRC_REPO = "HuggingFaceVLA/community_dataset_v3"
@@ -168,6 +168,14 @@ def migrate_one(api, dst_repo, sub, work_dir, no_upload) -> dict:
     if is_end_effector(info):
         return {"root": sub, "robot_type": info.get("robot_type"),
                 "action": "skipped: end-effector (task-space) dataset, out of scope"}
+    feats = info.get("features", {})
+    dims = [feats[c]["shape"][0] for c in ("action", "observation.state") if feats.get(c, {}).get("shape")]
+    if is_so_robot_type(info.get("robot_type", "") or "") and any(d % 6 != 0 for d in dims):
+        # We only migrate datasets usable right away by specifying joints: a clean stack of
+        # 6-DOF SO arms. Extra appended columns (bbox, EE pose, ...) push the dim off a
+        # multiple of 6 and mean the degrees mapping doesn't cleanly apply -> out of scope.
+        return {"root": sub, "robot_type": info.get("robot_type"),
+                "action": f"skipped: non-standard SO arm (joint dims {dims} not a multiple of 6), out of scope"}
 
     result = fix_dataset_in_place(local)          # SO-arm value fix (or structural_only)
 
