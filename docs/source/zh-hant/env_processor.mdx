@@ -403,7 +403,7 @@ class CoordinateTransformPostprocessor(ProcessorStep):
 
 1. **保持環境簡單（keep environment processors simple）**：它們應該只處理環境特定的資料格式（environment-specific data format）問題，而非複雜的學習相關轉換（learning-related transformations）。
 
-2. **使用策略處理器處理模型需求（use policy processors for model requirements）**：正規化（normalization）、批次化（batching）、裝置放置（device placement）與分詞（tokenization）都應歸屬於策略處理器（policy processor）。
+2. **使用策略處理器處理模型需求（use policy processors for model requirements）**：正規化（normalization）、批次化（batching）、裝置放置（device placement）與 tokenization 都應歸屬於策略處理器（policy processor）。
 
 3. **從環境公開所有資料（expose all data from environments）**：讓處理器（processor）決定要使用哪些，而非在環境中硬編碼（hardcoding）這些選擇。
 

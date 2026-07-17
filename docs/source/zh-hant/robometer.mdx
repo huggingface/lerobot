@@ -133,7 +133,7 @@ preprocessor, postprocessor = make_reward_pre_post_processors(cfg)
 
 ### 骨幹與詞彙表（backbone and vocabulary）
 
-已發布的檢查點（checkpoint）使用 Qwen3-VL-4B 骨幹（backbone）。ROBOMETER 以固定順序（fixed order）在分詞器（tokenizer） 中新增五個特殊標記（token）：
+已發布的檢查點（checkpoint）使用 Qwen3-VL-4B 骨幹（backbone）。ROBOMETER 以固定順序（fixed order）在 tokenizer 中新增五個特殊 token：
 
 ```text
 <|split_token|>
@@ -145,7 +145,7 @@ preprocessor, postprocessor = make_reward_pre_post_processors(cfg)
 
 `<|prog_token|>` 會被插入到每個影格（frame）之後，是用於每個影格進度與成功預測（per-frame progress and success prediction）的隱藏狀態位置（hidden-state position）。`<|split_token|>` 與 `<|pref_token|>` 被論文的成對軌跡偏好目標（trajectory preference objective）所使用。`<|reward_token|>` 與 `<|sim_token|>` 為了檢查點相容性（checkpoint compatibility）而被保留。
 
-LeRobot 設定會儲存一份帶有調整大小後詞彙表（post-resize vocabulary）的序列化（serialized） `vlm_config`，使模型（model）能從 `config.json` 重新載入，而無需先下載基礎的 Qwen 權重（weights）。對於 `Qwen/Qwen3-VL-4B-Instruct`，分詞器（tokenizer） 長度為 `151669`，而這五個 ROBOMETER 標記（token）產生了檢查點詞彙表（checkpoint vocabulary）大小 `151674`。
+LeRobot 設定會儲存一份帶有調整大小後詞彙表（post-resize vocabulary）的序列化（serialized） `vlm_config`，使模型（model）能從 `config.json` 重新載入，而無需先下載基礎的 Qwen 權重（weights）。對於 `Qwen/Qwen3-VL-4B-Instruct`，tokenizer 長度為 `151669`，而這五個 ROBOMETER token 產生了檢查點詞彙表（checkpoint vocabulary）大小 `151674`。
 
 ### 進度預測（progress prediction）
 
