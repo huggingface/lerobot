@@ -1285,6 +1285,66 @@ def apply_joystick_axes(lx, ly, rx, ry, ms, controller=None):
         ms.height = max(0.1, min(1.0, (ms.height if ms.height >= 0 else DEFAULT_HEIGHT) + step))
 
 
+# gear_sonic PlannerLoop joystick constants (pico_manager_thread_server).
+PICO_YAW_GAIN = 1.5  # rad/s of facing rotation at full right-stick deflection
+PICO_JOY_DEADZONE = 0.15  # gear_sonic JOYSTICK_DEADZONE (distinct from the remote's)
+
+
+def apply_pico_loco_axes(lx, ly, rx, ry, ms, dt=CONTROL_DT):
+    """Map PICO controller sticks onto ``MovementState`` — the gear_sonic 3-point path.
+
+    Ports ``pico_manager_thread_server.PlannerLoop`` (encode_mode 1) rather than the
+    keyboard/remote-parity :func:`apply_joystick_axes`, so speed follows gear_sonic's
+    mode-dependent curves and facing comes from a yaw accumulator:
+
+    - Right stick X -> yaw accumulator (``+= PICO_YAW_GAIN * -rx * dt``), dead-zoned.
+    - Left stick -> magnitude ``mag`` (dead-zone-rescaled to 0..1) driving a
+      *mode-dependent* speed curve (slow ``0.1+0.5·mag``, run ``1.5+3·mag``, walk =
+      default), and a facing-rotated global movement vector -> ``movement_angle``.
+
+    Signs replicate gear_sonic's ``get_controller_axes`` usage exactly (forward = +ly,
+    strafe = -lx, turn = -rx), which resolves the PICO axis-sign question: because the
+    publisher forwards the same raw SDK axes gear_sonic reads, matching its sign usage
+    is by definition the correct mapping. ``ms.speed`` is later re-clamped into each
+    mode's valid range by :func:`clamp_mode_params`.
+    """
+    lx, ly, rx, ry = float(lx), float(ly), float(rx), float(ry)
+
+    # Facing: gear_sonic YawAccumulator — integrate only outside the dead zone.
+    if abs(rx) >= PICO_JOY_DEADZONE:
+        ms.facing_angle += PICO_YAW_GAIN * (-rx) * dt
+
+    raw_mag = min(1.0, math.hypot(lx, ly))
+    if raw_mag < PICO_JOY_DEADZONE:
+        ms.has_movement = False
+        ms.speed = -1.0
+        ms.joy_prev_active = False
+        return
+
+    mag = min(1.0, (raw_mag - PICO_JOY_DEADZONE) / (1.0 - PICO_JOY_DEADZONE))
+    m = LM(ms.mode)
+    if m == LM.SLOW_WALK:
+        ms.speed = 0.1 + 0.5 * mag  # 0.1 .. 0.6
+    elif m == LM.WALK:
+        ms.speed = -1.0  # planner default
+    elif m == LM.RUN:
+        ms.speed = 1.5 + 3.0 * mag  # 1.5 .. 4.5
+    else:
+        ms.speed = mag
+
+    # Facing-rotated movement vector: rotation_facing @ [-lx, ly] * scale.
+    scale = mag / raw_mag
+    mlx, mly = -lx * scale, ly * scale
+    fx, fy = math.cos(ms.facing_angle), math.sin(ms.facing_angle)
+    gx = -fy * mlx + fx * mly
+    gy = fx * mlx + fy * mly
+    if not ms.joy_prev_active:
+        ms.needs_replan = True
+    ms.has_movement = True
+    ms.joy_prev_active = True
+    ms.movement_angle = math.atan2(gy, gx)
+
+
 def process_joystick(obs, ms, controller=None):
     """Drive ``MovementState`` from the G1 wireless remote in ``obs``."""
     wr = obs.get("wireless_remote")

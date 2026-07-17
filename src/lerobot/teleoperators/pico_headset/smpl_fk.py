@@ -355,11 +355,28 @@ def compute_3point_from_devices(
 
 
 # ── operator calibration for the 3-point targets ────────────────────────────
-# G1 neutral (zero-q) key-frame targets, pelvis-relative [x, y, z] in metres, from
-# MuJoCo FK on g1_29dof with gear_sonic's local offsets (wrists +0.18x ∓0.025y,
-# torso +0.35z). These are the poses the operator's rest pose is mapped onto so the
-# robot starts at its neutral stance. Orientations are identity at neutral.
-_G1_NEUTRAL_WRIST_POS = np.array([[0.3798, 0.1237, 0.0952], [0.3798, -0.1237, 0.0952]], np.float64)
+# G1 neutral key-frame targets, pelvis-relative [x, y, z] in metres, from MuJoCo FK on
+# g1_29dof at the robot's *standing* configuration (``default_angles`` — the pose the
+# robot actually holds at calibration time), with gear_sonic's local key-frame offsets
+# (``G1_KEY_FRAME_OFFSETS``: wrists +0.18x ∓0.025y, torso +0.35z). These are the poses
+# the operator's rest pose is mapped onto so the handoff starts at the robot's neutral
+# stance. This is the fixed-``default_angles`` stand-in for gear_sonic's
+# ``get_g1_key_frame_poses(q=measured_q)`` (see :meth:`ThreePointCalibrator.capture`):
+# since the robot stands at ``default_angles`` after the startup ramp, its measured q
+# equals this configuration, so these constants are the measured-q targets for the
+# nominal case. (Per-frame *live* measured q would need a reverse controller->publisher
+# feedback channel; not wired.)
+_G1_NEUTRAL_WRIST_POS = np.array(
+    [[0.2232, 0.2177, -0.1555], [0.2232, -0.2177, -0.1555]], np.float64
+)
+# Wrist neutral orientations (scalar-first w, x, y, z) at ``default_angles`` — NOT
+# identity: the wrists are rolled/pitched in the standing pose. Matches gear_sonic
+# using ``g1_lwrist_rot`` / ``g1_rwrist_rot`` from FK (not identity) as the rotation
+# calibration reference.
+_G1_NEUTRAL_WRIST_ROT = [
+    R.from_quat([0.9168, 0.0897, 0.3864, 0.0463], scalar_first=True),  # left
+    R.from_quat([0.9168, -0.0897, 0.3864, -0.0463], scalar_first=True),  # right
+]
 # Neck reconstruction chain (mirrors ThreePointPose._apply_calibration): torso link
 # +0.05 z, then +0.35 along the neck's local Z.
 _NECK_TORSO_OFFSET_Z = 0.05
@@ -387,15 +404,31 @@ class ThreePointCalibrator:
 
     @property
     def is_calibrated(self) -> bool:
-        return self._neck_quat_inv is not None
+        return self._neck_quat_inv is not None and self._wrist_pos_offset is not None
 
     def reset(self) -> None:
         self._neck_quat_inv = None
         self._wrist_pos_offset = None
         self._wrist_rot_offset = []
 
+    def recalibrate_wrists(self) -> None:
+        """Clear only the wrist offsets, preserving the neck calibration.
+
+        Mirrors gear_sonic ``ThreePointPose.reset_with_measured_q``: the next
+        :meth:`capture` recomputes the wrist offsets (against the G1 neutral targets)
+        while keeping the already-captured neck orientation, so re-aligning the arms
+        doesn't force the operator to re-level their head.
+        """
+        self._wrist_pos_offset = None
+        self._wrist_rot_offset = []
+
     def capture(self, pos: np.ndarray, orn: np.ndarray) -> None:
         """Capture calibration offsets from a neutral-pose frame.
+
+        Neck calibration is captured once and then preserved across subsequent
+        captures (matching gear_sonic's ``if self._calibration_neck_quat_inv is
+        None``); call :meth:`reset` to clear it or :meth:`recalibrate_wrists` to
+        re-align only the arms.
 
         Args:
             pos: (9,) root-relative ``[x, y, z]`` for [l-wrist, r-wrist, head].
@@ -403,8 +436,9 @@ class ThreePointCalibrator:
         """
         pos = np.asarray(pos, np.float64).reshape(3, 3)
         orn = np.asarray(orn, np.float64).reshape(3, 4)
-        neck_rot = R.from_quat(orn[2], scalar_first=True)
-        neck_inv = neck_rot.inv()
+        if self._neck_quat_inv is None:
+            self._neck_quat_inv = R.from_quat(orn[2], scalar_first=True).inv()
+        neck_inv = self._neck_quat_inv
 
         self._wrist_pos_offset = np.zeros((2, 3), np.float64)
         self._wrist_rot_offset = []
@@ -412,15 +446,16 @@ class ThreePointCalibrator:
             corrected_pos = neck_inv.apply(pos[k])
             corrected_rot = neck_inv * R.from_quat(orn[k], scalar_first=True)
             self._wrist_pos_offset[k] = corrected_pos - _G1_NEUTRAL_WRIST_POS[k]
-            self._wrist_rot_offset.append(corrected_rot.inv())  # g1 neutral rot = identity
-        self._neck_quat_inv = neck_inv
+            # rot_offset maps the corrected rest orientation onto the G1 neutral wrist
+            # orientation: calibrated = rot_offset * (neck_inv * current).
+            self._wrist_rot_offset.append(_G1_NEUTRAL_WRIST_ROT[k] * corrected_rot.inv())
 
     def apply(self, pos: np.ndarray, orn: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Apply the stored calibration; returns calibrated ``(pos (9,), orn (12,))``.
 
         A no-op (returns the inputs unchanged) until :meth:`capture` has been called.
         """
-        if self._neck_quat_inv is None:
+        if self._neck_quat_inv is None or self._wrist_pos_offset is None:
             return (
                 np.asarray(pos, np.float32).reshape(-1),
                 np.asarray(orn, np.float32).reshape(-1),

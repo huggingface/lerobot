@@ -53,7 +53,7 @@ from .sonic_pipeline import (
     MovementState,
     PlannerController,
     SonicPlanner,
-    apply_joystick_axes,
+    apply_pico_loco_axes,
     clamp_mode_params,
     compute_kp_kd,
     make_ort_session_options,
@@ -240,6 +240,7 @@ class SonicWholeBodyController:
         force_cpu: bool = False,
         *,
         enable_smpl_root: bool = False,
+        root_smoothing_alpha: float = 0.15,
         enable_smpl_stream: bool = False,
         smpl_host: str | None = None,
         smpl_port: int | None = None,
@@ -252,10 +253,16 @@ class SonicWholeBodyController:
         self.ms = self._runtime.ms
 
         # When True, the per-frame SMPL root quaternion steers the mode-2 anchor.
-        # Off by default: feeding it currently produces root-acceleration spikes
-        # (NaN QACC at DOF 0) until the reference root trajectory is smoothed and
-        # rate-matched (30 Hz dataset -> 50 Hz control).
+        # Off by default: even with smoothing this changes the anchor/heading and is
+        # untested on hardware, so it stays opt-in. When enabled, the raw per-frame
+        # root quat (from a 30 Hz dataset resampled to a 50 Hz loop) is spherically
+        # smoothed by :meth:`_smooth_root_quat` before it reaches the anchor, which
+        # removes the root-acceleration spikes (NaN QACC at DOF 0) the unsmoothed
+        # trajectory caused. ``root_smoothing_alpha`` in (0, 1] is the per-tick blend
+        # toward the incoming quat (smaller = smoother/laggier, 1 = no smoothing).
         self.enable_smpl_root = enable_smpl_root
+        self._root_smoothing_alpha = float(np.clip(root_smoothing_alpha, 1e-3, 1.0))
+        self._smoothed_root_quat: np.ndarray | None = None
 
         # Tracks the previous keyboard held-key set so discrete controls (mode,
         # motion set, replan, e-stop, WASD direction) fire once per physical press
@@ -413,12 +420,12 @@ class SonicWholeBodyController:
         """Drive locomotion from the PICO controller sticks/buttons (encode_mode 1).
 
         Mirrors gear_sonic's ``PlannerLoop`` VR-3PT tick: left/right sticks steer
-        movement/facing/height (via the shared :func:`apply_joystick_axes`, identical
-        to the G1 remote), and A+B / X+Y edge-cycle the locomotion mode within the
-        current motion set.
+        movement/facing/speed via :func:`apply_pico_loco_axes` (the faithful gear_sonic
+        yaw-accumulator + mode-dependent speed curves, not the keyboard-parity map), and
+        A+B / X+Y edge-cycle the locomotion mode within the current motion set.
         """
         lx, ly, rx, ry = (float(v) for v in axes)
-        apply_joystick_axes(lx, ly, rx, ry, self.ms, self.controller)
+        apply_pico_loco_axes(lx, ly, rx, ry, self.ms)
 
         # Mode cycling: step linearly through the LocomotionMode enum (A+B = next,
         # X+Y = previous), exactly like gear_sonic's PlannerLoop — so the operator can
@@ -437,6 +444,34 @@ class SonicWholeBodyController:
             self.controller.playing = True
             logger.info("SONIC 3-point: locomotion mode -> %s", LM(self.ms.mode).name)
         self._prev_loco_mode_pair = (ab_now, xy_now)
+
+    def _smooth_root_quat(self, root_quat: np.ndarray | None) -> np.ndarray | None:
+        """Spherically smooth the per-frame SMPL root quaternion (mode-2 anchor).
+
+        The reference root trajectory is authored at ~30 Hz and consumed at 50 Hz, so
+        the raw per-tick quat steps unevenly and injects root-acceleration spikes into
+        the anchor. This keeps a persistent estimate and shortest-path nlerp-slerps it
+        toward each incoming (unit) quat by ``root_smoothing_alpha``, yielding a
+        continuous, rate-matched heading. Quaternions are scalar-first (w, x, y, z).
+        Returns ``None`` (leaving the anchor self-driven) for an invalid/zero input.
+        """
+        if root_quat is None:
+            self._smoothed_root_quat = None
+            return None
+        q = np.asarray(root_quat, np.float64)
+        n = np.linalg.norm(q)
+        if n < 1e-8:
+            return self._smoothed_root_quat
+        q = q / n
+        if self._smoothed_root_quat is None:
+            self._smoothed_root_quat = q
+        else:
+            prev = self._smoothed_root_quat
+            if np.dot(prev, q) < 0.0:  # shortest-path: quats double-cover SO(3)
+                q = -q
+            blended = prev + self._root_smoothing_alpha * (q - prev)
+            self._smoothed_root_quat = blended / (np.linalg.norm(blended) + 1e-12)
+        return self._smoothed_root_quat.astype(np.float32)
 
     def _startup_blend(self, obs: dict, out: dict) -> dict:
         """Ease into policy control at startup: for the first ``INIT_RAMP_S`` seconds,
@@ -500,10 +535,12 @@ class SonicWholeBodyController:
                 self._enter_wholebody()
             self.controller.smpl_joints_10frame_step1 = smpl
             # Root orientation steers the mode-2 anchor/heading, but only when
-            # explicitly enabled (see enable_smpl_root); otherwise the anchor stays
-            # self-driven to avoid root-acceleration spikes from an unsmoothed
-            # reference trajectory.
-            self.controller.smpl_root_quat = root_quat if self.enable_smpl_root else None
+            # explicitly enabled (see enable_smpl_root); the raw per-frame quat is
+            # spherically smoothed first so the 30->50 Hz resample doesn't spike the
+            # anchor. Disabled -> anchor stays self-driven.
+            self.controller.smpl_root_quat = (
+                self._smooth_root_quat(root_quat) if self.enable_smpl_root else None
+            )
             out = self._runtime.tick(obs, debug=False, use_joystick=False)
         elif vr3 is not None:
             # 3-point VR teleop: upper body tracks the wrist/neck targets; the lower
@@ -525,6 +562,7 @@ class SonicWholeBodyController:
             # No (or stale) teleop reference: fall back to locomotion so the robot stays balanced.
             if self.controller.encode_mode != 0:
                 self.controller.smpl_root_quat = None
+                self._smoothed_root_quat = None
                 self._exit_wholebody()
             out = self._runtime.tick(obs, debug=False)
 
@@ -536,6 +574,7 @@ class SonicWholeBodyController:
         self._runtime.reset()
         self._init_step = 0  # re-run the startup blend after a reset
         self._start_pose = {}
+        self._smoothed_root_quat = None
 
     def shutdown(self):
         if self._smpl_stream is not None:
