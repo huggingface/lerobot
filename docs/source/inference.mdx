@@ -43,7 +43,7 @@ lerobot-rollout \
 | ---------------- | ------------------------------------------------------ |
 | `--duration`     | Run time in seconds (0 = infinite)                     |
 | `--task`         | Task description passed to the policy                  |
-| `--display_data` | Stream observations/actions to Rerun for visualization |
+| `--display_data` | Stream observations/actions to the visualization backend (`--display_mode`; add `--display_extra_data` for a policy's imagined predictions) |
 
 ### Sentry (`--strategy.type=sentry`)
 
@@ -251,9 +251,12 @@ See the [Real-Time Chunking](./rtc) guide for details on tuning RTC parameters.
 | `--duration`                      | Run time in seconds (0 = infinite)                                | 0       |
 | `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                               | auto    |
 | `--task`                          | Task description (used when no dataset is provided)               | --      |
-| `--display_data`                  | Stream telemetry to Rerun visualization                           | false   |
-| `--display_ip` / `--display_port` | Remote Rerun server address                                       | --      |
-| `--interpolation_multiplier`      | Action interpolation factor                                       | 1       |
+| `--display_data`                  | Stream telemetry to the visualization backend                     | false   |
+| `--display_mode`                  | Visualization backend: `rerun` or `foxglove`                      | rerun   |
+| `--display_extra_data`            | Also stream a policy's intermediate predictions (e.g. a world model's imagined video) on a dedicated channel; implies `--display_data`, sync inference only | false   |
+| `--display_compressed_images`     | JPEG-compress images before streaming (less bandwidth, more CPU)  | false   |
+| `--display_ip` / `--display_port` | Remote Rerun server address (or bind interface/port for foxglove) | --      |
+| `--interpolation_multiplier`      | Action interpolation factor (upsamples the control rate)          | 1       |
 | `--use_torch_compile`             | Enable `torch.compile` for inference                              | false   |
 | `--resume`                        | Resume a previous recording session                               | false   |
 | `--play_sounds`                   | Vocal synthesis for events                                        | true    |
