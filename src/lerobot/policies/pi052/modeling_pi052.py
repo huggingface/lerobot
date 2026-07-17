@@ -36,6 +36,8 @@ from ..pi05.modeling_pi05 import (
     ActionSelectKwargs,
     PI05Policy,
     PI05Pytorch as PI05PytorchBase,
+    _build_flow_matching_inputs,
+    _sample_training_rtc_prefix_mask,
     make_att_2d_masks,
 )
 from .configuration_pi052 import PI052Config
@@ -175,43 +177,6 @@ def _enable_hf_kernels() -> None:
     )
     _HF_KERNELS_ENABLED = True
     logger.info("PI052: HF kernels (Liger) enabled — rope, geglu fused.")
-
-
-def _sample_training_rtc_prefix_mask(
-    batch_size: int,
-    action_horizon: int,
-    max_delay: int,
-    device: torch.device,
-) -> Tensor | None:
-    """Sample per-draw clean prefixes for training-time RTC."""
-    if max_delay <= 0:
-        return None
-    delays = torch.randint(0, max_delay + 1, (batch_size,), device=device)
-    positions = torch.arange(action_horizon, device=device)
-    return positions.unsqueeze(0) < delays.unsqueeze(1)
-
-
-def _build_flow_matching_inputs(
-    actions: Tensor,
-    noise: Tensor,
-    time: Tensor,
-    prefix_mask: Tensor | None,
-) -> tuple[Tensor, Tensor]:
-    """Build noisy actions and scalar/per-token flow times.
-
-    LeRobot's PI0.5 flow uses ``t=0`` for clean data and ``t=1`` for
-    noise, the reverse of the notation in arXiv:2512.05964. Consequently,
-    clean RTC prefix tokens receive ``t=0`` here.
-    """
-    if prefix_mask is None:
-        model_time = time
-        expanded_time = time[:, None, None]
-    else:
-        model_time = time[:, None].expand_as(prefix_mask)
-        model_time = torch.where(prefix_mask, torch.zeros_like(model_time), model_time)
-        expanded_time = model_time.unsqueeze(-1)
-    x_t = expanded_time * noise + (1 - expanded_time) * actions
-    return x_t, model_time
 
 
 def _flow_loss_components(flow_per_dim: Tensor, prefix_mask: Tensor | None) -> tuple[Tensor, Tensor]:

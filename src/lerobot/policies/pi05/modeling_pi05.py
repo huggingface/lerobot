@@ -1066,7 +1066,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 training_max_delay = int(getattr(self.config, "rtc_training_max_delay", 0))
                 if training_max_delay <= 0:
                     raise ValueError(
-                        "RTC mode='trained' requires a Pi052 checkpoint trained with "
+                        "RTC mode='trained' requires a checkpoint trained with "
                         "policy.rtc_training_max_delay > 0."
                     )
                 trained_prefix, trained_prefix_mask = _prepare_trained_rtc_prefix(

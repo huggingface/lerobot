@@ -16,13 +16,13 @@ from torch import nn
 pytest.importorskip("transformers")
 
 from lerobot.policies.pi05.modeling_pi05 import (  # noqa: E402
+    _build_flow_matching_inputs,
     _prepare_trained_rtc_prefix,
     create_sinusoidal_pos_embedding,
 )
 from lerobot.policies.pi052.configuration_pi052 import PI052Config  # noqa: E402
 from lerobot.policies.pi052.modeling_pi052 import (  # noqa: E402
     PI05Pytorch as PI052Pytorch,
-    _build_flow_matching_inputs,
     _flow_loss_per_sample,
     _reduce_flow_loss,
 )
