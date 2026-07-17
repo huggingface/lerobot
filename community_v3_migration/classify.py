@@ -25,6 +25,9 @@ def is_so_robot_type(rt: str) -> bool:
     return bool(rt) and (rt.startswith(SO_PREFIXES) or rt in SO_EXACT) and rt not in NEVER_FIX
 
 
+SO_JOINTS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
+
+
 def is_end_effector(info: dict) -> bool:
     """True if action/observation.state are task-space end-effector features (e.g. ``ee_x``,
     ``ee_roll``) rather than joint angles. Such datasets are out of scope for the joint fix."""
@@ -34,6 +37,22 @@ def is_end_effector(info: dict) -> bool:
         if any(n.startswith("ee_") or "end_effector" in n or "eef" in n for n in names):
             return True
         if {"x", "y", "z"} <= set(names):
+            return True
+    return False
+
+
+def is_mislabeled_so(info: dict) -> bool:
+    """True when ``robot_type`` claims SO but the features prove it isn't a standard 6-DOF SO arm:
+    the joint dim isn't a multiple of 6, or (when names are present) the first 6 joints don't match
+    the canonical SO set. Such datasets keep their joints untouched and are relabeled 'unknown'
+    rather than being degrees-converted on a wrong assumption."""
+    feats = info.get("features", {})
+    dims = [feats[c]["shape"][0] for c in ("action", "observation.state") if feats.get(c, {}).get("shape")]
+    if any(d % 6 != 0 for d in dims):
+        return True
+    for key in ("action", "observation.state"):
+        names = [str(n).lower() for n in (feats.get(key, {}).get("names") or [])]
+        if len(names) >= 6 and not all(SO_JOINTS[i] in names[i] for i in range(6)):
             return True
     return False
 
@@ -105,6 +124,10 @@ def classify(root) -> dict:
     if is_end_effector(info):
         return {**out, "is_so": False, "encoding": "end_effector",
                 "note": "task-space end-effector features"}
+
+    if is_so_robot_type(rt) and is_mislabeled_so(info):
+        return {**out, "is_so": False, "encoding": "non_so", "mislabeled_so": True,
+                "note": "robot_type claims SO but joint dim/names don't match a 6-DOF SO arm"}
 
     is_so = is_so_robot_type(rt)
     if not is_so:

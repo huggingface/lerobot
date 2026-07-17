@@ -17,6 +17,13 @@ def _stack(col_values) -> np.ndarray:
     return np.stack([np.asarray(v, dtype=np.float64) for v in col_values])  # (N, D)
 
 
+def _set_robot_type(root: Path, robot_type: str) -> None:
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["robot_type"] = robot_type
+    info_path.write_text(json.dumps(info, indent=4))
+
+
 def _rewrite_parquet(root: Path, encoding: str) -> None:
     for pq in sorted((root / "data").glob("*/*.parquet")):
         df = pd.read_parquet(pq)
@@ -62,6 +69,14 @@ def fix_dataset_in_place(root) -> dict:
     """Returns the classification dict augmented with the action taken."""
     root = Path(root)
     cls = classify(root)
+    if cls.get("mislabeled_so"):
+        # robot_type claims SO but the joints prove otherwise (wrong dim or non-SO names).
+        # Relabel to 'unknown' and migrate structurally rather than degrees-converting on a
+        # false assumption; the joint values are left exactly as recorded.
+        _set_robot_type(root, "unknown")
+        return {**cls, "robot_type": "unknown", "converted": False,
+                "action": f"structural v2.1->v3.0 only; robot_type relabeled '{cls.get('robot_type')}'"
+                          "->'unknown' (joints don't match a 6-DOF SO arm), joint values left unchanged"}
     enc = cls.get("encoding")
     if not cls.get("is_so") or enc in ("radians", "unknown", "non_so"):
         reason = {
