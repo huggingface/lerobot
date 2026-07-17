@@ -28,7 +28,7 @@ import numpy as np
 import torch
 from gymnasium import spaces
 
-from lerobot.types import RobotObservation
+from lerobot.robot_types import RobotObservation
 from lerobot.utils.import_utils import _scipy_available
 
 from .utils import _LazyAsyncVectorEnv

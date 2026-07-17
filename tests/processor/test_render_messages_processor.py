@@ -9,7 +9,7 @@ import torch  # noqa: E402
 from lerobot.configs.recipe import MessageTurn, TrainingRecipe  # noqa: E402
 from lerobot.processor.converters import create_transition  # noqa: E402
 from lerobot.processor.render_messages_processor import RenderMessagesStep  # noqa: E402
-from lerobot.types import TransitionKey  # noqa: E402
+from lerobot.robot_types import TransitionKey  # noqa: E402
 
 
 def test_render_messages_step_noops_without_language_columns():

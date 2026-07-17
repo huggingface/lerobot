@@ -58,7 +58,7 @@ from lerobot.processor import (
     policy_action_to_transition,
     transition_to_policy_action,
 )
-from lerobot.types import EnvTransition, PolicyAction, TransitionKey
+from lerobot.robot_types import EnvTransition, PolicyAction, TransitionKey
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 from .configuration_sarm import SARMConfig

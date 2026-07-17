@@ -60,7 +60,7 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
 from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
 from lerobot.rewards.robometer.processor_robometer import RobometerEncoderProcessorStep
-from lerobot.types import TransitionKey
+from lerobot.robot_types import TransitionKey
 
 DEFAULT_OUTPUT_FILENAME = "robometer_progress.parquet"
 

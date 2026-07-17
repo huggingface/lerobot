@@ -29,7 +29,7 @@ from lerobot.teleoperators.utils import TeleopEvents
 if TYPE_CHECKING:
     from lerobot.teleoperators.teleoperator import Teleoperator
 
-from lerobot.types import EnvTransition, PolicyAction, TransitionKey
+from lerobot.robot_types import EnvTransition, PolicyAction, TransitionKey
 
 from .pipeline import (
     ComplementaryDataProcessorStep,

@@ -41,7 +41,7 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
 from lerobot.rollout import BaseStrategyConfig, RolloutConfig, build_rollout_context
 from lerobot.rollout.inference import SyncInferenceConfig
 from lerobot.rollout.strategies import BaseStrategy
-from lerobot.types import RobotAction, RobotObservation
+from lerobot.robot_types import RobotAction, RobotObservation
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.utils import init_logging
 

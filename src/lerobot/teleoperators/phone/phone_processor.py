@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.processor import ProcessorStepRegistry, RobotActionProcessorStep
-from lerobot.types import RobotAction
+from lerobot.robot_types import RobotAction
 
 from .config_phone import PhoneOS
 

@@ -19,7 +19,7 @@ import time
 from typing import TYPE_CHECKING
 
 from lerobot.motors import MotorCalibration
-from lerobot.types import RobotAction
+from lerobot.robot_types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.import_utils import _motorbridge_smart_servo_available, require_package
 

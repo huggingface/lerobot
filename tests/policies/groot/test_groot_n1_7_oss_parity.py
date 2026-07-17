@@ -30,7 +30,7 @@ from lerobot.policies.groot.processor_groot import (
     GrootN17VLMEncodeStep,
     _transform_n1_7_image_for_vlm_albumentations,
 )
-from lerobot.types import TransitionKey
+from lerobot.robot_types import TransitionKey
 from lerobot.utils.constants import OBS_STATE
 
 OSS_REFERENCE_COMMIT = "ab88b50c718f6528e1df9dcbaf75865d1b604760"

@@ -57,7 +57,7 @@ from lerobot.policies.molmoact2.processor_molmoact2 import (
     make_molmoact2_pre_post_processors,
 )
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.types import TransitionKey
+from lerobot.robot_types import TransitionKey
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 

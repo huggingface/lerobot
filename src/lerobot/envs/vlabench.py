@@ -37,7 +37,7 @@ import numpy as np
 from gymnasium import spaces
 from scipy.spatial.transform import Rotation
 
-from lerobot.types import RobotObservation
+from lerobot.robot_types import RobotObservation
 
 from .utils import _LazyAsyncVectorEnv
 

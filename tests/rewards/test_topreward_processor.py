@@ -26,7 +26,7 @@ from lerobot.rewards.topreward.processor_topreward import (
     _expand_tasks,
     _prepare_video_batch,
 )
-from lerobot.types import TransitionKey
+from lerobot.robot_types import TransitionKey
 from tests.utils import skip_if_package_missing
 
 # ---------------------------------------------------------------------------

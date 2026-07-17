@@ -25,7 +25,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from lerobot.types import RobotObservation
+from lerobot.robot_types import RobotObservation
 
 from .utils import _LazyAsyncVectorEnv, parse_camera_names
 

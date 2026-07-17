@@ -20,7 +20,7 @@ from functools import cached_property
 from typing import Any
 
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig
-from lerobot.types import RobotAction
+from lerobot.robot_types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 

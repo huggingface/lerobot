@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.robots import Robot
-from lerobot.types import PolicyAction
+from lerobot.robot_types import PolicyAction
 
 
 def predict_action(

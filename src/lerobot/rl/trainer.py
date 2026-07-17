@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any
 
-from lerobot.types import BatchType
+from lerobot.robot_types import BatchType
 
 from .algorithms.base import RLAlgorithm
 from .algorithms.configs import TrainingStats
