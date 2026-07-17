@@ -18,6 +18,11 @@ DEG_MIN = 105.0   # |val| above this => old-convention degrees
 SAT_ATOL = 0.5    # closeness to +/-100 / 0 / 100 counted as normalization saturation
 
 
+def is_so_robot_type(rt: str) -> bool:
+    """True if the recorded ``robot_type`` denotes an in-scope SO-100/101 arm."""
+    return bool(rt) and (rt.startswith(SO_PREFIXES) or rt in SO_EXACT) and rt not in NEVER_FIX
+
+
 def load_info(root: Path) -> dict:
     return json.loads((Path(root) / "meta" / "info.json").read_text())
 
@@ -40,23 +45,14 @@ def _global_bounds(root: Path):
     return lo, hi, key_used
 
 
-def classify(root) -> dict:
-    root = Path(root)
-    info = load_info(root)
-    rt = info.get("robot_type", "") or ""
-    dim = (info.get("features", {}).get("action", {}).get("shape") or [None])[0]
-    out = {"root": str(root), "robot_type": rt, "action_dim": dim,
-           "codebase_version": info.get("codebase_version"), "ambiguous": False}
+def encoding_from_bounds(lo, hi, rt: str) -> dict:
+    """Detect the SO-arm joint encoding from per-joint global min/max and the robot_type name.
 
-    is_so = (rt.startswith(SO_PREFIXES) or rt in SO_EXACT) and rt not in NEVER_FIX
-    if not is_so:
-        return {**out, "is_so": False, "encoding": "non_so"}
-
-    lo, hi, key_used = _global_bounds(root)
-    if lo is None:
-        return {**out, "is_so": True, "encoding": "unknown", "ambiguous": True,
-                "note": "no action/state stats found"}
-
+    Layout-agnostic (v2.1 episodes_stats or v3.0 stats.json both reduce to lo/hi here), so it is
+    the single source of truth for the degrees_old / degrees_new / normalized / radians decision.
+    """
+    lo = np.asarray(lo, dtype=float)
+    hi = np.asarray(hi, dtype=float)
     maxabs = float(np.nanmax(np.abs(np.concatenate([lo, hi]))))
     # saturation on any arm joint (index != gripper) at +/-100, or gripper at 0/100
     n = 6
@@ -80,5 +76,24 @@ def classify(root) -> dict:
 
     name_says_new = rt.endswith(("_follower", "_bimanual"))
     ambiguous = (enc == "degrees_old" and name_says_new) or (enc in ("normalized", "degrees_new") and not name_says_new)
-    return {**out, "is_so": True, "encoding": enc, "maxabs": round(maxabs, 2),
-            "saturates": sat, "stats_key": key_used, "ambiguous": ambiguous}
+    return {"encoding": enc, "maxabs": round(maxabs, 2), "saturates": sat, "ambiguous": ambiguous}
+
+
+def classify(root) -> dict:
+    root = Path(root)
+    info = load_info(root)
+    rt = info.get("robot_type", "") or ""
+    dim = (info.get("features", {}).get("action", {}).get("shape") or [None])[0]
+    out = {"root": str(root), "robot_type": rt, "action_dim": dim,
+           "codebase_version": info.get("codebase_version"), "ambiguous": False}
+
+    is_so = is_so_robot_type(rt)
+    if not is_so:
+        return {**out, "is_so": False, "encoding": "non_so"}
+
+    lo, hi, key_used = _global_bounds(root)
+    if lo is None:
+        return {**out, "is_so": True, "encoding": "unknown", "ambiguous": True,
+                "note": "no action/state stats found"}
+
+    return {**out, "is_so": True, "stats_key": key_used, **encoding_from_bounds(lo, hi, rt)}
