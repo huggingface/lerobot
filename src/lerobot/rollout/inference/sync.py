@@ -31,25 +31,14 @@ from .base import InferenceEngine
 logger = logging.getLogger(__name__)
 
 
-# Relative-action support (drift-free anchoring)
-# ----------------------------------------------
-# Relative-action policies predict a *chunk* of offsets anchored to the robot
-# state at chunk-prediction time.  ``select_action`` serves that chunk one action
-# per tick from an internal ``_action_queue``, recomputing only when the queue is
-# empty.  The per-tick flow here runs the full pre/post pipeline every call, and
-# ``RelativeActionsProcessorStep`` would otherwise refresh its cached anchor state
-# on every tick — so actions popped from the queue on later ticks would be
-# re-anchored to the *current* (already-moved) state and absolute targets would
-# drift through the chunk.
-#
-# Fix: detect chunk boundaries by inspecting the policy's ``_action_queue`` length
-# *before* running the pipeline, and freeze the relative step's cached anchor
-# (``set_hold``) on ticks that pop a cached action.  The whole chunk is then
-# anchored to a single state, exactly like RTC.  ``select_action`` stays on the
-# hot path, so policy-specific side effects (e.g. LingBot-VA's per-tick keyframe
-# feedback) are preserved.  Policies without an ``_action_queue`` (e.g. ACT
-# temporal ensembling, which recomputes every tick) fall back to refreshing the
-# anchor every tick, which is the correct behaviour there.
+# Relative-action support: a predicted chunk of offsets is anchored to the robot
+# state at prediction time, but the sync engine reruns the pre/post pipeline every
+# tick, so ``RelativeActionsProcessorStep`` would re-anchor cached actions to the
+# current (moved) state and drift through the chunk. We pin the anchor per chunk:
+# a probe on the policy's public ``predict_action_chunk`` flags the ticks that
+# predict a fresh chunk; on the others the engine restores the anchor the relative
+# step overwrote. ``select_action`` stays on the hot path, so per-tick side effects
+# (e.g. LingBot-VA keyframe feedback) are preserved.
 
 
 class SyncInferenceEngine(InferenceEngine):
@@ -81,9 +70,8 @@ class SyncInferenceEngine(InferenceEngine):
         self._device = torch.device(device or "cpu")
         self._robot_type = robot_type
 
-        # Relative-action policies need the chunk anchor held while cached actions
-        # are popped (see module docstring).  Introspect the preprocessor for an
-        # enabled RelativeActionsProcessorStep, mirroring the RTC engine.
+        # Find an enabled RelativeActionsProcessorStep to pin its anchor per chunk
+        # (see module comment), mirroring the RTC engine.
         self._relative_step = next(
             (
                 s
@@ -92,11 +80,15 @@ class SyncInferenceEngine(InferenceEngine):
             ),
             None,
         )
+        # Set by the probe for the current tick / ever, respectively.
+        self._chunk_predicted = False
+        self._ever_predicted_chunk = False
         if self._relative_step is not None:
             if self._relative_step.action_names is None:
                 cfg_names = getattr(policy.config, "action_feature_names", None)
                 self._relative_step.action_names = list(cfg_names) if cfg_names else list(ordered_action_keys)
-            logger.info("Relative actions enabled: chunk anchor will be held per chunk")
+            self._install_chunk_probe()
+            logger.info("Relative actions enabled: chunk anchor pinned per predicted chunk")
 
         # Intermediate-prediction visualization (e.g. a world model's imagined video). When on,
         # ``get_action`` requests predictions and keeps the current chunk's frame stacks; a playhead
@@ -128,23 +120,24 @@ class SyncInferenceEngine(InferenceEngine):
         self._policy.reset()
         self._preprocessor.reset()
         self._postprocessor.reset()
-        # ``policy.reset()`` empties ``_action_queue`` so the next ``get_action``
-        # recomputes and refreshes the anchor; clear any leftover hold defensively.
-        if self._relative_step is not None:
-            self._relative_step.set_hold(False)
+        # New episode: the next tick predicts a fresh chunk and re-anchors.
+        self._chunk_predicted = False
+        self._ever_predicted_chunk = False
         self._pred_stacks = {}
         self._pred_cursor = 0
 
-    def _policy_will_recompute(self) -> bool:
-        """True if the next ``select_action`` will predict a fresh chunk (queue empty/absent).
+    def _install_chunk_probe(self) -> None:
+        """Wrap the policy's public ``predict_action_chunk`` so we learn which ticks
+        predict a fresh chunk (when the anchor must advance) without introspecting any
+        private action queue. Chunking policies call it from ``select_action``."""
+        inner = self._policy.predict_action_chunk
 
-        Relative-action policies expose an ``_action_queue`` deque that is refilled
-        only when empty.  When it is non-empty the upcoming ``select_action`` will
-        pop a cached action, so the anchor state must be held.  Policies without the
-        attribute recompute every tick, so we always refresh the anchor.
-        """
-        queue = getattr(self._policy, "_action_queue", None)
-        return queue is None or len(queue) == 0
+        def probe(*args, **kwargs):
+            self._chunk_predicted = True
+            self._ever_predicted_chunk = True
+            return inner(*args, **kwargs)
+
+        self._policy.predict_action_chunk = probe
 
     def get_intermediate_predictions(self) -> dict | None:
         """Serve one imagined frame per key for this tick, advancing the playhead.
@@ -184,34 +177,30 @@ class SyncInferenceEngine(InferenceEngine):
             if self._device.type == "cuda" and self._policy.config.use_amp
             else nullcontext()
         )
-        # For relative-action policies, hold the cached anchor on ticks that pop a
-        # cached action so the whole chunk stays anchored to the state captured when
-        # it was predicted.  Decided before the pipeline runs (the queue is drained
-        # inside ``select_action``); always released in ``finally`` so a hold never
-        # leaks across ticks or on exception.
-        hold_anchor = self._relative_step is not None and not self._policy_will_recompute()
-        if self._relative_step is not None:
-            self._relative_step.set_hold(hold_anchor)
-        try:
-            with torch.inference_mode(), autocast_ctx:
-                observation = prepare_observation_for_inference(
-                    observation, self._device, self._task, self._robot_type
+        # Snapshot the chunk anchor before the preprocessor overwrites it with this
+        # tick's state; restore it below if this tick only served a cached action.
+        anchor_before = self._relative_step.get_cached_state() if self._relative_step is not None else None
+        self._chunk_predicted = False
+        with torch.inference_mode(), autocast_ctx:
+            observation = prepare_observation_for_inference(
+                observation, self._device, self._task, self._robot_type
+            )
+            observation = self._preprocessor(observation)
+            if self._visualize_predictions:
+                action, predictions = unpack_action_output(
+                    self._policy.select_action(observation, return_intermediate_predictions=True)
                 )
-                observation = self._preprocessor(observation)
-                if self._visualize_predictions:
-                    action, predictions = unpack_action_output(
-                        self._policy.select_action(observation, return_intermediate_predictions=True)
-                    )
-                    if predictions:
-                        # A fresh chunk was predicted this tick — store its frame stacks and restart the playhead.
-                        self._pred_stacks = predictions
-                        self._pred_cursor = 0
-                else:
-                    action = self._policy.select_action(observation)
-                action = self._postprocessor(action)
-        finally:
-            if self._relative_step is not None:
-                self._relative_step.set_hold(False)
+                if predictions:
+                    # A fresh chunk was predicted this tick — store its frame stacks and restart the playhead.
+                    self._pred_stacks = predictions
+                    self._pred_cursor = 0
+            else:
+                action = self._policy.select_action(observation)
+            # Hold the anchor only for a chunking policy serving a cached action this
+            # tick; policies that never chunk or that recomputed keep refreshing.
+            if self._relative_step is not None and self._ever_predicted_chunk and not self._chunk_predicted:
+                self._relative_step.set_cached_state(anchor_before)
+            action = self._postprocessor(action)
         action_tensor = action.squeeze(0).cpu()
 
         # Reorder to match dataset action ordering so the caller can treat
