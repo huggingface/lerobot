@@ -96,12 +96,30 @@ def _trained_rtc_chunk_can_merge(
     has_previous_actions: bool,
 ) -> bool:
     """Check that a trained RTC chunk covers the overlap observed during inference."""
+    if not has_previous_actions:
+        return True
     if measured_delay > training_max_delay:
         raise _TrainedRTCDelayExceededError(
             f"Measured RTC inference delay ({measured_delay}) exceeds the checkpoint's "
             f"rtc_training_max_delay ({training_max_delay})."
         )
-    return not has_previous_actions or measured_delay <= conditioned_delay
+    return measured_delay <= conditioned_delay
+
+
+def _estimate_rtc_delay(
+    *,
+    latency: float,
+    time_per_step: float,
+    mode: str,
+    training_max_delay: int,
+    has_previous_actions: bool,
+) -> int:
+    """Estimate overlap, using the trained capacity to bootstrap the first transition."""
+    if latency:
+        return math.ceil(latency / time_per_step)
+    if mode == "trained" and has_previous_actions:
+        return training_max_delay
+    return 0
 
 
 def _validate_trained_rtc_prefix_available(*, conditioned_delay: int, available_steps: int) -> None:
@@ -312,8 +330,15 @@ class RTCInferenceEngine(InferenceEngine):
                         prev_actions = queue.get_left_over()
                         has_previous_actions = prev_actions is not None and prev_actions.numel() > 0
 
+                        training_max_delay = int(getattr(self._policy.config, "rtc_training_max_delay", 0))
                         latency = latency_tracker.max()
-                        delay = math.ceil(latency / time_per_chunk) if latency else 0
+                        delay = _estimate_rtc_delay(
+                            latency=latency,
+                            time_per_step=time_per_chunk,
+                            mode=self._rtc_config.mode,
+                            training_max_delay=training_max_delay,
+                            has_previous_actions=has_previous_actions,
+                        )
                         if self._rtc_config.mode == "trained" and delay > 0:
                             available_steps = 0 if prev_actions is None else prev_actions.shape[0]
                             _validate_trained_rtc_prefix_available(
@@ -361,28 +386,31 @@ class RTCInferenceEngine(InferenceEngine):
                         inference_count += 1
                         consecutive_errors = 0
                         is_warmup = self._use_torch_compile and inference_count <= warmup_required
-                        if is_warmup:
+                        is_initial_trained_chunk = (
+                            self._rtc_config.mode == "trained" and not has_previous_actions
+                        )
+                        if is_warmup or is_initial_trained_chunk:
                             latency_tracker.reset()
                         else:
                             latency_tracker.add(new_latency)
 
-                        if not is_warmup and self._rtc_config.mode == "trained":
-                            training_max_delay = int(
-                                getattr(self._policy.config, "rtc_training_max_delay", 0)
-                            )
-                            if not _trained_rtc_chunk_can_merge(
+                        if (
+                            not is_warmup
+                            and self._rtc_config.mode == "trained"
+                            and not _trained_rtc_chunk_can_merge(
                                 conditioned_delay=delay,
                                 measured_delay=new_delay,
                                 training_max_delay=training_max_delay,
                                 has_previous_actions=has_previous_actions,
-                            ):
-                                logger.warning(
-                                    "Discarding trained RTC chunk: measured delay %d exceeded "
-                                    "conditioned delay %d; retrying with updated latency",
-                                    new_delay,
-                                    delay,
-                                )
-                                continue
+                            )
+                        ):
+                            logger.warning(
+                                "Discarding trained RTC chunk: measured delay %d exceeded "
+                                "conditioned delay %d; retrying with updated latency",
+                                new_delay,
+                                delay,
+                            )
+                            continue
 
                         queue.merge(original, processed, new_delay, idx_before)
 

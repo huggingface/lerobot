@@ -110,9 +110,34 @@ def test_trained_rtc_retries_chunk_when_measured_delay_exceeds_conditioning():
     )
     assert _trained_rtc_chunk_can_merge(
         conditioned_delay=2,
-        measured_delay=3,
+        measured_delay=5,
         training_max_delay=4,
         has_previous_actions=False,
+    )
+
+
+def test_trained_rtc_bootstraps_first_overlap_with_checkpoint_capacity():
+    from lerobot.rollout.inference.rtc import _estimate_rtc_delay
+
+    assert (
+        _estimate_rtc_delay(
+            latency=0,
+            time_per_step=1 / 30,
+            mode="trained",
+            training_max_delay=10,
+            has_previous_actions=False,
+        )
+        == 0
+    )
+    assert (
+        _estimate_rtc_delay(
+            latency=0,
+            time_per_step=1 / 30,
+            mode="trained",
+            training_max_delay=10,
+            has_previous_actions=True,
+        )
+        == 10
     )
 
 
