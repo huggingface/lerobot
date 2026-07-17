@@ -45,7 +45,8 @@ class RTCProcessor:
     def __init__(self, rtc_config: RTCConfig, *, trained_mode_supported: bool = False):
         if rtc_config.enabled and rtc_config.mode == "trained" and not trained_mode_supported:
             raise ValueError(
-                "RTC mode='trained' requires a Pi052 checkpoint trained with rtc_training_max_delay > 0."
+                "RTC mode='trained' requires a PI05-compatible checkpoint trained with "
+                "rtc_training_max_delay > 0."
             )
         self.rtc_config = rtc_config
 

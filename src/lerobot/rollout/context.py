@@ -65,9 +65,9 @@ def _validate_trained_rtc_rollout_config(policy_config, inference_config: RTCInf
     rtc = inference_config.rtc
     if not rtc.enabled or rtc.mode != "trained":
         return
-    if policy_config.type != "pi052":
+    if policy_config.type not in {"pi05", "pi052"}:
         raise ValueError(
-            "--inference.rtc.mode=trained currently requires a Pi052 checkpoint; "
+            "--inference.rtc.mode=trained currently requires a PI05-compatible checkpoint; "
             f"got policy type {policy_config.type!r}."
         )
 

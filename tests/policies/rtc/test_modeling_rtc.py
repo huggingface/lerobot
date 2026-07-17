@@ -96,7 +96,7 @@ def test_rtc_processor_initialization_without_debug(rtc_config_debug_disabled):
 def test_rtc_processor_rejects_trained_mode_when_policy_does_not_support_it():
     config = RTCConfig(mode="trained")
 
-    with pytest.raises(ValueError, match="requires a Pi052 checkpoint"):
+    with pytest.raises(ValueError, match="requires a PI05-compatible checkpoint"):
         RTCProcessor(config)
 
     processor = RTCProcessor(config, trained_mode_supported=True)
