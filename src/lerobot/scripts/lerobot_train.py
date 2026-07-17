@@ -200,6 +200,9 @@ def update_policy(
     train_metrics.update_s = time.perf_counter() - start_time
     if torch.cuda.is_available():
         train_metrics.gpu_mem_gb = torch.cuda.max_memory_allocated() / (1024**3)
+    # Aggregate the policy's scalar outputs for logging and rank-reduction across the log window.
+    if output_dict:
+        train_metrics.update_metrics(output_dict)
     return train_metrics, output_dict
 
 
@@ -621,7 +624,7 @@ def train(cfg: TrainPipelineConfig):
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
-        train_tracker, output_dict = update_policy(
+        train_tracker, _ = update_policy(
             train_tracker,
             policy,
             batch,
@@ -654,9 +657,10 @@ def train(cfg: TrainPipelineConfig):
                     train_tracker.samples_per_s = samples_per_step / step_time
                 logging.info(train_tracker)
                 if wandb_logger:
+                    # Policy sub-losses (latent_loss, action_loss, ...) are aggregated into the
+                    # tracker by update_policy, so to_dict() already carries their windowed,
+                    # rank-reduced averages — no per-step output_dict passthrough needed.
                     wandb_log_dict = train_tracker.to_dict()
-                    if output_dict:
-                        wandb_log_dict.update(output_dict)
                     # Log sample weighting statistics if enabled
                     if sample_weighter is not None:
                         weighter_stats = sample_weighter.get_stats()

@@ -21,8 +21,6 @@ import os
 from pathlib import Path
 from typing import Any, ClassVar, TypedDict, TypeVar, Unpack
 
-import packaging
-import safetensors
 from huggingface_hub import hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
@@ -30,6 +28,7 @@ from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
 
 from .utils import log_model_loading_keys
@@ -177,26 +176,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
-        # Create base kwargs
-        kwargs = {"strict": strict}
-
-        # Add device parameter for newer versions that support it
-        if packaging.version.parse(safetensors.__version__) >= packaging.version.parse("0.4.3"):
-            kwargs["device"] = map_location
-
-        # Load the model with appropriate kwargs
-        missing_keys, unexpected_keys = load_model_as_safetensor(model, model_file, **kwargs)
+        missing_keys, unexpected_keys = load_model_as_safetensor(
+            model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
+        )
         log_model_loading_keys(missing_keys, unexpected_keys)
-
-        # For older versions, manually move to device if needed
-        if "device" not in kwargs and map_location != "cpu":
-            logging.warning(
-                "Loading model weights on other devices than 'cpu' is not supported natively in your version of safetensors."
-                " This means that the model is loaded on 'cpu' first and then copied to the device."
-                " This leads to a slower loading time."
-                " Please update safetensors to version 0.4.3 or above for improved performance."
-            )
-            model.to(map_location)
         return model
 
     @abc.abstractmethod
