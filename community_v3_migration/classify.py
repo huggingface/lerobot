@@ -8,8 +8,9 @@ import json
 from pathlib import Path
 import numpy as np
 
-# so100/so101 (+ _follower/_bimanual), so_follower, and bi_so_follower (bimanual, 12-dim).
-SO_PREFIXES = ("so100", "so101", "so_", "bi_so_")
+# so100/so101 (+ _follower/_bimanual), so_follower, and bimanual bi_so* (bi_so_follower,
+# bi_so100_follower, ...; 12-dim).
+SO_PREFIXES = ("so100", "so101", "so_", "bi_so")
 SO_EXACT: set[str] = set()
 # Robots that superficially look SO-like but are NOT in scope for the joint fix:
 NEVER_FIX = {"koch", "koch_follower", "koch_bimanual", "moss", "moss_follower"}
