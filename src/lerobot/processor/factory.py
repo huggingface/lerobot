@@ -98,7 +98,6 @@ class DefaultPolicyProcessorSteps:
 
 
 def make_default_policy_processor_steps(
-def make_default_policy_processor_steps(
     config: PreTrainedConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     *,
@@ -157,7 +156,6 @@ def make_policy_processor_pipelines(
 
 
 def make_default_pre_post_processors(
-def make_default_policy_processor_steps(
     config: PreTrainedConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     *,
