@@ -17,6 +17,7 @@ to perform the deletions.
 """
 import argparse
 import sys
+import time
 
 import pandas as pd
 from huggingface_hub import HfApi
@@ -113,10 +114,23 @@ def main():
     if not args.yes:
         print("dry-run: nothing deleted. re-run with --yes to delete.", file=sys.stderr)
         return
+    failed = []
     for root, reason in sorted(to_delete.items()):
-        api.delete_folder(path_in_repo=root, repo_id=args.dst_repo, repo_type="dataset",
-                          commit_message=f"Prune {root} ({reason})")
-        print(f"deleted {root} ({reason})", file=sys.stderr)
+        for attempt in range(1, 4):  # transient Hub ReadTimeouts are common; retry with backoff
+            try:
+                api.delete_folder(path_in_repo=root, repo_id=args.dst_repo, repo_type="dataset",
+                                  commit_message=f"Prune {root} ({reason})")
+                print(f"deleted {root} ({reason})", file=sys.stderr)
+                break
+            except Exception as e:
+                if attempt == 3:
+                    failed.append(root)
+                    print(f"FAILED {root}: {e}", file=sys.stderr)
+                else:
+                    time.sleep(2 ** attempt)
+    if failed:
+        print(f"\n{len(failed)} deletion(s) failed (likely transient); safe to re-run to retry: "
+              f"{failed}", file=sys.stderr)
 
 
 if __name__ == "__main__":
