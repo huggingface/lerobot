@@ -729,6 +729,7 @@ def concatenate_video_files(
             stream_map[input_stream.index].time_base = input_stream.time_base
 
     # Demux + remux packets (no re-encode)
+    last_dts: dict[int, int] = {}
     for packet in input_container.demux():
         # Skip packets from un-mapped streams
         if packet.stream.index not in stream_map:
@@ -737,6 +738,19 @@ def concatenate_video_files(
         # Skip demux flushing packets
         if packet.dts is None:
             continue
+
+        # Enforce strictly increasing DTS. Clips encoded with B-frames start at a negative DTS, so the
+        # concat demuxer can emit the first packet of a clip with a DTS equal to the last of the previous
+        # one; the MP4 muxer rejects duplicate/decreasing DTS with [Errno 22]. Nudge such packets forward.
+        prev_dts = last_dts.get(packet.stream.index)
+        if prev_dts is not None and packet.dts <= prev_dts:
+            shift = prev_dts + 1 - packet.dts
+            packet.dts += shift
+            if packet.pts is not None:
+                packet.pts += shift
+        if packet.pts is not None and packet.pts < packet.dts:
+            packet.pts = packet.dts
+        last_dts[packet.stream.index] = packet.dts
 
         output_stream = stream_map[packet.stream.index]
         packet.stream = output_stream
