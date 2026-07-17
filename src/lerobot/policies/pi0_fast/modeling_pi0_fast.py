@@ -25,13 +25,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
-
-# Conditional import for type checking and lazy loading
-if TYPE_CHECKING or _scipy_available:
-    from scipy.fftpack import idct
-else:
-    idct = None
+from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoProcessor, AutoTokenizer
@@ -76,6 +70,32 @@ def pad_vector(vector, new_dim):
     if vector.shape[-1] >= new_dim:
         return vector
     return F.pad(vector, (0, new_dim - vector.shape[-1]))
+
+
+def _gather_last_valid_language_hidden(
+    hidden_states: Tensor,
+    language_masks: Tensor,
+    image_token_count: int,
+) -> Tensor:
+    """Gather each sample's last non-padding language hidden state."""
+    last_language_indices = image_token_count + language_masks.long().sum(dim=1) - 1
+    if torch.any(last_language_indices < image_token_count):
+        raise ValueError("PI0-FAST requires at least one valid language token per sample")
+    batch_indices = torch.arange(hidden_states.shape[0], device=hidden_states.device)
+    return hidden_states[batch_indices, last_language_indices]
+
+
+def _reduce_fast_token_loss(token_loss: Tensor, token_mask: Tensor) -> Tensor:
+    """Give every sample equal weight regardless of its FAST token count."""
+    sample_loss = (token_loss * token_mask).sum(dim=1) / token_mask.sum(dim=1).clamp(min=1)
+    return sample_loss.mean()
+
+
+def _sample_next_token(logits: Tensor, temperature: float) -> Tensor:
+    if temperature > 0:
+        probabilities = torch.softmax(logits / temperature, dim=-1)
+        return torch.multinomial(probabilities, num_samples=1)
+    return torch.argmax(logits, dim=-1, keepdim=True)
 
 
 def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
@@ -326,7 +346,6 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         # Compile model if requested
         if config.compile_model:
             torch.set_float32_matmul_precision("high")
-            self.sample_actions_fast = torch.compile(self.sample_actions_fast, mode=config.compile_mode)
             self.forward = torch.compile(self.forward, mode=config.compile_mode)
 
     def gradient_checkpointing_enable(self):
@@ -561,18 +580,12 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         # only compute logits for the positions that predict FAST tokens
         lm_head = self.paligemma_with_expert.paligemma.lm_head
 
-        # Targets are the FAST action tokens
-        fast_targets = fast_action_tokens  # (B, num_fast_embs)
-
-        # extract logits for FAST token prediction
-        fast_hidden = prefix_out[:, -fast_targets.shape[1] :, :]
-        fast_logits_for_pred = lm_head(fast_hidden)  # (B, num_fast_embs, gemma_vocab_size)
-
-        # Shift left for next-step prediction and shift target
-        # logits[:, i] predicts targets[:, i+1]
-        fast_logits_for_pred = fast_logits_for_pred[:, :-1, :]  # shift logits left
-        fast_targets = fast_targets[:, 1:]  # shift targets right
-        fast_action_masks = fast_action_masks[:, 1:]  # shift masks to match targets
+        # The last valid prompt token predicts "Action:", then each FAST token predicts the next one.
+        fast_hidden = prefix_out[:, -num_fast_embs:, :]
+        last_language_hidden = _gather_last_valid_language_hidden(prefix_out, masks, total_t_images)
+        prediction_hidden = torch.cat([last_language_hidden[:, None], fast_hidden[:, :-1]], dim=1)
+        fast_logits_for_pred = lm_head(prediction_hidden)
+        fast_targets = fast_action_tokens
 
         # compute cross-entropy loss
         loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
@@ -582,9 +595,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         fast_loss_per_token = loss_fct(fast_logits_flat, fast_targets_flat)
         fast_loss_per_token = fast_loss_per_token.reshape(fast_targets.shape)
 
-        # apply mask and compute mean loss
-        masked_fast_loss = fast_loss_per_token * fast_action_masks.float()
-        fast_loss = masked_fast_loss.sum() / fast_action_masks.sum().clamp(min=1)
+        fast_loss = _reduce_fast_token_loss(fast_loss_per_token, fast_action_masks.float())
 
         return {
             "ce_loss": fast_loss,
@@ -613,15 +624,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         device = tokens.device
         lm_head = self.paligemma_with_expert.paligemma.lm_head
 
-        # add bos token after tokens
-        bos_token = torch.full(
-            (bsize, 1), self._paligemma_tokenizer.bos_token_id, dtype=torch.long, device=device
-        )
-        tokens = torch.cat([tokens, bos_token], dim=1)
-        masks = torch.cat([masks, torch.ones((bsize, 1), dtype=torch.bool, device=device)], dim=1)
-
-        # 1. Initial Embedding (matches training prefix)
-        # prefix_embs will include [Images, Language Prompt, BOS]
+        # 1. Initial embedding: the prompt's existing BOS is the only BOS in the sequence.
         prefix_embs, prefix_pad_masks, prefix_att_masks, total_t_images, _ = self.embed_prefix_fast(
             images, img_masks, tokens, masks, fast_action_tokens=None, fast_action_masks=None
         )
@@ -633,6 +636,8 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
 
         generated_action_tokens = torch.zeros((bsize, max_decoding_steps), dtype=torch.long, device=device)
+        eos_token_id = self._paligemma_tokenizer.eos_token_id
+        finished = torch.zeros(bsize, dtype=torch.bool, device=device)
 
         # 2. Decoding Loop (each step re-computes full sequence)
         for t in range(max_decoding_steps):
@@ -650,16 +655,24 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
                 adarms_cond=[None, None],
             )
 
-            # predict next token from the very last sequence position
-            last_logits = lm_head(prefix_out[:, -1:, :])  # (B, 1, vocab_size)
-
-            if temperature > 0:
-                probs = torch.softmax(last_logits[:, -1] / temperature, dim=-1)
-                next_token = torch.multinomial(probs, num_samples=1)
+            if t == 0:
+                prediction_hidden = _gather_last_valid_language_hidden(prefix_out, masks, total_t_images)
             else:
-                next_token = torch.argmax(last_logits[:, -1], dim=-1, keepdim=True)
+                prediction_hidden = prefix_out[:, -1]
+            next_token = _sample_next_token(lm_head(prediction_hidden), temperature)
 
-            generated_action_tokens[:, t] = next_token.squeeze(-1)
+            active = ~finished
+            generated_action_tokens[:, t] = torch.where(
+                active, next_token.squeeze(-1), torch.zeros_like(next_token.squeeze(-1))
+            )
+            finished |= active & next_token.squeeze(-1).eq(eos_token_id)
+            if finished.all():
+                break
+            next_token = torch.where(
+                finished[:, None],
+                torch.full_like(next_token, eos_token_id),
+                next_token,
+            )
 
             # 3. Update sequence for next iteration (unless it's the last step)
             if t < max_decoding_steps - 1:
@@ -706,20 +719,14 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         device = tokens.device
         lm_head = self.paligemma_with_expert.paligemma.lm_head
 
+        generated_action_tokens = torch.zeros((bsize, max_decoding_steps), dtype=torch.long, device=device)
+        if max_decoding_steps == 0:
+            return generated_action_tokens
+
         # --- 1. PREFILL PHASE ---
-        # Process Images + Text Prompt + BOS token once to populate the KV cache.
-
-        # Add BOS token to the prompt
-        bos_token = torch.full(
-            (bsize, 1), self._paligemma_tokenizer.bos_token_id, dtype=torch.long, device=device
-        )
-        tokens_in = torch.cat([tokens, bos_token], dim=1)
-        masks_in = torch.cat([masks, torch.ones((bsize, 1), dtype=torch.bool, device=device)], dim=1)
-
-        # Embed prefix [Images, Language, BOS]
         # fast_action_tokens=None means we are just embedding the condition (images+text)
         prefix_embs, prefix_pad_masks, prefix_att_masks, total_t_images, _ = self.embed_prefix_fast(
-            images, img_masks, tokens_in, masks_in, fast_action_tokens=None, fast_action_masks=None
+            images, img_masks, tokens, masks, fast_action_tokens=None, fast_action_masks=None
         )
 
         # Ensure correct precision (bfloat16/float32)
@@ -746,17 +753,18 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             adarms_cond=[None, None],
         )
 
-        # Sample the first action token from the last logit of the prefix
-        last_logits = lm_head(prefix_out[:, -1:, :])  # (B, 1, V)
-        if temperature > 0:
-            probs = torch.softmax(last_logits[:, -1] / temperature, dim=-1)
-            next_token = torch.multinomial(probs, num_samples=1)
-        else:
-            next_token = torch.argmax(last_logits[:, -1], dim=-1, keepdim=True)
-
-        # Initialize storage for generated tokens
-        generated_action_tokens = torch.zeros((bsize, max_decoding_steps), dtype=torch.long, device=device)
+        prediction_hidden = _gather_last_valid_language_hidden(prefix_out, masks, total_t_images)
+        next_token = _sample_next_token(lm_head(prediction_hidden), temperature)
         generated_action_tokens[:, 0] = next_token.squeeze(-1)
+        eos_token_id = self._paligemma_tokenizer.eos_token_id
+        finished = next_token.squeeze(-1).eq(eos_token_id)
+        if finished.all():
+            return generated_action_tokens
+        next_token = torch.where(
+            finished[:, None],
+            torch.full_like(next_token, eos_token_id),
+            next_token,
+        )
 
         # Track valid tokens mask (0 for pad, 1 for valid)
         # We need this to tell the new token what it can attend to (images + text + past actions)
@@ -797,15 +805,19 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
                 adarms_cond=[None, None],
             )
 
-            # Sample next token
-            last_logits = lm_head(step_out[:, -1:, :])
-            if temperature > 0:
-                probs = torch.softmax(last_logits[:, -1] / temperature, dim=-1)
-                next_token = torch.multinomial(probs, num_samples=1)
-            else:
-                next_token = torch.argmax(last_logits[:, -1], dim=-1, keepdim=True)
-
-            generated_action_tokens[:, t] = next_token.squeeze(-1)
+            next_token = _sample_next_token(lm_head(step_out[:, -1]), temperature)
+            active = ~finished
+            generated_action_tokens[:, t] = torch.where(
+                active, next_token.squeeze(-1), torch.zeros_like(next_token.squeeze(-1))
+            )
+            finished |= active & next_token.squeeze(-1).eq(eos_token_id)
+            if finished.all():
+                break
+            next_token = torch.where(
+                finished[:, None],
+                torch.full_like(next_token, eos_token_id),
+                next_token,
+            )
 
         return generated_action_tokens
 
@@ -1118,7 +1130,7 @@ class PI0FastPolicy(PreTrainedPolicy):
         return self._paligemma_tokenizer.vocab_size - 1 - self.config.fast_skip_tokens - tokens
 
     def decode_actions_with_fast(
-        self, token_ids: list[int], time_horizon: int, action_dim: int, relaxed_decoding: bool = True
+        self, token_ids: list[Tensor], time_horizon: int, action_dim: int
     ) -> np.ndarray:
         """
         Decodes action token IDs back to continuous action values using the FAST tokenizer.
@@ -1127,8 +1139,6 @@ class PI0FastPolicy(PreTrainedPolicy):
             token_ids: List of token IDs to decode.
             time_horizon: The number of timesteps for actions.
             action_dim: The dimensionality of each action.
-            relaxed_decoding: Whether to use relaxed decoding (allows partial sequences).
-
         Returns:
             A numpy array representing the decoded actions.
         """
@@ -1136,40 +1146,23 @@ class PI0FastPolicy(PreTrainedPolicy):
 
         for token in token_ids:
             try:
-                decoded_tokens = self.action_tokenizer.bpe_tokenizer.decode(token)
-                decoded_dct_coeff = np.array(list(map(ord, decoded_tokens))) + self.action_tokenizer.min_token
-
-                if relaxed_decoding:
-                    # expected sequence length
-                    expected_seq_len = time_horizon * action_dim
-                    diff = expected_seq_len - decoded_dct_coeff.shape[0]
-
-                    # apply truncation if too long
-                    if diff < 0:
-                        decoded_dct_coeff = decoded_dct_coeff[:expected_seq_len]  # truncate on the right
-
-                    # apply padding if too short
-                    elif diff > 0:
-                        decoded_dct_coeff = np.pad(
-                            decoded_dct_coeff, (0, diff), mode="constant", constant_values=0
-                        )
-
-                decoded_dct_coeff = decoded_dct_coeff.reshape(-1, action_dim)
-                assert decoded_dct_coeff.shape == (
-                    time_horizon,
-                    action_dim,
-                ), (
-                    f"Decoded DCT coefficients have shape {decoded_dct_coeff.shape}, expected ({time_horizon}, {action_dim})"
+                expected_shape = (time_horizon, action_dim)
+                decoded_action = np.asarray(
+                    self.action_tokenizer.decode(
+                        [token.tolist()], time_horizon=time_horizon, action_dim=action_dim
+                    )[0],
+                    dtype=np.float32,
                 )
+                if decoded_action.shape != expected_shape:
+                    raise ValueError(
+                        f"decoded action shape {decoded_action.shape} does not match {expected_shape}"
+                    )
 
             except Exception as e:
-                logging.warning(f"Error decoding tokens: {e}")
-                logging.warning(f"Tokens: {token}")
-                decoded_dct_coeff = np.zeros((time_horizon, action_dim))
+                logging.warning("Invalid FAST action sequence; returning a zero action chunk: %s", e)
+                decoded_action = np.zeros((time_horizon, action_dim))
 
-            decoded_actions.append(
-                idct(decoded_dct_coeff / self.action_tokenizer.scale, axis=0, norm="ortho")
-            )
+            decoded_actions.append(decoded_action)
 
         return np.stack(decoded_actions)
 
@@ -1199,53 +1192,28 @@ class PI0FastPolicy(PreTrainedPolicy):
         if single_sample:
             tokens = tokens.unsqueeze(0)
 
-        # Convert token IDs to token strings
-        decoded_tokens = [self._paligemma_tokenizer.convert_ids_to_tokens(seq.tolist()) for seq in tokens]
-        # Get the token sequence for "Action: " to remove it
-        action_prefix_ids = self._paligemma_tokenizer.encode("Action: ", add_special_tokens=False)
-        action_prefix_tokens = self._paligemma_tokenizer.convert_ids_to_tokens(action_prefix_ids)
-        action_prefix_len = len(action_prefix_tokens)
-
-        # Clean tokens by removing everything after the first "|" (end-of-action marker)
-        # and removing all occurrences of "Action: " token sequence
-        # assert that beginning contain "Action: "
-        if self.config.validate_action_token_prefix:
-            for token_seq in decoded_tokens:
-                assert len(token_seq) >= 2 and token_seq[0] == "Action" and token_seq[1] == ":", (
-                    f"Token sequence does not start with ['Action', ':']: {token_seq}"
+        action_tokens = []
+        for token_sequence in tokens:
+            try:
+                token_ids = token_sequence.tolist()
+                eos_token_id = self._paligemma_tokenizer.eos_token_id
+                if eos_token_id in token_ids:
+                    token_ids = token_ids[: token_ids.index(eos_token_id) + 1]
+                decoded_text = self._paligemma_tokenizer.decode(token_ids)
+                if not decoded_text.startswith("Action: ") or "|" not in decoded_text:
+                    raise ValueError(f"expected 'Action: <codes>|', got {decoded_text!r}")
+                action_text = decoded_text.removeprefix("Action: ").split("|", maxsplit=1)[0]
+                raw_action_tokens = torch.tensor(
+                    self._paligemma_tokenizer.encode(action_text, add_special_tokens=False),
+                    dtype=torch.long,
+                    device=tokens.device,
                 )
-
-        cleaned_tokens = []
-        for token_seq in decoded_tokens:
-            # Remove everything after "|"
-            if "|" in token_seq:
-                token_seq = token_seq[: token_seq.index("|")]
-
-            # Remove all occurrences of "Action: " token sequence
-            i = 0
-            while i <= len(token_seq) - action_prefix_len:
-                if token_seq[i : i + action_prefix_len] == action_prefix_tokens:
-                    # Found a match, remove it
-                    token_seq = token_seq[:i] + token_seq[i + action_prefix_len :]
-                else:
-                    i += 1
-
-            cleaned_tokens.append(token_seq)
-
-        # Convert token strings back to IDs
-        raw_action_tokens = [
-            torch.tensor(
-                self._paligemma_tokenizer.convert_tokens_to_ids(token_seq),
-                dtype=torch.long,
-                device=tokens.device,
-            )
-            for token_seq in cleaned_tokens
-        ]
-
-        # Convert PaliGemma tokens to action tokens
-        action_tokens = [
-            self._paligemma_tokens_to_act_tokens(raw_action_token) for raw_action_token in raw_action_tokens
-        ]
+                if raw_action_tokens.numel() == 0:
+                    raise ValueError("empty FAST action payload")
+                action_tokens.append(self._paligemma_tokens_to_act_tokens(raw_action_tokens))
+            except Exception as e:
+                logging.warning("Invalid generated PI0-FAST text; returning zeros for this sample: %s", e)
+                action_tokens.append(torch.empty(0, dtype=torch.long, device=tokens.device))
 
         # Decode action tokens to continuous actions
         actions = self.decode_actions_with_fast(
@@ -1314,7 +1282,7 @@ class PI0FastPolicy(PreTrainedPolicy):
             )
 
         # Detokenize action tokens to continuous actions
-        action_horizon = self.config.n_action_steps
+        action_horizon = self.config.chunk_size
         action_dim = self.config.output_features[ACTION].shape[0]
 
         continuous_actions = self.detokenize_actions(

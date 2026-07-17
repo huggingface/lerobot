@@ -79,7 +79,7 @@ class Pi0FastPrepareStateAndLanguageTokenizerProcessorStep(ProcessorStep):
 
         full_prompts = []
         for i, task in enumerate(tasks):
-            cleaned_text = task.strip().replace("_", " ").replace("\n", " ")
+            cleaned_text = task.strip().replace("_", " ").replace("\n", " ").lower()
             state_str = " ".join(map(str, discretized_states[i]))
             full_prompt = f"Task: {cleaned_text}, State: {state_str};\n"
             full_prompts.append(full_prompt)
@@ -164,6 +164,7 @@ def make_pi0_fast_pre_post_processors(
             max_action_tokens=config.max_action_tokens,
             fast_skip_tokens=config.fast_skip_tokens,
             paligemma_tokenizer_name=config.text_tokenizer_name,
+            prepend_bos=False,
         ),
         DeviceProcessorStep(device=config.device),
     ]

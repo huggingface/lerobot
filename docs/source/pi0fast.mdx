@@ -43,6 +43,12 @@ This approach can transform **any existing VLM** into a VLA by training it to pr
    pip install -e ".[pi]"
    ```
 
+> [!WARNING]
+> PI0-FAST now follows OpenPI's token and normalization semantics exactly. Checkpoints and
+> saved preprocessors created with the previous LeRobot implementation are incompatible and
+> must be retrained or regenerated. In particular, do not reuse `MEAN_STD` statistics or a
+> processor that inserts a second BOS token before `Action:`.
+
 ## Training a Custom FAST Tokenizer
 
 You have two options for the FAST tokenizer:
@@ -114,7 +120,7 @@ lerobot-train \
 | `--policy.gradient_checkpointing=true` | Reduces memory usage significantly during training | `false`                         |
 | `--policy.dtype=bfloat16`              | Use mixed precision training for efficiency        | `float32`                       |
 | `--policy.chunk_size`                  | Number of action steps to predict (action horizon) | `50`                            |
-| `--policy.n_action_steps`              | Number of action steps to execute                  | `50`                            |
+| `--policy.n_action_steps`              | Number of decoded action steps to execute          | `50`                            |
 | `--policy.max_action_tokens`           | Maximum number of FAST tokens per action chunk     | `256`                           |
 | `--policy.action_tokenizer_name`       | FAST tokenizer to use                              | `lerobot/fast-action-tokenizer` |
 | `--policy.compile_model=true`          | Enable torch.compile for faster training           | `false`                         |
@@ -150,6 +156,9 @@ actions = policy.predict_action_chunk(batch)
 - **Language Model**: Gemma 2B for processing language instructions and predicting action tokens
 
 The model takes images, text instructions, and robot state as input, and outputs discrete FAST tokens that are decoded back to continuous actions.
+
+PI0-FAST always decodes a complete `chunk_size` action chunk. `n_action_steps` controls only
+how many actions from that chunk are executed before the policy predicts again.
 
 ## Configuration Options
 

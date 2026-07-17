@@ -349,6 +349,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
     max_action_tokens: int = 256
     fast_skip_tokens: int = 128
     paligemma_tokenizer_name: str = "google/paligemma-3b-pt-224"
+    prepend_bos: bool = True
     # Internal tokenizer instance (not part of the config)
     action_tokenizer: Any = field(default=None, init=False, repr=False)
     _paligemma_tokenizer: Any = field(default=None, init=False, repr=False)
@@ -476,11 +477,13 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             if tokens.dim() > 1:
                 tokens = tokens.flatten()
 
-            bos_id = self._paligemma_tokenizer.bos_token_id
-            # add bos
-            tokens = torch.cat(
+            token_parts = []
+            if self.prepend_bos:
+                token_parts.append(
+                    torch.tensor([self._paligemma_tokenizer.bos_token_id], device=action.device)
+                )
+            token_parts.extend(
                 [
-                    torch.tensor([bos_id], device=action.device),
                     torch.tensor(
                         self._paligemma_tokenizer.encode("Action: ", add_special_tokens=False),
                         device=action.device,
@@ -489,6 +492,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
                     torch.tensor(self._paligemma_tokenizer.encode("|"), device=action.device),
                 ]
             )
+            tokens = torch.cat(token_parts)
 
             # Truncate or pad to max_action_tokens
             if len(tokens) > self.max_action_tokens:
@@ -550,6 +554,9 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         config = {
             "trust_remote_code": self.trust_remote_code,
             "max_action_tokens": self.max_action_tokens,
+            "fast_skip_tokens": self.fast_skip_tokens,
+            "paligemma_tokenizer_name": self.paligemma_tokenizer_name,
+            "prepend_bos": self.prepend_bos,
         }
 
         # Only save tokenizer_name if it was used to create the tokenizer
