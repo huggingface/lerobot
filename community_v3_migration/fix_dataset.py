@@ -88,13 +88,15 @@ def fix_dataset_in_place(root) -> dict:
     feats = load_info(root).get("features", {})
     dims = [feats[c]["shape"][0] for c in VALUE_COLS if c in feats and feats[c].get("shape")]
     if any(d % 6 != 0 for d in dims):
-        # Not a plain stack of 6-joint SO arms (e.g. 7-dim with an appended EE pose): the
-        # degrees mapping doesn't apply. The `so100`/`so101` robot_type is provably wrong for
-        # this structure, so relabel it 'unknown' and migrate structurally without touching values.
-        _set_robot_type(root, "unknown")
-        return {**cls, "robot_type": "unknown", "converted": False,
+        # Not a plain stack of 6-joint SO arms (e.g. a 7-joint variant): the degrees mapping
+        # doesn't apply. Keep the original robot_type but flag it '_nonstandard' so the SO
+        # lineage is preserved while making clear it isn't a canonical 6-DOF arm.
+        rt = cls.get("robot_type") or "so"
+        new_rt = rt if rt.endswith("_nonstandard") else f"{rt}_nonstandard"
+        _set_robot_type(root, new_rt)
+        return {**cls, "robot_type": new_rt, "converted": False,
                 "action": f"structural v2.1->v3.0 only; joint dims {dims} not a multiple of 6 "
-                          "(non-standard arm), robot_type set to 'unknown', joint values left unchanged"}
+                          f"(non-standard arm), robot_type set to '{new_rt}', joint values left unchanged"}
     # drop stray files that would otherwise be uploaded
     for junk in (root / "meta").glob("info.json.bak"):
         junk.unlink()
