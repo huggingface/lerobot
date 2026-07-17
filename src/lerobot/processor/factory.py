@@ -19,6 +19,7 @@ from typing import Any
 
 import torch
 
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.types import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
@@ -97,7 +98,8 @@ class DefaultPolicyProcessorSteps:
 
 
 def make_default_policy_processor_steps(
-    config,
+def make_default_policy_processor_steps(
+    config: PreTrainedConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     *,
     normalizer_device: torch.device | str | None = None,
@@ -155,7 +157,8 @@ def make_policy_processor_pipelines(
 
 
 def make_default_pre_post_processors(
-    config,
+def make_default_policy_processor_steps(
+    config: PreTrainedConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     *,
     normalizer_device: torch.device | str | None = None,
