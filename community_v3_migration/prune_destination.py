@@ -72,9 +72,12 @@ def main():
     ap.add_argument("--list-missing", action="store_true",
                     help="Report datasets in the manifest that are NOT present in the destination "
                          "repo (grouped by their migration action), then exit without deleting.")
+    ap.add_argument("--report", action="store_true",
+                    help="List all three categories (errored, mislabeled-so, missing) without "
+                         "deleting anything, then exit. '*' marks datasets absent from the repo.")
     args = ap.parse_args()
-    if not (args.errored or args.mislabeled_so or args.list_missing):
-        ap.error("enable at least one of: --errored, --mislabeled-so, --list-missing")
+    if not (args.errored or args.mislabeled_so or args.list_missing or args.report):
+        ap.error("enable at least one of: --errored, --mislabeled-so, --list-missing, --report")
 
     df = pd.concat([pd.read_csv(p) for p in args.manifest], ignore_index=True)
     if "root" not in df.columns:
@@ -86,13 +89,19 @@ def main():
                for p in api.list_repo_files(args.dst_repo, repo_type="dataset")
                if p.endswith("/meta/info.json")}
 
-    if args.list_missing:
-        missing = df[~df["root"].isin(present)]
-        for _, row in missing.sort_values("action").iterrows():
-            print(f"{str(row.get('action') or '')[:90]:92s} {row['root']}")
-        print(f"\n{len(missing)} dataset(s) in manifest missing from {args.dst_repo} "
-              f"({df['root'].nunique()} unique manifest rows, {len(present)} datasets in repo).",
-              file=sys.stderr)
+    if args.report or args.list_missing:
+        def _dump(title, sub):
+            print(f"== {title} ({len(sub)}) ==")
+            for root in sorted(sub):
+                print(f"  {' ' if root in present else '*'} {root}")
+            print()
+        missing = set(df.loc[~df["root"].isin(present), "root"])
+        if args.report:
+            _dump("errored", set(df.loc[df.apply(_is_errored, axis=1), "root"]))
+            _dump("mislabeled-so", set(df.loc[df.apply(_is_mislabeled_so, axis=1), "root"]))
+        _dump("missing from repo", missing)
+        print(f"{df['root'].nunique()} unique manifest rows, {len(present)} datasets in "
+              f"{args.dst_repo}. '*' = absent from repo.", file=sys.stderr)
         return
 
     to_delete = select(df, present, args.errored, args.mislabeled_so)
