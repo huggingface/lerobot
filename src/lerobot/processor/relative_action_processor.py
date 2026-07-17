@@ -112,12 +112,6 @@ class RelativeActionsProcessorStep(ProcessorStep):
     exclude_joints: list[str] = field(default_factory=list)
     action_names: list[str] | None = None
     _last_state: torch.Tensor | None = field(default=None, init=False, repr=False)
-    # When True, ``__call__`` stops refreshing ``_last_state``. Chunked inference
-    # engines set this so every action popped from a policy's action queue is
-    # re-anchored to the state captured when the chunk was predicted, instead of
-    # drifting against the current per-tick state. Episode-scoped runtime state,
-    # not part of ``get_config``.
-    _hold_state: bool = field(default=False, init=False, repr=False)
 
     def _build_mask(self, action_dim: int) -> list[bool]:
         if not self.exclude_joints or self.action_names is None:
@@ -142,9 +136,8 @@ class RelativeActionsProcessorStep(ProcessorStep):
         observation = transition.get(TransitionKey.OBSERVATION, {})
         state = observation.get(OBS_STATE) if observation else None
 
-        # Always cache state for the paired AbsoluteActionsProcessorStep, unless a
-        # chunked inference engine has frozen the anchor for the current chunk.
-        if state is not None and not self._hold_state:
+        # Always cache state for the paired AbsoluteActionsProcessorStep.
+        if state is not None:
             self._last_state = state
 
         if not self.enabled:
@@ -163,14 +156,10 @@ class RelativeActionsProcessorStep(ProcessorStep):
         """Return the cached ``observation.state`` used as the reference point for relative/absolute action conversions."""
         return self._last_state
 
-    def set_hold(self, flag: bool) -> None:
-        """Freeze (``True``) or resume (``False``) refreshing of the cached anchor state.
-
-        While held, ``__call__`` keeps the previously cached ``_last_state`` so the
-        paired :class:`AbsoluteActionsProcessorStep` re-anchors every action of a
-        predicted chunk to the same state, avoiding intra-chunk drift.
-        """
-        self._hold_state = flag
+    def set_cached_state(self, state: torch.Tensor | None) -> None:
+        """Override the cached anchor state, e.g. to re-pin a chunk's anchor after the
+        per-tick pipeline overwrote it (see ``SyncInferenceEngine``)."""
+        self._last_state = state
 
     def get_config(self) -> dict[str, Any]:
         return {

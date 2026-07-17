@@ -359,13 +359,8 @@ _REL_ACTION_DIM = len(_REL_ACTION_NAMES)
 
 
 def _relative_pre_post(exclude_joints=None):
-    """Build fake pre/post processors wrapping real relative/absolute steps.
-
-    The preprocessor runs the ``RelativeActionsProcessorStep`` (caching/holding the
-    anchor state) and passes the observation through; the postprocessor runs the
-    paired ``AbsoluteActionsProcessorStep`` (relative + cached state) and returns the
-    absolute action tensor.  Shapes mirror what the sync engine feeds them.
-    """
+    """Pre/post processors wrapping the real relative (caches anchor) and absolute
+    (relative + cached state) steps, mirroring what the sync engine feeds them."""
     from lerobot.processor import (
         AbsoluteActionsProcessorStep,
         RelativeActionsProcessorStep,
@@ -383,8 +378,7 @@ def _relative_pre_post(exclude_joints=None):
         steps = [relative_step]
 
         def __call__(self, observation):
-            # observation carries a batched OBS_STATE tensor; run the relative step so
-            # it caches (or holds) the anchor, then pass the batch through unchanged.
+            # Run the relative step so it caches the anchor, then pass the batch through.
             transition = create_transition(observation={OBS_STATE: observation[OBS_STATE]})
             relative_step(transition)
             return observation
@@ -403,33 +397,37 @@ def _relative_pre_post(exclude_joints=None):
     return _Pre(), _Post(), relative_step
 
 
-def _fake_relative_policy(chunk_rel, n_action_steps, with_queue=True):
-    """Fake chunk policy: refills an ``_action_queue`` with ``chunk_rel`` when empty."""
+def _fake_relative_policy(chunk_rel, n_action_steps, chunking=True):
+    """Fake relative-action policy for the sync engine.
+
+    ``chunking=True`` buffers a chunk and serves it one action per tick, calling the
+    public ``predict_action_chunk`` only on refill (pi0/fastwam/lingbot). ``False``
+    returns an action directly and never calls it. The engine's anchor probe keys off
+    that public call, so the fake routes through it rather than any private queue.
+    """
     from collections import deque
 
     policy = MagicMock()
     policy.config.use_amp = False
     policy.config.action_feature_names = list(_REL_ACTION_NAMES)
     state = {"predict_calls": 0}
+    queue = deque(maxlen=n_action_steps)
 
-    if with_queue:
-        policy._action_queue = deque(maxlen=n_action_steps)
-    else:
-        # Ensure the attribute is truly absent so getattr(...) falls back.
-        del policy._action_queue
+    def predict_action_chunk(_batch=None, **_kwargs):
+        state["predict_calls"] += 1
+        return chunk_rel.unsqueeze(0)  # [B=1, n, dim]
 
     def select_action(_observation):
-        if with_queue:
-            if len(policy._action_queue) == 0:
-                state["predict_calls"] += 1
-                policy._action_queue.extend(chunk_rel[i].unsqueeze(0) for i in range(n_action_steps))
-            return policy._action_queue.popleft()
-        # No queue: recompute every tick (like temporal ensembling).
-        state["predict_calls"] += 1
-        return chunk_rel[0].unsqueeze(0)
+        if not chunking:
+            return chunk_rel[0].unsqueeze(0)
+        if len(queue) == 0:
+            actions = policy.predict_action_chunk(_observation)
+            queue.extend(actions.transpose(0, 1))  # [n, 1, dim]
+        return queue.popleft()
 
+    policy.predict_action_chunk.side_effect = predict_action_chunk
     policy.select_action.side_effect = select_action
-    policy.reset.side_effect = lambda: policy._action_queue.clear() if with_queue else None
+    policy.reset.side_effect = queue.clear
     policy._predict_state = state
     return policy
 
@@ -479,28 +477,30 @@ def test_sync_relative_holds_anchor_across_chunk():
         expected = torch.tensor(s0) + chunk_rel[tick]
         torch.testing.assert_close(outputs[tick], expected)
 
-    # Next tick empties the queue -> recompute -> anchor refreshes to the new state.
+    # Next tick empties the queue -> fresh chunk -> anchor advances to the new state.
     s_next = [10.0, 20.0, 30.0, 40.0]
     out = engine.get_action(_obs_frame(s_next))
     assert policy._predict_state["predict_calls"] == 2
     torch.testing.assert_close(out, torch.tensor(s_next) + chunk_rel[0])
-    assert relative_step._hold_state is False  # released after every call
+    # The anchor now reflects the fresh-chunk state, not the held one.
+    torch.testing.assert_close(relative_step.get_cached_state(), torch.tensor([s_next]))
 
 
-def test_sync_relative_fallback_without_action_queue():
-    """A policy without ``_action_queue`` refreshes the anchor every tick."""
+def test_sync_relative_non_chunking_policy_refreshes_every_tick():
+    """A policy that never calls ``predict_action_chunk`` must not freeze the anchor."""
     n = 3
     chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.5) for _ in range(n)])
     pre, post, _ = _relative_pre_post()
-    policy = _fake_relative_policy(chunk_rel, n_action_steps=n, with_queue=False)
+    policy = _fake_relative_policy(chunk_rel, n_action_steps=n, chunking=False)
     engine = _build_sync_engine(policy, pre, post)
 
     s0 = [1.0, 1.0, 1.0, 1.0]
     for tick in range(3):
         state = [v + tick for v in s0]
         out = engine.get_action(_obs_frame(state))
-        # Anchor tracks the current state every tick.
+        # Anchor must track the current state every tick (no chunk => no hold).
         torch.testing.assert_close(out, torch.tensor(state) + chunk_rel[0])
+    assert policy._predict_state["predict_calls"] == 0
 
 
 def test_sync_engine_no_relative_step_is_none():
