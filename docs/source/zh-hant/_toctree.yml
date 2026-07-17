@@ -149,6 +149,10 @@
     title: Isaac Teleop
   title: "遙操作器（Teleoperators）"
 - sections:
+  - local: cameras
+    title: 攝影機（Cameras）
+  title: "感測器（Sensors）"
+- sections:
   - local: contributing
     title: 貢獻至 LeRobot
   - local: backwardcomp
