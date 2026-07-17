@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
@@ -44,26 +45,10 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.feature_utils import dataset_to_policy_features
 
-from .act.configuration_act import ACTConfig
-from .diffusion.configuration_diffusion import DiffusionConfig
-from .eo1.configuration_eo1 import EO1Config
 from .evo1.configuration_evo1 import Evo1Config
-from .fastwam.configuration_fastwam import FastWAMConfig
-from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
 from .groot.configuration_groot import GrootConfig
-from .lingbot_va.configuration_lingbot_va import LingBotVAConfig
-from .molmoact2.configuration_molmoact2 import MolmoAct2Config
-from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
-from .pi0.configuration_pi0 import PI0Config
-from .pi05.configuration_pi05 import PI05Config
 from .pretrained import PreTrainedPolicy
-from .smolvla.configuration_smolvla import SmolVLAConfig
-from .tdmpc.configuration_tdmpc import TDMPCConfig
 from .utils import validate_visual_features_consistency
-from .vla_jepa.configuration_vla_jepa import VLAJEPAConfig
-from .vqbet.configuration_vqbet import VQBeTConfig
-from .wall_x.configuration_wall_x import WallXConfig
-from .xvla.configuration_xvla import XVLAConfig
 
 
 def _reconnect_relative_absolute_steps(
@@ -88,100 +73,23 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
     """
     Retrieves a policy class by its registered name.
 
-    This function uses dynamic imports to avoid loading all policy classes into memory
-    at once, improving startup time and reducing dependencies.
+    Resolution is convention-based: the draccus-registered config class of ``name`` is
+    looked up, its ``configuration_*`` module path is rewritten to ``modeling_*``, and
+    the ``<X>Policy`` class is imported from there. The modeling module is only imported
+    at call time, keeping heavy optional dependencies lazy. This works for both built-in
+    policies and third-party lerobot plugins (anything registered via
+    ``@PreTrainedConfig.register_subclass``).
 
     Args:
-        name: The name of the policy. Supported names are "tdmpc", "diffusion", "act",
-            "multi_task_dit", "vqbet", "pi0", "pi05", "gaussian_actor", "smolvla", "wall_x",
-            "molmoact2", "eo1", "evo1".
+        name: The registered name of the policy (e.g. "act", "diffusion", "pi0").
     Returns:
         The policy class corresponding to the given name.
 
     Raises:
-        NotImplementedError: If the policy name is not recognized.
+        ValueError: If the policy name is not registered.
+        ImportError: If the policy's optional dependencies are not installed.
     """
-    if name == "tdmpc":
-        from .tdmpc.modeling_tdmpc import TDMPCPolicy
-
-        return TDMPCPolicy
-    elif name == "diffusion":
-        from .diffusion.modeling_diffusion import DiffusionPolicy
-
-        return DiffusionPolicy
-    elif name == "act":
-        from .act.modeling_act import ACTPolicy
-
-        return ACTPolicy
-    elif name == "multi_task_dit":
-        from .multi_task_dit.modeling_multi_task_dit import MultiTaskDiTPolicy
-
-        return MultiTaskDiTPolicy
-    elif name == "vqbet":
-        from .vqbet.modeling_vqbet import VQBeTPolicy
-
-        return VQBeTPolicy
-    elif name == "pi0":
-        from .pi0.modeling_pi0 import PI0Policy
-
-        return PI0Policy
-    elif name == "pi0_fast":
-        from .pi0_fast.modeling_pi0_fast import PI0FastPolicy
-
-        return PI0FastPolicy
-    elif name == "pi05":
-        from .pi05.modeling_pi05 import PI05Policy
-
-        return PI05Policy
-    elif name == "gaussian_actor":
-        from .gaussian_actor.modeling_gaussian_actor import GaussianActorPolicy
-
-        return GaussianActorPolicy
-    elif name == "smolvla":
-        from .smolvla.modeling_smolvla import SmolVLAPolicy
-
-        return SmolVLAPolicy
-    elif name == "groot":
-        from .groot.modeling_groot import GrootPolicy
-
-        return GrootPolicy
-    elif name == "xvla":
-        from .xvla.modeling_xvla import XVLAPolicy
-
-        return XVLAPolicy
-    elif name == "wall_x":
-        from .wall_x.modeling_wall_x import WallXPolicy
-
-        return WallXPolicy
-    elif name == "eo1":
-        from .eo1.modeling_eo1 import EO1Policy
-
-        return EO1Policy
-    elif name == "molmoact2":
-        from .molmoact2.modeling_molmoact2 import MolmoAct2Policy
-
-        return MolmoAct2Policy
-    elif name == "vla_jepa":
-        from .vla_jepa.modeling_vla_jepa import VLAJEPAPolicy
-
-        return VLAJEPAPolicy
-    elif name == "lingbot_va":
-        from .lingbot_va.modeling_lingbot_va import LingBotVAPolicy
-
-        return LingBotVAPolicy
-    elif name == "fastwam":
-        from .fastwam.modeling_fastwam import FastWAMPolicy
-
-        return FastWAMPolicy
-    elif name == "evo1":
-        from .evo1.modeling_evo1 import Evo1Policy
-
-        return Evo1Policy
-    else:
-        try:
-            return _get_policy_cls_from_policy_name(name=name)
-        except Exception as e:
-            raise ValueError(f"Policy type '{name}' is not available.") from e
+    return _get_policy_cls_from_policy_name(name=name)
 
 
 def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
@@ -192,9 +100,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     mapping a string identifier to the corresponding config class.
 
     Args:
-        policy_type: The type of the policy. Supported types include "tdmpc",
-                     "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05", "gaussian_actor",
-                     "smolvla", "wall_x", "molmoact2", "eo1", "evo1".
+        policy_type: The registered type of the policy (any name registered via
+                     ``@PreTrainedConfig.register_subclass``, e.g. "act", "diffusion", "pi0").
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -203,48 +110,11 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     Raises:
         ValueError: If the `policy_type` is not recognized.
     """
-    if policy_type == "tdmpc":
-        return TDMPCConfig(**kwargs)
-    elif policy_type == "diffusion":
-        return DiffusionConfig(**kwargs)
-    elif policy_type == "act":
-        return ACTConfig(**kwargs)
-    elif policy_type == "multi_task_dit":
-        return MultiTaskDiTConfig(**kwargs)
-    elif policy_type == "vqbet":
-        return VQBeTConfig(**kwargs)
-    elif policy_type == "pi0":
-        return PI0Config(**kwargs)
-    elif policy_type == "pi05":
-        return PI05Config(**kwargs)
-    elif policy_type == "gaussian_actor":
-        return GaussianActorConfig(**kwargs)
-    elif policy_type == "smolvla":
-        return SmolVLAConfig(**kwargs)
-    elif policy_type == "groot":
-        return GrootConfig(**kwargs)
-    elif policy_type == "xvla":
-        return XVLAConfig(**kwargs)
-    elif policy_type == "wall_x":
-        return WallXConfig(**kwargs)
-    elif policy_type == "eo1":
-        return EO1Config(**kwargs)
-    elif policy_type == "molmoact2":
-        return MolmoAct2Config(**kwargs)
-    elif policy_type == "vla_jepa":
-        return VLAJEPAConfig(**kwargs)
-    elif policy_type == "lingbot_va":
-        return LingBotVAConfig(**kwargs)
-    elif policy_type == "fastwam":
-        return FastWAMConfig(**kwargs)
-    elif policy_type == "evo1":
-        return Evo1Config(**kwargs)
-    else:
-        try:
-            config_cls = PreTrainedConfig.get_choice_class(policy_type)
-            return config_cls(**kwargs)
-        except Exception as e:
-            raise ValueError(f"Policy type '{policy_type}' is not available.") from e
+    try:
+        config_cls = PreTrainedConfig.get_choice_class(policy_type)
+    except Exception as e:
+        raise ValueError(f"Policy type '{policy_type}' is not available.") from e
+    return config_cls(**kwargs)
 
 
 class ProcessorConfigKwargs(TypedDict, total=False):
@@ -298,8 +168,7 @@ def make_pre_post_processors(
         A tuple containing the input (pre-processor) and output (post-processor) pipelines.
 
     Raises:
-        NotImplementedError: If a processor factory is not implemented for the given
-            policy configuration type.
+        ValueError: If no processor factory exists for the given policy configuration type.
     """
     if pretrained_path:
         if isinstance(policy_cfg, GrootConfig):
@@ -351,166 +220,13 @@ def make_pre_post_processors(
             )
         return preprocessor, postprocessor
 
-    # Create a new processor based on policy type
-    if isinstance(policy_cfg, TDMPCConfig):
-        from .tdmpc.processor_tdmpc import make_tdmpc_pre_post_processors
-
-        processors = make_tdmpc_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, DiffusionConfig):
-        from .diffusion.processor_diffusion import make_diffusion_pre_post_processors
-
-        processors = make_diffusion_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, ACTConfig):
-        from .act.processor_act import make_act_pre_post_processors
-
-        processors = make_act_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, MultiTaskDiTConfig):
-        from .multi_task_dit.processor_multi_task_dit import (
-            make_multi_task_dit_pre_post_processors,
-        )
-
-        processors = make_multi_task_dit_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, VQBeTConfig):
-        from .vqbet.processor_vqbet import make_vqbet_pre_post_processors
-
-        processors = make_vqbet_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, PI0Config):
-        from .pi0.processor_pi0 import make_pi0_pre_post_processors
-
-        processors = make_pi0_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, PI05Config):
-        from .pi05.processor_pi05 import make_pi05_pre_post_processors
-
-        processors = make_pi05_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, GaussianActorConfig):
-        from .gaussian_actor.processor_gaussian_actor import make_gaussian_actor_pre_post_processors
-
-        processors = make_gaussian_actor_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, SmolVLAConfig):
-        from .smolvla.processor_smolvla import make_smolvla_pre_post_processors
-
-        processors = make_smolvla_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, GrootConfig):
-        from .groot.processor_groot import make_groot_pre_post_processors
-
-        processors = make_groot_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-            dataset_meta=kwargs.get("dataset_meta"),
-        )
-
-    elif isinstance(policy_cfg, XVLAConfig):
-        from .xvla.processor_xvla import (
-            make_xvla_pre_post_processors,
-        )
-
-        processors = make_xvla_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, WallXConfig):
-        from .wall_x.processor_wall_x import make_wall_x_pre_post_processors
-
-        processors = make_wall_x_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, EO1Config):
-        from .eo1.processor_eo1 import make_eo1_pre_post_processors
-
-        processors = make_eo1_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-    elif isinstance(policy_cfg, Evo1Config):
-        from .evo1.processor_evo1 import make_evo1_pre_post_processors
-
-        processors = make_evo1_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, MolmoAct2Config):
-        from .molmoact2.processor_molmoact2 import make_molmoact2_pre_post_processors
-
-        processors = make_molmoact2_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-            dataset_meta=kwargs.get("dataset_meta"),
-        )
-
-    elif isinstance(policy_cfg, VLAJEPAConfig):
-        from .vla_jepa.processor_vla_jepa import make_vla_jepa_pre_post_processors
-
-        processors = make_vla_jepa_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, LingBotVAConfig):
-        from .lingbot_va.processor_lingbot_va import make_lingbot_va_pre_post_processors
-
-        processors = make_lingbot_va_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, FastWAMConfig):
-        from .fastwam.processor_fastwam import make_fastwam_pre_post_processors
-
-        processors = make_fastwam_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    else:
-        try:
-            processors = _make_processors_from_policy_config(
-                config=policy_cfg,
-                dataset_stats=kwargs.get("dataset_stats"),
-            )
-        except Exception as e:
-            raise ValueError(f"Processor for policy type '{policy_cfg.type}' is not implemented.") from e
-
-    return processors
+    # Create new processors from the policy config, resolving the per-policy factory
+    # function by naming convention (lazy import keeps optional dependencies optional).
+    return _make_processors_from_policy_config(
+        config=policy_cfg,
+        dataset_stats=kwargs.get("dataset_stats"),
+        dataset_meta=kwargs.get("dataset_meta"),
+    )
 
 
 def make_policy(
@@ -654,10 +370,12 @@ def make_policy(
     return policy
 
 
-def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedConfig]:
+def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedPolicy]:
     """Get policy class from its registered name using dynamic imports.
 
-    This is used as a helper function to import policies from 3rd party lerobot plugins.
+    Works for built-in policies and 3rd party lerobot plugins alike: the config class
+    registered under ``name`` is resolved via the draccus ChoiceRegistry, and the policy
+    class is imported from the sibling ``modeling_*`` module by naming convention.
 
     Args:
         name: The name of the policy.
@@ -683,22 +401,39 @@ def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedConfig]:
         "configuration_", "modeling_"
     )  # e.g., configuration_diffusion -> modeling_diffusion
 
-    module = importlib.import_module(module_path)
-    policy_cls = getattr(module, cls_name)
+    try:
+        module = importlib.import_module(module_path)
+    except ModuleNotFoundError as e:
+        if e.name == module_path:
+            # The modeling_* module itself does not exist for this policy type. A missing
+            # optional dependency inside an existing module propagates unchanged instead,
+            # so its actionable install hint stays visible.
+            raise ValueError(f"Policy class for '{name}' is not implemented.") from e
+        raise
+    policy_cls = getattr(module, cls_name, None)
+    if policy_cls is None:
+        raise ValueError(
+            f"Policy class '{cls_name}' not found in '{module_path}'. "
+            f"Policies must expose '<Name>Policy' in the sibling 'modeling_*' module by naming convention."
+        )
     return policy_cls
 
 
 def _make_processors_from_policy_config(
     config: PreTrainedConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    dataset_meta: Any | None = None,
 ) -> tuple[Any, Any]:
     """Create pre- and post-processors from a policy configuration using dynamic imports.
 
-    This is used as a helper function to import processor factories from 3rd party lerobot plugins.
+    Resolves ``make_{type}_pre_post_processors`` from the policy's ``processor_*`` module
+    by naming convention. Works for built-in policies and 3rd party lerobot plugins.
 
     Args:
         config: The policy configuration object.
         dataset_stats: Dataset statistics for normalization.
+        dataset_meta: Dataset metadata, forwarded only to factories that declare a
+            ``dataset_meta`` parameter (e.g. groot, molmoact2).
     Returns:
         A tuple containing the input (pre-processor) and output (post-processor) pipelines.
     """
@@ -711,6 +446,19 @@ def _make_processors_from_policy_config(
     logging.debug(
         f"Instantiating pre/post processors using function '{function_name}' from module '{module_path}'"
     )
-    module = importlib.import_module(module_path)
-    function = getattr(module, function_name)
-    return function(config, dataset_stats=dataset_stats)
+    try:
+        module = importlib.import_module(module_path)
+    except ModuleNotFoundError as e:
+        if e.name == module_path:
+            # The processor_* module itself does not exist for this policy type. A missing
+            # optional dependency inside an existing module propagates unchanged instead,
+            # so its actionable install hint stays visible.
+            raise ValueError(f"Processor for policy type '{policy_type}' is not implemented.") from e
+        raise
+    function = getattr(module, function_name, None)
+    if function is None:
+        raise ValueError(f"Processor for policy type '{policy_type}' is not implemented.")
+    call_kwargs: dict[str, Any] = {"dataset_stats": dataset_stats}
+    if "dataset_meta" in inspect.signature(function).parameters:
+        call_kwargs["dataset_meta"] = dataset_meta
+    return function(config, **call_kwargs)

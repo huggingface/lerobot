@@ -32,6 +32,7 @@ from torch import Tensor, nn
 from lerobot.__version__ import __version__
 from lerobot.configs import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
 
 from .utils import log_model_loading_keys
@@ -220,7 +221,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
         missing_keys, unexpected_keys = load_model_as_safetensor(
-            model, model_file, strict=strict, device=map_location
+            model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
         )
         log_model_loading_keys(missing_keys, unexpected_keys)
         return model

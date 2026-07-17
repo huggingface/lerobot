@@ -42,10 +42,14 @@ from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorTo
 from .device_processor import DeviceProcessorStep
 from .env_processor import IsaaclabArenaProcessorStep, LiberoProcessorStep
 from .factory import (
+    DefaultPolicyProcessorSteps,
+    make_default_policy_processor_steps,
+    make_default_pre_post_processors,
     make_default_processors,
     make_default_robot_action_processor,
     make_default_robot_observation_processor,
     make_default_teleop_action_processor,
+    make_policy_processor_pipelines,
 )
 from .gym_action_processor import (
     Numpy2TorchActionProcessorStep,
@@ -129,10 +133,14 @@ __all__ = [
     "ImageCropResizeProcessorStep",
     "InfoProcessorStep",
     "InterventionActionProcessorStep",
+    "DefaultPolicyProcessorSteps",
+    "make_default_policy_processor_steps",
+    "make_default_pre_post_processors",
     "make_default_processors",
     "make_default_teleop_action_processor",
     "make_default_robot_action_processor",
     "make_default_robot_observation_processor",
+    "make_policy_processor_pipelines",
     "AbsoluteActionsProcessorStep",
     "RelativeActionsProcessorStep",
     "MapDeltaActionToRobotActionStep",
