@@ -43,12 +43,6 @@ This approach can transform **any existing VLM** into a VLA by training it to pr
    pip install -e ".[pi]"
    ```
 
-> [!WARNING]
-> PI0-FAST now follows OpenPI's token and normalization semantics exactly. Checkpoints and
-> saved preprocessors created with the previous LeRobot implementation are incompatible and
-> must be retrained or regenerated. In particular, do not reuse `MEAN_STD` statistics or a
-> processor that inserts a second BOS token before `Action:`.
-
 ## Training a Custom FAST Tokenizer
 
 You have two options for the FAST tokenizer:
