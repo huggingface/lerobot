@@ -53,6 +53,38 @@
     title: 串流影片編碼（Streaming Video Encoding）
   title: "資料集（Datasets）"
 - sections:
+  - local: act
+    title: ACT
+  - local: smolvla
+    title: SmolVLA
+  - local: pi0
+    title: π₀ (Pi0)
+  - local: pi0fast
+    title: π₀-FAST (Pi0Fast)
+  - local: pi05
+    title: π₀.₅ (Pi05)
+  - local: molmoact2
+    title: MolmoAct2
+  - local: vla_jepa
+    title: VLA-JEPA
+  - local: eo1
+    title: EO-1
+  - local: lingbot_va
+    title: LingBot-VA
+  - local: fastwam
+    title: FastWAM
+  - local: evo1
+    title: EVO1
+  - local: groot
+    title: NVIDIA GR00T
+  - local: xvla
+    title: X-VLA
+  - local: multi_task_dit
+    title: 多任務 DiT 策略（Multitask DiT Policy）
+  - local: walloss
+    title: WALL-OSS
+  title: "策略（Policies）"
+- sections:
   - local: sarm
     title: SARM
   - local: robometer
