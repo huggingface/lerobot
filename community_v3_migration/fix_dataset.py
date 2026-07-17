@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 import so_arm_frame
-from classify import classify
+from classify import classify, load_info
 
 VALUE_COLS = ("observation.state", "action")
 
@@ -78,6 +78,14 @@ def fix_dataset_in_place(root) -> dict:
         return {**cls, "converted": False,
                 "action": "structural v2.1->v3.0 only; joint values kept in normalized units "
                           "(-100..100 / 0..100), NOT converted to degrees (uncalibrated -> APPROXIMATE)"}
+    feats = load_info(root).get("features", {})
+    dims = [feats[c]["shape"][0] for c in VALUE_COLS if c in feats and feats[c].get("shape")]
+    if any(d % 6 != 0 for d in dims):
+        # Not a plain stack of 6-joint SO arms (e.g. 7-dim with an appended EE pose): the
+        # degrees mapping doesn't apply, so migrate structurally and leave the values alone.
+        return {**cls, "converted": False,
+                "action": f"structural v2.1->v3.0 only; joint dims {dims} not a multiple of 6 "
+                          "(non-standard arm), joint values left unchanged"}
     # drop stray files that would otherwise be uploaded
     for junk in (root / "meta").glob("info.json.bak"):
         junk.unlink()
