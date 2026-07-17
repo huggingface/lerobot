@@ -78,6 +78,21 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
             f.write(json.dumps(r) + "\n")
 
 
+def data_video_episode_mismatch(root) -> str | None:
+    """Return a description when the data files and any camera's video files disagree on the
+    episode count (dataset can't be migrated, e.g. 'All cams dont have same number of episodes'),
+    else None. Datasets without videos never mismatch here."""
+    root = Path(root)
+    info = json.loads((root / "meta" / "info.json").read_text())
+    counts = {"data": len(list((root / "data").glob("*/episode_*.parquet")))}
+    for k, f in info.get("features", {}).items():
+        if f.get("dtype") == "video":
+            counts[k] = len(list((root / "videos").glob(f"*/{k}/episode_*.mp4")))
+    if len(counts) > 1 and len(set(counts.values())) > 1:
+        return f"data/video episode counts disagree: {counts}"
+    return None
+
+
 def reconcile_episode_count(root) -> str | None:
     """When the data files and video files agree on an episode count N but the metadata lists a
     different count, rewrite the metadata (episodes.jsonl, episodes_stats.jsonl, info.json) to N.

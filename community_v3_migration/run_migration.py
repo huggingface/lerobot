@@ -17,7 +17,7 @@ from huggingface_hub import HfApi
 
 import so_arm_frame
 from classify import classify, is_end_effector, load_info
-from fix_dataset import fix_dataset_in_place, reconcile_episode_count
+from fix_dataset import data_video_episode_mismatch, fix_dataset_in_place, reconcile_episode_count
 
 SRC_REPO = "HuggingFaceVLA/community_dataset_v3"
 
@@ -168,6 +168,10 @@ def migrate_one(api, dst_repo, sub, work_dir, no_upload) -> dict:
     if is_end_effector(info):
         return {"root": sub, "robot_type": info.get("robot_type"),
                 "action": "skipped: end-effector (task-space) dataset, out of scope"}
+    mismatch = data_video_episode_mismatch(local)
+    if mismatch:
+        return {"root": sub, "robot_type": info.get("robot_type"),
+                "action": f"skipped: {mismatch}"}
 
     result = fix_dataset_in_place(local)          # SO-arm value fix (or structural_only)
 
