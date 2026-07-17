@@ -52,6 +52,7 @@ from .fastwam.configuration_fastwam import FastWAMConfig
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
 from .groot.configuration_groot import GrootConfig
 from .lingbot_va.configuration_lingbot_va import LingBotVAConfig
+from .lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from .pi0.configuration_pi0 import PI0Config
@@ -177,6 +178,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .evo1.modeling_evo1 import Evo1Policy
 
         return Evo1Policy
+    elif name == "lingbot_vla_v2":
+        from .lingbot_vla_v2.modeling_lingbot_vla_v2 import LingbotVLAV2Policy
+
+        return LingbotVLAV2Policy
     else:
         try:
             return _get_policy_cls_from_policy_name(name=name)
@@ -194,7 +199,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
                      "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05", "gaussian_actor",
-                     "smolvla", "wall_x", "molmoact2", "eo1", "evo1".
+                     "smolvla", "wall_x", "molmoact2", "eo1", "evo1", "lingbot_vla_v2".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -239,6 +244,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return FastWAMConfig(**kwargs)
     elif policy_type == "evo1":
         return Evo1Config(**kwargs)
+    elif policy_type == "lingbot_vla_v2":
+        return LingbotVLAV2Config(**kwargs)
     else:
         try:
             config_cls = PreTrainedConfig.get_choice_class(policy_type)
@@ -497,6 +504,14 @@ def make_pre_post_processors(
         from .fastwam.processor_fastwam import make_fastwam_pre_post_processors
 
         processors = make_fastwam_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, LingbotVLAV2Config):
+        from .lingbot_vla_v2.processor_lingbot_vla_v2 import make_lingbot_vla_v2_pre_post_processors
+
+        processors = make_lingbot_vla_v2_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
