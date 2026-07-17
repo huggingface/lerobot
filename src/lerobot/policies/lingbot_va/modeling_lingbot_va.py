@@ -419,7 +419,9 @@ class LingBotVAPolicy(PreTrainedPolicy):
             # First call: this observation conditions the first chunk (it is *not* a keyframe).
             self._started = True
             actions, predictions = unpack_action_output(
-                self.predict_action_chunk(batch, return_intermediate_predictions=return_intermediate_predictions)
+                self.predict_action_chunk(
+                    batch, return_intermediate_predictions=return_intermediate_predictions
+                )
             )  # [B, chunk_size, n_used]
             self._action_queue.extend(actions.transpose(0, 1))  # [chunk_size, B, n_used]
             self._obs_buffer = []
