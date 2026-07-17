@@ -46,6 +46,7 @@ from lerobot.processor import (
 from lerobot.processor.relative_action_processor import RelativeActionsProcessorStep
 from lerobot.robots import make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
+from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 
 from .configs import BaseStrategyConfig, DAggerStrategyConfig, RolloutConfig
@@ -107,6 +108,26 @@ def _resolve_action_key_order(
         logger.warning("policy.action_feature_names keys don't match dataset; using dataset order")
         return dataset_action_names
     return policy_action_names
+
+
+def _align_relative_state_feature_order(
+    hw_features: dict[str, dict], policy_action_names: list[str] | None
+) -> dict[str, dict]:
+    """Align policy-facing state with named relative-action dimensions."""
+    if not policy_action_names or OBS_STATE not in hw_features:
+        return hw_features
+
+    state_feature = hw_features[OBS_STATE]
+    state_names = state_feature.get("names")
+    if not state_names or len(state_names) != len(policy_action_names):
+        return hw_features
+    if set(state_names) != set(policy_action_names) or state_names == policy_action_names:
+        return hw_features
+
+    aligned = dict(hw_features)
+    aligned[OBS_STATE] = {**state_feature, "names": list(policy_action_names)}
+    logger.info("Aligned relative-action state order with checkpoint action names")
+    return aligned
 
 
 # ---------------------------------------------------------------------------
@@ -431,10 +452,22 @@ def build_rollout_context(
         },
     )
 
-    if isinstance(cfg.inference, SyncInferenceConfig) and any(
-        isinstance(step, RelativeActionsProcessorStep) and step.enabled
-        for step in getattr(preprocessor, "steps", ())
-    ):
+    relative_action_step = next(
+        (
+            step
+            for step in getattr(preprocessor, "steps", ())
+            if isinstance(step, RelativeActionsProcessorStep) and step.enabled
+        ),
+        None,
+    )
+    if relative_action_step is not None:
+        relative_action_names = relative_action_step.action_names or policy_action_names
+        hw_features = _align_relative_state_feature_order(
+            hw_features,
+            list(relative_action_names) if relative_action_names else None,
+        )
+
+    if isinstance(cfg.inference, SyncInferenceConfig) and relative_action_step is not None:
         raise NotImplementedError(
             "SyncInferenceEngine does not support policies with relative actions for now."
             "Use --inference.type=rtc or remove relative action processor steps from the policy pipeline."

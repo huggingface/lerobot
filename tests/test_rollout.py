@@ -188,6 +188,42 @@ def test_trained_rtc_rollout_requires_capacity_for_max_delay(execution_horizon, 
         _validate_trained_rtc_rollout_config(policy_config, inference_config)
 
 
+def test_relative_state_order_follows_checkpoint_action_names():
+    from lerobot.rollout.context import _align_relative_state_feature_order
+    from lerobot.utils.constants import OBS_STATE
+    from lerobot.utils.feature_utils import build_dataset_frame
+
+    hw_features = {
+        OBS_STATE: {
+            "dtype": "float32",
+            "shape": (4,),
+            "names": ["left_joint.pos", "left_gripper.pos", "right_joint.pos", "right_gripper.pos"],
+        }
+    }
+    checkpoint_order = [
+        "right_joint.pos",
+        "right_gripper.pos",
+        "left_joint.pos",
+        "left_gripper.pos",
+    ]
+
+    aligned = _align_relative_state_feature_order(hw_features, checkpoint_order)
+    frame = build_dataset_frame(
+        aligned,
+        {
+            "left_joint.pos": 1.0,
+            "left_gripper.pos": 2.0,
+            "right_joint.pos": 3.0,
+            "right_gripper.pos": 4.0,
+        },
+        prefix="observation",
+    )
+
+    assert aligned[OBS_STATE]["names"] == checkpoint_order
+    assert frame[OBS_STATE].tolist() == [3.0, 4.0, 1.0, 2.0]
+    assert hw_features[OBS_STATE]["names"][0] == "left_joint.pos"
+
+
 def test_sentry_config_defaults():
     from lerobot.rollout import SentryStrategyConfig
 
