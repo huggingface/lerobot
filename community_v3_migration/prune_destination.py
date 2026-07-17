@@ -69,18 +69,31 @@ def main():
                     help="Delete datasets labelled SO but not a real 6-DOF SO arm.")
     ap.add_argument("--yes", action="store_true",
                     help="Actually delete. Without it, only prints what would be deleted (dry-run).")
+    ap.add_argument("--list-missing", action="store_true",
+                    help="Report datasets in the manifest that are NOT present in the destination "
+                         "repo (grouped by their migration action), then exit without deleting.")
     args = ap.parse_args()
-    if not (args.errored or args.mislabeled_so):
-        ap.error("enable at least one filter: --errored and/or --mislabeled-so")
+    if not (args.errored or args.mislabeled_so or args.list_missing):
+        ap.error("enable at least one of: --errored, --mislabeled-so, --list-missing")
 
     df = pd.concat([pd.read_csv(p) for p in args.manifest], ignore_index=True)
     if "root" not in df.columns:
         ap.error("manifest has no 'root' column; is this a run_migration.py manifest?")
+    df = df.drop_duplicates(subset="root", keep="last")
 
     api = HfApi()
     present = {p[: -len("/meta/info.json")]
                for p in api.list_repo_files(args.dst_repo, repo_type="dataset")
                if p.endswith("/meta/info.json")}
+
+    if args.list_missing:
+        missing = df[~df["root"].isin(present)]
+        for _, row in missing.sort_values("action").iterrows():
+            print(f"{str(row.get('action') or '')[:90]:92s} {row['root']}")
+        print(f"\n{len(missing)} dataset(s) in manifest missing from {args.dst_repo} "
+              f"({df['root'].nunique()} unique manifest rows, {len(present)} datasets in repo).",
+              file=sys.stderr)
+        return
 
     to_delete = select(df, present, args.errored, args.mislabeled_so)
     for root, reason in sorted(to_delete.items()):
