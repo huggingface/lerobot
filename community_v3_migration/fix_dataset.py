@@ -67,6 +67,61 @@ def _regen_episode_stats(root: Path) -> None:
             f.write(json.dumps(orig[ep]) + "\n")
 
 
+def _read_jsonl(path: Path) -> list[dict]:
+    with open(path) as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    with open(path, "w") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+
+
+def reconcile_episode_count(root) -> str | None:
+    """When the data files and video files agree on an episode count N but the metadata lists a
+    different count, rewrite the metadata (episodes.jsonl, episodes_stats.jsonl, info.json) to N.
+
+    Only the safe direction is handled: trimming metadata that lists MORE episodes than actually
+    exist. If the data itself is non-contiguous, the videos disagree with the data, or the metadata
+    lists FEWER episodes than the data (which would require fabricating per-episode stats), nothing
+    is changed and the stock converter's mismatch error is left to surface. Returns a note on fix."""
+    root = Path(root)
+    info = json.loads((root / "meta" / "info.json").read_text())
+
+    data_idx = sorted(int(p.stem.split("_")[-1]) for p in (root / "data").glob("*/episode_*.parquet"))
+    n = len(data_idx)
+    if n == 0 or data_idx != list(range(n)):
+        return None
+
+    vkeys = [k for k, f in info.get("features", {}).items() if f.get("dtype") == "video"]
+    for k in vkeys:
+        if len(list((root / "videos").glob(f"*/{k}/episode_*.mp4"))) != n:
+            return None  # data and videos disagree -> out of scope for this fix
+
+    eps_path = root / "meta" / "episodes.jsonl"
+    stats_path = root / "meta" / "episodes_stats.jsonl"
+    eps, stats = _read_jsonl(eps_path), _read_jsonl(stats_path)
+    if len(eps) == n and len(stats) == n:
+        return None
+
+    eps_keep = [e for e in eps if e.get("episode_index", -1) < n]
+    stats_keep = [s for s in stats if s.get("episode_index", -1) < n]
+    if len(eps_keep) != n or len(stats_keep) != n:
+        return None  # metadata is missing episodes present in the data -> can't safely fabricate
+
+    dropped = max(len(eps), len(stats)) - n
+    _write_jsonl(eps_path, eps_keep)
+    _write_jsonl(stats_path, stats_keep)
+    info["total_episodes"] = n
+    info["total_frames"] = int(sum(e.get("length", 0) for e in eps_keep))
+    if "total_videos" in info:
+        info["total_videos"] = n * len(vkeys)
+    info["splits"] = {"train": f"0:{n}"}
+    (root / "meta" / "info.json").write_text(json.dumps(info, indent=4))
+    return f"metadata episode count reconciled to {n} (data & videos agree; dropped {dropped} stale meta entries)"
+
+
 def fix_dataset_in_place(root) -> dict:
     """Returns the classification dict augmented with the action taken."""
     root = Path(root)
