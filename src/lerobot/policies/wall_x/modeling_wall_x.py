@@ -44,6 +44,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as functional
+from safetensors import SafetensorError
 from safetensors.torch import load_file
 from torch import Tensor
 from torch.distributions import Beta
@@ -326,7 +327,7 @@ class ActionHead(nn.Module):
 
         return loss
 
-    def proprioception_proj(self, proprioception, dof_mask=None, use_history=False):
+    def proprioception_proj(self, proprioception, dof_mask=None):
         """Project proprioceptive data to hidden space."""
         # Ensure proper device and dtype alignment
         proprioception = proprioception.to(device=self.propri_proj.weight.device).to(
@@ -336,10 +337,7 @@ class ActionHead(nn.Module):
         if dof_mask is not None:
             # Concatenate proprioception with DOF mask
             # TODO: Use variable-based dimension checking for better flexibility
-            if use_history:
-                proprioception = torch.cat([proprioception, dof_mask], dim=-1)
-            else:
-                proprioception = torch.cat([proprioception, dof_mask], dim=-1)
+            proprioception = torch.cat([proprioception, dof_mask], dim=-1)
 
         proprioception = proprioception.to(device=self.propri_proj.weight.device).to(
             dtype=self.propri_proj.weight.dtype
@@ -415,7 +413,15 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
             )
         if attn_implementation is not None:
             config._attn_implementation = attn_implementation
-        processor = AutoProcessor.from_pretrained(pretrained_name_or_path, use_fast=True)
+        processor = AutoProcessor.from_pretrained(
+            pretrained_name_or_path,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            local_files_only=local_files_only,
+            token=token,
+            revision=revision,
+            use_fast=True,
+        )
         if action_tokenizer_path is not None:
             action_tokenizer = AutoProcessor.from_pretrained(action_tokenizer_path, trust_remote_code=True)
             processor.action_processor = action_tokenizer
@@ -438,27 +444,25 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         # Resize token embeddings to match processor tokenizer vocabulary size
         model.resize_token_embeddings(len(processor.tokenizer))
 
-        # Try to load the model.safetensors file
-        print(f"Loading model from: {pretrained_name_or_path}")
+        logger.info("Loading Wall-X model from %s", pretrained_name_or_path)
         try:
-            # Try safetensors first
             resolved_file = cached_file(
                 pretrained_name_or_path,
                 "model.safetensors",
-                cache_dir=kwargs.get("cache_dir"),
-                force_download=kwargs.get("force_download", False),
+                cache_dir=cache_dir,
+                force_download=force_download,
                 resume_download=kwargs.get("resume_download"),
                 proxies=kwargs.get("proxies"),
-                token=kwargs.get("token"),
-                revision=kwargs.get("revision"),
-                local_files_only=kwargs.get("local_files_only", False),
+                token=token,
+                revision=revision,
+                local_files_only=local_files_only,
             )
             sd = load_file(resolved_file)
-            print("✓ Loaded state dict from model.safetensors")
-        except Exception as e:
-            print(f"Could not load state dict from remote files: {e}")
-            print("Returning model without loading pretrained weights")
-            return model
+        except (OSError, SafetensorError) as error:
+            raise OSError(
+                f"Failed to load pretrained Wall-X weights from {pretrained_name_or_path!r}"
+            ) from error
+        logger.info("Loaded Wall-X state dict from model.safetensors")
 
         state_dict = {}
         # filter normalizer statistic params
@@ -960,7 +964,6 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
                 proprioception = self.action_preprocessor.proprioception_proj(
                     proprioception,
                     agent_pos_mask,
-                    use_history=proprioception.shape[1] > 1,
                 )
                 mask = input_ids == self.action_token_id_set["propri_token_id"]
                 mask_unsqueezed = mask.unsqueeze(-1)
@@ -1245,7 +1248,6 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
                 proprio_embed = self.action_preprocessor.proprioception_proj(
                     proprioception,
                     agent_pos_mask,
-                    use_history=proprioception.shape[1] > 1,
                 )
                 proprioception_mask = input_ids == self.action_token_id_set["propri_token_id"]
                 proprio_embed = proprio_embed.to(torch.bfloat16)
@@ -1294,25 +1296,37 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
         # Split input sequence for text and fast modes (not needed for diffusion)
         if predict_mode == "text" or predict_mode == "fast":
-            # Look for generation prompt tokens: <|im_start|>assistant
+            generation_prompt = "<|im_start|>assistant\n"
             generation_prompt_ids = torch.tensor(
-                [151644, 77091], device=input_ids.device, dtype=input_ids.dtype
+                self.processor.tokenizer.encode(generation_prompt, add_special_tokens=False),
+                device=input_ids.device,
+                dtype=input_ids.dtype,
             )
-            matches = (input_ids[0, :-1] == generation_prompt_ids[0]) & (
-                input_ids[0, 1:] == generation_prompt_ids[1]
-            )
+            prompt_length = generation_prompt_ids.numel()
+            if prompt_length == 0:
+                raise ValueError(f"Tokenizer produced no tokens for generation prompt {generation_prompt!r}")
+            if input_ids.shape[1] < prompt_length:
+                matches = torch.empty(0, device=input_ids.device, dtype=torch.bool)
+            else:
+                matches = (
+                    input_ids[0]
+                    .unfold(dimension=0, size=prompt_length, step=1)
+                    .eq(generation_prompt_ids)
+                    .all(dim=-1)
+                )
 
             if matches.any():
                 split_pos = torch.nonzero(matches, as_tuple=True)[0][0].item()
+                prompt_end = split_pos + prompt_length
                 # Extract ground truth output tokens (including newline)
-                gt_output_ids = input_ids[:, split_pos + 3 :]
+                gt_output_ids = input_ids[:, prompt_end:]
                 # Remove output part from input, keeping prompt
-                input_ids = input_ids[:, : split_pos + 3]
-                inputs_embeds = inputs_embeds[:, : split_pos + 3, :]
+                input_ids = input_ids[:, :prompt_end]
+                inputs_embeds = inputs_embeds[:, :prompt_end, :]
                 if attention_mask is not None:
-                    attention_mask = attention_mask[:, : split_pos + 3]
+                    attention_mask = attention_mask[:, :prompt_end]
                 if labels is not None:
-                    labels = labels[:, split_pos + 3 :]
+                    labels = labels[:, prompt_end:]
             else:
                 raise ValueError(
                     "input_ids does not contain the generation prompt tokens <|im_start|>assistant"
@@ -1904,8 +1918,8 @@ class WallXPolicy(PreTrainedPolicy):
         agent_pos_mask = (~torch.isnan(agent_pos)).float()
         agent_pos = agent_pos.nan_to_num(nan=0.0)
 
-        if agent_pos.shape[-1] != 20:
-            pad_size = 20 - agent_pos.shape[-1]
+        if agent_pos.shape[-1] < self.config.max_state_dim:
+            pad_size = self.config.max_state_dim - agent_pos.shape[-1]
             agent_pos = torch.cat(
                 [
                     agent_pos,
@@ -1925,6 +1939,10 @@ class WallXPolicy(PreTrainedPolicy):
                 ],
                 dim=-1,
             )
+        elif agent_pos.shape[-1] > self.config.max_state_dim:
+            raise ValueError(
+                f"State dimension {agent_pos.shape[-1]} exceeds max_state_dim {self.config.max_state_dim}"
+            )
 
         # ==================== PROCESS ACTIONS ====================
         action = batch.get(ACTION)  # (batch_size, chunk_size, action_dim)
@@ -1934,8 +1952,8 @@ class WallXPolicy(PreTrainedPolicy):
             dof_mask = (~torch.isnan(action)).float()
             action = action.nan_to_num(nan=0.0)
 
-            if action.shape[-1] != 20:
-                pad_size = 20 - action.shape[-1]
+            if action.shape[-1] < self.config.max_action_dim:
+                pad_size = self.config.max_action_dim - action.shape[-1]
                 action = torch.cat(
                     [action, torch.zeros(action.shape[0], action.shape[1], pad_size, device=action.device)],
                     dim=-1,
@@ -1947,6 +1965,10 @@ class WallXPolicy(PreTrainedPolicy):
                     ],
                     dim=-1,
                 )
+            elif action.shape[-1] > self.config.max_action_dim:
+                raise ValueError(
+                    f"Action dimension {action.shape[-1]} exceeds max_action_dim {self.config.max_action_dim}"
+                )
         else:
             action_dim = self.config.output_features[ACTION].shape[0]
             dof_mask = torch.cat(
@@ -1955,7 +1977,10 @@ class WallXPolicy(PreTrainedPolicy):
                         batch_size, self.config.chunk_size, action_dim, device=batch[OBS_STATE].device
                     ),
                     torch.zeros(
-                        batch_size, self.config.chunk_size, 20 - action_dim, device=batch[OBS_STATE].device
+                        batch_size,
+                        self.config.chunk_size,
+                        self.config.max_action_dim - action_dim,
+                        device=batch[OBS_STATE].device,
                     ),
                 ],
                 dim=-1,

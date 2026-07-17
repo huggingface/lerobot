@@ -248,6 +248,8 @@ class Qwen2_5_VLMoEModel(Qwen2_5_VLTextModel):  # noqa: N801
         self.embed_tokens = value
 
     @merge_with_config_defaults
+    # ``capture_outputs`` reads output_hidden_states/output_attentions from kwargs and populates
+    # BaseModelOutputWithPast via hooks on the decoder layers and attention modules.
     @capture_outputs
     def forward(
         self,

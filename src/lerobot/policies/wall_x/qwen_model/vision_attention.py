@@ -163,7 +163,7 @@ class WallXVisionAttention(Qwen2_5_VLVisionAttention):
         varlen_kwargs = {"scale": self.scaling}
         if _VARLEN_USES_WINDOW_SIZE:
             varlen_kwargs["window_size"] = (-1, -1)
-        else:  # PyTorch 2.10 API
+        else:  # Stable PyTorch 2.10 API; pre-release variants used window_size.
             varlen_kwargs["is_causal"] = False
         attn_output = _varlen_attn(
             query_states,
