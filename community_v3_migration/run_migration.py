@@ -16,7 +16,7 @@ from pathlib import Path
 from huggingface_hub import HfApi
 
 import so_arm_frame
-from classify import classify, load_info
+from classify import classify, is_end_effector, load_info
 from fix_dataset import fix_dataset_in_place
 
 SRC_REPO = "HuggingFaceVLA/community_dataset_v3"
@@ -165,6 +165,9 @@ def migrate_one(api, dst_repo, sub, work_dir, no_upload) -> dict:
     info = load_info(local)
     if info.get("codebase_version") != "v2.1":
         return {"root": sub, "action": f"skipped: source codebase is {info.get('codebase_version')} (expected v2.1)"}
+    if is_end_effector(info):
+        return {"root": sub, "robot_type": info.get("robot_type"),
+                "action": "skipped: end-effector (task-space) dataset, out of scope"}
 
     result = fix_dataset_in_place(local)          # SO-arm value fix (or structural_only)
 

@@ -25,6 +25,19 @@ def is_so_robot_type(rt: str) -> bool:
     return bool(rt) and (rt.startswith(SO_PREFIXES) or rt in SO_EXACT) and rt not in NEVER_FIX
 
 
+def is_end_effector(info: dict) -> bool:
+    """True if action/observation.state are task-space end-effector features (e.g. ``ee_x``,
+    ``ee_roll``) rather than joint angles. Such datasets are out of scope for the joint fix."""
+    feats = info.get("features", {})
+    for key in ("action", "observation.state"):
+        names = [str(n).lower() for n in (feats.get(key, {}).get("names") or [])]
+        if any(n.startswith("ee_") or "end_effector" in n or "eef" in n for n in names):
+            return True
+        if {"x", "y", "z"} <= set(names):
+            return True
+    return False
+
+
 def load_info(root: Path) -> dict:
     return json.loads((Path(root) / "meta" / "info.json").read_text())
 
@@ -88,6 +101,10 @@ def classify(root) -> dict:
     dim = (info.get("features", {}).get("action", {}).get("shape") or [None])[0]
     out = {"root": str(root), "robot_type": rt, "action_dim": dim,
            "codebase_version": info.get("codebase_version"), "ambiguous": False}
+
+    if is_end_effector(info):
+        return {**out, "is_so": False, "encoding": "end_effector",
+                "note": "task-space end-effector features"}
 
     is_so = is_so_robot_type(rt)
     if not is_so:
