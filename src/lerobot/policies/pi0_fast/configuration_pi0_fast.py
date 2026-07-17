@@ -65,17 +65,14 @@ class PI0FastConfig(PreTrainedConfig):
     max_decoding_steps: int = 256
     fast_skip_tokens: int = 128
 
-    # Whether to validate that decoded action tokens start with "Action: " prefix
-    validate_action_token_prefix: bool = True
-
     # Whether to use KV cache for faster autoregressive decoding
     use_kv_cache: bool = True
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
-            "STATE": NormalizationMode.MEAN_STD,  # Pi0Fast uses quantiles for state
-            "ACTION": NormalizationMode.MEAN_STD,  # Pi0Fast uses quantiles for action
+            "STATE": NormalizationMode.QUANTILES,
+            "ACTION": NormalizationMode.QUANTILES,
         }
     )
 
