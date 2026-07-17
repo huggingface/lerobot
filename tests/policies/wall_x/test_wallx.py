@@ -27,7 +27,7 @@ pytest.importorskip("torchdiffeq")
 from lerobot.policies.factory import make_policy_config  # noqa: E402
 from lerobot.policies.wall_x import (
     WallXConfig,  # noqa: E402
-    )
+)
 from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy  # noqa: E402
 from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors  # noqa: E402
 from lerobot.policies.wall_x.qwen_model import Qwen2_5_VLMoEModel, Qwen2_5_VLTextConfig  # noqa: E402
