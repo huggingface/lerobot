@@ -41,20 +41,32 @@ def is_end_effector(info: dict) -> bool:
     return False
 
 
+def _leading_so_joints(names: list[str], dim: int) -> int:
+    """Number of LEADING joints (a multiple of 6) that match the SO joint order in blocks of 6.
+    When names are absent, fall back to the full dim if it's already a multiple of 6, else 0."""
+    if not names:
+        return dim if dim and dim % 6 == 0 else 0
+    k = 0
+    while (k + 1) * 6 <= len(names) and all(SO_JOINTS[i] in names[k * 6 + i] for i in range(6)):
+        k += 1
+    return k * 6
+
+
+def so_joint_count(info: dict, key: str) -> int:
+    """Leading SO-arm joint count for one feature (``action`` / ``observation.state``). Trailing
+    non-SO columns (bbox, appended EE pose, ...) are excluded so only the genuine SO joints are
+    ever degrees-converted."""
+    feat = info.get("features", {}).get(key, {})
+    dim = (feat.get("shape") or [0])[0]
+    names = [str(n).lower() for n in (feat.get("names") or [])]
+    return _leading_so_joints(names, dim)
+
+
 def is_mislabeled_so(info: dict) -> bool:
-    """True when ``robot_type`` claims SO but the features prove it isn't a standard 6-DOF SO arm:
-    the joint dim isn't a multiple of 6, or (when names are present) the first 6 joints don't match
-    the canonical SO set. Such datasets keep their joints untouched and are relabeled 'unknown'
-    rather than being degrees-converted on a wrong assumption."""
-    feats = info.get("features", {})
-    dims = [feats[c]["shape"][0] for c in ("action", "observation.state") if feats.get(c, {}).get("shape")]
-    if any(d % 6 != 0 for d in dims):
-        return True
-    for key in ("action", "observation.state"):
-        names = [str(n).lower() for n in (feats.get(key, {}).get("names") or [])]
-        if len(names) >= 6 and not all(SO_JOINTS[i] in names[i] for i in range(6)):
-            return True
-    return False
+    """True when ``robot_type`` claims SO but no leading 6-DOF SO joint block can be substantiated
+    from action/observation.state (wrong dim, or names that don't match the SO set). When the first
+    6 joint names DO match, the SO block is honored (and processed) even if extra columns follow."""
+    return max(so_joint_count(info, "action"), so_joint_count(info, "observation.state")) == 0
 
 
 def load_info(root: Path) -> dict:
@@ -138,4 +150,6 @@ def classify(root) -> dict:
         return {**out, "is_so": True, "encoding": "unknown", "ambiguous": True,
                 "note": "no action/state stats found"}
 
-    return {**out, "is_so": True, "stats_key": key_used, **encoding_from_bounds(lo, hi, rt)}
+    n = so_joint_count(info, key_used) or len(hi)  # ignore trailing non-joint columns
+    return {**out, "is_so": True, "stats_key": key_used, "so_dim": n,
+            **encoding_from_bounds(lo[:n], hi[:n], rt)}

@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 import so_arm_frame
-from classify import classify
+from classify import classify, load_info, so_joint_count
 
 VALUE_COLS = ("observation.state", "action")
 
@@ -24,14 +24,16 @@ def _set_robot_type(root: Path, robot_type: str) -> None:
     info_path.write_text(json.dumps(info, indent=4))
 
 
-def _rewrite_parquet(root: Path, encoding: str) -> None:
+def _rewrite_parquet(root: Path, encoding: str, so_dims: dict) -> None:
     for pq in sorted((root / "data").glob("*/*.parquet")):
         df = pd.read_parquet(pq)
         changed = False
         for col in VALUE_COLS:
-            if col in df.columns:
-                conv = so_arm_frame.to_degrees(_stack(df[col].values), encoding, n_joints_per_arm=6)
-                df[col] = list(conv.astype(np.float32))
+            n = so_dims.get(col, 0)
+            if col in df.columns and n:
+                full = _stack(df[col].values)  # (N, D)
+                full[:, :n] = so_arm_frame.to_degrees(full[:, :n], encoding, n_joints_per_arm=6)
+                df[col] = list(full.astype(np.float32))
                 changed = True
         if changed:
             df.to_parquet(pq, index=False)
@@ -96,7 +98,12 @@ def fix_dataset_in_place(root) -> dict:
     # drop stray files that would otherwise be uploaded
     for junk in (root / "meta").glob("info.json.bak"):
         junk.unlink()
-    _rewrite_parquet(root, enc)
+    info = load_info(root)
+    so_dims = {c: so_joint_count(info, c) for c in VALUE_COLS}
+    _rewrite_parquet(root, enc, so_dims)
     _regen_episode_stats(root)
+    full_dims = {c: (info.get("features", {}).get(c, {}).get("shape") or [0])[0] for c in VALUE_COLS}
+    partial = any(0 < so_dims[c] < full_dims[c] for c in VALUE_COLS)
+    tail = " (leading SO joints only; trailing non-joint columns left unchanged)" if partial else ""
     return {**cls, "converted": True,
-            "action": f"structural v2.1->v3.0 + joint values converted ({enc} -> degrees)"}
+            "action": f"structural v2.1->v3.0 + joint values converted ({enc} -> degrees){tail}"}
