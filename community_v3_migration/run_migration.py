@@ -22,8 +22,8 @@ from fix_dataset import fix_dataset_in_place
 SRC_REPO = "HuggingFaceVLA/community_dataset_v3"
 
 
-def download_subfolder(sub: str, work_dir: str, patterns: list[str] | None = None) -> None:
-    """Download only ``SRC_REPO/{sub}/...`` into ``work_dir``.
+def download_subfolder(sub: str, work_dir: str, patterns: list[str] | None = None, repo: str = SRC_REPO) -> None:
+    """Download only ``{repo}/{sub}/...`` into ``work_dir``.
 
     ``snapshot_download`` walks the entire repo tree (``list_repo_tree(recursive=True)``
     with no path scope) before applying ``allow_patterns``. On this 791-dataset monorepo
@@ -36,12 +36,12 @@ def download_subfolder(sub: str, work_dir: str, patterns: list[str] | None = Non
     from huggingface_hub.hf_api import RepoFile
 
     api = HfApi()
-    for entry in api.list_repo_tree(SRC_REPO, path_in_repo=sub, repo_type="dataset", recursive=True):
+    for entry in api.list_repo_tree(repo, path_in_repo=sub, repo_type="dataset", recursive=True):
         if not isinstance(entry, RepoFile):
             continue
         if patterns and not any(fnmatch(entry.path, pat) for pat in patterns):
             continue
-        hf_hub_download(SRC_REPO, filename=entry.path, repo_type="dataset", local_dir=work_dir)
+        hf_hub_download(repo, filename=entry.path, repo_type="dataset", local_dir=work_dir)
 
 
 def list_datasets(api: HfApi, repo: str) -> list[str]:
