@@ -82,13 +82,7 @@ def main():
     df = pd.concat([pd.read_csv(p) for p in args.manifest], ignore_index=True)
     if "root" not in df.columns:
         ap.error("manifest has no 'root' column; is this a run_migration.py manifest?")
-    # A dataset can appear multiple times across per-rank / resumed manifests (e.g. it timed out
-    # once then succeeded on retry). Collapse to one row per dataset, preferring a SUCCESS over an
-    # errored attempt so a later successful migration isn't shadowed by a stale ERROR row.
-    df = (df.assign(_err=df.apply(_is_errored, axis=1))
-            .sort_values("_err", kind="stable")
-            .drop_duplicates(subset="root", keep="first")
-            .drop(columns="_err"))
+    df = df.drop_duplicates(subset="root", keep="last")
 
     api = HfApi()
     present = {p[: -len("/meta/info.json")]
