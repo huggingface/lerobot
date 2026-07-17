@@ -486,6 +486,29 @@ def test_sync_relative_holds_anchor_across_chunk():
     torch.testing.assert_close(relative_step.get_cached_state(), torch.tensor([s_next]))
 
 
+def test_sync_relative_reset_reanchors_new_episode():
+    """After ``reset()`` the first tick of the next episode anchors to the new state."""
+    n = 3
+    chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.2) for _ in range(n)])
+    pre, post, relative_step = _relative_pre_post()
+    policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
+    engine = _build_sync_engine(policy, pre, post)
+
+    # Episode 1: one tick anchors to s0 and leaves cached actions in the queue.
+    engine.get_action(_obs_frame([1.0, 1.0, 1.0, 1.0]))
+    assert policy._predict_state["predict_calls"] == 1
+
+    engine.reset()  # clears the queue and the per-episode chunk flags
+
+    # Episode 2: a fresh state must produce a fresh chunk anchored to that state,
+    # not carry over the previous episode's anchor.
+    s_new = [7.0, 8.0, 9.0, 10.0]
+    out = engine.get_action(_obs_frame(s_new))
+    assert policy._predict_state["predict_calls"] == 2
+    torch.testing.assert_close(out, torch.tensor(s_new) + chunk_rel[0])
+    torch.testing.assert_close(relative_step.get_cached_state(), torch.tensor([s_new]))
+
+
 def test_sync_relative_non_chunking_policy_refreshes_every_tick():
     """A policy that never calls ``predict_action_chunk`` must not freeze the anchor."""
     n = 3
@@ -509,3 +532,16 @@ def test_sync_engine_no_relative_step_is_none():
     policy.config.use_amp = False
     engine = _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())
     assert engine._relative_step is None
+
+
+def test_sync_relative_stop_restores_policy_method():
+    """``stop()`` un-patches the probe so the policy object isn't permanently modified."""
+    n = 3
+    chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.2) for _ in range(n)])
+    pre, post, _ = _relative_pre_post()
+    policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
+    original = policy.predict_action_chunk
+    engine = _build_sync_engine(policy, pre, post)
+    assert policy.predict_action_chunk is not original  # probe installed
+    engine.stop()
+    assert policy.predict_action_chunk is original  # restored
