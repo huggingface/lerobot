@@ -46,9 +46,11 @@ def test_setup_motors_reports_devices_without_setup_support():
     config.type = "camera_only_robot"
     device = MagicMock(spec=[])
 
-    with patch("lerobot.scripts.lerobot_setup_motors.make_robot_from_config", return_value=device):
-        with pytest.raises(NotImplementedError, match="camera_only_robot"):
-            setup_motors(SetupConfig(robot=config))
+    with (
+        patch("lerobot.scripts.lerobot_setup_motors.make_robot_from_config", return_value=device),
+        pytest.raises(NotImplementedError, match="camera_only_robot"),
+    ):
+        setup_motors(SetupConfig(robot=config))
 
 
 def test_main_registers_third_party_plugins_before_parsing():

@@ -15,6 +15,10 @@
 """
 Helper to set motor ids and baudrate.
 
+Installed third-party robot and teleoperator plugins are discovered before
+configuration parsing. Any registered device with a callable
+``setup_motors()`` method can use this command.
+
 Example:
 
 ```shell
@@ -74,7 +78,7 @@ def setup_motors(cfg: SetupConfig):
         device = make_teleoperator_from_config(cfg.device)
 
     setup_device = getattr(device, "setup_motors", None)
-    if setup_device is None:
+    if not callable(setup_device):
         raise NotImplementedError(f"Motor setup is not supported for device type '{cfg.device.type}'.")
     setup_device()
 
