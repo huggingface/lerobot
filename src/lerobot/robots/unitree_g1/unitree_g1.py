@@ -282,23 +282,28 @@ class UnitreeG1(Robot):
 
             if lowstate is not None and self.controller is not None:
                 loop_count += 1
-                if time.time() - last_log_time >= 5.0:  # Log every 5 seconds
-                    actual_hz = loop_count / (time.time() - last_log_time)
-                    logger.info(
-                        f"Controller actual rate: {actual_hz:.1f}Hz (target: {1.0 / control_dt:.1f}Hz)"
-                    )
-                    loop_count = 0
-                    last_log_time = time.time()
+
                 # Read controller input snapshot
                 with self._controller_action_lock:
                     controller_input = dict(self.controller_input)
 
                 # Onboard: the physical Unitree remote (in local lowstate) takes
                 # priority for locomotion when active; otherwise laptop/exo axes stand.
+                wl = None
                 if self.config.onboard:
                     wl = self._wireless_remote_input(lowstate)
                     if wl is not None:
                         controller_input.update(wl)
+
+                if time.time() - last_log_time >= 5.0:  # Log every 5 seconds
+                    actual_hz = loop_count / (time.time() - last_log_time)
+                    eff = {k: round(float(controller_input.get(k, 0.0)), 3) for k in REMOTE_AXES}
+                    logger.info(
+                        f"Controller {actual_hz:.1f}Hz | eff_axes={eff} "
+                        f"wireless={'ACTIVE' if wl else 'idle'}"
+                    )
+                    loop_count = 0
+                    last_log_time = time.time()
 
                 # Run controller step
                 controller_action = self.controller.run_step(controller_input, lowstate)
