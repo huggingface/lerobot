@@ -518,6 +518,12 @@ class RoboCasaEnv(EnvConfig):
     # you've run `python -m robocasa.scripts.download_kitchen_assets
     # --type objaverse` locally.
     obj_registries: list[str] = field(default_factory=lambda: ["lightwheel"])
+    # Prompt exposed to the policy at eval as `task_description`.
+    #   "lang"    -> RoboCasa natural-language instruction (e.g. "Close the fridge doors.")
+    #   "task_id" -> CamelCase task name (e.g. "CloseFridge")
+    # The released `lerobot/smolvla_robocasa` checkpoint was trained on CamelCase
+    # task IDs, so reproducing its eval numbers requires `--env.task_prompt=task_id`.
+    task_prompt: str = "lang"
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,))}
     )
@@ -526,6 +532,9 @@ class RoboCasaEnv(EnvConfig):
     def __post_init__(self):
         if self.obs_type not in ("pixels", "pixels_agent_pos"):
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
+        if self.task_prompt not in ("lang", "task_id"):
+            raise ValueError(f"Unsupported task_prompt: {self.task_prompt}. Use 'lang' or 'task_id'.")
 
         # Preserve raw RoboCasa camera names end-to-end (e.g.
         # `observation.images.robot0_agentview_left`). This matches the
@@ -551,6 +560,7 @@ class RoboCasaEnv(EnvConfig):
             "observation_width": self.observation_width,
             "visualization_height": self.visualization_height,
             "visualization_width": self.visualization_width,
+            "task_prompt": self.task_prompt,
         }
         if self.split is not None:
             kwargs["split"] = self.split

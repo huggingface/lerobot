@@ -136,9 +136,19 @@ class RoboCasaEnv(gym.Env):
         episode_length: int | None = None,
         obj_registries: Sequence[str] = DEFAULT_OBJ_REGISTRIES,
         episode_index: int = 0,
+        task_prompt: str = "lang",
     ):
         super().__init__()
         self.task = task
+        # Which string to expose as ``task_description`` (the prompt fed to the
+        # policy at eval). "lang" uses RoboCasa's natural-language instruction
+        # (e.g. "Close the fridge doors."); "task_id" uses the CamelCase task
+        # name (e.g. "CloseFridge"). The released `lerobot/smolvla_robocasa`
+        # checkpoint was trained on CamelCase task IDs, so reproducing its
+        # numbers requires "task_id".
+        if task_prompt not in ("lang", "task_id"):
+            raise ValueError(f"Unsupported task_prompt '{task_prompt}'. Use 'lang' or 'task_id'.")
+        self.task_prompt = task_prompt
         self.obs_type = obs_type
         self.render_mode = render_mode
         self.observation_width = observation_width
@@ -219,7 +229,19 @@ class RoboCasaEnv(gym.Env):
         )
 
         ep_meta = self._env.env.get_ep_meta()
-        self.task_description = ep_meta.get("lang", self.task)
+        self.task_description = self._resolve_task_description(ep_meta)
+
+    def _resolve_task_description(self, ep_meta: dict[str, Any]) -> str:
+        """Pick the prompt exposed to the policy based on ``task_prompt``.
+
+        "task_id" returns the CamelCase task name (matching how the released
+        RoboCasa checkpoints were trained); "lang" returns RoboCasa's
+        natural-language instruction, falling back to the task name when the
+        episode metadata has no ``lang`` entry.
+        """
+        if self.task_prompt == "task_id":
+            return self.task
+        return ep_meta.get("lang", self.task)
 
     def _format_raw_obs(self, raw_obs: dict) -> RobotObservation:
         """Convert RoboCasaGymEnv observation dict to LeRobot format."""
@@ -261,7 +283,7 @@ class RoboCasaEnv(gym.Env):
         raw_obs, info = self._env.reset(seed=worker_seed)
 
         ep_meta = self._env.env.get_ep_meta()
-        self.task_description = ep_meta.get("lang", self.task)
+        self.task_description = self._resolve_task_description(ep_meta)
 
         observation = self._format_raw_obs(raw_obs)
         info = {"is_success": False}
@@ -313,6 +335,7 @@ def _make_env_fns(
     split: str | None,
     episode_length: int | None,
     obj_registries: Sequence[str],
+    task_prompt: str,
 ) -> list[Callable[[], RoboCasaEnv]]:
     """Build n_envs factory callables for a single task.
 
@@ -335,6 +358,7 @@ def _make_env_fns(
             episode_length=episode_length,
             obj_registries=obj_registries,
             episode_index=episode_index,
+            task_prompt=task_prompt,
         )
 
     return [partial(_make_env, i) for i in range(n_envs)]
@@ -375,6 +399,7 @@ def create_robocasa_envs(
     visualization_width = gym_kwargs.pop("visualization_width", 512)
     visualization_height = gym_kwargs.pop("visualization_height", 512)
     split = gym_kwargs.pop("split", None)
+    task_prompt = gym_kwargs.pop("task_prompt", "lang")
 
     camera_names = parse_camera_names(camera_name)
     task_names, group_split = _resolve_tasks(str(task))
@@ -409,6 +434,7 @@ def create_robocasa_envs(
             split=split,
             episode_length=episode_length,
             obj_registries=obj_registries,
+            task_prompt=task_prompt,
         )
 
         if is_async:
