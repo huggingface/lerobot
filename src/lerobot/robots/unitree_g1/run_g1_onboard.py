@@ -100,8 +100,13 @@ def main() -> None:
 
             robot.send_action(action)
             n += 1
-            if n % 200 == 0:
-                logger.info("Applied %d actions", n)
+            if n % 60 == 0:
+                axes = {
+                    k: round(float(action.get(k, 0.0)), 3)
+                    for k in ("remote.lx", "remote.ly", "remote.rx", "remote.ry")
+                }
+                btn = {k: action.get(k) for k in ("remote.button.0", "remote.button.4") if k in action}
+                logger.info("Applied %d actions | axes=%s buttons=%s", n, axes, btn)
     finally:
         logger.info("Shutting down onboard controller...")
         robot.disconnect()

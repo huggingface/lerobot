@@ -53,6 +53,7 @@ if TYPE_CHECKING or _unitree_sdk_available:
         LowState_ as hg_LowState,
     )
     from unitree_sdk2py.utils.crc import CRC
+    from unitree_sdk2py.utils.joystick import Joystick
 else:
     _SDKChannelFactoryInitialize = None
     _SDKChannelPublisher = None
@@ -61,6 +62,17 @@ else:
     hg_LowCmd = None
     hg_LowState = None
     CRC = None
+    Joystick = None
+
+
+# Wireless-remote button byte layout (little-endian uint16 from bytes 2-3), mapped to
+# the positional button indices the locomotion controllers expect. Mirrors the exo
+# teleoperator's RemoteController so the onboard path reads the physical Unitree remote
+# identically.
+_REMOTE_BUTTON_MAP: list[str] = [
+    "RB", "LB", "start", "back", "RT", "LT", "", "",
+    "A", "B", "X", "Y", "up", "right", "down", "left",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +174,10 @@ class UnitreeG1(Robot):
         self._controller_action_lock = threading.Lock()
         self.controller_input = default_remote_input()
         self.controller_output = {}
+
+        # Onboard-only: parser for the physical Unitree wireless remote (read straight
+        # from local lowstate so joystick locomotion works without a laptop round-trip).
+        self._joystick = None
 
     def _subscribe_lowstate(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
@@ -277,6 +293,13 @@ class UnitreeG1(Robot):
                 with self._controller_action_lock:
                     controller_input = dict(self.controller_input)
 
+                # Onboard: the physical Unitree remote (in local lowstate) takes
+                # priority for locomotion when active; otherwise laptop/exo axes stand.
+                if self.config.onboard:
+                    wl = self._wireless_remote_input(lowstate)
+                    if wl is not None:
+                        controller_input.update(wl)
+
                 # Run controller step
                 controller_action = self.controller.run_step(controller_input, lowstate)
 
@@ -298,6 +321,40 @@ class UnitreeG1(Robot):
 
     def configure(self) -> None:
         pass
+
+    def _wireless_remote_input(self, lowstate) -> dict | None:
+        """Parse the physical Unitree remote from lowstate into controller inputs.
+
+        Onboard only. Returns None when the remote is idle so the laptop-provided
+        (exo) axes keep control; otherwise the physical remote takes priority — the
+        same precedence the exo teleoperator applies laptop-side.
+        """
+        js = self._joystick
+        if js is None:
+            return None
+        wr = getattr(lowstate, "wireless_remote", None)
+        if not wr or len(wr) < 24:
+            return None
+        try:
+            js.extract(wr)
+        except Exception:  # noqa: BLE001
+            return None
+
+        axes = {
+            "remote.lx": float(js.lx.data),
+            "remote.ly": float(js.ly.data),
+            "remote.rx": float(js.rx.data),
+            "remote.ry": float(js.ry.data),
+        }
+        active = any(abs(v) > 1e-2 for v in axes.values())
+        out = dict(axes)
+        for i, name in enumerate(_REMOTE_BUTTON_MAP):
+            if name:
+                val = float(getattr(js, name).data)
+                out[f"remote.button.{i}"] = val
+                if val:
+                    active = True
+        return out if active else None
 
     def _release_motion_control(self) -> None:
         """Release the robot's built-in motion services so we can send raw lowcmd.
@@ -338,6 +395,11 @@ class UnitreeG1(Robot):
             else:
                 self._ChannelFactoryInitialize(0)
             self._release_motion_control()
+            # Read the physical wireless remote directly from lowstate for locomotion.
+            self._joystick = Joystick()
+            for axis in (self._joystick.lx, self._joystick.ly, self._joystick.rx, self._joystick.ry):
+                axis.smooth = 1.0
+                axis.deadzone = 0.0
         else:
             self._ChannelFactoryInitialize(0, config=self.config)
 

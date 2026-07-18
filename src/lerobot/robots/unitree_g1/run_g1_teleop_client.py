@@ -101,8 +101,12 @@ def main() -> None:
             except zmq.Again:
                 pass
             n += 1
-            if n % 200 == 0:
-                logger.info("Sent %d actions", n)
+            if n % 60 == 0:
+                axes = {
+                    k: round(float(action.get(k, 0.0)), 3)
+                    for k in ("remote.lx", "remote.ly", "remote.rx", "remote.ry")
+                }
+                logger.info("Sent %d actions | axes=%s", n, axes)
             if period:
                 time.sleep(max(0.0, period - (time.time() - t0)))
     except KeyboardInterrupt:
