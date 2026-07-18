@@ -60,17 +60,15 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
-from lerobot.utils.device_utils import get_safe_dtype
-from lerobot.utils.import_utils import require_package
-
-from ..pretrained import PreTrainedPolicy
-from ..rtc.modeling_rtc import RTCProcessor
-from ..utils import (
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
+from lerobot.policies.utils import (
     populate_queues,
 )
-from .configuration_smolvla import SmolVLAConfig
-from .smolvlm_with_expert import SmolVLMWithExpertModel
+from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.utils.device_utils import get_safe_dtype
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -240,7 +238,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
                     the configuration class is used.
         """
 
-        require_package("transformers", extra="smolvla")
         super().__init__(config)
         config.validate_features()
         self.config = config
@@ -253,6 +250,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
+        self.distr_queue: deque[tuple[Tensor, Tensor]] = deque()
 
     def init_rtc_processor(self):
         """Initialize RTC processor if RTC is enabled in config."""
@@ -290,7 +288,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
-        actions = self.model.sample_actions(
+        actions, _ = self.model.sample_actions(
             images, img_masks, lang_tokens, lang_masks, state, noise=noise, **kwargs
         )
 
@@ -302,6 +300,31 @@ class SmolVLAPolicy(PreTrainedPolicy):
             actions = self._pi_aloha_encode_actions(actions)
 
         return actions
+
+    def _get_distr_params_chunk(
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
+    ) -> tuple[Tensor, Tensor]:
+        for k in batch:
+            if k in self._queues and k != ACTION:
+                batch[k] = torch.stack(list(self._queues[k]), dim=1)
+
+        images, img_masks = self.prepare_images(batch)
+        state = self.prepare_state(batch)
+        lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+        lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+
+        means, log_stds = self.model.sample_actions(
+            images, img_masks, lang_tokens, lang_masks, state, noise=noise, **kwargs
+        )
+
+        original_action_dim = self.config.action_feature.shape[0]
+        means = means[:, :, :original_action_dim]
+        log_stds = log_stds[:, :, :original_action_dim]
+
+        if self.config.adapt_to_pi_aloha:
+            raise RuntimeError("GRPO distr params path not supported with adapt_to_pi_aloha")
+
+        return means, log_stds
 
     def _prepare_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         if self.config.adapt_to_pi_aloha:
@@ -341,13 +364,40 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
         if self._check_get_actions_condition():
-            actions = self._get_action_chunk(batch, noise)
+            actions = self._get_action_chunk(batch, noise, **kwargs)
 
             # `self.predict_action_chunk` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
 
         return self._queues[ACTION].popleft()
+
+    def select_action_distr_params(
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
+    ) -> tuple[Tensor, Tensor]:
+        """Return one (mean, log_std) pair per env step, chunking like ``select_action``."""
+
+        assert not self._rtc_enabled(), (
+            "RTC is not supported for select_action, use it with predict_action_chunk"
+        )
+
+        self.eval()
+        batch = self._prepare_batch(batch)
+        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
+
+        if len(self.distr_queue) == 0:
+            means, log_stds = self._get_distr_params_chunk(batch, noise, **kwargs)
+            means = means.transpose(0, 1)
+            log_stds = log_stds.transpose(0, 1)
+            self.distr_queue.extend(
+                zip(
+                    means[: self.config.n_action_steps],
+                    log_stds[: self.config.n_action_steps],
+                    strict=True,
+                )
+            )
+
+        return self.distr_queue.popleft()
 
     def _check_get_actions_condition(self) -> bool:
         return len(self._queues[ACTION]) == 0
@@ -394,21 +444,13 @@ class SmolVLAPolicy(PreTrainedPolicy):
         loss_dict["losses_after_rm_padding"] = losses.clone().mean().item()
 
         if reduction == "none":
-            # Return per-sample losses (B,) by averaging over valid (time, action) entries
-            if actions_is_pad is None:
-                per_sample_loss = losses.mean(dim=(1, 2))
-            else:
-                num_valid = ((~actions_is_pad).sum(dim=1) * losses.shape[-1]).clamp_min(1)
-                per_sample_loss = losses.sum(dim=(1, 2)) / num_valid
+            # Return per-sample losses (B,) by averaging over time and action dims
+            per_sample_loss = losses.mean(dim=(1, 2))
             loss_dict["loss"] = per_sample_loss.mean().item()
             return per_sample_loss, loss_dict
         else:
-            # Default: return scalar mean loss over valid (time, action) entries
-            if actions_is_pad is None:
-                loss = losses.mean()
-            else:
-                num_valid = ((~actions_is_pad).sum() * losses.shape[-1]).clamp_min(1)
-                loss = losses.sum() / num_valid
+            # Default: return scalar mean loss
+            loss = losses.mean()
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
 
@@ -564,7 +606,12 @@ class VLAFlowMatching(nn.Module):
     └──────────────────────────────┘
     """
 
-    def __init__(self, config: SmolVLAConfig, rtc_processor: RTCProcessor | None = None):
+    def __init__(
+        self,
+        config: SmolVLAConfig,
+        rtc_processor: RTCProcessor | None = None,
+        init_log_std: float = -3.0,
+    ):
         super().__init__()
         self.config = config
 
@@ -585,6 +632,8 @@ class VLAFlowMatching(nn.Module):
         )
         self.action_in_proj = nn.Linear(self.config.max_action_dim, self.vlm_with_expert.expert_hidden_size)
         self.action_out_proj = nn.Linear(self.vlm_with_expert.expert_hidden_size, self.config.max_action_dim)
+        self.log_std = nn.Parameter(torch.ones(1, 1, self.config.max_action_dim) * init_log_std)
+        self.euler_step_noise_std = None
 
         self.action_time_mlp_in = nn.Linear(
             self.vlm_with_expert.expert_hidden_size * 2, self.vlm_with_expert.expert_hidden_size
@@ -818,8 +867,8 @@ class VLAFlowMatching(nn.Module):
         state,
         noise=None,
         **kwargs: Unpack[ActionSelectKwargs],
-    ) -> Tensor:
-        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
+    ) -> tuple[Tensor, Tensor]:
+        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)."""
         bsize = state.shape[0]
         device = state.device
 
@@ -873,12 +922,18 @@ class VLAFlowMatching(nn.Module):
             else:
                 v_t = denoise_step_partial_call(x_t)
 
+            if self.euler_step_noise_std:
+                v_t = v_t + torch.randn_like(v_t) * self.euler_step_noise_std
+
             x_t = x_t + dt * v_t
 
             if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
                 self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
 
-        return x_t
+        batch_size = x_t.shape[0]
+        chunk_size = x_t.shape[1]
+        log_std = self.log_std.expand(batch_size, chunk_size, -1)
+        return x_t, log_std
 
     def denoise_step(
         self,
