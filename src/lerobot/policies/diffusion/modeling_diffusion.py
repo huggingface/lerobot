@@ -104,18 +104,29 @@ class DiffusionPolicy(PreTrainedPolicy):
         """Predict a chunk of actions given environment observations.
 
         Supports two modes:
-        - Online (queues populated via select_action): stacks observations from internal queues.
-        - Offline (empty queues, e.g. dataloader batch): uses the batch directly.
+        - Online (queues populated via select_action): stacks the `n_obs_steps` history from the
+          internal queues.
+        - Queue-less (empty queues): used by offline dataloader batches and by the async inference
+          server, which calls this method directly with a single observation and never warms up the
+          queues. A single frame (state with `ndim == 2`, images with `ndim == 4`) is expanded along a
+          new temporal dimension of length `n_obs_steps`, mirroring the warm-up that `select_action`
+          performs through `populate_queues`. Batches that already carry the temporal dimension are
+          left untouched.
         """
         queues_populated = any(len(q) > 0 for q in self._queues.values())
         if queues_populated:
             batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
         else:
             batch = dict(batch)
+            n_obs_steps = self.config.n_obs_steps
+            if batch[OBS_STATE].ndim == 2:
+                batch[OBS_STATE] = batch[OBS_STATE].unsqueeze(1).expand(-1, n_obs_steps, -1)
+            if self.config.env_state_feature and batch[OBS_ENV_STATE].ndim == 2:
+                batch[OBS_ENV_STATE] = batch[OBS_ENV_STATE].unsqueeze(1).expand(-1, n_obs_steps, -1)
             if self.config.image_features:
                 for key in self.config.image_features:
                     if batch[key].ndim == 4:
-                        batch[key] = batch[key].unsqueeze(1)
+                        batch[key] = batch[key].unsqueeze(1).expand(-1, n_obs_steps, -1, -1, -1)
                 batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         actions = self.diffusion.generate_actions(batch, noise=noise)
         return actions
