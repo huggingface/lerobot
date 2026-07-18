@@ -366,9 +366,7 @@ def compute_3point_from_devices(
 # equals this configuration, so these constants are the measured-q targets for the
 # nominal case. (Per-frame *live* measured q would need a reverse controller->publisher
 # feedback channel; not wired.)
-_G1_NEUTRAL_WRIST_POS = np.array(
-    [[0.2232, 0.2177, -0.1555], [0.2232, -0.2177, -0.1555]], np.float64
-)
+_G1_NEUTRAL_WRIST_POS = np.array([[0.2232, 0.2177, -0.1555], [0.2232, -0.2177, -0.1555]], np.float64)
 # Wrist neutral orientations (scalar-first w, x, y, z) at ``default_angles`` — NOT
 # identity: the wrists are rolled/pitched in the standing pose. Matches gear_sonic
 # using ``g1_lwrist_rot`` / ``g1_rwrist_rot`` from FK (not identity) as the rotation

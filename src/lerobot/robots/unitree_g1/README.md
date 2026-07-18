@@ -10,11 +10,11 @@ deploy stack (no `gear_sonic`/torch dependency).
 
 Selected with `--robot.controller=<ClassName>`:
 
-| Controller                     | Purpose                                                                               |
-| ------------------------------ | ------------------------------------------------------------------------------------- |
+| Controller                     | Purpose                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------ |
 | `SonicWholeBodyController`     | SONIC whole-body: locomotion (mode 0), 3-point VR teleop (mode 1), SMPL imitation (mode 2) |
-| `GrootLocomotionController`    | GR00T locomotion policy                                                               |
-| `HolosomaLocomotionController` | Holosoma locomotion policy                                                            |
+| `GrootLocomotionController`    | GR00T locomotion policy                                                                    |
+| `HolosomaLocomotionController` | Holosoma locomotion policy                                                                 |
 
 On startup the controller **interpolates** from the robot's measured pose into the
 policy's commanded target over ~3 s (no snap), and on disconnect (Ctrl-C) it performs a
