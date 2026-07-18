@@ -1,0 +1,71 @@
+# Feetech 馬達韌體（firmware）更新
+
+本教學將引導您使用官方 Feetech 軟體更新 Feetech 馬達的韌體（firmware）。
+
+## 事前準備（prerequisites）
+
+- Windows 電腦（Feetech 軟體僅提供 Windows 版本）
+- Feetech 馬達控制板（motor controller board）
+- 用於連接控制板與電腦的 USB 線（cable）
+- 已連接到控制板的 Feetech 馬達（motors）
+
+## 步驟 1：下載 Feetech 軟體（download Feetech software）
+
+1. 前往官方 Feetech 軟體下載頁面：[https://www.feetechrc.com/software.html](https://www.feetechrc.com/software.html)
+2. 下載最新版本的 Feetech 除錯軟體（FD）
+3. 在您的 Windows 電腦上安裝該軟體
+
+## 步驟 2：硬體設定（hardware setup）
+
+1. 將您的 Feetech 馬達（motors）連接到馬達控制板（motor controller board）
+2. 透過 USB 線（cable）將馬達控制板連接到您的 Windows 電腦
+3. 確保馬達已供電
+
+## 步驟 3：設定連線（configure connection）
+
+1. 啟動 Feetech 除錯軟體
+2. 從連接埠下拉選單中選擇正確的 COM 連接埠（COM port）
+   - 若不確定要使用哪個連接埠（port），請在 Windows 裝置管理員中查看「連接埠（COM 和 LPT）」
+3. 設定適當的鮑率（baudrate，大多數 Feetech 馬達通常為 1000000）
+4. 點擊「Open」以建立與控制板（controller board）的通訊
+
+## 步驟 4：掃描馬達（scan for motors）
+
+1. 連線後，點擊「Search」按鈕以偵測所有已連接的馬達（motors）
+2. 軟體會自動探索並列出匯流排（bus）上的所有馬達
+3. 每個馬達都會顯示其 ID 編號（number）
+
+## 步驟 5：更新韌體（update firmware）
+
+針對每個您想更新的馬達（motors）：
+
+1. **從清單中選擇馬達**，點擊該馬達即可
+2. **點擊 Upgrade 分頁**：
+3. **點擊 Online 按鈕**：
+   - 若找到可能的韌體（firmware）更新，會顯示在框中
+4. **點擊 Upgrade 按鈕**：
+   - 更新進度將會顯示
+
+## 步驟 6：驗證更新（verify update）
+
+1. 更新完成後，軟體應會自動重新整理馬達資訊（motor information）
+2. 確認韌體版本（firmware version）已更新為預期的版本
+
+## 重要注意事項（important notes）
+
+⚠️ **警告**：在韌體（firmware）更新期間請勿中斷電源或 USB 連接，否則可能會使馬達變磚（brick）。
+
+## 額外內容：在 Linux/macOS 上進行馬達除錯（bonus: motor debugging on Linux/macOS）
+
+僅供除錯用途，您可以使用開源的 Feetech Debug Tool：
+
+- **儲存庫（repository）**：[FT_SCServo_Debug_Qt](https://github.com/CarolinePascal/FT_SCServo_Debug_Qt/tree/fix/port-search-timer)
+
+### 安裝說明（installation instructions）
+
+請依照儲存庫（repository）中的說明安裝此工具，Ubuntu 可以直接安裝，macOS 則需要從原始碼建置（build it from source）。
+
+**限制（limitations）：**
+
+- 此工具僅用於除錯與參數調整（parameter adjustment）
+- 韌體（firmware）更新仍必須在 Windows 上使用官方 Feetech 軟體進行

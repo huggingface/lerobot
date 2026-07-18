@@ -177,6 +177,14 @@
     title: 攝影機（Cameras）
   title: "感測器（Sensors）"
 - sections:
+  - local: notebooks
+    title: Notebooks
+  - local: feetech
+    title: 更新 Feetech 韌體
+  - local: damiao
+    title: Damiao 馬達與 CAN 匯流排
+  title: "資源（Resources）"
+- sections:
   - local: contributing
     title: 貢獻至 LeRobot
   - local: backwardcomp
