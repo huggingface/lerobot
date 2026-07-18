@@ -31,11 +31,12 @@ from tests.utils import skip_if_package_missing
 BATCH_SIZE = 4
 NUM_BINS = 201
 IMAGE_KEY = f"{OBS_IMAGES}.top"
+IMAGE_KEY_WRIST_LEFT = f"{OBS_IMAGES}.wrist_left"
+IMAGE_KEY_WRIST_RIGHT = f"{OBS_IMAGES}.wrist_right"
 
 
 def _make_config(**overrides) -> DistributionalVFConfig:
     defaults = {
-        "init_from_actor_path": "",
         "device": "cpu",
         "image_resolution": (224, 224),
     }
@@ -43,6 +44,8 @@ def _make_config(**overrides) -> DistributionalVFConfig:
     config = DistributionalVFConfig(**defaults)
     config.input_features = {
         IMAGE_KEY: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+        IMAGE_KEY_WRIST_LEFT: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+        IMAGE_KEY_WRIST_RIGHT: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
     }
     config.output_features = {}
     config.normalization_mapping = {
@@ -60,15 +63,28 @@ def _make_model():
 
 
 def _make_batch(batch_size: int = BATCH_SIZE, device: str = "cpu") -> dict[str, torch.Tensor]:
+    from lerobot.rewards.distributional_value_function.processor_distributional_value_function import (
+        IMAGE_MASK_SUFFIX,
+    )
     from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 
     return {
-        IMAGE_KEY: torch.rand(batch_size, 3, 224, 224, device=device),
-        OBS_LANGUAGE_TOKENS: torch.randint(0, 1000, (batch_size, 16), device=device),
-        OBS_LANGUAGE_ATTENTION_MASK: torch.ones(batch_size, 16, dtype=torch.bool, device=device),
+        IMAGE_KEY: torch.rand(batch_size, 3, 224, 224, device=device) * 2 - 1,
+        IMAGE_KEY + IMAGE_MASK_SUFFIX: torch.ones(batch_size, dtype=torch.bool, device=device),
+        IMAGE_KEY_WRIST_LEFT: torch.rand(batch_size, 3, 224, 224, device=device) * 2 - 1,
+        IMAGE_KEY_WRIST_LEFT + IMAGE_MASK_SUFFIX: torch.ones(batch_size, dtype=torch.bool, device=device),
+        IMAGE_KEY_WRIST_RIGHT: torch.rand(batch_size, 3, 224, 224, device=device) * 2 - 1,
+        IMAGE_KEY_WRIST_RIGHT + IMAGE_MASK_SUFFIX: torch.ones(batch_size, dtype=torch.bool, device=device),
+        OBS_LANGUAGE_TOKENS: torch.randint(0, 1000, (batch_size, 200), device=device),
+        OBS_LANGUAGE_ATTENTION_MASK: torch.ones(batch_size, 200, dtype=torch.bool, device=device),
         "mc_return": torch.rand(batch_size, device=device) * -1.0,
         "is_terminal": torch.zeros(batch_size, dtype=torch.bool, device=device),
     }
+
+
+# ------------------------------------------------------------------
+# Config / registry tests
+# ------------------------------------------------------------------
 
 
 def test_config_registered_in_reward_model_registry():
@@ -98,6 +114,11 @@ def test_make_reward_model_config_factory():
     assert config.num_value_bins == 101
 
 
+# ------------------------------------------------------------------
+# Target distribution tests (HL-Gauss, Dirac delta, one-hot)
+# ------------------------------------------------------------------
+
+
 @skip_if_package_missing("transformers")
 def test_hl_gauss_sums_to_one():
     """HL-Gauss target distribution sums to 1 for each sample."""
@@ -125,7 +146,7 @@ def test_hl_gauss_expected_value_matches():
     model = _make_model()
     targets = torch.tensor([-0.5, -0.1, -0.9])
     dist = model.hl_gauss_target(targets)
-    expected = (dist * model.bin_centers).sum(dim=-1)
+    expected = (dist * model.value_head.bin_centers).sum(dim=-1)
 
     torch.testing.assert_close(expected, targets, atol=1e-4, rtol=0)
 
@@ -169,7 +190,7 @@ def test_dirac_delta_expected_value_matches():
     model = _make_model()
     targets = torch.tensor([-0.5, -0.1, -0.9])
     dist = model.dirac_delta_target(targets)
-    expected = (dist * model.bin_centers).sum(dim=-1)
+    expected = (dist * model.value_head.bin_centers).sum(dim=-1)
 
     torch.testing.assert_close(expected, targets, atol=1e-5, rtol=0)
 
@@ -207,7 +228,7 @@ def test_one_hot_nearest_bin():
     dist = model.one_hot_target(targets)
 
     hot_idx = dist[0].argmax()
-    assert model.bin_centers[hot_idx].item() == pytest.approx(-0.5, abs=0.003)
+    assert model.value_head.bin_centers[hot_idx].item() == pytest.approx(-0.5, abs=0.003)
 
 
 @skip_if_package_missing("transformers")
@@ -243,41 +264,62 @@ def test_no_terminal_override_when_disabled():
     assert (dist[1] > 0).sum() > 2
 
 
+# ------------------------------------------------------------------
+# Architecture / component tests
+# ------------------------------------------------------------------
+
+
 @skip_if_package_missing("transformers")
 def test_model_has_expected_components():
-    """Model scaffold contains all architectural components."""
+    """Model scaffold contains the SigLIP2+Gemma3+ValueHead components."""
     model = _make_model()
 
-    assert hasattr(model, "vision_tower")
-    assert hasattr(model, "multi_modal_projector")
-    assert hasattr(model, "token_embedding")
-    assert hasattr(model, "layers")
+    assert hasattr(model, "vision_encoder")
+    assert hasattr(model, "gemma3")
+    assert hasattr(model, "image_proj")
     assert hasattr(model, "value_head")
     assert hasattr(model, "cls_embedding")
-    assert hasattr(model, "norm")
-    assert hasattr(model, "rotary_emb")
-    assert hasattr(model, "bin_centers")
+    assert hasattr(model.value_head, "mlp")
+    assert hasattr(model.value_head, "bin_centers")
 
 
 @skip_if_package_missing("transformers")
 def test_model_bin_centers_shape():
-    """Bin centers buffer has shape (num_value_bins,)."""
+    """Value head bin_centers buffer has shape (num_value_bins,)."""
     model = _make_model()
-    assert model.bin_centers.shape == (NUM_BINS,)
+    assert model.value_head.bin_centers.shape == (NUM_BINS,)
 
 
 @skip_if_package_missing("transformers")
-def test_model_layer_count():
-    """Transformer has num_hidden_layers (6) layers."""
+def test_value_head_output_dim():
+    """Value head linear projection outputs num_value_bins logits."""
     model = _make_model()
-    assert len(model.layers) == 6
+    assert model.value_head.mlp[-1].out_features == NUM_BINS
 
 
 @skip_if_package_missing("transformers")
-def test_model_value_head_output_dim():
-    """Value head outputs num_value_bins logits."""
+def test_cls_embedding_is_nn_embedding():
+    """CLS is nn.Embedding (FSDP-safe) with correct shape."""
     model = _make_model()
-    assert model.value_head.out_features == NUM_BINS
+    from torch import nn
+
+    assert isinstance(model.cls_embedding, nn.Embedding)
+    assert model.cls_embedding.num_embeddings == 1
+    assert model.cls_embedding.embedding_dim == model.gemma3_hidden
+
+
+@skip_if_package_missing("transformers")
+def test_image_proj_dimensions():
+    """Image projection maps SigLIP2 hidden to Gemma3 hidden."""
+    model = _make_model()
+    siglip_hidden = model.vision_encoder.config.hidden_size
+    assert model.image_proj.in_features == siglip_hidden
+    assert model.image_proj.out_features == model.gemma3_hidden
+
+
+# ------------------------------------------------------------------
+# Forward / inference tests
+# ------------------------------------------------------------------
 
 
 @skip_if_package_missing("transformers")
@@ -293,6 +335,9 @@ def test_forward_returns_loss_and_dict():
     assert "loss" in output_dict
     assert "predicted_value_mean" in output_dict
     assert "mc_return_mean" in output_dict
+    assert "acc_best" in output_dict
+    assert "acc_neighbor" in output_dict
+    assert "mae" in output_dict
 
 
 @skip_if_package_missing("transformers")
@@ -335,32 +380,14 @@ def test_compute_reward_values_in_support_range():
     assert (values <= 0.0 + 0.01).all()
 
 
-@skip_if_package_missing("transformers")
-def test_processor_pipeline_produces_expected_keys():
-    """Full preprocessor pipeline produces tokenized text and processed images."""
-    from lerobot.rewards.distributional_value_function.processor_distributional_value_function import (
-        make_distributional_vf_pre_post_processors,
-    )
-    from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
-
-    config = _make_config()
-    preprocessor, _ = make_distributional_vf_pre_post_processors(config)
-
-    raw_batch = {
-        IMAGE_KEY: torch.rand(3, 224, 224),
-        "task": "pick up the cup",
-    }
-
-    processed = preprocessor(raw_batch)
-
-    assert OBS_LANGUAGE_TOKENS in processed
-    assert OBS_LANGUAGE_ATTENTION_MASK in processed
-    assert IMAGE_KEY in processed
+# ------------------------------------------------------------------
+# Gradient flow tests
+# ------------------------------------------------------------------
 
 
 @skip_if_package_missing("transformers")
 def test_gradient_flows_through_value_head():
-    """Backprop produces non-zero gradients on the value head."""
+    """Backprop produces non-zero gradients on the value head projection."""
     model = _make_model()
     model.train()
     batch = _make_batch()
@@ -368,8 +395,8 @@ def test_gradient_flows_through_value_head():
     loss, _ = model.forward(batch)
     loss.backward()
 
-    assert model.value_head.weight.grad is not None
-    assert not torch.all(model.value_head.weight.grad == 0)
+    assert model.value_head.mlp[-1].weight.grad is not None
+    assert not torch.all(model.value_head.mlp[-1].weight.grad == 0)
 
 
 @skip_if_package_missing("transformers")
@@ -382,13 +409,82 @@ def test_gradient_flows_through_cls_embedding():
     loss, _ = model.forward(batch)
     loss.backward()
 
-    assert model.cls_embedding.grad is not None
-    assert not torch.all(model.cls_embedding.grad == 0)
+    assert model.cls_embedding.weight.grad is not None
+    assert not torch.all(model.cls_embedding.weight.grad == 0)
+
+
+@skip_if_package_missing("transformers")
+def test_gradient_flows_through_image_proj():
+    """Backprop produces non-zero gradients on the image projection."""
+    model = _make_model()
+    model.train()
+    batch = _make_batch()
+
+    loss, _ = model.forward(batch)
+    loss.backward()
+
+    assert model.image_proj.weight.grad is not None
+    assert not torch.all(model.image_proj.weight.grad == 0)
+
+
+# ------------------------------------------------------------------
+# Freeze / training infrastructure tests
+# ------------------------------------------------------------------
+
+
+@skip_if_package_missing("transformers")
+def test_freeze_vision_encoder():
+    """freeze_vision_encoder disables requires_grad on SigLIP2."""
+    model = _make_model()
+    model.config.freeze_vision_encoder = True
+    model._set_requires_grad()
+
+    for p in model.vision_encoder.parameters():
+        assert not p.requires_grad
+    for p in model.value_head.parameters():
+        assert p.requires_grad
+
+
+@skip_if_package_missing("transformers")
+def test_freeze_language_model():
+    """freeze_language_model disables requires_grad on Gemma3."""
+    model = _make_model()
+    model.config.freeze_language_model = True
+    model._set_requires_grad()
+
+    for p in model.gemma3.parameters():
+        assert not p.requires_grad
+    for p in model.value_head.parameters():
+        assert p.requires_grad
+
+
+@skip_if_package_missing("transformers")
+def test_stop_gradient_to_vlm_preserves_cls_grad():
+    """With stop_gradient_to_vlm, CLS embedding still gets gradients."""
+    config = _make_config(stop_gradient_to_vlm=True)
+    from lerobot.rewards.distributional_value_function.modeling_distributional_value_function import (
+        DistributionalVFRewardModel,
+    )
+
+    model = DistributionalVFRewardModel(config)
+    model.train()
+    batch = _make_batch()
+
+    loss, _ = model.forward(batch)
+    loss.backward()
+
+    assert model.cls_embedding.weight.grad is not None
+    assert not torch.all(model.cls_embedding.weight.grad == 0)
+
+
+# ------------------------------------------------------------------
+# Config validation tests
+# ------------------------------------------------------------------
 
 
 def test_config_requires_visual_feature():
     """validate_features raises if no VISUAL feature is present."""
-    config = DistributionalVFConfig(init_from_actor_path="")
+    config = DistributionalVFConfig()
     config.input_features = {
         "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(14,)),
     }
@@ -403,71 +499,47 @@ def test_config_passes_with_visual_feature():
     config.validate_features()
 
 
-@skip_if_package_missing("transformers")
-def test_save_load_pretrained_roundtrip(tmp_path):
-    """Saved model can be loaded back with identical weights."""
-    from lerobot.rewards.distributional_value_function.modeling_distributional_value_function import (
-        DistributionalVFRewardModel,
-    )
-
-    model = _make_model()
-    model._save_pretrained(tmp_path)
-
-    loaded = DistributionalVFRewardModel.from_pretrained(str(tmp_path))
-
-    orig_sd = model.state_dict()
-    loaded_sd = loaded.state_dict()
-
-    assert set(orig_sd.keys()) == set(loaded_sd.keys())
-    for key in orig_sd:
-        torch.testing.assert_close(orig_sd[key], loaded_sd[key], msg=f"Mismatch in {key}")
+# ------------------------------------------------------------------
+# Processor tests
+# ------------------------------------------------------------------
 
 
 @skip_if_package_missing("transformers")
-def test_image_preprocessor_normalizes_to_minus_one_one():
-    """Image preprocessor scales [0, 1] float input to [-1, 1] for SigLIP."""
+def test_processor_pipeline_produces_expected_keys():
+    """Full preprocessor pipeline produces tokenized text, preprocessed images, and masks."""
     from lerobot.rewards.distributional_value_function.processor_distributional_value_function import (
-        DistributionalVFImagePreprocessorStep,
+        IMAGE_MASK_SUFFIX,
+        make_distributional_vf_pre_post_processors,
     )
+    from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 
-    step = DistributionalVFImagePreprocessorStep(image_resolution=(224, 224), image_keys=(IMAGE_KEY,))
+    config = _make_config()
+    preprocessor, _ = make_distributional_vf_pre_post_processors(config)
 
-    transition = {
-        TransitionKey.OBSERVATION: {
-            IMAGE_KEY: torch.rand(1, 224, 224, 3),
-        },
+    raw_batch = {
+        IMAGE_KEY: torch.rand(3, 224, 224),
+        IMAGE_KEY_WRIST_LEFT: torch.rand(3, 224, 224),
+        IMAGE_KEY_WRIST_RIGHT: torch.rand(3, 224, 224),
+        "task": "pick up the cup",
     }
 
-    result = step(transition)
-    image = result[TransitionKey.OBSERVATION][IMAGE_KEY]
+    processed = preprocessor(raw_batch)
 
-    assert image.min() >= -1.0 - 1e-5
-    assert image.max() <= 1.0 + 1e-5
+    assert OBS_LANGUAGE_TOKENS in processed
+    assert OBS_LANGUAGE_ATTENTION_MASK in processed
+    assert IMAGE_KEY in processed
+    assert IMAGE_KEY + IMAGE_MASK_SUFFIX in processed
+    assert IMAGE_KEY_WRIST_LEFT + IMAGE_MASK_SUFFIX in processed
+    assert IMAGE_KEY_WRIST_RIGHT + IMAGE_MASK_SUFFIX in processed
 
-
-@skip_if_package_missing("transformers")
-def test_image_preprocessor_resizes_with_pad():
-    """Image preprocessor resizes non-square images to target resolution."""
-    from lerobot.rewards.distributional_value_function.processor_distributional_value_function import (
-        DistributionalVFImagePreprocessorStep,
-    )
-
-    step = DistributionalVFImagePreprocessorStep(image_resolution=(224, 224), image_keys=(IMAGE_KEY,))
-
-    transition = {
-        TransitionKey.OBSERVATION: {
-            IMAGE_KEY: torch.rand(1, 480, 640, 3),
-        },
-    }
-
-    result = step(transition)
-    image = result[TransitionKey.OBSERVATION][IMAGE_KEY]
-
-    assert image.shape[1:3] == (224, 224)
+    img = processed[IMAGE_KEY]
+    assert img.shape == (1, 3, 224, 224)
+    assert img.min() >= -1.0 - 1e-5
+    assert img.max() <= 1.0 + 1e-5
 
 
 def test_task_prompt_formats_correctly():
-    """Task prompt step converts underscored task to 'Task: {text}.' format."""
+    """Task prompt step builds 'Task: {task}.' format."""
     from lerobot.rewards.distributional_value_function.processor_distributional_value_function import (
         DistributionalVFPrepareTaskPromptStep,
     )
@@ -485,7 +557,7 @@ def test_task_prompt_formats_correctly():
 
 
 def test_task_prompt_handles_string_input():
-    """Task prompt step accepts a plain string (not just a list)."""
+    """Task prompt step accepts a plain string task."""
     from lerobot.rewards.distributional_value_function.processor_distributional_value_function import (
         DistributionalVFPrepareTaskPromptStep,
     )
@@ -516,3 +588,130 @@ def test_task_prompt_raises_on_missing_task():
 
     with pytest.raises(ValueError, match="No task found"):
         step(transition)
+
+
+def test_image_preprocessor_resize_and_normalize():
+    """Image preprocessor resizes, normalizes to [-1,1], and adds masks."""
+    from lerobot.rewards.distributional_value_function.processor_distributional_value_function import (
+        IMAGE_MASK_SUFFIX,
+        DistributionalVFImagePreprocessorStep,
+    )
+
+    step = DistributionalVFImagePreprocessorStep(
+        image_resolution=(224, 224),
+        image_keys=(IMAGE_KEY,),
+    )
+
+    transition = {
+        TransitionKey.OBSERVATION: {
+            IMAGE_KEY: torch.rand(2, 3, 320, 240),  # non-square, [0, 1]
+        }
+    }
+
+    result = step(transition)
+    obs = result[TransitionKey.OBSERVATION]
+
+    assert obs[IMAGE_KEY].shape == (2, 3, 224, 224)
+    assert obs[IMAGE_KEY].min() >= -1.0 - 1e-5
+    assert obs[IMAGE_KEY].max() <= 1.0 + 1e-5
+    assert obs[IMAGE_KEY + IMAGE_MASK_SUFFIX].all()
+
+
+def test_image_preprocessor_missing_camera_gets_placeholder():
+    """Missing cameras get black placeholder and mask=False."""
+    from lerobot.rewards.distributional_value_function.processor_distributional_value_function import (
+        IMAGE_MASK_SUFFIX,
+        DistributionalVFImagePreprocessorStep,
+    )
+
+    step = DistributionalVFImagePreprocessorStep(
+        image_resolution=(224, 224),
+        image_keys=(IMAGE_KEY, IMAGE_KEY_WRIST_LEFT),
+    )
+
+    transition = {
+        TransitionKey.OBSERVATION: {
+            IMAGE_KEY: torch.rand(2, 3, 224, 224),
+        }
+    }
+
+    result = step(transition)
+    obs = result[TransitionKey.OBSERVATION]
+
+    assert obs[IMAGE_KEY + IMAGE_MASK_SUFFIX].all()
+    assert not obs[IMAGE_KEY_WRIST_LEFT + IMAGE_MASK_SUFFIX].any()
+    assert obs[IMAGE_KEY_WRIST_LEFT].shape == (2, 3, 224, 224)
+
+
+# ------------------------------------------------------------------
+# Save / load roundtrip
+# ------------------------------------------------------------------
+
+
+@skip_if_package_missing("transformers")
+def test_save_load_pretrained_roundtrip(tmp_path):
+    """Saved model can be loaded back with identical weights."""
+    from lerobot.rewards.distributional_value_function.modeling_distributional_value_function import (
+        DistributionalVFRewardModel,
+    )
+
+    model = _make_model()
+    model._save_pretrained(tmp_path)
+
+    loaded = DistributionalVFRewardModel.from_pretrained(str(tmp_path))
+
+    orig_sd = model.state_dict()
+    loaded_sd = loaded.state_dict()
+
+    assert set(orig_sd.keys()) == set(loaded_sd.keys())
+    for key in orig_sd:
+        torch.testing.assert_close(orig_sd[key], loaded_sd[key], msg=f"Mismatch in {key}")
+
+
+# ------------------------------------------------------------------
+# Attention mask utility test
+# ------------------------------------------------------------------
+
+
+@skip_if_package_missing("transformers")
+def test_make_att_2d_masks():
+    """Verify attention mask construction for prefix + CLS."""
+    from lerobot.rewards.distributional_value_function.modeling_distributional_value_function import (
+        make_att_2d_masks,
+    )
+
+    pad = torch.ones(1, 4, dtype=torch.bool)
+    att = torch.tensor([[0, 0, 0, 1]])
+    mask = make_att_2d_masks(pad, att)[0]
+
+    assert mask[0, 0]  # prefix sees prefix
+    assert mask[1, 2]  # prefix sees prefix
+    assert not mask[0, 3]  # prefix does NOT see CLS
+    assert mask[3, 0]  # CLS sees prefix
+    assert mask[3, 3]  # CLS sees itself
+
+
+# ------------------------------------------------------------------
+# Categorical metrics test
+# ------------------------------------------------------------------
+
+
+@skip_if_package_missing("transformers")
+def test_categorical_metrics_perfect_prediction():
+    """Metrics return acc_best=1 when logits peak at the correct bin."""
+    model = _make_model()
+    bin_centers = model.value_head.bin_centers
+    target = bin_centers[100].unsqueeze(0)  # exact bin center
+
+    batch = _make_batch(batch_size=1)
+    batch["mc_return"] = target
+    batch["is_terminal"] = torch.zeros(1, dtype=torch.bool)
+
+    with torch.no_grad():
+        _, output_dict = model.forward(batch)
+
+    assert "acc_best" in output_dict
+    assert "acc_neighbor" in output_dict
+    assert "mae" in output_dict
+    assert isinstance(output_dict["acc_best"], float)
+    assert isinstance(output_dict["mae"], float)

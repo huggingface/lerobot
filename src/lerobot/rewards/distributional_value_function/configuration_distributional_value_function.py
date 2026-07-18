@@ -17,15 +17,17 @@
 Paper: "π*0.6: a VLA That Learns From Experience" (Physical Intelligence, 2025)
        https://pi.website/blog/pistar06
 
-Implements the distributional value function V^{pi_ref}(o_t, l) from Section IV-A.
-Architecture: the paper uses a 670M-parameter Gemma 3 VLM (the actor is 4B Gemma 3).
-We match that scale on PaliGemma (PI05's Gemma 2B backbone) by truncating to 6 Gemma
-LM layers and 13 SigLIP vision layers (~670M params), with a [CLS] token and linear
-head predicting a categorical distribution over B=201 discrete value bins in [-1, 0].
+Distributional value function V^{pi_ref}(o_t, l) (Section IV-A).
 
-Training: cross-entropy on HL-Gauss soft targets (or Dirac delta projection),
-with optional one-hot targets for terminal states; MC returns normalized per task.
-Weights initialized from a pre-trained PI05 actor checkpoint.
+Architecture (~670M params):
+    Vision:  SigLIP2-so400m — 27 layers, 1152-dim, 256 patches/image
+    LM:      Gemma3-270M   — 18 layers, 640-dim
+    Proj:    Linear(1152, 640) fresh init
+    Head:    [CLS] → Linear(640→320) → LN → GELU → Dropout → Linear(320→201)
+
+Inputs:  multi-camera images (3 x 256 patches) + ``"Task: {task}."`` prompt
+Targets: MC returns in [-1, 0], cross-entropy on HL-Gauss (default) or Dirac delta
+Init:    SigLIP2 + Gemma3 from pretrained HF checkpoints; head normal_(std=0.02)
 """
 
 from dataclasses import dataclass, field
@@ -40,20 +42,17 @@ from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 class DistributionalVFConfig(RewardModelConfig):
     """Configuration for RECAP's distributional value function.
 
-    The value function predicts V^{pi_ref}(o_t, l) as a distribution over B discrete
-    bins spanning [value_support_min, value_support_max]. It is trained with cross-entropy
-    on HL-Gauss soft targets or Dirac delta projection, derived from Monte Carlo returns
-    (Eq. 1 in the paper).
+    Predicts V^{pi_ref}(o_t, l) as a categorical distribution over B=201 bins in [-1, 0].
+    Trained with cross-entropy on HL-Gauss soft targets (default) or Dirac delta (C51),
+    with optional one-hot targets for terminal states.
 
-    Architecture: the paper value function is a 670M Gemma 3 VLM; the actor is 4B Gemma 3.
-    We use truncated PaliGemma (``num_hidden_layers=6``, ``num_vision_layers=13``) to reach
-    about 670M params and initialize from the PI05 actor checkpoint.
+    Architecture: monolithic VLM — SigLIP2-so400m (vision) + Gemma3-270M (language),
+    bidirectional prefix attention, one-way [CLS] readout, 2-layer MLP value head.
     """
 
-    # Backbone
-    paligemma_variant: str = "gemma_2b"
-    num_hidden_layers: int = 6
-    num_vision_layers: int = 13
+    # Backbone pretrained paths
+    siglip_path: str = "google/siglip2-so400m-patch14-224"
+    gemma3_path: str = "google/gemma-3-270m"
 
     # Distributional head
     num_value_bins: int = 201
@@ -65,25 +64,24 @@ class DistributionalVFConfig(RewardModelConfig):
     target_method: str = "hl_gauss"
 
     # Whether to use one-hot targets for terminal states (exact return, no smoothing).
-    # When False, terminal states use the same target method as non-terminal states.
     use_one_hot_terminal: bool = True
 
     # Image
     image_resolution: tuple[int, int] = (224, 224)
 
-    # Tokenizer
-    tokenizer_max_length: int = 64
+    # Tokenizer (uses Gemma3's tokenizer)
+    tokenizer_max_length: int = 200
 
-    # Init from actor (required for first training: provides SigLIP vision tower + Gemma embeddings).
-    # Pass a PI05 checkpoint path or Hub repo_id here.
-    # After training, load the value function with RewardModel.from_pretrained() instead.
-    init_from_actor_path: str = ""
+    # Training controls
+    value_dropout: float = 0.0
+    freeze_vision_encoder: bool = False
+    freeze_language_model: bool = False
+    stop_gradient_to_vlm: bool = False
 
     # Normalization
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
-            "STATE": NormalizationMode.IDENTITY,
         }
     )
 

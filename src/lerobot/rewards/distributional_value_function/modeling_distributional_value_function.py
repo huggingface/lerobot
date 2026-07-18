@@ -18,18 +18,12 @@ Paper: "π*0.6: a VLA That Learns From Experience" (Physical Intelligence, 2025)
        https://pi.website/blog/pistar06
 
 Implements the distributional value function V^{pi_ref}(o_t, l) from Section IV-A.
-Architecture: the paper uses a 670M-parameter Gemma 3 VLM (the actor is 4B Gemma 3).
-We match that scale on PaliGemma (PI05's Gemma 2B backbone) by truncating to 6 Gemma
-LM layers and 13 SigLIP vision layers (~670M params), with a [CLS] token and linear
-head predicting a categorical distribution over B=201 discrete value bins in [-1, 0].
-
-Inputs: single image observation + task text prompt ("Task: {task}.")
-Outputs: softmax distribution over value bins; expected value E[V] for inference.
-Training: cross-entropy on HL-Gauss soft targets (or Dirac delta projection),
-with optional one-hot targets for terminal states; MC returns normalized per task.
-
-Weight initialization: vision tower, multi-modal projector, token embeddings, and
-the first N transformer layers are copied from a pre-trained PI05 actor checkpoint.
+Architecture: the paper uses a 670M-parameter Gemma 3 VLM (Figure 3) —
+SigLIP2-so400m (27 layers, 1152-dim) + Gemma3-270M (18 layers, 640-dim),
+with a [CLS] token readout predicting a categorical distribution over
+B=201 discrete value bins in [-1, 0]. This implementation uses a 2-layer
+MLP value head (Linear→LN→GELU→Dropout→Linear) inspired by Robometer
+(Chen et al., 2025).
 """
 
 from __future__ import annotations
@@ -41,30 +35,90 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
+from lerobot.configs.types import FeatureType
 from lerobot.rewards.pretrained import PreTrainedRewardModel
+from lerobot.utils.constants import (
+    OBS_LANGUAGE_ATTENTION_MASK,
+    OBS_LANGUAGE_TOKENS,
+    OPENPI_ATTENTION_MASK_VALUE as _ATTENTION_MASK_VALUE,
+)
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from .configuration_distributional_value_function import DistributionalVFConfig
+from .processor_distributional_value_function import IMAGE_MASK_SUFFIX
 
 if TYPE_CHECKING or _transformers_available:
-    from transformers.models.auto import CONFIG_MAPPING
-    from transformers.models.gemma import modeling_gemma
-
-    from lerobot.policies.pi_gemma import (
-        PaliGemmaForConditionalGenerationWithPiGemma,
-        PiGemmaRMSNorm,
-        _gated_residual,
-        _get_pi_gemma_decoder_layer_base,
-    )
+    from transformers import Gemma3ForCausalLM, SiglipVisionModel
 else:
-    CONFIG_MAPPING = None
-    modeling_gemma = None
-    PaliGemmaForConditionalGenerationWithPiGemma = None
-    PiGemmaRMSNorm = None
-    _gated_residual = None
-    _get_pi_gemma_decoder_layer_base = None
+    Gemma3ForCausalLM = None  # type: ignore[assignment]
+    SiglipVisionModel = None  # type: ignore[assignment]
 
-PALIGEMMA_VOCAB_SIZE = 257152
+
+def make_att_2d_masks(pad_masks: Tensor, att_masks: Tensor) -> Tensor:
+    """Copied from big_vision.
+
+    Tokens can attend to valid inputs tokens which have a cumulative mask_ar
+    smaller or equal to theirs. This way `mask_ar` int[B, N] can be used to
+    setup several types of attention, for example:
+
+      [[1 1 1 1 1 1]]: pure causal attention.
+
+      [[0 0 0 1 1 1]]: prefix-lm attention. The first 3 tokens can attend between
+          themselves and the last 3 tokens have a causal attention. The first
+          entry could also be a 1 without changing behaviour.
+
+      [[1 0 1 0 1 0 0 1 0 0]]: causal attention between 4 blocks. Tokens of a
+          block can attend all previous blocks and all tokens on the same block.
+
+    Args:
+      input_mask: bool[B, N] true if its part of the input, false if padding.
+      mask_ar: int32[B, N] mask that's 1 where previous tokens cannot depend on
+        it and 0 where it shares the same attention mask as the previous token.
+    """
+    if att_masks.ndim != 2:
+        raise ValueError(att_masks.ndim)
+    if pad_masks.ndim != 2:
+        raise ValueError(pad_masks.ndim)
+
+    cumsum = torch.cumsum(att_masks, dim=1)
+    att_2d_masks = cumsum[:, None, :] <= cumsum[:, :, None]
+    pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
+    return att_2d_masks & pad_2d_masks
+
+
+class ValueHead(nn.Module):
+    """Categorical value projection: hidden state → bin logits.
+
+    2-layer MLP: Linear → LayerNorm → GELU → Dropout → Linear.
+    Also holds the ``bin_centers`` buffer used to compute E[V] = Σ p_i · c_i.
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_bins: int,
+        v_min: float,
+        v_max: float,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_bins = num_bins
+
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.LayerNorm(hidden_size // 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_size // 2, num_bins),
+        )
+
+        self.register_buffer("bin_centers", torch.linspace(v_min, v_max, num_bins), persistent=False)
+
+    def forward(self, hidden_states: Tensor) -> Tensor:
+        """Project hidden state to value logits. Returns [B, num_bins]."""
+        hidden_states = hidden_states.to(self.mlp[0].weight.dtype)
+        return self.mlp(hidden_states)
 
 
 class DistributionalVFRewardModel(PreTrainedRewardModel):
@@ -74,9 +128,11 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
     Trained with cross-entropy on HL-Gauss or Dirac delta targets centered on
     per-task normalized Monte Carlo returns.
 
-    Architecture: truncated PaliGemma (``num_hidden_layers=6``, ``num_vision_layers=13``),
-    causal attention, [CLS] token, and Linear(D, num_bins) value head.
-    The expected value is E[V] = sum(softmax(logits) * bin_centers).
+    Architecture: monolithic VLM — SigLIP2-so400m + Gemma3-270M (~670M params).
+    Multi-camera images are encoded by SigLIP2 (256 patches each), projected to
+    Gemma3's hidden dim, concatenated with tokenized language, and processed by
+    all 18 Gemma3 transformer layers. A [CLS] token appended at the end provides
+    the value readout via a 2-layer MLP head.
     """
 
     name = "distributional_value_function"
@@ -87,266 +143,110 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         super().__init__(config)
         self.config = config
 
-        from transformers.models.gemma.modeling_gemma import GemmaRotaryEmbedding
+        self.vision_encoder = SiglipVisionModel.from_pretrained(config.siglip_path)
+        siglip_hidden = self.vision_encoder.config.hidden_size  # 1152
 
-        from lerobot.policies.pi05.modeling_pi05 import get_gemma_config
+        self.gemma3 = Gemma3ForCausalLM.from_pretrained(config.gemma3_path)
+        self.gemma3_hidden = self.gemma3.config.hidden_size  # 640
 
-        # Get base dimensions from the paligemma variant (OpenPI config format)
-        base_config = get_gemma_config(config.paligemma_variant)
-        hidden_dim = base_config.width
-        mlp_dim = base_config.mlp_dim
-        num_layers = config.num_hidden_layers
+        # Fresh image projection: SigLIP2 1152-dim → Gemma3 640-dim
+        self.image_proj = nn.Linear(siglip_hidden, self.gemma3_hidden, bias=True)
+        nn.init.normal_(self.image_proj.weight, std=0.02)
+        nn.init.zeros_(self.image_proj.bias)
 
-        # HuggingFace GemmaConfig for transformer layers
-        gemma_config = CONFIG_MAPPING["gemma"](
-            head_dim=base_config.head_dim,
-            hidden_size=hidden_dim,
-            intermediate_size=mlp_dim,
-            num_attention_heads=base_config.num_heads,
-            num_hidden_layers=num_layers,
-            num_key_value_heads=base_config.num_kv_heads,
-            vocab_size=PALIGEMMA_VOCAB_SIZE,
-            hidden_activation="gelu_pytorch_tanh",
+        # Learnable [CLS] token — appended to the sequence before Gemma3.
+        # nn.Embedding (not nn.Parameter) for FSDP compatibility.
+        self.cls_embedding = nn.Embedding(1, self.gemma3_hidden)
+        nn.init.normal_(self.cls_embedding.weight, std=0.02)
+
+        # Value head: MLP projection → num_bins logits
+        self.value_head = ValueHead(
+            hidden_size=self.gemma3_hidden,
+            num_bins=config.num_value_bins,
+            v_min=config.value_support_min,
+            v_max=config.value_support_max,
+            dropout=config.value_dropout,
         )
-        self.gemma_config = gemma_config
-        self.hidden_dim = hidden_dim
-        self.num_value_bins = config.num_value_bins
 
-        # Single learned [CLS] token for value prediction
-        self.cls_embedding = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
-
-        # Value projection head: Linear(hidden_dim, num_bins)
-        self.value_head = nn.Linear(in_features=hidden_dim, out_features=config.num_value_bins)
-
-        # Transformer layers (overwritten by _initialize_from_actor on first run)
-        self.rotary_emb = GemmaRotaryEmbedding(gemma_config)
-        pi_gemma_decoder_layer_base = _get_pi_gemma_decoder_layer_base()
-        self.layers = nn.ModuleList(
-            [pi_gemma_decoder_layer_base(gemma_config, layer_idx=i) for i in range(num_layers)]
-        )
-        self.norm = PiGemmaRMSNorm(hidden_dim, eps=gemma_config.rms_norm_eps)
-
-        # Vision tower + projector + token embedding (overwritten by _initialize_from_actor on first run)
-        # PaliGemmaConfig wraps both vision and text configs into a single model
-        paligemma_config = CONFIG_MAPPING["paligemma"]()
-        paligemma_config.text_config = gemma_config
-        paligemma_config.vision_config.image_size = config.image_resolution[0]
-        paligemma_config.vision_config.intermediate_size = 4304
-        paligemma_config.vision_config.projection_dim = 2048
-        paligemma_config.vision_config.projector_hidden_act = "gelu_fast"
-
-        paligemma_full = PaliGemmaForConditionalGenerationWithPiGemma(config=paligemma_config)
-        self.vision_tower = paligemma_full.model.vision_tower
-        self.multi_modal_projector = paligemma_full.model.multi_modal_projector
-        self.token_embedding = paligemma_full.model.language_model.embed_tokens
-        del paligemma_full
-
-        # Truncate vision tower to num_vision_layers
-        if hasattr(self.vision_tower, "vision_model") and hasattr(self.vision_tower.vision_model, "encoder"):
-            vision_encoder = self.vision_tower.vision_model.encoder
-            vision_encoder.layers = vision_encoder.layers[: config.num_vision_layers]
-
-        # Bin support: evenly spaced centers from value_support_min to value_support_max
-        bin_centers = torch.linspace(config.value_support_min, config.value_support_max, self.num_value_bins)
-        self.register_buffer("bin_centers", bin_centers, persistent=False)
-        bin_width = (config.value_support_max - config.value_support_min) / (self.num_value_bins - 1)
+        # HL-Gauss sigma for soft targets
+        bin_width = (config.value_support_max - config.value_support_min) / (config.num_value_bins - 1)
         self.hl_gauss_sigma = float(config.hl_gauss_sigma_ratio * bin_width)
 
-        # Overwrite with pre-trained PI05 actor weights (first training run only)
-        if config.init_from_actor_path:
-            self._initialize_from_actor()
+        # Apply freezing
+        self._set_requires_grad()
 
-    def _initialize_from_actor(self) -> None:
-        """Overwrite weights from a pre-trained PI05 actor checkpoint.
+    def _set_requires_grad(self) -> None:
+        if self.config.freeze_vision_encoder:
+            for param in self.vision_encoder.parameters():
+                param.requires_grad = False
+            self.vision_encoder.eval()
 
-        Called on first training run only (when init_from_actor_path is set).
-        """
-        from lerobot.policies.pi05.modeling_pi05 import PI05Policy
+        if self.config.freeze_language_model:
+            for param in self.gemma3.parameters():
+                param.requires_grad = False
+            self.gemma3.eval()
 
-        actor_policy = PI05Policy.from_pretrained(self.config.init_from_actor_path)
-        actor_model = actor_policy.model
-
-        paligemma_model = actor_model.paligemma_with_expert.paligemma
-        source_language_model = paligemma_model.model.language_model
-
-        # Transformer components
-        self.rotary_emb.load_state_dict(source_language_model.rotary_emb.state_dict())
-        num_layers = self.gemma_config.num_hidden_layers
-        for i in range(num_layers):
-            self.layers[i].load_state_dict(source_language_model.layers[i].state_dict())
-        self.norm.load_state_dict(source_language_model.norm.state_dict())
-
-        # Vision tower (truncate source first, then copy)
-        source_vision_tower = paligemma_model.model.vision_tower
-        if hasattr(source_vision_tower, "vision_model") and hasattr(
-            source_vision_tower.vision_model, "encoder"
-        ):
-            source_encoder = source_vision_tower.vision_model.encoder
-            source_encoder.layers = source_encoder.layers[: self.config.num_vision_layers]
-        self.vision_tower.load_state_dict(source_vision_tower.state_dict())
-
-        # Multi-modal projector
-        self.multi_modal_projector.load_state_dict(paligemma_model.model.multi_modal_projector.state_dict())
-
-        # Token embedding table
-        self.token_embedding.load_state_dict(paligemma_model.model.language_model.embed_tokens.state_dict())
-
-        del actor_policy
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if self.config.freeze_vision_encoder:
+            self.vision_encoder.eval()
+        if self.config.freeze_language_model:
+            self.gemma3.eval()
+        return self
 
     def embed_image(self, image: Tensor) -> Tensor:
-        """Embed images using the value function's SigLIP vision tower.
+        """Embed images: SigLIP2 → projection → [B, num_patches, gemma3_hidden].
 
         Args:
-            image: [batch_size, channels, height, width] preprocessed images in [-1, 1].
+            image: [batch_size, channels, height, width] preprocessed image in [-1, 1].
 
         Returns:
-            [batch_size, num_patches, hidden_dim] projected image features.
+            [B, 256, gemma3_hidden] projected image features.
         """
-        out_dtype = image.dtype
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
-
-        image_outputs = self.vision_tower(image, return_dict=True)
-        image_features = self.multi_modal_projector(image_outputs.last_hidden_state)
-        image_features = image_features / (self.hidden_dim**0.5)
-
-        if image_features.dtype != out_dtype:
-            image_features = image_features.to(out_dtype)
-        return image_features
+        feats = self.vision_encoder(pixel_values=image).last_hidden_state
+        return self.image_proj(feats)
 
     def embed_text(self, token_ids: Tensor) -> Tensor:
-        """Embed text token IDs using the value function's token embedding table.
+        """Embed text using Gemma3's embedding table (includes sqrt(d) scaling).
 
         Args:
-            token_ids: [batch_size, seq_len] integer token IDs
+            token_ids: [B, seq_len] integer token IDs.
 
         Returns:
-            [batch_size, seq_len, hidden_dim] text embeddings
+            [B, seq_len, gemma3_hidden] text embeddings.
         """
-        return self.token_embedding(token_ids)
+        return self.gemma3.model.embed_tokens(token_ids)
 
-    def _get_cls_embedding(self, batch_size: int) -> Tensor:
-        """Get [CLS] token embedding expanded to batch size.
+    def embed_prefix(
+        self,
+        images: list[Tensor],
+        img_masks: list[Tensor],
+        text_embeddings: Tensor,
+        text_padding_mask: Tensor,
+    ) -> tuple[Tensor, Tensor]:
+        """Build prefix: [img1_patches, img2_patches, ..., lang_tokens].
 
-        Args:
-            batch_size: number of samples in the batch.
+        All prefix tokens use bidirectional attention (att_mask=0).
 
         Returns:
-            [batch_size, 1, hidden_dim] learned [CLS] embedding.
+            embs: [B, total_prefix_len, hidden_dim]
+            pad_masks: [B, total_prefix_len] boolean
         """
-        return self.cls_embedding.expand(batch_size, -1, -1)
+        embs: list[Tensor] = []
+        pad_masks: list[Tensor] = []
 
-    def forward_value(
-        self, vision_features: Tensor, text_embeddings: Tensor, text_padding_mask: Tensor
-    ) -> dict[str, Tensor]:
-        """Core forward pass through the distributional value function.
+        for img, img_mask in zip(images, img_masks, strict=True):
+            img_emb = self.embed_image(img)
+            bsize, num_patches = img_emb.shape[:2]
+            embs.append(img_emb)
+            pad_masks.append(img_mask[:, None].expand(bsize, num_patches))
 
-        Args:
-            vision_features: [batch_size, num_patches, hidden_dim]
-            text_embeddings: [batch_size, seq_len, hidden_dim]
-            text_padding_mask: [batch_size, seq_len] boolean mask for text tokens
+        embs.append(text_embeddings)
+        pad_masks.append(text_padding_mask)
 
-        Returns:
-            logits: [batch_size, num_value_bins]
-            probs: [batch_size, num_value_bins]
-            value: [batch_size, 1]
-        """
-        from lerobot.utils.constants import OPENPI_ATTENTION_MASK_VALUE
-
-        batch_size = text_embeddings.shape[0]
-        device = text_embeddings.device
-
-        # Build sequence: [vision, text, CLS]
-        cls_embedding = self._get_cls_embedding(batch_size)
-        hidden_states = torch.cat([vision_features, text_embeddings, cls_embedding], dim=1)
-
-        # Build causal attention mask
-        vision_len = vision_features.shape[1]
-        vision_padding_mask = torch.ones(batch_size, vision_len, dtype=torch.bool, device=device)
-        cls_padding_mask = torch.ones(batch_size, 1, dtype=torch.bool, device=device)
-        full_padding_mask = torch.cat([vision_padding_mask, text_padding_mask, cls_padding_mask], dim=1)
-
-        full_seq_len = full_padding_mask.shape[1]
-
-        # Causal mask
-        causal_mask = torch.tril(torch.ones(full_seq_len, full_seq_len, device=device, dtype=torch.bool))
-        # Combine causal mask with padding mask
-        padding_mask_4d = full_padding_mask[:, None, None, :].expand(
-            batch_size, 1, full_seq_len, full_seq_len
-        )
-        attention_mask = causal_mask[None, None, :, :] & padding_mask_4d
-        attention_mask = torch.where(attention_mask, 0.0, OPENPI_ATTENTION_MASK_VALUE)
-
-        position_ids = torch.cumsum(full_padding_mask.long(), dim=1) - 1
-        cos, sin = self.rotary_emb(hidden_states, position_ids)
-
-        for layer in self.layers:
-            norm_output = layer.input_layernorm(hidden_states, cond=None)
-            if isinstance(norm_output, tuple):
-                hidden_states_normed, gate = norm_output
-            else:
-                hidden_states_normed, gate = norm_output, None
-
-            input_shape = hidden_states_normed.shape[:-1]
-            hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
-
-            query_states = layer.self_attn.q_proj(hidden_states_normed).view(hidden_shape).transpose(1, 2)
-            key_states = layer.self_attn.k_proj(hidden_states_normed).view(hidden_shape).transpose(1, 2)
-            value_states = layer.self_attn.v_proj(hidden_states_normed).view(hidden_shape).transpose(1, 2)
-
-            query_states, key_states = modeling_gemma.apply_rotary_pos_emb(
-                query_states, key_states, cos, sin, unsqueeze_dim=1
-            )
-
-            attention_output, _ = modeling_gemma.eager_attention_forward(
-                layer.self_attn,
-                query_states,
-                key_states,
-                value_states,
-                attention_mask,
-                layer.self_attn.scaling,
-            )
-
-            attention_output = attention_output.reshape(batch_size, -1, self.gemma_config.hidden_size)
-            if attention_output.dtype != layer.self_attn.o_proj.weight.dtype:
-                attention_output = attention_output.to(layer.self_attn.o_proj.weight.dtype)
-            projected_attention = layer.self_attn.o_proj(attention_output)
-
-            if gate is not None:
-                projected_attention = _gated_residual(hidden_states, projected_attention, gate)
-            else:
-                projected_attention = hidden_states + projected_attention
-
-            after_attention_residual = projected_attention.clone()
-
-            norm_output = layer.post_attention_layernorm(projected_attention, cond=None)
-            if isinstance(norm_output, tuple):
-                mlp_input, gate = norm_output
-            else:
-                mlp_input, gate = norm_output, None
-
-            mlp_output = layer.mlp(mlp_input)
-
-            if gate is not None:
-                hidden_states = _gated_residual(after_attention_residual, mlp_output, gate)
-            else:
-                hidden_states = after_attention_residual + mlp_output
-
-        hidden_states = self.norm(hidden_states)
-        if isinstance(hidden_states, tuple):
-            hidden_states = hidden_states[0]
-
-        # Extract [CLS] token (last position in the sequence)
-        cls_hidden_state = hidden_states[:, -1, :]  # [batch_size, hidden_dim]
-
-        # Value head: Linear(hidden_dim, num_bins) -> logits
-        value_logits = self.value_head(cls_hidden_state)  # [batch_size, num_value_bins]
-        value_probs = F.softmax(value_logits, dim=-1)
-        predicted_value = (value_probs * self.bin_centers.to(dtype=value_probs.dtype)).sum(
-            dim=-1, keepdim=True
-        )
-
-        return {"logits": value_logits, "probs": value_probs, "value": predicted_value}
+        return torch.cat(embs, dim=1), torch.cat(pad_masks, dim=1)
 
     def hl_gauss_target(self, target_value: Tensor) -> Tensor:
         """HL-Gauss soft target distribution.
@@ -366,16 +266,17 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         """
         if target_value.ndim == 2:
             target_value = target_value.squeeze(-1)
-        target_value = target_value.to(dtype=self.bin_centers.dtype)
+
+        target_value = target_value.to(dtype=self.value_head.bin_centers.dtype)
 
         # Bin edges: half a bin-width outside the first/last center
         bin_width = (self.config.value_support_max - self.config.value_support_min) / (
-            self.num_value_bins - 1
+            self.config.num_value_bins - 1
         )
         support_edges = torch.linspace(
             self.config.value_support_min - bin_width / 2,
             self.config.value_support_max + bin_width / 2,
-            self.num_value_bins + 1,
+            self.config.num_value_bins + 1,
             device=target_value.device,
             dtype=target_value.dtype,
         )
@@ -412,13 +313,14 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         """
         if target_value.ndim == 2:
             target_value = target_value.squeeze(-1)
-        target_value = target_value.clamp(self.config.value_support_min, self.config.value_support_max)
-        target_value = target_value.to(dtype=self.bin_centers.dtype)
 
-        bin_width = self.bin_centers[1] - self.bin_centers[0]
+        target_value = target_value.clamp(self.config.value_support_min, self.config.value_support_max)
+        target_value = target_value.to(dtype=self.value_head.bin_centers.dtype)
+
+        bin_width = self.value_head.bin_centers[1] - self.value_head.bin_centers[0]
         normalized_position = (target_value - self.config.value_support_min) / bin_width
-        lower_bin_idx = normalized_position.floor().long().clamp(0, self.num_value_bins - 1)
-        upper_bin_idx = normalized_position.ceil().long().clamp(0, self.num_value_bins - 1)
+        lower_bin_idx = normalized_position.floor().long().clamp(0, self.config.num_value_bins - 1)
+        upper_bin_idx = normalized_position.ceil().long().clamp(0, self.config.num_value_bins - 1)
 
         weight_upper = normalized_position - lower_bin_idx.float()
         weight_lower = upper_bin_idx.float() - normalized_position
@@ -428,7 +330,7 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         weight_lower = torch.where(same_bin, torch.ones_like(weight_lower), weight_lower)
 
         batch_size = target_value.shape[0]
-        target_distribution = torch.zeros(batch_size, self.num_value_bins, device=target_value.device)
+        target_distribution = torch.zeros(batch_size, self.config.num_value_bins, device=target_value.device)
         batch_indices = torch.arange(batch_size, device=target_value.device)
         target_distribution[batch_indices, lower_bin_idx] += weight_lower
         target_distribution[batch_indices, upper_bin_idx] += weight_upper
@@ -446,11 +348,13 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         """
         if target_value.ndim == 2:
             target_value = target_value.squeeze(-1)
-        target_value = target_value.to(dtype=self.bin_centers.dtype)
+        target_value = target_value.to(dtype=self.value_head.bin_centers.dtype)
         nearest_bin_idx = torch.argmin(
-            torch.abs(self.bin_centers.unsqueeze(0) - target_value.unsqueeze(-1)), dim=-1
+            torch.abs(self.value_head.bin_centers.unsqueeze(0) - target_value.unsqueeze(-1)), dim=-1
         )
-        return F.one_hot(nearest_bin_idx, num_classes=self.num_value_bins).to(dtype=self.bin_centers.dtype)
+        return F.one_hot(nearest_bin_idx, num_classes=self.config.num_value_bins).to(
+            dtype=self.value_head.bin_centers.dtype
+        )
 
     def compute_target_distribution(
         self,
@@ -482,7 +386,6 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
             return base_distribution
 
         terminal_distribution = self.one_hot_target(target_value)
-
         return torch.where(is_terminal[:, None].bool(), terminal_distribution, base_distribution)
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any]]:
@@ -499,69 +402,170 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         Returns:
             (loss, output_dict) where loss is scalar cross-entropy
         """
-        from lerobot.utils.constants import OBS_IMAGES, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
-
-        # Get first image key from batch
-        image_keys = [k for k in batch if k.startswith(f"{OBS_IMAGES}.") or k == OBS_IMAGES]
-        if not image_keys:
-            raise KeyError(f"No image keys found in batch. Expected keys starting with '{OBS_IMAGES}.'")
-        images = batch[image_keys[0]]
-
-        token_ids = batch[OBS_LANGUAGE_TOKENS]
-        text_padding_mask = batch[OBS_LANGUAGE_ATTENTION_MASK].bool()
+        images, img_masks, token_ids, text_pad_mask = self._get_model_inputs(batch)
         mc_return = batch["mc_return"]
         is_terminal = batch["is_terminal"]
 
-        # Embed observations
-        vision_features = self.embed_image(images)
-        text_embeddings = self.embed_text(token_ids)
+        text_embs = self.embed_text(token_ids)
+        prefix_embs, prefix_pad_masks = self.embed_prefix(images, img_masks, text_embs, text_pad_mask)
 
-        # Forward through value function transformer
-        vf_output = self.forward_value(vision_features, text_embeddings, text_padding_mask)
-        value_logits = vf_output["logits"]
-        predicted_value = vf_output["value"]
+        # VLM forward: prefix + [CLS] through Gemma3, then value head
+        batch_size = prefix_embs.shape[0]
+        device = prefix_embs.device
 
-        # Compute target distribution
-        target_distribution = self.compute_target_distribution(
+        if self.config.stop_gradient_to_vlm:
+            prefix_embs = prefix_embs.detach()
+
+        cls_ids = torch.zeros(batch_size, 1, dtype=torch.long, device=device)
+        cls_emb = self.cls_embedding(cls_ids)
+        hidden_states = torch.cat([prefix_embs, cls_emb], dim=1)
+
+        cls_pad = torch.ones(batch_size, 1, dtype=torch.bool, device=device)
+        pad_masks = torch.cat([prefix_pad_masks, cls_pad], dim=1)
+
+        prefix_att = torch.zeros(batch_size, prefix_embs.shape[1], dtype=torch.long, device=device)
+        cls_att = torch.ones(batch_size, 1, dtype=torch.long, device=device)
+        att_masks = torch.cat([prefix_att, cls_att], dim=1)
+
+        att_2d = make_att_2d_masks(pad_masks, att_masks)
+        model_dtype = next(self.gemma3.parameters()).dtype
+        att_4d = torch.where(
+            att_2d[:, None, :, :],
+            torch.tensor(0.0, dtype=model_dtype, device=device),
+            torch.tensor(_ATTENTION_MASK_VALUE, dtype=model_dtype, device=device),
+        )
+
+        position_ids = torch.cumsum(pad_masks.long(), dim=1) - 1
+
+        if hidden_states.dtype != model_dtype:
+            hidden_states = hidden_states.to(model_dtype)
+
+        outputs = self.gemma3.model(
+            inputs_embeds=hidden_states,
+            attention_mask=att_4d,
+            position_ids=position_ids,
+        )
+        cls_hidden_state = outputs.last_hidden_state[:, -1, :]
+
+        value_logits = self.value_head(cls_hidden_state)
+        value_probs = F.softmax(value_logits, dim=-1)
+        predicted_value = (value_probs * self.value_head.bin_centers.to(dtype=value_probs.dtype)).sum(
+            dim=-1, keepdim=True
+        )
+
+        # Compute target distribution from MC returns
+        target_dist = self.compute_target_distribution(
             mc_return,
             is_terminal,
             method=self.config.target_method,
             use_one_hot_terminal=self.config.use_one_hot_terminal,
         )
 
-        # Cross-entropy loss (Eq. 1 in pi*0.6 paper)
+        # Cross-entropy loss between predicted and target distributions (Eq. 1 in pi*0.6 paper)
         log_probs = F.log_softmax(value_logits, dim=-1)
-        loss = -(target_distribution * log_probs).sum(dim=-1).mean()
+        loss = -(target_dist * log_probs).sum(dim=-1).mean()
 
-        output_dict = {
+        # Diagnostic metrics
+        clamped_return = (
+            mc_return.float().view(-1).clamp(self.config.value_support_min, self.config.value_support_max)
+        )
+        bin_width = self.value_head.bin_centers[1] - self.value_head.bin_centers[0]
+        normalized_position = (clamped_return - self.config.value_support_min) / bin_width
+        lower_bin_idx = normalized_position.floor().long().clamp(0, self.config.num_value_bins - 1)
+        upper_bin_idx = normalized_position.ceil().long().clamp(0, self.config.num_value_bins - 1)
+
+        dist_to_lower = normalized_position - lower_bin_idx.float()
+        dist_to_upper = upper_bin_idx.float() - normalized_position
+        same_bin = lower_bin_idx == upper_bin_idx
+        dist_to_lower = torch.where(same_bin, torch.zeros_like(dist_to_lower), dist_to_lower)
+        dist_to_upper = torch.where(same_bin, torch.ones_like(dist_to_upper), dist_to_upper)
+
+        pred_bin = value_logits.argmax(dim=-1)
+        best_target_bin = torch.where(dist_to_upper >= dist_to_lower, lower_bin_idx, upper_bin_idx)
+
+        acc_best = (pred_bin == best_target_bin).float().mean().item()
+        acc_neighbor = ((pred_bin == lower_bin_idx) | (pred_bin == upper_bin_idx)).float().mean().item()
+
+        min_bin_dist = torch.min((pred_bin - lower_bin_idx).abs(), (pred_bin - upper_bin_idx).abs()).float()
+        mae = (min_bin_dist * bin_width).mean().item()
+
+        output_dict: dict[str, Any] = {
             "loss": loss.item(),
             "predicted_value_mean": predicted_value.mean().item(),
             "mc_return_mean": mc_return.mean().item(),
+            "acc_best": acc_best,
+            "acc_neighbor": acc_neighbor,
+            "mae": mae,
         }
 
         return loss, output_dict
+
+    def _get_model_inputs(
+        self, batch: dict[str, Tensor]
+    ) -> tuple[list[Tensor], list[Tensor], Tensor, Tensor]:
+        """Extract images, masks, token_ids, text_pad_mask from a preprocessed batch."""
+        image_keys = [k for k, v in self.config.input_features.items() if v.type == FeatureType.VISUAL]
+        images = [batch[k] for k in image_keys]
+        img_masks = [batch[k + IMAGE_MASK_SUFFIX].bool() for k in image_keys]
+        token_ids = batch[OBS_LANGUAGE_TOKENS]
+        text_pad_mask = batch[OBS_LANGUAGE_ATTENTION_MASK].bool()
+        return images, img_masks, token_ids, text_pad_mask
 
     def compute_reward(self, batch: dict[str, Tensor]) -> Tensor:
         """Compute V(s) for a batch of observations. Used for advantage scoring.
 
         Args:
-            batch: preprocessed batch with images and tokenized text
+            batch: preprocessed batch with images, masks, and tokenized text.
 
         Returns:
-            [batch_size] tensor of predicted values V(s)
+            [batch_size] tensor of predicted values V(s).
         """
-        from lerobot.utils.constants import OBS_IMAGES, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
+        images, img_masks, token_ids, text_pad_mask = self._get_model_inputs(batch)
+        text_embs = self.embed_text(token_ids)
+        prefix_embs, prefix_pad_masks = self.embed_prefix(images, img_masks, text_embs, text_pad_mask)
 
-        image_keys = [k for k in batch if k.startswith(f"{OBS_IMAGES}.") or k == OBS_IMAGES]
-        if not image_keys:
-            raise KeyError(f"No image keys found in batch. Expected keys starting with '{OBS_IMAGES}.'")
-        images = batch[image_keys[0]]
+        # VLM forward: prefix + [CLS] through Gemma3, then value head
+        batch_size = prefix_embs.shape[0]
+        device = prefix_embs.device
 
-        token_ids = batch[OBS_LANGUAGE_TOKENS]
-        text_padding_mask = batch[OBS_LANGUAGE_ATTENTION_MASK].bool()
+        if self.config.stop_gradient_to_vlm:
+            prefix_embs = prefix_embs.detach()
 
-        vision_features = self.embed_image(images)
-        text_embeddings = self.embed_text(token_ids)
+        cls_ids = torch.zeros(batch_size, 1, dtype=torch.long, device=device)
+        cls_emb = self.cls_embedding(cls_ids)
+        hidden_states = torch.cat([prefix_embs, cls_emb], dim=1)
 
-        vf_output = self.forward_value(vision_features, text_embeddings, text_padding_mask)
-        return vf_output["value"].squeeze(-1)  # [batch_size]
+        cls_pad = torch.ones(batch_size, 1, dtype=torch.bool, device=device)
+        pad_masks = torch.cat([prefix_pad_masks, cls_pad], dim=1)
+
+        prefix_att = torch.zeros(batch_size, prefix_embs.shape[1], dtype=torch.long, device=device)
+        cls_att = torch.ones(batch_size, 1, dtype=torch.long, device=device)
+        att_masks = torch.cat([prefix_att, cls_att], dim=1)
+
+        att_2d = make_att_2d_masks(pad_masks, att_masks)
+        model_dtype = next(self.gemma3.parameters()).dtype
+        att_4d = torch.where(
+            att_2d[:, None, :, :],
+            torch.tensor(0.0, dtype=model_dtype, device=device),
+            torch.tensor(_ATTENTION_MASK_VALUE, dtype=model_dtype, device=device),
+        )
+
+        position_ids = torch.cumsum(pad_masks.long(), dim=1) - 1
+
+        if hidden_states.dtype != model_dtype:
+            hidden_states = hidden_states.to(model_dtype)
+
+        outputs = self.gemma3.model(
+            inputs_embeds=hidden_states,
+            attention_mask=att_4d,
+            position_ids=position_ids,
+        )
+        cls_hidden_state = outputs.last_hidden_state[:, -1, :]
+
+        value_logits = self.value_head(cls_hidden_state)
+        value_probs = F.softmax(value_logits, dim=-1)
+        predicted_value = (value_probs * self.value_head.bin_centers.to(dtype=value_probs.dtype)).sum(
+            dim=-1, keepdim=True
+        )
+
+        return predicted_value.squeeze(-1)
