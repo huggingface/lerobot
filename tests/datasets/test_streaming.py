@@ -115,6 +115,29 @@ def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
         )
 
 
+def test_frame_errors_are_surfaced(tmp_path, lerobot_dataset_factory, monkeypatch):
+    """A failure while building a frame (e.g. a video decode error) must propagate instead of
+    being treated as shard exhaustion, which would silently yield an empty stream.
+
+    See https://github.com/huggingface/lerobot/issues/4066.
+    """
+    local_path = tmp_path / "test"
+    repo_id = f"{DUMMY_REPO_ID}"
+
+    lerobot_dataset_factory(root=local_path, repo_id=repo_id, total_episodes=2, total_frames=20)
+
+    streaming_ds = StreamingLeRobotDataset(repo_id=repo_id, root=local_path, buffer_size=10)
+
+    def broken_decode(item):
+        # Mimics torchcodec failing to load its FFmpeg shared libraries
+        raise RuntimeError("Could not load this library: libtorchcodec_core7.so")
+
+    monkeypatch.setattr("lerobot.datasets.streaming_dataset.item_to_torch", broken_decode)
+
+    with pytest.raises(RuntimeError, match="libtorchcodec"):
+        next(iter(streaming_ds))
+
+
 @pytest.mark.parametrize(
     "shuffle",
     [False, True],
