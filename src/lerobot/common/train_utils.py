@@ -13,6 +13,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
+import stat
+import subprocess
+import uuid
+from contextlib import suppress
 from pathlib import Path
 
 from huggingface_hub import HfApi, snapshot_download
@@ -82,12 +87,98 @@ def load_training_batch_size(checkpoint_dir: Path) -> int | None:
     return load_json(checkpoint_dir / TRAINING_STATE_DIR / TRAINING_STEP).get("batch_size")
 
 
+WINDOWS_SYMLINK_PRIVILEGE_ERROR = 1314
+
+
+def _is_windows_symlink_privilege_error(exc: BaseException) -> bool:
+    """Return True only for Windows ERROR_PRIVILEGE_NOT_HELD (WinError 1314)."""
+    return os.name == "nt" and getattr(exc, "winerror", None) == WINDOWS_SYMLINK_PRIVILEGE_ERROR
+
+
+def _remove_latest_checkpoint_link(link_path: Path) -> None:
+    """Remove an existing latest-checkpoint pointer without deleting real checkpoint trees.
+
+    Handles symlinks, Windows directory junctions, regular files, and empty directories.
+    Refuses to recursively delete a non-empty real directory at the link path.
+    """
+    if link_path.is_symlink():
+        link_path.unlink()
+        return
+    if not os.path.lexists(link_path):
+        return
+    try:
+        mode = os.lstat(link_path).st_mode
+    except FileNotFoundError:
+        return
+    if stat.S_ISDIR(mode):
+        # Directory junctions and empty dirs are removed with rmdir; the junction
+        # target (the real step checkpoint) is left intact.
+        try:
+            os.rmdir(link_path)
+        except OSError as exc:
+            raise OSError(
+                f"Refusing to remove non-empty directory at latest checkpoint link path: {link_path}"
+            ) from exc
+        return
+    link_path.unlink()
+
+
+def _create_directory_junction(link_path: Path, target_path: Path) -> None:
+    """Create a Windows directory junction from link_path to target_path via mklink /J."""
+    if os.name != "nt":
+        raise OSError("Directory junctions are only supported on Windows.")
+
+    # abspath works for not-yet-created link paths; list args preserve spaces safely.
+    link = os.path.abspath(str(link_path))
+    target = os.path.abspath(str(target_path))
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", link, target],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout or "").strip() or f"exit code {result.returncode}"
+        raise OSError(f"Failed to create directory junction '{link}' -> '{target}': {details}")
+
+
+def _link_latest_checkpoint(link_path: Path, target_dir: Path) -> None:
+    """Point link_path at target_dir, preferring a relative directory symlink.
+
+    On Windows, if symlink creation fails with WinError 1314 (missing
+    SeCreateSymbolicLinkPrivilege / Developer Mode), fall back to a directory
+    junction. All other errors are re-raised unchanged.
+    """
+    if not target_dir.is_dir():
+        raise NotADirectoryError(f"Checkpoint target must be a directory: {target_dir}")
+    relative_target = target_dir.relative_to(link_path.parent)
+    try:
+        link_path.symlink_to(relative_target, target_is_directory=True)
+    except OSError as exc:
+        if not _is_windows_symlink_privilege_error(exc):
+            raise
+        _create_directory_junction(link_path, target_dir)
+
+
 def update_last_checkpoint(checkpoint_dir: Path) -> Path:
-    last_checkpoint_dir = checkpoint_dir.parent / LAST_CHECKPOINT_LINK
-    if last_checkpoint_dir.is_symlink():
-        last_checkpoint_dir.unlink()
-    relative_target = checkpoint_dir.relative_to(checkpoint_dir.parent)
-    last_checkpoint_dir.symlink_to(relative_target)
+    """Update the ``last`` pointer under the checkpoints directory to ``checkpoint_dir``.
+
+    Prefers a relative directory symlink. On Windows without symlink privilege
+    (WinError 1314), falls back to a directory junction. The public path name
+    remains ``checkpoints/last``; checkpoint trees are never copied.
+    """
+    checkpoints_dir = checkpoint_dir.parent
+    last_checkpoint_dir = checkpoints_dir / LAST_CHECKPOINT_LINK
+    temp_checkpoint_dir = checkpoints_dir / f"{LAST_CHECKPOINT_LINK}.tmp-{uuid.uuid4().hex}"
+    try:
+        _link_latest_checkpoint(temp_checkpoint_dir, checkpoint_dir)
+        _remove_latest_checkpoint_link(last_checkpoint_dir)
+        os.replace(temp_checkpoint_dir, last_checkpoint_dir)
+    except Exception:
+        with suppress(OSError):
+            _remove_latest_checkpoint_link(temp_checkpoint_dir)
+        raise
+    return last_checkpoint_dir
 
 
 def save_checkpoint(
