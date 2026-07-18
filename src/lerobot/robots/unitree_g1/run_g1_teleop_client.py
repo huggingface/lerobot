@@ -90,11 +90,21 @@ def main() -> None:
     sock.connect(f"tcp://{args.robot_ip}:{args.action_port}")
     logger.info("Sending actions to %s:%d. Ctrl-C to stop.", args.robot_ip, args.action_port)
 
+    # The normal lerobot-teleoperate loop calls teleop.send_feedback(robot_obs) each
+    # iteration, which resets the RemoteController axes from the robot's (usually idle)
+    # wireless-remote bytes. That reset is what keeps `wireless_active` False so the exo
+    # thumb-sticks (set_from_exo) are read every frame. We have no robot feedback here,
+    # so without this reset the first non-zero exo axis latches `wireless_active` True
+    # and the sticks freeze. Reset the latched axes ourselves before every get_action.
+    rc = teleop.remote_controller
+
     period = 1.0 / args.fps if args.fps > 0 else 0.0
     n = 0
     try:
         while True:
             t0 = time.time()
+            rc.lx = rc.ly = rc.rx = rc.ry = 0.0
+            rc.button = [0] * 16
             action = teleop.get_action()
             try:
                 sock.send_json(_to_jsonable(action), zmq.NOBLOCK)
