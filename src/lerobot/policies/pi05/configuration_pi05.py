@@ -56,6 +56,14 @@ class PI05Config(PreTrainedConfig):
     # Populated at runtime from dataset metadata by make_policy.
     action_feature_names: list[str] | None = None
 
+    # Build proprioception from absolute action samples when the dataset has no
+    # observation.state. With history_steps=2, training samples request t-1 as
+    # well as the normal t..t+chunk_size-1 action targets.
+    state_from_action: bool = False
+    proprioception_history_steps: int = 1
+    use_relative_state_history: bool = False
+    relative_state_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
 
@@ -121,6 +129,9 @@ class PI05Config(PreTrainedConfig):
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
 
+        if self.proprioception_history_steps < 1:
+            raise ValueError("proprioception_history_steps must be at least 1")
+
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
         for i in range(self.empty_cameras):
@@ -131,19 +142,31 @@ class PI05Config(PreTrainedConfig):
             )
             self.input_features[key] = empty_camera
 
-        if OBS_STATE not in self.input_features:
-            state_feature = PolicyFeature(
-                type=FeatureType.STATE,
-                shape=(self.max_state_dim,),  # Padded to max_state_dim
-            )
-            self.input_features[OBS_STATE] = state_feature
-
         if ACTION not in self.output_features:
             action_feature = PolicyFeature(
                 type=FeatureType.ACTION,
                 shape=(self.max_action_dim,),  # Padded to max_action_dim
             )
             self.output_features[ACTION] = action_feature
+
+        if OBS_STATE not in self.input_features:
+            state_shape = (self.max_state_dim,)
+            if self.state_from_action and ACTION in self.output_features:
+                state_shape = self.output_features[ACTION].shape
+            state_feature = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=state_shape,
+            )
+            self.input_features[OBS_STATE] = state_feature
+
+        state_dim = self.input_features[OBS_STATE].shape[-1]
+        history_state_dim = state_dim * self.proprioception_history_steps
+        if history_state_dim > self.max_state_dim:
+            raise ValueError(
+                "Flattened proprioception history exceeds max_state_dim: "
+                f"{state_dim} * {self.proprioception_history_steps} = {history_state_dim} > "
+                f"{self.max_state_dim}"
+            )
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(
@@ -168,7 +191,8 @@ class PI05Config(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
-        return list(range(self.chunk_size))
+        history_prefix = self.proprioception_history_steps - 1 if self.state_from_action else 0
+        return list(range(-history_prefix, self.chunk_size))
 
     @property
     def reward_delta_indices(self) -> None:

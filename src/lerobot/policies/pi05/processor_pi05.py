@@ -15,7 +15,7 @@
 # limitations under the License.
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -46,6 +46,144 @@ from lerobot.utils.constants import (
 )
 
 from .configuration_pi05 import PI05Config
+
+
+@ProcessorStepRegistry.register(name="pi05_state_from_action_processor_step")
+@dataclass
+class Pi05StateFromActionProcessorStep(ProcessorStep):
+    """Synthesize proprioception from absolute actions in state-less datasets.
+
+    The dataset loader supplies ``history_steps - 1`` actions before the normal
+    target chunk. Those leading samples and action(t) become state history; only
+    the leading samples are then removed from the action targets.
+    """
+
+    enabled: bool = False
+    history_steps: int = 1
+    _inference_history: torch.Tensor | None = field(default=None, init=False, repr=False)
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if not self.enabled:
+            return transition
+
+        observation = transition.get(TransitionKey.OBSERVATION, {})
+        observed_state = observation.get(OBS_STATE)
+        if observed_state is not None:
+            # At inference the robot normally provides only the current state and
+            # there is no action target. Build a rolling history in the processor.
+            if transition.get(TransitionKey.ACTION) is None and observed_state.ndim == 2:
+                if self._inference_history is None:
+                    self._inference_history = observed_state.unsqueeze(1).repeat(1, self.history_steps, 1)
+                else:
+                    self._inference_history = torch.cat(
+                        [self._inference_history[:, 1:], observed_state.unsqueeze(1)], dim=1
+                    )
+                new_transition = transition.copy()
+                new_observation = dict(observation)
+                new_observation[OBS_STATE] = self._inference_history.clone()
+                new_transition[TransitionKey.OBSERVATION] = new_observation
+                return new_transition
+            return transition
+
+        action = transition.get(TransitionKey.ACTION)
+        if action is None:
+            raise ValueError("Cannot synthesize PI0.5 state without action")
+        if action.ndim != 3:
+            raise ValueError(f"Expected batched action chunks with shape (B, T, D), got {action.shape}")
+        if action.shape[1] < self.history_steps:
+            raise ValueError(
+                f"Action chunk has {action.shape[1]} steps, fewer than history_steps={self.history_steps}"
+            )
+
+        new_transition = transition.copy()
+        new_observation = dict(observation)
+        state = action[:, : self.history_steps].clone()
+        if self.history_steps == 1:
+            state = state[:, 0]
+        new_observation[OBS_STATE] = state
+        new_transition[TransitionKey.OBSERVATION] = new_observation
+        new_transition[TransitionKey.ACTION] = action[:, self.history_steps - 1 :]
+        return new_transition
+
+    def get_config(self) -> dict[str, Any]:
+        return {"enabled": self.enabled, "history_steps": self.history_steps}
+
+    def reset(self) -> None:
+        self._inference_history = None
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+@ProcessorStepRegistry.register(name="pi05_flatten_state_history_processor_step")
+@dataclass
+class Pi05FlattenStateHistoryProcessorStep(ProcessorStep):
+    """Optionally relativize raw state history, then flatten it for PI0.5."""
+
+    history_steps: int = 1
+    max_state_dim: int = 32
+    relative: bool = False
+    exclude_joints: list[str] = field(default_factory=list)
+    state_names: list[str] | None = None
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        observation = transition.get(TransitionKey.OBSERVATION, {})
+        state = observation.get(OBS_STATE)
+        if state is None:
+            raise ValueError("State is required for PI05")
+        if self.history_steps == 1 and state.ndim == 2:
+            state = state.unsqueeze(1)
+        if state.ndim != 3 or state.shape[1] != self.history_steps:
+            raise ValueError(
+                f"Expected state history with shape (B, {self.history_steps}, D), got {state.shape}"
+            )
+
+        flattened_dim = state.shape[1] * state.shape[2]
+        if flattened_dim > self.max_state_dim:
+            raise ValueError(
+                f"Flattened state history has {flattened_dim} dimensions, above max_state_dim={self.max_state_dim}"
+            )
+
+        processed_state = state.clone()
+        if self.relative:
+            mask_step = RelativeActionsProcessorStep(
+                enabled=True,
+                exclude_joints=self.exclude_joints,
+                action_names=self.state_names,
+            )
+            mask = torch.tensor(
+                mask_step._build_mask(state.shape[-1]), dtype=state.dtype, device=state.device
+            )
+            reference = state[:, -1:, : mask.shape[0]]
+            processed_state[..., : mask.shape[0]] -= reference * mask
+
+        new_transition = transition.copy()
+        new_observation = dict(observation)
+        new_observation[OBS_STATE] = processed_state.flatten(start_dim=1)
+        new_transition[TransitionKey.OBSERVATION] = new_observation
+        return new_transition
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "history_steps": self.history_steps,
+            "max_state_dim": self.max_state_dim,
+            "relative": self.relative,
+            "exclude_joints": self.exclude_joints,
+            "state_names": self.state_names,
+        }
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        transformed = deepcopy(features)
+        for feature_group in transformed.values():
+            state_feature = feature_group.get(OBS_STATE)
+            if state_feature is not None and self.history_steps > 1:
+                state_dim = state_feature.shape[-1] * self.history_steps
+                feature_group[OBS_STATE] = PolicyFeature(type=state_feature.type, shape=(state_dim,))
+        return transformed
 
 
 @ProcessorStepRegistry.register(name="pi05_prepare_state_tokenizer_processor_step")
@@ -139,7 +277,18 @@ def make_pi05_pre_post_processors(
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         AddBatchDimensionProcessorStep(),
+        Pi05StateFromActionProcessorStep(
+            enabled=config.state_from_action,
+            history_steps=config.proprioception_history_steps,
+        ),
         relative_step,
+        Pi05FlattenStateHistoryProcessorStep(
+            history_steps=config.proprioception_history_steps,
+            max_state_dim=config.max_state_dim,
+            relative=config.use_relative_state_history,
+            exclude_joints=config.relative_state_exclude_joints,
+            state_names=config.action_feature_names,
+        ),
         # NOTE: NormalizerProcessorStep MUST come before Pi05PrepareStateTokenizerProcessorStep
         # because the tokenizer step expects normalized state in [-1, 1] range for discretization
         NormalizerProcessorStep(

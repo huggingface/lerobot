@@ -126,20 +126,24 @@ class RelativeActionsProcessorStep(ProcessorStep):
         observation = transition.get(TransitionKey.OBSERVATION, {})
         state = observation.get(OBS_STATE) if observation else None
 
+        # State history has shape (B, H, D). Relative actions are referenced to
+        # the newest proprioceptive state, not the whole history tensor.
+        reference_state = state[:, -1] if state is not None and state.ndim == 3 else state
+
         # Always cache state for the paired AbsoluteActionsProcessorStep
-        if state is not None:
-            self._last_state = state
+        if reference_state is not None:
+            self._last_state = reference_state
 
         if not self.enabled:
             return transition
 
         new_transition = transition.copy()
         action = new_transition.get(TransitionKey.ACTION)
-        if action is None or state is None:
+        if action is None or reference_state is None:
             return new_transition
 
         mask = self._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask)
+        new_transition[TransitionKey.ACTION] = to_relative_actions(action, reference_state, mask)
         return new_transition
 
     def get_cached_state(self) -> torch.Tensor | None:

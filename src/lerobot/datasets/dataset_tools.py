@@ -54,6 +54,7 @@ from .compute_stats import (
     aggregate_stats,
     compute_episode_stats,
     compute_relative_action_stats,
+    compute_state_history_stats,
 )
 from .dataset_metadata import LeRobotDatasetMetadata
 from .image_writer import write_image
@@ -1566,6 +1567,10 @@ def recompute_stats(
     relative_exclude_joints: list[str] | None = None,
     chunk_size: int = 50,
     num_workers: int = 0,
+    state_from_action: bool = False,
+    state_history_steps: int = 1,
+    relative_state_history: bool = False,
+    relative_state_exclude_joints: list[str] | None = None,
 ) -> LeRobotDataset:
     """Recompute stats.json from scratch by iterating all episodes.
 
@@ -1583,6 +1588,12 @@ def recompute_stats(
             ``policy.chunk_size``. Only used when ``relative_action=True``.
         num_workers: Number of parallel threads for relative action stats computation.
             Values ≤1 mean single-threaded. Only used when ``relative_action=True``.
+        state_from_action: Use absolute action rows as synthetic state while
+            computing relative-action stats, and write their absolute statistics
+            under ``observation.state``.
+        state_history_steps: Number of consecutive synthesized state samples.
+        relative_state_history: Express state history relative to its newest pose.
+        relative_state_exclude_joints: State dimensions to retain as absolute.
 
     Returns:
         The same dataset with updated stats.
@@ -1606,7 +1617,19 @@ def recompute_stats(
     # (matching what the model sees during training) and skip action in the
     # per-episode pass below.
     relative_action_stats = None
-    if relative_action and ACTION in features and OBS_STATE in features:
+    synthetic_state_stats = None
+    if state_from_action:
+        if ACTION not in features:
+            raise ValueError("state_from_action requires an action feature")
+        synthetic_state_stats = compute_state_history_stats(
+            dataset.hf_dataset,
+            features,
+            history_steps=state_history_steps,
+            exclude_joints=relative_state_exclude_joints,
+            relative=relative_state_history,
+        )
+
+    if relative_action and ACTION in features and (OBS_STATE in features or state_from_action):
         if relative_exclude_joints is None:
             relative_exclude_joints = ["gripper"]
         relative_action_stats = compute_relative_action_stats(
@@ -1615,6 +1638,7 @@ def recompute_stats(
             chunk_size=chunk_size,
             exclude_joints=relative_exclude_joints,
             num_workers=num_workers,
+            state_from_action=state_from_action,
         )
         features_to_compute.pop(ACTION, None)
 
@@ -1654,6 +1678,8 @@ def recompute_stats(
 
     if relative_action_stats is not None:
         new_stats[ACTION] = relative_action_stats
+    if synthetic_state_stats is not None:
+        new_stats[OBS_STATE] = synthetic_state_stats
 
     # Merge: keep existing stats for features we didn't recompute
     if dataset.meta.stats:

@@ -682,6 +682,7 @@ def compute_relative_action_stats(
     chunk_size: int,
     exclude_joints: list[str] | None = None,
     num_workers: int = 0,
+    state_from_action: bool = False,
 ) -> dict[str, np.ndarray]:
     """Compute normalization statistics for relative actions over the full dataset.
 
@@ -700,6 +701,9 @@ def compute_relative_action_stats(
         num_workers: Number of parallel threads for computation. Values ≤1
             mean single-threaded. Numpy releases the GIL so threads give
             real parallelism here.
+        state_from_action: Use the current absolute action as state. This is
+            intended for state-less pose datasets where each action row is the
+            synchronized measured robot pose.
 
     Returns:
         Statistics dict with keys "mean", "std", "min", "max", "q01", …, "q99".
@@ -722,7 +726,7 @@ def compute_relative_action_stats(
 
     logging.info("Loading action/state data for relative action stats...")
     all_actions = np.array(hf_dataset[ACTION], dtype=np.float32)
-    all_states = np.array(hf_dataset[OBS_STATE], dtype=np.float32)
+    all_states = all_actions if state_from_action else np.array(hf_dataset[OBS_STATE], dtype=np.float32)
     episode_indices = np.array(hf_dataset["episode_index"])
 
     valid_starts = _get_valid_chunk_starts(episode_indices, chunk_size)
@@ -777,3 +781,50 @@ def compute_relative_action_stats(
     )
 
     return stats
+
+
+def compute_state_history_stats(
+    hf_dataset,
+    features: dict,
+    history_steps: int,
+    exclude_joints: list[str] | None = None,
+    relative: bool = False,
+) -> dict[str, np.ndarray]:
+    """Compute stats for flattened state history synthesized from absolute actions.
+
+    History is left-padded with the first action of each episode, matching dataset
+    boundary padding. When ``relative`` is enabled, every history pose is expressed
+    relative to its newest pose while excluded dimensions remain absolute.
+    """
+    if history_steps < 1:
+        raise ValueError("history_steps must be at least 1")
+    if exclude_joints is None:
+        exclude_joints = []
+
+    actions = np.asarray(hf_dataset[ACTION], dtype=np.float32)
+    episode_indices = np.asarray(hf_dataset["episode_index"])
+    sample_indices = np.arange(len(actions))
+    episode_starts = np.maximum.accumulate(
+        np.where(
+            np.concatenate(([True], episode_indices[1:] != episode_indices[:-1])),
+            sample_indices,
+            0,
+        )
+    )
+    offsets = np.arange(-(history_steps - 1), 1)
+    history_indices = np.maximum(sample_indices[:, None] + offsets[None, :], episode_starts[:, None])
+    history = actions[history_indices].copy()
+
+    if relative:
+        state_dim = actions.shape[-1]
+        names = features.get(ACTION, {}).get("names")
+        mask_step = RelativeActionsProcessorStep(
+            enabled=True,
+            exclude_joints=exclude_joints,
+            action_names=names,
+        )
+        mask = np.asarray(mask_step._build_mask(state_dim), dtype=np.float32)
+        history[..., : len(mask)] -= history[:, -1:, : len(mask)] * mask[None, None, :]
+
+    flattened = history.reshape(len(history), -1)
+    return get_feature_stats(flattened, axis=0, keepdims=False)
