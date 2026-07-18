@@ -133,10 +133,13 @@ def say(text: str, blocking: bool = False):
     else:
         raise RuntimeError("Unsupported operating system for text-to-speech.")
 
-    if blocking:
-        subprocess.run(cmd, check=True)
-    else:
-        subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
+    try:
+        if blocking:
+            subprocess.run(cmd, check=True, timeout=5)
+        else:
+            subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
 
 
 def log_say(text: str, play_sounds: bool = True, blocking: bool = False):
