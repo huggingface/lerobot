@@ -17,7 +17,12 @@ from huggingface_hub import HfApi
 
 import so_arm_frame
 from classify import classify, is_end_effector, load_info
-from fix_dataset import data_video_episode_mismatch, fix_dataset_in_place, reconcile_episode_count
+from fix_dataset import (
+    data_video_episode_mismatch,
+    fix_dataset_in_place,
+    reconcile_episode_count,
+    reindex_episodes,
+)
 
 SRC_REPO = "HuggingFaceVLA/community_dataset_v3"
 
@@ -178,6 +183,10 @@ def migrate_one(api, dst_repo, sub, work_dir, no_upload) -> dict:
     reconciled = reconcile_episode_count(local)   # align stale meta counts to data+video files
     if reconciled:
         result["action"] = f"{result['action']}; {reconciled}"
+
+    reindexed = reindex_episodes(local)           # compact non-contiguous episode indices to 0..N-1
+    if reindexed:
+        result["action"] = f"{result['action']}; {reindexed}"
 
     from lerobot.scripts.convert_dataset_v21_to_v30 import convert_dataset
     convert_dataset(repo_id=sub, root=str(local), push_to_hub=False)  # v2.1 -> v3.0, in place

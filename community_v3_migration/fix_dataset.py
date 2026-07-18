@@ -93,6 +93,87 @@ def data_video_episode_mismatch(root) -> str | None:
     return None
 
 
+def _file_ep_indices(root: Path, pattern: str) -> list[int]:
+    return sorted(int(p.stem.split("_")[-1]) for p in root.glob(pattern))
+
+
+def reindex_episodes(root) -> str | None:
+    """Compact non-contiguous episode indices to 0..N-1 when every source agrees on the set.
+
+    Some datasets (e.g. '*_clean' variants) had episodes deleted, leaving gaps in the episode
+    numbering (data, videos, and metadata all skip the same indices, e.g. {20, 37, 38, 39}). The
+    stock v2.1->v3.0 converter renumbers data/videos by sorted file order (0..N-1) but reads the
+    original gapped indices from episodes.jsonl, so the two disagree and it raises
+    "Number of episodes is not the same". When the data files, every camera's videos, and both
+    metadata files list the *exact same* episode index set, remap it to 0..N-1 everywhere so the
+    converter's positional alignment holds. Returns a note if remapped, else None (already
+    contiguous, or the sources disagree -> unsafe to touch)."""
+    root = Path(root)
+    info = json.loads((root / "meta" / "info.json").read_text())
+
+    ref = _file_ep_indices(root, "data/*/episode_*.parquet")
+    if not ref:
+        return None
+    sources = {"data": ref}
+    vkeys = [k for k, f in info.get("features", {}).items() if f.get("dtype") == "video"]
+    for k in vkeys:
+        sources[k] = _file_ep_indices(root, f"videos/*/{k}/episode_*.mp4")
+    eps = _read_jsonl(root / "meta" / "episodes.jsonl")
+    stats = _read_jsonl(root / "meta" / "episodes_stats.jsonl")
+    sources["episodes"] = sorted(e["episode_index"] for e in eps)
+    sources["episodes_stats"] = sorted(s["episode_index"] for s in stats)
+
+    if any(v != ref for v in sources.values()):
+        return None  # sources disagree on the episode set -> not safe to reindex here
+    n = len(ref)
+    if ref == list(range(n)):
+        return None  # already contiguous
+
+    remap = {old: new for new, old in enumerate(ref)}
+
+    # Data: rewrite episode_index (and rebuild the global 'index'), then rename the file. Ascending
+    # order is collision-free because new <= old for every episode.
+    running = 0
+    for old in ref:
+        matches = list((root / "data").glob(f"*/episode_{old:06d}.parquet"))
+        if not matches:
+            return None
+        pq = matches[0]
+        df = pd.read_parquet(pq)
+        if "episode_index" in df.columns:
+            df["episode_index"] = remap[old]
+        if "index" in df.columns:
+            df["index"] = np.arange(running, running + len(df), dtype=df["index"].dtype)
+        running += len(df)
+        df.to_parquet(pq, index=False)
+        dst = pq.with_name(f"episode_{remap[old]:06d}.parquet")
+        if dst != pq:
+            pq.rename(dst)
+
+    # Videos: rename per camera (ascending -> collision-free).
+    for k in vkeys:
+        for old in ref:
+            for mp4 in (root / "videos").glob(f"*/{k}/episode_{old:06d}.mp4"):
+                dst = mp4.with_name(f"episode_{remap[old]:06d}.mp4")
+                if dst != mp4:
+                    mp4.rename(dst)
+
+    for e in eps:
+        e["episode_index"] = remap[e["episode_index"]]
+    for s in stats:
+        s["episode_index"] = remap[s["episode_index"]]
+    _write_jsonl(root / "meta" / "episodes.jsonl", sorted(eps, key=lambda e: e["episode_index"]))
+    _write_jsonl(root / "meta" / "episodes_stats.jsonl", sorted(stats, key=lambda s: s["episode_index"]))
+
+    info["total_episodes"] = n
+    info["total_frames"] = int(running)
+    if "total_videos" in info:
+        info["total_videos"] = n * len(vkeys)
+    info["splits"] = {"train": f"0:{n}"}
+    (root / "meta" / "info.json").write_text(json.dumps(info, indent=4))
+    return f"episode indices compacted to 0..{n - 1} (dropped gaps {sorted(set(range(ref[-1] + 1)) - set(ref))})"
+
+
 def reconcile_episode_count(root) -> str | None:
     """When the data files and video files agree on an episode count N but the metadata lists a
     different count, rewrite the metadata (episodes.jsonl, episodes_stats.jsonl, info.json) to N.
