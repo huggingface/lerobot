@@ -71,3 +71,9 @@ class UnitreeG1Config(RobotConfig):
     # Lower-body controller class name, e.g. "GrootLocomotionController" or
     # "HolosomaLocomotionController". None disables it.
     controller: str | None = None
+
+    # On disconnect, ramp the arms slowly back to `default_positions` (hands down)
+    # before going passive, instead of dropping straight to zero torque. Only
+    # applies on the real robot when a locomotion controller holds the legs.
+    soft_stop: bool = True
+    soft_stop_duration: float = 3.0

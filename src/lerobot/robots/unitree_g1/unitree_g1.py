@@ -298,6 +298,7 @@ class UnitreeG1(Robot):
         pass
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
+        self._is_disconnected = False
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
             from lerobot.envs import make_env
@@ -313,6 +314,7 @@ class UnitreeG1(Robot):
         # run_g1_server, which drives the Damiao grippers over CAN.
         self._gripper_sock = None
         self._last_gripper_cmd = None
+        self._warned_no_gripper_buttons = False
         if not self.config.is_simulation:
             try:
                 import zmq
@@ -385,6 +387,26 @@ class UnitreeG1(Robot):
             fps = int(1.0 / self.controller.control_dt)
             logger.info(f"Controller thread started ({fps}Hz)")
 
+    def _soft_stop(self) -> None:
+        """Gently ramp the arms to the default rest pose before shutdown.
+
+        Mirror of the connect-time soft-start. Only runs on the real robot when a
+        locomotion controller is active (so the legs stay balanced while the arms
+        come down) and lowstate is available to read the current pose.
+        """
+        if self.config.is_simulation or not self.config.soft_stop:
+            return
+        if self.controller is None:
+            return
+        with self._lowstate_lock:
+            if self._lowstate is None:
+                return
+        try:
+            logger.info("Soft-stop: ramping arms to default position...")
+            self._interpolate_to_default(duration=self.config.soft_stop_duration)
+        except Exception as e:
+            logger.warning(f"Soft-stop failed ({e}); continuing shutdown.")
+
     def _send_zero_torque(self) -> None:
         """Send a zero-gain command to make joints passive before shutting down."""
         try:
@@ -400,6 +422,17 @@ class UnitreeG1(Robot):
             logger.warning(f"Failed to send zero-torque on disconnect: {e}")
 
     def disconnect(self):
+        # Idempotent: disconnect() can be called both explicitly and again via GC /
+        # interpreter shutdown; re-running soft-stop against already-closed cameras
+        # would error, so bail out if we've already torn down.
+        if getattr(self, "_is_disconnected", False):
+            return
+        self._is_disconnected = True
+
+        # Soft-stop: ramp arms slowly back to the rest pose (hands down) while the
+        # controller still holds the legs, so they don't drop when we go passive.
+        self._soft_stop()
+
         # Put robot in passive mode before stopping threads
         if not self.config.is_simulation:
             self._send_zero_torque()
@@ -549,7 +582,9 @@ class UnitreeG1(Robot):
         l3 = action.get("remote.button.4")
         r3 = action.get("remote.button.0")
         if l3 is None and r3 is None:
-            logger.warning("[gripper] no remote.button.0/4 in action — teleop not emitting exo buttons")
+            if not self._warned_no_gripper_buttons:
+                logger.warning("[gripper] no remote.button.0/4 in action — teleop not emitting exo buttons")
+                self._warned_no_gripper_buttons = True
             return
         cmd = {"L": int(bool(l3)), "R": int(bool(r3))}
         if cmd == self._last_gripper_cmd:
