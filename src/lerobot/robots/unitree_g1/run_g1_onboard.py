@@ -42,8 +42,9 @@ import threading
 
 import zmq
 
+from lerobot.cameras.zmq.image_server import ImageServer
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
-from lerobot.robots.unitree_g1.run_g1_server import Gripper, build_gripper
+from lerobot.robots.unitree_g1.run_g1_server import Gripper, build_gripper, parse_camera_specs
 from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", force=True)
@@ -77,6 +78,13 @@ def main() -> None:
         "--gripper-no-fd", dest="gripper_fd", action="store_false", help="Classic CAN (non-FD adapter)"
     )
     p.set_defaults(gripper_fd=True)
+    # Optional camera streaming (so view_cameras.py can connect). Same spec format as
+    # run_g1_server.py: 'name:device[:WxH[:FOURCC]]' comma-separated.
+    p.add_argument("--cameras", default=None, help="Camera spec 'name:device[:WxH[:FOURCC]]', comma-sep")
+    p.add_argument("--camera-fps", type=int, default=30, help="Camera FPS")
+    p.add_argument("--camera-port", type=int, default=5555, help="Camera ZMQ port")
+    p.add_argument("--camera-width", type=int, default=640, help="Default camera width")
+    p.add_argument("--camera-height", type=int, default=480, help="Default camera height")
     args = p.parse_args()
 
     cfg = UnitreeG1Config(
@@ -87,6 +95,16 @@ def main() -> None:
         gravity_compensation=args.gravity_compensation,
         cameras={},
     )
+    # Optional camera server (for view_cameras.py). Runs in a background thread and is
+    # independent of DDS/CAN, so it coexists with the onboard controller and grippers.
+    camera_server = None
+    if args.cameras:
+        cameras = parse_camera_specs(args.cameras, args.camera_width, args.camera_height)
+        camera_server = ImageServer({"fps": args.camera_fps, "cameras": cameras}, port=args.camera_port)
+        threading.Thread(target=camera_server.run, daemon=True).start()
+        cam_summary = ", ".join(f"{name}(dev {c['device_id']})" for name, c in cameras.items())
+        logger.info("Camera server started on :%d: %s", args.camera_port, cam_summary)
+
     robot = UnitreeG1(cfg)
     logger.info("Connecting onboard robot (controller=%s)...", args.controller)
     robot.connect()
@@ -156,6 +174,11 @@ def main() -> None:
                 logger.info("Applied %d actions | axes=%s buttons=%s", n, axes, btn)
     finally:
         logger.info("Shutting down onboard controller...")
+        if camera_server is not None:
+            try:
+                camera_server.stop()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Camera server stop failed: %s", e)
         for g in grippers.values():
             try:
                 g.bus.disconnect()
