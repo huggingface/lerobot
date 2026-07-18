@@ -43,6 +43,23 @@ def _build_gains() -> tuple[list[float], list[float]]:
 
 _DEFAULT_KP, _DEFAULT_KD = _build_gains()
 
+# Rest / soft-stop arm pose. The G1 elbow's mechanical zero sits ~90deg (forearm
+# pointing forward); a positive elbow angle *extends* the arm toward straight (this is
+# why holosoma uses 0.6 for a mildly-extended natural stance). We hang the arms nearly
+# straight down so that on soft-stop they're already down and don't drop as dead weight
+# when the joints go passive. If the arms curl the wrong way on your robot, flip the
+# sign of _REST_ELBOW.
+_LEFT_ELBOW_IDX = 18
+_RIGHT_ELBOW_IDX = 25
+_REST_ELBOW = 1.5  # rad, ~straight-down forearm
+
+
+def _build_default_positions() -> list[float]:
+    pos = [0.0] * 29
+    pos[_LEFT_ELBOW_IDX] = _REST_ELBOW
+    pos[_RIGHT_ELBOW_IDX] = _REST_ELBOW
+    return pos
+
 
 @RobotConfig.register_subclass("unitree_g1")
 @dataclass
@@ -50,8 +67,8 @@ class UnitreeG1Config(RobotConfig):
     kp: list[float] = field(default_factory=lambda: _DEFAULT_KP.copy())
     kd: list[float] = field(default_factory=lambda: _DEFAULT_KD.copy())
 
-    # Default joint positions
-    default_positions: list[float] = field(default_factory=lambda: [0.0] * 29)
+    # Default joint positions (rest / soft-stop pose; arms hang straight down)
+    default_positions: list[float] = field(default_factory=_build_default_positions)
 
     # Control loop timestep
     control_dt: float = 1.0 / 250.0  # 250Hz
