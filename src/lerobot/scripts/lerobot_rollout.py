@@ -165,6 +165,7 @@ from lerobot.robots import (  # noqa: F401
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
+    lekiwi,
     omx_follower,
     openarm_follower,
     reachy2,
