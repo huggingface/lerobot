@@ -92,34 +92,72 @@ class ImageServer:
     def __init__(self, config: dict, port: int = 5555):
         # fps controls the publish loop rate (how often frames are sent over ZMQ), not the camera capture rate
         self.fps = config.get("fps", 30)
+        # First-frame warmup: UVC cameras (Arducam/RealSense) can take >1s to deliver
+        # their first frame, especially with several sharing a USB bus. A tight timeout
+        # aborts the launch and leaves the device wedged (no STREAMOFF), so give it room.
+        self.warmup_s = config.get("warmup_s", 5)
+        # Flaky USB cameras (RealSense especially) intermittently fail the first
+        # open or first-frame read; retry a few times before giving up.
+        self.open_attempts = config.get("open_attempts", 5)
+        self.open_retry_delay_s = config.get("open_retry_delay_s", 2.0)
         self.cameras: dict[str, OpenCVCamera] = {}
         self.capture_threads: dict[str, CameraCaptureThread] = {}
+        self._stop = threading.Event()
 
-        for name, cfg in config.get("cameras", {}).items():
-            shape = cfg.get("shape", [480, 640])
-            cam_kwargs = {
-                "index_or_path": cfg.get("device_id", 0),
-                "fps": self.fps,
-                "width": shape[1],
-                "height": shape[0],
-                "color_mode": ColorMode.RGB,
-                # Force V4L2 (Linux): the default FFMPEG backend is read-only for capture
-                # props, so it can't set FOURCC/resolution (e.g. RealSense color nodes).
-                "backend": Cv2Backends.V4L2,
-            }
-            # Some cameras (e.g. RealSense color nodes) won't apply a resolution unless the
-            # pixel format is forced first, so pass a FOURCC through when provided.
-            if cfg.get("fourcc"):
-                cam_kwargs["fourcc"] = cfg["fourcc"]
-            cam_config = OpenCVCameraConfig(**cam_kwargs)
-            camera = OpenCVCamera(cam_config)
-            camera.connect()
-            self.cameras[name] = camera
-            logger.info(f"Camera {name}: {shape[1]}x{shape[0]}")
+        # If any camera fails to open, release the ones we already opened so the V4L2
+        # devices get a clean STREAMOFF instead of staying busy until the next reboot.
+        try:
+            for name, cfg in config.get("cameras", {}).items():
+                shape = cfg.get("shape", [480, 640])
+                cam_kwargs = {
+                    "index_or_path": cfg.get("device_id", 0),
+                    "fps": self.fps,
+                    "width": shape[1],
+                    "height": shape[0],
+                    "color_mode": ColorMode.RGB,
+                    "warmup_s": self.warmup_s,
+                    # Force V4L2 (Linux): the default FFMPEG backend is read-only for capture
+                    # props, so it can't set FOURCC/resolution (e.g. RealSense color nodes).
+                    "backend": Cv2Backends.V4L2,
+                }
+                # Some cameras (e.g. RealSense color nodes) won't apply a resolution unless the
+                # pixel format is forced first, so pass a FOURCC through when provided.
+                if cfg.get("fourcc"):
+                    cam_kwargs["fourcc"] = cfg["fourcc"]
+                cam_config = OpenCVCameraConfig(**cam_kwargs)
+                camera = OpenCVCamera(cam_config)
 
-            # Create capture thread for this camera
-            capture_thread = CameraCaptureThread(camera, name)
-            self.capture_threads[name] = capture_thread
+                last_err: Exception | None = None
+                for attempt in range(1, self.open_attempts + 1):
+                    try:
+                        camera.connect()
+                        last_err = None
+                        break
+                    except Exception as e:  # noqa: BLE001
+                        last_err = e
+                        logger.warning(
+                            "Camera %s open attempt %d/%d failed: %s",
+                            name, attempt, self.open_attempts, e,
+                        )
+                        with contextlib.suppress(Exception):
+                            camera.disconnect()
+                        if attempt < self.open_attempts:
+                            time.sleep(self.open_retry_delay_s)
+                if last_err is not None:
+                    raise RuntimeError(
+                        f"Camera {name} failed to open after {self.open_attempts} attempts"
+                    ) from last_err
+
+                self.cameras[name] = camera
+                logger.info(f"Camera {name}: {shape[1]}x{shape[0]}")
+
+                # Create capture thread for this camera
+                capture_thread = CameraCaptureThread(camera, name)
+                self.capture_threads[name] = capture_thread
+        except Exception:
+            logger.exception("Failed to open cameras; releasing any already-opened devices.")
+            self._release_cameras()
+            raise
 
         # ZMQ PUB socket
         self.context = zmq.Context()
@@ -129,6 +167,28 @@ class ImageServer:
         self.socket.bind(f"tcp://*:{port}")
 
         logger.info(f"ImageServer running on port {port}")
+
+    def stop(self) -> None:
+        """Signal the publish loop to exit so ``run()`` reaches its cleanup.
+
+        Call this from the owning process on shutdown (e.g. Ctrl-C) — otherwise a
+        daemon thread running ``run()`` is killed abruptly and the cameras never get
+        released, leaving the V4L2 devices wedged until reboot.
+        """
+        self._stop.set()
+
+    def _release_cameras(self) -> None:
+        """Stop capture threads and disconnect all cameras (safe to call twice).
+
+        Ensures each V4L2 device gets a clean STREAMOFF/release so a failed or
+        interrupted run doesn't leave devices busy until the next reboot.
+        """
+        for capture_thread in self.capture_threads.values():
+            with contextlib.suppress(Exception):
+                capture_thread.stop()
+        for cam in self.cameras.values():
+            with contextlib.suppress(Exception):
+                cam.disconnect()
 
     def run(self):
         frame_count = 0
@@ -141,12 +201,12 @@ class ImageServer:
         # Wait for first frames to be captured and encoded
         logger.info("Waiting for cameras to start capturing...")
         for name, capture_thread in self.capture_threads.items():
-            while capture_thread.get_latest()[0] is None:
+            while capture_thread.get_latest()[0] is None and not self._stop.is_set():
                 time.sleep(0.01)
             logger.info(f"Camera {name} ready (capture + encode in background)")
 
         try:
-            while True:
+            while not self._stop.is_set():
                 t0 = time.time()
 
                 # Build message. Always include EVERY camera's latest frame so each message
@@ -177,10 +237,7 @@ class ImageServer:
         except KeyboardInterrupt:
             pass
         finally:
-            for capture_thread in self.capture_threads.values():
-                capture_thread.stop()
-            for cam in self.cameras.values():
-                cam.disconnect()
+            self._release_cameras()
             self.socket.close()
             self.context.term()
 

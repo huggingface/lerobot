@@ -321,6 +321,7 @@ def main() -> None:
 
     # Optionally start camera server in background thread
     camera_thread = None
+    camera_server = None
     if args.camera or args.cameras:
         if args.cameras:
             cameras = parse_camera_specs(args.cameras, args.camera_width, args.camera_height)
@@ -437,12 +438,16 @@ def main() -> None:
         print("shutting down bridge...")
     finally:
         shutdown_event.set()
+        # Stop the camera server first so it releases the V4L2 devices cleanly;
+        # otherwise the daemon thread is killed on exit and the cameras stay wedged.
+        if camera_server is not None:
+            camera_server.stop()
         ctx.term()  # terminates blocking zmq.recv() calls
         t_state.join(timeout=2.0)
         if t_gripper is not None:
             t_gripper.join(timeout=2.0)
         if camera_thread is not None:
-            camera_thread.join(timeout=2.0)
+            camera_thread.join(timeout=3.0)
         for g in grippers.values():
             try:
                 g.bus.disconnect(disable_torque=True)
