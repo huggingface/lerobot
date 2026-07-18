@@ -242,6 +242,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self,
         repo_id: str,
         root: str | Path | None = None,
+        repo_type: str = "dataset",
         episodes: list[int] | None = None,
         image_transforms: Callable | None = None,
         delta_timestamps: dict[list[float]] | None = None,
@@ -266,6 +267,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             root (Path | None, optional): Local directory to use for local datasets. When omitted, Hub
                 metadata is resolved through a revision-safe snapshot cache under
                 ``$HF_LEROBOT_HOME/hub``.
+            repo_type (str, optional): "dataset" (default) or "bucket" to stream
+                from an HF Storage Bucket over hf://buckets/.
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list.
             image_transforms (Callable | None, optional): Transform to apply to image data.
@@ -288,6 +291,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         """
         super().__init__()
         self.repo_id = repo_id
+        self.repo_type = repo_type
         self._requested_root = Path(root) if root else None
         self.root = self._requested_root if self._requested_root is not None else HF_LEROBOT_HOME / repo_id
         self.streaming_from_local = root is not None
@@ -317,6 +321,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self._requested_root,
             self.revision,
             force_cache_sync=force_cache_sync,
+            repo_type=self.repo_type,
             token=token,
         )
         self.root = self.meta.root
@@ -345,15 +350,23 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self.delta_timestamps = delta_timestamps
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
 
-        token_kwargs = {} if token is None or self.streaming_from_local else {"token": token}
-        self.hf_dataset: datasets.IterableDataset = load_dataset(
-            self.repo_id if not self.streaming_from_local else str(self.root),
-            split="train",
-            streaming=self.streaming,
-            data_files="data/*/*.parquet",
-            revision=self.revision,
-            **token_kwargs,
-        )
+        if self.repo_type == "bucket":
+            self.hf_dataset: datasets.IterableDataset = load_dataset(
+                "parquet",
+                data_files=f"hf://buckets/{self.repo_id}/data/*/*.parquet",
+                split="train",
+                streaming=self.streaming,
+            )
+        else:
+            token_kwargs = {} if token is None or self.streaming_from_local else {"token": token}
+            self.hf_dataset: datasets.IterableDataset = load_dataset(
+                self.repo_id if not self.streaming_from_local else str(self.root),
+                split="train",
+                streaming=self.streaming,
+                data_files="data/*/*.parquet",
+                revision=self.revision,
+                **token_kwargs,
+            )
 
         self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
 

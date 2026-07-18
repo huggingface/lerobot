@@ -73,6 +73,7 @@ class LeRobotDatasetMetadata:
         revision: str | None = None,
         force_cache_sync: bool = False,
         metadata_buffer_size: int = 10,
+        repo_type: str = "dataset",
         *,
         token: str | bool | None = None,
     ):
@@ -96,12 +97,15 @@ class LeRobotDatasetMetadata:
                 even when local files exist.
             metadata_buffer_size: Number of episode metadata records to buffer
                 in memory before flushing to parquet.
+            repo_type: Repository type: "dataset" (default) or "bucket" for an
+                HF Storage Bucket streamed over hf://buckets/.
             token: Authentication token used for Hub requests. Pass a string
                 token, ``True`` to require the locally stored token, ``False``
                 to disable authentication, or ``None`` to use the Hugging Face
                 Hub default.
         """
         self.repo_id = repo_id
+        self.repo_type = repo_type
         self.revision = revision if revision else CODEBASE_VERSION
         self._requested_root = Path(root) if root is not None else None
         self.root = self._requested_root if self._requested_root is not None else HF_LEROBOT_HOME / repo_id
@@ -118,7 +122,7 @@ class LeRobotDatasetMetadata:
                 raise FileNotFoundError
             self._load_metadata()
         except (FileNotFoundError, NotADirectoryError):
-            if is_valid_version(self.revision):
+            if self.repo_type != "bucket" and is_valid_version(self.revision):
                 if token is None:
                     self.revision = get_safe_version(self.repo_id, self.revision)
                 else:
@@ -232,6 +236,22 @@ class LeRobotDatasetMetadata:
         *,
         token: str | bool | None = None,
     ) -> None:
+        if getattr(self, "repo_type", "dataset") == "bucket":
+            from huggingface_hub import HfFileSystem
+
+            fs = HfFileSystem()
+            dest = (
+                self._requested_root
+                if self._requested_root is not None
+                else (HF_LEROBOT_HUB_CACHE / ("buckets--" + self.repo_id.replace("/", "--")))
+            )
+            dest = Path(dest)
+            dest.mkdir(parents=True, exist_ok=True)
+            # fs.get copies the SOURCE dir INTO the target, so target=dest (not
+            # dest/meta) lands the tree as dest/meta/... rather than dest/meta/meta.
+            fs.get(f"hf://buckets/{self.repo_id}/meta", str(dest), recursive=True)
+            self.root = dest
+            return
         token_kwargs = {} if token is None else {"token": token}
         if self._requested_root is None:
             self.root = Path(
@@ -262,6 +282,8 @@ class LeRobotDatasetMetadata:
     @property
     def url_root(self) -> str:
         """Hugging Face Hub URL root for this dataset."""
+        if getattr(self, "repo_type", "dataset") == "bucket":
+            return f"hf://buckets/{self.repo_id}"
         return f"hf://datasets/{self.repo_id}"
 
     @property
