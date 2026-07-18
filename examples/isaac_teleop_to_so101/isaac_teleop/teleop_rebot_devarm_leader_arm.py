@@ -16,10 +16,13 @@
 
 """reBot DevArm leader-arm device for NVIDIA Isaac Teleop, exposed to LeRobot.
 
-The leader is a back-drivable Seeed Studio reBot DevArm (B601-DM: 6-DOF + gripper, seven
-Damiao CAN motors) whose joint angles are streamed in radians by Isaac Teleop's native
-``rebot_devarm_leader`` plugin; this device reads them via a ``JointStateSource`` and
-converts them into follower-ready ``{joint}.pos``.
+The leader is a back-drivable Seeed Studio reBot DevArm (6-DOF + gripper, seven CAN
+motors — Damiao on the B601-DM build, RobStride on the B601-RS build) whose joint angles
+are streamed in radians by Isaac Teleop's native ``rebot_devarm_leader`` plugin; this
+device reads them via a ``JointStateSource`` and converts them into follower-ready
+``{joint}.pos``. The motor backend is the plugin's concern (selected by the device path it
+is launched with: serial path -> Damiao, SocketCAN name -> RobStride); this device is
+backend-agnostic.
 
 The natural follower is LeRobot's ``rebot_b601_follower`` — the SAME arm hardware — so the
 mirror is 1:1 in joint space: every streamed angle (gripper included) is converted

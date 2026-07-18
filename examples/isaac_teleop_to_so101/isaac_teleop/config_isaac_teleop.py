@@ -154,18 +154,22 @@ _DEFAULT_REBOT_JOINT_NAME_MAP: dict[str, str] = {
 class RebotDevArmLeaderArmConfig(IsaacTeleopConfig):
     """Config for an Isaac Teleop reBot DevArm *leader arm* (generic joint-space device).
 
-    Mirrors the leader's joint angles 1:1 onto a follower reBot B601-DM (LeRobot's
-    ``rebot_b601_follower``) — the same 6-DOF + gripper Damiao hardware, so no IK, clutch,
-    retargeter, or gripper normalization is needed. The leader state is streamed in radians
-    by the native ``rebot_devarm_leader`` plugin (which torque-disables the motors so the
-    arm is back-drivable) and read via a ``JointStateSource``; the device converts all
-    joints to degrees and renames them via :attr:`joint_name_map`.
+    Mirrors the leader's joint angles 1:1 onto a follower reBot B601 (LeRobot's
+    ``rebot_b601_follower``) — the same 6-DOF + gripper hardware, so no IK, clutch,
+    retargeter, or gripper normalization is needed. Both DevArm builds work: the plugin
+    drives Damiao motors over a dm-serial adapter (B601-DM) or RobStride motors over
+    SocketCAN (B601-RS), selected by the shape of :attr:`port`. The leader state is streamed
+    in radians by the native ``rebot_devarm_leader`` plugin (which torque-disables the
+    motors so the arm is back-drivable) and read via a ``JointStateSource``; the device
+    converts all joints to degrees and renames them via :attr:`joint_name_map`.
     """
 
     port: str = ""
-    """Serial device of the physical LEADER arm's Damiao USB-to-CAN adapter (e.g.
-    ``/dev/ttyACM0``), forwarded to the plugin (which owns the bus) when the example
-    launches it. Empty -> the plugin runs its synthetic trajectory."""
+    """Device of the physical LEADER arm, forwarded to the plugin (which owns the bus) when
+    the example launches it. The plugin picks its backend from the path shape: a serial path
+    (e.g. ``/dev/ttyACM0``) selects the Damiao dm-serial backend (B601-DM build), a bare
+    SocketCAN interface name (e.g. ``can0``) selects the RobStride backend (B601-RS build),
+    and empty runs the hardware-free synthetic trajectory."""
 
     collection_id: str = "rebot_devarm_leader"
     """Tensor collection id the leader plugin pushes on; must match the running

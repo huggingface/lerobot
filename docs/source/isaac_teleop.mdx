@@ -297,26 +297,41 @@ The URDF fetch uses `huggingface_hub` (already a LeRobot dependency) against the
 `lerobot/robot-urdfs` bucket, so it needs no login. It is cached under
 `HF_LEROBOT_HOME/robot-urdfs/so101/`; delete that folder to force a re‑download.
 
-### reBot DevArm leader (Damiao)
+### reBot DevArm leader (Damiao or RobStride)
 
 The third device, `--teleop.type=rebot_devarm_leader` (`RebotDevArmLeaderArm`), does the same 1:1
-joint mirror for the Seeed Studio reBot DevArm (B601-DM: 6-DOF + gripper, seven Damiao CAN
-motors) onto LeRobot's `rebot_b601_follower` — the identical arm hardware, so every joint
-including the gripper is a plain rad→deg mirror with **no** gripper normalization (the
-follower's soft `joint_limits` clip out-of-range targets). Isaac Teleop's native
-`rebot_devarm_leader` plugin owns the Damiao USB-to-CAN serial bus: it torque-disables the
-motors (Damiao motors keep answering feedback requests while disabled, which is what makes the
-leader back-drivable) and streams the decoded joint angles in radians.
+joint mirror for the Seeed Studio reBot DevArm (6-DOF + gripper, seven CAN motors) onto LeRobot's
+`rebot_b601_follower` — the identical arm hardware, so every joint including the gripper is a
+plain rad→deg mirror with **no** gripper normalization (the follower's soft `joint_limits` clip
+out-of-range targets). Isaac Teleop's native `rebot_devarm_leader` plugin owns the motor bus: it
+torque-disables the motors (they keep answering feedback requests while disabled, which is what
+makes the leader back-drivable) and streams the decoded joint angles in radians.
+
+Both DevArm builds are supported and the plugin picks its backend from the shape of
+`--teleop.port`:
+
+- **B601-DM (Damiao)** — a serial path (e.g. `--teleop.port=/dev/ttyACM1`) selects the Damiao
+  dm-serial backend (USB-to-CAN adapter).
+- **B601-RS (RobStride)** — a bare SocketCAN interface name (e.g. `--teleop.port=can0`) selects
+  the RobStride backend. Bring the interface up first:
+  `sudo ip link set can0 up type can bitrate 1000000`.
+- An empty `--teleop.port` runs the plugin's synthetic, hardware-free trajectory.
 
 Like `so101_leader_plugin`, the `rebot_devarm_leader_plugin` binary is built from the Isaac
 Teleop source tree and lands at `install/plugins/rebot_devarm_leader/rebot_devarm_leader_plugin`;
-pass it via `--launch_plugin` (or start it yourself; an empty `--teleop.port` runs its synthetic,
-hardware-free trajectory):
+pass it via `--launch_plugin` (or start it yourself):
 
 ```bash
+# Damiao build (serial adapter):
 python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=rebot_b601_follower \
     --robot.port=/dev/ttyACM0 --robot.id=rebot_b601_follower_arm --teleop.type=rebot_devarm_leader \
     --teleop.port=/dev/ttyACM1 \
+    --launch_plugin=/code/Teleop/install/plugins/rebot_devarm_leader/rebot_devarm_leader_plugin
+
+# RobStride build (SocketCAN):
+python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=rebot_b601_follower \
+    --robot.port=/dev/ttyACM0 --robot.id=rebot_b601_follower_arm --teleop.type=rebot_devarm_leader \
+    --teleop.port=can0 \
     --launch_plugin=/code/Teleop/install/plugins/rebot_devarm_leader/rebot_devarm_leader_plugin
 ```
 
@@ -324,10 +339,10 @@ python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=rebot_b601_fol
 the follower motor names and can be overridden for a differently-named follower. The plugin has
 its own plain-text calibration format (see its `README.md`), so no LeRobot calibration JSON is
 forwarded. Before trusting the wiring, run the plugin's `probe` subcommand
-(`rebot_devarm_leader_plugin probe /dev/ttyACM0`) — it verifies the bus, motor ids, and decode
-path with no OpenXR runtime and exits 0 when all seven motors reply (exit code 3 means the
-gripper reads outside its physical travel — its multi-turn encoder wrapped after a power cycle;
-re-home it before teleoperating).
+(`rebot_devarm_leader_plugin probe /dev/ttyACM0`, or `probe can0` on the RobStride build) — it
+verifies the bus, motor ids, and decode path with no OpenXR runtime and exits 0 when all seven
+motors reply (exit code 3 means the gripper reads outside its physical travel — its multi-turn
+encoder wrapped after a power cycle; re-home it before teleoperating).
 
 Then, in your headset: squeeze and hold the grip to engage, move the controller to drive the
 arm, twist/tilt it to orient the wrist, and press the trigger to close the gripper
