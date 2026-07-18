@@ -38,6 +38,15 @@ from .rewards import RewardModelConfig
 TRAIN_CONFIG_NAME = "train_config.json"
 
 
+def _get_override_value(overrides: list[str], name: str) -> str | None:
+    """Return the value for a flattened CLI-style override, if present."""
+    prefix = f"--{name}="
+    for override in reversed(overrides):
+        if override.startswith(prefix):
+            return override[len(prefix) :]
+    return None
+
+
 def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None:
     """Return migrated payload for legacy RA-BC fields, or None when no migration is needed."""
     legacy_fields = (
@@ -166,7 +175,10 @@ class TrainPipelineConfig(HubMixin):
             self.reward_model.pretrained_path = str(Path(reward_model_path))
         elif policy_path:
             overrides = parser.get_yaml_overrides("policy") + (parser.get_cli_overrides("policy") or [])
-            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=overrides)
+            pretrained_revision = _get_override_value(overrides, "pretrained_revision")
+            self.policy = PreTrainedConfig.from_pretrained(
+                policy_path, revision=pretrained_revision, cli_overrides=overrides
+            )
             self.policy.pretrained_path = Path(policy_path)
         elif self.resume:
             self._resolve_resume_checkpoint()
