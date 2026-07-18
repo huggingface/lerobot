@@ -150,14 +150,14 @@ class MyPolicy(PreTrainedPolicy):
 
 訓練／評估迴圈（train/eval loops）會呼叫的方法：
 
-| 方法                                                              | 被使用              | 會做什麼                                                                                                                                                                                                  |
-| ----------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reset() -> None`                                                 | `lerobot-eval`      | 在每個回合（episode）開始時清除每回合狀態。                                                                                                                                                               |
-| `select_action(batch, **kwargs) -> Tensor`                        | `lerobot-eval`      | 回傳下一個動作（action） `(B, action_dim)`。每步呼叫。                                                                                                                                                    |
-| `predict_action_chunk(batch, **kwargs) -> Tensor`                 | 策略本身            | 回傳動作區塊 `(B, chunk_size, action_dim)`。目前在基礎類別上為抽象方法，若您的策略不分塊，請 raise `NotImplementedError`。                                                                                |
-| `forward(batch, reduction="mean") -> tuple[Tensor, dict \| None]` | `lerobot-train`     | 回傳 `(loss, output_dict)`。若想支援 per-sample 加權，可接受 `reduction="none"`。                                                                                                                         |
-| `get_optim_params() -> dict`                                      | 優化器（optimizer） | 簡單策略回傳 `self.parameters()`；[多優化器策略](https://github.com/huggingface/lerobot/blob/ecd38c50d7d15b4184cf42649ff1185ee2e11eeb/src/lerobot/policies/sac/modeling_sac.py#L61-L73)回傳具名參數字典。 |
-| `update() -> None`（選用）                                        | `lerobot-train`     | 若有定義，會在每個優化器步驟後呼叫。用於 EMA、target 網路、replay buffer（TDMPC 使用此方法）。                                                                                                            |
+| 方法                                                              | 被使用              | 會做什麼                                                                                                                                                                                                                                                                                                   |
+| ----------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reset() -> None`                                                 | `lerobot-eval`      | 在每個回合（episode）開始時清除每回合狀態。                                                                                                                                                                                                                                                                |
+| `select_action(batch, **kwargs) -> Tensor`                        | `lerobot-eval`      | 回傳下一個動作（action） `(B, action_dim)`。每步呼叫。                                                                                                                                                                                                                                                     |
+| `predict_action_chunk(batch, **kwargs) -> Tensor`                 | 策略本身            | 回傳動作區塊 `(B, chunk_size, action_dim)`。目前在基礎類別上為抽象方法，若您的策略不分塊，請 raise `NotImplementedError`。                                                                                                                                                                                 |
+| `forward(batch, reduction="mean") -> tuple[Tensor, dict \| None]` | `lerobot-train`     | 回傳 `(loss, output_dict)`。若想支援 per-sample 加權，可接受 `reduction="none"`。                                                                                                                                                                                                                          |
+| `get_optim_params() -> dict`                                      | 優化器（optimizer） | 簡單策略（simple policies）回傳 `self.parameters()`；多優化器策略（multi-optimizer policies）回傳具名參數字典（named parameter dict）；per-group 學習率的範例，見 [`modeling_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/modeling_act.py) 中的 `get_optim_params`。 |
+| `update() -> None`（選用）                                        | `lerobot-train`     | 若有定義，會在每個優化器步驟後呼叫。用於 EMA、target 網路、replay buffer（TDMPC 使用此方法）。                                                                                                                                                                                                             |
 
 批次（batch）是扁平字典（flat dictionaries），以 [`lerobot.utils.constants`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/utils/constants.py) 中的常數作為鍵：`OBS_STATE`（`observation.state.<motor>`）、`OBS_IMAGES`（`observation.images.<camera>`）、`OBS_LANGUAGE`、`ACTION` 等。請重用這些常數（constants），不要自創新的前綴（prefix）。
 
@@ -295,12 +295,10 @@ src/lerobot/policies/my_policy/
 
 ### 連接（wiring）
 
-有四個地方需要知道您的策略（policy），全都透過名稱。
+有兩個地方需要知道您的策略（policy），全都透過名稱。
 
-1. **`policies/__init__.py`** — 重新匯出（re-export） `MyPolicyConfig` 並將其加入 `__all__`。**不要**重新匯出 modeling 類；它會透過工廠（factory）延遲載入（loads lazily，讓 `import lerobot` 保持快速）。
-2. **`factory.py:get_policy_class`** — 新增一個分支，從延遲匯入（lazy import）回傳 `MyPolicy`。
-3. **`factory.py:make_policy_config`** 與 **`factory.py:make_pre_post_processors`** — 相同做法，再多兩個分支。
-4. **`templates/lerobot_modelcard_template.md` 與根目錄的 `README.md`** — 這個模板（template）就是 `push_model_to_hub` 為每個以您策略訓練的檢查點（checkpoint）渲染出的模型卡（model card）內容：在 `model_name` 分支中為您的策略加上一行描述（one-line description），於 `policy_docs` 中對應它，讓模型卡連到您的 MDX 指南，並可選擇在 `diagrams` 中加入架構圖。接著把您的策略（your policy）加進根目錄 `README.md` 的模型表格（models table），放在正確的分類下，並連到您的文件頁面。
+1. **`policies/__init__.py`** — 重新匯出（re-export） `MyPolicyConfig` 並將其加入 `__all__`。這個匯入就是註冊您策略（registers your policy）的關鍵：`@PreTrainedConfig.register_subclass("my_policy")` 會執行，自此工廠（factory）便依慣例（convention）解析一切。**不要**重新匯出 modeling 類（class）；它會透過工廠延遲載入（loads lazily，讓 `import lerobot` 保持快速）。
+2. **`templates/lerobot_modelcard_template.md` 與根目錄（root）的 `README.md`** — 這個模板（template）就是 `push_model_to_hub` 為每個以您策略訓練的檢查點（checkpoint）渲染出的模型卡（model card）內容：在 `model_name` 分支中為您的策略加上一行描述（one-line description），於 `policy_docs` 中對應它，讓模型卡連到您的 MDX 指南，並可選擇在 `diagrams` 中加入架構圖。接著把您的策略（policy）加進根目錄 `README.md` 的模型表格（models table），放在正確的分類下，並連到您的文件頁面。
 
 參照一個結構與您相似的現有策略；差異很小。
 
@@ -331,6 +329,10 @@ class DiffusionPolicy(PreTrainedPolicy):
 - 在未安裝該額外相依項（extra）的情況下實例化該策略（instantiating the policy），會拋出清楚的 `ImportError`，指向 `pip install 'lerobot[diffusion]'`。
 
 在 [`pyproject.toml`](https://github.com/huggingface/lerobot/blob/main/pyproject.toml) 的 `[project.optional-dependencies]` 新增對應的額外相依項（matching extra），並將其納入 `all` 這個額外相依項（extra），讓 `pip install 'lerobot[all]'` 仍會安裝所有東西。
+
+### 不要複製 modeling —— 改用子類（avoid copying a modeling file — subclass it）
+
+如果您的策略（policy）需要修改 `transformers` 中已存在的骨幹（backbone；自訂條件 custom conditioning、額外輸入 extra inputs、替換某個子模組 a swapped sub-module），**請勿把它的 `modeling_*.py` 複製一份進來**。相反地，請子類化（subclass）最小的上游單元（upstream unit），只覆寫（override）有變動的部分。[`pi_gemma.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/pi_gemma.py) 是標準參考：它以約 370 行程式碼，透過子類化（subclassing） `GemmaModel`／`PaliGemmaModel` 並覆寫解碼層（decoder-layer）的 forward，把 AdaRMS 條件（conditioning）注入 PaliGemma/Gemma，而不是分叉（forking）那個約 2,000 行的 modeling 檔。對一個*已載入的*原生模型做模型手術（model surgery）也沒問題（層截斷 layer truncation、tokenizer 擴充、隱藏狀態擷取 hidden-state capture，可用範例見 `evo1/internvl3_embedder.py`、`eo1/modeling_eo1.py`、`groot/groot_n1_7.py`）。當 PR 帶著複製的 modeling 檔案（file）進來時，審查者會要求改用這個模式；唯一可接受的例外，是該模型在 `transformers` 中根本不存在。
 
 ### 基準測試與發布的檢查點（benchmarks and a published checkpoint）
 
@@ -367,7 +369,7 @@ Reproduce: `lerobot-eval --policy.path=lerobot/<policy>_libero --env.type=libero
 一般性的要求列在 [`CONTRIBUTING.md`](https://github.com/huggingface/lerobot/blob/main/CONTRIBUTING.md) 與 [PR 範本](https://github.com/huggingface/lerobot/blob/main/.github/PULL_REQUEST_TEMPLATE.md)。在這些之上，審查者還會檢查：
 
 - [ ] `MyPolicy` 與 `MyPolicyConfig` 涵蓋上述介面；`__init_subclass__` 接受該類別。
-- [ ] `factory.py` 與 `policies/__init__.py` 已連接（wired， modeling 採延遲匯入 lazy imports）。
+- [ ] `policies/__init__.py` 已重新匯出設定（re-export config；這會註冊該策略；工廠 factory 會依命名慣例 naming convention 解析 modeling／processor）。
 - [ ] `make_my_policy_pre_post_processors` 遵循命名慣例（naming convention）。
 - [ ] 選用相依套件放在 `[project.optional-dependencies]` 的額外相依項（extra）與 `TYPE_CHECKING + require_package` 把關（guard）之後。
 - [ ] 已更新 `tests/policies/`；已提交向後相容性產物（backward-compat artifact）與策略專屬測試（policy-specific tests）。
