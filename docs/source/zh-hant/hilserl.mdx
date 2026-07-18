@@ -661,7 +661,7 @@ python -m lerobot.rl.gym_manipulator --config_path src/lerobot/configs/reward_cl
   },
   "dataset": {
     "repo_id": "hf_username/dataset_name",
-    "dataset_root": "data/your_dataset",
+    "root": "data/your_dataset",
     "task": "reward_classifier_task",
     "num_episodes_to_record": 20,
     "replay_episode": null,
@@ -928,7 +928,7 @@ python -m lerobot.rl.actor --config_path src/lerobot/configs/train_config_hilser
 
 某些配置值（configuration values）對訓練（training）穩定性和速度具有不成比例的影響：
 
-- **`temperature_init`**（`policy.temperature_init`）——SAC 中的初始熵溫度（initial entropy temperature）。較高的值鼓勵更多探索（exploration）；較低的值使策略（policy）在早期更具確定性（more deterministic）。一個好的起始點是 `1e-2`。我們觀察到設定過高會使人為介入（human interventions）無效並減慢學習速度。
+- **`temperature_init`**（`algorithm.temperature_init`）——SAC 中的初始熵溫度（initial entropy temperature）。較高的值鼓勵更多探索（exploration）；較低的值使策略（policy）在早期更具確定性（more deterministic）。一個好的起始點是 `1e-2`。我們觀察到設定過高會使人為介入（human interventions）無效並減慢學習速度。
 - **`policy_parameters_push_frequency`**（`policy.actor_learner_config.policy_parameters_push_frequency`）——從學習者（learner）向執行者（actor）推送兩次權重（weight）之間的間隔（以*秒*為單位）。預設值為 `4 s`。減少到 **1-2 s** 以提供更新鮮的權重（但會增加更多網路流量 network traffic）；僅在連線速度慢時才增加此值，因為這會降低樣本效率（sample efficiency）。
 - **`storage_device`**（`policy.storage_device`）——學習者（learner）保存策略參數（policy parameters）的裝置。如果您有多餘的 GPU 記憶體，將其設為 `"cuda"`（而非預設的 `"cpu"`）。將權重（weights）保留在 GPU 上可以消除 CPU→GPU 傳輸開銷（transfer overhead），並能顯著增加每秒學習者更新的次數。
 

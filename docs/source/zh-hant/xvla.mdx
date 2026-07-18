@@ -418,7 +418,7 @@ policy.empty_cameras=1  # Adds 1 zero-padded camera view
 
 ```python
 from lerobot.processor import PolicyProcessorPipeline
-from lerobot.policies.xvla.processor_xvla import (
+from lerobot.policies.xvla import (
     XVLAImageToFloatProcessorStep,
     XVLAImageNetNormalizeProcessorStep,
     XVLAAddDomainIdProcessorStep,
@@ -520,7 +520,7 @@ class MappedActionSpace(BaseActionSpace):
 - [X-VLA 論文](https://arxiv.org/pdf/2510.10274)
 - [LeRobot 文件](https://github.com/huggingface/lerobot)
 - [動作註冊表實作](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/xvla/action_hub.py)
-- [處理器實作](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/xvla/action_hub.py)
+- [處理器實作](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/xvla/processor_xvla.py)
 - [模型配置](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/xvla/configuration_xvla.py)
 
 ## 貢獻

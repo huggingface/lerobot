@@ -49,7 +49,7 @@ lerobot-rollout \
 
 連續的自主錄製（recording），並定期上傳到 Hugging Face Hub。回合邊界（episode boundaries）會從攝影機解析度（camera resolution）與 FPS 自動計算，使每個儲存的回合都產生一個完整的影片檔案，讓上傳保持高效。
 
-策略狀態（policyolicy state，隱藏狀態 hidden state、RTC 佇列 queue）會跨回合邊界（episode boundaries）持續存在：機器人在回合之間不會重設。
+策略狀態（policy state，隱藏狀態 hidden state、RTC 佇列 queue）會跨回合邊界（episode boundaries）持續存在：機器人在回合之間不會重設。
 
 ```bash
 lerobot-rollout \

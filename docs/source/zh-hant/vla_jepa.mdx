@@ -64,20 +64,20 @@ VLA-JEPA 有三個主要組件（components）：
 
 `VLAJEPAConfig` 中的主要參數（parameters）：
 
-| 參數（parameter）         | 預設值（default） | 描述（description）                                                                                                                                        |
-| ------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `chunk_size`              | 7                 | 每次推論呼叫所預測的動作數量（number of actions predicted per inference call）                                                                             |
-| `n_action_steps`          | 7                 | 在重新規劃（re-planning）前，從預測區塊（predicted chunk）中執行的步數（steps executed）                                                                   |
-| `num_video_frames`        | 8                 | 餵給世界模型（world model）的影片片段長度（video clip length）                                                                                             |
-| `enable_world_model`      | `True`            | 是否載入並訓練（load and train） V-JEPA2 預測器（predictor）                                                                                               |
-| `world_model_loss_weight` | 0.1               | JEPA 預測損失（prediction loss）相對於動作損失（action loss）的權重（weight）                                                                              |
-| `num_inference_timesteps` | 4                 | 動作去噪（action denoising）的 Euler 積分步數（Euler integration steps）                                                                                   |
-| `freeze_qwen`             | `False`           | 凍結（freeze） Qwen3-VL 骨幹網路（backbone），只訓練動作頭（only train the action head）                                                                   |
-| `reinit_modules`          | `None`            | 載入時允許被隨機重新初始化（randomly re-initialised）的鍵值前綴（key prefixes，用於跨具身遷移 cross-embodiment transfer，請參閱[在不同具身上微調](#TODO)） |
-| `gripper_dim`             | 6                 | 夾爪維度在動作向量中的索引（index of the gripper dimension in the action vector，例如 7-DoF 手臂且夾爪為最後一個關節時為 6）                               |
-| `gripper_threshold`       | 0.5               | `pre_snap_gripper_action` 與 `binarize_gripper_action` 用來將夾爪維度二值化（binarize the gripper dimension）的閾值（threshold）                           |
-| `pre_snap_gripper_action` | `True`            | 在反正規化（unnormalization）前將夾爪維度貼齊為（snap the gripper dim to） {0, 1}。若機器人沒有二值夾爪（binary gripper），請設為 `False`                  |
-| `binarize_gripper_action` | `True`            | 在反正規化（unnormalization）後將夾爪維度二值化為（binarize the gripper dim to）{-1, 1}。若機器人沒有二值夾爪（binary gripper），請設為 `False`            |
+| 參數（parameter）         | 預設值（default） | 描述（description）                                                                                                                                                                                                                                                 |
+| ------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chunk_size`              | 7                 | 每次推論呼叫所預測的動作數量（number of actions predicted per inference call）                                                                                                                                                                                      |
+| `n_action_steps`          | 7                 | 在重新規劃（re-planning）前，從預測區塊（predicted chunk）中執行的步數（steps executed）                                                                                                                                                                            |
+| `num_video_frames`        | 8                 | 餵給世界模型（world model）的影片片段長度（video clip length）                                                                                                                                                                                                      |
+| `enable_world_model`      | `True`            | 是否載入並訓練（load and train） V-JEPA2 預測器（predictor）                                                                                                                                                                                                        |
+| `world_model_loss_weight` | 0.1               | JEPA 預測損失（prediction loss）相對於動作損失（action loss）的權重（weight）                                                                                                                                                                                       |
+| `num_inference_timesteps` | 4                 | 動作去噪（action denoising）的 Euler 積分步數（Euler integration steps）                                                                                                                                                                                            |
+| `freeze_qwen`             | `False`           | 凍結（freeze） Qwen3-VL 骨幹網路（backbone），只訓練動作頭（only train the action head）                                                                                                                                                                            |
+| `reinit_modules`          | `None`            | 載入時允許被隨機重新初始化（randomly re-initialised）的鍵值前綴（key prefixes，用於跨具身遷移 cross-embodiment transfer，請參閱[在不同具身上微調](#%E5%9C%A8%E4%B8%8D%E5%90%8C%E5%85%B7%E8%BA%AB%E4%B8%8A%E5%BE%AE%E8%AA%BFfine-tuning-on-a-different-embodiment)） |
+| `gripper_dim`             | 6                 | 夾爪維度在動作向量中的索引（index of the gripper dimension in the action vector，例如 7-DoF 手臂且夾爪為最後一個關節時為 6）                                                                                                                                        |
+| `gripper_threshold`       | 0.5               | `pre_snap_gripper_action` 與 `binarize_gripper_action` 用來將夾爪維度二值化（binarize the gripper dimension）的閾值（threshold）                                                                                                                                    |
+| `pre_snap_gripper_action` | `True`            | 在反正規化（unnormalization）前將夾爪維度貼齊為（snap the gripper dim to） {0, 1}。若機器人沒有二值夾爪（binary gripper），請設為 `False`                                                                                                                           |
+| `binarize_gripper_action` | `True`            | 在反正規化（unnormalization）後將夾爪維度二值化為（binarize the gripper dim to）{-1, 1}。若機器人沒有二值夾爪（binary gripper），請設為 `False`                                                                                                                     |
 
 ---
 

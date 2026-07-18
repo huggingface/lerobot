@@ -97,22 +97,22 @@ lerobot-train --help
 登入後，您可以在您的設定中執行推理（inference）：
 
 ```bash
-lerobot-record \
+lerobot-rollout \
+  --strategy.type=base \
   --robot.type=so101_follower \
   --robot.port=/dev/ttyACM0 \ # <- 使用您的連接埠
   --robot.id=my_blue_follower_arm \ # <- 使用您的機器人 ID
   --robot.cameras="{ front: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30}}" \ # <- 使用您的相機
-  --dataset.single_task="Grasp a lego block and put it in the bin." \ # <- 使用您在錄製資料集時使用的相同任務描述
-  --dataset.repo_id=${HF_USER}/eval_DATASET_NAME_test \  # <- 這將是 HF Hub 上的資料集名稱
-  --dataset.episode_time_s=50 \
-  --dataset.num_episodes=10 \
-  --dataset.streaming_encoding=true \
-  --dataset.encoder_threads=2 \
-  # --dataset.vcodec=auto \
-  # <- 如果您想在回合之間進行遙操作，可選啟用 Teleop \
+  --task="Grasp a lego block and put it in the bin." \ # <- 使用您在錄製資料集時使用的相同任務描述
+  # <- RTC 為可選項，於低算力硬體上執行時使用 \
+  # --inference.type=rtc \
+  # --inference.rtc.execution_horizon=10 \
+  # --inference.rtc.max_guidance_weight=10.0 \
+  # <- 若您想在回合之間進行遙操作，可選啟用 Teleop \
   # --teleop.type=so100_leader \
   # --teleop.port=/dev/ttyACM0 \
   # --teleop.id=my_red_leader_arm \
+  # --display_data=true #若您想查看相機串流，可選啟用 \
   --policy.path=HF_USER/FINETUNE_MODEL_NAME # <- 使用您微調後的模型
 ```
 
