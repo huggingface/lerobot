@@ -51,7 +51,7 @@ _DEFAULT_KP, _DEFAULT_KD = _build_gains()
 # sign of _REST_ELBOW.
 _LEFT_ELBOW_IDX = 18
 _RIGHT_ELBOW_IDX = 25
-_REST_ELBOW = 1.5  # rad, ~straight-down forearm
+_REST_ELBOW = 1.17  # rad, ~160deg forearm (0 rad~=90deg, 1.5 rad~=180deg straight)
 
 
 def _build_default_positions() -> list[float]:
