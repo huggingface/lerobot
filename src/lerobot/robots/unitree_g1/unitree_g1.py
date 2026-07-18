@@ -126,8 +126,10 @@ class UnitreeG1(Robot):
         # Initialize cameras config (ZMQ-based) - actual connection in connect()
         self._cameras = make_cameras_from_configs(config.cameras)
 
-        # Import channel classes based on mode
-        if config.is_simulation:
+        # Import channel classes based on mode. Simulation and onboard both talk to a
+        # real (local) DDS via the Unitree SDK; only the laptop-side bridge client uses
+        # the ZMQ socket shim.
+        if config.is_simulation or config.onboard:
             self._ChannelFactoryInitialize = _SDKChannelFactoryInitialize
             self._ChannelPublisher = _SDKChannelPublisher
             self._ChannelSubscriber = _SDKChannelSubscriber
@@ -297,8 +299,28 @@ class UnitreeG1(Robot):
     def configure(self) -> None:
         pass
 
+    def _release_motion_control(self) -> None:
+        """Release the robot's built-in motion services so we can send raw lowcmd.
+
+        Onboard-only. Mirrors run_g1_server.py: on the real robot the factory
+        locomotion/hand services must relinquish control before our controller can
+        write to ``rt/lowcmd``, otherwise commands are ignored or fought.
+        """
+        from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
+
+        msc = MotionSwitcherClient()
+        msc.SetTimeout(5.0)
+        msc.Init()
+        _, result = msc.CheckMode()
+        while result is not None and "name" in result and result["name"]:
+            logger.info("[UnitreeG1] Releasing built-in mode '%s'...", result["name"])
+            msc.ReleaseMode()
+            _, result = msc.CheckMode()
+            time.sleep(1.0)
+
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
         self._is_disconnected = False
+        self._pending_arm_softstart = False
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
             from lerobot.envs import make_env
@@ -307,6 +329,15 @@ class UnitreeG1(Robot):
             self._env_wrapper = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
+        elif self.config.onboard:
+            # Real robot, controller running onboard against local DDS. Initialize the
+            # real SDK channel factory on the robot's DDS interface and take low-level
+            # control from the built-in services before we start writing lowcmd.
+            if self.config.dds_interface:
+                self._ChannelFactoryInitialize(0, self.config.dds_interface)
+            else:
+                self._ChannelFactoryInitialize(0)
+            self._release_motion_control()
         else:
             self._ChannelFactoryInitialize(0, config=self.config)
 
@@ -315,7 +346,7 @@ class UnitreeG1(Robot):
         self._gripper_sock = None
         self._last_gripper_cmd = None
         self._warned_no_gripper_buttons = False
-        if not self.config.is_simulation:
+        if not self.config.is_simulation and not self.config.onboard:
             try:
                 import zmq
 
@@ -375,12 +406,11 @@ class UnitreeG1(Robot):
 
         # Start controller thread if enabled
         if self.controller is not None:
-            # Soft-start: ramp the arms from their current pose to the default position
-            # before the locomotion policy takes over, avoiding a jump at startup. The
-            # controller owns the legs, so send_action only moves the arms here. Runs in
-            # both sim and on the real robot so the ramp is visible in MuJoCo too.
-            logger.info("Soft-start: ramping arms to default position...")
-            self._interpolate_to_default(duration=3.0)
+            # Defer the arm soft-start to the first teleop action so we ramp to the
+            # exo's actual starting pose instead of the fixed default (avoids a snap
+            # when the operator's arms aren't at the default). Arms hold their current
+            # pose (set above) until then; the controller owns the legs meanwhile.
+            self._pending_arm_softstart = True
 
             self._controller_thread = threading.Thread(target=self._controller_loop, daemon=True)
             self._controller_thread.start()
@@ -538,6 +568,13 @@ class UnitreeG1(Robot):
         return obs
 
     def send_action(self, action: RobotAction) -> RobotAction:
+        # One-time soft-start: ramp the arms to the exo's first commanded pose so
+        # they don't snap when teleop starts. Flag is cleared before ramping so the
+        # ramp's own send_action calls don't re-enter this branch.
+        if self.controller is not None and getattr(self, "_pending_arm_softstart", False):
+            self._pending_arm_softstart = False
+            self._softstart_arms_to_action(action)
+
         action_to_publish = action
         if self.controller is not None:
             # Controller thread owns legs/waist. Here we only update joystick inputs
@@ -569,6 +606,29 @@ class UnitreeG1(Robot):
         self.publish_lowcmd(action_to_publish, tau=tau)
         self._send_gripper_cmd(action)
         return action
+
+    def _softstart_arms_to_action(self, action: RobotAction) -> None:
+        """Ramp arms from their current pose to the exo's first commanded pose.
+
+        Runs once, on the first teleop action after connect, so the arms move
+        smoothly to wherever the operator is holding the exoskeleton instead of
+        snapping. Legs stay under the controller throughout (send_action filters
+        to arm joints when a controller is active).
+        """
+        target = np.array(self.config.default_positions, dtype=np.float32).copy()
+        have_arm_target = False
+        for joint in G1_29_JointArmIndex:
+            key = f"{joint.name}.q"
+            if key in action:
+                target[joint.value] = float(action[key])
+                have_arm_target = True
+        if not have_arm_target:
+            return
+        logger.info("Soft-start: ramping arms to exo's first commanded pose...")
+        try:
+            self._interpolate_to_default(duration=3.0, default_positions=target)
+        except Exception as e:
+            logger.warning(f"Arm soft-start to exo pose failed ({e}); continuing.")
 
     def _send_gripper_cmd(self, action: RobotAction) -> None:
         """Forward exo R3/L3 button flags to run_g1_server to open/close the grippers.

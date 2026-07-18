@@ -44,6 +44,18 @@ DOF_POS_SCALE: float = 1.0
 DOF_VEL_SCALE: float = 0.05
 CMD_SCALE: list[float] = [2.0, 2.0, 0.5]
 
+# Waist-height control via the right stick Y axis (the only unmapped axis).
+# Rate control (m per control step at full deflection): a self-centering stick
+# returns to 0 = "hold current height". ~0.2 m/s at 50 Hz.
+HEIGHT_STICK_RATE: float = 0.004
+HEIGHT_MIN: float = 0.50
+HEIGHT_MAX: float = 1.00
+
+# Deadzone applied to all stick axes. Resting sticks drift by ~0.03-0.05, which
+# otherwise keeps cmd_magnitude above the balance/walk threshold and makes the
+# robot march in place instead of standing still on the Balance policy.
+STICK_DEADZONE: float = 0.1
+
 
 DEFAULT_GROOT_REPO_ID = "nepyope/GR00T-WholeBodyControl_g1"
 
@@ -68,9 +80,16 @@ def load_groot_policies(
         filename="GR00T-WholeBodyControl-Walk.onnx",
     )
 
-    # Load ONNX policies
-    policy_balance = ort.InferenceSession(balance_path)
-    policy_walk = ort.InferenceSession(walk_path)
+    # Load ONNX policies. Cap onnxruntime to a single thread: these are tiny MLP
+    # policies run in the real-time control loop, and letting ORT grab one intra-op
+    # thread per core oversubscribes the CPU and starves the teleop/IK loop
+    # (teleop becomes abysmally slow). Sequential + 1 thread is fastest here.
+    so = ort.SessionOptions()
+    so.intra_op_num_threads = 1
+    so.inter_op_num_threads = 1
+    so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    policy_balance = ort.InferenceSession(balance_path, sess_options=so)
+    policy_walk = ort.InferenceSession(walk_path, sess_options=so)
 
     logger.info("GR00T policies loaded successfully")
 
@@ -134,12 +153,19 @@ class GrootLocomotionController:
         buttons = [int(action.get(k, 0)) for k in REMOTE_BUTTONS]
         if buttons[0]:  # R1 - raise waist
             self.groot_height_cmd += 0.001
-            self.groot_height_cmd = np.clip(self.groot_height_cmd, 0.50, 1.00)
+            self.groot_height_cmd = np.clip(self.groot_height_cmd, HEIGHT_MIN, HEIGHT_MAX)
         if buttons[4]:  # R2 - lower waist
             self.groot_height_cmd -= 0.001
-            self.groot_height_cmd = np.clip(self.groot_height_cmd, 0.50, 1.00)
+            self.groot_height_cmd = np.clip(self.groot_height_cmd, HEIGHT_MIN, HEIGHT_MAX)
 
-        lx, ly, rx, _ry = (action.get(k, 0.0) for k in REMOTE_AXES)
+        lx, ly, rx, ry = (action.get(k, 0.0) for k in REMOTE_AXES)
+        # Deadzone every axis so resting-stick drift doesn't leak into commands.
+        lx, ly, rx, ry = (0.0 if abs(v) < STICK_DEADZONE else v for v in (lx, ly, rx, ry))
+        # Right stick Y controls waist height (rate control) — the only otherwise
+        # unmapped axis. Push up = raise, push down = lower, release = hold.
+        if ry != 0.0:
+            self.groot_height_cmd += ry * HEIGHT_STICK_RATE
+            self.groot_height_cmd = np.clip(self.groot_height_cmd, HEIGHT_MIN, HEIGHT_MAX)
         self.cmd[0] = ly  # Forward/backward
         self.cmd[1] = -lx  # Left/right (negated)
         self.cmd[2] = -rx  # Rotation rate (negated)

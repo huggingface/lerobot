@@ -59,6 +59,17 @@ class UnitreeG1Config(RobotConfig):
     # Launch mujoco simulation
     is_simulation: bool = True
 
+    # Run the locomotion controller ONBOARD the robot (policy on the G1 itself,
+    # against local DDS) instead of on the laptop over the ZMQ bridge. In this mode
+    # the robot object uses the real Unitree SDK channels and expects high-level
+    # actions (arm targets + joystick axes) to be fed in via send_action (e.g. by
+    # run_g1_onboard.py, which receives them from the laptop). Mutually exclusive
+    # with is_simulation.
+    onboard: bool = False
+    # DDS network interface for onboard mode (None = SDK default, matching
+    # run_g1_server.py's ChannelFactoryInitialize(0)).
+    dds_interface: str | None = None
+
     # Socket config for ZMQ bridge
     robot_ip: str = "192.168.123.164"  # default G1 IP
 

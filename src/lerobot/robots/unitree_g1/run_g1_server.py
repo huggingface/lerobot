@@ -26,7 +26,6 @@ Uses JSON for secure serialization instead of pickle.
 
 import argparse
 import base64
-import contextlib
 import json
 import threading
 import time
@@ -248,9 +247,14 @@ def state_forward_loop(
             # Convert to dict and serialize with JSON
             state_dict = lowstate_to_dict(msg)
             payload = json.dumps({"topic": kTopicLowState, "data": state_dict}).encode("utf-8")
-            # if no subscribers / tx buffer full, just drop
-            with contextlib.suppress(zmq.Again):
+            try:
+                # if no subscribers / tx buffer full, just drop
                 lowstate_sock.send(payload, zmq.NOBLOCK)
+            except zmq.Again:
+                pass
+            except zmq.ContextTerminated:
+                # Context torn down during shutdown; exit the loop quietly.
+                break
             last_state_time = now
 
 
