@@ -150,14 +150,14 @@ class MyPolicy(PreTrainedPolicy):
 
 The methods called by the train/eval loops:
 
-| Method                                                            | Used by           | What it does                                                                                                                                                                                                                                         |
-| ----------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reset() -> None`                                                 | `lerobot-eval`    | Clear per-episode state at the start of each episode.                                                                                                                                                                                                |
-| `select_action(batch, **kwargs) -> Tensor`                        | `lerobot-eval`    | Return the next action `(B, action_dim)`. Called every step.                                                                                                                                                                                         |
-| `predict_action_chunk(batch, **kwargs) -> Tensor`                 | the policy itself | Return an action chunk `(B, chunk_size, action_dim)`. Currently abstract on the base class — raise `NotImplementedError` if your policy doesn't chunk.                                                                                               |
-| `forward(batch, reduction="mean") -> tuple[Tensor, dict \| None]` | `lerobot-train`   | Return `(loss, output_dict)`. Accept `reduction="none"` if you want to support per-sample weighting.                                                                                                                                                 |
-| `get_optim_params() -> dict`                                      | the optimizer     | Return `self.parameters()` for simple policies; return a named parameter dict for [multi-optimizer policies](https://github.com/huggingface/lerobot/blob/ecd38c50d7d15b4184cf42649ff1185ee2e11eeb/src/lerobot/policies/sac/modeling_sac.py#L61-L73). |
-| `update() -> None` _(optional)_                                   | `lerobot-train`   | Called after each optimizer step _if defined_. Use for EMA, target nets, replay buffers (TDMPC uses this).                                                                                                                                           |
+| Method                                                            | Used by           | What it does                                                                                                                                                                                                                                                                                 |
+| ----------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reset() -> None`                                                 | `lerobot-eval`    | Clear per-episode state at the start of each episode.                                                                                                                                                                                                                                        |
+| `select_action(batch, **kwargs) -> Tensor`                        | `lerobot-eval`    | Return the next action `(B, action_dim)`. Called every step.                                                                                                                                                                                                                                 |
+| `predict_action_chunk(batch, **kwargs) -> Tensor`                 | the policy itself | Return an action chunk `(B, chunk_size, action_dim)`. Currently abstract on the base class — raise `NotImplementedError` if your policy doesn't chunk.                                                                                                                                       |
+| `forward(batch, reduction="mean") -> tuple[Tensor, dict \| None]` | `lerobot-train`   | Return `(loss, output_dict)`. Accept `reduction="none"` if you want to support per-sample weighting.                                                                                                                                                                                         |
+| `get_optim_params() -> dict`                                      | the optimizer     | Return `self.parameters()` for simple policies; return a named parameter dict for multi-optimizer policies (see `get_optim_params` in [`modeling_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/modeling_act.py) for a per-group learning-rate example). |
+| `update() -> None` _(optional)_                                   | `lerobot-train`   | Called after each optimizer step _if defined_. Use for EMA, target nets, replay buffers (TDMPC uses this).                                                                                                                                                                                   |
 
 Batches are flat dictionaries keyed by the constants in [`lerobot.utils.constants`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/utils/constants.py): `OBS_STATE` (`observation.state.<motor>`), `OBS_IMAGES` (`observation.images.<camera>`), `OBS_LANGUAGE`, `ACTION`, etc. Reuse the constants — don't invent new prefixes.
 
@@ -295,12 +295,10 @@ The file names are load-bearing: the factory does lazy imports by name, and the 
 
 ### Wiring
 
-Four places need to know about your policy. All by name.
+Two places need to know about your policy. All by name.
 
-1. **`policies/__init__.py`** — re-export `MyPolicyConfig` and add it to `__all__`. **Don't** re-export the modeling class; it loads lazily through the factory (so `import lerobot` stays fast).
-2. **`factory.py:get_policy_class`** — add a branch returning `MyPolicy` from a lazy import.
-3. **`factory.py:make_policy_config`** and **`factory.py:make_pre_post_processors`** — same idea, two more branches.
-4. **`templates/lerobot_modelcard_template.md` and the root `README.md`** — the template is what `push_model_to_hub` renders into the model card of every checkpoint trained with your policy: add a one-line description of your policy in the `model_name` branches, map it in `policy_docs` so cards link to your MDX guide, and optionally add an architecture image to `diagrams`. Then add your policy to the models table in the root `README.md`, under the right category, linking to your doc page.
+1. **`policies/__init__.py`** — re-export `MyPolicyConfig` and add it to `__all__`. This import is what registers your policy: `@PreTrainedConfig.register_subclass("my_policy")` runs, and from then on the factory resolves everything by convention. **Don't** re-export the modeling class; it loads lazily through the factory (so `import lerobot` stays fast).
+2. **`templates/lerobot_modelcard_template.md` and the root `README.md`** — the template is what `push_model_to_hub` renders into the model card of every checkpoint trained with your policy: add a one-line description of your policy in the `model_name` branches, map it in `policy_docs` so cards link to your MDX guide, and optionally add an architecture image to `diagrams`. Then add your policy to the models table in the root `README.md`, under the right category, linking to your doc page.
 
 Mirror an existing policy that's structurally similar to yours; the diff is small.
 
@@ -331,6 +329,10 @@ This way:
 - Instantiating the policy without the extra raises a clear `ImportError` pointing at `pip install 'lerobot[diffusion]'`.
 
 Add a matching extra to [`pyproject.toml`](https://github.com/huggingface/lerobot/blob/main/pyproject.toml) `[project.optional-dependencies]` and include it in the `all` extra so `pip install 'lerobot[all]'` keeps installing everything.
+
+### Avoid copying a modeling file — subclass it
+
+If your policy needs to modify a backbone that already exists in `transformers` (custom conditioning, extra inputs, a swapped sub-module), **do not vendor a copy of its `modeling_*.py`**. Instead, subclass the smallest upstream unit and override only what changes. [`pi_gemma.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/pi_gemma.py) is the canonical reference: it injects AdaRMS conditioning into PaliGemma/Gemma in ~370 lines by subclassing `GemmaModel`/`PaliGemmaModel` and overriding the decoder-layer forward, instead of forking the ~2,000-line modeling file. Model surgery on a _loaded_ native model is also fine (layer truncation, tokenizer expansion, hidden-state capture — see `evo1/internvl3_embedder.py`, `eo1/modeling_eo1.py`, `groot/groot_n1_7.py` for working examples). Reviewers will ask for this pattern when a PR arrives with a copied modeling file; the only accepted exception is a model that does not exist in `transformers` at all.
 
 ### Benchmarks and a published checkpoint
 
@@ -367,7 +369,7 @@ If your policy is real-robot-only and no sim benchmark applies, swap the sim eva
 The general expectations are in [`CONTRIBUTING.md`](https://github.com/huggingface/lerobot/blob/main/CONTRIBUTING.md) and the [PR template](https://github.com/huggingface/lerobot/blob/main/.github/PULL_REQUEST_TEMPLATE.md). On top of those, reviewers will look for:
 
 - [ ] `MyPolicy` and `MyPolicyConfig` cover the surface above; `__init_subclass__` accepts the class.
-- [ ] `factory.py` and `policies/__init__.py` are wired (lazy imports for modeling).
+- [ ] `policies/__init__.py` re-exports the config (this registers the policy; the factory resolves modeling/processor by naming convention).
 - [ ] `make_my_policy_pre_post_processors` follows the naming convention.
 - [ ] Optional deps live behind a `[project.optional-dependencies]` extra and the `TYPE_CHECKING + require_package` guard.
 - [ ] `tests/policies/` updated; backward-compat artifact committed & policy-specific tests.
