@@ -194,6 +194,25 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
             self.gemma3.eval()
         return self
 
+    def get_optim_params(self) -> list[dict]:
+        """Optimizer param groups with per-component learning rates."""
+        vision_params = []
+        other_params = []
+
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            if name.startswith("vision_encoder"):
+                vision_params.append(param)
+            else:
+                other_params.append(param)
+
+        base_lr = self.config.get_optimizer_preset().lr
+        return [
+            {"params": other_params},
+            {"params": vision_params, "lr": base_lr * self.config.vision_encoder_lr_multiplier},
+        ]
+
     def embed_image(self, image: Tensor) -> Tensor:
         """Embed images: SigLIP2 → projection → [B, num_patches, gemma3_hidden].
 

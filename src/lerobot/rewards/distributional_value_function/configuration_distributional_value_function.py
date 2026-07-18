@@ -77,6 +77,7 @@ class DistributionalVFConfig(RewardModelConfig):
     freeze_vision_encoder: bool = False
     freeze_language_model: bool = False
     stop_gradient_to_vlm: bool = False
+    vision_encoder_lr_multiplier: float = 0.5
 
     # Normalization
     normalization_mapping: dict[str, NormalizationMode] = field(
@@ -87,16 +88,16 @@ class DistributionalVFConfig(RewardModelConfig):
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(
-            lr=3e-4,
-            weight_decay=1e-4,
+            lr=1e-4,
+            weight_decay=1e-5,
             grad_clip_norm=1.0,
         )
 
     def get_scheduler_preset(self) -> CosineDecayWithWarmupSchedulerConfig:
         return CosineDecayWithWarmupSchedulerConfig(
             num_warmup_steps=500,
-            num_decay_steps=50000,
-            peak_lr=3e-4,
+            num_decay_steps=30000,
+            peak_lr=1e-4,
             decay_lr=1e-6,
         )
 
