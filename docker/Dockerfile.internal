@@ -68,17 +68,21 @@ ENV HOME=/home/user_lerobot \
 # issues with MuJoCo and OpenGL drivers.
 RUN uv venv --python python${PYTHON_VERSION}
 
-# Install Python dependencies for caching
-COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
-COPY --chown=user_lerobot:user_lerobot src/ src/
-
-RUN uv sync --locked --extra all --no-cache
+# Install third-party dependencies in a layer whose cache key is the lockfile ONLY.
+# Because src/ is NOT copied here, editing source code no longer invalidates this
+# layer — torch + all extras stay cached across builds (huge CI speedup). Without
+# --no-install-project, uv would need src/ and the cache would bust on every commit.
+COPY --chown=user_lerobot:user_lerobot pyproject.toml uv.lock README.md ./
+RUN uv sync --locked --extra all --no-install-project --no-cache
 
 RUN chmod +x /lerobot/.venv/lib/python${PYTHON_VERSION}/site-packages/triton/backends/nvidia/bin/ptxas
 
-# Copy the rest of the application source code
+# Copy the rest of the application source code and install the local project itself.
+# Third-party deps are already present above, so this step is fast and is the only
+# one that re-runs when source changes.
 # Make sure to have the git-LFS files for testing
 COPY --chown=user_lerobot:user_lerobot . .
+RUN uv sync --locked --extra all --no-cache
 
 # Set the default command
 CMD ["/bin/bash"]
