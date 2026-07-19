@@ -189,6 +189,11 @@ class LanceDBDataset(torch.utils.data.Dataset):
         storage_options: Extra options forwarded to ``lancedb.connect`` (e.g.
             object-store credentials).
         video_decoder_cache_size: Max torchcodec decoders kept per worker.
+            Defaults to 100 for local tables (decoders hold cheap blob
+            handles, matching the upstream decoder cache) and 16 for remote
+            tables (each decoder holds the materialized video bytes). A cache
+            smaller than the dataset's video file count causes re-fetches;
+            for remote tables that means re-downloading whole files.
     """
 
     def __init__(
@@ -202,7 +207,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         revision: str | None = None,
         return_uint8: bool = False,
         storage_options: dict | None = None,
-        video_decoder_cache_size: int = 8,
+        video_decoder_cache_size: int | None = None,
     ):
         super().__init__()
         require_package("lancedb", extra="lance")
@@ -292,6 +297,8 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self._frames_perm = None
         self._videos_table = None
         self._video_row_ids: dict[tuple, int] | None = None
+        if video_decoder_cache_size is None:
+            video_decoder_cache_size = 100 if self._is_local else 16
         self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size)
 
     # ── connection management ──────────────────────────────────────────────
