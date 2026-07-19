@@ -33,6 +33,7 @@ from lerobot.datasets.lancedb_dataset import (
     VIDEOS_TABLE,
     LanceDBDataset,
     is_lance_dataset,
+    lance_mp_context,
     to_lance_column,
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -244,7 +245,7 @@ def test_train_pipeline_e2e(video_dataset_roots):
         batch_size=4,
         sampler=sampler,
         num_workers=2,
-        multiprocessing_context="spawn",
+        multiprocessing_context=lance_mp_context(),
         drop_last=True,
     )
 

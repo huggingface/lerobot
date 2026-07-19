@@ -88,6 +88,19 @@ def to_lance_column(key: str) -> str:
     return key.replace(".", "_")
 
 
+def lance_mp_context() -> str:
+    """Start method for DataLoader workers reading a Lance-backed dataset.
+
+    ``fork`` is unsafe with Lance's async runtime. ``forkserver`` is preferred
+    (workers fork from a clean helper process that never touched the runtime,
+    and start faster than with ``spawn``); ``spawn`` is the fallback on
+    platforms without it.
+    """
+    import multiprocessing
+
+    return "forkserver" if "forkserver" in multiprocessing.get_all_start_methods() else "spawn"
+
+
 @lru_cache(maxsize=32)
 def is_lance_dataset(
     repo_id: str | None = None, root: str | Path | None = None, revision: str | None = None

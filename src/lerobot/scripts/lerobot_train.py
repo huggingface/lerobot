@@ -49,7 +49,7 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import JobConfig, parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import EpisodeAwareSampler, LanceDBDataset, compute_sampler_state
+from lerobot.datasets import EpisodeAwareSampler, LanceDBDataset, compute_sampler_state, lance_mp_context
 from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.jobs import submit_to_hf
@@ -464,8 +464,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # declares language columns; otherwise stay on PyTorch's default
     # collate so non-language training runs are unaffected.
     collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
-    # Lance's runtime is not fork-safe: spawn dataloader workers for Lance-backed datasets.
-    mp_context = "spawn" if isinstance(dataset, LanceDBDataset) and cfg.num_workers > 0 else None
+    # Lance's runtime is not fork-safe: use a non-fork start method for Lance-backed datasets.
+    mp_context = lance_mp_context() if isinstance(dataset, LanceDBDataset) and cfg.num_workers > 0 else None
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=cfg.num_workers,
@@ -496,7 +496,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
         eval_collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
         eval_mp_context = (
-            "spawn" if isinstance(eval_dataset, LanceDBDataset) and cfg.num_workers > 0 else None
+            lance_mp_context() if isinstance(eval_dataset, LanceDBDataset) and cfg.num_workers > 0 else None
         )
         eval_dataloader = torch.utils.data.DataLoader(
             eval_ds,

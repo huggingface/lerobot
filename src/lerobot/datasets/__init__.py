@@ -38,7 +38,7 @@ from .dataset_tools import (
 from .factory import make_dataset, make_train_eval_datasets, resolve_delta_timestamps
 from .image_writer import safe_stop_image_writer
 from .io_utils import load_episodes, write_stats
-from .lancedb_dataset import LanceDBDataset, is_lance_dataset
+from .lancedb_dataset import LanceDBDataset, is_lance_dataset, lance_mp_context
 from .language import (
     EVENT_ONLY_STYLES,
     LANGUAGE_EVENTS,
@@ -91,6 +91,7 @@ __all__ = [
     "get_feature_stats",
     "load_episodes",
     "is_lance_dataset",
+    "lance_mp_context",
     "make_dataset",
     "make_train_eval_datasets",
     "merge_datasets",
