@@ -27,6 +27,7 @@ Uses JSON for secure serialization instead of pickle.
 import argparse
 import base64
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -115,34 +116,57 @@ def build_gripper(
 def parse_camera_specs(spec: str, default_width: int, default_height: int) -> dict[str, dict]:
     """Parse a multi-camera spec string into an ImageServer `cameras` dict.
 
-    Format: comma-separated ``name:device_id[:WxH[:FOURCC]]`` entries, e.g.
-    ``head_camera:4,left_wrist:0,right_wrist:1,ego:2``. ``device_id`` may be an
+    Format: comma-separated ``name:device[:WxH[:FOURCC]]`` entries, e.g.
+    ``head_camera:4,left_wrist:0,right_wrist:1,ego:2``. ``device`` may be an
     integer index or an explicit device path (e.g. ``/dev/video4``); the path form
     is more reliable when the bare integer index fails to open. The optional ``WxH``
     overrides the default resolution (e.g. ``left_wrist:0:640x480``). The optional
     ``FOURCC`` forces a pixel format (e.g. ``head_camera:/dev/video8:1280x720:YUYV``),
     which some cameras (e.g. RealSense color nodes) require before the resolution
     can be applied.
+
+    The device token may itself contain colons — notably stable ``by-path`` names
+    like ``/dev/v4l/by-path/platform-3610000.xhci-usb-0:2.2:1.0-video-index0``,
+    which survive USB re-enumeration/unplug (unlike bare ``/dev/videoN`` indices or
+    ``by-id`` names that collide when two cameras share a serial). The optional
+    ``WxH`` and ``FOURCC`` are therefore parsed from the *right* so the colons in
+    the device path are preserved.
     """
+    wh_re = re.compile(r"\d+x\d+", re.IGNORECASE)
+    fourcc_re = re.compile(r"[A-Za-z0-9]{4}")
+
     cameras: dict[str, dict] = {}
     for entry in spec.split(","):
         entry = entry.strip()
         if not entry:
             continue
-        parts = entry.split(":")
-        if len(parts) < 2:
-            raise ValueError(f"Invalid camera spec '{entry}', expected 'name:device_id[:WxH[:FOURCC]]'")
-        name = parts[0].strip()
-        raw_id = parts[1].strip()
+        if ":" not in entry:
+            raise ValueError(f"Invalid camera spec '{entry}', expected 'name:device[:WxH[:FOURCC]]'")
+        name, rest = entry.split(":", 1)
+        name = name.strip()
+        tokens = [t.strip() for t in rest.split(":")]
+
+        # Peel optional FOURCC then WxH off the right. FOURCC only appears after a
+        # WxH, so require that pairing to avoid mistaking a device-path segment for
+        # a pixel format. Real device-path tail segments (e.g. "1.0-video-index0")
+        # won't match these strict patterns.
+        fourcc = None
+        if (
+            len(tokens) >= 3
+            and wh_re.fullmatch(tokens[-2])
+            and fourcc_re.fullmatch(tokens[-1])
+        ):
+            fourcc = tokens.pop().upper()
+        width, height = default_width, default_height
+        if len(tokens) >= 2 and wh_re.fullmatch(tokens[-1]):
+            w, h = tokens.pop().lower().split("x")
+            width, height = int(w), int(h)
+
+        raw_id = ":".join(tokens).strip()
+        if not raw_id:
+            raise ValueError(f"Invalid camera spec '{entry}', missing device")
         # Accept either an integer index or an explicit device path (e.g. /dev/video4).
         device_id: int | str = int(raw_id) if raw_id.lstrip("-").isdigit() else raw_id
-        width, height = default_width, default_height
-        if len(parts) >= 3 and parts[2].strip():
-            wh = parts[2].lower().split("x")
-            if len(wh) != 2:
-                raise ValueError(f"Invalid resolution '{parts[2]}' in '{entry}', expected 'WxH'")
-            width, height = int(wh[0]), int(wh[1])
-        fourcc = parts[3].strip().upper() if len(parts) >= 4 and parts[3].strip() else None
         if name in cameras:
             raise ValueError(f"Duplicate camera name '{name}' in --cameras")
         cameras[name] = {"device_id": device_id, "shape": [height, width], "fourcc": fourcc}
