@@ -63,9 +63,14 @@ class PI052Config(PI05Config):
     max_action_tokens: int = 256
     """Maximum number of FAST tokens per action chunk."""
 
-    fast_skip_tokens: int = 128
-    """Number of low-vocab tokens the FAST tokenizer skips to avoid
-    collisions with PaliGemma's text vocabulary."""
+    fast_skip_tokens: int = 1152
+    """Number of top-of-vocab tokens the FAST id mapping skips.
+
+    1152 skips PaliGemma's 128 ``<seg>`` and 1024 ``<loc>`` special tokens so
+    FAST codes land in plain-text ids below 256000 and never collide with the
+    ``<loc>`` targets used for VQA. openpi's pi0-FAST convention is 128 (FAST
+    occupies the ``<loc>`` range); use 128 only to stay weight-compatible with
+    checkpoints trained that way."""
 
     fast_action_loss_weight: float = 1.0
     """Weight on FAST action-token CE relative to continuous-flow supervision."""
@@ -75,6 +80,16 @@ class PI052Config(PI05Config):
 
     Non-positive values regenerate each action chunk while still refreshing the action prompt every chunk.
     """
+
+    joint_subtask_conditioning: bool = False
+    """Condition low-level action inference on the task plus the generated subtask.
+
+    Matches paper-style joint-sequence recipes (``recipes/subtask_joint.yaml``)
+    where one sample supervises the subtask text and conditions the action
+    losses on it: the inference prefix becomes
+    ``User: {task}, State: ...;\\nAssistant: {subtask}<eos>`` with the subtask
+    span attended causally, exactly as trained. Leave ``False`` for the blend
+    recipes, whose low-level samples use ``User: {subtask}, State: ...;``."""
 
     auto_fit_fast_tokenizer: bool = False
     """Fit and cache a dataset-specific FAST tokenizer before training.

@@ -1,0 +1,13 @@
+# Paper-style joint sequence (pi0.5 §IV-B): one sample supervises the subtask
+# text with CE and, because the assistant turn is part of the prefix, conditions
+# the FAST and flow action losses on the same annotated subtask in one forward.
+# The supervised span is attended causally; the action losses see task + subtask.
+#
+# Pair with `--policy.joint_subtask_conditioning=true` at inference so the flow
+# prefix reproduces this layout (task turn with state + causal generated subtask).
+# Samples without a `subtask` annotation fall back to a plain task-prompt
+# low-level sample via `if_present`.
+
+messages:
+  - {role: user, content: "${task}", stream: low_level}
+  - {role: assistant, content: "${subtask}", stream: low_level, target: true, if_present: subtask}

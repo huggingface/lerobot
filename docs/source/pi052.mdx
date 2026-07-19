@@ -55,8 +55,19 @@ The provided recipes are:
 | Recipe                                | Required annotations                                                    | Trains                                             |
 | ------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------- |
 | `recipes/subtask.yaml`                | `subtask`                                                               | Subtask prediction and subtask-conditioned actions |
+| `recipes/subtask_joint.yaml`          | `subtask`                                                               | Paper-style joint sequence: subtask text and actions in one sample |
 | `recipes/subtask_mem.yaml`            | `subtask`, `memory`                                                     | Subtasks, actions, and memory updates              |
 | `recipes/subtask_mem_vqa_speech.yaml` | `subtask`, `memory`, `vqa`; interjection/speech rows for those branches | Subtasks, actions, memory, VQA, and spoken replies |
+
+The blend recipes factorize training into separate high-level (task → subtask)
+and low-level (subtask → actions) samples, matching how inference decomposes
+π(a|o, subtask)·π(subtask|o, task). `recipes/subtask_joint.yaml` instead uses
+the π0.5 paper's single-sequence layout — the supervised subtask span is
+attended causally and conditions the FAST and flow losses in the same forward.
+Checkpoints trained with the joint recipe must set
+`--policy.joint_subtask_conditioning=true` at inference so the flow prefix
+rebuilds the same layout (task turn with state, then the generated subtask as a
+causal assistant turn); leave it `false` for the blend recipes.
 
 Use `lerobot-annotate` to generate these columns. The repository includes a
 Hugging Face Jobs launcher that you can edit for your source and destination
@@ -117,6 +128,14 @@ the expected prompt, text target, and action endpoints before scaling up.
 | `policy.knowledge_insulation`    |                     `true` | Blocks action-loss gradients through the VLM K/V path          |
 | `policy.flow_num_repeats`        |                        `5` | Reuses one VLM prefix for independent denoising targets        |
 | `policy.lm_head_lr_scale`        |                      `1.0` | Scales language-head learning rate; `1.0` uses the base rate   |
+| `policy.fast_skip_tokens`        |                     `1152` | FAST id offset; skips `<seg>`+`<loc>` so VQA and FAST never collide |
+| `policy.joint_subtask_conditioning` |                  `false` | Rebuilds the joint-sequence prefix at inference (see recipes)  |
+
+`fast_skip_tokens=1152` places FAST codes below PaliGemma's `<loc>` range.
+openpi's pi0-FAST convention is `128` (FAST occupies the `<loc>` ids); use that
+value only to stay weight-compatible with checkpoints trained that way, and
+avoid combining it with the VQA recipe, whose `<loc>` targets would share
+embedding rows with FAST codes.
 
 The loss weights are starting points, not dataset-independent constants. Track
 flow loss and text/FAST losses separately, and inspect generated subtasks rather

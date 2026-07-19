@@ -251,6 +251,44 @@ def _format_messages(
     return "".join(parts), spans
 
 
+def encode_prompt_with_targets(
+    tokenizer: Any, messages: list[dict[str, Any]], target_indices: list[int]
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Tokenize a flat prompt and mark the token positions of target spans.
+
+    Inference-side twin of ``PI052TextTokenizerStep._encode_messages``: same
+    serialization (role headers, target EOS) and the same offset-overlap span
+    arithmetic, but unpadded and returning a boolean target mask instead of
+    labels. Used to rebuild joint-sequence prompts whose target spans must be
+    attended causally, matching ``_mark_target_span_causal`` at train time.
+
+    Returns ``(input_ids, attention_mask, target_marks)``, each ``(1, L)``.
+    """
+    prompt, spans = _format_messages(messages, target_indices, getattr(tokenizer, "eos_token", None))
+    encoded = tokenizer(prompt, return_tensors="pt", return_offsets_mapping=True)
+    input_ids = encoded["input_ids"][0]
+    attention_mask = encoded.get("attention_mask")
+    if attention_mask is None:
+        attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+    else:
+        attention_mask = attention_mask[0].bool()
+    offsets = encoded["offset_mapping"][0]
+
+    marks = torch.zeros_like(input_ids, dtype=torch.bool)
+    for idx in target_indices:
+        if idx >= len(spans):
+            continue
+        char_start, char_end = spans[idx]
+        for token_pos in range(input_ids.shape[0]):
+            if not attention_mask[token_pos]:
+                continue
+            tok_start, tok_end = int(offsets[token_pos, 0]), int(offsets[token_pos, 1])
+            if tok_end <= char_start or tok_start >= char_end:
+                continue
+            marks[token_pos] = True
+    return input_ids.unsqueeze(0), attention_mask.unsqueeze(0), marks.unsqueeze(0)
+
+
 @dataclass
 @ProcessorStepRegistry.register(name="pi052_text_tokenizer")
 class PI052TextTokenizerStep(ProcessorStep):

@@ -41,22 +41,53 @@ class PI052PolicyAdapter(BaseLanguageAdapter):
 
         subtask = state.language_context.get("subtask") or state.task or ""
         # Match the training prompt by conditioning on both subtask and discretized state.
-        content = subtask
+        state_str = None
         obs_state = observation.get(OBS_STATE)
         if isinstance(obs_state, torch.Tensor) and obs_state.numel() > 0:
             from lerobot.policies.pi052.text_processor_pi052 import discretize_state_str  # noqa: PLC0415
 
             state_row = obs_state[0] if obs_state.ndim > 1 else obs_state
-            content = f"{subtask}, State: {discretize_state_str(state_row)};"
+            state_str = discretize_state_str(state_row)
 
-        text_batch = _build_text_batch(
-            self.policy,
-            [{"role": "user", "content": content}],
-            add_generation_prompt=False,
-        )
         batch = dict(observation)
-        batch[OBS_LANGUAGE_TOKENS] = text_batch["lang_tokens"]
-        batch[OBS_LANGUAGE_ATTENTION_MASK] = text_batch["lang_masks"]
+        if getattr(self.policy.config, "joint_subtask_conditioning", False):
+            # Joint sequences keep the task turn (with state) and render the
+            # subtask as a causal assistant turn, exactly as trained.
+            from transformers import AutoTokenizer  # noqa: PLC0415
+
+            from lerobot.policies.pi052.text_processor_pi052 import (  # noqa: PLC0415
+                encode_prompt_with_targets,
+                register_paligemma_loc_tokens,
+            )
+            from lerobot.utils.constants import OBS_LANGUAGE_CAUSAL_MARKS  # noqa: PLC0415
+
+            task = state.task or ""
+            task_content = task if state_str is None else f"{task}, State: {state_str};"
+            tok_name = getattr(self.policy.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
+            tokenizer = _get_loc_tokenizer(tok_name, AutoTokenizer, register_paligemma_loc_tokens)
+            ids, attn, marks = encode_prompt_with_targets(
+                tokenizer,
+                [
+                    {"role": "user", "content": task_content},
+                    {"role": "assistant", "content": subtask},
+                ],
+                target_indices=[1],
+            )
+            device = getattr(self.policy.config, "device", None)
+            if device is not None:
+                ids, attn, marks = ids.to(device), attn.to(device), marks.to(device)
+            batch[OBS_LANGUAGE_TOKENS] = ids
+            batch[OBS_LANGUAGE_ATTENTION_MASK] = attn
+            batch[OBS_LANGUAGE_CAUSAL_MARKS] = marks
+        else:
+            content = subtask if state_str is None else f"{subtask}, State: {state_str};"
+            text_batch = _build_text_batch(
+                self.policy,
+                [{"role": "user", "content": content}],
+                add_generation_prompt=False,
+            )
+            batch[OBS_LANGUAGE_TOKENS] = text_batch["lang_tokens"]
+            batch[OBS_LANGUAGE_ATTENTION_MASK] = text_batch["lang_masks"]
         return self.policy.predict_action_chunk(batch)
 
     def generate_text(
@@ -67,6 +98,21 @@ class PI052PolicyAdapter(BaseLanguageAdapter):
         user_text: str | None = None,
     ) -> str:
         messages = self.build_messages(kind, state, user_text=user_text)
+        if kind == "subtask" and getattr(self.policy.config, "joint_subtask_conditioning", False):
+            # Joint samples carry state on the task turn, so the subtask must be
+            # generated from the same state-bearing prompt.
+            import torch  # noqa: PLC0415
+
+            from lerobot.policies.pi052.text_processor_pi052 import discretize_state_str  # noqa: PLC0415
+            from lerobot.utils.constants import OBS_STATE  # noqa: PLC0415
+
+            obs_state = (observation or {}).get(OBS_STATE)
+            if isinstance(obs_state, torch.Tensor) and obs_state.numel() > 0:
+                state_row = obs_state[0] if obs_state.ndim > 1 else obs_state
+                for m in reversed(messages):
+                    if m.get("role") == "user":
+                        m["content"] = f"{m.get('content', '')}, State: {discretize_state_str(state_row)};"
+                        break
         return _generate_with_policy(
             self.policy,
             messages,
@@ -141,7 +187,10 @@ def _build_text_batch(
     messages = [_strip_blocks(_flatten_say_tool_calls(m)) for m in prompt_messages]
     prompt, _spans = _format_messages(messages)
     if add_generation_prompt:
-        prompt = prompt + "Assistant: "
+        # No trailing space: SentencePiece folds it into the first target token
+        # ("▁move"), so a space-suffixed prefill ends in a lone "▁" the model
+        # never saw at this position during training.
+        prompt = prompt + "Assistant:"
 
     encoded = tokenizer(prompt, return_tensors="pt")
     ids = encoded["input_ids"]

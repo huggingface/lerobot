@@ -28,6 +28,7 @@ from torch.nn import functional
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
+    OBS_LANGUAGE_CAUSAL_MARKS,
     OBS_LANGUAGE_TOKENS,
     OBS_STATE,
 )
@@ -143,9 +144,42 @@ class PI05Pytorch(PI05PytorchBase):  # see openpi `PI0Pytorch`
         suffix_out = suffix_out.to(dtype=torch.float32)
         return self.action_out_proj(suffix_out)
 
+    def sample_actions(
+        self,
+        images,
+        img_masks,
+        tokens,
+        masks,
+        noise=None,
+        num_steps=None,
+        lang_causal_marks=None,
+        **kwargs,
+    ) -> Tensor:
+        """Sample actions, optionally marking trailing language positions causal.
 
-# FAST tokens occupy the high vocabulary range and must be masked during text generation.
-_FAST_ACTION_VOCAB_SIZE = 2048
+        ``lang_causal_marks`` (B, L_lang bool) flags generated-subtask tokens so
+        joint-sequence checkpoints see the same causal prefix layout at
+        inference as during training (``_mark_target_span_causal``).
+        """
+        self._lang_causal_marks = lang_causal_marks
+        try:
+            return super().sample_actions(
+                images, img_masks, tokens, masks, noise=noise, num_steps=num_steps, **kwargs
+            )
+        finally:
+            self._lang_causal_marks = None
+
+    def embed_prefix(self, images, img_masks, tokens, masks):
+        prefix_embs, prefix_pad, prefix_att = super().embed_prefix(images, img_masks, tokens, masks)
+        marks = getattr(self, "_lang_causal_marks", None)
+        if marks is not None:
+            prefix_att = _apply_causal_language_marks(prefix_att, marks.to(prefix_att.device))
+        return prefix_embs, prefix_pad, prefix_att
+
+
+# The universal `physical-intelligence/fast` tokenizer (and dataset refits of it)
+# uses 1024 BPE codes; text generation must mask any that map below the <loc> range.
+_FAST_ACTION_VOCAB_SIZE = 1024
 
 
 _HF_KERNELS_ENABLED = False
@@ -328,6 +362,17 @@ def _mark_target_span_causal(
     target = text_labels[:, :n] != -100  # (B, n) bool
     seg = att[:, lang_start : lang_start + n].bool()
     att[:, lang_start : lang_start + n] = seg | target
+    return att
+
+
+def _apply_causal_language_marks(prefix_att_masks: Tensor, marks: Tensor) -> Tensor:
+    """OR per-token causal marks into the trailing language segment of a prefix."""
+    att = prefix_att_masks.clone()
+    n = min(marks.shape[1], att.shape[1])
+    if n <= 0:
+        return att
+    seg = att[:, -n:].bool()
+    att[:, -n:] = (seg | marks[:, -n:].bool()).to(att.dtype)
     return att
 
 
@@ -1622,14 +1667,26 @@ class PI052Policy(PI05Policy):
         return decoded
 
     def _prepare_action_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
-        from .inference.pi052_adapter import _build_text_batch  # noqa: PLC0415
-        from .text_processor_pi052 import discretize_state_str  # noqa: PLC0415
+        from .inference.pi052_adapter import _build_text_batch, _get_loc_tokenizer  # noqa: PLC0415
+        from .text_processor_pi052 import (  # noqa: PLC0415
+            discretize_state_str,
+            encode_prompt_with_targets,
+            register_paligemma_loc_tokens,
+        )
 
         n = self._batch_size_from_observation(batch)
         self._ensure_subtask_state(n)
         tasks = self._tasks_from_batch(batch, n)
         # Mirror training by appending the already normalized state to low-level prompts.
         state_all = batch.get(OBS_STATE)
+
+        joint = bool(getattr(self.config, "joint_subtask_conditioning", False))
+        joint_tokenizer = None
+        if joint:
+            from transformers import AutoTokenizer  # noqa: PLC0415
+
+            tok_name = getattr(self.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
+            joint_tokenizer = _get_loc_tokenizer(tok_name, AutoTokenizer, register_paligemma_loc_tokens)
 
         # Hold subtasks for the configured interval to match training and avoid rapid replanning.
         replan = int(getattr(self.config, "subtask_replan_steps", 0) or 0)
@@ -1638,7 +1695,7 @@ class PI052Policy(PI05Policy):
         self._subtask_chunk_counter += 1
 
         # Generate and batch one independently conditioned subtask per environment.
-        rows: list[tuple[Tensor, Tensor | None]] = []
+        rows: list[tuple[Tensor, Tensor | None, Tensor | None]] = []
         tokenizer = None
         for i in range(n):
             if regenerate or not self.last_subtasks[i]:
@@ -1648,32 +1705,62 @@ class PI052Policy(PI05Policy):
                 # Hold the previously generated subtask; only the state in the
                 # prompt below is refreshed to the current observation.
                 subtask = self.last_subtasks[i]
-            content = subtask
-            if torch.is_tensor(state_all):
-                content = f"{subtask}, State: {discretize_state_str(state_all[i])};"
-            text_batch = _build_text_batch(
-                self,
-                [{"role": "user", "content": content}],
-                add_generation_prompt=False,
-            )
-            rows.append((text_batch["lang_tokens"], text_batch["lang_masks"]))
-            tokenizer = text_batch["tokenizer"]
+            state_str = discretize_state_str(state_all[i]) if torch.is_tensor(state_all) else None
+            if joint:
+                # Joint sequences keep the task turn (with state) and render the
+                # subtask as a causal assistant turn, exactly as trained.
+                task_content = tasks[i]
+                if state_str is not None:
+                    task_content = f"{task_content}, State: {state_str};"
+                ids, attn, marks = encode_prompt_with_targets(
+                    joint_tokenizer,
+                    [
+                        {"role": "user", "content": task_content},
+                        {"role": "assistant", "content": subtask},
+                    ],
+                    target_indices=[1],
+                )
+                device = getattr(self.config, "device", None)
+                if device is not None:
+                    ids, attn, marks = ids.to(device), attn.to(device), marks.to(device)
+                rows.append((ids, attn, marks))
+                tokenizer = joint_tokenizer
+            else:
+                content = subtask if state_str is None else f"{subtask}, State: {state_str};"
+                text_batch = _build_text_batch(
+                    self,
+                    [{"role": "user", "content": content}],
+                    add_generation_prompt=False,
+                )
+                rows.append((text_batch["lang_tokens"], text_batch["lang_masks"], None))
+                tokenizer = text_batch["tokenizer"]
 
-        tokens, masks = self._stack_token_rows(rows, tokenizer)
+        tokens, masks, marks = self._stack_token_rows(rows, tokenizer)
 
         out = dict(batch)
         out[OBS_LANGUAGE_TOKENS] = tokens
         out[OBS_LANGUAGE_ATTENTION_MASK] = masks
+        if marks is not None:
+            out[OBS_LANGUAGE_CAUSAL_MARKS] = marks
         return out
 
     def _generate_low_level_subtask(self, obs_i: dict[str, Tensor], task: str, i: int) -> str:
         from .inference.pi052_adapter import _generate_with_policy  # noqa: PLC0415
+        from .text_processor_pi052 import discretize_state_str  # noqa: PLC0415
 
         msg = ""
         if task:
+            content = task
+            if getattr(self.config, "joint_subtask_conditioning", False):
+                # Joint samples carry state on the task turn, so the subtask
+                # must be generated from the same state-bearing prompt.
+                state = obs_i.get(OBS_STATE)
+                if torch.is_tensor(state) and state.numel() > 0:
+                    state_row = state[0] if state.ndim > 1 else state
+                    content = f"{task}, State: {discretize_state_str(state_row)};"
             msg = _generate_with_policy(
                 self,
-                [{"role": "user", "content": task}],
+                [{"role": "user", "content": content}],
                 observation=obs_i,
                 label=f"eval subtask gen[{i}]",
                 suppress_loc_tokens=True,
@@ -1740,21 +1827,27 @@ class PI052Policy(PI05Policy):
         return out
 
     @staticmethod
-    def _stack_token_rows(rows: list[tuple[Tensor, Tensor | None]], tokenizer: Any) -> tuple[Tensor, Tensor]:
-        """Right-pad per-env ``(1, L_i)`` token/mask rows and stack to ``(n, L)``.
+    def _stack_token_rows(
+        rows: list[tuple[Tensor, Tensor | None, Tensor | None]], tokenizer: Any
+    ) -> tuple[Tensor, Tensor, Tensor | None]:
+        """Right-pad per-env ``(1, L_i)`` token/mask/marks rows and stack to ``(n, L)``.
 
         Right-padding with a False attention mask matches the training-time
         tokenizer (``padding_side="right"``), so the action expert treats pad
-        positions as masked.
+        positions as masked. Causal marks (third element, optional) pad False.
         """
-        max_len = max(t.shape[1] for t, _ in rows)
+        max_len = max(t.shape[1] for t, _, _ in rows)
         pad_id = getattr(tokenizer, "pad_token_id", None) or 0
+        has_marks = any(m is not None for _, _, m in rows)
         tok_rows: list[Tensor] = []
         mask_rows: list[Tensor] = []
-        for tokens, masks in rows:
+        marks_rows: list[Tensor] = []
+        for tokens, masks, marks in rows:
             length = tokens.shape[1]
             if masks is None:
                 masks = torch.ones((1, length), dtype=torch.bool, device=tokens.device)
+            if has_marks and marks is None:
+                marks = torch.zeros((1, length), dtype=torch.bool, device=tokens.device)
             if length < max_len:
                 pad = max_len - length
                 tokens = torch.cat(
@@ -1765,9 +1858,17 @@ class PI052Policy(PI05Policy):
                     [masks, torch.zeros((1, pad), dtype=masks.dtype, device=masks.device)],
                     dim=1,
                 )
+                if has_marks:
+                    marks = torch.cat(
+                        [marks, torch.zeros((1, pad), dtype=marks.dtype, device=marks.device)],
+                        dim=1,
+                    )
             tok_rows.append(tokens)
             mask_rows.append(masks)
-        return torch.cat(tok_rows, dim=0), torch.cat(mask_rows, dim=0)
+            if has_marks:
+                marks_rows.append(marks)
+        stacked_marks = torch.cat(marks_rows, dim=0) if has_marks else None
+        return torch.cat(tok_rows, dim=0), torch.cat(mask_rows, dim=0), stacked_marks
 
     @staticmethod
     def _fallback_subtask_from_task(task: str) -> str:
@@ -1915,4 +2016,22 @@ class PI052Policy(PI05Policy):
         if self.config.use_flashrt_fp8_mlp and not getattr(self, "_fp8_applied", False):
             self._fp8_applied = True
             self.apply_flashrt_fp8_mlp(batch)
-        return super().predict_action_chunk(batch, **kwargs)
+        marks = batch.get(OBS_LANGUAGE_CAUSAL_MARKS)
+        if marks is None:
+            return super().predict_action_chunk(batch, **kwargs)
+        return self._predict_action_chunk_with_marks(batch, marks, **kwargs)
+
+    @torch.no_grad()
+    def _predict_action_chunk_with_marks(
+        self, batch: dict[str, Tensor], marks: Tensor, **kwargs: Unpack[ActionSelectKwargs]
+    ) -> Tensor:
+        """Base ``predict_action_chunk`` plus causal marks on the generated-subtask span."""
+        self.eval()
+        images, img_masks = self._preprocess_images(batch)
+        tokens = batch[OBS_LANGUAGE_TOKENS]
+        masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
+        actions = self.model.sample_actions(
+            images, img_masks, tokens, masks, lang_causal_marks=marks, **kwargs
+        )
+        original_action_dim = self.config.output_features[ACTION].shape[0]
+        return actions[:, :, :original_action_dim]
