@@ -37,6 +37,7 @@ is downloaded locally). Set ``HF_TOKEN`` in the environment for private repos.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from collections import OrderedDict, defaultdict
@@ -96,19 +97,34 @@ def _is_remote_uri(path) -> bool:
 
 
 def _mirror_remote_meta(db_uri: str, local_root: Path) -> None:
-    """Copy ``meta/`` from an object-store dataset root to a local cache, once."""
-    if (local_root / "meta" / "info.json").exists():
+    """Copy ``meta/`` from an object-store dataset root to a local cache, once.
+
+    Downloads into a temp directory and renames it into place so an
+    interrupted mirror can never be mistaken for a complete one.
+    """
+    meta_dir = local_root / "meta"
+    if meta_dir.exists():
         return
     from pyarrow import fs as pa_fs
 
+    tmp_dir = local_root / f"meta.tmp-{os.getpid()}"
     filesystem, base = pa_fs.FileSystem.from_uri(f"{db_uri}/meta")
-    for info in filesystem.get_file_info(pa_fs.FileSelector(base, recursive=True)):
-        if info.type != pa_fs.FileType.File:
-            continue
-        dst = local_root / "meta" / info.path[len(base) :].lstrip("/")
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        with filesystem.open_input_stream(info.path) as src, open(dst, "wb") as out:
-            shutil.copyfileobj(src, out)
+    try:
+        for info in filesystem.get_file_info(pa_fs.FileSelector(base, recursive=True)):
+            if info.type != pa_fs.FileType.File:
+                continue
+            dst = tmp_dir / info.path[len(base) :].lstrip("/")
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            with filesystem.open_input_stream(info.path) as src, open(dst, "wb") as out:
+                shutil.copyfileobj(src, out)
+        try:
+            tmp_dir.rename(meta_dir)
+        except OSError:
+            if not meta_dir.exists():  # lost a race to another process is fine
+                raise
+    finally:
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def lance_mp_context() -> str:
