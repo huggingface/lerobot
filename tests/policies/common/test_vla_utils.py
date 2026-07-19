@@ -26,9 +26,11 @@ import math
 
 import pytest
 import torch
+import torch.nn.functional as F  # noqa: N812
 
 from lerobot.policies.common.vla_utils import (
     create_sinusoidal_pos_embedding,
+    fuse_action_time_embedding,
     make_att_2d_masks,
     pad_vector,
     prepare_attention_masks_4d,
@@ -193,3 +195,95 @@ def test_clone_past_key_values_is_fullgraph_compilable():
     )
     assert torch.equal(cloned_keys, original_keys)
     assert torch.equal(cloned_values, original_values)
+
+
+def _make_action_time_layers(action_dim=7, width=16, seed=0):
+    torch.manual_seed(seed)
+    return (
+        torch.nn.Linear(action_dim, width),
+        torch.nn.Linear(2 * width, width),
+        torch.nn.Linear(width, width),
+    )
+
+
+def test_fuse_action_time_embedding_matches_pi0_inline_loop():
+    # Verbatim pi0 block: time_emb cast to timestep.dtype, no gradient checkpointing.
+    in_proj, mlp_in, mlp_out = _make_action_time_layers()
+    min_period, max_period = 4e-3, 4.0
+    noisy_actions = torch.randn(3, 5, 7)
+    timestep = torch.rand(3)
+
+    time_emb = create_sinusoidal_pos_embedding(
+        timestep, in_proj.out_features, min_period=min_period, max_period=max_period, device=timestep.device
+    )
+    time_emb = time_emb.type(dtype=timestep.dtype)
+    action_emb = in_proj(noisy_actions)
+    time_emb = time_emb[:, None, :].expand_as(action_emb)
+    action_time_emb = torch.cat([action_emb, time_emb], dim=2)
+    ref = mlp_out(F.silu(mlp_in(action_time_emb)))
+
+    out = fuse_action_time_embedding(
+        noisy_actions,
+        timestep,
+        action_in_proj=in_proj,
+        action_time_mlp_in=mlp_in,
+        action_time_mlp_out=mlp_out,
+        min_period=min_period,
+        max_period=max_period,
+        time_emb_dtype=timestep.dtype,
+    )
+    assert torch.equal(out, ref)
+
+
+def test_fuse_action_time_embedding_matches_smolvla_inline_loop():
+    # Verbatim smolvla block: time_emb cast to action_emb.dtype (default), no checkpointing.
+    in_proj, mlp_in, mlp_out = _make_action_time_layers(seed=1)
+    min_period, max_period = 4e-3, 4.0
+    noisy_actions = torch.randn(2, 4, 7)
+    timestep = torch.rand(2)
+
+    action_emb = in_proj(noisy_actions)
+    dtype = action_emb.dtype
+    time_emb = create_sinusoidal_pos_embedding(
+        timestep, in_proj.out_features, min_period, max_period, device=action_emb.device
+    )
+    time_emb = time_emb.type(dtype=dtype)
+    time_emb = time_emb[:, None, :].expand_as(action_emb)
+    action_time_emb = torch.cat([action_emb, time_emb], dim=2)
+    action_time_emb = mlp_in(action_time_emb)
+    action_time_emb = F.silu(action_time_emb)
+    ref = mlp_out(action_time_emb)
+
+    out = fuse_action_time_embedding(
+        noisy_actions,
+        timestep,
+        action_in_proj=in_proj,
+        action_time_mlp_in=mlp_in,
+        action_time_mlp_out=mlp_out,
+        min_period=min_period,
+        max_period=max_period,
+    )
+    assert torch.equal(out, ref)
+
+
+def test_fuse_action_time_embedding_apply_hook_is_invoked():
+    # The apply hook (gradient-checkpoint wrapper in pi0/eo1) must wrap both sub-steps.
+    in_proj, mlp_in, mlp_out = _make_action_time_layers(seed=2)
+    calls = []
+
+    def apply(fn, arg):
+        calls.append(fn)
+        return fn(arg)
+
+    out = fuse_action_time_embedding(
+        torch.randn(2, 4, 7),
+        torch.rand(2),
+        action_in_proj=in_proj,
+        action_time_mlp_in=mlp_in,
+        action_time_mlp_out=mlp_out,
+        min_period=4e-3,
+        max_period=4.0,
+        apply=apply,
+    )
+    assert len(calls) == 2
+    assert out.shape == (2, 4, 16)
