@@ -74,7 +74,12 @@ def main() -> None:
         default=STATE_PORT,
         help="ZMQ PUB port for observation.state feedback (29 joint .q) to the inference client",
     )
-    p.add_argument("--state-fps", type=float, default=60.0, help="observation.state publish rate (Hz)")
+    p.add_argument(
+        "--state-fps",
+        type=float,
+        default=30.0,
+        help="observation.state publish rate (Hz); set <=0 to disable the state PUB entirely",
+    )
     p.add_argument(
         "--gravity-compensation",
         action="store_true",
@@ -152,36 +157,41 @@ def main() -> None:
     sock.bind(f"tcp://0.0.0.0:{args.action_port}")
     logger.info("Onboard controller live. Waiting for laptop actions on :%d ...", args.action_port)
 
-    # Proprioception feedback: publish observation.state (29 joint .q) so the
-    # laptop-side inference client can feed it to the policy. DDS stays local to
-    # the robot; only this compact JSON state crosses the network (like the
-    # camera/action ZMQ channels).
-    state_sock = ctx.socket(zmq.PUB)
-    state_sock.setsockopt(zmq.SNDHWM, 2)
-    state_sock.setsockopt(zmq.LINGER, 0)
-    state_sock.bind(f"tcp://0.0.0.0:{args.state_port}")
-    logger.info("Publishing observation.state on :%d at %.0f Hz", args.state_port, args.state_fps)
-
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
 
-    def publish_state() -> None:
-        period = 1.0 / args.state_fps if args.state_fps > 0 else 0.0
-        joint_names = [j.name for j in G1_29_JointIndex]
-        while not stop.is_set():
-            t0 = time.time()
-            obs = robot.get_observation()
-            if obs:
-                state = {f"{name}.q": float(obs.get(f"{name}.q", 0.0)) for name in joint_names}
-                try:
-                    state_sock.send_json(state, zmq.NOBLOCK)
-                except zmq.Again:
-                    pass
-            if period:
+    # Proprioception feedback: publish observation.state (29 joint .q) so the
+    # laptop-side inference client can feed it to the policy. DDS stays local to
+    # the robot; only this compact JSON state crosses the network (like the
+    # camera/action ZMQ channels). get_observation() here reads only DDS lowstate
+    # (the robot is built with cameras={}), so it never touches the USB cameras.
+    # Disable with --state-fps <=0 (e.g. to reproduce the plain-teleop setup).
+    state_sock = None
+    if args.state_fps > 0:
+        state_sock = ctx.socket(zmq.PUB)
+        state_sock.setsockopt(zmq.SNDHWM, 2)
+        state_sock.setsockopt(zmq.LINGER, 0)
+        state_sock.bind(f"tcp://0.0.0.0:{args.state_port}")
+        logger.info("Publishing observation.state on :%d at %.0f Hz", args.state_port, args.state_fps)
+
+        def publish_state() -> None:
+            period = 1.0 / args.state_fps
+            joint_names = [j.name for j in G1_29_JointIndex]
+            while not stop.is_set():
+                t0 = time.time()
+                obs = robot.get_observation()
+                if obs:
+                    state = {f"{name}.q": float(obs.get(f"{name}.q", 0.0)) for name in joint_names}
+                    try:
+                        state_sock.send_json(state, zmq.NOBLOCK)
+                    except zmq.Again:
+                        pass
                 time.sleep(max(0.0, period - (time.time() - t0)))
 
-    threading.Thread(target=publish_state, daemon=True).start()
+        threading.Thread(target=publish_state, daemon=True).start()
+    else:
+        logger.info("observation.state PUB disabled (--state-fps<=0); inference client will get no proprio")
 
     n = 0
     try:
@@ -234,10 +244,11 @@ def main() -> None:
     finally:
         logger.info("Shutting down onboard controller...")
         stop.set()
-        try:
-            state_sock.close(linger=0)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("State socket close failed: %s", e)
+        if state_sock is not None:
+            try:
+                state_sock.close(linger=0)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("State socket close failed: %s", e)
         if camera_server is not None:
             try:
                 camera_server.stop()
