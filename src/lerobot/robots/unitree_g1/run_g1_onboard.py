@@ -31,6 +31,12 @@ on a ZMQ PUB port so the laptop policy client has proprioception, and applies ab
 height / torso orientation from the action dict (``groot.height`` / ``groot.rpy.*``) onto the
 controller (the joystick interface can only nudge height, not set it absolutely).
 
+Safety: an ``{"halt": true}`` action (sent by the laptop client on Ctrl-C) engages an instant
+safe-hold — zero locomotion velocity and arms frozen at their current pose, with no soft-stop
+ramp. A watchdog does the same automatically if no action arrives within ``ACTION_TIMEOUT_S``
+(so a client crash or network drop also stops the robot). The robot stays standing/balanced;
+Ctrl-C this process to fully power down.
+
 Examples (on the robot):
 
     python -m lerobot.robots.unitree_g1.run_g1_onboard --controller GrootLocomotionController
@@ -52,7 +58,7 @@ import zmq
 
 from lerobot.cameras.zmq.image_server import ImageServer
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
-from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
+from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex, G1_29_JointIndex
 from lerobot.robots.unitree_g1.run_g1_server import Gripper, build_gripper, parse_camera_specs
 from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
 
@@ -61,6 +67,28 @@ logger = logging.getLogger("g1_onboard")
 
 ACTION_PORT = 6004
 STATE_PORT = 6005
+
+# E-stop watchdog: if no fresh laptop action arrives within this window (Ctrl-C on
+# the client, a crash, or a network drop), engage a safe-hold so the robot never
+# keeps coasting on a stale velocity command.
+ACTION_TIMEOUT_S = 0.4
+
+
+def _safe_hold_cmd(robot: UnitreeG1) -> dict:
+    """Instant e-stop action: zero locomotion velocity + freeze arms in place.
+
+    Zeroing ``remote.*`` stops the GRoot controller from walking (it keeps the
+    robot balanced and standing), and echoing each arm joint's *current measured*
+    position back as its target holds the arms exactly where they are instead of
+    coasting toward a stale target or snapping to default.
+    """
+    cmd: dict[str, float] = {"remote.lx": 0.0, "remote.ly": 0.0, "remote.rx": 0.0, "remote.ry": 0.0}
+    obs = robot.get_observation() or {}
+    for joint in G1_29_JointArmIndex:
+        key = f"{joint.name}.q"
+        if key in obs:
+            cmd[key] = float(obs[key])
+    return cmd
 
 
 def main() -> None:
@@ -153,7 +181,7 @@ def main() -> None:
     ctx = zmq.Context.instance()
     sock = ctx.socket(zmq.PULL)
     sock.setsockopt(zmq.CONFLATE, 1)  # only ever act on the freshest command
-    sock.setsockopt(zmq.RCVTIMEO, 1000)
+    sock.setsockopt(zmq.RCVTIMEO, 200)  # short, so the e-stop watchdog stays responsive
     sock.bind(f"tcp://0.0.0.0:{args.action_port}")
     logger.info("Onboard controller live. Waiting for laptop actions on :%d ...", args.action_port)
 
@@ -194,11 +222,24 @@ def main() -> None:
         logger.info("observation.state PUB disabled (--state-fps<=0); inference client will get no proprio")
 
     n = 0
+    last_action_ts = time.time()
+    halted = False
     try:
         while not stop.is_set():
             try:
                 payload = sock.recv()
             except zmq.Again:
+                # E-stop watchdog: laptop went quiet (Ctrl-C, crash, or network
+                # drop). Engage a safe-hold once so the robot doesn't keep coasting
+                # on the last velocity command.
+                if not halted and (time.time() - last_action_ts) > ACTION_TIMEOUT_S:
+                    robot.send_action(_safe_hold_cmd(robot))
+                    halted = True
+                    logger.warning(
+                        "No actions for >%.2fs — safe-hold engaged (zero velocity, arms frozen). "
+                        "Ctrl-C this process to fully shut down.",
+                        ACTION_TIMEOUT_S,
+                    )
                 continue
             except zmq.ContextTerminated:
                 break
@@ -208,6 +249,19 @@ def main() -> None:
             except (ValueError, UnicodeDecodeError) as e:
                 logger.warning("Dropping malformed action: %s", e)
                 continue
+
+            # Explicit e-stop from the laptop (Ctrl-C on the client): stop NOW,
+            # without the slow soft-stop ramp.
+            if action.get("halt"):
+                robot.send_action(_safe_hold_cmd(robot))
+                last_action_ts = time.time()
+                if not halted:
+                    halted = True
+                    logger.warning("HALT received from laptop — safe-hold engaged (zero velocity, arms frozen).")
+                continue
+
+            last_action_ts = time.time()
+            halted = False
 
             robot.send_action(action)
 
