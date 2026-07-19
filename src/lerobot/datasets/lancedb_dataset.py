@@ -39,6 +39,7 @@ from __future__ import annotations
 
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
 
@@ -417,13 +418,18 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in missing]
             )
             for key, blob_file in zip(missing, blob_files, strict=True):
-                decoder = VideoDecoder(blob_file)
+                # approximate seek mode skips the full-file scan that exact
+                # mode performs on decoder creation, which is expensive
+                # through the blob I/O bridge on large files.
+                decoder = VideoDecoder(blob_file, seek_mode="approximate")
                 decoders[key] = decoder
                 self._decoder_cache.put(key, decoder)
 
         results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
-        for (key, _chunk, _file), file_requests in requests.items():
-            decoder = decoders[(key, _chunk, _file)]
+
+        def _decode_file(file_key: tuple, file_requests: list[tuple[int, list[float]]]) -> None:
+            key, chunk_idx, file_idx = file_key
+            decoder = decoders[file_key]
             fps = decoder.metadata.average_fps
             wanted = sorted({round(ts * fps) for _, shifted_ts in file_requests for ts in shifted_ts})
             frame_pos = {frame_idx: pos for pos, frame_idx in enumerate(wanted)}
@@ -435,13 +441,24 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 if (distance >= self.tolerance_s).any():
                     raise FrameTimestampError(
                         f"Query timestamps violate tolerance_s={self.tolerance_s} for video "
-                        f"'{key}' (chunk {_chunk}, file {_file}): queried {shifted_ts}, "
+                        f"'{key}' (chunk {chunk_idx}, file {file_idx}): queried {shifted_ts}, "
                         f"loaded {loaded_ts.tolist()}."
                     )
                 frames = batch.data[positions]
                 if not self.return_uint8:
                     frames = (frames / 255.0).type(torch.float32)
                 results[sample_idx][key] = frames.squeeze(0)
+
+        # Decode files in parallel (decoding releases the GIL), mirroring the
+        # per-camera thread pool in DatasetReader._query_videos.
+        if len(requests) <= 1:
+            for file_key, file_requests in requests.items():
+                _decode_file(file_key, file_requests)
+        else:
+            with ThreadPoolExecutor(max_workers=len(requests)) as pool:
+                futures = [pool.submit(_decode_file, k, r) for k, r in requests.items()]
+                for future in futures:
+                    future.result()
         return results
 
     def _build_item(self, plan: dict, columns: dict[str, np.ndarray], row_pos: dict[int, int]) -> dict:
