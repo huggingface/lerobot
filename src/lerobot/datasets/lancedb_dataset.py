@@ -64,27 +64,37 @@ VIDEO_BLOB_COLUMN = "video_bytes"
 class _VideoDecoderLRU:
     """Per-worker LRU of torchcodec decoders keyed by (video_key, chunk, file).
 
-    Each decoder holds a seekable ``BlobFile`` over the video's bytes in the
-    Lance table, so evicting the least-recently-used entry also releases its
-    blob handle. Capacity bounds worker RAM on datasets with many video files.
+    Local decoders hold cheap seekable ``BlobFile`` handles (``nbytes=0``).
+    Remote decoders hold the materialized video bytes, so eviction is also
+    bounded by ``byte_budget`` — with large video files a pure entry-count
+    cap would let per-worker RAM grow to ``capacity x file_size``.
     """
 
-    def __init__(self, capacity: int):
+    def __init__(self, capacity: int, byte_budget: int | None = None):
         self.capacity = capacity
-        self._items: OrderedDict[tuple, object] = OrderedDict()
+        self.byte_budget = byte_budget
+        self._items: OrderedDict[tuple, tuple[object, int]] = OrderedDict()
+        self._total_bytes = 0
 
     def __contains__(self, key: tuple) -> bool:
         return key in self._items
 
     def get(self, key: tuple):
         self._items.move_to_end(key)
-        return self._items[key]
+        return self._items[key][0]
 
-    def put(self, key: tuple, decoder) -> None:
-        self._items[key] = decoder
+    def put(self, key: tuple, decoder, nbytes: int = 0) -> None:
+        if key in self._items:
+            self._total_bytes -= self._items[key][1]
+        self._items[key] = (decoder, nbytes)
         self._items.move_to_end(key)
-        while len(self._items) > self.capacity:
-            self._items.popitem(last=False)
+        self._total_bytes += nbytes
+        while len(self._items) > 1 and (
+            len(self._items) > self.capacity
+            or (self.byte_budget is not None and self._total_bytes > self.byte_budget)
+        ):
+            _, (_, evicted_bytes) = self._items.popitem(last=False)
+            self._total_bytes -= evicted_bytes
 
 
 def to_lance_column(key: str) -> str:
@@ -320,7 +330,10 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self._video_row_ids: dict[tuple, int] | None = None
         if video_decoder_cache_size is None:
             video_decoder_cache_size = 100 if self._is_local else 16
-        self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size)
+        # Remote decoders hold materialized video bytes: cap them at 2 GiB per
+        # worker so large-file datasets can't multiply into an OOM.
+        byte_budget = None if self._is_local else 2 << 30
+        self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size, byte_budget=byte_budget)
 
     # ── connection management ──────────────────────────────────────────────
 
@@ -360,7 +373,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
         state["_frames_perm"] = None
         state["_videos_table"] = None
         state["_video_row_ids"] = None
-        state["_decoder_cache"] = _VideoDecoderLRU(self._decoder_cache.capacity)
+        state["_decoder_cache"] = _VideoDecoderLRU(
+            self._decoder_cache.capacity, byte_budget=self._decoder_cache.byte_budget
+        )
         return state
 
     # ── dataset protocol ───────────────────────────────────────────────────
@@ -490,7 +505,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 # mode performs on decoder creation.
                 decoder = VideoDecoder(source, seek_mode="approximate")
                 decoders[key] = decoder
-                self._decoder_cache.put(key, decoder)
+                self._decoder_cache.put(key, decoder, nbytes=0 if self._is_local else len(source))
 
         results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
 
