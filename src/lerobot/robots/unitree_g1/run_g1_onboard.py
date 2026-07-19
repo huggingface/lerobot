@@ -211,6 +211,17 @@ def main() -> None:
                 obs = robot.get_observation()
                 if obs:
                     state = {f"{name}.q": float(obs.get(f"{name}.q", 0.0)) for name in joint_names}
+                    # Also publish the controller's *commanded* base height / torso
+                    # orientation. These live only on the robot (the joystick nudges
+                    # them here), so the laptop recorder needs them to reconstruct the
+                    # policy's absolute height/rpy action channels.
+                    if robot.controller is not None:
+                        state["groot.height"] = float(getattr(robot.controller, "groot_height_cmd", 0.0))
+                        orient = getattr(robot.controller, "groot_orientation_cmd", None)
+                        if orient is not None:
+                            state["groot.rpy.roll"] = float(orient[0])
+                            state["groot.rpy.pitch"] = float(orient[1])
+                            state["groot.rpy.yaw"] = float(orient[2])
                     try:
                         state_sock.send_json(state, zmq.NOBLOCK)
                     except zmq.Again:
