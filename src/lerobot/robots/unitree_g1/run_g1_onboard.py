@@ -22,8 +22,14 @@ action (arm joint targets + joystick axes + gripper flags) as JSON over ZMQ. Thi
 applies each action via ``UnitreeG1.send_action`` while the onboard controller thread
 keeps the legs balanced.
 
-Pair with ``run_g1_teleop_client.py`` on the laptop. Grippers (exo L3/R3) are driven
-directly over CAN here when ``--grippers`` is passed; cameras stay in ``run_g1_server.py``.
+Pair with ``run_g1_teleop_client.py`` (exo teleop) or ``infer_pi05_g1_onboard.py`` (policy
+eval) on the laptop. Grippers (exo L3/R3 or policy flags) are driven directly over CAN here
+when ``--grippers`` is passed; cameras are served over ZMQ when ``--cameras`` is passed.
+
+Besides receiving actions, this process also publishes ``observation.state`` (29 joint ``.q``)
+on a ZMQ PUB port so the laptop policy client has proprioception, and applies absolute base
+height / torso orientation from the action dict (``groot.height`` / ``groot.rpy.*``) onto the
+controller (the joystick interface can only nudge height, not set it absolutely).
 
 Examples (on the robot):
 
@@ -39,11 +45,14 @@ import json
 import logging
 import signal
 import threading
+import time
 
+import numpy as np
 import zmq
 
 from lerobot.cameras.zmq.image_server import ImageServer
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
+from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
 from lerobot.robots.unitree_g1.run_g1_server import Gripper, build_gripper, parse_camera_specs
 from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
 
@@ -51,6 +60,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("g1_onboard")
 
 ACTION_PORT = 6004
+STATE_PORT = 6005
 
 
 def main() -> None:
@@ -58,6 +68,13 @@ def main() -> None:
     p.add_argument("--controller", default="GrootLocomotionController", help="Locomotion controller class")
     p.add_argument("--dds-interface", default=None, help="DDS network interface (default: SDK default)")
     p.add_argument("--action-port", type=int, default=ACTION_PORT, help="ZMQ port for laptop actions")
+    p.add_argument(
+        "--state-port",
+        type=int,
+        default=STATE_PORT,
+        help="ZMQ PUB port for observation.state feedback (29 joint .q) to the inference client",
+    )
+    p.add_argument("--state-fps", type=float, default=60.0, help="observation.state publish rate (Hz)")
     p.add_argument(
         "--gravity-compensation",
         action="store_true",
@@ -135,9 +152,36 @@ def main() -> None:
     sock.bind(f"tcp://0.0.0.0:{args.action_port}")
     logger.info("Onboard controller live. Waiting for laptop actions on :%d ...", args.action_port)
 
+    # Proprioception feedback: publish observation.state (29 joint .q) so the
+    # laptop-side inference client can feed it to the policy. DDS stays local to
+    # the robot; only this compact JSON state crosses the network (like the
+    # camera/action ZMQ channels).
+    state_sock = ctx.socket(zmq.PUB)
+    state_sock.setsockopt(zmq.SNDHWM, 2)
+    state_sock.setsockopt(zmq.LINGER, 0)
+    state_sock.bind(f"tcp://0.0.0.0:{args.state_port}")
+    logger.info("Publishing observation.state on :%d at %.0f Hz", args.state_port, args.state_fps)
+
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
+
+    def publish_state() -> None:
+        period = 1.0 / args.state_fps if args.state_fps > 0 else 0.0
+        joint_names = [j.name for j in G1_29_JointIndex]
+        while not stop.is_set():
+            t0 = time.time()
+            obs = robot.get_observation()
+            if obs:
+                state = {f"{name}.q": float(obs.get(f"{name}.q", 0.0)) for name in joint_names}
+                try:
+                    state_sock.send_json(state, zmq.NOBLOCK)
+                except zmq.Again:
+                    pass
+            if period:
+                time.sleep(max(0.0, period - (time.time() - t0)))
+
+    threading.Thread(target=publish_state, daemon=True).start()
 
     n = 0
     try:
@@ -157,6 +201,21 @@ def main() -> None:
 
             robot.send_action(action)
 
+            # Absolute base height / torso orientation from the policy (not
+            # expressible via the joystick interface, so set on the controller
+            # directly). Teleop omits these keys, so this is a no-op there.
+            if robot.controller is not None:
+                height = action.get("groot.height")
+                if height is not None:
+                    robot.controller.groot_height_cmd = float(height)
+                roll = action.get("groot.rpy.roll")
+                pitch = action.get("groot.rpy.pitch")
+                yaw = action.get("groot.rpy.yaw")
+                if None not in (roll, pitch, yaw):
+                    robot.controller.groot_orientation_cmd = np.array(
+                        [float(roll), float(pitch), float(yaw)], dtype=np.float32
+                    )
+
             if grippers:
                 # L3 = remote.button.4 -> left, R3 = remote.button.0 -> right.
                 if "L" in grippers and "remote.button.4" in action:
@@ -174,6 +233,11 @@ def main() -> None:
                 logger.info("Applied %d actions | axes=%s buttons=%s", n, axes, btn)
     finally:
         logger.info("Shutting down onboard controller...")
+        stop.set()
+        try:
+            state_sock.close(linger=0)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("State socket close failed: %s", e)
         if camera_server is not None:
             try:
                 camera_server.stop()
