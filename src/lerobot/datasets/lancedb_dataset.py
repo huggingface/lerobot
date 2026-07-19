@@ -37,6 +37,8 @@ is downloaded locally). Set ``HF_TOKEN`` in the environment for private repos.
 
 from __future__ import annotations
 
+from collections import OrderedDict, defaultdict
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -47,9 +49,37 @@ from lerobot.utils.import_utils import require_package
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .feature_utils import check_delta_timestamps, get_delta_indices
+from .video_utils import FrameTimestampError
 
 FRAMES_TABLE = "frames"
 VIDEOS_TABLE = "videos"
+VIDEO_BLOB_COLUMN = "video_bytes"
+
+
+class _VideoDecoderLRU:
+    """Per-worker LRU of torchcodec decoders keyed by (video_key, chunk, file).
+
+    Each decoder holds a seekable ``BlobFile`` over the video's bytes in the
+    Lance table, so evicting the least-recently-used entry also releases its
+    blob handle. Capacity bounds worker RAM on datasets with many video files.
+    """
+
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self._items: OrderedDict[tuple, object] = OrderedDict()
+
+    def __contains__(self, key: tuple) -> bool:
+        return key in self._items
+
+    def get(self, key: tuple):
+        self._items.move_to_end(key)
+        return self._items[key]
+
+    def put(self, key: tuple, decoder) -> None:
+        self._items[key] = decoder
+        self._items.move_to_end(key)
+        while len(self._items) > self.capacity:
+            self._items.popitem(last=False)
 
 
 def to_lance_column(key: str) -> str:
@@ -75,13 +105,18 @@ class LanceDBDataset(torch.utils.data.Dataset):
             When both ``repo_id`` and ``root`` are given, local tables win if
             present.
         episodes: Optional episode indices to select. ``None`` means all.
+        image_transforms: Optional torchvision v2 transform applied to camera
+            frames.
         delta_timestamps: Optional mapping of feature key to relative timestamp
             offsets (seconds) for temporal context windows, as in
             :class:`LeRobotDataset`.
         tolerance_s: Timestamp synchronization tolerance in seconds.
         revision: Hub revision for the ``meta/`` download.
+        return_uint8: If True, return RGB frames as raw uint8 tensors instead
+            of normalized float32.
         storage_options: Extra options forwarded to ``lancedb.connect`` (e.g.
             object-store credentials).
+        video_decoder_cache_size: Max torchcodec decoders kept per worker.
     """
 
     def __init__(
@@ -89,10 +124,13 @@ class LanceDBDataset(torch.utils.data.Dataset):
         repo_id: str | None = None,
         root: str | Path | None = None,
         episodes: list[int] | None = None,
+        image_transforms: Callable | None = None,
         delta_timestamps: dict[str, list[float]] | None = None,
         tolerance_s: float = 1e-4,
         revision: str | None = None,
+        return_uint8: bool = False,
         storage_options: dict | None = None,
+        video_decoder_cache_size: int = 8,
     ):
         super().__init__()
         require_package("lancedb", extra="lance")
@@ -115,8 +153,12 @@ class LanceDBDataset(torch.utils.data.Dataset):
         else:
             raise FileNotFoundError(f"No '{FRAMES_TABLE}.lance' table under {self.root}.")
 
-        if self.meta.video_keys:
-            raise NotImplementedError("Video decoding is not implemented yet (stage 3).")
+        if self.meta.depth_keys:
+            raise NotImplementedError("Depth features are not supported by LanceDBDataset yet.")
+        if image_transforms is not None and not callable(image_transforms):
+            raise TypeError("image_transforms must be callable or None.")
+        self.image_transforms = image_transforms
+        self.return_uint8 = return_uint8
 
         self.episodes = sorted(episodes) if episodes is not None else None
         self.delta_indices = None
@@ -154,8 +196,23 @@ class LanceDBDataset(torch.utils.data.Dataset):
             key: tuple(self.meta.features[key].get("shape") or ()) for key in self._tabular_keys
         }
 
+        # Per-episode video file location: which (chunk, file) mp4 holds each
+        # episode and where the episode starts inside it (episodes share files
+        # in v3.0, so frame timestamps must be shifted by from_timestamp).
+        self._video_locator = {
+            key: (
+                np.asarray(self.meta.episodes[f"videos/{key}/chunk_index"], dtype=np.int64),
+                np.asarray(self.meta.episodes[f"videos/{key}/file_index"], dtype=np.int64),
+                np.asarray(self.meta.episodes[f"videos/{key}/from_timestamp"], dtype=np.float64),
+            )
+            for key in self.meta.video_keys
+        }
+
         # Lazily opened per process; see __getstate__.
         self._frames_perm = None
+        self._videos_table = None
+        self._video_row_ids: dict[tuple, int] | None = None
+        self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size)
 
     # ── connection management ──────────────────────────────────────────────
 
@@ -177,10 +234,25 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self._frames_perm = (
             Permutation.identity(table).select_columns(self._fetch_columns).with_format("arrow")
         )
+        if self.meta.video_keys:
+            self._videos_table = db.open_table(VIDEOS_TABLE)
+            index = (
+                self._videos_table.search()
+                .select(["video_key", "chunk_index", "file_index"])
+                .with_row_id(True)
+                .to_arrow()
+            )
+            self._video_row_ids = {
+                (row["video_key"], row["chunk_index"], row["file_index"]): row["_rowid"]
+                for row in index.to_pylist()
+            }
 
     def __getstate__(self) -> dict:
         state = self.__dict__.copy()
         state["_frames_perm"] = None
+        state["_videos_table"] = None
+        state["_video_row_ids"] = None
+        state["_decoder_cache"] = _VideoDecoderLRU(self._decoder_cache.capacity)
         return state
 
     # ── dataset protocol ───────────────────────────────────────────────────
@@ -212,13 +284,22 @@ class LanceDBDataset(torch.utils.data.Dataset):
         return self.__getitems__([idx])[0]
 
     def __getitems__(self, indices: list[int]) -> list[dict]:
-        """Batched fetch: one deduplicated frames-table read for the whole batch."""
+        """Batched fetch: one deduplicated frames-table read and one blob fetch per batch."""
         self._ensure_open()
         plans = self._plan_batch(indices)
         rows = sorted({row for plan in plans for row in plan["rows"]})
         row_pos = {row: pos for pos, row in enumerate(rows)}
         columns = self._fetch_rows(rows)
-        return [self._build_item(plan, columns, row_pos) for plan in plans]
+        items = [self._build_item(plan, columns, row_pos) for plan in plans]
+
+        if self.meta.video_keys:
+            for item, frames in zip(items, self._decode_videos(plans, columns, row_pos), strict=True):
+                item.update(frames)
+        if self.image_transforms is not None:
+            for item in items:
+                for cam_key in self.meta.camera_keys:
+                    item[cam_key] = self.image_transforms(item[cam_key])
+        return items
 
     # ── internals ──────────────────────────────────────────────────────────
 
@@ -229,7 +310,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
             abs_idx = int(self._rel_to_abs[idx]) if self._rel_to_abs is not None else int(idx)
             ep_idx = int(np.searchsorted(self._ep_from, abs_idx, side="right") - 1)
             start, end = int(self._ep_from[ep_idx]), int(self._ep_to[ep_idx])
-            plan = {"abs_idx": abs_idx, "rows": {abs_idx}, "windows": {}, "padding": {}}
+            plan = {"abs_idx": abs_idx, "ep_idx": ep_idx, "rows": {abs_idx}, "windows": {}, "padding": {}}
             if self.delta_indices is not None:
                 for key, deltas in self.delta_indices.items():
                     window = [min(max(abs_idx + delta, start), end - 1) for delta in deltas]
@@ -258,6 +339,66 @@ class LanceDBDataset(torch.utils.data.Dataset):
             else:
                 columns[key] = array.to_numpy(zero_copy_only=False)
         return columns
+
+    def _decode_videos(
+        self, plans: list[dict], columns: dict[str, np.ndarray], row_pos: dict[int, int]
+    ) -> list[dict[str, torch.Tensor]]:
+        """Decode all camera frames a batch needs, one blob fetch and one decode pass per video file.
+
+        Requested frames are grouped by the mp4 file that contains them; files
+        missing from the decoder cache are fetched with a single
+        ``fetch_blob_files`` call, and each decoder serves every frame the batch
+        needs from its file in one ``get_frames_at`` call.
+        """
+        timestamps = columns["timestamp"]
+        requests: dict[tuple, list[tuple[int, list[float]]]] = defaultdict(list)
+        for sample_idx, plan in enumerate(plans):
+            ep_idx = plan["ep_idx"]
+            for key in self.meta.video_keys:
+                window = plan["windows"].get(key, [plan["abs_idx"]])
+                chunk_arr, file_arr, from_ts_arr = self._video_locator[key]
+                shifted_ts = [float(from_ts_arr[ep_idx]) + float(timestamps[row_pos[row]]) for row in window]
+                requests[(key, int(chunk_arr[ep_idx]), int(file_arr[ep_idx]))].append(
+                    (sample_idx, shifted_ts)
+                )
+
+        # Fetch all missing video files in one call. Local references keep
+        # this batch's decoders alive even if the LRU evicts them.
+        from torchcodec.decoders import VideoDecoder
+
+        decoders = {key: self._decoder_cache.get(key) for key in requests if key in self._decoder_cache}
+        missing = [key for key in requests if key not in decoders]
+        if missing:
+            blob_files = self._videos_table.fetch_blob_files(
+                VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in missing]
+            )
+            for key, blob_file in zip(missing, blob_files, strict=True):
+                decoder = VideoDecoder(blob_file)
+                decoders[key] = decoder
+                self._decoder_cache.put(key, decoder)
+
+        results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
+        for (key, _chunk, _file), file_requests in requests.items():
+            decoder = decoders[(key, _chunk, _file)]
+            fps = decoder.metadata.average_fps
+            wanted = sorted({round(ts * fps) for _, shifted_ts in file_requests for ts in shifted_ts})
+            frame_pos = {frame_idx: pos for pos, frame_idx in enumerate(wanted)}
+            batch = decoder.get_frames_at(indices=wanted)
+            for sample_idx, shifted_ts in file_requests:
+                positions = [frame_pos[round(ts * fps)] for ts in shifted_ts]
+                loaded_ts = batch.pts_seconds[positions]
+                distance = (torch.tensor(shifted_ts) - loaded_ts).abs()
+                if (distance >= self.tolerance_s).any():
+                    raise FrameTimestampError(
+                        f"Query timestamps violate tolerance_s={self.tolerance_s} for video "
+                        f"'{key}' (chunk {_chunk}, file {_file}): queried {shifted_ts}, "
+                        f"loaded {loaded_ts.tolist()}."
+                    )
+                frames = batch.data[positions]
+                if not self.return_uint8:
+                    frames = (frames / 255.0).type(torch.float32)
+                results[sample_idx][key] = frames.squeeze(0)
+        return results
 
     def _build_item(self, plan: dict, columns: dict[str, np.ndarray], row_pos: dict[int, int]) -> dict:
         base = row_pos[plan["abs_idx"]]
