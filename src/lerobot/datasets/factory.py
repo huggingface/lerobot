@@ -26,6 +26,7 @@ from lerobot.transforms import ImageTransforms
 from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_PREFIX, REWARD
 
 from .dataset_metadata import LeRobotDatasetMetadata
+from .lancedb_dataset import LanceDBDataset, is_lance_dataset
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .streaming_dataset import StreamingLeRobotDataset
@@ -66,7 +67,46 @@ def resolve_delta_timestamps(
     return delta_timestamps
 
 
-def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
+def _make_map_dataset(
+    cfg: TrainPipelineConfig,
+    episodes: list[int] | None,
+    delta_timestamps: dict[str, list] | None,
+    image_transforms,
+    depth_output_unit: str | None = None,
+) -> LeRobotDataset | LanceDBDataset:
+    """Instantiate a map-style dataset, auto-detecting the on-disk/Hub format.
+
+    Datasets stored in the Lance layout (a ``frames.lance`` table next to the
+    standard ``meta/`` directory) load through :class:`LanceDBDataset`;
+    everything else through :class:`LeRobotDataset`.
+    """
+    if is_lance_dataset(cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision):
+        return LanceDBDataset(
+            cfg.dataset.repo_id,
+            root=cfg.dataset.root,
+            episodes=episodes,
+            delta_timestamps=delta_timestamps,
+            image_transforms=image_transforms,
+            revision=cfg.dataset.revision,
+            return_uint8=True,
+            tolerance_s=cfg.tolerance_s,
+        )
+    kwargs = {"depth_output_unit": depth_output_unit} if depth_output_unit is not None else {}
+    return LeRobotDataset(
+        cfg.dataset.repo_id,
+        root=cfg.dataset.root,
+        episodes=episodes,
+        delta_timestamps=delta_timestamps,
+        image_transforms=image_transforms,
+        revision=cfg.dataset.revision,
+        video_backend=cfg.dataset.video_backend,
+        return_uint8=True,
+        tolerance_s=cfg.tolerance_s,
+        **kwargs,
+    )
+
+
+def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | LanceDBDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
     Args:
@@ -88,17 +128,17 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         )
         delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta)
         if not cfg.dataset.streaming:
-            dataset = LeRobotDataset(
-                cfg.dataset.repo_id,
-                root=cfg.dataset.root,
+            dataset = _make_map_dataset(
+                cfg,
                 episodes=cfg.dataset.episodes,
                 delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,
-                revision=cfg.dataset.revision,
-                video_backend=cfg.dataset.video_backend,
-                return_uint8=True,
                 depth_output_unit=cfg.dataset.depth_output_unit,
-                tolerance_s=cfg.tolerance_s,
+            )
+        elif is_lance_dataset(cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision):
+            raise ValueError(
+                "dataset.streaming=True is not supported for Lance datasets: LanceDBDataset "
+                "already reads directly from the Hub without downloading data files."
             )
         else:
             dataset = StreamingLeRobotDataset(
@@ -138,7 +178,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
 
 def make_train_eval_datasets(
     cfg: TrainPipelineConfig,
-) -> tuple[LeRobotDataset | MultiLeRobotDataset, LeRobotDataset | None]:
+) -> tuple[LeRobotDataset | LanceDBDataset | MultiLeRobotDataset, LeRobotDataset | LanceDBDataset | None]:
     """Create train and optional eval datasets by splitting episodes based on eval_split.
 
     The last ceil(n_episodes * eval_split) episodes per task are held out for evaluation.
@@ -181,28 +221,18 @@ def make_train_eval_datasets(
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
 
-    train_dataset = LeRobotDataset(
-        cfg.dataset.repo_id,
-        root=cfg.dataset.root,
+    train_dataset = _make_map_dataset(
+        cfg,
         episodes=train_episodes,
         delta_timestamps=delta_timestamps,
         image_transforms=train_image_transforms,
-        revision=cfg.dataset.revision,
-        video_backend=cfg.dataset.video_backend,
-        return_uint8=True,
-        tolerance_s=cfg.tolerance_s,
     )
 
-    eval_dataset = LeRobotDataset(
-        cfg.dataset.repo_id,
-        root=cfg.dataset.root,
+    eval_dataset = _make_map_dataset(
+        cfg,
         episodes=eval_episodes,
         delta_timestamps=delta_timestamps,
         image_transforms=None,
-        revision=cfg.dataset.revision,
-        video_backend=cfg.dataset.video_backend,
-        return_uint8=True,
-        tolerance_s=cfg.tolerance_s,
     )
 
     if cfg.dataset.use_imagenet_stats:

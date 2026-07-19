@@ -49,7 +49,7 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import JobConfig, parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
+from lerobot.datasets import EpisodeAwareSampler, LanceDBDataset, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.jobs import submit_to_hf
@@ -464,6 +464,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # declares language columns; otherwise stay on PyTorch's default
     # collate so non-language training runs are unaffected.
     collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
+    # Lance's runtime is not fork-safe: spawn dataloader workers for Lance-backed datasets.
+    mp_context = "spawn" if isinstance(dataset, LanceDBDataset) and cfg.num_workers > 0 else None
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=cfg.num_workers,
@@ -475,6 +477,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         collate_fn=collate_fn,
         prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
         persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
+        multiprocessing_context=mp_context,
     )
 
     # Build eval dataloader if a held-out split exists
@@ -492,6 +495,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             eval_ds = torch.utils.data.Subset(eval_dataset, selected)
 
         eval_collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
+        eval_mp_context = (
+            "spawn" if isinstance(eval_dataset, LanceDBDataset) and cfg.num_workers > 0 else None
+        )
         eval_dataloader = torch.utils.data.DataLoader(
             eval_ds,
             batch_size=cfg.batch_size,
@@ -502,6 +508,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             collate_fn=eval_collate_fn,
             prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
             persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
+            multiprocessing_context=eval_mp_context,
         )
 
     # Prepare everything with accelerator

@@ -24,14 +24,20 @@ import pyarrow.parquet as pq
 import pytest
 import torch
 
+from lerobot.configs.default import DatasetConfig
+from lerobot.configs.train import TrainPipelineConfig
+from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lancedb_dataset import (
     FRAMES_TABLE,
     VIDEO_BLOB_COLUMN,
     VIDEOS_TABLE,
     LanceDBDataset,
+    is_lance_dataset,
     to_lance_column,
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.sampler import EpisodeAwareSampler
+from lerobot.policies.factory import make_policy_config
 from tests.fixtures.constants import DUMMY_REPO_ID
 
 lancedb = pytest.importorskip("lancedb")
@@ -194,6 +200,64 @@ def test_video_return_uint8(video_dataset_roots):
     item = lance_ds[0]
     video_key = lance_ds.meta.video_keys[0]
     assert item[video_key].dtype == torch.uint8
+
+
+def test_factory_autodetection(video_dataset_roots):
+    src_root, lance_root = video_dataset_roots
+    assert is_lance_dataset(root=lance_root)
+    assert not is_lance_dataset(root=src_root)
+
+    lance_cfg = TrainPipelineConfig(
+        dataset=DatasetConfig(repo_id=DUMMY_REPO_ID, root=str(lance_root)),
+        policy=make_policy_config("act"),
+    )
+    assert isinstance(make_dataset(lance_cfg), LanceDBDataset)
+
+    parquet_cfg = TrainPipelineConfig(
+        dataset=DatasetConfig(repo_id=DUMMY_REPO_ID, root=str(src_root)),
+        policy=make_policy_config("act"),
+    )
+    assert isinstance(make_dataset(parquet_cfg), LeRobotDataset)
+
+
+def test_train_pipeline_e2e(video_dataset_roots):
+    """Build the training dataloader exactly as lerobot_train does and consume batches."""
+    _, lance_root = video_dataset_roots
+    cfg = TrainPipelineConfig(
+        dataset=DatasetConfig(repo_id=DUMMY_REPO_ID, root=str(lance_root)),
+        policy=make_policy_config("act"),
+    )
+    dataset = make_dataset(cfg)
+    assert isinstance(dataset, LanceDBDataset)
+
+    sampler = EpisodeAwareSampler(
+        dataset.meta.episodes["dataset_from_index"],
+        dataset.meta.episodes["dataset_to_index"],
+        episode_indices_to_use=dataset.episodes,
+        drop_n_last_frames=getattr(cfg.policy, "drop_n_last_frames", 0),
+        shuffle=True,
+        seed=0,
+        absolute_to_relative_idx=dataset.absolute_to_relative_idx,
+    )
+    loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=4,
+        sampler=sampler,
+        num_workers=2,
+        multiprocessing_context="spawn",
+        drop_last=True,
+    )
+
+    chunk_size = cfg.policy.chunk_size
+    action_dim = dataset.meta.features["action"]["shape"][0]
+    video_key = dataset.meta.video_keys[0]
+    for step, batch in enumerate(loader):
+        assert batch["action"].shape == (4, chunk_size, action_dim)
+        assert batch["action_is_pad"].shape == (4, chunk_size)
+        assert batch[video_key].dtype == torch.uint8  # factory passes return_uint8=True
+        assert batch[video_key].shape[0] == 4
+        if step == 1:
+            break
 
 
 def test_pickle_and_dataloader(dataset_roots):

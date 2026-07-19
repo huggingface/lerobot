@@ -38,6 +38,7 @@ from .dataset_tools import (
 from .factory import make_dataset, make_train_eval_datasets, resolve_delta_timestamps
 from .image_writer import safe_stop_image_writer
 from .io_utils import load_episodes, write_stats
+from .lancedb_dataset import LanceDBDataset, is_lance_dataset
 from .language import (
     EVENT_ONLY_STYLES,
     LANGUAGE_EVENTS,
@@ -67,6 +68,7 @@ __all__ = [
     "EpisodeAwareSampler",
     "LANGUAGE_EVENTS",
     "LANGUAGE_PERSISTENT",
+    "LanceDBDataset",
     "LeRobotDataset",
     "LeRobotDatasetMetadata",
     "MultiLeRobotDataset",
@@ -88,6 +90,7 @@ __all__ = [
     "delete_episodes",
     "get_feature_stats",
     "load_episodes",
+    "is_lance_dataset",
     "make_dataset",
     "make_train_eval_datasets",
     "merge_datasets",

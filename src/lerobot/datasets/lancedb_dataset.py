@@ -39,6 +39,7 @@ from __future__ import annotations
 
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -85,6 +86,36 @@ class _VideoDecoderLRU:
 def to_lance_column(key: str) -> str:
     """Map a LeRobot feature key to its Lance column name."""
     return key.replace(".", "_")
+
+
+@lru_cache(maxsize=32)
+def is_lance_dataset(
+    repo_id: str | None = None, root: str | Path | None = None, revision: str | None = None
+) -> bool:
+    """Detect whether a dataset is stored in the Lance layout.
+
+    Checks for a ``frames.lance`` table locally first (under ``root`` or the
+    default cache location), then on the Hub with a single targeted API call.
+    Does not require lancedb to be installed.
+    """
+    if root is None and repo_id is None:
+        return False
+    local_root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+    if (local_root / f"{FRAMES_TABLE}.lance").exists():
+        return True
+    if repo_id is None:
+        return False
+    import huggingface_hub
+
+    try:
+        paths = huggingface_hub.HfApi().get_paths_info(
+            repo_id, [f"{FRAMES_TABLE}.lance"], repo_type="dataset", revision=revision
+        )
+    except Exception:
+        # Unknown repo, no network, auth failure: fall back to the parquet loader,
+        # which owns the error reporting for those cases.
+        return False
+    return len(paths) > 0
 
 
 class LanceDBDataset(torch.utils.data.Dataset):
