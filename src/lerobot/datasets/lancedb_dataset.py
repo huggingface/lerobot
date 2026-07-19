@@ -280,6 +280,11 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self._feature_shapes = {
             key: tuple(self.meta.features[key].get("shape") or ()) for key in self._tabular_keys
         }
+        # Language/string features pass through as python strings, like the
+        # upstream reader; lerobot_collate_fn handles them at batch time.
+        self._string_keys = {
+            key for key in self._tabular_keys if self.meta.features[key].get("dtype") == "string"
+        }
 
         # Per-episode video file location: which (chunk, file) mp4 holds each
         # episode and where the episode starts inside it (episodes share files
@@ -513,7 +518,10 @@ class LanceDBDataset(torch.utils.data.Dataset):
         for key in self._tabular_keys:
             data = columns[key]
             shape = self._feature_shapes[key]
-            if key in plan["windows"]:
+            if key in self._string_keys:
+                value = data[base]
+                item[key] = value if isinstance(value, str) or value is None else str(value)
+            elif key in plan["windows"]:
                 window = data[[row_pos[row] for row in plan["windows"][key]]]
                 if len(shape) > 1:
                     window = window.reshape(len(window), *shape)
