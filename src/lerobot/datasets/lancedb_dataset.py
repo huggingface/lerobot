@@ -488,7 +488,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
             for sample_idx, shifted_ts in file_requests:
                 indices = [round(ts * fps) for ts in shifted_ts]
                 batch = decoder.get_frames_at(indices=indices)
-                distance = (torch.tensor(shifted_ts) - batch.pts_seconds).abs()
+                # float64: default float32 quantizes ~1e-3 s at t~10^4 s in
+                # long aggregated video files, tripping tolerance_s spuriously.
+                distance = (torch.tensor(shifted_ts, dtype=torch.float64) - batch.pts_seconds).abs()
                 if (distance >= self.tolerance_s).any():
                     raise FrameTimestampError(
                         f"Query timestamps violate tolerance_s={self.tolerance_s} for video "
