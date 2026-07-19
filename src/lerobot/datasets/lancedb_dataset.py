@@ -37,6 +37,7 @@ is downloaded locally). Set ``HF_TOKEN`` in the environment for private repos.
 
 from __future__ import annotations
 
+import io
 import os
 import re
 import shutil
@@ -59,6 +60,12 @@ from .video_utils import FrameTimestampError
 FRAMES_TABLE = "frames"
 VIDEOS_TABLE = "videos"
 VIDEO_BLOB_COLUMN = "video_bytes"
+# Remote video files serving at least this many windows in a batch are
+# materialized with one sequential read; below it, decoding streams sparse
+# ranges through a buffered handle (a window needs ~100 KB; a file can be
+# hundreds of MB).
+_REMOTE_MATERIALIZE_MIN_WINDOWS = 4
+_REMOTE_READ_BUFFER = 1 << 20
 
 
 class _VideoDecoderLRU:
@@ -496,16 +503,24 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in missing]
             )
             for key, blob_file in zip(missing, blob_files, strict=True):
-                # Local tables: decode straight off the seekable blob handle.
-                # Remote tables: materialize the file with one sequential read;
-                # decoding through the handle would turn every decoder seek
-                # into a latency-bound network range request.
-                source = blob_file if self._is_local else blob_file.readall()
+                # Local tables decode straight off the seekable blob handle.
+                # Remote tables pick per file: many windows from one file ->
+                # materialize it with one sequential read; few windows ->
+                # stream sparse ranges through a buffered handle (fetches KBs
+                # instead of the whole file).
+                nbytes = 0
+                if self._is_local:
+                    source = blob_file
+                elif len(requests[key]) >= _REMOTE_MATERIALIZE_MIN_WINDOWS:
+                    source = blob_file.readall()
+                    nbytes = len(source)
+                else:
+                    source = io.BufferedReader(blob_file, buffer_size=_REMOTE_READ_BUFFER)
                 # approximate seek mode skips the full-file scan that exact
                 # mode performs on decoder creation.
                 decoder = VideoDecoder(source, seek_mode="approximate")
                 decoders[key] = decoder
-                self._decoder_cache.put(key, decoder, nbytes=0 if self._is_local else len(source))
+                self._decoder_cache.put(key, decoder, nbytes=nbytes)
 
         results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
 
