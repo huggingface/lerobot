@@ -37,6 +37,8 @@ is downloaded locally). Set ``HF_TOKEN`` in the environment for private repos.
 
 from __future__ import annotations
 
+import re
+import shutil
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -89,6 +91,26 @@ def to_lance_column(key: str) -> str:
     return key.replace(".", "_")
 
 
+def _is_remote_uri(path) -> bool:
+    return "://" in str(path)
+
+
+def _mirror_remote_meta(db_uri: str, local_root: Path) -> None:
+    """Copy ``meta/`` from an object-store dataset root to a local cache, once."""
+    if (local_root / "meta" / "info.json").exists():
+        return
+    from pyarrow import fs as pa_fs
+
+    filesystem, base = pa_fs.FileSystem.from_uri(f"{db_uri}/meta")
+    for info in filesystem.get_file_info(pa_fs.FileSelector(base, recursive=True)):
+        if info.type != pa_fs.FileType.File:
+            continue
+        dst = local_root / "meta" / info.path[len(base) :].lstrip("/")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with filesystem.open_input_stream(info.path) as src, open(dst, "wb") as out:
+            shutil.copyfileobj(src, out)
+
+
 def lance_mp_context() -> str:
     """Start method for DataLoader workers reading a Lance-backed dataset.
 
@@ -114,6 +136,10 @@ def is_lance_dataset(
     """
     if root is None and repo_id is None:
         return False
+    if root is not None and _is_remote_uri(root):
+        # Object-store roots imply the Lance layout; the parquet loader
+        # cannot read them at all.
+        return True
     local_root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
     if (local_root / f"{FRAMES_TABLE}.lance").exists():
         return True
@@ -146,9 +172,10 @@ class LanceDBDataset(torch.utils.data.Dataset):
     Args:
         repo_id: Hub dataset repository (e.g. ``'lerobot/pusht_lance'``). Tables
             are streamed over ``hf://``; only ``meta/`` is downloaded.
-        root: Local directory containing ``meta/`` and the ``.lance`` tables.
-            When both ``repo_id`` and ``root`` are given, local tables win if
-            present.
+        root: Local directory containing ``meta/`` and the ``.lance`` tables,
+            or an object-store URI (``s3://bucket/path``) holding the same
+            layout. When both ``repo_id`` and ``root`` are given, local tables
+            win if present.
         episodes: Optional episode indices to select. ``None`` means all.
         image_transforms: Optional torchvision v2 transform applied to camera
             frames.
@@ -183,20 +210,28 @@ class LanceDBDataset(torch.utils.data.Dataset):
             raise ValueError("Provide `repo_id`, `root`, or both.")
 
         self.repo_id = repo_id
-        self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
         self.tolerance_s = tolerance_s
         self._storage_options = storage_options
+
+        if root is not None and _is_remote_uri(root):
+            # Object-store root (s3://, gs://, ...): tables are read in place,
+            # meta/ is mirrored to a local cache directory once.
+            self._db_uri = str(root).rstrip("/")
+            self.root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", self._db_uri)
+            _mirror_remote_meta(self._db_uri, self.root)
+        else:
+            self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+            if (self.root / f"{FRAMES_TABLE}.lance").exists():
+                self._db_uri = str(self.root)
+            elif repo_id is not None:
+                self._db_uri = f"hf://datasets/{repo_id}"
+            else:
+                raise FileNotFoundError(f"No '{FRAMES_TABLE}.lance' table under {self.root}.")
+        self._is_local = not _is_remote_uri(self._db_uri)
 
         self.meta = LeRobotDatasetMetadata(
             repo_id if repo_id is not None else str(self.root), root=self.root, revision=revision
         )
-
-        if (self.root / f"{FRAMES_TABLE}.lance").exists():
-            self._db_uri = str(self.root)
-        elif repo_id is not None:
-            self._db_uri = f"hf://datasets/{repo_id}"
-        else:
-            raise FileNotFoundError(f"No '{FRAMES_TABLE}.lance' table under {self.root}.")
 
         if self.meta.depth_keys:
             raise NotImplementedError("Depth features are not supported by LanceDBDataset yet.")
@@ -418,10 +453,14 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in missing]
             )
             for key, blob_file in zip(missing, blob_files, strict=True):
+                # Local tables: decode straight off the seekable blob handle.
+                # Remote tables: materialize the file with one sequential read;
+                # decoding through the handle would turn every decoder seek
+                # into a latency-bound network range request.
+                source = blob_file if self._is_local else blob_file.readall()
                 # approximate seek mode skips the full-file scan that exact
-                # mode performs on decoder creation, which is expensive
-                # through the blob I/O bridge on large files.
-                decoder = VideoDecoder(blob_file, seek_mode="approximate")
+                # mode performs on decoder creation.
+                decoder = VideoDecoder(source, seek_mode="approximate")
                 decoders[key] = decoder
                 self._decoder_cache.put(key, decoder)
 
@@ -431,20 +470,20 @@ class LanceDBDataset(torch.utils.data.Dataset):
             key, chunk_idx, file_idx = file_key
             decoder = decoders[file_key]
             fps = decoder.metadata.average_fps
-            wanted = sorted({round(ts * fps) for _, shifted_ts in file_requests for ts in shifted_ts})
-            frame_pos = {frame_idx: pos for pos, frame_idx in enumerate(wanted)}
-            batch = decoder.get_frames_at(indices=wanted)
+            # One decode call per sample window: window frames are consecutive,
+            # so each call is a single seek plus a sequential decode. This
+            # measures faster than merging all windows into one indices list.
             for sample_idx, shifted_ts in file_requests:
-                positions = [frame_pos[round(ts * fps)] for ts in shifted_ts]
-                loaded_ts = batch.pts_seconds[positions]
-                distance = (torch.tensor(shifted_ts) - loaded_ts).abs()
+                indices = [round(ts * fps) for ts in shifted_ts]
+                batch = decoder.get_frames_at(indices=indices)
+                distance = (torch.tensor(shifted_ts) - batch.pts_seconds).abs()
                 if (distance >= self.tolerance_s).any():
                     raise FrameTimestampError(
                         f"Query timestamps violate tolerance_s={self.tolerance_s} for video "
                         f"'{key}' (chunk {chunk_idx}, file {file_idx}): queried {shifted_ts}, "
-                        f"loaded {loaded_ts.tolist()}."
+                        f"loaded {batch.pts_seconds.tolist()}."
                     )
-                frames = batch.data[positions]
+                frames = batch.data
                 if not self.return_uint8:
                     frames = (frames / 255.0).type(torch.float32)
                 results[sample_idx][key] = frames.squeeze(0)
