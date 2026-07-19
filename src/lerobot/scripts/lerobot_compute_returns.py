@@ -22,9 +22,8 @@ Implements the sparse reward function from pi*0.6 / RECAP (Eq. 5):
     r_T = 0           for terminal success
     r_T = -C_fail     for terminal failure
 
-Monte Carlo returns are the cumulative sum from each step to the end of
-the episode, normalized by ``max_episode_length`` so that values are bounded
-to approximately (-1, 0).
+Returns are normalized by ``H - 1 + C_fail`` so mc_return ∈ [-1, 0], where
+``H`` is the longest episode (or ``--max-episode-length``).
 
 The columns are written directly into the dataset's parquet data shards as
 flat per-frame scalars. These serve as training targets for the distributional
@@ -120,6 +119,9 @@ def compute_episode_returns(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute is_terminal and mc_return arrays for a single episode.
 
+    Rewards (RECAP Eq. 5): r_t = -1, r_T = 0 (success) or -C_fail (failure),
+    normalized by ``H - 1 + C_fail`` so mc_return ∈ [-1, 0].
+
     Args:
         num_frames: Number of frames in the episode.
         success: Whether the episode ended successfully.
@@ -130,20 +132,19 @@ def compute_episode_returns(
     Returns:
         Tuple of (is_terminal, mc_return) arrays, each of length num_frames.
     """
-    horizon = max_episode_length
+    normalizer = max_episode_length - 1 + c_fail
 
-    rewards = np.full(num_frames, -1.0 / horizon, dtype=np.float64)
+    rewards = np.full(num_frames, -1.0 / normalizer, dtype=np.float64)
 
     if success:
         rewards[-1] = 0.0
     else:
-        rewards[-1] = -c_fail / horizon
+        rewards[-1] = -c_fail / normalizer
 
     is_terminal = np.zeros(num_frames, dtype=bool)
     is_terminal[-1] = True
 
     if gamma == 1.0:
-        # Reverse cumulative sum
         mc_return = np.cumsum(rewards[::-1])[::-1].astype(np.float32)
     else:
         mc_return = np.zeros(num_frames, dtype=np.float64)
@@ -176,7 +177,12 @@ def compute_returns(config: ComputeReturnsConfig) -> Path:
         max_ep_len = config.max_episode_length
     else:
         max_ep_len = max(int(meta.episodes[i]["length"]) for i in episode_indices)
-    logger.info(f"Normalization horizon (max_episode_length): {max_ep_len}")
+    normalizer = max_ep_len - 1 + config.c_fail
+    logger.info(
+        f"H={max_ep_len}, normalizer={normalizer:.1f}, "
+        f"success=[{-(max_ep_len - 1) / normalizer:.3f}, 0.0], "
+        f"failure_terminal={-config.c_fail / normalizer:.3f}"
+    )
 
     parquet_files_to_rewrite: dict[Path, list[int]] = {}
     for ep_idx in episode_indices:
@@ -338,13 +344,14 @@ Examples:
         "--max-episode-length",
         type=int,
         default=None,
-        help="Normalization horizon H. If not set, uses max episode length in dataset.",
+        help="Normalization horizon H. If not provided, inferred from the dataset as the longest episode.",
     )
     parser.add_argument(
         "--c-fail",
         type=float,
-        default=50.0,
-        help="Failure penalty constant (default: 50.0).",
+        default=900.0,
+        help="Failure penalty constant (default: 900.0). Larger values increase separation "
+        "between success and failure returns.",
     )
     parser.add_argument(
         "--gamma",
