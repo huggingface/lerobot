@@ -97,6 +97,50 @@ python src/lerobot/scripts/augment_dataset_quantile_stats.py \
 
 Or train pi05 with this normalization mapping: `--policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'`
 
+## Visual Memory (MEM)
+
+Pi05 can optionally use short-horizon visual context based on
+[MEM](https://arxiv.org/abs/2603.03596). Visual memory is disabled by default,
+so existing checkpoints and training commands retain the single-frame Pi05
+behavior.
+
+Enable it while finetuning with:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi05 \
+    --policy.pretrained_path=lerobot/pi05_base \
+    --policy.use_visual_memory=true \
+    --policy.memory_frames=6 \
+    --policy.memory_stride=10 \
+    --policy.memory_temporal_attention_every=4 \
+    ...
+```
+
+`memory_frames` includes the current observation. `memory_stride` is measured
+in dataset frames, so the example above uses the current image plus five
+historical images spaced one second apart for a 10 Hz dataset. Every fourth
+SigLIP layer applies causal temporal attention between matching patch tokens.
+Only current-frame tokens leave the vision tower, keeping the downstream
+language/action prefix length unchanged.
+
+Unavailable history at the beginning of an episode is padded and masked. At
+inference, Pi05 maintains the same strided image history internally and clears
+it whenever the policy is reset.
+
+Historical proprioception is an independent option:
+
+```bash
+--policy.use_proprioceptive_memory=true
+```
+
+When enabled, one projected continuous state token is added for each retained
+frame. Visual and proprioceptive memory use the same `memory_frames` and
+`memory_stride` settings, but either path can be enabled independently. Train
+or finetune with the selected memory options; enabling them only at inference
+does not give a single-frame checkpoint learned memory behavior.
+
 ## Relative Actions
 
 By default, π₀.₅ predicts absolute actions. You can enable **relative actions** so the model predicts offsets relative to the current robot state. This can improve training stability for certain setups.
