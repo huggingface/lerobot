@@ -70,6 +70,13 @@ python -m lerobot.navigation.dog_cli --dry-run --command "go to the couch"
 
 # On a real Unitree Go2 (DDS + LingBot-Map + SigLIP2 on the GPU host):
 python -m lerobot.navigation.dog_cli --live --network-interface enp2s0 --device cuda
+
+# Add --viz to stream the map into a Rerun viewer as it builds/updates
+# (pip install 'lerobot[viz]'). --color-mode recency shows observation age;
+# carved voxels (moved/removed objects) flash red then vanish.
+python -m lerobot.navigation.dog_cli --dry-run --viz
+python -m lerobot.navigation.dog_cli --map-only --viz --color-mode recency \
+    --network-interface enp2s0 --device cuda
 ```
 
 Idle (no prompt) ⇒ autonomous exploration; a typed object name ⇒ navigate

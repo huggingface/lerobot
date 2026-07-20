@@ -65,10 +65,23 @@ class DogController:
         skills: SpatialSkills,
         agent: DeterministicAgent | None = None,
         parser: HardcodedTaskParser | None = None,
+        viz=None,
     ) -> None:
         self.skills = skills
         self.agent = agent or DeterministicAgent(skills)
         self.parser = parser or HardcodedTaskParser()
+        self.viz = viz  # optional MapVisualizer
+
+    def refresh_viz(self, target_xyz=None, path_xyz=None) -> None:
+        """Log the current map, occupancy, robot pose (+ optional target/path)."""
+        if self.viz is None:
+            return
+        self.viz.log_map(self.skills.voxel_map.snapshot())
+        self.viz.log_occupancy(self.skills.occupancy())
+        self.viz.log_robot(self.skills.base.pose())
+        self.viz.log_target(target_xyz)
+        if path_xyz is not None:
+            self.viz.log_path(path_xyz)
 
     def handle_prompt(self, text: str) -> AgentResult:
         """Query the map and navigate to the target (exploring if needed)."""
@@ -79,6 +92,8 @@ class DogController:
                 LOG.info("  reached %r at %s (conf %.3f)", tr.target, tr.final_xyz, tr.confidence)
             else:
                 LOG.info("  did not reach %r: %s (conf %.3f)", tr.target, tr.reason, tr.confidence)
+        last = result.target_results[-1] if result.target_results else None
+        self.refresh_viz(target_xyz=last.final_xyz if last and last.reached else None)
         return result
 
     def report_location(self, text: str):
@@ -92,6 +107,8 @@ class DogController:
             LOG.info("  %r is at %s (conf %.3f, %d voxels)", text, loc.xyz, loc.confidence, loc.n_voxels)
         else:
             LOG.info("  %r not found yet (conf %.3f) — map more of the area", text, loc.confidence)
+        if self.viz is not None:
+            self.viz.log_target(loc.xyz if loc.found else None)
         return loc
 
     def idle_tick(self) -> ExploreResult:
@@ -102,13 +119,14 @@ class DogController:
             self.skills.goto(ex.target_xyz)
         else:
             LOG.debug("idle: no frontier to explore (%s)", ex.reason)
+        self.refresh_viz()
         return ex
 
     def stop(self) -> None:
         self.skills.base.stop()
 
 
-def _build_dry_run() -> DogController:
+def _build_dry_run(viz=None) -> DogController:
     """Wire the controller against the synthetic kitchen scene."""
     from lerobot.navigation.base_controller import StubBaseController
     from lerobot.navigation.sim import kitchen_scene
@@ -131,7 +149,9 @@ def _build_dry_run() -> DogController:
     agent = DeterministicAgent(skills, AgentConfig(max_explore_iters=4))
     objs = ", ".join(o.name for o in scene.objects)
     LOG.info("dry-run kitchen scene ready — try one of: %s", objs)
-    return DogController(skills, agent)
+    controller = DogController(skills, agent, viz=viz)
+    controller.refresh_viz()  # show the prebuilt map immediately
+    return controller
 
 
 class LiveMapper:
@@ -151,7 +171,7 @@ class LiveMapper:
     until the first tick.
     """
 
-    def __init__(self, robot, base, geometry, siglip, voxel_map, pcfg=None) -> None:
+    def __init__(self, robot, base, geometry, siglip, voxel_map, pcfg=None, viz=None) -> None:
         self.robot = robot
         self.base = base  # RobotBaseController (unwrapped) for feed_observation/pose
         self.safe = None  # optional SafeBaseController for the watchdog
@@ -159,6 +179,7 @@ class LiveMapper:
         self.siglip = siglip
         self.voxel_map = voxel_map
         self.pcfg = pcfg
+        self.viz = viz  # optional MapVisualizer
         self._frame = 0
 
     def tick(self, t_sec: float) -> None:
@@ -201,10 +222,15 @@ class LiveMapper:
             pose=pose,
             feat_map=feat_map,
         )
-        integrate_keyframe(self.voxel_map, ctx, self.pcfg or PipelineConfig())
+        carve, _ = integrate_keyframe(self.voxel_map, ctx, self.pcfg or PipelineConfig())
         self._frame += 1
         if self.safe is not None:
             self.safe.feed_watchdog()
+        if self.viz is not None:
+            self.viz.set_time(t_sec)
+            self.viz.log_map(self.voxel_map.snapshot(), now=t_sec)
+            self.viz.log_removed(carve.removed_xyz)  # dynamic: carved voxels flashed red
+            self.viz.log_robot(pose)
 
 
 def _build_live(
@@ -213,6 +239,7 @@ def _build_live(
     camera_hfov_deg: float = 90.0,
     max_lin_speed: float = 0.4,
     max_yaw_rate: float = 0.8,
+    viz=None,
 ) -> tuple[DogController, LiveMapper]:
     """Wire the controller + live mapper against a real Unitree Go2.
 
@@ -253,8 +280,8 @@ def _build_live(
     pcfg = PipelineConfig(focal_px=focal_px)
 
     skills = SpatialSkills(voxel_map, safe, siglip, SkillsConfig(cell_size=0.05))
-    controller = DogController(skills, DeterministicAgent(skills, AgentConfig()))
-    mapper = LiveMapper(robot, inner, geometry, siglip, voxel_map, pcfg=pcfg)
+    controller = DogController(skills, DeterministicAgent(skills, AgentConfig()), viz=viz)
+    mapper = LiveMapper(robot, inner, geometry, siglip, voxel_map, pcfg=pcfg, viz=viz)
     mapper.safe = safe
     LOG.info(
         "live stack wired (iface=%s, device=%s, focal=%.1fpx, vmax=%.2f m/s) — connect the dog and run",
@@ -382,6 +409,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--max-lin-speed", type=float, default=0.4, help="Body linear speed cap (m/s).")
     ap.add_argument("--max-yaw-rate", type=float, default=0.8, help="Yaw-rate cap (rad/s).")
+    ap.add_argument(
+        "--viz",
+        action="store_true",
+        help="Open a Rerun viewer and stream the map live as it builds/updates "
+        "(needs `pip install 'lerobot[viz]'`).",
+    )
+    ap.add_argument(
+        "--color-mode",
+        default="rgb",
+        choices=["rgb", "recency"],
+        help="Voxel coloring in the viewer: rgb, or recency (recent=cyan, old=red).",
+    )
     ap.add_argument("--command", default=None, help="Run a single command non-interactively, then exit.")
     ap.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING"])
     args = ap.parse_args(argv)
@@ -390,6 +429,12 @@ def main(argv: list[str] | None = None) -> int:
         level=getattr(logging, args.log_level), format="%(levelname)-7s %(name)s: %(message)s"
     )
 
+    viz = None
+    if args.viz:
+        from lerobot.navigation.viz import MapVisualizer
+
+        viz = MapVisualizer(color_mode=args.color_mode)
+
     if args.live or args.map_only:
         controller, mapper = _build_live(
             args.network_interface,
@@ -397,13 +442,14 @@ def main(argv: list[str] | None = None) -> int:
             camera_hfov_deg=args.camera_hfov_deg,
             max_lin_speed=args.max_lin_speed,
             max_yaw_rate=args.max_yaw_rate,
+            viz=viz,
         )
         return run_live_repl(controller, mapper, map_only=args.map_only)
 
     if not args.dry_run:
         raise SystemExit("Choose a mode: --dry-run (synthetic scene) or --live (real Unitree Go2).")
 
-    controller = _build_dry_run()
+    controller = _build_dry_run(viz=viz)
     if args.command is not None:
         result = controller.handle_prompt(args.command)
         controller.stop()
