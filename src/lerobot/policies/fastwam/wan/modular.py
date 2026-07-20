@@ -839,6 +839,7 @@ class FastWAM(torch.nn.Module):
         text_dim: int | None = None,
         proprio_dim: int | None = None,
         device: str = "cpu",
+        text_encoder_device: str | torch.device | None = None,
         torch_dtype: torch.dtype = torch.float32,
         video_train_shift: float = 5.0,
         video_infer_shift: float = 5.0,
@@ -908,11 +909,21 @@ class FastWAM(torch.nn.Module):
         self.infer_scheduler = self.infer_video_scheduler
 
         self.device = torch.device(device)
+        # When pinned (e.g. "cpu"), the frozen text encoder stays on this device instead
+        # of following the model onto the GPU — `_apply` skips it and `encode_prompt` runs
+        # it here, moving embeddings back to `self.device`. `None` = follow `self.device`.
+        self._text_encoder_device = (
+            torch.device(text_encoder_device) if text_encoder_device is not None else None
+        )
         self.torch_dtype = torch_dtype
         self.loss_lambda_video = float(loss_lambda_video)
         self.loss_lambda_action = float(loss_lambda_action)
 
         self.to(self.device)
+        # `self.to` above (via `_apply`) skips a pinned text encoder; make sure it actually
+        # sits on the pinned device (it was loaded there, but this is a cheap safety net).
+        if self.text_encoder is not None and self._text_encoder_device is not None:
+            self.text_encoder._apply(lambda t: t.to(self._text_encoder_device))
 
     @classmethod
     def from_wan22_pretrained(
@@ -1003,7 +1014,8 @@ class FastWAM(torch.nn.Module):
         # while staying out of `state_dict()` / `parameters()`.
         super()._apply(fn, *args, **kwargs)
         self.vae._apply(fn)
-        if self.text_encoder is not None:
+        # A pinned text encoder (e.g. on CPU) must NOT follow device moves — leave it put.
+        if self.text_encoder is not None and self._text_encoder_device is None:
             self.text_encoder._apply(fn)
         return self
 
@@ -1024,9 +1036,12 @@ class FastWAM(torch.nn.Module):
                 "Prompt encoding requires loaded text encoder/tokenizer. "
                 "Set `load_text_encoder=true` or provide precomputed `context/context_mask`."
             )
+        # Run the encoder on its own device (may be pinned to CPU to save VRAM), then
+        # move the resulting embeddings/mask to the model device for the DiT.
+        te_device = self._text_encoder_device or self.device
         ids, mask = self.tokenizer(prompt, return_mask=True, add_special_tokens=True)
-        ids = ids.to(self.device)
-        mask = mask.to(self.device, dtype=torch.bool)
+        ids = ids.to(te_device)
+        mask = mask.to(te_device, dtype=torch.bool)
         prompt_emb = self.text_encoder(ids, mask)
         seq_lens = mask.gt(0).sum(dim=1).long()
         for i, v in enumerate(seq_lens):
@@ -1034,7 +1049,7 @@ class FastWAM(torch.nn.Module):
         # Match FastWAM/Wan2.2 context semantics: padding embeddings are zeroed,
         # while cross-attention still sees a fixed-length context.
         mask = torch.ones_like(mask)
-        return prompt_emb.to(device=self.device), mask
+        return prompt_emb.to(device=self.device), mask.to(device=self.device)
 
     def _append_proprio_to_context(
         self,
