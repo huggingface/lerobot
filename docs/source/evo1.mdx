@@ -23,18 +23,18 @@ The broader EVO1 project may include additional training scripts and dataset too
 2. Install EVO1 dependencies:
 
    ```bash
-   pip install -e ".[evo1]"
+   pip install -e ".[training,evo1]"
    ```
 
-   For LIBERO evaluation, install the LIBERO extra as well:
+   For LIBERO training and evaluation, install the LIBERO extra as well:
 
    ```bash
-   pip install -e ".[evo1,libero]"
+   pip install -e ".[training,evo1,libero]"
    ```
 
 3. Install a `flash-attn` wheel only if it is compatible with your Python, PyTorch, CUDA, and GPU stack. EVO1 falls back to standard attention when `flash_attn` is not available.
 
-EVO1 uses the native Hugging Face `transformers` InternVL implementation, so `policy.vlm_model_name` must point to a natively converted checkpoint such as `OpenGVLab/InternVL3-1B-hf` (note the `-hf` suffix). The first run may download the configured VLM checkpoint unless `policy.vlm_model_name` points to a local model directory.
+EVO1 uses the native Hugging Face `transformers` InternVL implementation, so `policy.vlm_model_name` must point to a natively converted checkpoint such as `OpenGVLab/InternVL3-1B-hf` (note the `-hf` suffix). The first run downloads the configured VLM checkpoint and later runs reuse it from the Hugging Face cache.
 
 ## Data Requirements
 
@@ -69,47 +69,118 @@ policy.path=your-org/your-evo1-checkpoint
 
 ## Training
 
+> [!NOTE]
+> This recipe assumes a LeRobot revision containing
+> [#3945](https://github.com/huggingface/lerobot/pull/3945), which re-pads EVO1 normalization
+> statistics when starting Stage 2 from a checkpoint, and
+> [#4022](https://github.com/huggingface/lerobot/pull/4022), which preserves checkpoint processor
+> statistics during exact training resume.
+
 ### Stage 1
 
 Stage 1 freezes the VLM and trains the action head:
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=your_org/your_dataset \
+  --dataset.repo_id=lerobot/libero \
+  --dataset.revision=a1aaacb7f6cd6ee5fb43120f673cebb0cfea7dd4 \
+  --dataset.video_backend=torchcodec \
+  --dataset.return_uint8=true \
+  --dataset.image_transforms.enable=true \
+  --dataset.use_imagenet_stats=true \
+  --dataset.eval_split=0.0 \
   --policy.type=evo1 \
   --policy.training_stage=stage1 \
+  --policy.apply_training_stage_defaults=true \
   --policy.vlm_model_name=OpenGVLab/InternVL3-1B-hf \
+  --policy.vlm_num_layers=14 \
+  --policy.vlm_dtype=bfloat16 \
   --policy.device=cuda \
+  --policy.use_amp=true \
+  --policy.use_flash_attn=true \
+  --policy.enable_gradient_checkpointing=true \
+  --policy.gradient_checkpointing_use_reentrant=false \
+  --policy.image_resolution='[448,448]' \
   --policy.chunk_size=50 \
   --policy.n_action_steps=50 \
   --policy.max_state_dim=24 \
   --policy.max_action_dim=24 \
+  --policy.dropout=0.2 \
   --policy.optimizer_lr=1e-5 \
-  --batch_size=4 \
+  --policy.optimizer_weight_decay=1e-3 \
+  --policy.optimizer_grad_clip_norm=1.0 \
+  --policy.scheduler_warmup_steps=1000 \
+  --policy.push_to_hub=false \
+  --use_policy_training_preset=true \
+  --batch_size=128 \
   --steps=5000 \
-  --output_dir=./outputs/evo1_stage1
+  --save_checkpoint=true \
+  --save_checkpoint_to_hub=false \
+  --save_freq=2500 \
+  --log_freq=10 \
+  --env_eval_freq=0 \
+  --num_workers=4 \
+  --prefetch_factor=2 \
+  --persistent_workers=true \
+  --seed=1000 \
+  --wandb.enable=false \
+  --output_dir=./outputs/evo1-libero-stage1-g128-5k
 ```
 
 ### Stage 2
 
-Stage 2 finetunes the VLM branches and action head. A common workflow starts from a Stage 1 checkpoint:
+Stage 2 loads the Stage 1 policy, but starts a fresh optimizer and scheduler:
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=your_org/your_dataset \
-  --policy.path=./outputs/evo1_stage1/checkpoints/005000/pretrained_model \
+  --dataset.repo_id=lerobot/libero \
+  --dataset.revision=a1aaacb7f6cd6ee5fb43120f673cebb0cfea7dd4 \
+  --dataset.video_backend=torchcodec \
+  --dataset.return_uint8=true \
+  --dataset.image_transforms.enable=true \
+  --dataset.use_imagenet_stats=true \
+  --dataset.eval_split=0.0 \
+  --policy.path=./outputs/evo1-libero-stage1-g128-5k/checkpoints/005000/pretrained_model \
   --policy.training_stage=stage2 \
+  --policy.apply_training_stage_defaults=true \
   --policy.vlm_model_name=OpenGVLab/InternVL3-1B-hf \
+  --policy.vlm_num_layers=14 \
+  --policy.vlm_dtype=float32 \
   --policy.device=cuda \
+  --policy.use_amp=true \
+  --policy.use_flash_attn=true \
+  --policy.enable_gradient_checkpointing=true \
+  --policy.gradient_checkpointing_use_reentrant=false \
+  --policy.image_resolution='[448,448]' \
   --policy.chunk_size=50 \
   --policy.n_action_steps=50 \
   --policy.max_state_dim=24 \
   --policy.max_action_dim=24 \
+  --policy.dropout=0.2 \
   --policy.optimizer_lr=1e-5 \
-  --batch_size=4 \
+  --policy.optimizer_weight_decay=1e-3 \
+  --policy.optimizer_grad_clip_norm=1.0 \
+  --policy.scheduler_warmup_steps=1000 \
+  --policy.push_to_hub=false \
+  --use_policy_training_preset=true \
+  --batch_size=128 \
   --steps=80000 \
-  --output_dir=./outputs/evo1_stage2
+  --resume=false \
+  --save_checkpoint=true \
+  --save_checkpoint_to_hub=false \
+  --save_freq=10000 \
+  --log_freq=10 \
+  --env_eval_freq=0 \
+  --num_workers=4 \
+  --prefetch_factor=2 \
+  --persistent_workers=true \
+  --seed=1000 \
+  --wandb.enable=false \
+  --output_dir=./outputs/evo1-libero-stage2-g128-80k
 ```
+
+The recipe uses global batch 128; if `--batch_size=128` does not fit on one GPU, use two DDP processes with
+batch 64 per process.
 
 By default, `policy.training_stage` reapplies the finetuning defaults for that stage. This is important when
 starting Stage 2 from a Stage 1 checkpoint, because the Stage 1 checkpoint config stores the VLM finetuning
@@ -153,15 +224,28 @@ lerobot-rollout \
 ### LIBERO Evaluation
 
 > [!NOTE]
-> Benchmark results for a `lerobot`-hosted LIBERO checkpoint trained with this implementation
-> will be added once training completes.
+> Add the public checkpoint link and immutable Hub revision after the released artifact passes
+> clean-download and rollout verification.
 
-The official EVO1 LIBERO rollout protocol uses the raw LIBERO camera feature names
+The measured Stage-2 checkpoint at step 70,000 produced:
+
+| Suite          | Successful episodes |  Episodes | Success rate |
+| -------------- | ------------------: | --------: | -----------: |
+| LIBERO Spatial |                 485 |       500 |        97.0% |
+| LIBERO Object  |                 496 |       500 |        99.2% |
+| LIBERO Goal    |                 483 |       500 |        96.6% |
+| LIBERO-10      |                 469 |       500 |        93.8% |
+| **Overall**    |           **1,933** | **2,000** |   **96.65%** |
+
+These results use one trained checkpoint and evaluation seed `1000`; they are not a multi-seed
+mean or confidence estimate.
+
+The author-format EVO1 LIBERO profile uses the raw LIBERO camera feature names
 (`observation.images.agentview_image` and `observation.images.robot0_eye_in_hand_image`), replans every
 14 actions, and binarizes the gripper command before stepping the simulator. The EVO1 policy postprocessor
 can crop the padded 24D action back to the 7D LIBERO action space and apply that gripper binarization. To
-evaluate a LIBERO checkpoint under the same one-episode-per-task setting, keep the raw camera names instead
-of the default `image`/`image2` mapping and set the LIBERO action postprocessing flags:
+evaluate an author-format checkpoint under the same one-episode-per-task setting, keep the raw camera names
+instead of the default `image`/`image2` mapping and set the LIBERO action postprocessing flags:
 
 ```bash
 lerobot-eval \
@@ -180,6 +264,74 @@ lerobot-eval \
   --eval.batch_size=1 \
   --eval.n_episodes=1
 ```
+
+#### Native `lerobot/libero` v3 profile
+
+Revision `a1aaacb7f6cd6ee5fb43120f673cebb0cfea7dd4` stores camera features as `image` and
+`image2`. This example evaluates all ten LIBERO Object tasks, launching each task in a fresh process:
+
+```bash
+export MUJOCO_GL=egl
+export PYOPENGL_PLATFORM=egl
+
+suite=libero_object
+horizon=280
+for task_id in {0..9}; do
+  lerobot-eval \
+    --policy.path=./outputs/evo1-libero-stage2-g128-80k/checkpoints/070000/pretrained_model \
+    --policy.vlm_model_name=OpenGVLab/InternVL3-1B-hf \
+    --policy.device=cuda \
+    --policy.use_amp=true \
+    --policy.vlm_dtype=bfloat16 \
+    --policy.use_flash_attn=false \
+    --policy.enable_gradient_checkpointing=false \
+    --policy.vlm_num_layers=14 \
+    --policy.image_resolution='[448,448]' \
+    --policy.max_text_length=1024 \
+    --policy.chunk_size=50 \
+    --policy.n_action_steps=14 \
+    --policy.max_state_dim=24 \
+    --policy.max_action_dim=24 \
+    --policy.num_inference_timesteps=32 \
+    --policy.postprocess_action_dim=7 \
+    --policy.binarize_gripper=true \
+    --policy.gripper_threshold=0.0 \
+    --policy.gripper_below_threshold_value=-1.0 \
+    --policy.gripper_above_threshold_value=1.0 \
+    --env.type=libero \
+    --env.task="${suite}" \
+    --env.task_ids="[${task_id}]" \
+    --env.camera_name=agentview_image,robot0_eye_in_hand_image \
+    --env.camera_name_mapping="{agentview_image: image, robot0_eye_in_hand_image: image2}" \
+    --env.control_mode=relative \
+    --env.obs_type=pixels_agent_pos \
+    --env.observation_width=448 \
+    --env.observation_height=448 \
+    --env.init_states=true \
+    --env.episode_length="${horizon}" \
+    --env.render_mode=rgb_array \
+    --env.max_parallel_tasks=1 \
+    --eval.n_episodes=50 \
+    --eval.batch_size=1 \
+    --eval.use_async_envs=false \
+    --eval.recording=false \
+    --seed=1000 \
+    --output_dir="./outputs/evo1-libero-stage2-70k-eval/${suite}/task-${task_id}" \
+    --job_name="evo1-libero-stage2-70k-${suite}-task-${task_id}"
+done
+```
+
+Run all ten task IDs for each suite with these horizons:
+
+| `env.task`       | `env.episode_length` |
+| ---------------- | -------------------: |
+| `libero_spatial` |                `280` |
+| `libero_object`  |                `280` |
+| `libero_goal`    |                `300` |
+| `libero_10`      |                `520` |
+
+Set `suite` and `horizon` for each row. This gives 500 episodes per suite and 2,000 episodes overall, while
+the loop's fresh process per task matches the measured RNG-reset topology.
 
 ## References
 
