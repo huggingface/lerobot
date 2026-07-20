@@ -394,8 +394,20 @@ class ThreePointCalibrator:
     neck orientation via the torso->neck kinematic chain.
 
     All quaternions are scalar-first (w, x, y, z), matching :func:`compute_3point`.
+
+    ``neck_relative_wrists`` selects how the wrist targets are framed:
+
+    - ``True`` (body-source, :func:`compute_3point`): wrists are pelvis-relative and
+      the neck sits roughly upright over the pelvis, so de-rotating them by ``neck_inv``
+      correctly expresses them in the neck/torso frame (gear_sonic's behaviour).
+    - ``False`` (device-source, :func:`compute_3point_from_devices`): the "neck" is the
+      **headset**, which pitches down when the operator looks at their hands; the wrists
+      are already yaw-stabilised, so applying the head pitch/roll would rotate "up" hand
+      motion into "forward". The wrist frame is left in the yaw-local world frame (only
+      the neck point itself is still de-tilted).
     """
 
+    neck_relative_wrists: bool = True
     _neck_quat_inv: R | None = field(default=None, init=False)
     _wrist_pos_offset: np.ndarray | None = field(default=None, init=False)
     _wrist_rot_offset: list[R] = field(default_factory=list, init=False)
@@ -436,13 +448,15 @@ class ThreePointCalibrator:
         orn = np.asarray(orn, np.float64).reshape(3, 4)
         if self._neck_quat_inv is None:
             self._neck_quat_inv = R.from_quat(orn[2], scalar_first=True).inv()
-        neck_inv = self._neck_quat_inv
+        # Wrists use the neck frame only in body-source mode; device-source keeps them
+        # in the already yaw-stabilised world frame (see class docstring).
+        wrist_inv = self._neck_quat_inv if self.neck_relative_wrists else R.identity()
 
         self._wrist_pos_offset = np.zeros((2, 3), np.float64)
         self._wrist_rot_offset = []
         for k in range(2):
-            corrected_pos = neck_inv.apply(pos[k])
-            corrected_rot = neck_inv * R.from_quat(orn[k], scalar_first=True)
+            corrected_pos = wrist_inv.apply(pos[k])
+            corrected_rot = wrist_inv * R.from_quat(orn[k], scalar_first=True)
             self._wrist_pos_offset[k] = corrected_pos - _G1_NEUTRAL_WRIST_POS[k]
             # rot_offset maps the corrected rest orientation onto the G1 neutral wrist
             # orientation: calibrated = rot_offset * (neck_inv * current).
@@ -461,12 +475,13 @@ class ThreePointCalibrator:
         pos = np.asarray(pos, np.float64).reshape(3, 3)
         orn = np.asarray(orn, np.float64).reshape(3, 4)
         neck_inv = self._neck_quat_inv
+        wrist_inv = neck_inv if self.neck_relative_wrists else R.identity()
 
         out_pos = np.zeros((3, 3), np.float64)
         out_orn = np.zeros((3, 4), np.float64)
         for k in range(2):  # wrists
-            out_pos[k] = neck_inv.apply(pos[k]) - self._wrist_pos_offset[k]
-            corrected_rot = neck_inv * R.from_quat(orn[k], scalar_first=True)
+            out_pos[k] = wrist_inv.apply(pos[k]) - self._wrist_pos_offset[k]
+            corrected_rot = wrist_inv * R.from_quat(orn[k], scalar_first=True)
             out_orn[k] = (self._wrist_rot_offset[k] * corrected_rot).as_quat(scalar_first=True)
 
         # Head/neck: orientation de-tilted, position from the torso->neck chain.

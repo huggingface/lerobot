@@ -195,7 +195,13 @@ def main() -> None:
     # 3-point operator calibration (device source only): map the operator's neutral
     # rest pose onto the G1's neutral stance. Trigger a (re)capture with the A+B+X+Y
     # controller combo, mirroring gear_sonic's ThreePointPose.calibrate_now.
-    calibrator = ThreePointCalibrator() if (xrt is not None and args.headset_source == "devices") else None
+    # Device source: the "neck" is the headset (pitches when looking down), so keep the
+    # wrist targets in the yaw-local world frame rather than de-rotating by head tilt.
+    calibrator = (
+        ThreePointCalibrator(neck_relative_wrists=False)
+        if (xrt is not None and args.headset_source == "devices")
+        else None
+    )
     calib_combo_last = False
     if calibrator is not None:
         print(

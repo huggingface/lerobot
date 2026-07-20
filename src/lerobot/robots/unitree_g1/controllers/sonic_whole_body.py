@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections import deque
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -38,10 +39,12 @@ from lerobot.teleoperators.pico_headset.smpl_constants import (
     VR3_ORN_PREFIX,
     VR3_POS_DIM,
     VR3_POS_PREFIX,
+    WB_ACTION_DIM,
+    wb_action_key,
 )
 from lerobot.utils.import_utils import _onnxruntime_available, require_package
 
-from ..g1_utils import KEYBOARD_KEYS_FIELD, G1_29_JointIndex, lowstate_to_obs
+from ..g1_utils import MUJOCO_TO_ISAACLAB, KEYBOARD_KEYS_FIELD, G1_29_JointIndex, lowstate_to_obs
 from .sonic_pipeline import (
     CONTROL_DT,
     DEBUG_PRINT_EVERY,
@@ -130,6 +133,51 @@ def _extract_vr3_from_action(action: dict | None) -> tuple[np.ndarray, np.ndarra
         count=VR3_ORN_DIM,
     )
     return pos, orn
+
+
+def _extract_wb34_from_action(action: dict | None) -> np.ndarray | None:
+    """Reassemble a dense (34,) whole-body command from ``wb.{i}.pos`` keys, or None.
+
+    This is the OpenHLM / pi0.5 joint-based interface: one 34-D vector per tick
+    (sentinel: presence of ``wb.0.pos``) carrying absolute joint targets in real
+    units. The ``.pos`` suffix lets these flow through ``lerobot-rollout`` as normal
+    joint-position action features.
+    """
+    if not action or wb_action_key(0) not in action:
+        return None
+    return np.fromiter(
+        (float(action.get(wb_action_key(i), 0.0)) for i in range(WB_ACTION_DIM)),
+        dtype=np.float32,
+        count=WB_ACTION_DIM,
+    )
+
+
+def _wb34_to_reference(wb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Map a 34-D OpenHLM whole-body command to a SONIC mode-0 reference.
+
+    Returns ``(ref29, anchor_quat)`` where ``ref29`` is the 29 joint targets in
+    IsaacLab order (what SONIC's ``motion_joint_positions`` expects) and
+    ``anchor_quat`` (wxyz) encodes the root roll/pitch (yaw=0).
+
+    OpenHLM layout : [L-arm 0:7, L-grip 7, R-arm 8:15, R-grip 15,
+                      L-leg 16:22, R-leg 22:28, waist 28:31, root rp+yaw 31:34]
+    The 29 joints are first assembled in MuJoCo / Unitree-SDK order
+    ([L-leg 0:6, R-leg 6:12, waist 12:15, L-arm 15:22, R-arm 22:29] — the
+    ``G1_29_JointIndex`` grouping OpenHLM uses), then permuted to IsaacLab order via
+    ``MUJOCO_TO_ISAACLAB``. Grippers (7, 15) and yaw-rate (33) are not part of the
+    29-DoF SONIC reference.
+    """
+    ref_mj = np.zeros(29, np.float32)  # MuJoCo / Unitree-SDK grouped order
+    ref_mj[0:6] = wb[16:22]   # left leg
+    ref_mj[6:12] = wb[22:28]  # right leg
+    ref_mj[12:15] = wb[28:31]  # waist
+    ref_mj[15:22] = wb[0:7]   # left arm
+    ref_mj[22:29] = wb[8:15]  # right arm
+    ref = ref_mj[MUJOCO_TO_ISAACLAB].astype(np.float32)  # -> IsaacLab order for SONIC
+    roll, pitch = float(wb[31]), float(wb[32])
+    cr, sr, cp, sp = np.cos(roll / 2), np.sin(roll / 2), np.cos(pitch / 2), np.sin(pitch / 2)
+    anchor = np.array([cr * cp, sr * cp, cr * sp, sr * sp], np.float32)  # Rx(roll)·Ry(pitch)
+    return ref, anchor
 
 
 def _extract_loco_from_action(action: dict | None) -> tuple[np.ndarray, np.ndarray] | None:
@@ -234,6 +282,10 @@ class SonicWholeBodyController:
 
     control_dt = CONTROL_DT
     full_body = True
+    # Advertise a dense 34-D whole-body action space (OpenHLM / pi0.5) so the robot
+    # exposes ``wb.{i}.pos`` action features and ``lerobot-rollout`` can drive it
+    # directly with a 34-D VLA policy.
+    wb_action = True
 
     def __init__(
         self,
@@ -276,6 +328,13 @@ class SonicWholeBodyController:
         self._init_ramp_steps = max(1, round(INIT_RAMP_S / CONTROL_DT))
         self._init_step = 0
         self._start_pose: dict[str, float] = {}
+
+        # Tick counter for the dense whole-body (OpenHLM, mode-0) path's encoder cadence.
+        self._wb_step = 0
+        # Rolling 50-frame reference trajectory (ref29 + anchor quat) built from the
+        # stream of per-tick whole-body commands, fed to the encoder as a batch.
+        self._wb_traj: deque[np.ndarray] = deque(maxlen=50)
+        self._wb_quat_traj: deque[np.ndarray] = deque(maxlen=50)
 
         # Optional: subscribe directly to the rt/smpl headset stream so full-body
         # teleop works with ANY teleoperator (e.g. --teleop.type=unitree_g1 for the
@@ -445,6 +504,66 @@ class SonicWholeBodyController:
             logger.info("SONIC 3-point: locomotion mode -> %s", LM(self.ms.mode).name)
         self._prev_loco_mode_pair = (ab_now, xy_now)
 
+    def _run_wholebody34(self, obs: dict, wb: np.ndarray) -> dict:
+        """Feed a dense 34-D OpenHLM whole-body command as the mode-0 encoder reference.
+
+        The 29 joint targets are held across the encoder lookahead window (zero
+        velocity) and the root roll/pitch set the anchor orientation, then the
+        encoder/decoder run directly (planner bypassed). One command per tick, so the
+        VLA's commanded pose is what SONIC tracks.
+        """
+        ref, anchor = _wb34_to_reference(wb)
+        c = self.controller
+        if c.encode_mode != 0:
+            c.encode_mode = 0
+            c.reinit_heading = True
+        # Capture the heading/anchor reference on the first whole-body tick. The
+        # controller only latches ``init_ref_quat`` (and the base heading) inside
+        # ``step()`` when ``first_motion or reinit_heading`` — but it already boots in
+        # mode 0, so the mode-switch guard above misses the very first command and the
+        # anchor would stay identity. This mirrors the GEAR reference, which seeds
+        # ``init_ref_quat`` from the first anchor. Must run before the buffers below so
+        # ``step()`` latches ``motion_body_quats[0]`` = this tick's anchor.
+        if self._wb_step == 0:
+            c.reinit_heading = True
+
+        # Accumulate the per-tick commands into a rolling 50-frame reference
+        # trajectory so the encoder's 10-frame, step-5 lookahead sees an actual
+        # motion sequence (with velocities) instead of one repeated pose. 50 frames
+        # == chunk horizon == 10 lookahead frames × step 5.
+        self._wb_traj.append(ref)
+        self._wb_quat_traj.append(anchor)
+        traj = np.asarray(self._wb_traj, np.float32)  # (L, 29), oldest -> newest
+        quats = np.asarray(self._wb_quat_traj, np.float32)  # (L, 4)
+        n = len(traj)
+        # Per-frame velocities from finite differences (rad/s at the control rate).
+        vel = np.zeros_like(traj)
+        if n > 1:
+            vel[1:] = (traj[1:] - traj[:-1]) / CONTROL_DT
+            vel[0] = vel[1]
+        with c.motion_lock:
+            c.motion_joint_positions[:n] = traj
+            c.motion_joint_velocities[:n] = vel
+            c.motion_body_quats[:n] = quats
+            c.motion_body_pos[:n] = 0.0
+            c.motion_timesteps = n
+            c.ref_cursor = 0
+        c.playing = True
+        do_enc = self._wb_step % ENCODER_UPDATE_EVERY == 0
+        out = c.step(obs, update_encoder=do_enc, debug=False)
+        if self._wb_step % 25 == 0:
+            tgt = np.array([out[f"{m.name}.q"] for m in G1_29_JointIndex], np.float32)
+            logger.info(
+                "[WB34] step=%d |ref|mean=%.3f |target|mean=%.3f target_std=%.3f init_ref_quat=%s",
+                self._wb_step,
+                float(np.abs(ref).mean()),
+                float(np.abs(tgt).mean()),
+                float(tgt.std()),
+                np.round(c.init_ref_quat, 3).tolist(),
+            )
+        self._wb_step += 1
+        return out
+
     def _smooth_root_quat(self, root_quat: np.ndarray | None) -> np.ndarray | None:
         """Spherically smooth the per-frame SMPL root quaternion (mode-2 anchor).
 
@@ -513,6 +632,20 @@ class SonicWholeBodyController:
         # direct rt/smpl subscription when enabled (enable_smpl_stream). A stale
         # stream (headset silent past its timeout) is treated as "no SMPL" so the
         # robot doesn't stay frozen tracking the last pose.
+        # Dense whole-body command (OpenHLM / pi0.5 joint interface) takes priority:
+        # a single 34-D vector drives the mode-0 joint reference directly.
+        wb = _extract_wb34_from_action(action)
+        if wb is not None:
+            return self._startup_blend(obs, self._run_wholebody34(obs, wb))
+        self._wb_miss = getattr(self, "_wb_miss", 0) + 1
+        if self._wb_miss % 50 == 1:
+            akeys = [k for k in action if isinstance(k, str)]
+            logger.info(
+                "[WB34] no wb.*.pos in action this tick (miss=%d). action keys sample: %s",
+                self._wb_miss,
+                akeys[:8],
+            )
+
         smpl = _extract_smpl_from_action(action)
         root_quat = _extract_root_from_action(action)
         vr3 = _extract_vr3_from_action(action)
@@ -575,6 +708,9 @@ class SonicWholeBodyController:
         self._init_step = 0  # re-run the startup blend after a reset
         self._start_pose = {}
         self._smoothed_root_quat = None
+        self._wb_step = 0
+        self._wb_traj.clear()
+        self._wb_quat_traj.clear()
 
     def shutdown(self):
         if self._smpl_stream is not None:
