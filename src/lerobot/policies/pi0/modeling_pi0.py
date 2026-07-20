@@ -1227,6 +1227,15 @@ class PI0Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+        # --- Add this block ---
+        # The client sends 'observation.images.side', but Pi0 expects 'observation.image'
+        if "observation.images.side" in observation:
+                observation["observation.image"] = observation.pop("observation.images.side")
+        elif "observation.images.image" in observation:
+                observation["observation.image"] = observation.pop("observation.images.image")
+        # --- End of block ---
+    	
+    	
         """Select a single action given environment observations."""
         assert not self._rtc_enabled(), (
             "RTC is not supported for select_action, use it with predict_action_chunk"
