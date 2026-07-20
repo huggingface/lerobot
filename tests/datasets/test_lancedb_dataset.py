@@ -246,6 +246,22 @@ def test_video_delta_timestamps_parity(video_dataset_roots):
         assert_items_equal(actual, expected)
 
 
+def test_video_batched_shared_segments(video_dataset_roots):
+    """Large shuffled batches make many windows share segments; decode must stay stable."""
+    src_root, lance_root = video_dataset_roots
+    fps = LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta.fps
+    delta_timestamps = {"action": [0.0, 1 / fps]}
+    for key in LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta.video_keys:
+        delta_timestamps[key] = [-1 / fps, 0.0, 1 / fps]
+    lance_ds = LanceDBDataset(root=lance_root, delta_timestamps=delta_timestamps)
+    rng = torch.Generator().manual_seed(0)
+    for _ in range(3):
+        indices = torch.randperm(len(lance_ds), generator=rng)[:32].tolist()
+        items = lance_ds.__getitems__(indices)
+        for idx, item in zip(indices, items, strict=True):
+            assert_items_equal(item, lance_ds[idx])
+
+
 def test_video_return_uint8(video_dataset_roots):
     _, lance_root = video_dataset_roots
     lance_ds = LanceDBDataset(root=lance_root, return_uint8=True)
