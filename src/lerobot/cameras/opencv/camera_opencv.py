@@ -205,6 +205,8 @@ class OpenCVCamera(Camera):
         set_fourcc_after_size_and_fps = platform.system() == "Windows"
         if self.config.fourcc is not None and not set_fourcc_after_size_and_fps:
             self._validate_fourcc()
+        elif self.config.fourcc is None and not set_fourcc_after_size_and_fps:
+            self._apply_preferred_fourcc()
 
         default_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         default_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
@@ -227,6 +229,8 @@ class OpenCVCamera(Camera):
             # On Windows with DSHOW, changing the resolution can silently override the FOURCC setting.
             # Set FOURCC last to make sure the requested pixel format is actually enforced.
             self._validate_fourcc()
+        elif self.config.fourcc is None and set_fourcc_after_size_and_fps:
+            self._apply_preferred_fourcc()
 
     def _validate_fps(self) -> None:
         """Validates and sets the camera's frames per second (FPS)."""
@@ -262,6 +266,28 @@ class OpenCVCamera(Camera):
             logger.warning(
                 f"{self} failed to set fourcc={self.config.fourcc} (actual={actual_fourcc}, success={success}). "
                 f"Continuing with default format."
+            )
+
+    def _apply_preferred_fourcc(self) -> None:
+        """Prefer MJPG when no fourcc was requested and the camera supports it.
+
+        Uncompressed formats (e.g. YUYV) consume ~16x the USB bandwidth of MJPG
+        for identical frames, which can silently cap the frame rate on shared
+        USB 2.0 buses. Requesting a FOURCC the camera does not support leaves the
+        negotiated format unchanged, so this is a no-op on cameras without MJPG.
+        An explicit ``config.fourcc`` always takes precedence (this runs only
+        when it is None).
+        """
+        if self.videocapture is None:
+            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+
+        self.videocapture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        actual_fourcc_code_int = int(self.videocapture.get(cv2.CAP_PROP_FOURCC))
+        actual_fourcc = "".join([chr((actual_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)])
+        if actual_fourcc != "MJPG":
+            logger.debug(
+                f"{self} does not report MJPG support (using {actual_fourcc!r}); "
+                f"set config.fourcc explicitly to override."
             )
 
     def _validate_width_and_height(self) -> None:

@@ -20,7 +20,7 @@
 # ```
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cv2
 import numpy as np
@@ -266,6 +266,19 @@ def test_fourcc_with_camera():
         # Read should work normally
         img = camera.read()
         assert isinstance(img, np.ndarray)
+
+
+def test_apply_preferred_fourcc_no_op_when_unsupported():
+    """_apply_preferred_fourcc requests MJPG and is a no-op if the camera rejects it."""
+    camera = OpenCVCamera(OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH))
+    camera.videocapture = MagicMock()
+    # Camera reports YUYV (no MJPG support): must not raise, must not touch config.
+    camera.videocapture.get.return_value = float(cv2.VideoWriter_fourcc(*"YUYV"))
+
+    camera._apply_preferred_fourcc()
+
+    camera.videocapture.set.assert_called_once_with(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    assert camera.config.fourcc is None
 
 
 @pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)
