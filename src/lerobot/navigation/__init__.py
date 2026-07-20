@@ -31,12 +31,33 @@ from .base_controller import (
     odometry_to_world_pose,
     world_velocity_to_body,
 )
+from .occupancy import (
+    NAVIGABLE,
+    OBSTACLE,
+    UNOBSERVED,
+    OccupancyGrid,
+    astar,
+    find_frontier_cells,
+    project_voxel_map_to_grid,
+)
+from .voxel_map import CarveResult, QueryResult, VoxelMap, VoxelSnapshot
 
 __all__ = [
+    "NAVIGABLE",
+    "OBSTACLE",
+    "UNOBSERVED",
     "BaseController",
+    "CarveResult",
+    "OccupancyGrid",
+    "QueryResult",
     "RobotBaseController",
     "SafeBaseController",
     "StubBaseController",
+    "VoxelMap",
+    "VoxelSnapshot",
+    "astar",
+    "find_frontier_cells",
     "odometry_to_world_pose",
+    "project_voxel_map_to_grid",
     "world_velocity_to_body",
 ]
