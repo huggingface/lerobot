@@ -288,7 +288,7 @@ class UnitreeG1(Robot):
     def _empty_cameras_ft(self) -> dict[str, tuple]:
         """Synthetic zero-image cameras (see ``UnitreeG1Config.empty_cameras``)."""
         h, w = self.config.empty_camera_hw
-        return {name: (h, w, 3) for name in self.config.empty_cameras}
+        return dict.fromkeys(self.config.empty_cameras, (h, w, 3))
 
     @property
     def _replay_cameras_ft(self) -> dict[str, tuple]:
