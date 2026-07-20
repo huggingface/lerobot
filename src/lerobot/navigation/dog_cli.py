@@ -81,6 +81,19 @@ class DogController:
                 LOG.info("  did not reach %r: %s (conf %.3f)", tr.target, tr.reason, tr.confidence)
         return result
 
+    def report_location(self, text: str):
+        """Locate a target and report where it is — no motion commanded.
+
+        The safe query for map-only bring-up: build the map by teleop, then
+        ask where an object is without the dog driving itself.
+        """
+        loc = self.skills.locate(text)
+        if loc.found:
+            LOG.info("  %r is at %s (conf %.3f, %d voxels)", text, loc.xyz, loc.confidence, loc.n_voxels)
+        else:
+            LOG.info("  %r not found yet (conf %.3f) — map more of the area", text, loc.confidence)
+        return loc
+
     def idle_tick(self) -> ExploreResult:
         """One autonomous exploration step: pick a frontier and drive to it."""
         ex = self.skills.explore(query=None)
@@ -296,18 +309,26 @@ def run_live_repl(
     controller: DogController,
     mapper: LiveMapper,
     idle_period_s: float = 0.2,
+    map_only: bool = False,
 ) -> int:
-    """Live loop on the robot: map continuously, run tasks on typed lines.
+    """Live loop on the robot: map continuously, act on typed lines.
 
     Each iteration integrates one keyframe (perceive → geometry → features →
-    voxel map), then either handles a typed prompt or takes one exploration
+    voxel map). In ``map_only`` mode the dog is never commanded to move —
+    you teleop it while the map builds, and a typed object name reports
+    where it is (safe first bring-up). Otherwise a typed name runs a full
+    locate/goto task and an empty line takes one autonomous exploration
     step. The DDS connection is opened here so ``--help`` stays model-free.
     """
     import time
 
     mapper.robot.connect()
     controller.skills.base.reset_watchdog()
-    print("dog-nav (live). Type an object to find it, empty line to explore, 'quit' to exit.")
+    if map_only:
+        print("dog-nav (live, MAP-ONLY — no autonomous motion). Teleop the dog; type an")
+        print("object to ask where it is; 'quit' to exit.")
+    else:
+        print("dog-nav (live). Type an object to find it, empty line to explore, 'quit' to exit.")
     t0 = time.monotonic()
     try:
         while True:
@@ -320,10 +341,10 @@ def run_live_repl(
                 if text.lower() in {"quit", "exit"}:
                     break
                 if text:
-                    controller.handle_prompt(text)
-                else:
+                    controller.report_location(text) if map_only else controller.handle_prompt(text)
+                elif not map_only:
                     controller.idle_tick()
-            else:
+            elif not map_only:
                 controller.idle_tick()
     except KeyboardInterrupt:
         LOG.warning("interrupted — stopping base")
@@ -345,6 +366,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Run on a real Unitree Go2 (DDS + LingBot-Map + SigLIP2 on the GPU host).",
     )
+    ap.add_argument(
+        "--map-only",
+        action="store_true",
+        help="Live mode with NO autonomous motion: teleop the dog, build the map, "
+        "and query where objects are. Recommended for first bring-up.",
+    )
     ap.add_argument("--network-interface", default="eth0", help="Host interface wired to the dog.")
     ap.add_argument("--device", default="cuda", help="Torch device for the geometry/feature models.")
     ap.add_argument(
@@ -363,7 +390,7 @@ def main(argv: list[str] | None = None) -> int:
         level=getattr(logging, args.log_level), format="%(levelname)-7s %(name)s: %(message)s"
     )
 
-    if args.live:
+    if args.live or args.map_only:
         controller, mapper = _build_live(
             args.network_interface,
             args.device,
@@ -371,7 +398,7 @@ def main(argv: list[str] | None = None) -> int:
             max_lin_speed=args.max_lin_speed,
             max_yaw_rate=args.max_yaw_rate,
         )
-        return run_live_repl(controller, mapper)
+        return run_live_repl(controller, mapper, map_only=args.map_only)
 
     if not args.dry_run:
         raise SystemExit("Choose a mode: --dry-run (synthetic scene) or --live (real Unitree Go2).")
