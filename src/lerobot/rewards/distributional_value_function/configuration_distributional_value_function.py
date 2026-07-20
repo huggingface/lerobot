@@ -79,6 +79,9 @@ class DistributionalVFConfig(RewardModelConfig):
     stop_gradient_to_vlm: bool = False
     vision_encoder_lr_multiplier: float = 0.5
 
+    # Readout: "mean_pool" (average all tokens) or "last_token" (causal LM last position)
+    readout: str = "mean_pool"
+
     # Normalization
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -88,17 +91,17 @@ class DistributionalVFConfig(RewardModelConfig):
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(
-            lr=1e-4,
-            weight_decay=1e-5,
+            lr=5e-5,
+            weight_decay=1e-10,
             grad_clip_norm=1.0,
         )
 
     def get_scheduler_preset(self) -> CosineDecayWithWarmupSchedulerConfig:
         return CosineDecayWithWarmupSchedulerConfig(
             num_warmup_steps=500,
-            num_decay_steps=30000,
-            peak_lr=1e-4,
-            decay_lr=1e-6,
+            num_decay_steps=40000,
+            peak_lr=5e-5,
+            decay_lr=5e-5,
         )
 
     def validate_features(self) -> None:
