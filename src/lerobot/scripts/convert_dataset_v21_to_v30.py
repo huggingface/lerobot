@@ -48,6 +48,8 @@ meta/, data/, videos/. When omitted, defaults to $HF_LEROBOT_HOME/{repo_id}.
 import argparse
 import logging
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +58,7 @@ from lerobot.utils.import_utils import require_package
 require_package("jsonlines", extra="dataset")
 
 import jsonlines
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import tqdm
@@ -176,6 +179,151 @@ def validate_local_dataset_version(local_path: Path) -> None:
         )
 
 
+def parse_episode_indices(episode_indices: str) -> list[int]:
+    try:
+        indices = [int(idx.strip()) for idx in episode_indices.split(",") if idx.strip()]
+    except ValueError as e:
+        raise ValueError(f"episode_indices must be a comma-separated list of integers: {episode_indices}") from e
+
+    if len(indices) == 0:
+        raise ValueError("episode_indices must contain at least one episode index.")
+    if len(set(indices)) != len(indices):
+        raise ValueError(f"episode_indices contains duplicate episode indices: {episode_indices}.")
+
+    return indices
+
+
+def resolve_episode_indices(
+    total_episodes: int,
+    episode_start: int | None = None,
+    episode_end: int | None = None,
+    episode_indices: str | None = None,
+) -> list[int]:
+    if episode_indices is not None:
+        if episode_start is not None or episode_end is not None:
+            raise ValueError("--episode-indices cannot be used with --episode-start or --episode-end.")
+
+        indices = parse_episode_indices(episode_indices)
+        out_of_range = [idx for idx in indices if idx < 0 or idx >= total_episodes]
+        if out_of_range:
+            raise ValueError(
+                f"episode_indices contains out-of-range episode indices for dataset with "
+                f"{total_episodes} episodes: {out_of_range}."
+            )
+        return indices
+
+    start = 0 if episode_start is None else episode_start
+    end = total_episodes if episode_end is None else episode_end
+
+    if start < 0:
+        raise ValueError(f"episode_start must be >= 0, got {episode_start}.")
+    if end < 0:
+        raise ValueError(f"episode_end must be >= 0, got {episode_end}.")
+    if start >= end:
+        raise ValueError(f"episode_start must be smaller than episode_end, got {start} >= {end}.")
+    if end > total_episodes:
+        raise ValueError(f"episode_end={end} is out of range for dataset with {total_episodes} episodes.")
+
+    return list(range(start, end))
+
+
+def get_episode_index_from_path(path: Path) -> int:
+    return int(path.stem.rsplit("_", 1)[1])
+
+
+def select_episode_paths(paths: list[Path], episode_indices: list[int]) -> list[Path]:
+    paths_by_episode_index = {get_episode_index_from_path(path): path for path in paths}
+    selected = [paths_by_episode_index[idx] for idx in episode_indices if idx in paths_by_episode_index]
+    if len(selected) != len(episode_indices):
+        selected_indices = {get_episode_index_from_path(path) for path in selected}
+        missing = [idx for idx in episode_indices if idx not in selected_indices]
+        raise FileNotFoundError(f"Missing files for episode indices: {missing}.")
+    return selected
+
+
+def has_episode_subset(
+    episode_start: int | None, episode_end: int | None, episode_indices: str | None = None
+) -> bool:
+    return episode_start is not None or episode_end is not None or episode_indices is not None
+
+
+def format_episode_indices_for_cli(episode_indices: list[int]) -> str:
+    return ",".join(str(idx) for idx in episode_indices)
+
+
+def describe_episode_indices(episode_indices: list[int]) -> str:
+    if len(episode_indices) == 0:
+        return "[]"
+    if episode_indices == list(range(episode_indices[0], episode_indices[-1] + 1)):
+        return f"[{episode_indices[0]}, {episode_indices[-1] + 1})"
+    return str(episode_indices)
+
+
+def split_episode_groups(episode_indices: list[int], num_workers: int) -> list[list[int]]:
+    if num_workers < 1:
+        raise ValueError(f"num_workers must be >= 1, got {num_workers}.")
+
+    total_episodes = len(episode_indices)
+    num_shards = min(num_workers, total_episodes)
+    base_size, remainder = divmod(total_episodes, num_shards)
+    groups = []
+    offset = 0
+    for shard_idx in range(num_shards):
+        shard_size = base_size + (1 if shard_idx < remainder else 0)
+        groups.append(episode_indices[offset : offset + shard_size])
+        offset += shard_size
+    return groups
+
+
+def run_conversion_workers(
+    repo_id: str,
+    root: Path,
+    output_root: Path,
+    episode_groups: list[list[int]],
+    data_file_size_in_mb: int,
+    video_file_size_in_mb: int,
+):
+    output_root.mkdir(parents=True, exist_ok=True)
+    processes = []
+    for worker_idx, episode_indices in enumerate(episode_groups):
+        shard_root = output_root / f"shard-{worker_idx:03d}"
+        cmd = [
+            sys.executable,
+            "-m",
+            "lerobot.scripts.convert_dataset_v21_to_v30",
+            "--repo-id",
+            repo_id,
+            "--root",
+            str(root),
+            "--output-root",
+            str(shard_root),
+            "--push-to-hub=false",
+            "--force-conversion",
+            "--episode-indices",
+            format_episode_indices_for_cli(episode_indices),
+            "--data-file-size-in-mb",
+            str(data_file_size_in_mb),
+            "--video-file-size-in-mb",
+            str(video_file_size_in_mb),
+        ]
+        logging.info(
+            "Launching worker %s for episode indices %s -> %s",
+            worker_idx,
+            describe_episode_indices(episode_indices),
+            shard_root,
+        )
+        processes.append((worker_idx, subprocess.Popen(cmd)))
+
+    failed_workers = []
+    for worker_idx, process in processes:
+        return_code = process.wait()
+        if return_code != 0:
+            failed_workers.append((worker_idx, return_code))
+
+    if failed_workers:
+        raise RuntimeError(f"Conversion workers failed: {failed_workers}")
+
+
 def convert_tasks(root, new_root):
     logging.info(f"Converting tasks from {root} to {new_root}")
     tasks, _ = legacy_load_tasks(root)
@@ -185,9 +333,14 @@ def convert_tasks(root, new_root):
     write_tasks(df_tasks, new_root)
 
 
-def concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys):
+def concat_data_files(episodes_to_cat, new_root, chunk_idx, file_idx, image_keys):
     # TODO(rcadene): to save RAM use Dataset.from_parquet(file) and concatenate_datasets
-    dataframes = [pd.read_parquet(file) for file in paths_to_cat]
+    dataframes = []
+    for item in episodes_to_cat:
+        dataframe = pd.read_parquet(item["path"])
+        dataframe["episode_index"] = item["episode_index"]
+        dataframe["index"] = np.arange(item["dataset_from_index"], item["dataset_to_index"])
+        dataframes.append(dataframe)
     # Concatenate all DataFrames along rows
     concatenated_df = pd.concat(dataframes, ignore_index=True)
 
@@ -206,9 +359,9 @@ def concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys):
     concatenated_df.to_parquet(path, index=False, schema=schema)
 
 
-def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
+def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int, episode_indices: list[int]):
     data_dir = root / "data"
-    ep_paths = sorted(data_dir.glob("*/*.parquet"))
+    ep_paths = select_episode_paths(sorted(data_dir.glob("*/*.parquet")), episode_indices)
 
     image_keys = get_image_keys(root)
 
@@ -216,30 +369,32 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
     file_idx = 0
     size_in_mb = 0
     num_frames = 0
-    paths_to_cat = []
+    episodes_to_cat = []
     episodes_metadata = []
 
     logging.info(f"Converting data files from {len(ep_paths)} episodes")
 
     for ep_idx, ep_path in enumerate(tqdm.tqdm(ep_paths, desc="convert data files")):
+        source_ep_idx = get_episode_index_from_path(ep_path)
         ep_size_in_mb = get_parquet_file_size_in_mb(ep_path)
         ep_num_frames = get_parquet_num_frames(ep_path)
 
         # Check if we need to start a new file BEFORE creating metadata
-        if size_in_mb + ep_size_in_mb >= data_file_size_in_mb and len(paths_to_cat) > 0:
+        if size_in_mb + ep_size_in_mb >= data_file_size_in_mb and len(episodes_to_cat) > 0:
             # Write the accumulated data files
-            concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys)
+            concat_data_files(episodes_to_cat, new_root, chunk_idx, file_idx, image_keys)
 
             # Move to next file
             chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
 
             # Reset for the next file
             size_in_mb = 0
-            paths_to_cat = []
+            episodes_to_cat = []
 
         # Now create metadata with correct chunk/file indices
         ep_metadata = {
             "episode_index": ep_idx,
+            "source_episode_index": source_ep_idx,
             "data/chunk_index": chunk_idx,
             "data/file_index": file_idx,
             "dataset_from_index": num_frames,
@@ -248,11 +403,11 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
         size_in_mb += ep_size_in_mb
         num_frames += ep_num_frames
         episodes_metadata.append(ep_metadata)
-        paths_to_cat.append(ep_path)
+        episodes_to_cat.append({"path": ep_path, **ep_metadata})
 
     # Write remaining data if any
-    if paths_to_cat:
-        concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys)
+    if episodes_to_cat:
+        concat_data_files(episodes_to_cat, new_root, chunk_idx, file_idx, image_keys)
 
     return episodes_metadata
 
@@ -271,7 +426,7 @@ def get_image_keys(root):
     return image_keys
 
 
-def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int):
+def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int, episode_indices: list[int]):
     logging.info(f"Converting videos from {root} to {new_root}")
 
     video_keys = get_video_keys(root)
@@ -282,7 +437,9 @@ def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int):
 
     eps_metadata_per_cam = []
     for camera in video_keys:
-        eps_metadata = convert_videos_of_camera(root, new_root, camera, video_file_size_in_mb)
+        eps_metadata = convert_videos_of_camera(
+            root, new_root, camera, video_file_size_in_mb, episode_indices
+        )
         eps_metadata_per_cam.append(eps_metadata)
 
     num_eps_per_cam = [len(eps_cam_map) for eps_cam_map in eps_metadata_per_cam]
@@ -307,10 +464,12 @@ def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int):
     return episodes_metadata
 
 
-def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_file_size_in_mb: int):
+def convert_videos_of_camera(
+    root: Path, new_root: Path, video_key: str, video_file_size_in_mb: int, episode_indices: list[int]
+):
     # Access old paths to mp4
     videos_dir = root / "videos"
-    ep_paths = sorted(videos_dir.glob(f"*/{video_key}/*.mp4"))
+    ep_paths = select_episode_paths(sorted(videos_dir.glob(f"*/{video_key}/*.mp4")), episode_indices)
 
     ep_idx = 0
     chunk_idx = 0
@@ -415,8 +574,19 @@ def generate_episode_metadata_dict(
 def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_metadata=None):
     logging.info(f"Converting episodes metadata from {root} to {new_root}")
 
-    episodes_legacy_metadata = legacy_load_episodes(root)
-    episodes_stats = legacy_load_episodes_stats(root)
+    legacy_episodes = legacy_load_episodes(root)
+    legacy_episodes_stats = legacy_load_episodes_stats(root)
+    episodes_legacy_metadata = {}
+    episodes_stats = {}
+    for ep_metadata in episodes_metadata:
+        new_ep_idx = ep_metadata["episode_index"]
+        source_ep_idx = ep_metadata["source_episode_index"]
+        episodes_legacy_metadata[new_ep_idx] = {
+            **legacy_episodes[source_ep_idx],
+            "episode_index": new_ep_idx,
+            "source_episode_index": source_ep_idx,
+        }
+        episodes_stats[new_ep_idx] = legacy_episodes_stats[source_ep_idx]
 
     num_eps_set = {len(episodes_legacy_metadata), len(episodes_metadata)}
     if episodes_video_metadata is not None:
@@ -436,10 +606,20 @@ def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_
     write_stats(stats, new_root)
 
 
-def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb):
+def convert_info(
+    root,
+    new_root,
+    data_file_size_in_mb,
+    video_file_size_in_mb,
+    total_episodes: int,
+    total_frames: int,
+):
     # Load as raw dict to remove legacy v2.1 fields before constructing DatasetInfo.
     info = load_json(root / INFO_PATH)
     info["codebase_version"] = V30
+    info["total_episodes"] = total_episodes
+    info["total_frames"] = total_frames
+    info["splits"] = {"train": f"0:{total_episodes}"}
     del info["total_chunks"]
     del info["total_videos"]
     info["data_files_size_in_mb"] = data_file_size_in_mb
@@ -466,14 +646,33 @@ def convert_dataset(
     root: str | Path | None = None,
     push_to_hub: bool = True,
     force_conversion: bool = False,
+    episode_start: int | None = None,
+    episode_end: int | None = None,
+    episode_indices: str | None = None,
+    output_root: str | Path | None = None,
+    num_workers: int = 1,
 ):
     if data_file_size_in_mb is None:
         data_file_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
     if video_file_size_in_mb is None:
         video_file_size_in_mb = DEFAULT_VIDEO_FILE_SIZE_IN_MB
+    if num_workers < 1:
+        raise ValueError(f"num_workers must be >= 1, got {num_workers}.")
+    if num_workers > 1 and push_to_hub:
+        raise ValueError("--num-workers writes local shard directories and cannot be used with --push-to-hub=true.")
+    if output_root is not None and push_to_hub:
+        raise ValueError(
+            "--output-root writes a local shard/output directory and cannot be used with --push-to-hub=true."
+        )
 
     # First check if the dataset already has a v3.0 version
-    if root is None and not force_conversion:
+    if (
+        root is None
+        and not force_conversion
+        and not has_episode_subset(episode_start, episode_end, episode_indices)
+        and output_root is None
+        and num_workers == 1
+    ):
         try:
             print("Trying to download v3.0 version of the dataset from the hub...")
             snapshot_download(repo_id, repo_type="dataset", revision=V30, local_dir=HF_LEROBOT_HOME / repo_id)
@@ -489,15 +688,21 @@ def convert_dataset(
         use_local_dataset = True
         print(f"Using local dataset at {root}")
 
+    output_root = Path(output_root) if output_root is not None else None
+    if num_workers > 1 and output_root is None:
+        output_root = root.parent / f"{root.name}_shards"
     old_root = root.parent / f"{root.name}_old"
-    new_root = root.parent / f"{root.name}_v30"
+    new_root = output_root if output_root is not None else root.parent / f"{root.name}_v30"
 
-    # Handle old_root cleanup if both old_root and root exist
-    if old_root.is_dir() and root.is_dir():
-        shutil.rmtree(str(root))
-        shutil.move(str(old_root), str(root))
+    if output_root is None:
+        # Handle old_root cleanup if both old_root and root exist
+        if old_root.is_dir() and root.is_dir():
+            shutil.rmtree(str(root))
+            shutil.move(str(old_root), str(root))
 
-    if new_root.is_dir():
+        if new_root.is_dir():
+            shutil.rmtree(new_root)
+    elif new_root.is_dir():
         shutil.rmtree(new_root)
 
     if not use_local_dataset:
@@ -508,14 +713,55 @@ def convert_dataset(
             local_dir=root,
         )
 
-    convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb)
+    info = load_info(root)
+    selected_episode_indices = resolve_episode_indices(
+        info.total_episodes, episode_start, episode_end, episode_indices
+    )
+    if has_episode_subset(episode_start, episode_end, episode_indices):
+        logging.info(
+            "Converting episode subset %s from %s total episodes",
+            describe_episode_indices(selected_episode_indices),
+            info.total_episodes,
+        )
+
+    if num_workers > 1:
+        if output_root.is_dir():
+            shutil.rmtree(output_root)
+        episode_groups = split_episode_groups(selected_episode_indices, num_workers)
+        logging.info(
+            "Running local multiprocessing conversion with %s worker(s) into %s",
+            len(episode_groups),
+            output_root,
+        )
+        run_conversion_workers(
+            repo_id,
+            root,
+            output_root,
+            episode_groups,
+            data_file_size_in_mb,
+            video_file_size_in_mb,
+        )
+        return
+
     convert_tasks(root, new_root)
-    episodes_metadata = convert_data(root, new_root, data_file_size_in_mb)
-    episodes_videos_metadata = convert_videos(root, new_root, video_file_size_in_mb)
+    episodes_metadata = convert_data(root, new_root, data_file_size_in_mb, selected_episode_indices)
+    total_frames = episodes_metadata[-1]["dataset_to_index"] if episodes_metadata else 0
+    episodes_videos_metadata = convert_videos(
+        root, new_root, video_file_size_in_mb, selected_episode_indices
+    )
+    convert_info(
+        root,
+        new_root,
+        data_file_size_in_mb,
+        video_file_size_in_mb,
+        len(selected_episode_indices),
+        total_frames,
+    )
     convert_episodes_metadata(root, new_root, episodes_metadata, episodes_videos_metadata)
 
-    shutil.move(str(root), str(old_root))
-    shutil.move(str(new_root), str(root))
+    if output_root is None:
+        shutil.move(str(root), str(old_root))
+        shutil.move(str(new_root), str(root))
 
     if push_to_hub:
         hub_api = HfApi()
@@ -579,6 +825,43 @@ if __name__ == "__main__":
         "--force-conversion",
         action="store_true",
         help="Force conversion even if the dataset already has a v3.0 version.",
+    )
+    parser.add_argument(
+        "--episode-start",
+        type=int,
+        default=None,
+        help="First episode index to convert, inclusive. Defaults to the first episode.",
+    )
+    parser.add_argument(
+        "--episode-end",
+        type=int,
+        default=None,
+        help=(
+            "Episode index at which to stop conversion, exclusive. Defaults to the total number of episodes."
+        ),
+    )
+    parser.add_argument(
+        "--episode-indices",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated source episode indices to convert, e.g. '0,3,7'. "
+            "Cannot be used with --episode-start or --episode-end."
+        ),
+    )
+    parser.add_argument(
+        "--output-root",
+        type=str,
+        default=None,
+        help=(
+            "Local output directory for the converted dataset. When set, the source root is left unchanged."
+        ),
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=1,
+        help="Number of local subprocess workers to launch. Defaults to 1.",
     )
 
     args = parser.parse_args()
