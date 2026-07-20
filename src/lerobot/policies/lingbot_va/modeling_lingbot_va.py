@@ -573,7 +573,6 @@ class LingBotVAPolicy(PreTrainedPolicy):
         if size is None:
             size = (self.config.height, self.config.width)
         img = F.interpolate(img, size=size, mode="bilinear", align_corners=False)
-        print(f"[lingbot_va] {key} pre-scale range: [{img.min().item():.4f}, {img.max().item():.4f}] (expect ~[0,1])")
         img = img * 2.0 - 1.0
         return img.unsqueeze(2).to(self.dtype)  # [1, C, F=1, H, W]
 
