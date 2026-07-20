@@ -187,6 +187,11 @@ unitree_g1 = [
     "lerobot[matplotlib-dep]",
     "lerobot[pygame-dep]",
 ]
+# Go2 talks plain DDS from the host — no bridge server, no extra deps beyond
+# the SDK itself (cyclonedds-based, hence Linux-only).
+unitree_go2 = [
+    "unitree_sdk2py>=1.0.1; sys_platform == 'linux'",
+]
 # reachy2-sdk caps grpcio<=1.73.1 and protobuf<=6.32.0; quarantined here so downstream users aren't held back. reachy2-sdk is unlikely to release new versions.
 reachy2 = [
     "reachy2_sdk>=1.0.15,<1.1.0",
