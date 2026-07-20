@@ -221,14 +221,30 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         # Generate action based on the most recent observation and its timestep
         try:
+        
+
+        
             getactions_starts = time.perf_counter()
             obs = self.observation_queue.get(timeout=self.config.obs_queue_timeout)
             self.logger.info(
                 f"Running inference for observation #{obs.get_timestep()} (must_go: {obs.must_go})"
             )
 
+            # --- FORCE ALIGNMENT BLOCK ---
+            # Look for the camera name you sent ('side') and map it to what Pi0 needs
+            observation_dict = obs.observation 
+            if "observation.images.side" in observation_dict:
+                observation_dict["observation.image"] = observation_dict.pop("observation.images.side")
+            elif "observation.images.image" in observation_dict:
+                observation_dict["observation.image"] = observation_dict.pop("observation.images.image")
+                
+            obs.observation = observation_dict
+            # --- END BLOCK ---
+
             with self._predicted_timesteps_lock:
                 self._predicted_timesteps.add(obs.get_timestep())
+                
+
 
             start_time = time.perf_counter()
             action_chunk = self._predict_action_chunk(obs)
