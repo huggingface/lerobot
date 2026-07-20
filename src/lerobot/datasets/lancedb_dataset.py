@@ -90,16 +90,27 @@ class _VideoDecoderLRU:
         self._items.move_to_end(key)
         return self._items[key][0]
 
+    # Sparse (handle-backed) decoders hold a parsed frame index, not file
+    # bytes; they are cheap enough to keep in the hundreds. Only materialized
+    # entries (nbytes > 0) count against `capacity` and `byte_budget`.
+    SPARSE_CAPACITY = 512
+
     def put(self, key: tuple, decoder, nbytes: int = 0) -> None:
         if key in self._items:
             self._total_bytes -= self._items[key][1]
         self._items[key] = (decoder, nbytes)
         self._items.move_to_end(key)
         self._total_bytes += nbytes
-        while len(self._items) > 1 and (
-            len(self._items) > self.capacity
-            or (self.byte_budget is not None and self._total_bytes > self.byte_budget)
-        ):
+
+        def _over_limit() -> bool:
+            materialized = sum(1 for _, entry_bytes in self._items.values() if entry_bytes > 0)
+            return (
+                materialized > self.capacity
+                or (self.byte_budget is not None and self._total_bytes > self.byte_budget)
+                or len(self._items) > max(self.capacity, self.SPARSE_CAPACITY)
+            )
+
+        while len(self._items) > 1 and _over_limit():
             _, (_, evicted_bytes) = self._items.popitem(last=False)
             self._total_bytes -= evicted_bytes
 
