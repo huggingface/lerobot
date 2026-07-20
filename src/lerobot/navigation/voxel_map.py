@@ -466,7 +466,10 @@ class VoxelMap:
         text_unit = text_embedding.astype(np.float32)
         text_unit = text_unit / max(float(np.linalg.norm(text_unit)), 1e-6)
 
-        scores = voxel_feat @ text_unit  # (M,)
+        # fp16 feature storage can carry the odd inf/nan from a saturated
+        # running sum; the cosine stays well-defined, so don't warn on it.
+        with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+            scores = np.nan_to_num(voxel_feat @ text_unit)  # (M,)
         k = min(int(top_k), len(scores))
         # Partition-and-sort for the top-k.
         top_idx = np.argpartition(scores, -k)[-k:]

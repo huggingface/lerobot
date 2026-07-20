@@ -23,6 +23,14 @@ dyna360 research stack; the physical robot layer lives in
 ``lerobot.robots`` (e.g. ``unitree_go2``).
 """
 
+from .agent import (
+    AgentConfig,
+    AgentResult,
+    DeterministicAgent,
+    HardcodedTaskParser,
+    Task,
+    TaskParser,
+)
 from .base_controller import (
     BaseController,
     RobotBaseController,
@@ -30,6 +38,11 @@ from .base_controller import (
     StubBaseController,
     odometry_to_world_pose,
     world_velocity_to_body,
+)
+from .features import (
+    BasisVectorFeatureExtractor,
+    FeatureExtractor,
+    SiglipFeatureExtractor,
 )
 from .occupancy import (
     NAVIGABLE,
@@ -40,24 +53,50 @@ from .occupancy import (
     find_frontier_cells,
     project_voxel_map_to_grid,
 )
+from .skills import (
+    ExploreResult,
+    GotoResult,
+    LocateResult,
+    SkillsConfig,
+    SpatialSkills,
+)
+from .value_map import ValueMapConfig, ValueMaps, compute_value_maps, pick_best_frontier_cell
 from .voxel_map import CarveResult, QueryResult, VoxelMap, VoxelSnapshot
 
 __all__ = [
     "NAVIGABLE",
     "OBSTACLE",
     "UNOBSERVED",
+    "AgentConfig",
+    "AgentResult",
     "BaseController",
+    "BasisVectorFeatureExtractor",
     "CarveResult",
+    "DeterministicAgent",
+    "ExploreResult",
+    "FeatureExtractor",
+    "GotoResult",
+    "HardcodedTaskParser",
+    "LocateResult",
     "OccupancyGrid",
     "QueryResult",
     "RobotBaseController",
     "SafeBaseController",
+    "SiglipFeatureExtractor",
+    "SkillsConfig",
+    "SpatialSkills",
     "StubBaseController",
+    "Task",
+    "TaskParser",
+    "ValueMapConfig",
+    "ValueMaps",
     "VoxelMap",
     "VoxelSnapshot",
     "astar",
+    "compute_value_maps",
     "find_frontier_cells",
     "odometry_to_world_pose",
+    "pick_best_frontier_cell",
     "project_voxel_map_to_grid",
     "world_velocity_to_body",
 ]
