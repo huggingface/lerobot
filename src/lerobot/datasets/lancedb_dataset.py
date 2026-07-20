@@ -515,15 +515,27 @@ class LanceDBDataset(torch.utils.data.Dataset):
                     seg_starts[rowid] = float(starts[seg])
                 windows[(sample_idx, key)] = entries
 
-        missing = [rowid for rowid in sorted(seg_requests) if (rowid,) not in self._decoder_cache]
+        # Local references pin this batch's decoders: cache eviction (the
+        # budget can be smaller than one batch's working set at high
+        # resolution) must never invalidate in-flight work.
+        decoders = {
+            rowid: self._decoder_cache.get((rowid,))
+            for rowid in seg_requests
+            if (rowid,) in self._decoder_cache
+        }
+        missing = [rowid for rowid in sorted(seg_requests) if rowid not in decoders]
         if missing:
             blobs = self._videos_table.fetch_blobs(VIDEO_BLOB_COLUMN, missing)
             for rowid, blob in zip(missing, blobs, strict=True):
                 data = blob.as_py()
-                self._decoder_cache.put(
-                    (rowid,), VideoDecoder(data, seek_mode="approximate"), nbytes=len(data)
-                )
-        decoders = {rowid: self._decoder_cache.get((rowid,)) for rowid in seg_requests}
+                decoder = VideoDecoder(data, seek_mode="approximate")
+                decoders[rowid] = decoder
+                # A cached entry costs its blob bytes PLUS the decoder's ffmpeg
+                # context, which scales with resolution (~6.5 MB at 320x180,
+                # ~15 MB at 720p). Charging only blob bytes let 720p datasets
+                # cache thousands of contexts and OOM the workers.
+                context_cost = (8 << 20) + 8 * decoder.metadata.height * decoder.metadata.width
+                self._decoder_cache.put((rowid,), decoder, nbytes=len(data) + context_cost)
 
         # Decode per segment so each decoder is only ever touched by one
         # thread (torchcodec decoders are not thread-safe), and every segment
