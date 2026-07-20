@@ -46,6 +46,7 @@ Examples (on the robot):
 import argparse
 import json
 import logging
+import os
 import signal
 import sys
 import threading
@@ -166,15 +167,21 @@ def main() -> None:
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
 
-    # Emergency stop key: 'e' + Enter -> skip the soft-stop arm ramp (make it a no-op),
-    # then trigger the normal shutdown, which goes straight to zero-torque and exits.
+    # Emergency stop key: 'e' + Enter -> go passive NOW. We stop the controller loop
+    # from re-publishing, send a single zero-gain (limp) command, and hard-exit the
+    # process. This deliberately skips the graceful disconnect (soft-stop arm ramp +
+    # thread joins), which is what made it take several seconds.
     def estop_listener() -> None:
         for line in sys.stdin:
             if line.strip().lower() == "e":
-                logger.warning("E-STOP ('e'): stopping immediately (no arm ramp).")
-                robot._soft_stop = lambda: None  # skip the slow ramp-to-default
-                stop.set()
-                break
+                logger.warning("E-STOP ('e'): going passive NOW.")
+                try:
+                    robot._shutdown_event.set()  # stop the 50Hz controller loop publishing
+                    time.sleep(0.05)             # let it finish its current cycle
+                    robot._send_zero_torque()    # motors limp; nothing overwrites it now
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("E-stop zero-torque failed: %s", e)
+                os._exit(0)  # immediate hard exit, no slow cleanup
 
     threading.Thread(target=estop_listener, daemon=True).start()
 
