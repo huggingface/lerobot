@@ -45,7 +45,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
@@ -493,29 +493,30 @@ class LanceDBDataset(torch.utils.data.Dataset):
         from torchcodec.decoders import VideoDecoder
 
         timestamps = columns["timestamp"]
-        # windows[(sample, key)] = [(segment_rowid, ts), ...] in window order
-        windows: dict[tuple[int, str], list[tuple[int, float]]] = {}
-        seg_requests: dict[int, set[float]] = defaultdict(set)
-        seg_starts: dict[int, float] = {}
+        # window_parts[(sample, key)] = ordered [(segment_rowid, [ts, ...]), ...]
+        window_parts: dict[tuple[int, str], list[tuple[int, list[float]]]] = {}
+        needed: set[int] = set()
         for sample_idx, plan in enumerate(plans):
             ep_idx = plan["ep_idx"]
             for key in self.meta.video_keys:
                 window = plan["windows"].get(key, [plan["abs_idx"]])
                 chunk_arr, file_arr, from_ts_arr = self._video_locator[key]
                 file_key = (key, int(chunk_arr[ep_idx]), int(file_arr[ep_idx]))
-                starts, _ends, seg_row_ids = self._segments[file_key]
-                entries = []
+                starts, ends, seg_row_ids = self._segments[file_key]
+                parts: list[tuple[int, list[float]]] = []
                 for row in window:
                     ts = float(from_ts_arr[ep_idx]) + float(timestamps[row_pos[row]])
                     seg = int(np.searchsorted(starts, ts + self.tolerance_s, side="right") - 1)
                     seg = min(max(seg, 0), len(starts) - 1)
                     rowid = int(seg_row_ids[seg])
-                    entries.append((rowid, ts))
-                    seg_requests[rowid].add(ts)
-                    seg_starts[rowid] = float(starts[seg])
-                windows[(sample_idx, key)] = entries
+                    if parts and parts[-1][0] == rowid:
+                        parts[-1][1].append(ts)
+                    else:
+                        parts.append((rowid, [ts]))
+                    needed.add(rowid)
+                window_parts[(sample_idx, key)] = parts
 
-        missing = [rowid for rowid in sorted(seg_requests) if (rowid,) not in self._decoder_cache]
+        missing = [rowid for rowid in sorted(needed) if (rowid,) not in self._decoder_cache]
         if missing:
             blobs = self._videos_table.fetch_blobs(VIDEO_BLOB_COLUMN, missing)
             for rowid, blob in zip(missing, blobs, strict=True):
@@ -523,44 +524,47 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 self._decoder_cache.put(
                     (rowid,), VideoDecoder(data, seek_mode="approximate"), nbytes=len(data)
                 )
-        decoders = {rowid: self._decoder_cache.get((rowid,)) for rowid in seg_requests}
+        decoders = {rowid: self._decoder_cache.get((rowid,)) for rowid in needed}
 
-        # Decode per segment so each decoder is only ever touched by one
-        # thread (torchcodec decoders are not thread-safe), and every segment
-        # serves all its requested frames in a single call.
-        seg_frames: dict[int, dict[float, torch.Tensor]] = {}
-
-        def _decode_segment(rowid: int) -> None:
-            decoder = decoders[rowid]
-            fps = decoder.metadata.average_fps
-            start = seg_starts[rowid]
-            n_frames = decoder.metadata.num_frames
-            ts_list = sorted(seg_requests[rowid])
-            indices = [min(max(round((ts - start) * fps), 0), n_frames - 1) for ts in ts_list]
-            batch = decoder.get_frames_at(indices=indices)
-            distance = (torch.tensor(ts_list, dtype=torch.float64) - batch.pts_seconds - start).abs()
-            if (distance >= self.tolerance_s).any():
-                raise FrameTimestampError(
-                    f"Query timestamps violate tolerance_s={self.tolerance_s} for segment row "
-                    f"{rowid}: queried {ts_list}, loaded {(batch.pts_seconds + start).tolist()}."
-                )
-            seg_frames[rowid] = dict(zip(ts_list, batch.data, strict=True))
-
-        row_ids = list(seg_requests)
-        if len(row_ids) <= 1:
-            for rowid in row_ids:
-                _decode_segment(rowid)
-        else:
-            with ThreadPoolExecutor(max_workers=min(len(row_ids), 8)) as pool:
-                for future in [pool.submit(_decode_segment, rowid) for rowid in row_ids]:
-                    future.result()
+        seg_starts = {}
+        for starts, _ends, seg_row_ids in self._segments.values():
+            for start, rowid in zip(starts, seg_row_ids, strict=True):
+                if int(rowid) in needed:
+                    seg_starts[int(rowid)] = float(start)
 
         results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
-        for (sample_idx, key), entries in windows.items():
-            frames = torch.stack([seg_frames[rowid][ts] for rowid, ts in entries])
+
+        def _decode_window(item: tuple[tuple[int, str], list[tuple[int, list[float]]]]) -> None:
+            (sample_idx, key), parts = item
+            frames_parts = []
+            for rowid, ts_list in parts:
+                decoder = decoders[rowid]
+                fps = decoder.metadata.average_fps
+                start = seg_starts[rowid]
+                n_frames = decoder.metadata.num_frames
+                indices = [min(max(round((ts - start) * fps), 0), n_frames - 1) for ts in ts_list]
+                batch = decoder.get_frames_at(indices=indices)
+                distance = (torch.tensor(ts_list, dtype=torch.float64) - batch.pts_seconds - start).abs()
+                if (distance >= self.tolerance_s).any():
+                    raise FrameTimestampError(
+                        f"Query timestamps violate tolerance_s={self.tolerance_s} for video "
+                        f"'{key}' segment row {rowid}: queried {ts_list}, "
+                        f"loaded {(batch.pts_seconds + start).tolist()}."
+                    )
+                frames_parts.append(batch.data)
+            frames = torch.cat(frames_parts) if len(frames_parts) > 1 else frames_parts[0]
             if not self.return_uint8:
                 frames = (frames / 255.0).type(torch.float32)
             results[sample_idx][key] = frames.squeeze(0)
+
+        items = list(window_parts.items())
+        if len(items) <= 1:
+            for entry in items:
+                _decode_window(entry)
+        else:
+            with ThreadPoolExecutor(max_workers=min(len(items), 8)) as pool:
+                for future in [pool.submit(_decode_window, entry) for entry in items]:
+                    future.result()
         return results
 
     def _build_item(self, plan: dict, columns: dict[str, np.ndarray], row_pos: dict[int, int]) -> dict:
