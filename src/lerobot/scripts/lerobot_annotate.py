@@ -28,7 +28,12 @@ For distributed runs, see ``examples/annotations/run_hf_job.py``.
 """
 
 import logging
+from contextlib import suppress
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
 from lerobot.annotations.steerable_pipeline.executor import Executor
@@ -42,6 +47,12 @@ from lerobot.annotations.steerable_pipeline.validator import StagingValidator
 from lerobot.annotations.steerable_pipeline.vlm_client import make_vlm_client
 from lerobot.annotations.steerable_pipeline.writer import LanguageColumnsWriter
 from lerobot.configs import parser
+from lerobot.utils.import_utils import _datasets_available, require_package
+
+if TYPE_CHECKING or _datasets_available:
+    from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
+    from lerobot.datasets.io_utils import load_info
+    from lerobot.datasets.utils import create_lerobot_dataset_card
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +61,6 @@ def _resolve_root(cfg: AnnotationPipelineConfig) -> Path:
     if cfg.root is not None:
         return Path(cfg.root)
     if cfg.repo_id is not None:
-        from huggingface_hub import snapshot_download
-
         return Path(snapshot_download(repo_id=cfg.repo_id, repo_type="dataset"))
     raise ValueError("Either --root or --repo_id must be provided.")
 
@@ -125,7 +134,7 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
 
     Pushes to ``cfg.new_repo_id`` when set, otherwise back to ``cfg.repo_id``.
     """
-    from huggingface_hub import HfApi  # noqa: PLC0415
+    require_package("datasets", "dataset")
 
     repo_id = cfg.new_repo_id or cfg.repo_id
     commit_message = cfg.push_commit_message or "Add steerable annotations (lerobot-annotate)"
@@ -143,9 +152,16 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
         repo_id=repo_id,
         repo_type="dataset",
         commit_message=commit_message,
-        ignore_patterns=[".annotate_staging/**", "**/.DS_Store"],
+        # README.md is excluded because when pushing to ``new_repo_id`` the
+        # source card's links (e.g. the visualize badge) would keep pointing
+        # at the source dataset; a fresh card is generated below instead.
+        ignore_patterns=[".annotate_staging/**", "**/.DS_Store", "README.md"],
     )
     print(f"[lerobot-annotate] uploaded to https://huggingface.co/datasets/{repo_id}", flush=True)
+
+    dataset_info = load_info(root)
+    card = create_lerobot_dataset_card(dataset_info=dataset_info, license="apache-2.0", repo_id=repo_id)
+    card.push_to_hub(repo_id=repo_id, repo_type="dataset")
 
     # Tag the upload with the codebase version. ``LeRobotDatasetMetadata``
     # resolves the dataset revision via ``get_safe_version`` which scans
@@ -153,23 +169,9 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
     # ``RevisionNotFoundError``. Read the version straight from the
     # dataset's own ``meta/info.json`` so we tag whatever the writer
     # actually wrote (no accidental drift if the codebase floor moves).
-    from lerobot.datasets.dataset_metadata import CODEBASE_VERSION  # noqa: PLC0415
-
-    info_path = root / "meta" / "info.json"
-    version_tag = CODEBASE_VERSION
-    if info_path.exists():
-        try:
-            from lerobot.utils.io_utils import load_json  # noqa: PLC0415
-
-            info = load_json(info_path)
-            ds_version = info.get("codebase_version")
-            if isinstance(ds_version, str) and ds_version.startswith("v"):
-                version_tag = ds_version
-        except Exception as exc:  # noqa: BLE001
-            print(
-                f"[lerobot-annotate] could not read codebase_version from info.json ({exc}); falling back to {version_tag}",
-                flush=True,
-            )
+    version_tag = (
+        dataset_info.codebase_version if dataset_info.codebase_version.startswith("v") else CODEBASE_VERSION
+    )
     revision = getattr(commit_info, "oid", None)
     tag_kwargs = {
         "repo_id": repo_id,
@@ -180,10 +182,6 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
         tag_kwargs["revision"] = revision
 
     try:
-        from contextlib import suppress  # noqa: PLC0415
-
-        from huggingface_hub.errors import RevisionNotFoundError  # noqa: PLC0415
-
         with suppress(RevisionNotFoundError):
             api.delete_tag(repo_id, tag=version_tag, repo_type="dataset")
         api.create_tag(**tag_kwargs)
