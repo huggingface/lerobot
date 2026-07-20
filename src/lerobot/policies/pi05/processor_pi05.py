@@ -73,7 +73,10 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
 
         # State should already be normalized to [-1, 1] by the NormalizerProcessorStep that runs before this step
         # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
-        state_np = state.cpu().numpy()
+        # MEM retains the full normalized state history for continuous tokens,
+        # while the stock PI0.5 prompt continues to describe the current state.
+        prompt_state = state[:, -1] if state.ndim == 3 else state
+        state_np = prompt_state.cpu().numpy()
         discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
 
         full_prompts = []

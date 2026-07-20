@@ -25,6 +25,7 @@ from types import ModuleType
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 
 
 def _install_robomme_stub():
@@ -44,7 +45,10 @@ def _install_robomme_stub():
                 "joint_state_list": [np.zeros(7, dtype=np.float32)],
                 "gripper_state_list": [np.zeros(2, dtype=np.float32)],
             }
-            env.reset.return_value = (obs, {"status": "ongoing", "task_goal": "pick the cube"})
+            env.reset.return_value = (
+                obs,
+                {"status": "ongoing", "task_goal": ["pick the cube", "pick the blue cube"]},
+            )
             env.step.return_value = (obs, 0.0, False, False, {"status": "ongoing", "task_goal": ""})
             return env
 
@@ -89,9 +93,25 @@ def test_robomme_features_map():
 
     cfg = RoboMMEEnv()
     assert cfg.features_map[ACTION] == ACTION
+    assert cfg.features_map["pixels/camera1"] == f"{OBS_IMAGES}.camera1"
+    assert cfg.features_map["pixels/camera2"] == f"{OBS_IMAGES}.camera2"
+    assert cfg.features_map["agent_pos"] == OBS_STATE
+
+
+def test_robomme_rejects_duplicate_camera_names():
+    from lerobot.envs.configs import RoboMMEEnv
+
+    with pytest.raises(ValueError, match="camera names must be distinct"):
+        RoboMMEEnv(front_camera_name="camera", wrist_camera_name="camera")
+
+
+def test_robomme_camera_feature_names_are_configurable():
+    from lerobot.envs.configs import RoboMMEEnv
+    from lerobot.utils.constants import OBS_IMAGES
+
+    cfg = RoboMMEEnv(front_camera_name="image", wrist_camera_name="wrist_image")
     assert cfg.features_map["pixels/image"] == f"{OBS_IMAGES}.image"
     assert cfg.features_map["pixels/wrist_image"] == f"{OBS_IMAGES}.wrist_image"
-    assert cfg.features_map["agent_pos"] == OBS_STATE
 
 
 def test_robomme_features_action_dim_joint_angle():
@@ -116,9 +136,56 @@ def test_robomme_features_action_dim_ee_pose():
 # ---------------------------------------------------------------------------
 
 
+def test_reset_exposes_episode_task_description():
+    _install_robomme_stub()
+    try:
+        from lerobot.envs.robomme import RoboMMEGymEnv
+
+        env = RoboMMEGymEnv(task="PickXtimes")
+        env.reset()
+
+        assert env.task == "PickXtimes"
+        assert env.task_description == "pick the cube"
+    finally:
+        _uninstall_robomme_stub()
+
+
+def test_close_releases_underlying_simulator():
+    _install_robomme_stub()
+    try:
+        from lerobot.envs.robomme import RoboMMEGymEnv
+
+        env = RoboMMEGymEnv(task="PickXtimes")
+        env.reset()
+        simulator = env._env
+        env.close()
+
+        simulator.close.assert_called_once_with()
+        assert env._env is None
+        assert env._last_raw_obs is None
+    finally:
+        _uninstall_robomme_stub()
+
+
+def test_reset_closes_previous_simulator():
+    _install_robomme_stub()
+    try:
+        from lerobot.envs.robomme import RoboMMEGymEnv
+
+        env = RoboMMEGymEnv(task="PickXtimes")
+        env.reset()
+        first_simulator = env._env
+        env.reset()
+
+        first_simulator.close.assert_called_once_with()
+        assert env._env is not first_simulator
+    finally:
+        _uninstall_robomme_stub()
+
+
 def test_convert_obs_list_format():
     """_convert_obs takes the last element from list-format obs fields and
-    emits a nested ``pixels`` dict (image, wrist_image) plus ``agent_pos``.
+    emits a nested ``pixels`` dict using policy-aligned camera names plus ``agent_pos``.
 
     The nested layout is required so ``preprocess_observation()`` in
     ``envs/utils.py`` maps each camera to ``observation.images.<cam>``.
@@ -142,11 +209,17 @@ def test_convert_obs_list_format():
         }
 
         result = env._convert_obs(obs_raw)
-        np.testing.assert_array_equal(result["pixels"]["image"], front)
-        np.testing.assert_array_equal(result["pixels"]["wrist_image"], wrist)
+        np.testing.assert_array_equal(result["pixels"]["camera1"], front)
+        np.testing.assert_array_equal(result["pixels"]["camera2"], wrist)
         assert result["agent_pos"].shape == (8,)
         np.testing.assert_array_almost_equal(result["agent_pos"][:7], joints)
         assert result["agent_pos"][7] == gripper[0]
+
+        from lerobot.envs.utils import preprocess_observation
+
+        processed = preprocess_observation(result)
+        assert "observation.images.camera1" in processed
+        assert "observation.images.camera2" in processed
     finally:
         _uninstall_robomme_stub()
 
@@ -167,8 +240,8 @@ def test_convert_obs_array_format():
             "gripper_state_list": np.zeros(2, dtype=np.float32),
         }
         result = env._convert_obs(obs_raw)
-        assert result["pixels"]["image"].shape == (256, 256, 3)
-        assert result["pixels"]["wrist_image"].shape == (256, 256, 3)
+        assert result["pixels"]["camera1"].shape == (256, 256, 3)
+        assert result["pixels"]["camera2"].shape == (256, 256, 3)
         assert result["agent_pos"].shape == (8,)
     finally:
         _uninstall_robomme_stub()
