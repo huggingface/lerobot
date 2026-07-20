@@ -59,6 +59,20 @@ def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     return device
 
 
+def resolve_safetensors_device(map_location: str | torch.device) -> str:
+    """Resolve a device string for a safetensors load, working around a device-mapping quirk.
+
+    safetensors' load maps the bare string "cuda" to cuda:0 regardless of the current device
+    (unlike torch's .to("cuda"), which honors torch.cuda.current_device()). Under multi-GPU
+    accelerate/FSDP every rank would then load its weights onto GPU 0, OOMing it before sharding.
+    Resolve "cuda" to the concrete current-device index so each rank loads onto its own GPU.
+    """
+    map_location = str(map_location)
+    if map_location == "cuda" and torch.cuda.is_available():
+        return f"cuda:{torch.cuda.current_device()}"
+    return map_location
+
+
 def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
     """
     mps is currently not compatible with float64
