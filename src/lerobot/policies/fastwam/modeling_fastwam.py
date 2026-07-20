@@ -86,14 +86,20 @@ class FastWAMPolicy(PreTrainedPolicy):
                 for layer in mot.layers:
                     if "video" in layer.blocks:
                         layer.blocks["video"].requires_grad_(False)
-        self._init_rtc_processor()
+        self.init_rtc_processor()
         self.reset()
 
-    def _init_rtc_processor(self) -> None:
+    def init_rtc_processor(self) -> None:
         """Attach a Real-Time Chunking processor to the core model when configured.
 
         Mirrors the PI0/PI05 pattern: the policy owns the `RTCProcessor` and hands it to
         the core `FastWAM` model, which consults it inside `infer_action`'s denoising loop.
+        Must stay public and named exactly `init_rtc_processor`: the rollout loader
+        (`lerobot.rollout.context`) sets `policy.config.rtc_config = cfg.inference.rtc` and
+        then calls `policy.init_rtc_processor()` to (re)build the processor after load, so
+        `--inference.type=rtc` alone is enough to enable guidance — no separate policy-side
+        `rtc_config` needed. A private/renamed method would be silently skipped (guidance
+        off), degrading RTC to unguided async chunk-swapping.
         """
         self.rtc_processor = None
         if self.config.rtc_config is not None:
