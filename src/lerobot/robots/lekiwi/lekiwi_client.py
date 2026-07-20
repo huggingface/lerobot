@@ -14,7 +14,6 @@
 
 # TODO(aliberts, Steven, Pepijn): use gRPC calls instead of zmq?
 
-import base64
 import json
 import logging
 from functools import cached_property
@@ -134,7 +133,9 @@ class LeKiwiClient(Robot):
         self.zmq_observation_socket = self.zmq_context.socket(zmq.PULL)
         zmq_observations_locator = f"tcp://{self.remote_ip}:{self.port_zmq_observations}"
         self.zmq_observation_socket.connect(zmq_observations_locator)
-        self.zmq_observation_socket.setsockopt(zmq.CONFLATE, 1)
+        # CONFLATE does not support multipart messages; a small receive queue plus
+        # the existing drain-to-latest loop keeps newest-only semantics.
+        self.zmq_observation_socket.setsockopt(zmq.RCVHWM, 2)
 
         poller = zmq.Poller()
         poller.register(self.zmq_observation_socket, zmq.POLLIN)
@@ -147,8 +148,8 @@ class LeKiwiClient(Robot):
     def calibrate(self) -> None:
         pass
 
-    def _poll_and_get_latest_message(self) -> str | None:
-        """Polls the ZMQ socket for a limited time and returns the latest message string."""
+    def _poll_and_get_latest_message(self) -> list[bytes] | None:
+        """Polls the ZMQ socket for a limited time and returns the latest message's frames."""
         zmq = self._zmq
         poller = zmq.Poller()
         poller.register(self.zmq_observation_socket, zmq.POLLIN)
@@ -166,7 +167,7 @@ class LeKiwiClient(Robot):
         last_msg = None
         while True:
             try:
-                msg = self.zmq_observation_socket.recv_string(zmq.NOBLOCK)
+                msg = self.zmq_observation_socket.recv_multipart(zmq.NOBLOCK)
                 last_msg = msg
             except zmq.Again:
                 break
@@ -176,28 +177,27 @@ class LeKiwiClient(Robot):
 
         return last_msg
 
-    def _parse_observation_json(self, obs_string: str) -> RobotObservation | None:
-        """Parses the JSON observation string."""
+    def _parse_observation(self, frames: list[bytes]) -> RobotObservation | None:
+        """Parses a multipart observation: JSON header + one raw JPEG frame per camera."""
         try:
-            return json.loads(obs_string)
-        except json.JSONDecodeError as e:
-            logging.error(f"Error decoding JSON observation: {e}")
+            header = json.loads(frames[0])
+            cam_names = header.pop("_cams")
+            observation: RobotObservation = header
+            for cam_name, jpeg in zip(cam_names, frames[1:], strict=True):
+                observation[cam_name] = jpeg
+            return observation
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            logging.error(f"Error decoding observation: {e}")
             return None
 
-    def _decode_image_from_b64(self, image_b64: str) -> np.ndarray | None:
-        """Decodes a base64 encoded image string to an OpenCV image."""
-        if not image_b64:
+    def _decode_image(self, jpeg: bytes) -> np.ndarray | None:
+        """Decodes a raw JPEG buffer to an OpenCV image."""
+        if not jpeg:
             return None
-        try:
-            jpg_data = base64.b64decode(image_b64)
-            np_arr = np.frombuffer(jpg_data, dtype=np.uint8)
-            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-            if frame is None:
-                logging.warning("cv2.imdecode returned None for an image.")
-            return frame
-        except (TypeError, ValueError) as e:
-            logging.error(f"Error decoding base64 image data: {e}")
-            return None
+        frame = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            logging.warning("cv2.imdecode returned None for an image.")
+        return frame
 
     def _remote_state_from_obs(
         self, observation: RobotObservation
@@ -212,10 +212,10 @@ class LeKiwiClient(Robot):
 
         # Decode images
         current_frames: dict[str, np.ndarray] = {}
-        for cam_name, image_b64 in observation.items():
+        for cam_name, jpeg in observation.items():
             if cam_name not in self._cameras_ft:
                 continue
-            frame = self._decode_image_from_b64(image_b64)
+            frame = self._decode_image(jpeg)
             if frame is not None:
                 current_frames[cam_name] = frame
 
@@ -230,15 +230,15 @@ class LeKiwiClient(Robot):
         If no new data arrives or decoding fails, returns the last known values.
         """
 
-        # 1. Get the latest message string from the socket
-        latest_message_str = self._poll_and_get_latest_message()
+        # 1. Get the latest message's frames from the socket
+        latest_frames = self._poll_and_get_latest_message()
 
         # 2. If no message, return cached data
-        if latest_message_str is None:
+        if latest_frames is None:
             return self.last_frames, self.last_remote_state
 
-        # 3. Parse the JSON message
-        observation = self._parse_observation_json(latest_message_str)
+        # 3. Parse the multipart message
+        observation = self._parse_observation(latest_frames)
 
         # 4. If JSON parsing failed, return cached data
         if observation is None:
