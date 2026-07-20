@@ -59,3 +59,22 @@ LOCO_N_AXES = 4  # [left_x, left_y, right_x, right_y]
 LOCO_N_BTN = 4  # [A, B, X, Y]
 LOCO_AXES_PREFIX = "loco_axes."
 LOCO_BTN_PREFIX = "loco_btn."
+
+# ── Dense whole-body joint reference (SONIC encode_mode 0, OpenHLM-style) ─────
+# A single 34-D whole-body command per tick, in the pi0.5 / OpenHLM action layout:
+#   [L-arm(7), L-grip(1), R-arm(7), R-grip(1), L-leg(6), R-leg(6), waist(3),
+#    root roll/pitch + yaw-rate(3)]
+# The 29 joint targets (arms/legs/waist, grippers excluded) become the mode-0
+# encoder joint reference and root roll/pitch become the anchor orientation.
+#
+# Fed as flat scalars ``wb.0.pos .. wb.33.pos``. The ``.pos`` suffix is required so
+# these behave like ordinary joint-position action features: ``lerobot-rollout``
+# only routes ``*.pos`` keys from ``robot.action_features`` into the policy<->robot
+# action mapping, letting a 34-D VLA (OpenHLM / pi0.5) drive the robot directly.
+WB_ACTION_PREFIX = "wb."
+WB_ACTION_DIM = 34
+
+
+def wb_action_key(i: int) -> str:
+    """Action-dict key for the ``i``-th whole-body command scalar (``wb.{i}.pos``)."""
+    return f"{WB_ACTION_PREFIX}{i}.pos"
