@@ -224,8 +224,9 @@ lerobot-rollout \
 ### LIBERO Evaluation
 
 > [!NOTE]
-> Add the public checkpoint link and immutable Hub revision after the released artifact passes
-> clean-download and rollout verification.
+> The released Stage-2 checkpoint passed clean-download and rollout verification:
+> [`zuoxingdong/evo1_libero`](https://huggingface.co/zuoxingdong/evo1_libero), revision
+> [`515921f4a2c1d3f3ad523721eafa26fdf2af315b`](https://huggingface.co/zuoxingdong/evo1_libero/commit/515921f4a2c1d3f3ad523721eafa26fdf2af315b).
 
 The measured Stage-2 checkpoint at step 70,000 produced:
 
@@ -278,7 +279,8 @@ suite=libero_object
 horizon=280
 for task_id in {0..9}; do
   lerobot-eval \
-    --policy.path=./outputs/evo1-libero-stage2-g128-80k/checkpoints/070000/pretrained_model \
+    --policy.path=zuoxingdong/evo1_libero \
+    --policy.pretrained_revision=515921f4a2c1d3f3ad523721eafa26fdf2af315b \
     --policy.vlm_model_name=OpenGVLab/InternVL3-1B-hf \
     --policy.device=cuda \
     --policy.use_amp=true \
