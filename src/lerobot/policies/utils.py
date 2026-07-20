@@ -101,6 +101,16 @@ def prepare_observation_for_inference(
     task: str | None = None,
     robot_type: str | None = None,
 ) -> RobotObservation:
+
+    # --- ADD THIS BLOCK START ---
+    # Pi0/VLA models expect 'observation.image', but robot_client sends 'observation.images.NAME'
+    # We find the first available image and alias it to 'observation.image'
+    image_keys = [k for k in observation.keys() if "observation.images." in k]
+    if image_keys and "observation.image" not in observation:
+        observation["observation.image"] = observation[image_keys[0]]
+    # --- ADD THIS BLOCK END ---
+
+
     """Converts observation data to model-ready PyTorch tensors.
 
     This function takes a dictionary of NumPy arrays, performs necessary

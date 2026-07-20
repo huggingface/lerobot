@@ -1,0 +1,11 @@
+[project]
+name = "lerobot_policy_pi05_polarization"
+version = "0.1.0"
+dependencies = [
+    "lerobot>=0.1.0",
+]
+requires-python = ">= 3.12"
+
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools"]
