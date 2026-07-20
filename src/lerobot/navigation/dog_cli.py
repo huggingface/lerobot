@@ -121,6 +121,97 @@ def _build_dry_run() -> DogController:
     return DogController(skills, agent)
 
 
+class LiveMapper:
+    """One perceive→integrate step of live mapping on the robot.
+
+    Each :meth:`tick` reads an observation (front camera + odometry),
+    updates the controller's pose from odometry, runs the geometry model
+    and feature extractor on the frame, integrates the keyframe into the
+    voxel map, and feeds the safety watchdog. Constructed lazily — no SDK
+    or model is touched until the first tick.
+    """
+
+    def __init__(self, robot, base, geometry, siglip, voxel_map, pcfg=None) -> None:
+        self.robot = robot
+        self.base = base  # RobotBaseController (unwrapped) for feed_observation
+        self.safe = None  # optional SafeBaseController for the watchdog
+        self.geometry = geometry
+        self.siglip = siglip
+        self.voxel_map = voxel_map
+        self.pcfg = pcfg
+        self._frame = 0
+
+    def tick(self, t_sec: float) -> None:
+        import numpy as np
+
+        from lerobot.navigation.pipeline import (
+            KeyframeContext,
+            PipelineConfig,
+            integrate_keyframe,
+            upsample_features_to_view,
+        )
+
+        obs = self.robot.get_observation()
+        self.base.feed_observation(obs)
+
+        frame = obs.get("front")
+        if frame is None:
+            return
+        views = np.asarray(frame)[None].astype(np.uint8)  # (1, H, W, 3)
+        geo = self.geometry(views)
+        h, w = frame.shape[:2]
+
+        feat_map = None
+        if self.siglip is not None:
+            patches = self.siglip.encode_views(views)[0]  # (Hp, Wp, D)
+            feat_map = upsample_features_to_view(patches, h, w)
+
+        ctx = KeyframeContext(
+            frame_idx=self._frame,
+            t_sec=t_sec,
+            rgb_uint8=views[0],
+            points_world=geo.points[0],
+            local_points=geo.local_points[0],
+            conf=geo.conf[0],
+            pose=geo.camera_poses[0],
+            feat_map=feat_map,
+        )
+        integrate_keyframe(self.voxel_map, ctx, self.pcfg or PipelineConfig())
+        self._frame += 1
+        if self.safe is not None:
+            self.safe.feed_watchdog()
+
+
+def _build_live(
+    network_interface: str = "eth0",
+    device: str = "cuda",
+) -> tuple[DogController, LiveMapper]:
+    """Wire the controller + live mapper against a real Unitree Go2.
+
+    Nothing here touches the SDK or loads a model — construction is lazy;
+    the DDS connection and model loads happen on first use.
+    """
+    from lerobot.navigation.base_controller import RobotBaseController, SafeBaseController
+    from lerobot.navigation.features import SiglipFeatureExtractor
+    from lerobot.navigation.geometry import LingBotMapRunner
+    from lerobot.navigation.voxel_map import VoxelMap
+    from lerobot.robots.unitree_go2 import UnitreeGo2, UnitreeGo2Config
+
+    robot = UnitreeGo2(UnitreeGo2Config(network_interface=network_interface))
+    inner = RobotBaseController(robot)
+    safe = SafeBaseController(inner=inner)
+    voxel_map = VoxelMap(voxel_size=0.05)
+    siglip = SiglipFeatureExtractor(device=device)
+    geometry = LingBotMapRunner(device=device)
+
+    skills = SpatialSkills(voxel_map, safe, siglip, SkillsConfig(cell_size=0.05))
+    controller = DogController(skills, DeterministicAgent(skills, AgentConfig()))
+    mapper = LiveMapper(robot, inner, geometry, siglip, voxel_map)
+    mapper.safe = safe
+    LOG.info("live stack wired (iface=%s, device=%s) — connect the dog and run", network_interface, device)
+    return controller, mapper
+
+
 def _stdin_line_ready(timeout_s: float) -> bool:
     """True when a full line is available on stdin within ``timeout_s``.
 
@@ -160,14 +251,61 @@ def run_repl(controller: DogController, idle_period_s: float = 0.5) -> int:
     return 0
 
 
+def run_live_repl(
+    controller: DogController,
+    mapper: LiveMapper,
+    idle_period_s: float = 0.2,
+) -> int:
+    """Live loop on the robot: map continuously, run tasks on typed lines.
+
+    Each iteration integrates one keyframe (perceive → geometry → features →
+    voxel map), then either handles a typed prompt or takes one exploration
+    step. The DDS connection is opened here so ``--help`` stays model-free.
+    """
+    import time
+
+    mapper.robot.connect()
+    controller.skills.base.reset_watchdog()
+    print("dog-nav (live). Type an object to find it, empty line to explore, 'quit' to exit.")
+    t0 = time.monotonic()
+    try:
+        while True:
+            mapper.tick(time.monotonic() - t0)
+            if _stdin_line_ready(idle_period_s):
+                line = sys.stdin.readline()
+                if not line:
+                    break
+                text = line.strip()
+                if text.lower() in {"quit", "exit"}:
+                    break
+                if text:
+                    controller.handle_prompt(text)
+                else:
+                    controller.idle_tick()
+            else:
+                controller.idle_tick()
+    except KeyboardInterrupt:
+        LOG.warning("interrupted — stopping base")
+    finally:
+        controller.stop()
+        mapper.robot.disconnect()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="dog-nav", description=__doc__)
     ap.add_argument(
         "--dry-run",
         action="store_true",
-        help="Run against a synthetic scene (no robot/camera/models). "
-        "Currently the only supported mode until the live geometry pipeline lands.",
+        help="Run against a synthetic scene (no robot/camera/models).",
     )
+    ap.add_argument(
+        "--live",
+        action="store_true",
+        help="Run on a real Unitree Go2 (DDS + LingBot-Map + SigLIP2 on the GPU host).",
+    )
+    ap.add_argument("--network-interface", default="eth0", help="Host interface wired to the dog.")
+    ap.add_argument("--device", default="cuda", help="Torch device for the geometry/feature models.")
     ap.add_argument("--command", default=None, help="Run a single command non-interactively, then exit.")
     ap.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING"])
     args = ap.parse_args(argv)
@@ -176,11 +314,12 @@ def main(argv: list[str] | None = None) -> int:
         level=getattr(logging, args.log_level), format="%(levelname)-7s %(name)s: %(message)s"
     )
 
+    if args.live:
+        controller, mapper = _build_live(args.network_interface, args.device)
+        return run_live_repl(controller, mapper)
+
     if not args.dry_run:
-        raise SystemExit(
-            "Live mode needs the geometry pipeline (LingBot-Map + segment map), which is not "
-            "wired yet. Run with --dry-run for now."
-        )
+        raise SystemExit("Choose a mode: --dry-run (synthetic scene) or --live (real Unitree Go2).")
 
     controller = _build_dry_run()
     if args.command is not None:

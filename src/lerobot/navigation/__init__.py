@@ -44,6 +44,13 @@ from .features import (
     FeatureExtractor,
     SiglipFeatureExtractor,
 )
+from .geometry import (
+    FakeGeometryRunner,
+    GeometryOutput,
+    GeometryRunner,
+    LingBotMapRunner,
+    align_trajectory_to_odometry,
+)
 from .occupancy import (
     NAVIGABLE,
     OBSTACLE,
@@ -53,6 +60,7 @@ from .occupancy import (
     find_frontier_cells,
     project_voxel_map_to_grid,
 )
+from .pipeline import KeyframeContext, PipelineConfig, integrate_keyframe
 from .skills import (
     ExploreResult,
     GotoResult,
@@ -74,11 +82,17 @@ __all__ = [
     "CarveResult",
     "DeterministicAgent",
     "ExploreResult",
+    "FakeGeometryRunner",
     "FeatureExtractor",
+    "GeometryOutput",
+    "GeometryRunner",
     "GotoResult",
     "HardcodedTaskParser",
+    "KeyframeContext",
+    "LingBotMapRunner",
     "LocateResult",
     "OccupancyGrid",
+    "PipelineConfig",
     "QueryResult",
     "RobotBaseController",
     "SafeBaseController",
@@ -92,8 +106,10 @@ __all__ = [
     "ValueMaps",
     "VoxelMap",
     "VoxelSnapshot",
+    "align_trajectory_to_odometry",
     "astar",
     "compute_value_maps",
+    "integrate_keyframe",
     "find_frontier_cells",
     "odometry_to_world_pose",
     "pick_best_frontier_cell",
