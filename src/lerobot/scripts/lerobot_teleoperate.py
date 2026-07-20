@@ -116,7 +116,6 @@ from lerobot.teleoperators import (  # noqa: F401
     omx_leader,
     openarm_leader,
     openarm_mini,
-    pico_headset,
     reachy2_teleoperator,
     rebot_102_leader,
     so_leader,
