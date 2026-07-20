@@ -22,6 +22,7 @@ import torch
 from torch import Tensor
 
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import require_package
 
@@ -85,7 +86,22 @@ class FastWAMPolicy(PreTrainedPolicy):
                 for layer in mot.layers:
                     if "video" in layer.blocks:
                         layer.blocks["video"].requires_grad_(False)
+        self._init_rtc_processor()
         self.reset()
+
+    def _init_rtc_processor(self) -> None:
+        """Attach a Real-Time Chunking processor to the core model when configured.
+
+        Mirrors the PI0/PI05 pattern: the policy owns the `RTCProcessor` and hands it to
+        the core `FastWAM` model, which consults it inside `infer_action`'s denoising loop.
+        """
+        self.rtc_processor = None
+        if self.config.rtc_config is not None:
+            self.rtc_processor = RTCProcessor(self.config.rtc_config)
+            self.model.rtc_processor = self.rtc_processor
+
+    def _rtc_enabled(self) -> bool:
+        return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
     @classmethod
     def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
@@ -227,12 +243,26 @@ class FastWAMPolicy(PreTrainedPolicy):
         return loss, dict(metrics or {})
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **_: Any) -> Tensor:
+    def predict_action_chunk(
+        self,
+        batch: dict[str, Tensor],
+        inference_delay: int | None = None,
+        prev_chunk_left_over: Tensor | None = None,
+        execution_horizon: int | None = None,
+        **_: Any,
+    ) -> Tensor:
         """Predict a chunk of actions from the current FastWAM observation.
 
         Args:
             batch (dict[str, Tensor]): Inference batch with `input_image` or
                 image observation keys, plus `context/context_mask` or `prompt`.
+            inference_delay (int | None): RTC — number of prefix steps assumed already
+                executed by the time this chunk lands (from measured inference latency).
+            prev_chunk_left_over (Tensor | None): RTC — the previous chunk's unexecuted
+                action tail `[T_prev, action_dim]` in model space; guides denoising so the
+                new chunk inpaints onto it. `None` (default) = plain synchronous inference.
+            execution_horizon (int | None): RTC — override for the prefix-weight horizon;
+                `None` falls back to `rtc_config.execution_horizon`.
 
         Returns:
             Tensor: Action chunk with shape `[B, action_horizon, action_dim]`.
@@ -249,6 +279,11 @@ class FastWAMPolicy(PreTrainedPolicy):
             infer_kwargs["prompt"] = None
             infer_kwargs["context"] = context
             infer_kwargs["context_mask"] = context_mask
+        # RTC guidance args flow straight to `infer_action`; they are inert unless an
+        # RTCProcessor is attached, enabled, and `prev_chunk_left_over` is provided.
+        infer_kwargs["inference_delay"] = inference_delay
+        infer_kwargs["prev_chunk_left_over"] = prev_chunk_left_over
+        infer_kwargs["execution_horizon"] = execution_horizon
         batch_size = _infer_kwargs_batch_size(infer_kwargs)
         if batch_size == 1:
             action = _action_from_model_output(self.model.infer_action(**infer_kwargs))

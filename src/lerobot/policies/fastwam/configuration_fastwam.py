@@ -27,6 +27,8 @@ from lerobot.configs import (
 from lerobot.optim import AdamWConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
+from ..rtc.configuration_rtc import RTCConfig
+
 WAN22_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B"
 WAN22_DIFFUSERS_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
 FASTWAM_BASE_MODEL_ID = "lerobot/fastwam_base"
@@ -214,6 +216,11 @@ class FastWAMConfig(PreTrainedConfig):
     )
     num_inference_steps: int = 10
     inference_seed: int | None = 42
+    # Real-Time Chunking (RTC): async chunk generation with prefix guidance so a new chunk
+    # inpaints smoothly onto the still-executing tail of the previous one. `None` disables it
+    # (default synchronous inference). Consumed by `RTCInferenceEngine`, which calls
+    # `predict_action_chunk(..., inference_delay=, prev_chunk_left_over=)`.
+    rtc_config: RTCConfig | None = None
     rand_device: str = "cpu"
     text_cfg_scale: float = 1.0
     negative_prompt: str = ""
