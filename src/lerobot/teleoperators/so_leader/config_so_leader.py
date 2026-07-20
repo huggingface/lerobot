@@ -34,7 +34,11 @@ class SOLeaderConfig:
 @TeleoperatorConfig.register_subclass("so100_leader")
 @dataclass
 class SOLeaderTeleopConfig(TeleoperatorConfig, SOLeaderConfig):
-    pass
+    # Hold the gripper at its open position with a torque-capped P controller,
+    # so the trigger resists progressively when squeezed and springs back when
+    # released. Servo settings are tuned for the STS3215 gripper and live in
+    # SOLeader.configure().
+    sprung_gripper: bool = False
 
 
 SO100LeaderConfig = SOLeaderTeleopConfig
