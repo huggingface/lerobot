@@ -21,8 +21,13 @@ Layout of a Lance-backed dataset (video layout):
 <root>/
   meta/         # standard LeRobot v3.0 metadata (info.json, stats.json, tasks, episodes)
   frames.lance  # one row per frame: tabular features, no pixels
-  videos.lance  # one row per source video file: encoded bytes in a blob column
+  videos.lance  # one row per ~2s keyframe-aligned video segment: encoded bytes
+                # in a blob column + (video_key, chunk, file, start_ts, end_ts)
 ```
+
+Keyframe-aligned segment rows keep every read window-sized: a batch's camera
+frames are served by one eager ``fetch_blobs`` call (which reads blobs in
+parallel) instead of touching multi-hundred-MB video files.
 
 Feature keys contain dots (``observation.state``) which Lance column names do not
 allow, so columns are stored with dots replaced by underscores and mapped back on
@@ -37,11 +42,10 @@ is downloaded locally). Set ``HF_TOKEN`` in the environment for private repos.
 
 from __future__ import annotations
 
-import io
 import os
 import re
 import shutil
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
@@ -60,12 +64,10 @@ from .video_utils import FrameTimestampError
 FRAMES_TABLE = "frames"
 VIDEOS_TABLE = "videos"
 VIDEO_BLOB_COLUMN = "video_bytes"
-# Remote video files serving at least this many windows in a batch are
-# materialized with one sequential read; below it, decoding streams sparse
-# ranges through a buffered handle (a window needs ~100 KB; a file can be
-# hundreds of MB).
-_REMOTE_MATERIALIZE_MIN_WINDOWS = 4
-_REMOTE_READ_BUFFER = 1 << 20
+# Per-worker budget for cached segment bytes. Segments are ~1 MB, so the
+# cache holds on the order of a couple thousand recently used segments.
+_VIDEO_CACHE_BYTES = 2 << 30
+_VIDEO_CACHE_ENTRIES = 4096
 
 
 class _VideoDecoderLRU:
@@ -90,27 +92,16 @@ class _VideoDecoderLRU:
         self._items.move_to_end(key)
         return self._items[key][0]
 
-    # Sparse (handle-backed) decoders hold a parsed frame index, not file
-    # bytes; they are cheap enough to keep in the hundreds. Only materialized
-    # entries (nbytes > 0) count against `capacity` and `byte_budget`.
-    SPARSE_CAPACITY = 512
-
     def put(self, key: tuple, decoder, nbytes: int = 0) -> None:
         if key in self._items:
             self._total_bytes -= self._items[key][1]
         self._items[key] = (decoder, nbytes)
         self._items.move_to_end(key)
         self._total_bytes += nbytes
-
-        def _over_limit() -> bool:
-            materialized = sum(1 for _, entry_bytes in self._items.values() if entry_bytes > 0)
-            return (
-                materialized > self.capacity
-                or (self.byte_budget is not None and self._total_bytes > self.byte_budget)
-                or len(self._items) > max(self.capacity, self.SPARSE_CAPACITY)
-            )
-
-        while len(self._items) > 1 and _over_limit():
+        while len(self._items) > 1 and (
+            len(self._items) > self.capacity
+            or (self.byte_budget is not None and self._total_bytes > self.byte_budget)
+        ):
             _, (_, evicted_bytes) = self._items.popitem(last=False)
             self._total_bytes -= evicted_bytes
 
@@ -232,12 +223,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
             of normalized float32.
         storage_options: Extra options forwarded to ``lancedb.connect`` (e.g.
             object-store credentials).
-        video_decoder_cache_size: Max torchcodec decoders kept per worker.
-            Defaults to 100 for local tables (decoders hold cheap blob
-            handles, matching the upstream decoder cache) and 16 for remote
-            tables (each decoder holds the materialized video bytes). A cache
-            smaller than the dataset's video file count causes re-fetches;
-            for remote tables that means re-downloading whole files.
     """
 
     def __init__(
@@ -251,7 +236,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
         revision: str | None = None,
         return_uint8: bool = False,
         storage_options: dict | None = None,
-        video_decoder_cache_size: int | None = None,
     ):
         super().__init__()
         require_package("lancedb", extra="lance")
@@ -276,8 +260,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 self._db_uri = f"hf://datasets/{repo_id}"
             else:
                 raise FileNotFoundError(f"No '{FRAMES_TABLE}.lance' table under {self.root}.")
-        self._is_local = not _is_remote_uri(self._db_uri)
-
         self.meta = LeRobotDatasetMetadata(
             repo_id if repo_id is not None else str(self.root), root=self.root, revision=revision
         )
@@ -345,13 +327,8 @@ class LanceDBDataset(torch.utils.data.Dataset):
         # Lazily opened per process; see __getstate__.
         self._frames_perm = None
         self._videos_table = None
-        self._video_row_ids: dict[tuple, int] | None = None
-        if video_decoder_cache_size is None:
-            video_decoder_cache_size = 100 if self._is_local else 16
-        # Remote decoders hold materialized video bytes: cap them at 2 GiB per
-        # worker so large-file datasets can't multiply into an OOM.
-        byte_budget = None if self._is_local else 2 << 30
-        self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size, byte_budget=byte_budget)
+        self._segments: dict[tuple, tuple] | None = None
+        self._decoder_cache = _VideoDecoderLRU(_VIDEO_CACHE_ENTRIES, byte_budget=_VIDEO_CACHE_BYTES)
 
     # ── connection management ──────────────────────────────────────────────
 
@@ -375,22 +352,44 @@ class LanceDBDataset(torch.utils.data.Dataset):
         )
         if self.meta.video_keys:
             self._videos_table = db.open_table(VIDEOS_TABLE)
-            index = (
-                self._videos_table.search()
-                .select(["video_key", "chunk_index", "file_index"])
-                .with_row_id(True)
-                .to_arrow()
-            )
-            self._video_row_ids = {
-                (row["video_key"], row["chunk_index"], row["file_index"]): row["_rowid"]
-                for row in index.to_pylist()
-            }
+            if "start_ts" not in [field.name for field in self._videos_table.schema]:
+                raise ValueError(
+                    "This dataset uses an outdated videos-table layout (one blob per mp4). "
+                    "Re-convert it to the segment layout."
+                )
+            self._load_segment_index()
+
+    def _load_segment_index(self) -> None:
+        """Per (video_key, chunk, file): sorted segment start times and row ids."""
+        index = (
+            self._videos_table.search()
+            .select(["video_key", "chunk_index", "file_index", "start_ts", "end_ts"])
+            .with_row_id(True)
+            .to_arrow()
+        )
+        video_keys = index.column("video_key").to_numpy(zero_copy_only=False)
+        chunks = index.column("chunk_index").to_numpy(zero_copy_only=False)
+        files = index.column("file_index").to_numpy(zero_copy_only=False)
+        starts = index.column("start_ts").to_numpy(zero_copy_only=False).astype(np.float64)
+        ends = index.column("end_ts").to_numpy(zero_copy_only=False).astype(np.float64)
+        row_ids = index.column("_rowid").to_numpy(zero_copy_only=False)
+
+        self._segments = {}
+        order = np.lexsort((starts, files, chunks, video_keys))
+        boundaries = np.flatnonzero(
+            (video_keys[order][1:] != video_keys[order][:-1])
+            | (chunks[order][1:] != chunks[order][:-1])
+            | (files[order][1:] != files[order][:-1])
+        )
+        for group in np.split(order, boundaries + 1):
+            file_key = (str(video_keys[group[0]]), int(chunks[group[0]]), int(files[group[0]]))
+            self._segments[file_key] = (starts[group], ends[group], row_ids[group])
 
     def __getstate__(self) -> dict:
         state = self.__dict__.copy()
         state["_frames_perm"] = None
         state["_videos_table"] = None
-        state["_video_row_ids"] = None
+        state["_segments"] = None
         state["_decoder_cache"] = _VideoDecoderLRU(
             self._decoder_cache.capacity, byte_budget=self._decoder_cache.byte_budget
         )
@@ -484,90 +483,87 @@ class LanceDBDataset(torch.utils.data.Dataset):
     def _decode_videos(
         self, plans: list[dict], columns: dict[str, np.ndarray], row_pos: dict[int, int]
     ) -> list[dict[str, torch.Tensor]]:
-        """Decode all camera frames a batch needs, one blob fetch and one decode pass per video file.
+        """Decode from GOP-segment blob rows: one eager (parallel) blob fetch per batch.
 
-        Requested frames are grouped by the mp4 file that contains them; files
-        missing from the decoder cache are fetched with a single
-        ``fetch_blob_files`` call, and each decoder serves every frame the batch
-        needs from its file in one ``get_frames_at`` call.
+        Each requested timestamp maps to the segment containing it; all
+        missing segments are fetched in a single ``fetch_blobs`` call, which
+        reads blobs in parallel. Windows spanning a segment boundary decode
+        each part and concatenate.
         """
+        from torchcodec.decoders import VideoDecoder
+
         timestamps = columns["timestamp"]
-        requests: dict[tuple, list[tuple[int, list[float]]]] = defaultdict(list)
+        # window_parts[(sample, key)] = ordered [(segment_rowid, [ts, ...]), ...]
+        window_parts: dict[tuple[int, str], list[tuple[int, list[float]]]] = {}
+        needed: set[int] = set()
         for sample_idx, plan in enumerate(plans):
             ep_idx = plan["ep_idx"]
             for key in self.meta.video_keys:
                 window = plan["windows"].get(key, [plan["abs_idx"]])
                 chunk_arr, file_arr, from_ts_arr = self._video_locator[key]
-                shifted_ts = [float(from_ts_arr[ep_idx]) + float(timestamps[row_pos[row]]) for row in window]
-                requests[(key, int(chunk_arr[ep_idx]), int(file_arr[ep_idx]))].append(
-                    (sample_idx, shifted_ts)
-                )
+                file_key = (key, int(chunk_arr[ep_idx]), int(file_arr[ep_idx]))
+                starts, ends, seg_row_ids = self._segments[file_key]
+                parts: list[tuple[int, list[float]]] = []
+                for row in window:
+                    ts = float(from_ts_arr[ep_idx]) + float(timestamps[row_pos[row]])
+                    seg = int(np.searchsorted(starts, ts + self.tolerance_s, side="right") - 1)
+                    seg = min(max(seg, 0), len(starts) - 1)
+                    rowid = int(seg_row_ids[seg])
+                    if parts and parts[-1][0] == rowid:
+                        parts[-1][1].append(ts)
+                    else:
+                        parts.append((rowid, [ts]))
+                    needed.add(rowid)
+                window_parts[(sample_idx, key)] = parts
 
-        # Fetch all missing video files in one call. Local references keep
-        # this batch's decoders alive even if the LRU evicts them.
-        from torchcodec.decoders import VideoDecoder
-
-        decoders = {key: self._decoder_cache.get(key) for key in requests if key in self._decoder_cache}
-        missing = [key for key in requests if key not in decoders]
+        missing = [rowid for rowid in sorted(needed) if (rowid,) not in self._decoder_cache]
         if missing:
-            blob_files = self._videos_table.fetch_blob_files(
-                VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in missing]
-            )
-            for key, blob_file in zip(missing, blob_files, strict=True):
-                # Local tables decode straight off the seekable blob handle.
-                # Remote tables pick per file: many windows from one file ->
-                # materialize it with one sequential read; few windows ->
-                # stream sparse ranges through a buffered handle (fetches KBs
-                # instead of the whole file).
-                nbytes = 0
-                if self._is_local:
-                    source = blob_file
-                elif len(requests[key]) >= _REMOTE_MATERIALIZE_MIN_WINDOWS:
-                    source = blob_file.readall()
-                    nbytes = len(source)
-                else:
-                    source = io.BufferedReader(blob_file, buffer_size=_REMOTE_READ_BUFFER)
-                # approximate seek mode skips the full-file scan that exact
-                # mode performs on decoder creation.
-                decoder = VideoDecoder(source, seek_mode="approximate")
-                decoders[key] = decoder
-                self._decoder_cache.put(key, decoder, nbytes=nbytes)
+            blobs = self._videos_table.fetch_blobs(VIDEO_BLOB_COLUMN, missing)
+            for rowid, blob in zip(missing, blobs, strict=True):
+                data = blob.as_py()
+                self._decoder_cache.put(
+                    (rowid,), VideoDecoder(data, seek_mode="approximate"), nbytes=len(data)
+                )
+        decoders = {rowid: self._decoder_cache.get((rowid,)) for rowid in needed}
+
+        seg_starts = {}
+        for starts, _ends, seg_row_ids in self._segments.values():
+            for start, rowid in zip(starts, seg_row_ids, strict=True):
+                if int(rowid) in needed:
+                    seg_starts[int(rowid)] = float(start)
 
         results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
 
-        def _decode_file(file_key: tuple, file_requests: list[tuple[int, list[float]]]) -> None:
-            key, chunk_idx, file_idx = file_key
-            decoder = decoders[file_key]
-            fps = decoder.metadata.average_fps
-            # One decode call per sample window: window frames are consecutive,
-            # so each call is a single seek plus a sequential decode. This
-            # measures faster than merging all windows into one indices list.
-            for sample_idx, shifted_ts in file_requests:
-                indices = [round(ts * fps) for ts in shifted_ts]
+        def _decode_window(item: tuple[tuple[int, str], list[tuple[int, list[float]]]]) -> None:
+            (sample_idx, key), parts = item
+            frames_parts = []
+            for rowid, ts_list in parts:
+                decoder = decoders[rowid]
+                fps = decoder.metadata.average_fps
+                start = seg_starts[rowid]
+                n_frames = decoder.metadata.num_frames
+                indices = [min(max(round((ts - start) * fps), 0), n_frames - 1) for ts in ts_list]
                 batch = decoder.get_frames_at(indices=indices)
-                # float64: default float32 quantizes ~1e-3 s at t~10^4 s in
-                # long aggregated video files, tripping tolerance_s spuriously.
-                distance = (torch.tensor(shifted_ts, dtype=torch.float64) - batch.pts_seconds).abs()
+                distance = (torch.tensor(ts_list, dtype=torch.float64) - batch.pts_seconds - start).abs()
                 if (distance >= self.tolerance_s).any():
                     raise FrameTimestampError(
                         f"Query timestamps violate tolerance_s={self.tolerance_s} for video "
-                        f"'{key}' (chunk {chunk_idx}, file {file_idx}): queried {shifted_ts}, "
-                        f"loaded {batch.pts_seconds.tolist()}."
+                        f"'{key}' segment row {rowid}: queried {ts_list}, "
+                        f"loaded {(batch.pts_seconds + start).tolist()}."
                     )
-                frames = batch.data
-                if not self.return_uint8:
-                    frames = (frames / 255.0).type(torch.float32)
-                results[sample_idx][key] = frames.squeeze(0)
+                frames_parts.append(batch.data)
+            frames = torch.cat(frames_parts) if len(frames_parts) > 1 else frames_parts[0]
+            if not self.return_uint8:
+                frames = (frames / 255.0).type(torch.float32)
+            results[sample_idx][key] = frames.squeeze(0)
 
-        # Decode files in parallel (decoding releases the GIL), mirroring the
-        # per-camera thread pool in DatasetReader._query_videos.
-        if len(requests) <= 1:
-            for file_key, file_requests in requests.items():
-                _decode_file(file_key, file_requests)
+        items = list(window_parts.items())
+        if len(items) <= 1:
+            for entry in items:
+                _decode_window(entry)
         else:
-            with ThreadPoolExecutor(max_workers=len(requests)) as pool:
-                futures = [pool.submit(_decode_file, k, r) for k, r in requests.items()]
-                for future in futures:
+            with ThreadPoolExecutor(max_workers=min(len(items), 8)) as pool:
+                for future in [pool.submit(_decode_window, entry) for entry in items]:
                     future.result()
         return results
 

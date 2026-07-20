@@ -44,6 +44,55 @@ from tests.fixtures.constants import DUMMY_REPO_ID
 lancedb = pytest.importorskip("lancedb")
 
 
+def segment_rows(mp4: Path, segment_seconds: float) -> list[dict]:
+    """Split one mp4 into keyframe-aligned segment rows (stream copy, reset timestamps)."""
+    import subprocess
+    import tempfile
+
+    import av
+
+    rows = []
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(mp4),
+                "-map",
+                "0:v:0",
+                "-c",
+                "copy",
+                "-f",
+                "segment",
+                "-segment_time",
+                str(segment_seconds),
+                "-reset_timestamps",
+                "1",
+                f"{tmp}/seg_%06d.mp4",
+            ],
+            check=True,
+        )
+        start = 0.0
+        for index, seg in enumerate(sorted(Path(tmp).glob("seg_*.mp4"))):
+            with av.open(str(seg)) as container:
+                stream = container.streams.video[0]
+                duration = float(stream.duration * stream.time_base)
+            rows.append(
+                {
+                    "segment_index": index,
+                    "start_ts": start,
+                    "end_ts": start + duration,
+                    VIDEO_BLOB_COLUMN: seg.read_bytes(),
+                }
+            )
+            start += duration
+    return rows
+
+
 def convert_frames_to_lance(src_root: Path, dst_root: Path) -> None:
     """Test-only converter: copy ``meta/`` and build the frames table from parquet data."""
     shutil.copytree(src_root / "meta", dst_root / "meta")
@@ -66,21 +115,23 @@ def convert_frames_to_lance(src_root: Path, dst_root: Path) -> None:
                 pa.field("video_key", pa.string()),
                 pa.field("chunk_index", pa.int64()),
                 pa.field("file_index", pa.int64()),
+                pa.field("segment_index", pa.int64()),
+                pa.field("start_ts", pa.float64()),
+                pa.field("end_ts", pa.float64()),
                 lancedb.blob(VIDEO_BLOB_COLUMN),
             ]
         )
         videos_table = db.create_table(VIDEOS_TABLE, schema=schema)
-        videos_table.add(
-            [
-                {
-                    "video_key": mp4.parts[-3],
-                    "chunk_index": int(mp4.parent.name.split("-")[1]),
-                    "file_index": int(mp4.stem.split("-")[1]),
-                    VIDEO_BLOB_COLUMN: mp4.read_bytes(),
-                }
-                for mp4 in video_files
-            ]
-        )
+        rows = []
+        for mp4 in video_files:
+            base = {
+                "video_key": mp4.parts[-3],
+                "chunk_index": int(mp4.parent.name.split("-")[1]),
+                "file_index": int(mp4.stem.split("-")[1]),
+            }
+            # tiny segments so fixture windows cross segment boundaries
+            rows.extend({**base, **seg} for seg in segment_rows(mp4, segment_seconds=0.2))
+        videos_table.add(rows)
 
 
 @pytest.fixture
