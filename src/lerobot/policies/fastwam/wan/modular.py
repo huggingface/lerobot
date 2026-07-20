@@ -908,6 +908,11 @@ class FastWAM(torch.nn.Module):
         self.train_scheduler = self.train_video_scheduler
         self.infer_scheduler = self.infer_video_scheduler
 
+        # Optional Real-Time Chunking processor (set by the policy wrapper). When present and
+        # enabled it guides the action denoising loop in `infer_action` so a freshly generated
+        # chunk inpaints onto the previous chunk's unexecuted tail. Plain attribute (not an
+        # nn.Module) — carries no parameters and stays out of state_dict / device moves.
+        self.rtc_processor = None
         self.device = torch.device(device)
         # When pinned (e.g. "cpu"), the frozen text encoder stays on this device instead
         # of following the model onto the GPU — `_apply` skips it and `encode_prompt` runs
@@ -1825,6 +1830,9 @@ class FastWAM(torch.nn.Module):
         seed: int | None = None,
         rand_device: str = "cpu",
         tiled: bool = False,
+        inference_delay: int | None = None,
+        prev_chunk_left_over: torch.Tensor | None = None,
+        execution_horizon: int | None = None,
     ) -> dict[str, Any]:
         self.eval()
         if str(getattr(self.video_expert, "video_attention_mask_mode", "")) != "first_frame_causal":
@@ -1877,18 +1885,43 @@ class FastWAM(torch.nn.Module):
             dtype=latents_action.dtype,
             shift_override=sigma_shift,
         )
+        rtc_active = (
+            self.rtc_processor is not None
+            and getattr(self.rtc_processor.rtc_config, "enabled", False)
+            and prev_chunk_left_over is not None
+        )
+        num_train_timesteps = float(self.infer_action_scheduler.num_train_timesteps)
         for step_t_action, step_delta_action in zip(infer_timesteps_action, infer_deltas_action, strict=True):
             timestep_action = step_t_action.unsqueeze(0).to(dtype=latents_action.dtype, device=self.device)
 
-            pred_action = self._predict_action_noise_with_cache(
-                latents_action=latents_action,
-                timestep_action=timestep_action,
-                context=context,
-                context_mask=context_mask,
-                video_kv_cache=video_kv_cache,
-                attention_mask=attention_mask,
-                video_seq_len=video_seq_len,
-            )
+            def denoise(x_t, ts=timestep_action):
+                return self._predict_action_noise_with_cache(
+                    latents_action=x_t,
+                    timestep_action=ts,
+                    context=context,
+                    context_mask=context_mask,
+                    video_kv_cache=video_kv_cache,
+                    attention_mask=attention_mask,
+                    video_seq_len=video_seq_len,
+                )
+
+            if rtc_active:
+                # `time` is the flow-matching noise level sigma in [0, 1]: FastWAM's model
+                # predicts velocity v = noise - clean, so the clean-action estimate is
+                # x1 = x_t - sigma * v — exactly RTC's `x1_t = x_t - time * v_t`.
+                sigma = float(step_t_action.item()) / num_train_timesteps
+                pred_action = self.rtc_processor.denoise_step(
+                    x_t=latents_action,
+                    prev_chunk_left_over=prev_chunk_left_over.to(
+                        device=latents_action.device, dtype=latents_action.dtype
+                    ),
+                    inference_delay=inference_delay or 0,
+                    time=sigma,
+                    original_denoise_step_partial=denoise,
+                    execution_horizon=execution_horizon,
+                )
+            else:
+                pred_action = denoise(latents_action)
 
             latents_action = self.infer_action_scheduler.step(pred_action, step_delta_action, latents_action)
 
