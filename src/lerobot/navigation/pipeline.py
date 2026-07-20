@@ -98,6 +98,27 @@ def integrate_keyframe(
     return carve, stats
 
 
+def local_points_to_world(local_points: np.ndarray, pose: np.ndarray) -> np.ndarray:
+    """Transform camera-frame points ``(H, W, 3)`` into the world frame using
+    a 4×4 camera-to-world ``pose``.
+
+    On the robot the world frame is the odometry frame (from the base
+    controller), and the geometry model supplies only relative
+    camera-frame geometry — so projecting through the odometry pose keeps
+    the voxel map and the robot pose in ONE consistent frame. Returns
+    ``(H, W, 3)`` float32.
+    """
+    if local_points.ndim != 3 or local_points.shape[-1] != 3:
+        raise ValueError(f"expected (H, W, 3), got {local_points.shape}")
+    if pose.shape != (4, 4):
+        raise ValueError(f"pose must be (4, 4); got {pose.shape}")
+    r = pose[:3, :3].astype(np.float64)
+    t = pose[:3, 3].astype(np.float64)
+    flat = local_points.reshape(-1, 3).astype(np.float64)
+    world = flat @ r.T + t
+    return world.reshape(local_points.shape).astype(np.float32)
+
+
 def upsample_features_to_view(
     patch_feats_one_view: np.ndarray,
     view_h: int,

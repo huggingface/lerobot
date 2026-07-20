@@ -125,15 +125,22 @@ class LiveMapper:
     """One perceive→integrate step of live mapping on the robot.
 
     Each :meth:`tick` reads an observation (front camera + odometry),
-    updates the controller's pose from odometry, runs the geometry model
-    and feature extractor on the frame, integrates the keyframe into the
-    voxel map, and feeds the safety watchdog. Constructed lazily — no SDK
-    or model is touched until the first tick.
+    updates the base pose from odometry, runs the geometry model + feature
+    extractor on the frame, and integrates the keyframe.
+
+    Frame convention (important): the **odometry frame is the one world
+    frame**. The geometry model supplies only relative camera-frame
+    geometry (``local_points``/depth); those points are projected through
+    the base's odometry pose, so the voxel map and the robot pose live in
+    the same coordinates and ``goto`` drives to the right place. The
+    model's own ``camera_poses`` (its internal monocular frame) are not
+    used as the world frame. Constructed lazily — no SDK/model touched
+    until the first tick.
     """
 
     def __init__(self, robot, base, geometry, siglip, voxel_map, pcfg=None) -> None:
         self.robot = robot
-        self.base = base  # RobotBaseController (unwrapped) for feed_observation
+        self.base = base  # RobotBaseController (unwrapped) for feed_observation/pose
         self.safe = None  # optional SafeBaseController for the watchdog
         self.geometry = geometry
         self.siglip = siglip
@@ -148,11 +155,13 @@ class LiveMapper:
             KeyframeContext,
             PipelineConfig,
             integrate_keyframe,
+            local_points_to_world,
             upsample_features_to_view,
         )
 
         obs = self.robot.get_observation()
-        self.base.feed_observation(obs)
+        self.base.feed_observation(obs)  # updates the odometry world pose
+        pose = self.base.pose()  # camera-to-world in the odometry frame
 
         frame = obs.get("front")
         if frame is None:
@@ -166,14 +175,17 @@ class LiveMapper:
             patches = self.siglip.encode_views(views)[0]  # (Hp, Wp, D)
             feat_map = upsample_features_to_view(patches, h, w)
 
+        # World points come from the model's camera-frame geometry projected
+        # through the odometry pose — NOT the model's own world frame.
+        points_world = local_points_to_world(geo.local_points[0], pose)
         ctx = KeyframeContext(
             frame_idx=self._frame,
             t_sec=t_sec,
             rgb_uint8=views[0],
-            points_world=geo.points[0],
+            points_world=points_world,
             local_points=geo.local_points[0],
             conf=geo.conf[0],
-            pose=geo.camera_poses[0],
+            pose=pose,
             feat_map=feat_map,
         )
         integrate_keyframe(self.voxel_map, ctx, self.pcfg or PipelineConfig())
@@ -185,30 +197,59 @@ class LiveMapper:
 def _build_live(
     network_interface: str = "eth0",
     device: str = "cuda",
+    camera_hfov_deg: float = 90.0,
+    max_lin_speed: float = 0.4,
+    max_yaw_rate: float = 0.8,
 ) -> tuple[DogController, LiveMapper]:
     """Wire the controller + live mapper against a real Unitree Go2.
 
     Nothing here touches the SDK or loads a model — construction is lazy;
     the DDS connection and model loads happen on first use.
+
+    ``camera_hfov_deg`` sets the pinhole focal length used for free-space
+    carving (``focal = W / (2·tan(HFOV/2))``). Calibrate it to the Go2
+    front camera for correct carving; a wrong value only degrades dynamic
+    removal, not the additive map. Speed caps are deliberately low for
+    first bring-up.
     """
-    from lerobot.navigation.base_controller import RobotBaseController, SafeBaseController
+    import math
+
+    from lerobot.navigation.base_controller import (
+        RobotBaseController,
+        RobotBaseControllerConfig,
+        SafeBaseController,
+    )
     from lerobot.navigation.features import SiglipFeatureExtractor
     from lerobot.navigation.geometry import LingBotMapRunner
+    from lerobot.navigation.pipeline import PipelineConfig
     from lerobot.navigation.voxel_map import VoxelMap
     from lerobot.robots.unitree_go2 import UnitreeGo2, UnitreeGo2Config
 
-    robot = UnitreeGo2(UnitreeGo2Config(network_interface=network_interface))
-    inner = RobotBaseController(robot)
-    safe = SafeBaseController(inner=inner)
+    robot_cfg = UnitreeGo2Config(network_interface=network_interface)
+    robot = UnitreeGo2(robot_cfg)
+    inner = RobotBaseController(
+        robot, RobotBaseControllerConfig(max_lin_speed=max_lin_speed, max_yaw_rate=max_yaw_rate)
+    )
+    safe = SafeBaseController(inner=inner, max_lin_speed=max_lin_speed, max_yaw_rate=max_yaw_rate)
     voxel_map = VoxelMap(voxel_size=0.05)
     siglip = SiglipFeatureExtractor(device=device)
     geometry = LingBotMapRunner(device=device)
 
+    w = robot_cfg.front_camera_width
+    focal_px = w / (2.0 * math.tan(math.radians(camera_hfov_deg) / 2.0))
+    pcfg = PipelineConfig(focal_px=focal_px)
+
     skills = SpatialSkills(voxel_map, safe, siglip, SkillsConfig(cell_size=0.05))
     controller = DogController(skills, DeterministicAgent(skills, AgentConfig()))
-    mapper = LiveMapper(robot, inner, geometry, siglip, voxel_map)
+    mapper = LiveMapper(robot, inner, geometry, siglip, voxel_map, pcfg=pcfg)
     mapper.safe = safe
-    LOG.info("live stack wired (iface=%s, device=%s) — connect the dog and run", network_interface, device)
+    LOG.info(
+        "live stack wired (iface=%s, device=%s, focal=%.1fpx, vmax=%.2f m/s) — connect the dog and run",
+        network_interface,
+        device,
+        focal_px,
+        max_lin_speed,
+    )
     return controller, mapper
 
 
@@ -306,6 +347,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--network-interface", default="eth0", help="Host interface wired to the dog.")
     ap.add_argument("--device", default="cuda", help="Torch device for the geometry/feature models.")
+    ap.add_argument(
+        "--camera-hfov-deg",
+        type=float,
+        default=90.0,
+        help="Go2 front-camera horizontal FOV, for the carve focal length. Calibrate to your camera.",
+    )
+    ap.add_argument("--max-lin-speed", type=float, default=0.4, help="Body linear speed cap (m/s).")
+    ap.add_argument("--max-yaw-rate", type=float, default=0.8, help="Yaw-rate cap (rad/s).")
     ap.add_argument("--command", default=None, help="Run a single command non-interactively, then exit.")
     ap.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING"])
     args = ap.parse_args(argv)
@@ -315,7 +364,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if args.live:
-        controller, mapper = _build_live(args.network_interface, args.device)
+        controller, mapper = _build_live(
+            args.network_interface,
+            args.device,
+            camera_hfov_deg=args.camera_hfov_deg,
+            max_lin_speed=args.max_lin_speed,
+            max_yaw_rate=args.max_yaw_rate,
+        )
         return run_live_repl(controller, mapper)
 
     if not args.dry_run:
