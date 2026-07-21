@@ -25,6 +25,7 @@ from fix_dataset import (
 )
 
 SRC_REPO = "HuggingFaceVLA/community_dataset_v3"
+NORMALIZED_TAG = "normalized"  # card tag for datasets whose SO joints stay in normalized units
 
 
 def download_subfolder(sub: str, work_dir: str, patterns: list[str] | None = None, repo: str = SRC_REPO) -> None:
@@ -145,8 +146,11 @@ def _write_dataset_card(local: Path, sub: str, result: dict) -> None:
                 return dict(self)
 
         rt = result.get("robot_type") or None
+        tags = [rt] if rt else []
+        if enc == "normalized" and not converted_degrees:
+            tags.append(NORMALIZED_TAG)
         card = create_lerobot_dataset_card(
-            tags=[rt] if rt else None,
+            tags=tags or None,
             dataset_info=_Info(load_info(local)),
             license="apache-2.0",
             repo_id=sub,
