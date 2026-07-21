@@ -65,7 +65,6 @@ from lerobot.utils.import_utils import require_package
 
 from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
 from ..common.vla_utils import (
-    clone_past_key_values,
     create_sinusoidal_pos_embedding,
     make_att_2d_masks,
     pad_vector,
@@ -346,6 +345,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         for key in present_img_keys:
             img = batch[key][:, -1, :, :, :] if batch[key].ndim == 5 else batch[key]
             if self.config.resize_imgs_with_padding is not None:
+                # SmolVLA stores the target as (width, height); the shared helper expects (height, width).
                 img = resize_with_pad(
                     img,
                     self.config.resize_imgs_with_padding[1],
@@ -790,10 +790,6 @@ class VLAFlowMatching(nn.Module):
         prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
-        if past_key_values is not None:
-            # The interleaved self-attention layers append the suffix K/V to the cache in place;
-            # clone it so every denoising step starts from the pristine prefix cache.
-            past_key_values = clone_past_key_values(past_key_values)
         outputs_embeds, _ = self.vlm_with_expert.forward(
             attention_mask=full_att_2d_masks,
             position_ids=position_ids,
@@ -801,6 +797,9 @@ class VLAFlowMatching(nn.Module):
             inputs_embeds=[None, suffix_embs],
             use_cache=self.config.use_cache,
         )
+        if past_key_values is not None:
+            # Self-attention layers append suffix K/V in place; restore the prefix for the next step.
+            past_key_values.crop(prefix_len)
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)
