@@ -26,6 +26,7 @@ from torch import Tensor, nn
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.device_utils import get_autocast_context
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -183,7 +184,7 @@ class VLAJEPAModel(nn.Module):
             action_idx = action_mask.nonzero(as_tuple=True)
 
         device_type = next(self.parameters()).device.type
-        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+        with get_autocast_context(device_type, torch.bfloat16):
             last_hidden = self._qwen_last_decoder_hidden(qwen_inputs)  # [B, seq_len, H]
             b, _, h = last_hidden.shape
             embodied_action_tokens = last_hidden[embodied_idx[0], embodied_idx[1], :].view(b, -1, h)
@@ -246,8 +247,8 @@ class VLAJEPAModel(nn.Module):
         )
         if reduction == "none":
             # Per-sample loss (B,): mean over all non-batch dims (tokens, feature).
-            l = F.l1_loss(predicted_states, gt_states.float(), reduction="none")
-            return l.mean(dim=tuple(range(1, l.ndim)))
+            elementwise = F.l1_loss(predicted_states, gt_states.float(), reduction="none")
+            return elementwise.mean(dim=tuple(range(1, elementwise.ndim)))
         return F.l1_loss(predicted_states, gt_states.float(), reduction="mean")
 
     def _action_loss(
@@ -264,7 +265,7 @@ class VLAJEPAModel(nn.Module):
         independent noise draws are averaged back per original sample — for RA-BC weighting.
         """
         device_type = next(self.parameters()).device.type
-        with torch.autocast(device_type=device_type, dtype=torch.float32):
+        with get_autocast_context(device_type, torch.float32):
             r = self.config.repeated_diffusion_steps
             horizon = self.config.chunk_size
             b = embodied_action_tokens.shape[0]
