@@ -282,6 +282,7 @@ class VLAJEPAActionHead(nn.Module):
         actions: torch.Tensor,
         state: torch.Tensor | None = None,
         action_is_pad: torch.Tensor | None = None,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         noise = torch.randn_like(actions)
         t = self.sample_time(actions.shape[0], actions.device, actions.dtype)
@@ -302,6 +303,10 @@ class VLAJEPAActionHead(nn.Module):
 
         loss = F.mse_loss(pred_actions, velocity, reduction="none")  # [B, T, action_dim]
         valid_mask = ~action_is_pad.unsqueeze(-1)  # [B, T, 1]
+        if reduction == "none":
+            # Per-sample loss (B,) for sample weighting (RA-BC): mask-average over T and action_dim.
+            per_sample_valid = valid_mask.sum(dim=(1, 2)) * loss.shape[-1]  # [B]
+            return (loss * valid_mask).sum(dim=(1, 2)) / per_sample_valid.clamp_min(1)
         num_valid = valid_mask.sum() * loss.shape[-1]
         return (loss * valid_mask).sum() / num_valid.clamp_min(1)
 
