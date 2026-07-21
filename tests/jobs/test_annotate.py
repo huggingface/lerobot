@@ -134,12 +134,24 @@ def test_submit_requires_repo_id(monkeypatch):
         submit_annotate_to_hf(cfg)
 
 
-def test_submit_rejects_local_config_path(monkeypatch):
+@pytest.mark.parametrize("arg", ["--config_path=annotate.yaml", "--vlm=vlm.yaml", "--job=job.yaml"])
+def test_submit_rejects_local_config_files(monkeypatch, arg):
+    """draccus takes a config file for the whole config and for each nested one; the
+    pod can read none of them, so a remote run must refuse rather than drop them."""
     monkeypatch.setattr("lerobot.jobs.annotate.get_token", lambda: "tok")
-    _set_argv(monkeypatch, "--config_path=annotate.yaml", "--job.target=h200")
+    _set_argv(monkeypatch, arg, "--job.target=h200")
     cfg = _parse("--repo_id", "u/d", "--job.target", "h200")
-    with pytest.raises(ValueError, match="--config_path"):
+    with pytest.raises(ValueError, match="cannot read config files"):
         submit_annotate_to_hf(cfg)
+
+
+def test_pod_command_drops_bare_job_config_file_arg():
+    """`--job` isn't caught by the `--job.` prefix, and could carry a remote target
+    that would make the pod submit a job of its own — recursively."""
+    argv = _annotate_argv(build_pod_command("u/d", "main", ["--job", "job.yaml", "--seed=7"]))
+    assert "--job" not in argv
+    assert "job.yaml" not in argv
+    assert argv[-1] == "--job.target=local"
 
 
 def test_submit_dispatches_job(monkeypatch):

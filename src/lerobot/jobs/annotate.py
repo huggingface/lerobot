@@ -30,6 +30,7 @@ import shlex
 import signal
 import sys
 import threading
+from dataclasses import is_dataclass
 from typing import TYPE_CHECKING
 
 from huggingface_hub import HfApi, get_token, run_job
@@ -57,9 +58,22 @@ _RUNTIME_REQUIREMENTS = (
 
 # Flags the submitter resolves itself instead of forwarding verbatim: `--root`
 # names a directory only this machine has, `--repo_id` is re-emitted from the
-# config, and `--config_path` names a local file (rejected up front by
-# `submit_annotate_to_hf`). `--job.*` is dropped separately, by prefix.
-_SUBMITTER_OWNED_ARGS = ("--root", "--repo_id", "--config_path")
+# config, and the config-file args name local files (rejected up front by
+# `submit_annotate_to_hf`). `--job.*` is dropped separately, by prefix; bare
+# `--job` is not, hence its entry here — it is the one arg that could smuggle a
+# remote `target` onto the pod and have the job recursively submit itself.
+_SUBMITTER_OWNED_ARGS = ("--root", "--repo_id", "--config_path", "--job")
+
+
+def _local_config_file_args(cfg: AnnotationPipelineConfig) -> list[str]:
+    """The CLI args that name a config file on the client's disk.
+
+    draccus exposes ``--config_path`` for the whole config plus a ``--<field>``
+    for every nested dataclass (``--vlm``, ``--plan``, ``--job``, ...). The pod has
+    none of those files, so a remote run has to reject them rather than silently
+    drop the settings they carry.
+    """
+    return ["--config_path", *(f"--{name}" for name in vars(cfg) if is_dataclass(getattr(cfg, name)))]
 
 
 def build_pod_setup(lerobot_ref: str) -> str:
@@ -109,10 +123,12 @@ def submit_annotate_to_hf(cfg: AnnotationPipelineConfig) -> None:
         )
 
     argv = sys.argv[1:]
-    if any(tok.split("=", 1)[0] == "--config_path" for tok in argv):
+    passed = {tok.split("=", 1)[0] for tok in argv}
+    used_config_files = sorted(passed.intersection(_local_config_file_args(cfg)))
+    if used_config_files:
         raise ValueError(
-            "--config_path is not supported with a remote --job.target: the pod cannot read a "
-            "local config file. Pass the settings as CLI flags instead."
+            f"{', '.join(used_config_files)} cannot be used with a remote --job.target: the pod "
+            "cannot read config files from this machine. Pass the settings as CLI flags instead."
         )
 
     if not cfg.push_to_hub:
