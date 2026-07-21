@@ -27,9 +27,7 @@ from the Hub.
 from __future__ import annotations
 
 import shlex
-import signal
 import sys
-import threading
 from dataclasses import is_dataclass
 from typing import TYPE_CHECKING
 
@@ -37,9 +35,9 @@ from huggingface_hub import HfApi, get_token, run_job
 
 from .dataset import ensure_dataset_available
 
-# Package-internal reuse of the training submitter's job plumbing: the polling,
-# log tailing and argv forwarding are identical for annotation runs.
-from .hf import _pod_forwarded_args, _poll_until_done, _tail_logs, resolve_job_tags
+# Package-internal reuse of the training submitter's job plumbing: following a
+# submitted job and forwarding argv are identical for annotation runs.
+from .hf import _pod_forwarded_args, follow_job, resolve_job_tags
 
 if TYPE_CHECKING:
     from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
@@ -167,54 +165,10 @@ def submit_annotate_to_hf(cfg: AnnotationPipelineConfig) -> None:
     print(f"  Monitor:      hf jobs logs {job_id}")
     print(f"  Cancel:       hf jobs cancel {job_id}")
 
-    if cfg.job.detach:
+    # No success marker: `lerobot-annotate` keeps working after the upload log line
+    # (dataset card, version tag), so completion has to be stage-based.
+    if not follow_job(job_id, detach=cfg.job.detach):
         return
-
-    done = threading.Event()
-    detached = threading.Event()
-    stage_holder: dict[str, str | None] = {}
-
-    def _poll() -> None:
-        stage_holder["stage"] = _poll_until_done(job_id, done, status_holder=stage_holder)
-
-    poll_thread = threading.Thread(target=_poll, daemon=True)
-    poll_thread.start()
-    log_thread = threading.Thread(target=_tail_logs, args=(job_id, done), daemon=True)
-    log_thread.start()
-
-    def _detach(sig, frame):
-        detached.set()
-        done.set()
-        print("\nDetached. Job is still running.")
-        print(f"  Monitor: hf jobs logs {job_id}")
-        print(f"  Cancel:  hf jobs cancel {job_id}")
-
-    # signal.signal only works on the main thread; when called from a worker thread
-    # (e.g. an orchestration framework) skip the Ctrl-C-detaches-instead-of-cancels
-    # handler rather than crashing with ValueError.
-    install_sigint = threading.current_thread() is threading.main_thread()
-    original_sigint = signal.getsignal(signal.SIGINT) if install_sigint else None
-    if install_sigint:
-        signal.signal(signal.SIGINT, _detach)
-    try:
-        # Timeout-based join so SIGINT is delivered to the main thread promptly.
-        while poll_thread.is_alive():
-            poll_thread.join(timeout=0.5)
-        log_thread.join(timeout=5)
-    finally:
-        if install_sigint:
-            signal.signal(signal.SIGINT, original_sigint)
-
-    if detached.is_set():
-        return
-
-    stage = stage_holder.get("stage")
-    if stage != "COMPLETED":
-        message = stage_holder.get("message")
-        detail = f" ({message})" if message else ""
-        raise RuntimeError(
-            f"Job {job_id} ended with stage={stage}{detail}. Check logs: hf jobs logs {job_id}"
-        )
 
     if cfg.push_to_hub:
         print(f"\nAnnotation complete — dataset pushed to https://huggingface.co/datasets/{target_repo_id}")

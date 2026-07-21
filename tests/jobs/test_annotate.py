@@ -184,6 +184,48 @@ def test_submit_dispatches_job(monkeypatch):
     assert "--push_to_hub=true" in argv
 
 
+@pytest.mark.timeout(15)
+def test_submit_follows_job_to_completion(monkeypatch, capsys):
+    """Non-detach path must stream logs and RETURN (not hang) once the job is terminal.
+
+    Exercises the `follow_job` helper shared with the training submitter from the
+    annotation side, which is why the job-state patches target `lerobot.jobs.hf`.
+    Asserting on the completion message and not merely on "didn't hang" is what makes
+    this fail if `follow_job` ever reports detached-without-a-verdict instead.
+    """
+    monkeypatch.setattr("lerobot.jobs.annotate.get_token", lambda: "tok")
+    monkeypatch.setattr("lerobot.jobs.annotate.HfApi", lambda token=None: MagicMock())
+    monkeypatch.setattr("lerobot.jobs.annotate.ensure_dataset_available", lambda *a, **kw: None)
+    monkeypatch.setattr("lerobot.jobs.annotate.run_job", lambda **kw: MagicMock(id="job-1", url="http://x"))
+    monkeypatch.setattr(
+        "lerobot.jobs.hf.inspect_job",
+        lambda job_id: MagicMock(status=MagicMock(stage=MagicMock(value="COMPLETED"), message=None)),
+    )
+    monkeypatch.setattr("lerobot.jobs.hf.fetch_job_logs", lambda job_id, follow=True: iter(()))
+    _set_argv(monkeypatch, "--repo_id=u/d", "--job.target=h200")
+
+    submit_annotate_to_hf(_parse("--repo_id", "u/d", "--push_to_hub", "true", "--job.target", "h200"))
+    assert "Annotation complete" in capsys.readouterr().out
+
+
+@pytest.mark.timeout(15)
+def test_submit_raises_when_job_fails(monkeypatch):
+    """A job that ends in a non-COMPLETED stage must surface as an error, not a silent return."""
+    monkeypatch.setattr("lerobot.jobs.annotate.get_token", lambda: "tok")
+    monkeypatch.setattr("lerobot.jobs.annotate.HfApi", lambda token=None: MagicMock())
+    monkeypatch.setattr("lerobot.jobs.annotate.ensure_dataset_available", lambda *a, **kw: None)
+    monkeypatch.setattr("lerobot.jobs.annotate.run_job", lambda **kw: MagicMock(id="job-1", url=None))
+    monkeypatch.setattr(
+        "lerobot.jobs.hf.inspect_job",
+        lambda job_id: MagicMock(status=MagicMock(stage=MagicMock(value="ERROR"), message="Job timeout")),
+    )
+    monkeypatch.setattr("lerobot.jobs.hf.fetch_job_logs", lambda job_id, follow=True: iter(()))
+    _set_argv(monkeypatch, "--repo_id=u/d", "--job.target=h200")
+
+    with pytest.raises(RuntimeError, match="stage=ERROR .Job timeout."):
+        submit_annotate_to_hf(_parse("--repo_id", "u/d", "--job.target", "h200"))
+
+
 def test_submit_ensures_dataset_is_on_the_hub(monkeypatch):
     """A local-only dataset is pushed (privately) before the job can reach it by repo_id."""
     monkeypatch.setattr("lerobot.jobs.annotate.get_token", lambda: "tok")
