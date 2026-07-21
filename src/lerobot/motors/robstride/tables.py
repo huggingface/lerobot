@@ -154,12 +154,19 @@ class PrivateCommType(IntEnum):
 
 
 class PrivateControlMode(IntEnum):
-    """Values of the ``run_mode`` parameter (0x7005) in the private protocol."""
+    """Values of the ``run_mode`` parameter (0x7005) in the private protocol.
+
+    The two position modes take the same ``loc_ref`` setpoint but obey different speed
+    parameters: PP shapes a profile from ``vel_max``/``acc_set`` and ignores ``limit_spd``,
+    CSP tracks the setpoint at up to ``limit_spd``. Not every firmware implements CSP;
+    ``set_control_mode`` verifies the switch by read-back and raises when it is rejected.
+    """
 
     MIT = 0  # operation/MIT mode, driven by type-0x01 control frames
-    POSITION = 1  # profile position mode, driven by loc_ref (0x7016) parameter writes
+    POSITION = 1  # profile position mode (PP), loc_ref (0x7016) writes, vel_max/acc_set profile
     VELOCITY = 2  # velocity mode, driven by spd_ref (0x700A) parameter writes
     CURRENT = 3  # current (Iq) mode, driven by iq_ref (0x7006) parameter writes
+    POSITION_CSP = 5  # continuous-setpoint position mode, loc_ref writes, capped by limit_spd
 
 
 # Host ID used in outgoing frames. 0xFD is the convention of the vendor PC tools;
@@ -187,8 +194,8 @@ PRIVATE_PARAMS: dict[str, PrivateParam] = {
     "cur_kp": PrivateParam(0x7010, "f"),
     "cur_ki": PrivateParam(0x7011, "f"),
     "cur_filter_gain": PrivateParam(0x7014, "f"),
-    "loc_ref": PrivateParam(0x7016, "f"),  # position-mode target [rad]
-    "limit_spd": PrivateParam(0x7017, "f"),  # position-mode speed limit [rad/s]
+    "loc_ref": PrivateParam(0x7016, "f"),  # position-mode target [rad] (PP and CSP)
+    "limit_spd": PrivateParam(0x7017, "f"),  # CSP position-mode speed cap [rad/s]; inert in PP mode
     "limit_cur": PrivateParam(0x7018, "f"),  # current limit [A]
     "mech_pos": PrivateParam(0x7019, "f", writable=False),  # mechanical position [rad], exact f32
     "iqf": PrivateParam(0x701A, "f", writable=False),  # filtered q-axis current [A]
@@ -199,8 +206,8 @@ PRIVATE_PARAMS: dict[str, PrivateParam] = {
     "spd_ki": PrivateParam(0x7020, "f"),  # velocity loop Ki
     "spd_filter_gain": PrivateParam(0x7021, "f"),
     "acc_rad": PrivateParam(0x7022, "f"),  # velocity-mode acceleration [rad/s^2]
-    "vel_max": PrivateParam(0x7024, "f"),  # profile-position max velocity [rad/s]
-    "acc_set": PrivateParam(0x7025, "f"),  # profile-position acceleration [rad/s^2]
+    "vel_max": PrivateParam(0x7024, "f"),  # PP position-mode profile velocity [rad/s]; inert in CSP
+    "acc_set": PrivateParam(0x7025, "f"),  # PP position-mode profile acceleration [rad/s^2]
     "zero_sta": PrivateParam(0x7029, "B"),
 }
 

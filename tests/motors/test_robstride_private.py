@@ -597,10 +597,27 @@ def test_read_skips_reply_from_wrong_motor(bus, fake):
 def test_set_position_speed_limit_wire_format(bus, fake):
     fake.responder = MotorSim([1, 2, 3])
     bus.set_position_speed_limit("shoulder", 150.0)
-    (msg,) = sent(fake, PrivateCommType.PARAM_WRITE)
-    assert msg.arbitration_id == ext_id(PrivateCommType.PARAM_WRITE, HOST_ID, 1)
-    # limit_spd is 0x7017 (spec literal) and the value must be radians/second, float32 LE.
-    assert bytes(msg.data) == struct.pack("<H", 0x7017) + b"\x00\x00" + struct.pack("<f", math.radians(150.0))
+    writes = sent(fake, PrivateCommType.PARAM_WRITE)
+    assert all(msg.arbitration_id == ext_id(PrivateCommType.PARAM_WRITE, HOST_ID, 1) for msg in writes)
+    # PP obeys vel_max (0x7024) and CSP obeys limit_spd (0x7017), so the cap is written to
+    # both (spec-literal indices, radians/second, float32 LE).
+    raw = struct.pack("<f", math.radians(150.0))
+    assert [bytes(msg.data) for msg in writes] == [
+        struct.pack("<H", 0x7017) + b"\x00\x00" + raw,
+        struct.pack("<H", 0x7024) + b"\x00\x00" + raw,
+    ]
+
+
+def test_goal_position_in_csp_mode_writes_loc_ref(bus, fake):
+    fake.responder = MotorSim([1, 2, 3])
+    bus.set_control_mode(PrivateControlMode.POSITION_CSP, "shoulder")
+    fake.sent.clear()
+    bus.write("Goal_Position", "shoulder", 90.0)
+    writes = sent(fake, PrivateCommType.PARAM_WRITE)
+    assert len(writes) == 1
+    assert bytes(writes[0].data) == struct.pack("<H", LOC_REF_IDX) + b"\x00\x00" + struct.pack(
+        "<f", math.radians(90.0)
+    )
 
 
 def test_set_zero_position_raises_without_ack(bus, fake):
@@ -838,7 +855,7 @@ def test_write_goal_position_position_mode_writes_loc_ref(bus, fake):
 
 def test_write_goal_position_velocity_mode_raises(bus, fake):
     bus.control_mode["shoulder"] = PrivateControlMode.VELOCITY
-    with pytest.raises(ValueError, match="Goal_Position requires MIT or Position mode"):
+    with pytest.raises(ValueError, match="Goal_Position requires MIT or a position mode"):
         bus.write("Goal_Position", "shoulder", 10.0)
     assert fake.sent == []
 
@@ -946,7 +963,7 @@ def test_sync_write_goal_position_mixed_modes(bus, fake):
 
 def test_sync_write_goal_position_wrong_mode_raises(bus):
     bus.control_mode["elbow"] = PrivateControlMode.VELOCITY
-    with pytest.raises(ValueError, match="Goal_Position requires MIT or Position mode"):
+    with pytest.raises(ValueError, match="Goal_Position requires MIT or a position mode"):
         bus.sync_write("Goal_Position", {"elbow": 10.0})
 
 

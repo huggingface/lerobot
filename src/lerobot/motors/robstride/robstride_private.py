@@ -22,10 +22,10 @@ IDs); a motor speaks exactly one of the two at a time, selected by a persisted s
 power cycle.
 
 This bus works with motors out of the box (no protocol switch) and exposes the modes the MIT
-frame format cannot: Position (``run_mode`` 1, driven by ``loc_ref`` parameter writes),
-Velocity (``run_mode`` 2, ``spd_ref``) and Current (``run_mode`` 3, ``iq_ref``), alongside
-operation/MIT control frames (``run_mode`` 0). See issues #3547 and #3488 for the design
-discussion.
+frame format cannot: Position (``run_mode`` 1 PP, or ``run_mode`` 5 CSP on firmware that has
+it, both driven by ``loc_ref`` parameter writes), Velocity (``run_mode`` 2, ``spd_ref``) and
+Current (``run_mode`` 3, ``iq_ref``), alongside operation/MIT control frames (``run_mode``
+0). See issues #3547 and #3488 for the design discussion.
 
 Implementation notes learned from real RS-series hardware:
 
@@ -46,6 +46,10 @@ Implementation notes learned from real RS-series hardware:
 - A read of an index the firmware does not support is answered with an *error echo*: the
   reply sets data16's high byte and carries a zeroed value payload. Verified on rs00, rs03
   and rs06. Reply filters must reject those frames or a bad index silently reads as 0.0.
+- The position-mode speed parameters are mode-scoped: PP (``run_mode`` 1) obeys ``vel_max``/
+  ``acc_set`` and ignores ``limit_spd``; CSP (``run_mode`` 5) obeys ``limit_spd``. Measured
+  on rs00: an acknowledged ``limit_spd`` of 0.4 rad/s left a PP move peaking at 1.6 rad/s
+  (the ``acc_set`` limit), while the same value in CSP capped it.
 """
 
 import logging
@@ -689,12 +693,12 @@ class RobstridePrivateMotorsBus(MotorsBusBase):
                 gains = self._gains[motor]
                 self._mit_control(motor, gains["kp"], gains["kd"], float(value), 0.0, 0.0)
                 self.flush_rx_queue()
-            elif mode == PrivateControlMode.POSITION:
+            elif mode in (PrivateControlMode.POSITION, PrivateControlMode.POSITION_CSP):
                 self.write_param(motor, "loc_ref", float(value) * _DEG_TO_RAD)
                 self.flush_rx_queue()
             else:
                 raise ValueError(
-                    f"Goal_Position requires MIT or Position mode, but motor '{motor}' is in "
+                    f"Goal_Position requires MIT or a position mode, but motor '{motor}' is in "
                     f"{mode.name} mode. Call set_control_mode() first."
                 )
             return
@@ -809,11 +813,11 @@ class RobstridePrivateMotorsBus(MotorsBusBase):
                 if mode == PrivateControlMode.MIT:
                     gains = self._gains[motor]
                     mit_batch[motor] = (gains["kp"], gains["kd"], float(value), 0.0, 0.0)
-                elif mode == PrivateControlMode.POSITION:
+                elif mode in (PrivateControlMode.POSITION, PrivateControlMode.POSITION_CSP):
                     self.write_param(motor, "loc_ref", float(value) * _DEG_TO_RAD)
                 else:
                     raise ValueError(
-                        f"Goal_Position requires MIT or Position mode, but motor '{motor}' is in "
+                        f"Goal_Position requires MIT or a position mode, but motor '{motor}' is in "
                         f"{mode.name} mode. Call set_control_mode() first."
                     )
             if mit_batch:
@@ -847,8 +851,18 @@ class RobstridePrivateMotorsBus(MotorsBusBase):
 
     @check_if_not_connected
     def set_position_speed_limit(self, motor: NameOrID, speed_deg_s: float) -> None:
-        """Set the Position-mode speed limit (``limit_spd``) for one motor [deg/s]."""
-        self.write_param(motor, "limit_spd", speed_deg_s * _DEG_TO_RAD, wait_ack=True)
+        """Cap the position-mode speed of one motor [deg/s].
+
+        The two position modes obey different parameters: PP (``run_mode`` 1) shapes its
+        profile from ``vel_max`` and ignores ``limit_spd``, CSP (``run_mode`` 5) tracks
+        ``loc_ref`` at up to ``limit_spd`` and ignores ``vel_max`` (measured on B601-RS
+        rs00 firmware: with ``limit_spd`` 0.4 rad/s written and acknowledged, a PP move
+        still peaked at 1.6 rad/s; ``vel_max`` capped it). Both are written so the cap
+        holds whichever position mode is active.
+        """
+        speed_rad_s = speed_deg_s * _DEG_TO_RAD
+        self.write_param(motor, "limit_spd", speed_rad_s, wait_ack=True)
+        self.write_param(motor, "vel_max", speed_rad_s, wait_ack=True)
 
     @check_if_not_connected
     def set_position_gains(self, motor: NameOrID, *, loc_kp: float | None = None) -> None:
