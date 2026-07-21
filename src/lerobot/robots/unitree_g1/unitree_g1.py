@@ -33,12 +33,14 @@ from ..robot import Robot
 from .config_unitree_g1 import UnitreeG1Config
 from .g1_kinematics import G1_29_ArmIK
 from .g1_utils import (
+    KEYBOARD_KEYS_FIELD,
     REMOTE_AXES,
-    REMOTE_KEYS,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
     default_remote_input,
+    lowstate_to_obs,
     make_locomotion_controller,
+    obs_to_wb34_state,
 )
 
 if TYPE_CHECKING or _unitree_sdk_available:
@@ -47,8 +49,12 @@ if TYPE_CHECKING or _unitree_sdk_available:
         ChannelPublisher as _SDKChannelPublisher,
         ChannelSubscriber as _SDKChannelSubscriber,
     )
-    from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
+    from unitree_sdk2py.idl.default import (
+        unitree_hg_msg_dds__HandCmd_ as hg_HandCmd_default,
+        unitree_hg_msg_dds__LowCmd_,
+    )
     from unitree_sdk2py.idl.unitree_hg.msg.dds_ import (
+        HandCmd_ as hg_HandCmd,
         LowCmd_ as hg_LowCmd,
         LowState_ as hg_LowState,
     )
@@ -58,6 +64,8 @@ else:
     _SDKChannelPublisher = None
     _SDKChannelSubscriber = None
     unitree_hg_msg_dds__LowCmd_ = None
+    hg_HandCmd_default = None
+    hg_HandCmd = None
     hg_LowCmd = None
     hg_LowState = None
     CRC = None
@@ -157,6 +165,37 @@ class UnitreeG1(Robot):
         self.controller_input = default_remote_input()
         self.controller_output = {}
 
+        # Replay-camera state (decoded frames per robot camera name + play cursor).
+        self._replay_frames: dict[str, list[np.ndarray]] = {}
+        self._replay_len = 0
+        self._replay_idx = 0
+        if config.replay_camera_parquet and config.replay_camera_map:
+            self._load_replay_frames()
+
+    def _load_replay_frames(self) -> None:
+        """Decode recorded episode frames from a parquet into per-camera image lists."""
+        import io
+
+        import pyarrow.parquet as pq
+        from PIL import Image
+
+        table = pq.read_table(self.config.replay_camera_parquet)
+        cols = {col: table.column(col).to_pylist() for col in self.config.replay_camera_map.values()}
+        self._replay_len = table.num_rows
+
+        def decode(cell) -> np.ndarray:
+            data = cell["bytes"] if isinstance(cell, dict) else cell
+            return np.asarray(Image.open(io.BytesIO(data)).convert("RGB"), dtype=np.uint8)
+
+        for cam_name, column in self.config.replay_camera_map.items():
+            self._replay_frames[cam_name] = [decode(c) for c in cols[column]]
+        logger.info(
+            "Loaded %d replay frames for cameras %s from %s",
+            self._replay_len,
+            list(self.config.replay_camera_map),
+            self.config.replay_camera_parquet,
+        )
+
     def _subscribe_lowstate(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
             start_time = time.time()
@@ -231,14 +270,53 @@ class UnitreeG1(Robot):
                 features[f"{cam}_depth"] = (cfg.height, cfg.width, 1)
         return features
 
+    @property
+    def _wb_state_ft(self) -> dict[str, type]:
+        """34-D whole-body proprio state (``wb_state.{i}.pos``) for dense controllers.
+
+        Exposed only when the controller consumes a dense whole-body command
+        (OpenHLM / pi0.5). These ``.pos`` scalars are aggregated by the rollout
+        pipeline into a single 34-D ``observation.state`` for the policy.
+        """
+        if not getattr(self.controller, "wb_action", False):
+            return {}
+        from .g1_utils import WB_ACTION_DIM
+
+        return {f"wb_state.{i}.pos": float for i in range(WB_ACTION_DIM)}
+
+    @property
+    def _empty_cameras_ft(self) -> dict[str, tuple]:
+        """Synthetic zero-image cameras (see ``UnitreeG1Config.empty_cameras``)."""
+        h, w = self.config.empty_camera_hw
+        return {name: (h, w, 3) for name in self.config.empty_cameras}
+
+    @property
+    def _replay_cameras_ft(self) -> dict[str, tuple]:
+        """Replay cameras, shaped from their first decoded frame."""
+        return {name: frames[0].shape for name, frames in self._replay_frames.items() if frames}
+
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._motors_ft, **self._cameras_ft}
+        return {
+            **self._motors_ft,
+            **self._wb_state_ft,
+            **self._empty_cameras_ft,
+            **self._replay_cameras_ft,
+            **self._cameras_ft,
+        }
 
     @cached_property
     def action_features(self) -> dict[str, type]:
         if self.controller is None:
             return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
+
+        # Dense whole-body controllers (SONIC / OpenHLM, pi0.5) consume a single
+        # 34-D command per tick. Expose it as ``wb.{i}.pos`` joint-position features
+        # so ``lerobot-rollout`` maps a 34-D policy output straight onto the robot.
+        if getattr(self.controller, "wb_action", False):
+            from .g1_utils import WB_ACTION_DIM, wb_action_key
+
+            return {wb_action_key(i): float for i in range(WB_ACTION_DIM)}
 
         arm_features = {f"{G1_29_JointArmIndex(motor).name}.q": float for motor in G1_29_JointArmIndex}
         remote_features = dict.fromkeys(REMOTE_AXES, float)
@@ -311,6 +389,17 @@ class UnitreeG1(Robot):
         self.lowstate_subscriber = self._ChannelSubscriber(kTopicLowState, hg_LowState)
         self.lowstate_subscriber.Init()
 
+        # Dex3 hand command publishers (grasping). Driven by the OpenHLM grip scalars.
+        self._hand_publishers = {}
+        if self.config.publish_hands:
+            self._left_hand_cmd = hg_HandCmd_default()
+            self._right_hand_cmd = hg_HandCmd_default()
+            self._hand_publishers["left"] = self._ChannelPublisher("rt/dex3/left/cmd", hg_HandCmd)
+            self._hand_publishers["right"] = self._ChannelPublisher("rt/dex3/right/cmd", hg_HandCmd)
+            for pub in self._hand_publishers.values():
+                pub.Init()
+            logger.info("Dex3 hand command publishers initialized (rt/dex3/{left,right}/cmd)")
+
         # Start subscribe thread to read robot state
         self.subscribe_thread = threading.Thread(target=self._subscribe_lowstate)
         self.subscribe_thread.start()
@@ -343,6 +432,9 @@ class UnitreeG1(Robot):
 
         self.kp = np.array(self.config.kp, dtype=np.float32)
         self.kd = np.array(self.config.kd, dtype=np.float32)
+        if self.controller is not None and hasattr(self.controller, "kp"):
+            self.kp = np.array(self.controller.kp, dtype=np.float32)
+            self.kd = np.array(self.controller.kd, dtype=np.float32)
 
         for joint in G1_29_JointIndex:
             self.msg.motor_cmd[joint].mode = 1
@@ -371,25 +463,56 @@ class UnitreeG1(Robot):
         except Exception as e:
             logger.warning(f"Failed to send zero-torque on disconnect: {e}")
 
-    def disconnect(self):
-        # Put robot in passive mode before stopping threads
-        if not self.config.is_simulation:
-            self._send_zero_torque()
+    def _graceful_stop(self) -> None:
+        """Soft shutdown: hold the current pose and ramp joint stiffness (kp) to zero
+        over ``graceful_stop_s`` while keeping damping (kd), then go passive.
 
-        # Signal thread to stop and unblock any waits
+        Prevents the robot from collapsing the instant control ends (a bare
+        zero-torque command is kp=kd=0 ≈ free-fall). Must run after the controller
+        loop has stopped so the two aren't publishing at once.
+        """
+        if self.config.graceful_stop_s <= 0:
+            self._send_zero_torque()
+            return
+        with self._lowstate_lock:
+            lowstate = self._lowstate
+        if lowstate is None:
+            self._send_zero_torque()
+            return
+        q_hold = {f"{motor.name}.q": lowstate.motor_state[motor.value].q for motor in G1_29_JointIndex}
+        kp = np.array(self.kp, dtype=np.float32)
+        kd = np.array(self.kd, dtype=np.float32)
+        zeros = np.zeros(29, dtype=np.float32)
+        dt = self.controller.control_dt if self.controller is not None else self.config.control_dt
+        steps = max(1, int(self.config.graceful_stop_s / dt))
+        logger.info("Graceful stop: damping down over %.1fs", self.config.graceful_stop_s)
+        for i in range(steps):
+            ratio = (i + 1) / steps
+            self.publish_lowcmd(q_hold, kp=kp * (1.0 - ratio), kd=kd, tau=zeros)
+            time.sleep(dt)
+        self._send_zero_torque()
+
+    def disconnect(self):
+        # Stop the controller loop first so it isn't fighting the shutdown ramp.
         self._shutdown_event.set()
+        if self._controller_thread is not None:
+            self._controller_thread.join(timeout=2.0)
+            if self._controller_thread.is_alive():
+                logger.warning("Controller thread did not stop cleanly")
+
+        # Soft, damped settle instead of an instant limp (real robot only; the
+        # subscribe thread is still alive here to supply the current pose).
+        if not self.config.is_simulation:
+            self._graceful_stop()
+
+        if self.controller is not None and hasattr(self.controller, "shutdown"):
+            self.controller.shutdown()
 
         # Wait for subscribe thread to finish
         if self.subscribe_thread is not None:
             self.subscribe_thread.join(timeout=2.0)
             if self.subscribe_thread.is_alive():
                 logger.warning("Subscribe thread did not stop cleanly")
-
-        # Wait for controller thread to finish
-        if self._controller_thread is not None:
-            self._controller_thread.join(timeout=2.0)
-            if self._controller_thread.is_alive():
-                logger.warning("Controller thread did not stop cleanly")
 
         # Close simulation environment
         if self.config.is_simulation and self.sim_env is not None:
@@ -422,44 +545,33 @@ class UnitreeG1(Robot):
         if lowstate is None:
             return {}
 
-        obs = {}
+        # Motors + IMU + wireless remote (shared lowstate -> obs mapping)
+        obs = lowstate_to_obs(lowstate)
 
-        # Motors - q, dq, tau for all joints
-        for motor in G1_29_JointIndex:
-            name = motor.name
-            idx = motor.value
-            obs[f"{name}.q"] = lowstate.motor_state[idx].q
-            obs[f"{name}.dq"] = lowstate.motor_state[idx].dq
-            obs[f"{name}.tau"] = lowstate.motor_state[idx].tau_est
+        # Dense whole-body controllers (OpenHLM / pi0.5): expose the 34-D proprio
+        # state as ``wb_state.{i}.pos`` so the rollout aggregates it into
+        # ``observation.state`` for the policy.
+        if getattr(self.controller, "wb_action", False):
+            wb_state = obs_to_wb34_state(obs)
+            for i, v in enumerate(wb_state):
+                obs[f"wb_state.{i}.pos"] = float(v)
 
-        # IMU - gyroscope
-        if lowstate.imu_state.gyroscope:
-            obs["imu.gyro.x"] = lowstate.imu_state.gyroscope[0]
-            obs["imu.gyro.y"] = lowstate.imu_state.gyroscope[1]
-            obs["imu.gyro.z"] = lowstate.imu_state.gyroscope[2]
+        # Synthetic empty cameras: black frames so image-conditioned policies run
+        # before real cameras are wired.
+        if self.config.empty_cameras:
+            h, w = self.config.empty_camera_hw
+            black = np.zeros((h, w, 3), dtype=np.uint8)
+            for name in self.config.empty_cameras:
+                obs[name] = black
 
-        # IMU - accelerometer
-        if lowstate.imu_state.accelerometer:
-            obs["imu.accel.x"] = lowstate.imu_state.accelerometer[0]
-            obs["imu.accel.y"] = lowstate.imu_state.accelerometer[1]
-            obs["imu.accel.z"] = lowstate.imu_state.accelerometer[2]
-
-        # IMU - quaternion
-        if lowstate.imu_state.quaternion:
-            obs["imu.quat.w"] = lowstate.imu_state.quaternion[0]
-            obs["imu.quat.x"] = lowstate.imu_state.quaternion[1]
-            obs["imu.quat.y"] = lowstate.imu_state.quaternion[2]
-            obs["imu.quat.z"] = lowstate.imu_state.quaternion[3]
-
-        # IMU - rpy
-        if lowstate.imu_state.rpy:
-            obs["imu.rpy.roll"] = lowstate.imu_state.rpy[0]
-            obs["imu.rpy.pitch"] = lowstate.imu_state.rpy[1]
-            obs["imu.rpy.yaw"] = lowstate.imu_state.rpy[2]
-
-        # Wireless remote (raw bytes for teleoperator)
-        if lowstate.wireless_remote:
-            obs["wireless_remote"] = lowstate.wireless_remote
+        # Replay cameras: serve the current recorded frame per camera, then advance.
+        if self._replay_len:
+            idx = self._replay_idx
+            if idx >= self._replay_len:
+                idx = self._replay_len - 1 if not self.config.replay_camera_loop else idx % self._replay_len
+            for name, frames in self._replay_frames.items():
+                obs[name] = frames[idx]
+            self._replay_idx += 1
 
         # Cameras - read images from ZMQ cameras
         for cam_name, cam in self._cameras.items():
@@ -473,9 +585,13 @@ class UnitreeG1(Robot):
     def send_action(self, action: RobotAction) -> RobotAction:
         action_to_publish = action
         if self.controller is not None:
+            self._update_controller_action(action)
+            if self.config.publish_hands and getattr(self.controller, "wb_action", False):
+                self._publish_hand_cmds(action)
+            if getattr(self.controller, "full_body", False):
+                return action
             # Controller thread owns legs/waist. Here we only update joystick inputs
             # and publish arm targets from the teleoperator.
-            self._update_controller_action(action)
             arm_prefixes = tuple(j.name for j in G1_29_JointArmIndex)
             action_to_publish = {
                 key: value
@@ -503,11 +619,67 @@ class UnitreeG1(Robot):
         return action
 
     def _update_controller_action(self, action: RobotAction) -> None:
-        """Update controller input state from incoming teleop action."""
+        """Update controller input state from an incoming teleop action.
+
+        Controller-agnostic: every value-carrying key is forwarded verbatim into
+        ``controller_input`` (whole-body ``wb.{i}.pos`` from a 34-D VLA, or whatever a
+        future controller expects), and each controller extracts only the keys it
+        understands. The robot deliberately does not enumerate any controller's key
+        schema here.
+
+        KeyboardTeleop is the one special case: it emits the currently-pressed keys as
+        bare action keys with a ``None`` value (``dict.fromkeys(pressed, None)``), so
+        those are collected into a single held-key set under ``KEYBOARD_KEYS_FIELD``,
+        rebuilt each tick so releases clear. Special keys arrive as pynput objects and
+        are normalised to their name ("space", ...).
+        """
         with self._controller_action_lock:
-            for key in REMOTE_KEYS:
-                if key in action:
-                    self.controller_input[key] = action[key]
+            self.controller_input[KEYBOARD_KEYS_FIELD] = {
+                (k if isinstance(k, str) else getattr(k, "name", str(k)))
+                for k, value in action.items()
+                if value is None
+            }
+            for key, value in action.items():
+                if isinstance(key, str) and value is not None:
+                    self.controller_input[key] = value
+
+    def _publish_hand_cmds(self, action: RobotAction) -> None:
+        """Drive the Dex3 hands from the OpenHLM grip scalars in a 34-D wb action.
+
+        ``wb.7.pos`` is the left grip and ``wb.15.pos`` the right grip. Each scalar in
+        [0, 1] (``hand_open_grip_value`` == fully open) is turned into a curl amount and
+        scaled onto ``hand_closed_pose`` (7 joints), then published as a PD target on
+        ``rt/dex3/{left,right}/cmd`` so the fingers close when the policy grips.
+        """
+        if not self._hand_publishers:
+            return
+        from .g1_utils import wb_action_key
+
+        open_val = float(self.config.hand_open_grip_value)
+        closed_val = float(self.config.hand_closed_grip_value)
+        closed_pose = self.config.hand_closed_pose
+        kp, kd = float(self.config.hand_kp), float(self.config.hand_kd)
+        span = (closed_val - open_val) or 1.0
+
+        def curl_amount(grip: float) -> float:
+            # Fraction of the way from the open scalar to the closed scalar, in [0, 1].
+            return float(min(max((grip - open_val) / span, 0.0), 1.0))
+
+        for side, grip_idx, cmd in (
+            ("left", 7, self._left_hand_cmd),
+            ("right", 15, self._right_hand_cmd),
+        ):
+            grip = action.get(wb_action_key(grip_idx))
+            if grip is None:
+                continue
+            amount = curl_amount(float(grip))
+            for i, closed_q in enumerate(closed_pose):
+                cmd.motor_cmd[i].q = float(closed_q) * amount
+                cmd.motor_cmd[i].dq = 0.0
+                cmd.motor_cmd[i].kp = kp
+                cmd.motor_cmd[i].kd = kd
+                cmd.motor_cmd[i].tau = 0.0
+            self._hand_publishers[side].Write(cmd)
 
     @property
     def is_calibrated(self) -> bool:
