@@ -1,4 +1,4 @@
-# Hot-Switching Language Prompts at Runtime
+# Online Task Switching
 
 `lerobot-rollout` supports updating the language task prompt **while the robot is running** — no restart required.  
 This is the foundation for voice-commanded robots: a speech-to-text (STT) process can pipe new tasks into the rollout script in real time.
@@ -314,13 +314,13 @@ curl -X POST http://localhost:8765/task -d '{"task": "fold the towel"}'
 
 ## SmolVLA Demo (no robot required)
 
-`examples/online_task_switching_smolvla_demo.py` loads a real SmolVLA checkpoint and feeds it synthetic (zero) camera frames and robot state, so you can test online task switching without any hardware.
+`examples/online_task_switching/smolvla_demo.py` loads a real SmolVLA checkpoint and feeds it synthetic (zero) camera frames and robot state, so you can test online task switching without any hardware.
 
 ```bash
 # Terminal 1 — start the demo
 conda activate lerobot_rollout
 > /tmp/robot_task   # create the file
-python examples/online_task_switching_smolvla_demo.py \
+python examples/online_task_switching/smolvla_demo.py \
     --checkpoint /path/to/pretrained_model \
     --task "pick up the bottle" \
     --fps 0.5 \
@@ -337,10 +337,9 @@ The switch is visible in the logs immediately:
 
 ```text
 INFO  Task switched: 'pick up the bottle' → 'grab the red cup'
-INFO  [SyncInference] task='grab the red cup' | action[0:5]=...
 ```
 
-The demo loop also logs the active task per tick, so you can verify exactly when the rollout starts executing under the new instruction.
+The demo loop logs the active task per tick, so you can verify exactly when the rollout starts executing under the new instruction.
 
 ### Key arguments
 
@@ -360,12 +359,10 @@ The demo loop also logs the active task per tick, so you can verify exactly when
 3. If `--flush_on_switch` (default): `broker.register_on_change(policy.flush_action_queue)` is called so a deferred flush request is recorded on every switch.
 4. `SyncInferenceEngine` reads `broker.get_task()` on every `get_action()` call and injects it into the observation before calling the policy.
 5. Queue-backed policies apply that pending flush at the start of `select_action()`, so stale buffered actions are discarded safely in the main control thread.
-6. The preprocessor appends `\n` (`NewLineTaskProcessorStep`) then tokenizes the string before the VLM sees it.
 
-The active task can be confirmed from the rollout logs:
+The active task can be confirmed from the demo's per-tick log line:
 
 ```
-[SyncInference] task='pick up the bottle' | action[0:5]=...
 tick   12 | task='pick up the bottle' | action[0:5]=...
 ```
 
@@ -415,8 +412,8 @@ No changes needed in the inference engines or strategies — they always read fr
 | `src/lerobot/policies/*/modeling_*.py` | Queue-backed policies call `_apply_pending_flush()` at the start of `select_action()` |
 | [`tests/test_prompt_broker.py`](../tests/test_prompt_broker.py) | **New** — 11 unit tests (6 broker, 5 listener) |
 | [`tests/test_rollout.py`](../tests/test_rollout.py) | 3 integration tests for broker + `SyncInferenceEngine` |
-| [`examples/online_task_switching_demo.py`](../examples/online_task_switching_demo.py) | **New** — mock-robot demo, no GPU needed |
-| [`examples/online_task_switching_smolvla_demo.py`](../examples/online_task_switching_smolvla_demo.py) | **New** — real SmolVLA checkpoint demo with synthetic frames; `--flush_on_switch` flag |
+| [`examples/online_task_switching/demo.py`](../examples/online_task_switching/demo.py) | **New** — mock-robot demo, no GPU needed |
+| [`examples/online_task_switching/smolvla_demo.py`](../examples/online_task_switching/smolvla_demo.py) | **New** — real SmolVLA checkpoint demo with synthetic frames; `--flush_on_switch` flag |
 
 ---
 
