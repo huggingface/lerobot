@@ -555,7 +555,7 @@ def eval_policy(
         if seeds:
             all_seeds.extend(seeds)
         else:
-            all_seeds.append(None)
+            all_seeds.extend([None] * env.num_envs)
 
         # FIXME: episode_data is either None or it doesn't exist
         if return_episode_data:
