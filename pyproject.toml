@@ -25,7 +25,7 @@ discord = "https://discord.gg/s3KuuzsPFb"
 
 [project]
 name = "lerobot"
-version = "0.5.2"
+version = "0.6.1"
 description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch"
 dynamic = ["readme"]
 license = { text = "Apache-2.0" }
@@ -164,6 +164,7 @@ pynput-dep = ["pynput>=1.7.8,<1.9.0"]
 pyzmq-dep = ["pyzmq>=26.2.1,<28.0.0"]
 motorbridge-dep = ["motorbridge>=0.3.2,<0.4.0"]
 motorbridge-smart-servo-dep = ["motorbridge-smart-servo>=0.0.4,<0.1.0"]
+timm-dep = ["timm>=1.0.0,<1.1.0"]
 
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0", "lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
@@ -219,11 +220,10 @@ groot = [
     "lerobot[transformers-dep]",
     "lerobot[peft-dep]",
     "lerobot[diffusers-dep]",
+    "lerobot[dataset]", # NOTE: processor_groot builds a LeRobotDataset for relative-action training stats
     "dm-tree>=0.1.8,<1.0.0",
-    "timm>=1.0.0,<1.1.0",
+    "lerobot[timm-dep]",
     "decord>=0.6.0,<1.0.0; (platform_machine == 'AMD64' or platform_machine == 'x86_64')",
-    "ninja>=1.11.1,<2.0.0",
-    "flash-attn>=2.5.9,<3.0.0 ; sys_platform != 'darwin'"
 ]
 sarm = ["lerobot[transformers-dep]", "pydantic>=2.0.0,<3.0.0", "faker>=33.0.0,<35.0.0", "lerobot[matplotlib-dep]", "lerobot[qwen-vl-utils-dep]"]
 robometer = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]", "lerobot[peft-dep]"]
@@ -234,8 +234,10 @@ fastwam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
 ]
+evo1 = ["lerobot[transformers-dep]"]
 hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.14,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]
+lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[accelerate-dep]"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
@@ -314,10 +316,12 @@ all = [
     "lerobot[molmoact2]",
     "lerobot[smolvla]",
     "lerobot[fastwam]",
-    # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
+    "lerobot[groot]",
     "lerobot[xvla]",
+    "lerobot[evo1]",
     "lerobot[hilserl]",
     "lerobot[vla_jepa]",
+    "lerobot[lingbot_va]",
     "lerobot[async]",
     "lerobot[dev]",
     "lerobot[test]",
@@ -409,8 +413,6 @@ ignore = [
 "__init__.py" = ["F401", "F403", "E402"]
 # E402: conditional-import guards (TYPE_CHECKING / is_package_available) must precede the imports they protect
 "src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
-"src/lerobot/policies/wall_x/**" = ["N801", "N812", "SIM102", "SIM108", "SIM210", "SIM211", "B006", "B007", "SIM118"] # Supprese these as they are coming from original Qwen2_5_vl code TODO(pepijn): refactor original
-
 [tool.ruff.lint.isort]
 combine-as-imports = true
 known-first-party = ["lerobot"]

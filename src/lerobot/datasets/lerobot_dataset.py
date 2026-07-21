@@ -224,6 +224,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
+        self.meta.rescale_depth_stats(self._depth_output_unit)
 
         if episodes is not None and any(
             episode >= self.meta.total_episodes or episode < 0 for episode in episodes
@@ -349,6 +350,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def fps(self) -> int:
         """Frames per second used during data collection."""
         return self.meta.fps
+
+    @property
+    def depth_output_unit(self) -> str:
+        """Physical unit (``"m"`` or ``"mm"``) depth maps and statistics are returned in on read."""
+        return self._depth_output_unit
 
     @property
     def num_frames(self) -> int:

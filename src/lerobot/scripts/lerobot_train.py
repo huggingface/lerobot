@@ -171,6 +171,9 @@ def update_policy(
     train_metrics.update_s = time.perf_counter() - start_time
     if torch.cuda.is_available():
         train_metrics.gpu_mem_gb = torch.cuda.max_memory_allocated() / (1024**3)
+    # Aggregate the policy's scalar outputs for logging and rank-reduction across the log window.
+    if output_dict:
+        train_metrics.update_metrics(output_dict)
     return train_metrics, output_dict
 
 
@@ -211,8 +214,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
         # Force the device to be CPU when the active config's device is set to CPU (works for both policy and reward model training).
         force_cpu = cfg.trainable_config.device == "cpu"
+        # Drive Accelerate's autocast from policy.dtype (bf16/fp16 activate it; float32/absent -> launcher default).
+        policy_dtype = getattr(cfg.trainable_config, "dtype", None)
+        mixed_precision = {"bfloat16": "bf16", "float16": "fp16", "float32": "no"}.get(policy_dtype)
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,
+            mixed_precision=mixed_precision,
             kwargs_handlers=[ddp_kwargs],
             cpu=force_cpu,
         )
@@ -568,7 +575,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
-        train_tracker, output_dict = update_policy(
+        train_tracker, _ = update_policy(
             train_tracker,
             policy,
             batch,
@@ -601,9 +608,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     train_tracker.samples_per_s = effective_batch_size / step_time
                 logging.info(train_tracker)
                 if wandb_logger:
+                    # Policy sub-losses (latent_loss, action_loss, ...) are aggregated into the
+                    # tracker by update_policy, so to_dict() already carries their windowed,
+                    # rank-reduced averages — no per-step output_dict passthrough needed.
                     wandb_log_dict = train_tracker.to_dict()
-                    if output_dict:
-                        wandb_log_dict.update(output_dict)
                     # Log sample weighting statistics if enabled
                     if sample_weighter is not None:
                         weighter_stats = sample_weighter.get_stats()
