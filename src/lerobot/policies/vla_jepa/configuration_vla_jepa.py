@@ -56,6 +56,14 @@ class VLAJEPAConfig(PreTrainedConfig):
     action_dim: int = 7
     state_dim: int = 8
 
+    # Relative actions: converts absolute actions to relative (action -= state) during
+    # preprocessing, and reverses it at postprocessing. Requires `state_dim` (OBS_STATE).
+    use_relative_actions: bool = False
+    # Joint names to keep absolute (not converted to relative). Empty list = all dims relative.
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Populated at runtime from dataset metadata by make_policy (used to build the exclude mask).
+    action_feature_names: list[str] | None = None
+
     num_action_tokens_per_timestep: int = 8
     num_embodied_action_tokens_per_instruction: int = 32
     num_inference_timesteps: int = 4

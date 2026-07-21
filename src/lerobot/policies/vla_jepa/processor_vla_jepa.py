@@ -20,6 +20,7 @@ import torch
 
 from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig
 from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     EnvTransition,
@@ -28,6 +29,7 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
+    RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
     TransitionKey,
     UnnormalizerProcessorStep,
@@ -112,10 +114,21 @@ def make_vla_jepa_pre_post_processors(
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     features = {**config.input_features, **config.output_features}
+
+    # Shared relative-action step (OpenPI order: raw -> relative -> normalize -> model ->
+    # unnormalize -> absolute). The SAME instance is passed to AbsoluteActionsProcessorStep
+    # below so its cached raw state (set during preprocessing) flows to postprocessing.
+    relative_step = RelativeActionsProcessorStep(
+        enabled=config.use_relative_actions,
+        exclude_joints=getattr(config, "relative_exclude_joints", []),
+        action_names=getattr(config, "action_feature_names", None),
+    )
+
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
+        relative_step,
         NormalizerProcessorStep(
             features=features,
             norm_map=config.normalization_mapping,
@@ -135,6 +148,11 @@ def make_vla_jepa_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         )
+    )
+    # Reverse the relative conversion on the unnormalized action, before gripper binarization.
+    # gripper is kept absolute by relative_exclude_joints, so the two steps touch disjoint dims.
+    output_steps.append(
+        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step)
     )
     if config.binarize_gripper_action:
         output_steps.append(
