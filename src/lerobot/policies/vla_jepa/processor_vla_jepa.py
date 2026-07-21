@@ -17,11 +17,14 @@ from __future__ import annotations
 from typing import Any
 
 import torch
+import torch.nn.functional as F  # noqa: N812
 
+from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     EnvTransition,
+    ObservationProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
@@ -32,6 +35,69 @@ from lerobot.processor import (
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
+
+
+@ProcessorStepRegistry.register(name="vla_jepa_image_prep")
+class ImagePrepProcessorStep(ObservationProcessorStep):
+    """Prepares image observations for the VLA-JEPA model: float cast, 1->3 channel expand, resize.
+
+    This makes explicit (in the serialized pipeline) the image prep the model used to do
+    internally. The model keeps the same operations as idempotent guards, so:
+      - checkpoints saved WITHOUT this step (older uploads) are unaffected — the model still
+        does the prep;
+      - checkpoints saved WITH this step get it done here, and the model-side guards no-op.
+
+    Mirrors `Qwen3VLInterface.to_pixel_values` + the `F.interpolate(mode="area")` resize in
+    `VLAJEPAPolicy._prepare_model_inputs`/`predict_action`. Deliberately does NOT clamp (the
+    model path doesn't), so values stay bit-identical. Handles [C,H,W], [B,C,H,W]/[T,C,H,W]
+    and [B,T,C,H,W] image tensors.
+    """
+
+    def __init__(self, resize_to: tuple[int, int] | None = None, expand_channels: bool = True):
+        self.resize_to = tuple(resize_to) if resize_to is not None else None
+        self.expand_channels = expand_channels
+
+    def observation(self, observation: dict) -> dict:
+        new_observation = dict(observation)
+        for key in observation:
+            if "image" not in key:
+                continue
+            image = observation[key].float()
+            if self.expand_channels and image.shape[-3] == 1:
+                repeats = [1] * image.ndim
+                repeats[-3] = 3
+                image = image.repeat(*repeats)
+            if self.resize_to is not None and tuple(image.shape[-2:]) != self.resize_to:
+                device = image.device
+                # NOTE: no "area" kernel on mps; resize on cpu then move back.
+                if device.type == "mps":
+                    image = image.cpu()
+                lead = image.shape[:-3]
+                c, h, w = image.shape[-3:]
+                flat = image.reshape(-1, c, h, w)
+                flat = F.interpolate(flat, size=self.resize_to, mode="area")
+                image = flat.reshape(*lead, c, *self.resize_to).to(device)
+            new_observation[key] = image
+        return new_observation
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "resize_to": list(self.resize_to) if self.resize_to is not None else None,
+            "expand_channels": self.expand_channels,
+        }
+
+    def transform_features(self, features):
+        for key in features[PipelineFeatureType.OBSERVATION]:
+            if "image" not in key:
+                continue
+            feat = features[PipelineFeatureType.OBSERVATION][key]
+            # Match `to_pixel_values`: only a single channel is expanded to 3.
+            nb_channel = 3 if (self.expand_channels and feat.shape[0] == 1) else feat.shape[0]
+            spatial = self.resize_to if self.resize_to is not None else tuple(feat.shape[1:])
+            features[PipelineFeatureType.OBSERVATION][key] = PolicyFeature(
+                type=feat.type, shape=(nb_channel, *spatial)
+            )
+        return features
 
 
 @ProcessorStepRegistry.register(name="vla_jepa_clip_actions")
@@ -125,6 +191,9 @@ def make_vla_jepa_pre_post_processors(
         steps.rename_observations,
         steps.add_batch_dim,
         steps.to_device,
+        ImagePrepProcessorStep(
+            resize_to=tuple(config.resize_images_to) if config.resize_images_to else None,
+        ),
         relative_step,
         steps.normalize,
     ]
