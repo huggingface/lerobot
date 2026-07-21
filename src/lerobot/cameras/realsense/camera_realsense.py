@@ -109,6 +109,8 @@ class RealSenseCamera(Camera):
         ```
     """
 
+    _MAX_CONNECT_ATTEMPTS = 2
+
     def __init__(self, config: RealSenseCameraConfig):
         """
         Initializes the RealSenseCamera instance.
@@ -170,6 +172,80 @@ class RealSenseCamera(Camera):
                 return
         logger.warning(f"{self} device not found for hardware reset, skipping.")
 
+    def _teardown_pipeline(self) -> None:
+        """Stops the read thread and the RealSense pipeline.
+
+        Shared by :meth:`disconnect` and :meth:`connect`'s retry-after-reset path.
+        """
+        try:
+            if self.thread is not None:
+                self._stop_read_thread()
+        finally:
+            if self.rs_pipeline is not None:
+                try:
+                    self.rs_pipeline.stop()
+                except Exception as e:
+                    raise ConnectionError(f"Failed to stop {self} during connection cleanup.") from e
+                finally:
+                    self.rs_pipeline = None
+                    self.rs_profile = None
+            else:
+                self.rs_profile = None
+
+    def _open_pipeline(self, attempt: int) -> None:
+        """Initializes the RealSense pipeline, starts it, and starts the background read thread.
+
+        Args:
+            attempt: 1-based attempt number, used only to pick the right error message.
+
+        Raises:
+            ConnectionError: If the pipeline fails to start. Never retried by :meth:`connect`,
+                since a hardware reset cannot help a device that couldn't be opened at all.
+        """
+        rs_pipeline = rs.pipeline()
+        rs_config = rs.config()
+        self._configure_rs_pipeline_config(rs_config)
+
+        try:
+            rs_profile = rs_pipeline.start(rs_config)
+        except RuntimeError as e:
+            if attempt > 1:
+                raise ConnectionError(f"Failed to open {self} after hardware reset.") from e
+            raise ConnectionError(
+                f"Failed to open {self}.Run `lerobot-find-cameras realsense` to find available cameras."
+            ) from e
+
+        self.rs_pipeline = rs_pipeline
+        self.rs_profile = rs_profile
+
+        try:
+            self._configure_capture_settings()
+            self._start_read_thread()
+        except BaseException:
+            self._teardown_pipeline()
+            raise
+
+    def _run_warmup(self) -> None:
+        """Blocks until at least one valid frame has been captured by the background thread.
+
+        Raises:
+            TimeoutError: If no frame arrives before ``warmup_s`` elapses. This is the failure
+                class :meth:`connect`'s retry loop treats as reset-and-retry-worthy.
+        """
+        # NOTE(Steven/Caroline): Enforcing at least one second of warmup as RS cameras need a bit of time before the first read. If we don't wait, the first read from the warmup will raise.
+        self.warmup_s = max(self.warmup_s, 1)
+
+        warmup_read = self.async_read if self.use_rgb else self.async_read_depth
+        start_time = time.time()
+        while time.time() - start_time < self.warmup_s:
+            warmup_read(timeout_ms=self.warmup_s * 1000)
+            time.sleep(0.1)
+        with self.frame_lock:
+            if (self.use_rgb and self.latest_color_frame is None) or (
+                self.use_depth and self.latest_depth_frame is None
+            ):
+                raise TimeoutError("No frames during warmup.")
+
     @check_if_already_connected
     def connect(self, warmup: bool = True) -> None:
         """
@@ -177,6 +253,8 @@ class RealSenseCamera(Camera):
 
         Initializes the RealSense pipeline, configures the required streams (color
         and optionally depth), starts the pipeline, and validates the actual stream settings.
+        If the pipeline starts but no frames arrive during warmup, performs a USB hardware
+        reset and retries once (common recovery path for a stuck D405).
 
         Args:
             warmup (bool): If True, waits at connect() time until at least one valid frame
@@ -189,72 +267,25 @@ class RealSenseCamera(Camera):
             RuntimeError: If the pipeline starts but fails to apply requested settings.
         """
 
-        self.rs_pipeline = rs.pipeline()
-        rs_config = rs.config()
-        self._configure_rs_pipeline_config(rs_config)
+        for attempt in range(1, self._MAX_CONNECT_ATTEMPTS + 1):
+            self._open_pipeline(attempt)
 
-        try:
-            self.rs_profile = self.rs_pipeline.start(rs_config)
-        except RuntimeError as e:
-            self.rs_profile = None
-            self.rs_pipeline = None
-            raise ConnectionError(
-                f"Failed to open {self}.Run `lerobot-find-cameras realsense` to find available cameras."
-            ) from e
-
-        self._configure_capture_settings()
-        self._start_read_thread()
-
-        # NOTE(Steven/Caroline): Enforcing at least one second of warmup as RS cameras need a bit of time before the first read. If we don't wait, the first read from the warmup will raise.
-        self.warmup_s = max(self.warmup_s, 1)
-
-        warmup_read = self.async_read if self.use_rgb else self.async_read_depth
-        try:
-            start_time = time.time()
-            while time.time() - start_time < self.warmup_s:
-                warmup_read(timeout_ms=self.warmup_s * 1000)
-                time.sleep(0.1)
-            with self.frame_lock:
-                if (self.use_rgb and self.latest_color_frame is None) or (
-                    self.use_depth and self.latest_depth_frame is None
-                ):
-                    raise TimeoutError("No frames during warmup.")
-        except (TimeoutError, ConnectionError):
-            logger.warning(f"{self} warmup failed, attempting hardware reset and retry.")
-            self._stop_read_thread()
-            if self.rs_pipeline is not None:
-                self.rs_pipeline.stop()
-                self.rs_pipeline = None
-                self.rs_profile = None
-
-            self._hardware_reset()
-
-            self.rs_pipeline = rs.pipeline()
-            rs_config = rs.config()
-            self._configure_rs_pipeline_config(rs_config)
             try:
-                self.rs_profile = self.rs_pipeline.start(rs_config)
-            except RuntimeError as e:
-                self.rs_profile = None
-                self.rs_pipeline = None
-                raise ConnectionError(f"Failed to open {self} after hardware reset.") from e
-
-            self._configure_capture_settings()
-            self._start_read_thread()
-
-            start_time = time.time()
-            while time.time() - start_time < self.warmup_s:
-                warmup_read(timeout_ms=self.warmup_s * 1000)
-                time.sleep(0.1)
-            with self.frame_lock:
-                if (self.use_rgb and self.latest_color_frame is None) or (
-                    self.use_depth and self.latest_depth_frame is None
-                ):
+                self._run_warmup()
+            except (TimeoutError, ConnectionError) as e:
+                self._teardown_pipeline()
+                if attempt == self._MAX_CONNECT_ATTEMPTS:
                     raise ConnectionError(
                         f"{self} failed to capture frames even after hardware reset."
-                    ) from None
-
-        logger.info(f"{self} connected.")
+                    ) from e
+                logger.warning(f"{self} warmup failed, attempting hardware reset and retry.")
+                self._hardware_reset()
+            except BaseException:
+                self._teardown_pipeline()
+                raise
+            else:
+                logger.info(f"{self} connected.")
+                return
 
     @staticmethod
     def find_cameras() -> list[dict[str, Any]]:
@@ -527,10 +558,9 @@ class RealSenseCamera(Camera):
 
         Stops on DeviceNotConnectedError, logs other errors and continues.
         """
-        if self.stop_event is None:
-            raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
-
         stop_event = self.stop_event
+        if stop_event is None:
+            raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
 
         failure_count = 0
         while not stop_event.is_set():
@@ -740,13 +770,7 @@ class RealSenseCamera(Camera):
                 f"Attempted to disconnect {self}, but it appears already disconnected."
             )
 
-        if self.thread is not None:
-            self._stop_read_thread()
-
-        if self.rs_pipeline is not None:
-            self.rs_pipeline.stop()
-            self.rs_pipeline = None
-            self.rs_profile = None
+        self._teardown_pipeline()
 
         with self.frame_lock:
             self.latest_color_frame = None
