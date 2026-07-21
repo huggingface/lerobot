@@ -1571,6 +1571,8 @@ def recompute_stats(
     state_history_steps: int = 1,
     relative_state_history: bool = False,
     relative_state_exclude_joints: list[str] | None = None,
+    relative_pose_representation: str = "componentwise",
+    relative_se3_pose_groups: list[list[int]] | None = None,
 ) -> LeRobotDataset:
     """Recompute stats.json from scratch by iterating all episodes.
 
@@ -1594,6 +1596,9 @@ def recompute_stats(
         state_history_steps: Number of consecutive synthesized state samples.
         relative_state_history: Express state history relative to its newest pose.
         relative_state_exclude_joints: State dimensions to retain as absolute.
+        relative_pose_representation: ``componentwise`` for legacy subtraction or
+            ``se3`` for ``inv(T_current) @ T_target`` pose composition.
+        relative_se3_pose_groups: Six-index xyz+rotation-vector pose groups.
 
     Returns:
         The same dataset with updated stats.
@@ -1627,6 +1632,8 @@ def recompute_stats(
             history_steps=state_history_steps,
             exclude_joints=relative_state_exclude_joints,
             relative=relative_state_history,
+            pose_representation=relative_pose_representation,
+            se3_pose_groups=relative_se3_pose_groups,
         )
 
     if relative_action and ACTION in features and (OBS_STATE in features or state_from_action):
@@ -1639,6 +1646,8 @@ def recompute_stats(
             exclude_joints=relative_exclude_joints,
             num_workers=num_workers,
             state_from_action=state_from_action,
+            pose_representation=relative_pose_representation,
+            se3_pose_groups=relative_se3_pose_groups,
         )
         features_to_compute.pop(ACTION, None)
 

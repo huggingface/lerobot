@@ -18,8 +18,9 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+import torch
 
-from lerobot.processor import RelativeActionsProcessorStep
+from lerobot.processor import RelativeActionsProcessorStep, to_relative_actions
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .io_utils import load_image_as_numpy
@@ -660,6 +661,8 @@ def _compute_relative_chunk_batch(
     all_states: np.ndarray,
     chunk_size: int,
     relative_mask: np.ndarray,
+    pose_representation: str = "componentwise",
+    se3_pose_groups: list[list[int]] | None = None,
 ) -> np.ndarray:
     """Vectorised relative-action computation for a batch of start indices.
 
@@ -671,6 +674,18 @@ def _compute_relative_chunk_batch(
     frame_idx = start_indices[:, None] + offsets[None, :]
     chunks = all_actions[frame_idx].copy()
     states = all_states[start_indices]
+    if pose_representation == "se3":
+        return (
+            to_relative_actions(
+                torch.from_numpy(chunks),
+                torch.from_numpy(states),
+                relative_mask.astype(bool).tolist(),
+                pose_representation=pose_representation,
+                se3_pose_groups=se3_pose_groups,
+            )
+            .numpy()
+            .reshape(-1, all_actions.shape[1])
+        )
     mask_dim = len(relative_mask)
     chunks[:, :, :mask_dim] -= states[:, None, :mask_dim] * relative_mask[None, None, :]
     return chunks.reshape(-1, all_actions.shape[1])
@@ -683,6 +698,8 @@ def compute_relative_action_stats(
     exclude_joints: list[str] | None = None,
     num_workers: int = 0,
     state_from_action: bool = False,
+    pose_representation: str = "componentwise",
+    se3_pose_groups: list[list[int]] | None = None,
 ) -> dict[str, np.ndarray]:
     """Compute normalization statistics for relative actions over the full dataset.
 
@@ -758,6 +775,8 @@ def compute_relative_action_stats(
                     all_states,
                     chunk_size,
                     relative_mask,
+                    pose_representation,
+                    se3_pose_groups,
                 )
                 for batch in batches
             ]
@@ -766,7 +785,15 @@ def compute_relative_action_stats(
     else:
         for batch in batches:
             running_stats.update(
-                _compute_relative_chunk_batch(batch, all_actions, all_states, chunk_size, relative_mask)
+                _compute_relative_chunk_batch(
+                    batch,
+                    all_actions,
+                    all_states,
+                    chunk_size,
+                    relative_mask,
+                    pose_representation,
+                    se3_pose_groups,
+                )
             )
 
     stats = running_stats.get_statistics()
@@ -789,6 +816,8 @@ def compute_state_history_stats(
     history_steps: int,
     exclude_joints: list[str] | None = None,
     relative: bool = False,
+    pose_representation: str = "componentwise",
+    se3_pose_groups: list[list[int]] | None = None,
 ) -> dict[str, np.ndarray]:
     """Compute stats for flattened state history synthesized from absolute actions.
 
@@ -823,8 +852,14 @@ def compute_state_history_stats(
             exclude_joints=exclude_joints,
             action_names=names,
         )
-        mask = np.asarray(mask_step._build_mask(state_dim), dtype=np.float32)
-        history[..., : len(mask)] -= history[:, -1:, : len(mask)] * mask[None, None, :]
+        mask = mask_step._build_mask(state_dim)
+        history = to_relative_actions(
+            torch.from_numpy(history),
+            torch.from_numpy(history[:, -1].copy()),
+            mask,
+            pose_representation=pose_representation,
+            se3_pose_groups=se3_pose_groups,
+        ).numpy()
 
     flattened = history.reshape(len(history), -1)
     return get_feature_stats(flattened, axis=0, keepdims=False)

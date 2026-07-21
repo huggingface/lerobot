@@ -36,6 +36,7 @@ from lerobot.processor import (
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
     policy_action_to_transition,
+    to_relative_actions,
     transition_to_policy_action,
 )
 from lerobot.types import EnvTransition, TransitionKey
@@ -127,6 +128,8 @@ class Pi05FlattenStateHistoryProcessorStep(ProcessorStep):
     relative: bool = False
     exclude_joints: list[str] = field(default_factory=list)
     state_names: list[str] | None = None
+    pose_representation: str = "componentwise"
+    se3_pose_groups: list[list[int]] = field(default_factory=list)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION, {})
@@ -153,11 +156,13 @@ class Pi05FlattenStateHistoryProcessorStep(ProcessorStep):
                 exclude_joints=self.exclude_joints,
                 action_names=self.state_names,
             )
-            mask = torch.tensor(
-                mask_step._build_mask(state.shape[-1]), dtype=state.dtype, device=state.device
+            processed_state = to_relative_actions(
+                state,
+                state[:, -1],
+                mask_step._build_mask(state.shape[-1]),
+                pose_representation=self.pose_representation,
+                se3_pose_groups=self.se3_pose_groups,
             )
-            reference = state[:, -1:, : mask.shape[0]]
-            processed_state[..., : mask.shape[0]] -= reference * mask
 
         new_transition = transition.copy()
         new_observation = dict(observation)
@@ -172,6 +177,8 @@ class Pi05FlattenStateHistoryProcessorStep(ProcessorStep):
             "relative": self.relative,
             "exclude_joints": self.exclude_joints,
             "state_names": self.state_names,
+            "pose_representation": self.pose_representation,
+            "se3_pose_groups": self.se3_pose_groups,
         }
 
     def transform_features(
@@ -271,6 +278,8 @@ def make_pi05_pre_post_processors(
         enabled=config.use_relative_actions,
         exclude_joints=getattr(config, "relative_exclude_joints", []),
         action_names=getattr(config, "action_feature_names", None),
+        pose_representation=config.relative_pose_representation,
+        se3_pose_groups=config.relative_se3_pose_groups,
     )
 
     # OpenPI order: raw → relative → normalize → model → unnormalize → absolute
@@ -288,6 +297,8 @@ def make_pi05_pre_post_processors(
             relative=config.use_relative_state_history,
             exclude_joints=config.relative_state_exclude_joints,
             state_names=config.action_feature_names,
+            pose_representation=config.relative_pose_representation,
+            se3_pose_groups=config.relative_se3_pose_groups,
         ),
         # NOTE: NormalizerProcessorStep MUST come before Pi05PrepareStateTokenizerProcessorStep
         # because the tokenizer step expects normalized state in [-1, 1] range for discretization

@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from math import pi
+
 import numpy as np
 import pytest
 import torch
@@ -114,6 +116,26 @@ def test_state_history_can_be_relative_with_absolute_gripper():
     )
 
 
+def test_state_history_can_use_se3_composition_with_absolute_gripper():
+    state_history = torch.tensor(
+        [[[0.0, 1.0, 0.0, 0.0, 0.0, pi / 2, 0.2], [0.0, 0.0, 0.0, 0.0, 0.0, pi / 2, 0.4]]]
+    )
+    step = Pi05FlattenStateHistoryProcessorStep(
+        history_steps=2,
+        max_state_dim=14,
+        relative=True,
+        exclude_joints=["gripper"],
+        state_names=["x", "y", "z", "rx", "ry", "rz", "gripper_width"],
+        pose_representation="se3",
+        se3_pose_groups=[list(range(6))],
+    )
+
+    result = step(_transition(torch.zeros(1, 2, 7), state_history))
+
+    expected = torch.tensor([[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.4]])
+    torch.testing.assert_close(result[TransitionKey.OBSERVATION][OBS_STATE], expected, atol=1e-6, rtol=1e-6)
+
+
 def test_inference_state_history_is_rolled_and_reset():
     step = Pi05StateFromActionProcessorStep(enabled=True, history_steps=2)
 
@@ -173,3 +195,33 @@ def test_relative_state_history_stats_match_processor_representation():
 
     expected = np.asarray([[0.0, 0.1, 0.0, 0.1], [-1.0, 0.1, 0.0, 0.2], [-2.0, 0.2, 0.0, 0.3]])
     np.testing.assert_allclose(stats["mean"], expected.mean(axis=0))
+
+
+def test_se3_relative_action_stats_use_reference_frame():
+    actions = np.asarray(
+        [
+            [0.0, 0.0, 0.0, 0.0, 0.0, pi / 2, 0.2],
+            [0.0, 1.0, 0.0, 0.0, 0.0, pi / 2, 0.3],
+        ],
+        dtype=np.float32,
+    )
+    dataset = {"action": actions, "episode_index": np.zeros(2, dtype=np.int64)}
+    features = {
+        "action": {
+            "shape": [7],
+            "names": ["x", "y", "z", "rx", "ry", "rz", "gripper_width"],
+        }
+    }
+
+    stats = compute_relative_action_stats(
+        dataset,
+        features,
+        chunk_size=2,
+        exclude_joints=["gripper"],
+        state_from_action=True,
+        pose_representation="se3",
+        se3_pose_groups=[list(range(6))],
+    )
+
+    np.testing.assert_allclose(stats["mean"][:3], [0.5, 0.0, 0.0], atol=1e-6)
+    np.testing.assert_allclose(stats["mean"][6], 0.25, atol=1e-6)

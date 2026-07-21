@@ -55,6 +55,10 @@ class PI05Config(PreTrainedConfig):
     relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
     # Populated at runtime from dataset metadata by make_policy.
     action_feature_names: list[str] | None = None
+    # ``se3`` uses inv(T_current) @ T_target for each xyz+rotation-vector pose group.
+    # ``componentwise`` preserves the legacy action - state behavior.
+    relative_pose_representation: str = "componentwise"
+    relative_se3_pose_groups: list[list[int]] = field(default_factory=lambda: [list(range(6))])
 
     # Build proprioception from absolute action samples when the dataset has no
     # observation.state. With history_steps=2, training samples request t-1 as
@@ -131,6 +135,17 @@ class PI05Config(PreTrainedConfig):
 
         if self.proprioception_history_steps < 1:
             raise ValueError("proprioception_history_steps must be at least 1")
+
+        if self.relative_pose_representation not in {"componentwise", "se3"}:
+            raise ValueError(
+                "relative_pose_representation must be either 'componentwise' or 'se3', got "
+                f"{self.relative_pose_representation!r}"
+            )
+        for group in self.relative_se3_pose_groups:
+            if len(group) != 6 or len(set(group)) != 6 or any(index < 0 for index in group):
+                raise ValueError(f"Invalid six-index SE(3) pose group: {group}")
+        if self.relative_pose_representation == "se3" and not self.relative_se3_pose_groups:
+            raise ValueError("relative_pose_representation='se3' requires relative_se3_pose_groups")
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""

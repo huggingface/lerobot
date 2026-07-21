@@ -325,6 +325,8 @@ class RecomputeStatsConfig(OperationConfig):
     relative_exclude_joints: list[str] | None = None
     chunk_size: int = 50
     num_workers: int = 0
+    relative_pose_representation: str = "componentwise"
+    relative_se3_pose_groups: list[list[int]] | None = None
     overwrite: bool = False
 
 
@@ -698,6 +700,8 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         relative_exclude_joints=cfg.operation.relative_exclude_joints,
         chunk_size=cfg.operation.chunk_size,
         num_workers=cfg.operation.num_workers,
+        relative_pose_representation=cfg.operation.relative_pose_representation,
+        relative_se3_pose_groups=cfg.operation.relative_se3_pose_groups,
     )
 
     logging.info(f"Stats written to {dataset.root}")
