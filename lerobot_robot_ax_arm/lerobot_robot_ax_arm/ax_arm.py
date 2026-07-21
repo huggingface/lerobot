@@ -240,7 +240,13 @@ class AXArm(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
+        goal_pos = {
+            key.removesuffix(".pos"): val
+            for key, val in action.items()
+            if isinstance(key, str) and key.endswith(".pos")
+        }
+        if not goal_pos:
+            return {}
 
         if self.config.max_relative_target is not None:
             present_pos = {motor: self.bus.read("Present_Position", motor) for motor in goal_pos}

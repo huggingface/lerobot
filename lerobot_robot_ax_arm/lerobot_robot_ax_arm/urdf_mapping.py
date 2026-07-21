@@ -33,9 +33,9 @@ SCALE = AX_TRAVEL_DEG / AX_MAX_TICK  # URDF degrees per motor tick
 REFERENCE_URDF_DEG = {"shoulder_pan": 0.0, "shoulder_lift": 45.0, "elbow_flex": 90.0}
 # URDF joint limits (deg) from ax_arm.urdf, used to guide the lower/upper jog during calibration.
 URDF_LIMITS_DEG = {
-    "shoulder_pan": (-45.0, 45.0),
+    "shoulder_pan": (-90.0, 90.0),
     "shoulder_lift": (0.0, 90.0),
-    "elbow_flex": (0.0, 90.0),
+    "elbow_flex": (0.0, 180.0),
 }
 
 
