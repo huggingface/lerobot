@@ -194,8 +194,12 @@ class VLAJEPAModel(nn.Module):
             )
         return embodied_action_tokens, action_tokens
 
-    def _world_model_loss(self, videos: Tensor, action_tokens: Tensor) -> Tensor:
-        """JEPA encode + predictor L1 loss. `videos` is [B, V, T, C, H, W] float in [0, 1]."""
+    def _world_model_loss(self, videos: Tensor, action_tokens: Tensor, reduction: str = "mean") -> Tensor:
+        """JEPA encode + predictor L1 loss. `videos` is [B, V, T, C, H, W] float in [0, 1].
+
+        `reduction="none"` returns a per-sample loss (B,) for sample weighting (RA-BC);
+        "mean" returns the scalar loss.
+        """
         # Match the world model's expected view count: pad with the first view, or trim extras.
         num_views = self.config.jepa_tubelet_size
         if videos.shape[1] < num_views:
@@ -223,7 +227,8 @@ class VLAJEPAModel(nn.Module):
         # num_video_frames raw frames → t_enc_total temporal positions after tubelet compression
         t_enc_total = self.config.num_video_frames // tubelet_size
         if t_enc_total < 2:
-            return torch.zeros((), device=video_embeddings.device)
+            zero_shape = (video_embeddings.shape[0],) if reduction == "none" else ()
+            return torch.zeros(zero_shape, device=video_embeddings.device)
 
         # Shift-by-one JEPA split: input_states = positions 0..T-2, gt_states = positions 1..T-1
         t_enc_ctx = t_enc_total - 1
@@ -239,6 +244,10 @@ class VLAJEPAModel(nn.Module):
         predicted_states = self.video_predictor(
             input_states.float(), action_tokens[:, :expected_actions].float()
         )
+        if reduction == "none":
+            # Per-sample loss (B,): mean over all non-batch dims (tokens, feature).
+            l = F.l1_loss(predicted_states, gt_states.float(), reduction="none")
+            return l.mean(dim=tuple(range(1, l.ndim)))
         return F.l1_loss(predicted_states, gt_states.float(), reduction="mean")
 
     def _action_loss(
@@ -247,17 +256,27 @@ class VLAJEPAModel(nn.Module):
         actions: Tensor,
         state: Tensor | None,
         action_is_pad: Tensor | None,
+        reduction: str = "mean",
     ) -> Tensor:
-        """Flow-matching action-head loss, repeated over `repeated_diffusion_steps`."""
+        """Flow-matching action-head loss, repeated over `repeated_diffusion_steps`.
+
+        `reduction="none"` returns a per-sample loss (B,) — the `repeated_diffusion_steps`
+        independent noise draws are averaged back per original sample — for RA-BC weighting.
+        """
         device_type = next(self.parameters()).device.type
         with torch.autocast(device_type=device_type, dtype=torch.float32):
             r = self.config.repeated_diffusion_steps
             horizon = self.config.chunk_size
+            b = embodied_action_tokens.shape[0]
             actions_target = actions[:, -horizon:, :].to(torch.float32).repeat(r, 1, 1)
             embodied = embodied_action_tokens.repeat(r, 1, 1)
             state_rep = state.to(embodied_action_tokens.dtype).repeat(r, 1, 1) if state is not None else None
             pad_rep = action_is_pad[:, -horizon:].repeat(r, 1) if action_is_pad is not None else None
-            return self.action_model(embodied, actions_target, state_rep, pad_rep)
+            loss = self.action_model(embodied, actions_target, state_rep, pad_rep, reduction=reduction)
+            if reduction == "none":
+                # `.repeat(r, 1, 1)` tiles as [rep0(b0..b_{B-1}), rep1(...), ...] → (r, B); mean over reps.
+                return loss.view(r, b).mean(dim=0)
+            return loss
 
     def forward(
         self,
@@ -267,21 +286,29 @@ class VLAJEPAModel(nn.Module):
         actions: Tensor | None = None,
         state: Tensor | None = None,
         action_is_pad: Tensor | None = None,
+        reduction: str = "mean",
     ) -> dict[str, Tensor]:
-        """Native forward: Qwen encode → optional world-model loss → optional action-head loss."""
+        """Native forward: Qwen encode → optional world-model loss → optional action-head loss.
+
+        `reduction="none"` makes both loss terms per-sample (B,) for RA-BC weighting; "mean"
+        returns scalar losses.
+        """
         embodied_action_tokens, action_tokens = self._encode_qwen(
             images, instructions, need_action_tokens=self.config.enable_world_model
         )
 
         if self.config.enable_world_model and videos is not None:
-            wm_loss = self._world_model_loss(videos, action_tokens)
+            wm_loss = self._world_model_loss(videos, action_tokens, reduction=reduction)
         else:
-            wm_loss = torch.zeros((), device=embodied_action_tokens.device)
+            zero_shape = (embodied_action_tokens.shape[0],) if reduction == "none" else ()
+            wm_loss = torch.zeros(zero_shape, device=embodied_action_tokens.device)
 
         if actions is None:
             return {"wm_loss": wm_loss}
 
-        action_loss = self._action_loss(embodied_action_tokens, actions, state, action_is_pad)
+        action_loss = self._action_loss(
+            embodied_action_tokens, actions, state, action_is_pad, reduction=reduction
+        )
         return {"action_loss": action_loss, "wm_loss": wm_loss * self.config.world_model_loss_weight}
 
     # ---- Native predict_action (follows original VLA_JEPA.predict_action) ----
@@ -367,12 +394,19 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         batch_size = batch[image_keys[0]].shape[0]
 
         # Current-frame image per view ([B, C, H, W]); regroup per sample for Qwen messages.
+        # Resize to config.resize_images_to (as predict_action does) so training and inference feed
+        # Qwen the same resolution. Critical for memory: native camera frames (e.g. 720x1280) would
+        # otherwise blow up the Qwen3-VL vision-tower attention (patch count grows with resolution).
+        resize_hw = tuple(self.config.resize_images_to) if self.config.resize_images_to else None
         frames = []
         for key in image_keys:
             t = batch[key]
             if t.ndim == 5:  # [B, T, C, H, W] -> current observation (delta=0)
                 t = t[:, 0]
-            frames.append(self.model.qwen.to_pixel_values(t))
+            px = self.model.qwen.to_pixel_values(t)  # [B, C, H, W]
+            if resize_hw is not None and tuple(px.shape[-2:]) != resize_hw:
+                px = F.interpolate(px.float(), size=resize_hw, mode="area")
+            frames.append(px)
         images = [[frame[b] for frame in frames] for b in range(batch_size)]
 
         tasks = batch.get("task")
@@ -388,7 +422,26 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         # Videos [B, V, T, C, H, W] - only assembled during training when the world model consumes them.
         if self.model.config.enable_world_model and training:
             views = [batch[k].unsqueeze(1) if batch[k].ndim == 4 else batch[k] for k in image_keys]
-            inputs["videos"] = self.model.qwen.to_pixel_values(torch.stack(views, dim=1))
+            # The world model consumes a SINGLE stacked [B, V, T, C, H, W] tensor, so all camera
+            # views must share a spatial size. Cameras can differ (e.g. base 480x640 vs wrist
+            # 720x1280), so resize each view to a common size before stacking — config.resize_images_to
+            # if set (same target predict_action uses), else the first view's size (a no-op when all
+            # views already match, preserving behavior for single-resolution datasets). The vjepa video
+            # processor does the final resize to the encoder resolution downstream.
+            cfg = self.model.config
+            target_hw = tuple(cfg.resize_images_to) if cfg.resize_images_to else tuple(views[0].shape[-2:])
+            resized = []
+            for v in views:
+                if tuple(v.shape[-2:]) != target_hw:
+                    b, t, c = v.shape[0], v.shape[1], v.shape[2]
+                    v = F.interpolate(
+                        v.reshape(b * t, c, v.shape[3], v.shape[4]).float(),
+                        size=target_hw,
+                        mode="bilinear",
+                        align_corners=False,
+                    ).reshape(b, t, c, target_hw[0], target_hw[1])
+                resized.append(v)
+            inputs["videos"] = self.model.qwen.to_pixel_values(torch.stack(resized, dim=1))
 
         actions = batch.get(ACTION)
         if actions is not None:
@@ -406,15 +459,17 @@ class VLAJEPAPolicy(PreTrainedPolicy):
 
     # ---- LeRobot Policy Interface ----
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
+    def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
         """LeRobot train forward: convert → native forward → aggregate losses."""
-        native_output = self.model.forward(**self._prepare_model_inputs(batch, training=True))
+        native_output = self.model.forward(
+            **self._prepare_model_inputs(batch, training=True), reduction=reduction
+        )
 
         ref = next(iter(native_output.values()))
-        zero = torch.zeros((), device=ref.device, dtype=ref.dtype)
+        zero = torch.zeros_like(ref)
         total_loss = native_output.get("action_loss", zero) + native_output.get("wm_loss", zero)
-        logs = {k: v.detach().item() for k, v in native_output.items()}
-        logs["loss"] = total_loss.detach().item()
+        logs = {k: v.detach().mean().item() for k, v in native_output.items()}
+        logs["loss"] = total_loss.detach().mean().item()
         return total_loss, logs
 
     def get_optim_params(self) -> dict:
