@@ -273,6 +273,36 @@ def estimate_max_episode_seconds(
 # ---------------------------------------------------------------------------
 
 
+def detect_unsafe_action_jumps(
+    action_dict: dict,
+    obs_raw: dict,
+    max_jump: float,
+    exclude_substrings: tuple[str, ...] = ("gripper",),
+) -> dict[str, float]:
+    """Return ``{joint: jump}`` for joints whose commanded target exceeds the current
+    measured position by more than ``max_jump`` in a single control step; empty if safe.
+
+    Only keys present in both ``action_dict`` and ``obs_raw`` and not matching an
+    excluded substring are checked (grippers use a different unit/range). A large
+    single-step jump is the signature of a chunk-splice slam: a well-behaved trajectory
+    advances a joint by only a few units per tick.
+    """
+    violations: dict[str, float] = {}
+    for key, target in action_dict.items():
+        if any(token in key for token in exclude_substrings):
+            continue
+        current = obs_raw.get(key)
+        if current is None:
+            continue
+        try:
+            jump = abs(float(target) - float(current))
+        except (TypeError, ValueError):
+            continue
+        if jump > max_jump:
+            violations[key] = jump
+    return violations
+
+
 def send_next_action(
     obs_processed: dict,
     obs_raw: dict,
@@ -306,6 +336,25 @@ def send_next_action(
     if len(interp) != len(ordered_keys):
         raise ValueError(f"Interpolated tensor length ({len(interp)}) != action keys ({len(ordered_keys)})")
     action_dict = {k: interp[i].item() for i, k in enumerate(ordered_keys)}
+
+    # Safety net: refuse to command a single-step joint jump larger than the configured
+    # limit and stop the rollout. Catches chunk-splice / bad-chunk slams before they reach
+    # the motors. Compares the commanded target against the freshly-measured pose in
+    # `obs_raw` (same `.pos` units); no-op when the limit is unset.
+    max_jump = ctx.runtime.cfg.max_action_jump_deg
+    if max_jump is not None:
+        unsafe = detect_unsafe_action_jumps(action_dict, obs_raw, max_jump)
+        if unsafe:
+            detail = ", ".join(f"{k}={v:.1f}" for k, v in sorted(unsafe.items(), key=lambda kv: -kv[1]))
+            logger.error(
+                "SAFETY STOP: commanded joint jump exceeds %.1f in one step (%s); "
+                "refusing to send action and signalling shutdown.",
+                max_jump,
+                detail,
+            )
+            ctx.runtime.shutdown_event.set()
+            return None
+
     processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
     ctx.hardware.robot_wrapper.send_action(processed)
     return action_dict
