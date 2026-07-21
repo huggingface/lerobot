@@ -687,6 +687,31 @@ def test_compute_episode_stats_string_features_skipped():
     assert "q01" in stats["action"]
 
 
+def test_compute_episode_stats_zero_width_feature_skipped():
+    """Features with a zero-width dimension carry no values and must be skipped, not crash.
+
+    Regression test for https://github.com/huggingface/lerobot/issues/3654:
+    a feature declared with shape=(0,) previously reached RunningQuantileStats.update,
+    where ``batch.reshape(-1, batch.shape[-1])`` raised
+    "ValueError: cannot reshape array of size 0 into shape (0)".
+    """
+    episode_data = {
+        "action": np.random.normal(0, 1, (100, 5)).astype(np.float32),
+        "target": np.zeros((100, 0), dtype=np.float32),  # zero-width feature
+    }
+    features = {
+        "action": {"dtype": "float32", "shape": (5,)},
+        "target": {"dtype": "float32", "shape": (0,)},
+    }
+
+    stats = compute_episode_stats(episode_data, features)
+
+    # Zero-width features are skipped, just like strings; non-empty features are unaffected.
+    assert "target" not in stats
+    assert "action" in stats
+    assert "q01" in stats["action"]
+
+
 def test_aggregate_feature_stats_with_quantiles():
     """Test aggregating feature stats that include quantiles."""
     stats_ft_list = [

@@ -67,9 +67,12 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
         elif ft["shape"] == (1,):
             hf_features[key] = datasets.Value(dtype=ft["dtype"])
         elif len(ft["shape"]) == 1:
-            hf_features[key] = datasets.Sequence(
-                length=ft["shape"][0], feature=datasets.Value(dtype=ft["dtype"])
-            )
+            # A zero-width feature (shape=(0,)) has no fixed-size Arrow representation:
+            # pyarrow rejects a fixed-size list of length 0 ("list_size needs to be a
+            # strict positive integer"). Store it as a variable-length sequence
+            # (length=-1) so each per-frame value is simply an empty list.
+            seq_length = ft["shape"][0] if ft["shape"][0] > 0 else -1
+            hf_features[key] = datasets.Sequence(length=seq_length, feature=datasets.Value(dtype=ft["dtype"]))
         elif len(ft["shape"]) == 2:
             hf_features[key] = datasets.Array2D(shape=ft["shape"], dtype=ft["dtype"])
         elif len(ft["shape"]) == 3:
