@@ -39,8 +39,13 @@ Implementation notes learned from real RS-series hardware:
   budget).
 - ``run_mode`` writes are ignored by some firmware revisions while torque is enabled, so mode
   switches always stop the motor first and read the mode back to verify.
-- ``mech_vel`` (0x701A) has an unreliable scale on some firmware revisions; prefer
-  differentiating ``Present_Position`` when a trustworthy velocity is needed for control.
+- ``mech_vel`` is parameter 0x701B; its neighbor 0x701A is ``iqf``, the filtered q-axis
+  current in amperes. Hardware-verified on rs00 and rs02: 0x701B tracks the numerical
+  derivative of ``mech_pos`` sample by sample, while 0x701A reads exactly 0.0 with torque
+  disabled.
+- A read of an index the firmware does not support is answered with an *error echo*: the
+  reply sets data16's high byte and carries a zeroed value payload. Verified on rs00, rs03
+  and rs06. Reply filters must reject those frames or a bad index silently reads as 0.0.
 """
 
 import logging
@@ -182,7 +187,6 @@ class RobstridePrivateMotorsBus(MotorsBusBase):
             for name in self.motors
         }
         self._consecutive_read_failures: dict[str, int] = dict.fromkeys(self.motors, 0)
-        self._velocity_warned = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -367,6 +371,13 @@ class RobstridePrivateMotorsBus(MotorsBusBase):
         msg = self._collect(deadline, predicate=matches)
         if msg is None:
             return None
+        error_flag = (msg.arbitration_id >> 16) & 0xFF
+        if error_flag:
+            logger.warning(
+                f"Motor id={motor_id} answered the read of param 0x{param.index:04X} with error "
+                f"flag 0x{error_flag:02X} (unsupported index on this firmware?); ignoring the reply."
+            )
+            return None
         size = struct.calcsize(param.fmt)
         value: float | int = struct.unpack("<" + param.fmt, bytes(msg.data[4 : 4 + size]))[0]
         return value
@@ -491,6 +502,10 @@ class RobstridePrivateMotorsBus(MotorsBusBase):
         count is volatile, so joints with more than one turn of travel can wake wrapped
         after a power cycle and must be re-homed. :meth:`save_parameters` additionally
         flashes the parameter file (the vendor tools treat it as an optional follow-up).
+
+        On some firmware revisions the new zero only takes effect after a full power cycle
+        of the motor supply (reconnecting CAN is not enough). Read back ``Present_Position``
+        to confirm; if it still reports the old frame, power-cycle the motors.
 
         Raises:
             RuntimeError: If a motor is torque-enabled or does not acknowledge the command.
@@ -625,7 +640,6 @@ class RobstridePrivateMotorsBus(MotorsBusBase):
             self._last_known_states[motor]["position"] = position
             return position
         if data_name == "Present_Velocity":
-            self._warn_velocity_once()
             value = self._read_param(motor, "mech_vel", num_retry=1)
             if value is None:
                 return self._stale_read(motor, "velocity")
@@ -641,15 +655,6 @@ class RobstridePrivateMotorsBus(MotorsBusBase):
             value = self._read_param(motor, "vbus", num_retry=1)
             return float(value) if value is not None else 0.0
         raise ValueError(f"Reading '{data_name}' is not supported by {self.__class__.__name__}.")
-
-    def _warn_velocity_once(self) -> None:
-        if not self._velocity_warned:
-            self._velocity_warned = True
-            logger.warning(
-                "Present_Velocity reads the mech_vel parameter (0x701A); on tested RS firmware "
-                "its scale did not match the mechanical velocity. Prefer differentiating "
-                "Present_Position for control-grade velocity."
-            )
 
     def _stale_read(self, motor: str, field: str) -> float:
         self._consecutive_read_failures[motor] += 1
@@ -730,7 +735,6 @@ class RobstridePrivateMotorsBus(MotorsBusBase):
                     result[name] = position
             return result
         if data_name == "Present_Velocity":
-            self._warn_velocity_once()
             values_rad = self._sync_read_param(names, "mech_vel")
             result = {}
             for name in names:
@@ -770,6 +774,14 @@ class RobstridePrivateMotorsBus(MotorsBusBase):
                 return False
             if struct.unpack("<H", bytes(msg.data[:2]))[0] != entry.index:
                 return False
+            error_flag = (arb >> 16) & 0xFF
+            if error_flag:
+                name = pending.pop(motor_id)
+                logger.warning(
+                    f"Motor '{name}' answered the read of param 0x{entry.index:04X} with error "
+                    f"flag 0x{error_flag:02X} (unsupported index on this firmware?); ignoring the reply."
+                )
+                return not pending
             name = pending.pop(motor_id)
             results[name] = struct.unpack("<" + entry.fmt, bytes(msg.data[4 : 4 + size]))[0]
             return not pending  # stop collecting once every motor answered

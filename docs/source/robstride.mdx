@@ -87,8 +87,10 @@ In MIT mode, set the per-motor gains with `bus.write("Kp", motor, value)` / `bus
 
 - Motors stream undocumented compact type-0x18 report frames by default. The bus skips them, using an absolute deadline on every read so a report flood consumes the timeout budget instead of spinning forever.
 - Positions are read as `mech_pos` (0x7019) parameter reads, which return the exact float32. The type-0x02 feedback frames are command acknowledgments, not a telemetry stream: on tested firmware, enabling the active report yields a single frame per motor and then goes quiet.
-- `mech_vel` (0x701A) has an unreliable scale on some firmware revisions. For control-grade velocity, differentiate `Present_Position` instead of trusting `Present_Velocity`.
-- The zero set by `set_zero_position()` persists across power cycles (call `save_parameters()`), but only within a single turn: the multi-turn count is volatile. Geared joints with more than one motor turn of travel (typically grippers) can wake up reading a full turn (360°) off — re-home and re-zero them after a power cycle.
+- `mech_vel` is parameter 0x701B; the neighboring 0x701A is `iqf`, the filtered q-axis current in amperes. Read as 0x701B, `Present_Velocity` is control-grade: on rs00 and rs02 hardware it matches the numerical derivative of `mech_pos` sample by sample.
+- Reads of an index the firmware does not support are answered with an error echo (data16 high byte set, zeroed value). The bus rejects those replies and falls back to the last known value instead of reporting 0.0.
+- On some firmware, `limit_torque` (0x700B) writes have no effect while driving in operation/MIT mode. Do not rely on it as a safety torque cap in MIT mode.
+- The zero set by `set_zero_position()` persists across power cycles (call `save_parameters()`), but only within a single turn: the multi-turn count is volatile. Geared joints with more than one motor turn of travel (typically grippers) can wake up reading a full turn (360°) off — re-home and re-zero them after a power cycle. On some firmware the new zero only takes effect after a full power cycle of the motor supply (reconnecting CAN is not enough) — read back `Present_Position` to confirm before trusting it.
 
 ## Choosing between the two buses
 

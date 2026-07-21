@@ -82,12 +82,20 @@ def u16_phys(value: float, half_range: float) -> int:
     return int(round((clamped / half_range + 1.0) * 32767.0))
 
 
-def param_reply(motor_id: int, index: int, value: float | int, host_id: int = HOST_ID) -> can.Message:
-    """Motor -> host type-0x11 reply: index echoed LE in bytes 0-1, value LE in bytes 4-7."""
+def param_reply(
+    motor_id: int, index: int, value: float | int, host_id: int = HOST_ID, error_flag: int = 0
+) -> can.Message:
+    """Motor -> host type-0x11 reply: index echoed LE in bytes 0-1, value LE in bytes 4-7.
+
+    ``error_flag`` sets data16's high byte, which real firmware uses to answer a read of an
+    unsupported index (with a zeroed value payload; pass ``value=0`` to mimic it).
+    """
     raw = struct.pack("<" + _FMT_BY_INDEX.get(index, "f"), value)
     data = struct.pack("<H", index) + b"\x00\x00" + raw + bytes(4 - len(raw))
     return can.Message(
-        arbitration_id=ext_id(PrivateCommType.PARAM_READ, motor_id, host_id),
+        arbitration_id=ext_id(
+            PrivateCommType.PARAM_READ, ((error_flag & 0xFF) << 8) | (motor_id & 0xFF), host_id
+        ),
         data=data,
         is_extended_id=True,
     )
@@ -262,6 +270,25 @@ def test_constructor_normalizes_model_names():
 
 
 # ---------------------------------------------------------------------------
+# Tables
+# ---------------------------------------------------------------------------
+
+
+def test_telemetry_param_indices_match_manual():
+    # Manual order: 0x7019 mechPos, 0x701A iqf (filtered current!), 0x701B mechVel, 0x701C VBUS.
+    assert PRIVATE_PARAMS["mech_pos"].index == 0x7019
+    assert PRIVATE_PARAMS["iqf"].index == 0x701A
+    assert PRIVATE_PARAMS["mech_vel"].index == 0x701B
+    assert PRIVATE_PARAMS["vbus"].index == 0x701C
+
+
+def test_rs05_limits_match_manual():
+    rs05 = RS_MODEL_LIMITS["rs05"]
+    assert rs05.v_max == 50.0
+    assert rs05.t_max == 5.5
+
+
+# ---------------------------------------------------------------------------
 # Connect / handshake / disconnect
 # ---------------------------------------------------------------------------
 
@@ -371,7 +398,7 @@ def test_param_write_frame_u8(bus, fake):
 
 
 def test_write_param_rejects_read_only(bus, fake):
-    for param in ("mech_pos", "mech_vel", "vbus"):
+    for param in ("mech_pos", "mech_vel", "iqf", "vbus"):
         with pytest.raises(ValueError, match="read-only"):
             bus.write_param("shoulder", param, 1.0)
     assert fake.sent == []
@@ -529,6 +556,24 @@ def test_successful_read_resets_failure_counter(bus, fake):
     assert bus._consecutive_read_failures["shoulder"] == 0
 
 
+def test_read_error_echo_falls_back_to_stale_and_warns(bus, fake, caplog):
+    fake.rx.append(param_reply(1, MECH_POS_IDX, 1.5))
+    first = bus.read("Present_Position", "shoulder")
+    fake.rx.append(param_reply(1, MECH_POS_IDX, 0.0, error_flag=0x01))
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        value = bus.read("Present_Position", "shoulder")
+    assert value == first  # the zeroed error payload must not be decoded as 0.0
+    assert bus._consecutive_read_failures["shoulder"] == 1
+    assert any("error flag 0x01" in r.message for r in caplog.records)
+
+
+def test_read_param_error_echo_returns_none(bus, fake, caplog):
+    fake.rx.append(param_reply(1, 0x1003, 0.0, error_flag=0x01))
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        assert bus.read_param("shoulder", 0x1003) is None
+    assert any("0x1003" in r.message for r in caplog.records)
+
+
 def test_read_ignores_reply_for_other_host(bus, fake):
     bus._last_known_states["shoulder"]["position"] = 42.0
     fake.rx.append(param_reply(1, MECH_POS_IDX, 5.0, host_id=0x42))
@@ -680,6 +725,27 @@ def test_sync_read_stale_fallback_for_missing_motor(bus, fake, caplog):
     assert bus._consecutive_read_failures["wrist"] == 1
     assert bus._consecutive_read_failures["shoulder"] == 0
     assert any("wrist" in r.message for r in caplog.records)
+
+
+def test_sync_read_error_echo_falls_back_to_stale(bus, fake, caplog):
+    sim = MotorSim([1, 2])
+    sim.params[1][MECH_POS_IDX] = 1.0
+
+    def responder(msg: can.Message) -> list[can.Message]:
+        is_read = (msg.arbitration_id >> 24) & 0x1F == PrivateCommType.PARAM_READ
+        if is_read and msg.arbitration_id & 0xFF == 3:
+            return [param_reply(3, MECH_POS_IDX, 0.0, error_flag=0x01)]
+        return sim(msg)
+
+    fake.responder = responder
+    bus._last_known_states["wrist"]["position"] = 42.0
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        result = bus.sync_read("Present_Position")
+    assert result["wrist"] == 42.0  # error echo not decoded as 0.0
+    assert result["shoulder"] == pytest.approx(math.degrees(1.0), abs=1e-12)
+    assert any("error flag 0x01" in r.message for r in caplog.records)
+    # An errored motor is not pointlessly retried within the same sync read.
+    assert len(sent(fake, PrivateCommType.PARAM_READ, motor_id=3)) == 1
 
 
 def test_sync_read_skips_interleaved_report_frames(bus, fake):

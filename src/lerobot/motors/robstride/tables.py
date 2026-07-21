@@ -181,7 +181,9 @@ PRIVATE_PARAMS: dict[str, PrivateParam] = {
     "run_mode": PrivateParam(0x7005, "B"),
     "iq_ref": PrivateParam(0x7006, "f"),  # current-mode target [A]
     "spd_ref": PrivateParam(0x700A, "f"),  # velocity-mode target [rad/s]
-    "limit_torque": PrivateParam(0x700B, "f"),  # torque limit [N.m]
+    # Torque limit [N.m]. On some firmware, writes have no effect while driving in
+    # operation/MIT mode: do not rely on it as a safety torque cap in that mode.
+    "limit_torque": PrivateParam(0x700B, "f"),
     "cur_kp": PrivateParam(0x7010, "f"),
     "cur_ki": PrivateParam(0x7011, "f"),
     "cur_filter_gain": PrivateParam(0x7014, "f"),
@@ -189,7 +191,8 @@ PRIVATE_PARAMS: dict[str, PrivateParam] = {
     "limit_spd": PrivateParam(0x7017, "f"),  # position-mode speed limit [rad/s]
     "limit_cur": PrivateParam(0x7018, "f"),  # current limit [A]
     "mech_pos": PrivateParam(0x7019, "f", writable=False),  # mechanical position [rad], exact f32
-    "mech_vel": PrivateParam(0x701A, "f", writable=False),  # mechanical velocity [rad/s]; see caveat
+    "iqf": PrivateParam(0x701A, "f", writable=False),  # filtered q-axis current [A]
+    "mech_vel": PrivateParam(0x701B, "f", writable=False),  # mechanical velocity [rad/s]
     "vbus": PrivateParam(0x701C, "f", writable=False),  # bus voltage [V]
     "loc_kp": PrivateParam(0x701E, "f"),  # position loop Kp
     "spd_kp": PrivateParam(0x701F, "f"),  # velocity loop Kp
@@ -217,13 +220,16 @@ _RS_P_MAX = 12.566370614359172  # 4*pi, identical for every RS model
 
 # RS-series model table. kp/kd MIT full-scales are model-grouped:
 # rs00/rs01/rs02/rs05 use 500/5, rs03/rs04/rs06 use 5000/100.
+# V/T half-ranges follow each model's manual (frame-scaling section). Where the vendor
+# SDK table disagrees, the manual wins: the SDK ships rs05 as (33, 17), the RS05 manual
+# gives +/-50 rad/s and +/-5.5 N.m (5.5 N.m is also the motor's listed peak torque).
 RS_MODEL_LIMITS: dict[str, RSModelLimits] = {
     "rs00": RSModelLimits(_RS_P_MAX, 50.0, 14.0, 500.0, 5.0),
     "rs01": RSModelLimits(_RS_P_MAX, 44.0, 17.0, 500.0, 5.0),
     "rs02": RSModelLimits(_RS_P_MAX, 44.0, 17.0, 500.0, 5.0),
     "rs03": RSModelLimits(_RS_P_MAX, 50.0, 60.0, 5000.0, 100.0),
     "rs04": RSModelLimits(_RS_P_MAX, 15.0, 120.0, 5000.0, 100.0),
-    "rs05": RSModelLimits(_RS_P_MAX, 33.0, 17.0, 500.0, 5.0),
+    "rs05": RSModelLimits(_RS_P_MAX, 50.0, 5.5, 500.0, 5.0),
     "rs06": RSModelLimits(_RS_P_MAX, 20.0, 36.0, 5000.0, 100.0),
 }
 
