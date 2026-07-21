@@ -32,7 +32,7 @@ from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
-from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, WandBConfig
+from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, TensorBoardConfig, WandBConfig
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
 
@@ -126,6 +126,7 @@ class TrainPipelineConfig(HubMixin):
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
+    tensorboard: TensorBoardConfig = field(default_factory=TensorBoardConfig)
     peft: PeftConfig | None = None
 
     # Where to run training (local default, or an HF Jobs flavor). See JobConfig.

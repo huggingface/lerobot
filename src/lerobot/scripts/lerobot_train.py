@@ -15,7 +15,7 @@
 # limitations under the License.
 """Train a policy.
 
-Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wandb extras)
+Requires: pip install 'lerobot[training]'  (includes dataset + accelerate extras)
 """
 
 import dataclasses
@@ -272,7 +272,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(pformat(cfg.to_dict()))
 
     # Initialize tensorboard only on main process
-    if cfg.wandb.enable and cfg.wandb.project and is_main_process:
+    if cfg.tensorboard.enable and is_main_process:
         tb_logger = TensorBoardLogger(cfg)
     else:
         tb_logger = None
