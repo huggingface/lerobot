@@ -46,8 +46,11 @@ CMD = (
     "apt-get update -qq && apt-get install -y -qq git ffmpeg && "
     "pip install --no-deps "
     "'lerobot @ git+https://github.com/huggingface/lerobot.git@main' && "
+    # Pins mirror pyproject.toml — unpinned installs pull av 18 / datasets 5 /
+    # draccus 0.11, which break lerobot at import time.
     "pip install --upgrade-strategy only-if-needed "
-    "datasets pyarrow av jsonlines draccus gymnasium torchcodec mergedeep pyyaml-include toml typing-inspect "
+    "'datasets>=4.7.0,<5.0.0' 'pyarrow>=21.0.0,<30.0.0' 'av>=15.0.0,<16.0.0' 'draccus==0.10.0' "
+    "'pandas>=2.0.0,<3.0.0' jsonlines gymnasium torchcodec mergedeep pyyaml-include toml typing-inspect "
     "openai && "
     "export VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 && "
     "export VLLM_VIDEO_BACKEND=pyav && "
