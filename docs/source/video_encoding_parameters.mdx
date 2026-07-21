@@ -6,12 +6,11 @@ Encoding frames into an MP4 is a full FFmpeg pipeline: choice of encoder, pixel 
 
 You can set these parameters from the CLI with `--dataset.rgb_encoder.<field>` (e.g. with `lerobot-record` or `lerobot-rollout`). The same block applies to every camera video stream in that run.
 
-<Tip>
-  Video storage must be on for `rgb_encoder` to have any effect —
-  `use_videos=True` in Python APIs, or `--dataset.video=true` on the CLI (the
-  recording default). With video off, inputs stay as images and `rgb_encoder` is
-  ignored.
-</Tip>
+> [!TIP]
+> Video storage must be on for `rgb_encoder` to have any effect —
+> `use_videos=True` in Python APIs, or `--dataset.video=true` on the CLI (the
+> recording default). With video off, inputs stay as images and `rgb_encoder` is
+> ignored.
 
 For details on **when** frames are written vs. encoded (streaming vs. post-episode), queues, and other top-level `--dataset.*` switches, see [Streaming Video Encoding](./streaming_video_encoding). For an encoding-parameter comparison and experiments, see the [video-benchmark Space](https://huggingface.co/spaces/lerobot/video-benchmark).
 
@@ -43,12 +42,10 @@ lerobot-record \
 
 ## Tuning parameters
 
-<Tip warning={true}>
-The defaults are tuned to balance **compression ratio**, **visual quality**, and **decoding/seek speed** for typical robotics datasets. Changing them can affect both recording (CPU load, frame drops) and training (decoding throughput, image quality).
-
-Only override these parameters if you have a specific reason to, and measure the impact on your pipeline before relying on the new settings.
-
-</Tip>
+> [!WARNING]
+> The defaults are tuned to balance **compression ratio**, **visual quality**, and **decoding/seek speed** for typical robotics datasets. Changing them can affect both recording (CPU load, frame drops) and training (decoding throughput, image quality).
+>
+> Only override these parameters if you have a specific reason to, and measure the impact on your pipeline before relying on the new settings.
 
 All flags below are prefixed with `--dataset.rgb_encoder.` on the CLI.
 
@@ -69,25 +66,92 @@ All flags below are prefixed with `--dataset.rgb_encoder.` on the CLI.
 
 Depth maps (Intel RealSense, Reachy 2) are stored as their **own video streams** alongside the RGB streams. Raw depth (`uint16` millimetres or `float32` metres) can't survive an 8-bit codec, so LeRobot **quantizes** each map to a 12-bit code (`[0, 4095]`) — logarithmically by default, to match the `1/depth` error profile of depth sensors — then packs it into a high-bit-depth pixel format (`gray12le`) and encodes it with a 12-bit codec.
 
-```mermaid
-flowchart LR
-    A["Raw depth (uint16 mm / float32 m)"] --> B["Clip to depth_min, depth_max"]
-    B --> C["Quantize to 12-bit code 0–4095 (log or linear)"]
-    C --> D["Pack into gray12le"]
-    D --> E["Encode video (hevc Main 12)"]
-    E --> F[("MP4 + metadata: depth_min/max, shift, use_log")]
-    F -. "load time (depth_output_unit)" .-> G["Dequantize to mm or m"]
-
-    classDef input fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
-    classDef encode fill:#ede7f6,stroke:#5e35b1,color:#311b92;
-    classDef store fill:#fff8e1,stroke:#f9a825,color:#e65100;
-    classDef load fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;
-
-    class A input;
-    class B,C,D,E encode;
-    class F store;
-    class G load;
-```
+<div style="margin:28px 0;padding:14px 0;">
+  <div style="margin:0 auto;display:flex;flex-wrap:wrap;justify-content:center;align-items:stretch;gap:6px;font-family:'Source Sans 3',ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:600;color:#1B1B1D;">
+    <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#DBEAFE;color:#1D4ED8;border-radius:9px;padding:8px 12px;">
+      <span>Raw depth</span>
+      <span style="font-size:11px;font-weight:400;color:#3B6FD4;white-space:nowrap;">
+        uint16 mm
+        <br />
+        float32 m
+      </span>
+    </span>
+    <span style="display:flex;align-items:center;font-size:16px;color:#C3CBD9;">
+      →
+    </span>
+    <div style="border:2px dashed #C4B5FD;border-radius:13px;padding:18px 12px 12px;position:relative;display:flex;align-items:stretch;gap:6px;">
+      <span style="position:absolute;top:-10px;left:12px;background:#fff;padding:0 6px;font-size:11px;font-weight:700;color:#7E22CE;text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap;">
+        Record time
+      </span>
+      <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#F3E8FF;color:#7E22CE;border-radius:9px;padding:8px 12px;">
+        <span>Clip</span>
+        <span style="font-size:11px;font-weight:400;color:#9061C2;white-space:nowrap;">
+          to [depth_min,
+          <br />
+          depth_max]
+        </span>
+      </span>
+      <span style="display:flex;align-items:center;font-size:16px;color:#C3CBD9;">
+        →
+      </span>
+      <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#F3E8FF;color:#7E22CE;border-radius:9px;padding:8px 12px;">
+        <span>Quantize</span>
+        <span style="font-size:11px;font-weight:400;color:#9061C2;white-space:nowrap;">
+          12-bit codes 0–4095
+          <br />
+          log (default) or linear
+        </span>
+      </span>
+      <span style="display:flex;align-items:center;font-size:16px;color:#C3CBD9;">
+        →
+      </span>
+      <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#F3E8FF;color:#7E22CE;border-radius:9px;padding:8px 12px;">
+        <span>Pack</span>
+        <span style="font-size:11px;font-weight:400;color:#9061C2;white-space:nowrap;">
+          into gray12le
+          <br />
+          plane
+        </span>
+      </span>
+      <span style="display:flex;align-items:center;font-size:16px;color:#C3CBD9;">
+        →
+      </span>
+      <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#F3E8FF;color:#7E22CE;border-radius:9px;padding:8px 12px;">
+        <span>Encode</span>
+        <span style="font-size:11px;font-weight:400;color:#9061C2;white-space:nowrap;">
+          HEVC
+          <br />
+          Main 12
+        </span>
+      </span>
+    </div>
+    <span style="display:flex;align-items:center;font-size:16px;color:#C3CBD9;">
+      →
+    </span>
+    <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#FEF3C7;color:#B45309;border-radius:9px;padding:8px 12px;">
+      <span>MP4</span>
+      <span style="font-size:11px;font-weight:400;color:#C77D18;white-space:nowrap;">
+        stored
+        <br />
+        stream
+      </span>
+    </span>
+    <span style="display:flex;align-items:center;font-size:16px;color:#34A06B;">
+      →
+    </span>
+    <div style="border:2px dashed #6EE7B7;border-radius:13px;padding:18px 12px 12px;position:relative;display:flex;align-items:center;gap:6px;">
+      <span style="position:absolute;top:-10px;left:12px;background:#fff;padding:0 6px;font-size:11px;font-weight:700;color:#047857;text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap;">
+        Load time
+      </span>
+      <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#D1FAE5;color:#047857;border-radius:9px;padding:8px 12px;">
+        <span>Dequantize</span>
+        <span style="font-size:11px;font-weight:400;color:#059669;white-space:nowrap;">
+          to mm / m
+        </span>
+      </span>
+    </div>
+  </div>
+</div>
 
 Configure the depth pipeline through a parallel **`depth_encoder`** block (`DepthEncoderConfig`). It shares every `RGBEncoderConfig` field (`vcodec`, `pix_fmt`, `crf`, …) and adds four quantizer knobs, set via `--dataset.depth_encoder.<field>`:
 
@@ -168,15 +232,16 @@ After the first episode of a video stream is encoded, the encoder configuration 
 
 Two sources contribute to the `info` block:
 
-- **Stream-derived** (read back from the encoded MP4 with PyAV): `video.height`, `video.width`, `video.codec`, `video.pix_fmt`, `video.fps`, `video.channels`, `is_depth_map`, plus `audio.*` if an audio stream is present.
-- **Encoder-derived** (taken from `RGBEncoderConfig` or `DepthEncoderConfig`): `video.g`, `video.crf`, `video.preset`, `video.fast_decode`, `video.video_backend`, `video.extra_options`.
+| Source              | Where it comes from                                   | Fields                                                                                                                  |
+| ------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **Stream-derived**  | Read back from the encoded MP4 with PyAV.             | `video.height`, `video.width`, `video.codec`, `video.pix_fmt`, `video.fps`, `video.channels`, `is_depth_map`, `audio.*` |
+| **Encoder-derived** | Taken from `RGBEncoderConfig` / `DepthEncoderConfig`. | `video.g`, `video.crf`, `video.preset`, `video.fast_decode`, `video.video_backend`, `video.extra_options`               |
 
-<Tip>
-  This block is populated **once**, from the **first** episode. It assumes every
-  episode in the dataset was encoded with the same `rgb_encoder`. Changing
-  encoder settings partway through a recording is not supported — the
-  `info.json` will only reflect the parameters used for the first episode.
-</Tip>
+> [!IMPORTANT]
+> This block is populated **once**, from the **first** episode. It assumes every
+> episode in the dataset was encoded with the same `rgb_encoder`. Changing
+> encoder settings partway through a recording is not supported — the
+> `info.json` will only reflect the parameters used for the first episode.
 
 ---
 
@@ -184,5 +249,7 @@ Two sources contribute to the `info` block:
 
 When aggregating datasets with `merge_datasets`, video files are concatenated as-is (no re-encoding), and encoder fields in `info.json` are merged per-key:
 
-- **Stream-derived fields must match** across sources: `video.codec`, `video.pix_fmt`, `video.height`, `video.width`, `video.fps`. Otherwise FFmpeg's concat demuxer fails.
-- **Encoder-tuning fields are merged loosely**: `video.g`, `video.crf`, `video.preset`, `video.fast_decode`, `video.extra_options`. If every source agrees, the value is kept; if not, it's set to `null` (or `{}` for `video.extra_options`) and a warning is logged.
+| Merge rule         | Fields                                                                             | Behaviour                                                                                                                                                 |
+| ------------------ | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Must match**     | `video.codec`, `video.pix_fmt`, `video.height`, `video.width`, `video.fps`         | Stream-derived fields must match across sources, otherwise FFmpeg's concat demuxer fails.                                                                 |
+| **Merged loosely** | `video.g`, `video.crf`, `video.preset`, `video.fast_decode`, `video.extra_options` | Encoder-tuning fields. If every source agrees, the value is kept; if not, it's set to `null` (or `{}` for `video.extra_options`) and a warning is logged. |
