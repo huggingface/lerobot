@@ -1,0 +1,20 @@
+# NexArm training config (ACT policy)
+# Usage: python -m lerobot.scripts.lerobot_train --config_path=examples/nexarm/train.yaml
+
+dataset:
+  repo_id: local/nexarm_pick
+
+policy:
+  type: act
+
+output_dir: outputs/train/nexarm_act
+job_name: nexarm_act
+seed: 1000
+batch_size: 32
+steps: 100000
+save_freq: 25000
+log_freq: 100
+eval_freq: 25000
+
+wandb:
+  enable: false

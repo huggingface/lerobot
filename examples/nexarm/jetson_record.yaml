@@ -1,0 +1,46 @@
+# NexArm dataset recording config (Jetson)
+# Usage: python -m lerobot.scripts.lerobot_record --config_path=examples/nexarm/jetson_record.yaml
+#
+# Hardware:
+#   /dev/ttyCH341USB0  ← follower (slave) ESP32  (插入顺序：第一个)
+#   /dev/ttyCH341USB1  ← leader  (master) ESP32  (插入顺序：第二个)
+#   /dev/video0        ← wrist (YUYV only)
+#   /dev/video2        ← front (MJPG capable)
+
+robot:
+  type: nexarm_follower
+  port: /dev/ttyCH341USB0
+  baudrate: 1000000
+  cameras:
+    wrist:
+      type: opencv
+      index_or_path: /dev/video0
+      width: 640
+      height: 480
+      fps: 30
+      fourcc: YUYV
+    front:
+      type: opencv
+      index_or_path: /dev/video2
+      width: 640
+      height: 480
+      fps: 30
+      fourcc: MJPG
+
+teleop:
+  type: nexarm_leader
+  port: /dev/ttyCH341USB1
+  baudrate: 1000000
+
+dataset:
+  repo_id: local/nexarm_pick
+  single_task: "pick up the object"
+  num_episodes: 10
+  episode_time_s: 20
+  reset_time_s: 10
+  fps: 30
+  video: true
+  push_to_hub: false
+
+display_data: false
+play_sounds: true
