@@ -334,15 +334,24 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self.delta_timestamps = delta_timestamps
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
 
-        self.hf_dataset: datasets.IterableDataset = load_dataset(
+        self.hf_dataset: datasets.IterableDataset = self._load_hf_dataset()
+
+        self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
+
+    def _load_hf_dataset(self) -> datasets.IterableDataset:
+        """Build the streaming HF dataset over the low-dim parquet shards.
+
+        Extracted as a seam so subclasses can source the shards elsewhere (e.g.
+        :class:`~lerobot.datasets.fsspec_dataset.FsspecLeRobotDataset` streams them
+        from an fsspec object store).
+        """
+        return load_dataset(
             self.repo_id if not self.streaming_from_local else str(self.root),
             split="train",
             streaming=self.streaming,
             data_files="data/*/*.parquet",
             revision=self.revision,
         )
-
-        self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
 
     @property
     def num_frames(self):
@@ -577,6 +586,16 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         return query_timestamps
 
+    def _get_video_path(self, ep_idx: int, video_key: str) -> str:
+        """Resolve where a video file is fetched from (Hub URL or local path).
+
+        Extracted as a seam so subclasses can source videos elsewhere (e.g.
+        :class:`~lerobot.datasets.fsspec_dataset.FsspecLeRobotDataset` supplies an
+        fsspec object-store URL); the depth/rgb decode logic stays shared.
+        """
+        root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
+        return f"{root}/{self.meta.get_video_file_path(ep_idx, video_key)}"
+
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict:
         """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
         in the main process (e.g. by using a second Dataloader with num_workers=0). It will result in a
@@ -586,8 +605,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         item = {}
         for video_key, query_ts in query_timestamps.items():
-            root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
-            video_path = f"{root}/{self.meta.get_video_file_path(ep_idx, video_key)}"
+            video_path = self._get_video_path(ep_idx, video_key)
             if video_key in self.meta.depth_keys:
                 # Depth maps are 12-bit quantized and only decodable via pyav; dequantize back
                 # to physical units to match the non-streaming reader.

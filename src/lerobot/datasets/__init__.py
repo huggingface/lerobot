@@ -36,6 +36,7 @@ from .dataset_tools import (
     split_dataset,
 )
 from .factory import make_dataset, make_train_eval_datasets, resolve_delta_timestamps
+from .fsspec_dataset import FsspecLeRobotDataset
 from .image_writer import safe_stop_image_writer
 from .io_utils import load_episodes, write_stats
 from .language import (
@@ -65,6 +66,7 @@ __all__ = [
     "DEFAULT_QUANTILES",
     "EVENT_ONLY_STYLES",
     "EpisodeAwareSampler",
+    "FsspecLeRobotDataset",
     "LANGUAGE_EVENTS",
     "LANGUAGE_PERSISTENT",
     "LeRobotDataset",
