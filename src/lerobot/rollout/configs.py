@@ -223,6 +223,15 @@ class RolloutConfig:
     fps: float = 30.0
     duration: float = 0.0  # 0 = infinite (24/7 mode)
     interpolation_multiplier: int = 1
+    # Safety net (opt-in): if any commanded joint's target differs from the robot's
+    # currently-measured position by more than this many units in a single control
+    # step, the action is treated as an unsafe jump — the robot is NOT commanded and
+    # the rollout stops. Units are the robot's raw `.pos` values (degrees for the
+    # SO-arms). Gripper joints are excluded (different unit/range). `None` disables it.
+    # Guards against chunk-splice / bad-chunk slams; a normal per-tick move at fps=30
+    # is only a few degrees, so a threshold like 20-30 catches slams without tripping
+    # on legitimate fast motion.
+    max_action_jump_deg: float | None = None
     device: str | None = None
     task: str = ""
     display_data: bool = False
@@ -272,6 +281,11 @@ class RolloutConfig:
                 "display_extra_data is only supported with sync inference (--inference.type=sync); "
                 "it will be ignored for inference type '%s'",
                 self.inference.type,
+            )
+
+        if self.max_action_jump_deg is not None and self.max_action_jump_deg <= 0:
+            raise ValueError(
+                f"max_action_jump_deg must be positive when set, got {self.max_action_jump_deg}"
             )
 
         # --- Strategy-specific validation ---
