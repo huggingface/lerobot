@@ -204,6 +204,61 @@ def test_clear_resets_buffer(tmp_path):
     assert dataset.writer.episode_buffer["size"] == 0
 
 
+VIDEO_FEATURES = {
+    **SIMPLE_FEATURES,
+    "observation.images.cam": {"dtype": "video", "shape": (32, 32, 3), "names": ["h", "w", "c"]},
+}
+
+
+def test_clear_removes_video_frame_staging(tmp_path):
+    """Discarding an episode must delete the staging frames of video cameras.
+
+    Staging frames of ``dtype="video"`` cameras live in a per-episode directory
+    that the encoder globs in full. If a discarded take leaves frames behind,
+    the re-recorded take (same episode index, same directory) is encoded with
+    the discarded take's frames appended, so the video no longer matches the
+    episode's parquet data.
+    """
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=VIDEO_FEATURES, root=tmp_path / "ds"
+    )
+    for _ in range(3):
+        dataset.add_frame(_make_frame(VIDEO_FEATURES))
+
+    writer = dataset.writer
+    staging_dir = writer._get_image_file_dir(0, "observation.images.cam")
+    assert staging_dir.is_dir() and any(staging_dir.iterdir())
+
+    dataset.clear_episode_buffer()  # discard, as on re-record
+
+    assert not staging_dir.exists()
+
+
+def test_save_episode_keeps_video_frame_staging_for_batched_encoding(tmp_path):
+    """The post-save clear must NOT delete video staging frames.
+
+    With ``batch_encoding_size > 1`` the frames of already-saved episodes stay
+    on disk until the batch encode runs; the encoder deletes them afterwards.
+    """
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=VIDEO_FEATURES,
+        root=tmp_path / "ds",
+        batch_encoding_size=2,
+    )
+    for _ in range(3):
+        dataset.add_frame(_make_frame(VIDEO_FEATURES))
+
+    writer = dataset.writer
+    staging_dir = writer._get_image_file_dir(0, "observation.images.cam")
+    assert staging_dir.is_dir()
+
+    dataset.save_episode()  # first of a batch of 2: no encoding yet
+
+    assert staging_dir.is_dir() and any(staging_dir.iterdir())
+
+
 def test_finalize_is_idempotent(tmp_path):
     """Calling finalize() twice does not raise."""
     dataset = LeRobotDataset.create(

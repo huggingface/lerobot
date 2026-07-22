@@ -369,7 +369,11 @@ class DatasetWriter:
                 self._episodes_since_last_encoding = 0
 
         if episode_data is None:
-            self.clear_episode_buffer(delete_images=len(self._meta.image_keys) > 0)
+            # Keep video staging frames: they are still needed by (batched) video
+            # encoding and are deleted by the encoder once each video is written.
+            self.clear_episode_buffer(
+                delete_images=len(self._meta.image_keys) > 0, preserve_video_frames=True
+            )
 
     def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
         """Batch save videos for multiple episodes."""
@@ -560,12 +564,20 @@ class DatasetWriter:
         }
         return metadata
 
-    def clear_episode_buffer(self, delete_images: bool = True) -> None:
+    def clear_episode_buffer(self, delete_images: bool = True, preserve_video_frames: bool = False) -> None:
         """Discard the current episode buffer and optionally delete temp images.
 
         Args:
             delete_images: If ``True``, remove temporary image directories
                 written for the current episode.
+            preserve_video_frames: If ``True``, keep the temporary frame
+                directories of ``dtype="video"`` cameras. This is only meant
+                for the post-``save_episode()`` clear, where those frames are
+                still needed by (possibly batched) video encoding and are
+                deleted by the encoder itself. When discarding an episode
+                (e.g. re-recording), leave this ``False`` so the staging
+                frames are removed — otherwise they are picked up by the next
+                take's video encode, which globs the whole directory.
         """
         # Cancel streaming encoder if active
         if self._streaming_encoder is not None:
@@ -579,7 +591,8 @@ class DatasetWriter:
             # save_episode() mutates the buffer. Handle both types here.
             if isinstance(episode_index, np.ndarray):
                 episode_index = episode_index.item() if episode_index.size == 1 else episode_index[0]
-            for cam_key in self._meta.image_keys:
+            cam_keys = self._meta.image_keys if preserve_video_frames else self._meta.camera_keys
+            for cam_key in cam_keys:
                 img_dir = self._get_image_file_dir(episode_index, cam_key)
                 if img_dir.is_dir():
                     shutil.rmtree(img_dir)
