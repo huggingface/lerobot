@@ -29,9 +29,48 @@ from lerobot.utils.constants import OBS_IMAGES
 from lerobot.utils.import_utils import _transformers_available
 
 if TYPE_CHECKING or _transformers_available:
-    from .configuration_florence2 import Florence2Config
+    from transformers import Florence2Config
 else:
     Florence2Config = None
+
+
+def _translate_vision_config(vision_config: dict[str, Any]) -> dict[str, Any]:
+    """Translate a vision config from the original Microsoft remote-code Florence-2 format
+    (used by existing XVLA checkpoints) to the native ``transformers`` format.
+
+    Configs already in the native format pass through unchanged.
+    """
+    vision = dict(vision_config)
+    model_type = vision.pop("model_type", None)
+    if model_type not in (None, "davit", "florence_vision"):
+        raise ValueError(f"Unsupported Florence-2 vision backbone: {model_type!r}")
+    vision.pop("enable_checkpoint", None)
+
+    image_pos_embed = vision.pop("image_pos_embed", None)
+    if image_pos_embed is not None:
+        if image_pos_embed.get("type") != "learned_abs_2d":
+            raise ValueError(f"Unsupported image_pos_embed type: {image_pos_embed.get('type')!r}")
+        vision["max_position_embeddings"] = image_pos_embed["max_pos_embeddings"]
+
+    visual_temporal_embedding = vision.pop("visual_temporal_embedding", None)
+    if visual_temporal_embedding is not None:
+        if visual_temporal_embedding.get("type") != "COSINE":
+            raise ValueError(
+                f"Unsupported visual_temporal_embedding type: {visual_temporal_embedding.get('type')!r}"
+            )
+        vision["max_temporal_embeddings"] = visual_temporal_embedding["max_temporal_embeddings"]
+
+    image_feature_source = vision.pop("image_feature_source", None)
+    if image_feature_source is not None and list(image_feature_source) != [
+        "spatial_avg_pool",
+        "temporal_avg_pool",
+    ]:
+        # the native Florence2MultiModalProjector hardcodes this feature combination
+        raise ValueError(f"Unsupported image_feature_source: {image_feature_source!r}")
+
+    if "dim_embed" in vision:
+        vision["embed_dim"] = vision.pop("dim_embed")
+    return vision
 
 
 @PreTrainedConfig.register_subclass("xvla")
@@ -128,16 +167,41 @@ class XVLAConfig(PreTrainedConfig):
 
     def get_florence_config(self) -> Florence2Config:
         """
-        Build (and cache) the Florence2 transformer config that should back the VLM.
+        Build (and cache) the native ``transformers`` Florence-2 config that backs the VLM.
+
+        ``florence_config`` may be given either in the native ``transformers`` format or in the
+        original Microsoft remote-code format stored by existing XVLA checkpoints (e.g. with
+        ``dim_embed`` / ``image_pos_embed`` in the vision config); the latter is translated
+        field-by-field to the native format.
         """
         if self._florence_config_obj is None:
             config_dict = dict(self.florence_config)
-            if "vision_config" not in config_dict or config_dict["vision_config"] is None:
+            if config_dict.get("vision_config") is None:
                 raise ValueError("vision_config is required")
-
-            if "text_config" not in config_dict or config_dict["text_config"] is None:
+            if config_dict.get("text_config") is None:
                 raise ValueError("text_config is required")
-            self._florence_config_obj = Florence2Config(**config_dict)
+
+            vision_config = _translate_vision_config(config_dict["vision_config"])
+            text_config = dict(config_dict["text_config"])
+            if text_config.get("model_type", "florence2_language") == "florence2_language":
+                # The MS remote-code language config is BART, field for field.
+                text_config["model_type"] = "bart"
+
+            kwargs = {
+                key: config_dict[key]
+                for key in (
+                    "pad_token_id",
+                    "bos_token_id",
+                    "eos_token_id",
+                    "image_token_id",
+                    "is_encoder_decoder",
+                    "tie_word_embeddings",
+                )
+                if key in config_dict
+            }
+            self._florence_config_obj = Florence2Config(
+                vision_config=vision_config, text_config=text_config, **kwargs
+            )
         return self._florence_config_obj
 
     def validate_features(self) -> None:
