@@ -51,6 +51,7 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 ```
 
 """
+
 import math
 from collections import deque
 from typing import TypedDict, Unpack

@@ -56,6 +56,7 @@ logger = logging.getLogger("online_task_switching_smolvla")
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _resolve_device(requested: str) -> str:
     """Return *requested* device, but fall back to CPU if CUDA is unavailable."""
     if requested.startswith("cuda") and not torch.cuda.is_available():
@@ -129,6 +130,7 @@ def _load_processors(checkpoint_path: str, device: str):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -168,7 +170,7 @@ def main() -> None:
     # Build dataset_features + ordered_action_keys expected by make_robot_action
     # The single output key is "action" with shape [31].  We give each dimension
     # a synthetic name "joint_0 … joint_N" so make_robot_action can build the dict.
-    action_key = next(iter(output_features))           # "action"
+    action_key = next(iter(output_features))  # "action"
     action_dim = output_features[action_key]["shape"][0]
     joint_names = [f"joint_{i}" for i in range(action_dim)]
     dataset_features = {
@@ -255,7 +257,10 @@ def main() -> None:
     logger.info("  Initial task : '%s'", args.task)
     logger.info("  FPS          : %.1f", args.fps)
     logger.info("  Device       : %s", device)
-    logger.info("  Flush on switch : %s", "yes (immediate VLM re-run)" if args.flush_on_switch else "no (drain current chunk first)")
+    logger.info(
+        "  Flush on switch : %s",
+        "yes (immediate VLM re-run)" if args.flush_on_switch else "no (drain current chunk first)",
+    )
     logger.info(
         "  Duration     : %s",
         f"{args.duration}s" if args.duration > 0 else "infinite (Ctrl-C to stop)",

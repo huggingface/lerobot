@@ -20,8 +20,6 @@ from contextlib import contextmanager
 from threading import Event
 from unittest.mock import patch
 
-import pytest
-
 from lerobot.rollout.prompt_broker import PromptBroker, StdinPromptListener
 
 
@@ -112,10 +110,9 @@ class TestPromptBroker:
                 if not isinstance(task, str):
                     errors.append(f"Expected str, got {type(task)}")
 
-        threads = (
-            [threading.Thread(target=writer) for _ in range(2)]
-            + [threading.Thread(target=reader) for _ in range(4)]
-        )
+        threads = [threading.Thread(target=writer) for _ in range(2)] + [
+            threading.Thread(target=reader) for _ in range(4)
+        ]
         for t in threads:
             t.start()
         time.sleep(0.1)
@@ -137,12 +134,14 @@ class TestStdinPromptListener:
         broker = PromptBroker(initial_task="initial")
         shutdown = Event()
 
-        with _pipe_stdin("fold the towel\n") as fake_stdin:
-            with patch("lerobot.rollout.prompt_broker.sys.stdin", fake_stdin):
-                listener = StdinPromptListener()
-                listener.start(broker, shutdown)
-                # Give the daemon thread time to process the line then hit EOF
-                time.sleep(0.3)
+        with (
+            _pipe_stdin("fold the towel\n") as fake_stdin,
+            patch("lerobot.rollout.prompt_broker.sys.stdin", fake_stdin),
+        ):
+            listener = StdinPromptListener()
+            listener.start(broker, shutdown)
+            # Give the daemon thread time to process the line then hit EOF
+            time.sleep(0.3)
 
         assert broker.get_task() == "fold the towel"
 
@@ -151,11 +150,13 @@ class TestStdinPromptListener:
         broker = PromptBroker(initial_task="original")
         shutdown = Event()
 
-        with _pipe_stdin("\n   \n\n") as fake_stdin:
-            with patch("lerobot.rollout.prompt_broker.sys.stdin", fake_stdin):
-                listener = StdinPromptListener()
-                listener.start(broker, shutdown)
-                time.sleep(0.3)
+        with (
+            _pipe_stdin("\n   \n\n") as fake_stdin,
+            patch("lerobot.rollout.prompt_broker.sys.stdin", fake_stdin),
+        ):
+            listener = StdinPromptListener()
+            listener.start(broker, shutdown)
+            time.sleep(0.3)
 
         assert broker.get_task() == "original"
 
@@ -164,11 +165,13 @@ class TestStdinPromptListener:
         broker = PromptBroker(initial_task="task0")
         shutdown = Event()
 
-        with _pipe_stdin("task1\ntask2\ntask3\n") as fake_stdin:
-            with patch("lerobot.rollout.prompt_broker.sys.stdin", fake_stdin):
-                listener = StdinPromptListener()
-                listener.start(broker, shutdown)
-                time.sleep(0.3)
+        with (
+            _pipe_stdin("task1\ntask2\ntask3\n") as fake_stdin,
+            patch("lerobot.rollout.prompt_broker.sys.stdin", fake_stdin),
+        ):
+            listener = StdinPromptListener()
+            listener.start(broker, shutdown)
+            time.sleep(0.3)
 
         assert broker.get_task() == "task3"
 
@@ -203,10 +206,12 @@ class TestStdinPromptListener:
         broker = PromptBroker(initial_task="initial")
         shutdown = Event()
 
-        with _pipe_stdin("  grasp the block  \n") as fake_stdin:
-            with patch("lerobot.rollout.prompt_broker.sys.stdin", fake_stdin):
-                listener = StdinPromptListener()
-                listener.start(broker, shutdown)
-                time.sleep(0.3)
+        with (
+            _pipe_stdin("  grasp the block  \n") as fake_stdin,
+            patch("lerobot.rollout.prompt_broker.sys.stdin", fake_stdin),
+        ):
+            listener = StdinPromptListener()
+            listener.start(broker, shutdown)
+            time.sleep(0.3)
 
         assert broker.get_task() == "grasp the block"

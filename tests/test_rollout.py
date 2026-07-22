@@ -383,8 +383,10 @@ def test_sync_engine_uses_static_task_when_no_broker():
     )
     engine._policy.select_action.return_value = torch.zeros(1, 1)
 
-    with patch("lerobot.rollout.inference.sync.prepare_observation_for_inference", fake_prepare), \
-         patch("lerobot.rollout.inference.sync.make_robot_action", return_value={"action": 0.0}):
+    with (
+        patch("lerobot.rollout.inference.sync.prepare_observation_for_inference", fake_prepare),
+        patch("lerobot.rollout.inference.sync.make_robot_action", return_value={"action": 0.0}),
+    ):
         engine.get_action({"dummy": torch.zeros(1)})
         engine.get_action({"dummy": torch.zeros(1)})
 
@@ -422,12 +424,14 @@ def test_sync_engine_reflects_broker_task_change():
     )
     engine._policy.select_action.return_value = torch.zeros(1, 1)
 
-    with patch("lerobot.rollout.inference.sync.prepare_observation_for_inference", fake_prepare), \
-         patch("lerobot.rollout.inference.sync.make_robot_action", return_value={"action": 0.0}):
-        engine.get_action({"dummy": torch.zeros(1)})   # sees "task A"
+    with (
+        patch("lerobot.rollout.inference.sync.prepare_observation_for_inference", fake_prepare),
+        patch("lerobot.rollout.inference.sync.make_robot_action", return_value={"action": 0.0}),
+    ):
+        engine.get_action({"dummy": torch.zeros(1)})  # sees "task A"
         broker.set_task("task B")
-        engine.get_action({"dummy": torch.zeros(1)})   # sees "task B" immediately
-        engine.get_action({"dummy": torch.zeros(1)})   # still "task B"
+        engine.get_action({"dummy": torch.zeros(1)})  # sees "task B" immediately
+        engine.get_action({"dummy": torch.zeros(1)})  # still "task B"
 
     assert captured == ["task A", "task B", "task B"]
 
@@ -469,8 +473,10 @@ def test_broker_task_change_is_thread_safe_under_concurrent_inference():
     stop = threading.Event()
 
     def inference_loop():
-        with patch("lerobot.rollout.inference.sync.prepare_observation_for_inference", fake_prepare), \
-             patch("lerobot.rollout.inference.sync.make_robot_action", return_value={"action": 0.0}):
+        with (
+            patch("lerobot.rollout.inference.sync.prepare_observation_for_inference", fake_prepare),
+            patch("lerobot.rollout.inference.sync.make_robot_action", return_value={"action": 0.0}),
+        ):
             while not stop.is_set():
                 engine.get_action({"dummy": torch.zeros(1)})
                 time.sleep(0.005)

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 import time
 from threading import Event
 from unittest.mock import MagicMock
@@ -39,12 +38,13 @@ logger = logging.getLogger("online_task_switching_demo")
 # Fake policy: returns random actions, prints the task it receives
 # ---------------------------------------------------------------------------
 
+
 class _EchoPolicy:
     """Dummy policy that logs the task it receives and returns a random action."""
 
     type = "echo"
 
-    class config:
+    class config:  # noqa: N801
         use_amp = False
         action_feature_names = ["motor_1.pos", "motor_2.pos", "motor_3.pos"]
 
@@ -55,15 +55,18 @@ class _EchoPolicy:
         task = observation.get("task", ["<no task>"])
         task_str = task[0] if isinstance(task, list) else task
         logger.info("  [policy] received task: '%s'  →  sending random action", task_str)
-        return torch.rand(1, 3) * 2 - 1   # shape [1, 3], range [-1, 1]
+        return torch.rand(1, 3) * 2 - 1  # shape [1, 3], range [-1, 1]
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--task", default="pick up cube", help="Initial task string")
     parser.add_argument("--fps", type=float, default=3.0, help="Control loop frequency (Hz)")
     parser.add_argument("--duration", type=float, default=0.0, help="Run for N seconds (0 = infinite)")
@@ -85,9 +88,7 @@ def main():
 
     # dataset_features and ordered_action_keys must describe the action space
     action_keys = ["motor_1.pos", "motor_2.pos", "motor_3.pos"]
-    dataset_features = {
-        k: {"dtype": "float32", "shape": (1,), "names": None} for k in action_keys
-    }
+    dataset_features = {k: {"dtype": "float32", "shape": (1,), "names": None} for k in action_keys}
 
     fake_policy = _EchoPolicy()
     fake_robot_wrapper = MagicMock()
@@ -96,7 +97,7 @@ def main():
     engine = create_inference_engine(
         SyncInferenceConfig(),
         policy=fake_policy,
-        preprocessor=MagicMock(side_effect=lambda x: x),   # identity
+        preprocessor=MagicMock(side_effect=lambda x: x),  # identity
         postprocessor=MagicMock(side_effect=lambda x: x),  # identity
         robot_wrapper=fake_robot_wrapper,
         hw_features={},
@@ -110,13 +111,14 @@ def main():
 
     # Patch make_robot_action so we don't need real dataset feature parsing
     import lerobot.rollout.inference.sync as _sync_mod
+
     _orig_make_robot_action = _sync_mod.make_robot_action
 
     def _fake_make_robot_action(tensor, features):
         vals = tensor.tolist()
         if not isinstance(vals, list):
             vals = [vals]
-        return {k: v for k, v in zip(action_keys, vals)}
+        return dict(zip(action_keys, vals, strict=False))
 
     _sync_mod.make_robot_action = _fake_make_robot_action
 
@@ -136,7 +138,9 @@ def main():
     logger.info("Online task-switching demo started")
     logger.info("  Initial task : '%s'", args.task)
     logger.info("  FPS          : %.0f", args.fps)
-    logger.info("  Duration     : %s", f"{args.duration}s" if args.duration > 0 else "infinite (Ctrl-C to stop)")
+    logger.info(
+        "  Duration     : %s", f"{args.duration}s" if args.duration > 0 else "infinite (Ctrl-C to stop)"
+    )
     logger.info("=" * 60)
     logger.info("Type a new task below and press Enter to switch:")
 
@@ -154,7 +158,7 @@ def main():
 
             # Fake observation
             obs = {"motor_1.pos": 0.0, "motor_2.pos": 0.0, "motor_3.pos": 0.0}
-            action = engine.get_action(obs)
+            engine.get_action(obs)
             tick += 1
 
             dt = time.perf_counter() - loop_start

@@ -355,7 +355,11 @@ class DAggerStrategy(RolloutStrategy):
             try:
                 while not events.stop_recording.is_set() and not ctx.runtime.shutdown_event.is_set():
                     loop_start = time.perf_counter()
-                    task_str = ctx.runtime.prompt_broker.get_task() if ctx.runtime.prompt_broker else (cfg.dataset.single_task if cfg.dataset else cfg.task)
+                    task_str = (
+                        ctx.runtime.prompt_broker.get_task()
+                        if ctx.runtime.prompt_broker
+                        else (cfg.dataset.single_task if cfg.dataset else cfg.task)
+                    )
 
                     if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
                         logger.info("Duration limit reached (%.0fs)", cfg.duration)
@@ -516,7 +520,11 @@ class DAggerStrategy(RolloutStrategy):
                     and not ctx.runtime.shutdown_event.is_set()
                 ):
                     loop_start = time.perf_counter()
-                    task_str = ctx.runtime.prompt_broker.get_task() if ctx.runtime.prompt_broker else (cfg.dataset.single_task if cfg.dataset else cfg.task)
+                    task_str = (
+                        ctx.runtime.prompt_broker.get_task()
+                        if ctx.runtime.prompt_broker
+                        else (cfg.dataset.single_task if cfg.dataset else cfg.task)
+                    )
 
                     if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
                         logger.info("Duration limit reached (%.0fs)", cfg.duration)

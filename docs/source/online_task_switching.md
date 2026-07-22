@@ -1,6 +1,6 @@
 # Online Task Switching
 
-`lerobot-rollout` supports updating the language task prompt **while the robot is running** — no restart required.  
+`lerobot-rollout` supports updating the language task prompt **while the robot is running** — no restart required.
 This is the foundation for voice-commanded robots: a speech-to-text (STT) process can pipe new tasks into the rollout script in real time.
 
 ---
@@ -53,11 +53,11 @@ lerobot-rollout \
 
 ## Configuration Flags
 
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--online_task_switching` | `bool` | `false` | Enable runtime task switching |
-| `--online_task_switching_source` | `str` | `"stdin"` | Where new prompts come from. Currently: `"stdin"` |
-| `--online_task_switching_flush` | `bool` | `true` | Flush the policy action queue immediately on switch (set to `false` to let the current chunk drain) |
+| Flag                             | Type   | Default   | Description                                                                                         |
+| -------------------------------- | ------ | --------- | --------------------------------------------------------------------------------------------------- |
+| `--online_task_switching`        | `bool` | `false`   | Enable runtime task switching                                                                       |
+| `--online_task_switching_source` | `str`  | `"stdin"` | Where new prompts come from. Currently: `"stdin"`                                                   |
+| `--online_task_switching_flush`  | `bool` | `true`    | Flush the policy action queue immediately on switch (set to `false` to let the current chunk drain) |
 
 All three flags live in `RolloutConfig` ([src/lerobot/rollout/configs.py](../src/lerobot/rollout/configs.py)).
 
@@ -119,7 +119,7 @@ This is how the **action-queue flush** is wired (see below).
 
 ### PromptListenerBase / StdinPromptListener
 
-Listeners run in a **daemon thread** and call `broker.set_task()` when a new prompt arrives.  
+Listeners run in a **daemon thread** and call `broker.set_task()` when a new prompt arrives.
 They implement a single abstract method `_listen(broker, shutdown_event)`.
 
 `StdinPromptListener` uses `select.select` with a 0.5 s timeout so the thread exits cleanly when `shutdown_event` is set:
@@ -146,7 +146,7 @@ The broker is then stored on `RuntimeContext.prompt_broker` and passed to the in
 
 ### Inference Engines
 
-Both `SyncInferenceEngine` and `RTCInferenceEngine` accept an optional `prompt_broker`.  
+Both `SyncInferenceEngine` and `RTCInferenceEngine` accept an optional `prompt_broker`.
 When set, they call `broker.get_task()` **on every inference call** instead of using the static `self._task` captured at startup:
 
 ```python
@@ -184,11 +184,12 @@ This means a single episode can contain frames with **different task labels** if
 
 ### The chunking problem
 
-Action-chunking policies (SmolVLA, Pi0, Diffusion Policy, ACT, etc.) do not call the neural network on every control tick. Instead they run **one expensive forward pass** to generate a *chunk* of N actions (e.g. `chunk_size=50` for SmolVLA), push them into an internal queue, and then pop one per tick without touching the model again.
+Action-chunking policies (SmolVLA, Pi0, Diffusion Policy, ACT, etc.) do not call the neural network on every control tick. Instead they run **one expensive forward pass** to generate a _chunk_ of N actions (e.g. `chunk_size=50` for SmolVLA), push them into an internal queue, and then pop one per tick without touching the model again.
 
 This means that after a task switch:
+
 - The broker and inference engine immediately see the new task string.
-- But the policy still pops precomputed actions from the *old* task until the queue drains.
+- But the policy still pops precomputed actions from the _old_ task until the queue drains.
 - For SmolVLA with `chunk_size=50` at 5 Hz that is up to **10 seconds** of stale behaviour.
 
 ### `PreTrainedPolicy.flush_action_queue()`
@@ -233,10 +234,10 @@ Now whenever the operator types a new task the listener thread records a flush r
 
 ### Flush vs. drain — choosing the right behaviour
 
-| Mode | Effect | When to use |
-|------|--------|-------------|
-| **Flush on switch** (default) | Queue cleared immediately; VLM re-runs on next tick (~1–2 s GPU time) | Maximum responsiveness; voice commands |
-| **Drain first** | Current chunk runs to completion; new task takes effect naturally | Smooth motion continuity; avoid mid-trajectory interruption |
+| Mode                          | Effect                                                                | When to use                                                 |
+| ----------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------- |
+| **Flush on switch** (default) | Queue cleared immediately; VLM re-runs on next tick (~1–2 s GPU time) | Maximum responsiveness; voice commands                      |
+| **Drain first**               | Current chunk runs to completion; new task takes effect naturally     | Smooth motion continuity; avoid mid-trajectory interruption |
 
 In the SmolVLA demo this is controlled by `--flush_on_switch` / `--no-flush_on_switch`.
 
@@ -272,7 +273,7 @@ whisper_stt_tool --model=base | \
         ...
 ```
 
-The STT process owns `stdout`; `lerobot-rollout` reads it on `stdin`.  
+The STT process owns `stdout`; `lerobot-rollout` reads it on `stdin`.
 Any tool that writes one task string per line works — Whisper, Vosk, Google STT, etc.
 
 ### Method 3 — File + `tail -f`
@@ -296,7 +297,7 @@ echo "drop it in the bin"    >> /tmp/robot_task
 echo "initial task"          >> /tmp/robot_task
 ```
 
-> **Note:** use `>>` (append) in Terminal 2, not `>`.  A single `>` would truncate the file and `tail -f` would lose its position.
+> **Note:** use `>>` (append) in Terminal 2, not `>`. A single `>` would truncate the file and `tail -f` would lose its position.
 
 ### Method 4 — Script / programmatic (future: HTTP)
 
@@ -343,14 +344,14 @@ The demo loop logs the active task per tick, so you can verify exactly when the 
 
 ### Key arguments
 
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--checkpoint` | *(required)* | Path to `pretrained_model/` directory |
-| `--task` | `"pick up the bottle"` | Initial task string |
-| `--fps` | `1.0` | Control loop frequency (Hz) |
-| `--device` | `cuda` | `cuda` or `cpu` |
-| `--flush_on_switch` | `true` | Flush action queue on task change (use `--no-flush_on_switch` to drain first) |
-| `--duration` | `0` | Run for N seconds; 0 = infinite |
+| Argument            | Default                | Description                                                                   |
+| ------------------- | ---------------------- | ----------------------------------------------------------------------------- |
+| `--checkpoint`      | _(required)_           | Path to `pretrained_model/` directory                                         |
+| `--task`            | `"pick up the bottle"` | Initial task string                                                           |
+| `--fps`             | `1.0`                  | Control loop frequency (Hz)                                                   |
+| `--device`          | `cuda`                 | `cuda` or `cpu`                                                               |
+| `--flush_on_switch` | `true`                 | Flush action queue on task change (use `--no-flush_on_switch` to drain first) |
+| `--duration`        | `0`                    | Run for N seconds; 0 = infinite                                               |
 
 ### What happens inside
 
@@ -396,29 +397,28 @@ No changes needed in the inference engines or strategies — they always read fr
 
 ## Files Changed
 
-| File | Change |
-|------|--------|
-| [`src/lerobot/rollout/prompt_broker.py`](../src/lerobot/rollout/prompt_broker.py) | **New** — `PromptBroker` (with `register_on_change`), `PromptListenerBase`, `StdinPromptListener` |
-| [`src/lerobot/rollout/configs.py`](../src/lerobot/rollout/configs.py) | Added `online_task_switching`, `online_task_switching_source`, and `online_task_switching_flush` to `RolloutConfig` |
-| [`src/lerobot/rollout/context.py`](../src/lerobot/rollout/context.py) | `RuntimeContext.prompt_broker` field; broker creation + listener start in `build_rollout_context()` |
-| [`src/lerobot/rollout/inference/sync.py`](../src/lerobot/rollout/inference/sync.py) | `prompt_broker` param; per-call `broker.get_task()` in `get_action()` |
-| [`src/lerobot/rollout/inference/rtc.py`](../src/lerobot/rollout/inference/rtc.py) | `prompt_broker` param; per-call `broker.get_task()` in `_rtc_loop()` |
-| [`src/lerobot/rollout/inference/factory.py`](../src/lerobot/rollout/inference/factory.py) | `prompt_broker` kwarg forwarded to both engine constructors |
-| [`src/lerobot/rollout/strategies/sentry.py`](../src/lerobot/rollout/strategies/sentry.py) | Per-frame broker read instead of pre-loop capture |
-| [`src/lerobot/rollout/strategies/highlight.py`](../src/lerobot/rollout/strategies/highlight.py) | Per-frame broker read instead of pre-loop capture |
-| [`src/lerobot/rollout/strategies/dagger.py`](../src/lerobot/rollout/strategies/dagger.py) | Per-frame broker read in both `_run_continuous_recording` and `_run_corrections_only` |
-| [`src/lerobot/rollout/__init__.py`](../src/lerobot/rollout/__init__.py) | Re-exports `PromptBroker`, `StdinPromptListener` |
-| [`src/lerobot/policies/pretrained.py`](../src/lerobot/policies/pretrained.py) | Deferred `flush_action_queue()` + `_apply_pending_flush()` helper added to `PreTrainedPolicy` |
-| `src/lerobot/policies/*/modeling_*.py` | Queue-backed policies call `_apply_pending_flush()` at the start of `select_action()` |
-| [`tests/test_prompt_broker.py`](../tests/test_prompt_broker.py) | **New** — 11 unit tests (6 broker, 5 listener) |
-| [`tests/test_rollout.py`](../tests/test_rollout.py) | 3 integration tests for broker + `SyncInferenceEngine` |
-| [`examples/online_task_switching/demo.py`](../examples/online_task_switching/demo.py) | **New** — mock-robot demo, no GPU needed |
-| [`examples/online_task_switching/smolvla_demo.py`](../examples/online_task_switching/smolvla_demo.py) | **New** — real SmolVLA checkpoint demo with synthetic frames; `--flush_on_switch` flag |
+| File                                                                                                  | Change                                                                                                              |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| [`src/lerobot/rollout/prompt_broker.py`](../src/lerobot/rollout/prompt_broker.py)                     | **New** — `PromptBroker` (with `register_on_change`), `PromptListenerBase`, `StdinPromptListener`                   |
+| [`src/lerobot/rollout/configs.py`](../src/lerobot/rollout/configs.py)                                 | Added `online_task_switching`, `online_task_switching_source`, and `online_task_switching_flush` to `RolloutConfig` |
+| [`src/lerobot/rollout/context.py`](../src/lerobot/rollout/context.py)                                 | `RuntimeContext.prompt_broker` field; broker creation + listener start in `build_rollout_context()`                 |
+| [`src/lerobot/rollout/inference/sync.py`](../src/lerobot/rollout/inference/sync.py)                   | `prompt_broker` param; per-call `broker.get_task()` in `get_action()`                                               |
+| [`src/lerobot/rollout/inference/rtc.py`](../src/lerobot/rollout/inference/rtc.py)                     | `prompt_broker` param; per-call `broker.get_task()` in `_rtc_loop()`                                                |
+| [`src/lerobot/rollout/inference/factory.py`](../src/lerobot/rollout/inference/factory.py)             | `prompt_broker` kwarg forwarded to both engine constructors                                                         |
+| [`src/lerobot/rollout/strategies/sentry.py`](../src/lerobot/rollout/strategies/sentry.py)             | Per-frame broker read instead of pre-loop capture                                                                   |
+| [`src/lerobot/rollout/strategies/highlight.py`](../src/lerobot/rollout/strategies/highlight.py)       | Per-frame broker read instead of pre-loop capture                                                                   |
+| [`src/lerobot/rollout/strategies/dagger.py`](../src/lerobot/rollout/strategies/dagger.py)             | Per-frame broker read in both `_run_continuous_recording` and `_run_corrections_only`                               |
+| [`src/lerobot/rollout/__init__.py`](../src/lerobot/rollout/__init__.py)                               | Re-exports `PromptBroker`, `StdinPromptListener`                                                                    |
+| [`src/lerobot/policies/pretrained.py`](../src/lerobot/policies/pretrained.py)                         | Deferred `flush_action_queue()` + `_apply_pending_flush()` helper added to `PreTrainedPolicy`                       |
+| `src/lerobot/policies/*/modeling_*.py`                                                                | Queue-backed policies call `_apply_pending_flush()` at the start of `select_action()`                               |
+| [`tests/test_prompt_broker.py`](../tests/test_prompt_broker.py)                                       | **New** — 11 unit tests (6 broker, 5 listener)                                                                      |
+| [`tests/test_rollout.py`](../tests/test_rollout.py)                                                   | 3 integration tests for broker + `SyncInferenceEngine`                                                              |
+| [`examples/online_task_switching/demo.py`](../examples/online_task_switching/demo.py)                 | **New** — mock-robot demo, no GPU needed                                                                            |
+| [`examples/online_task_switching/smolvla_demo.py`](../examples/online_task_switching/smolvla_demo.py) | **New** — real SmolVLA checkpoint demo with synthetic frames; `--flush_on_switch` flag                              |
 
 ---
 
 ## Backward Compatibility
 
-When `--online_task_switching=false` (the default), `prompt_broker` is `None` everywhere and all code falls back to the original static `self._task` / `cfg.task` path.  
+When `--online_task_switching=false` (the default), `prompt_broker` is `None` everywhere and all code falls back to the original static `self._task` / `cfg.task` path.
 **No behaviour change for existing users.**
-

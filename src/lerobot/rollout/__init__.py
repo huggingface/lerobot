@@ -38,7 +38,6 @@ from .context import (
     RuntimeContext,
     build_rollout_context,
 )
-from .prompt_broker import PromptBroker, StdinPromptListener
 from .inference import (
     InferenceEngine,
     InferenceEngineConfig,
@@ -48,6 +47,7 @@ from .inference import (
     SyncInferenceEngine,
     create_inference_engine,
 )
+from .prompt_broker import PromptBroker, StdinPromptListener
 from .strategies import (
     BaseStrategy,
     DAggerStrategy,

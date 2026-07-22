@@ -423,7 +423,8 @@ def build_rollout_context(
             StdinPromptListener().start(prompt_broker, shutdown_event)
         else:
             logger.warning(
-                "Unknown online_task_switching_source '%s'; hot-switching disabled", cfg.online_task_switching_source
+                "Unknown online_task_switching_source '%s'; hot-switching disabled",
+                cfg.online_task_switching_source,
             )
             prompt_broker = None
         if prompt_broker is not None:

@@ -123,8 +123,7 @@ class StdinPromptListener(PromptListenerBase):
 
     def _listen(self, broker: PromptBroker, shutdown_event: Event) -> None:
         logger.info(
-            "StdinPromptListener active — type a new task and press Enter to switch "
-            "(current: '%s')",
+            "StdinPromptListener active — type a new task and press Enter to switch (current: '%s')",
             broker.get_task(),
         )
         while not shutdown_event.is_set():
