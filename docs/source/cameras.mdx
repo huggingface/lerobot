@@ -40,6 +40,17 @@ Camera #0:
 (more cameras ...)
 ```
 
+To fine-tune a camera's physical placement (for example, rotating a wrist camera), add the `--live` flag to open a real-time tiled preview of every detected camera in a single window. This is handy when the default still-capture window does not give you enough time to adjust the hardware:
+
+```bash
+lerobot-find-cameras opencv --live
+```
+
+While the preview window is focused, press `q` or `ESC` to quit and `s` to save a snapshot of all current frames to the output directory.
+
+> [!WARNING]
+> `--live` requires an OpenCV build with GUI support. LeRobot ships `opencv-python-headless` by default, which has no display backend. If you see an error about GUI support, install the GUI build: `pip uninstall -y opencv-python-headless && pip install opencv-python`.
+
 > [!WARNING]
 > When using Intel RealSense cameras in `macOS`, you could get this [error](https://github.com/IntelRealSense/librealsense/issues/12307): `Error finding RealSense cameras: failed to set power state`, this can be solved by running the same command with `sudo` permissions. Note that using RealSense cameras in `macOS` is unstable.
 
