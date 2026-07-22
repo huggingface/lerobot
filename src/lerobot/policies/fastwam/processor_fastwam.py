@@ -22,20 +22,11 @@ import torch
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
     ActionProcessorStep,
-    AddBatchDimensionProcessorStep,
-    DeviceProcessorStep,
-    NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStepRegistry,
-    RenameObservationsProcessorStep,
-    UnnormalizerProcessorStep,
-    policy_action_to_transition,
-    transition_to_policy_action,
-)
-from lerobot.utils.constants import (
-    POLICY_POSTPROCESSOR_DEFAULT_NAME,
-    POLICY_PREPROCESSOR_DEFAULT_NAME,
+    make_default_policy_processor_steps,
+    make_policy_processor_pipelines,
 )
 
 from .configuration_fastwam import FastWAMConfig
@@ -105,38 +96,20 @@ def make_fastwam_pre_post_processors(
     # anyway) and unsafe across fine-tuning: its `resize_size` would be inherited from the base
     # checkpoint's camera geometry, not this dataset's, making the concatenation N_cameras x too wide.
 
+    steps = make_default_policy_processor_steps(config, normalization_stats, normalizer_device=config.device)
+
     input_steps = [
-        RenameObservationsProcessorStep(rename_map={}),
-        AddBatchDimensionProcessorStep(),
-        DeviceProcessorStep(device=config.device),
-        NormalizerProcessorStep(
-            features={**config.input_features, **config.output_features},
-            norm_map=config.normalization_mapping,
-            stats=normalization_stats,
-            device=config.device,
-        ),
+        steps.rename_observations,
+        steps.add_batch_dim,
+        steps.to_device,
+        steps.normalize,
     ]
     output_steps = [
-        UnnormalizerProcessorStep(
-            features=config.output_features,
-            norm_map=config.normalization_mapping,
-            stats=normalization_stats,
-        ),
+        steps.unnormalize,
     ]
     if config.toggle_action_dimensions:
         output_steps.append(
             FastWAMActionToggleProcessorStep(toggle_dimensions=config.toggle_action_dimensions)
         )
-    output_steps.append(DeviceProcessorStep(device="cpu"))
-    return (
-        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
-            steps=input_steps,
-            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-        ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
-            steps=output_steps,
-            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-        ),
-    )
+    output_steps.append(steps.to_cpu)
+    return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
