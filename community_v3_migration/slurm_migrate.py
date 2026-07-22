@@ -73,6 +73,7 @@ class MigrateShard(PipelineStep):
         import logging
         import shutil
         import sys
+        import time
         import traceback
         from pathlib import Path
 
@@ -101,11 +102,22 @@ class MigrateShard(PipelineStep):
         manifest = Path(self.manifest_dir) / f"manifest_{rank:05d}.csv"
 
         api = HfApi()
-        dst_files = (
-            set()
-            if (self.only_classify or self.no_push)
-            else set(api.list_repo_files(self.dst_repo, repo_type="dataset"))
-        )
+        # Resume prefetch. A single transient Hub read timeout here must NOT kill the whole
+        # rank (and skip its entire dataset slice), so retry with backoff and, as a last
+        # resort, fall back to an empty set (already-present datasets are re-checked per item
+        # and, for --source molmoact, were already filtered out on the submit node).
+        dst_files: set = set()
+        if not self.only_classify and not self.no_push:
+            for attempt in range(5):
+                try:
+                    dst_files = set(api.list_repo_files(self.dst_repo, repo_type="dataset"))
+                    break
+                except Exception as e:
+                    if attempt == 4:
+                        logging.warning(f"Rank {rank}: could not list {self.dst_repo} after 5 "
+                                        f"tries ({e}); proceeding without a resume set.")
+                    else:
+                        time.sleep(5 * (attempt + 1))
 
         fieldnames = sorted(
             {"root", "robot_type", "is_so", "encoding", "action_dim", "maxabs", "ambiguous", "action"}
