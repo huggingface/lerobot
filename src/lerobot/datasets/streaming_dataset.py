@@ -386,9 +386,18 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         buffer_indices_generator = self._iter_random_indices(rng, self.buffer_size)
 
+        # HF datasets splits each sub-shard's files across DataLoader workers (one worker reads
+        # every num_workers-th file), so each sub-shard needs >= num_workers files or some
+        # workers receive nothing.
+        worker_info = torch.utils.data.get_worker_info()
+        num_workers = worker_info.num_workers if worker_info is not None else 1
+        num_shards = self.num_shards
+        if num_workers > 1:
+            num_shards = max(1, min(num_shards, self.hf_dataset.num_shards // num_workers))
+
         idx_to_backtrack_dataset = {
-            idx: self._make_backtrackable_dataset(safe_shard(self.hf_dataset, idx, self.num_shards))
-            for idx in range(self.num_shards)
+            idx: self._make_backtrackable_dataset(safe_shard(self.hf_dataset, idx, num_shards))
+            for idx in range(num_shards)
         }
 
         # This buffer is populated while iterating on the dataset's shards
