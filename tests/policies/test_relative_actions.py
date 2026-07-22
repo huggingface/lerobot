@@ -143,6 +143,23 @@ def test_index_map_none_matches_prefix_behavior():
     torch.testing.assert_close(prefix, explicit)
 
 
+def test_index_map_with_short_mask():
+    """A mask shorter than action_dim combined with a full-length map uses only the
+    first len(mask) mapped columns (regression for base * mask broadcast mismatch)."""
+    state = torch.tensor([[10.0, 0.1, 20.0, 0.2, 30.0, 0.3, 40.0, 0.4, 50.0, 0.5, 60.0, 0.6, 99.0]])
+    action = torch.tensor([[11.0, 22.0, 33.0, 44.0, 55.0, 66.0, 7.0]])
+    idx_map = [0, 2, 4, 6, 8, 10, 12]  # one entry per action dim
+    mask = [True, True, True]  # shorter than action_dim (7)
+
+    rel = to_relative_actions(action, state, mask, idx_map)
+    # Only the first 3 dims are converted (base = positions 10, 20, 30); the rest
+    # are untouched.
+    torch.testing.assert_close(rel, torch.tensor([[1.0, 2.0, 3.0, 44.0, 55.0, 66.0, 7.0]]))
+    # Round-trip is exact for the same short-mask + full-map combination.
+    back = to_absolute_actions(rel, state, mask, idx_map)
+    torch.testing.assert_close(back, action)
+
+
 def test_processor_step_uses_index_map():
     state = torch.tensor([[10.0, 0.1, 20.0, 0.2, 30.0, 0.3, 40.0, 0.4, 50.0, 0.5, 60.0, 0.6, 99.0]])
     action = torch.tensor([[11.0, 22.0, 33.0, 44.0, 55.0, 66.0, 7.0]])

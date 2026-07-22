@@ -52,12 +52,14 @@ def _state_base_offset(
     end-effector pose, contact flags, etc.
 
     ``state_index_map`` makes the alignment explicit: ``state_index_map[i]`` is
-    the state column that action dim ``i`` is relative to. Its length must equal
-    ``action_dim`` (``mask_t.shape[0]``).
+    the state column that action dim ``i`` is relative to. It provides one entry
+    per action dim; only the first ``mask_t.shape[0]`` entries are used, matching
+    the dims that ``mask`` actually converts (``mask`` may be shorter than
+    ``action_dim``).
     """
     dims = mask_t.shape[0]
     if state_index_map is not None:
-        idx = torch.as_tensor(list(state_index_map), dtype=torch.long, device=state.device)
+        idx = torch.as_tensor(list(state_index_map)[:dims], dtype=torch.long, device=state.device)
         base = state.index_select(-1, idx)
     else:
         base = state[..., :dims]
