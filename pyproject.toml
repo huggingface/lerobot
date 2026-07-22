@@ -357,6 +357,8 @@ lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 lerobot-annotate="lerobot.scripts.lerobot_annotate:main"
 lerobot-rollout="lerobot.scripts.lerobot_rollout:main"
+lerobot-check-calibration="lerobot.scripts.lerobot_check_calibration:main"
+lerobot-dataset-quality="lerobot.scripts.lerobot_dataset_quality:main"
 
 # ---------------- Tool Configurations ----------------
 
