@@ -105,6 +105,73 @@ def test_exclude_joints_supports_partial_name_matching():
     assert step._build_mask(len(names)) == [True, False, True, False]
 
 
+# Explicit state->action index map (non-prefix state layouts)
+
+
+def test_index_map_selects_correct_state_base():
+    """Interleaved [pos, vel] state: base must pull position channels, not state[:action_dim]."""
+    # state: [j0p, j0v, j1p, j1v, ..., j5p, j5v, grip]  (13)
+    state = torch.tensor([[10.0, 0.1, 20.0, 0.2, 30.0, 0.3, 40.0, 0.4, 50.0, 0.5, 60.0, 0.6, 99.0]])
+    # action: [j0p..j5p, grip]  (7), absolute joint targets
+    action = torch.tensor([[11.0, 22.0, 33.0, 44.0, 55.0, 66.0, 7.0]])
+    mask = [True] * 6 + [False]  # gripper kept absolute
+    idx_map = [0, 2, 4, 6, 8, 10, 12]  # position channels only
+
+    rel = to_relative_actions(action, state, mask, idx_map)
+    # Clean per-joint offsets; gripper (masked out) stays absolute.
+    torch.testing.assert_close(rel, torch.tensor([[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]]))
+
+
+def test_index_map_roundtrip_is_exact():
+    state = torch.tensor([[10.0, 0.1, 20.0, 0.2, 30.0, 0.3, 40.0, 0.4, 50.0, 0.5, 60.0, 0.6, 99.0]])
+    action = torch.tensor([[11.0, 22.0, 33.0, 44.0, 55.0, 66.0, 7.0]])
+    mask = [True] * 6 + [False]
+    idx_map = [0, 2, 4, 6, 8, 10, 12]
+
+    rel = to_relative_actions(action, state, mask, idx_map)
+    back = to_absolute_actions(rel, state, mask, idx_map)
+    torch.testing.assert_close(back, action)
+
+
+def test_index_map_none_matches_prefix_behavior():
+    """With no map, behavior is identical to the legacy state[:action_dim] prefix path."""
+    actions = torch.randn(4, CHUNK_SIZE, 7)
+    state = torch.randn(4, 13)
+    mask = [True] * 7
+    prefix = to_relative_actions(actions, state, mask)
+    explicit = to_relative_actions(actions, state, mask, list(range(7)))
+    torch.testing.assert_close(prefix, explicit)
+
+
+def test_processor_step_uses_index_map():
+    state = torch.tensor([[10.0, 0.1, 20.0, 0.2, 30.0, 0.3, 40.0, 0.4, 50.0, 0.5, 60.0, 0.6, 99.0]])
+    action = torch.tensor([[11.0, 22.0, 33.0, 44.0, 55.0, 66.0, 7.0]])
+    idx_map = [0, 2, 4, 6, 8, 10, 12]
+    step = RelativeActionsProcessorStep(
+        enabled=True,
+        exclude_joints=["gripper"],
+        action_names=[f"joint_{i}.pos" for i in range(6)] + ["gripper.pos"],
+        state_action_index_map=idx_map,
+    )
+    transition = batch_to_transition({ACTION: action, OBS_STATE: state})
+    result = step(transition)
+    torch.testing.assert_close(
+        result[TransitionKey.ACTION], torch.tensor([[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]])
+    )
+
+
+def test_index_map_wrong_length_raises():
+    step = RelativeActionsProcessorStep(enabled=True, state_action_index_map=[0, 1, 2])
+    with pytest.raises(ValueError, match="one state index per action dim"):
+        step._resolve_state_index_map(action_dim=7, state_dim=13)
+
+
+def test_index_map_out_of_range_raises():
+    step = RelativeActionsProcessorStep(enabled=True, state_action_index_map=[0, 2, 4, 6, 8, 10, 20])
+    with pytest.raises(ValueError, match="out-of-range"):
+        step._resolve_state_index_map(action_dim=7, state_dim=13)
+
+
 # Chunk-level relative stats test
 
 

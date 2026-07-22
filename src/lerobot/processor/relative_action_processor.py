@@ -37,21 +37,56 @@ __all__ = [
 ]
 
 
-def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Tensor:
+def _state_base_offset(
+    state: Tensor,
+    mask_t: Tensor,
+    state_index_map: Sequence[int] | None,
+) -> Tensor:
+    """Select the per-action-dim reference state used as the relative base.
+
+    By default the base is ``state[..., :action_dim]``, which assumes the first
+    ``action_dim`` state channels are positionally aligned with the action (i.e.
+    ``state[i]`` is the quantity that ``action[i]`` controls). That assumption
+    breaks whenever ``observation.state`` carries anything other than a prefix
+    copy of the action -- interleaved position/velocity, force/torque channels,
+    end-effector pose, contact flags, etc.
+
+    ``state_index_map`` makes the alignment explicit: ``state_index_map[i]`` is
+    the state column that action dim ``i`` is relative to. Its length must equal
+    ``action_dim`` (``mask_t.shape[0]``).
+    """
+    dims = mask_t.shape[0]
+    if state_index_map is not None:
+        idx = torch.as_tensor(list(state_index_map), dtype=torch.long, device=state.device)
+        base = state.index_select(-1, idx)
+    else:
+        base = state[..., :dims]
+    return base * mask_t
+
+
+def to_relative_actions(
+    actions: Tensor,
+    state: Tensor,
+    mask: Sequence[bool],
+    state_index_map: Sequence[int] | None = None,
+) -> Tensor:
     """Convert absolute actions to relative: relative = action - state (for masked dims).
 
     Args:
         actions: (B, T, action_dim) or (B, action_dim).
         state: (B, state_dim). Broadcast across time dimension.
         mask: Which dims to convert. Can be shorter than action_dim.
+        state_index_map: Optional length-``action_dim`` list mapping each action
+            dim to the state column it is relative to. When ``None`` (default),
+            the first ``action_dim`` state channels are used (prefix alignment).
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
-    dims = mask_t.shape[0]
     # Align state to the same device/dtype as actions. _last_state is cached before
     # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
     if state.device != actions.device or state.dtype != actions.dtype:
         state = state.to(device=actions.device, dtype=actions.dtype)
-    state_offset = state[..., :dims] * mask_t
+    dims = mask_t.shape[0]
+    state_offset = _state_base_offset(state, mask_t, state_index_map)
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)
     actions = actions.clone()
@@ -59,21 +94,29 @@ def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     return actions
 
 
-def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Tensor:
+def to_absolute_actions(
+    actions: Tensor,
+    state: Tensor,
+    mask: Sequence[bool],
+    state_index_map: Sequence[int] | None = None,
+) -> Tensor:
     """Convert relative actions back to absolute: absolute = relative + state (for masked dims).
 
     Args:
         actions: (B, T, action_dim) or (B, action_dim).
         state: (B, state_dim). Broadcast across time dimension.
         mask: Which dims to convert. Can be shorter than action_dim.
+        state_index_map: Optional length-``action_dim`` list mapping each action
+            dim to the state column it is relative to. When ``None`` (default),
+            the first ``action_dim`` state channels are used (prefix alignment).
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
-    dims = mask_t.shape[0]
     # Align state to the same device/dtype as actions. _last_state is cached before
     # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
     if state.device != actions.device or state.dtype != actions.dtype:
         state = state.to(device=actions.device, dtype=actions.dtype)
-    state_offset = state[..., :dims] * mask_t
+    dims = mask_t.shape[0]
+    state_offset = _state_base_offset(state, mask_t, state_index_map)
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)
     actions = actions.clone()
@@ -96,11 +139,19 @@ class RelativeActionsProcessorStep(ProcessorStep):
         exclude_joints: Joint names to keep absolute (not converted to relative).
         action_names: Action dimension names from dataset metadata, used to build
             the mask from exclude_joints. If None, all dims are converted.
+        state_action_index_map: Optional explicit mapping where entry ``i`` is the
+            ``observation.state`` column that action dim ``i`` is relative to. Use
+            this when the state is not a prefix-aligned copy of the action, e.g.
+            interleaved ``[pos, vel]`` per joint, or a state augmented with
+            force/torque, pose, or contact channels. When ``None`` (default), the
+            legacy ``state[:action_dim]`` prefix behavior is used, so existing
+            configs are unchanged.
     """
 
     enabled: bool = False
     exclude_joints: list[str] = field(default_factory=list)
     action_names: list[str] | None = None
+    state_action_index_map: list[int] | None = None
     _last_state: torch.Tensor | None = field(default=None, init=False, repr=False)
 
     def _build_mask(self, action_dim: int) -> list[bool]:
@@ -122,6 +173,29 @@ class RelativeActionsProcessorStep(ProcessorStep):
 
         return mask
 
+    def _resolve_state_index_map(self, action_dim: int, state_dim: int) -> list[int] | None:
+        """Resolve which state column each action dim is relative to.
+
+        Returns the explicit ``state_action_index_map`` when set (validated), else
+        ``None`` for the legacy ``state[:action_dim]`` prefix behavior. Raises on an
+        obviously inconsistent map so a misaligned config fails loudly instead of
+        silently producing wrong offsets.
+        """
+        if self.state_action_index_map is None:
+            return None
+
+        idx_map = list(self.state_action_index_map)
+        if len(idx_map) != action_dim:
+            raise ValueError(
+                f"state_action_index_map has length {len(idx_map)} but action_dim is "
+                f"{action_dim}; it must provide one state index per action dim."
+            )
+        if any(not (0 <= j < state_dim) for j in idx_map):
+            raise ValueError(
+                f"state_action_index_map contains out-of-range indices for state_dim={state_dim}: {idx_map}."
+            )
+        return idx_map
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION, {})
         state = observation.get(OBS_STATE) if observation else None
@@ -139,7 +213,8 @@ class RelativeActionsProcessorStep(ProcessorStep):
             return new_transition
 
         mask = self._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask)
+        state_index_map = self._resolve_state_index_map(action.shape[-1], state.shape[-1])
+        new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask, state_index_map)
         return new_transition
 
     def get_cached_state(self) -> torch.Tensor | None:
@@ -151,6 +226,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
             "enabled": self.enabled,
             "exclude_joints": self.exclude_joints,
             "action_names": self.action_names,
+            "state_action_index_map": self.state_action_index_map,
         }
 
     def transform_features(
@@ -199,7 +275,12 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
             return new_transition
 
         mask = self.relative_step._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_absolute_actions(action, cached_state, mask)
+        state_index_map = self.relative_step._resolve_state_index_map(
+            action.shape[-1], cached_state.shape[-1]
+        )
+        new_transition[TransitionKey.ACTION] = to_absolute_actions(
+            action, cached_state, mask, state_index_map
+        )
         return new_transition
 
     def get_config(self) -> dict[str, Any]:

@@ -1566,6 +1566,7 @@ def recompute_stats(
     relative_exclude_joints: list[str] | None = None,
     chunk_size: int = 50,
     num_workers: int = 0,
+    relative_state_index_map: list[int] | None = None,
 ) -> LeRobotDataset:
     """Recompute stats.json from scratch by iterating all episodes.
 
@@ -1583,6 +1584,12 @@ def recompute_stats(
             ``policy.chunk_size``. Only used when ``relative_action=True``.
         num_workers: Number of parallel threads for relative action stats computation.
             Values ≤1 mean single-threaded. Only used when ``relative_action=True``.
+        relative_state_index_map: Optional explicit mapping where entry ``i`` is the
+            ``observation.state`` column that action dim ``i`` is relative to. Use this
+            when the state is not a prefix-aligned copy of the action (interleaved
+            ``[pos, vel]``, force/torque-augmented state, etc.). Must match the value
+            passed to the policy's relative-action config so train-time stats and the
+            runtime relative transform agree. Only used when ``relative_action=True``.
 
     Returns:
         The same dataset with updated stats.
@@ -1615,6 +1622,7 @@ def recompute_stats(
             chunk_size=chunk_size,
             exclude_joints=relative_exclude_joints,
             num_workers=num_workers,
+            state_action_index_map=relative_state_index_map,
         )
         features_to_compute.pop(ACTION, None)
 

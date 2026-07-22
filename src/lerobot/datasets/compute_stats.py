@@ -660,10 +660,16 @@ def _compute_relative_chunk_batch(
     all_states: np.ndarray,
     chunk_size: int,
     relative_mask: np.ndarray,
+    state_index_map: np.ndarray | None = None,
 ) -> np.ndarray:
     """Vectorised relative-action computation for a batch of start indices.
 
     Returns an ``(N * chunk_size, action_dim)`` float32 array.
+
+    ``state_index_map`` selects, for each action dim, which ``observation.state``
+    column is used as the relative base. When ``None`` the first ``mask_dim``
+    state channels are used (legacy prefix alignment), which is only correct when
+    the state is a prefix-aligned copy of the action.
     """
     if len(start_indices) == 0:
         return np.empty((0, all_actions.shape[1]), dtype=np.float32)
@@ -672,7 +678,9 @@ def _compute_relative_chunk_batch(
     chunks = all_actions[frame_idx].copy()
     states = all_states[start_indices]
     mask_dim = len(relative_mask)
-    chunks[:, :, :mask_dim] -= states[:, None, :mask_dim] * relative_mask[None, None, :]
+    # base has shape (N, mask_dim): the reference state column for each action dim.
+    base = states[:, state_index_map] if state_index_map is not None else states[:, :mask_dim]
+    chunks[:, :, :mask_dim] -= base[:, None, :] * relative_mask[None, None, :]
     return chunks.reshape(-1, all_actions.shape[1])
 
 
@@ -682,6 +690,7 @@ def compute_relative_action_stats(
     chunk_size: int,
     exclude_joints: list[str] | None = None,
     num_workers: int = 0,
+    state_action_index_map: list[int] | None = None,
 ) -> dict[str, np.ndarray]:
     """Compute normalization statistics for relative actions over the full dataset.
 
@@ -700,6 +709,13 @@ def compute_relative_action_stats(
         num_workers: Number of parallel threads for computation. Values ≤1
             mean single-threaded. Numpy releases the GIL so threads give
             real parallelism here.
+        state_action_index_map: Optional explicit mapping where entry ``i`` is the
+            ``observation.state`` column that action dim ``i`` is relative to. Use
+            when the state is not a prefix-aligned copy of the action (interleaved
+            ``[pos, vel]``, force/torque-augmented state, etc.). When ``None``, the
+            first ``action_dim`` state channels are used (legacy prefix). Must match
+            the policy's ``relative_state_index_map`` so train-time stats and the
+            runtime relative transform agree.
 
     Returns:
         Statistics dict with keys "mean", "std", "min", "max", "q01", …, "q99".
@@ -717,8 +733,12 @@ def compute_relative_action_stats(
         enabled=True,
         exclude_joints=exclude_joints,
         action_names=action_names,
+        state_action_index_map=state_action_index_map,
     )
     relative_mask = np.array(mask_step._build_mask(action_dim), dtype=np.float32)
+    state_dim = features.get(OBS_STATE, {}).get("shape", [0])[0]
+    resolved_map = mask_step._resolve_state_index_map(action_dim, state_dim)
+    index_map_arr = np.array(resolved_map, dtype=np.int64) if resolved_map is not None else None
 
     logging.info("Loading action/state data for relative action stats...")
     all_actions = np.array(hf_dataset[ACTION], dtype=np.float32)
@@ -754,6 +774,7 @@ def compute_relative_action_stats(
                     all_states,
                     chunk_size,
                     relative_mask,
+                    index_map_arr,
                 )
                 for batch in batches
             ]
@@ -762,7 +783,9 @@ def compute_relative_action_stats(
     else:
         for batch in batches:
             running_stats.update(
-                _compute_relative_chunk_batch(batch, all_actions, all_states, chunk_size, relative_mask)
+                _compute_relative_chunk_batch(
+                    batch, all_actions, all_states, chunk_size, relative_mask, index_map_arr
+                )
             )
 
     stats = running_stats.get_statistics()

@@ -326,6 +326,11 @@ class RecomputeStatsConfig(OperationConfig):
     chunk_size: int = 50
     num_workers: int = 0
     overwrite: bool = False
+    # Explicit action-dim -> observation.state column mapping for relative actions.
+    # Required when the state is not a prefix-aligned copy of the action (e.g.
+    # interleaved [pos, vel] per joint, or force/torque-augmented state). Must
+    # match the policy's relative-action config used at train/eval time.
+    relative_state_index_map: list[int] | None = None
 
 
 @OperationConfig.register_subclass("reencode_videos")
@@ -698,6 +703,7 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         relative_exclude_joints=cfg.operation.relative_exclude_joints,
         chunk_size=cfg.operation.chunk_size,
         num_workers=cfg.operation.num_workers,
+        relative_state_index_map=cfg.operation.relative_state_index_map,
     )
 
     logging.info(f"Stats written to {dataset.root}")
