@@ -302,6 +302,33 @@ def _pad_evo1_stats(
     return padded_stats
 
 
+def _refresh_evo1_normalization_steps(
+    config: Evo1Config,
+    preprocessor: PolicyProcessorPipeline,
+    postprocessor: PolicyProcessorPipeline,
+) -> None:
+    """Re-pad checkpoint-loaded (un)normalizer stats/features to EVO1's fixed widths.
+
+    Loading a checkpoint injects the raw dataset stats (unpadded to max_state_dim/max_action_dim)
+    into the (un)normalizer via the generic override path in make_pre_post_processors. Those stats
+    and their declared features must be re-padded/reshaped to EVO1's fixed widths, otherwise
+    normalization fails against the padded state/action tensors (e.g. state padded to 24 vs. 8-dim
+    LIBERO stats). Padding is a no-op when stats are already at the target width.
+    """
+    normalization_features = _evo1_normalization_features(config)
+    action_features = _evo1_action_features(config)
+    for step in preprocessor.steps:
+        if isinstance(step, NormalizerProcessorStep):
+            step.features = normalization_features
+            step.stats = _pad_evo1_stats(config, step.stats)
+            step.to(device=step.device, dtype=step.dtype)
+    for step in postprocessor.steps:
+        if isinstance(step, UnnormalizerProcessorStep):
+            step.features = action_features
+            step.stats = _pad_evo1_stats(config, step.stats)
+            step.to(device=step.device, dtype=step.dtype)
+
+
 def reconcile_evo1_processors(
     config: Evo1Config,
     preprocessor: PolicyProcessorPipeline,
@@ -309,15 +336,18 @@ def reconcile_evo1_processors(
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     """Reconcile checkpoint-loaded pipelines with the current EVO1 config.
 
-    Two things cannot be restored from a serialized pipeline alone: the EVO1 batch converter
-    (converters are plain functions and are never serialized), and eval-time CLI overrides of the
-    action postprocessing flags (`postprocess_action_dim`, `binarize_gripper`, `gripper_*`). This
-    restores the converter and rebuilds the action step from the current config so those overrides
-    take effect.
+    Three things cannot be restored from a serialized pipeline alone: the EVO1 batch converter
+    (converters are plain functions and are never serialized), eval-time CLI overrides of the
+    action postprocessing flags (`postprocess_action_dim`, `binarize_gripper`, `gripper_*`), and the
+    (un)normalizer stats/features when the generic override path injects raw, unpadded dataset
+    stats. This restores the converter, re-pads the normalization stats to EVO1's fixed widths, and
+    rebuilds the action step from the current config so those overrides take effect.
     """
     # Pipelines reloaded from a checkpoint come back with the default batch converter, which drops
     # non-observation extras (embodiment_id, state_mask, custom task fields) needed by EVO1.
     preprocessor.to_transition = evo1_batch_to_transition
+
+    _refresh_evo1_normalization_steps(config, preprocessor, postprocessor)
 
     action_step = Evo1ActionProcessorStep(
         action_dim=_evo1_action_dim(config),
