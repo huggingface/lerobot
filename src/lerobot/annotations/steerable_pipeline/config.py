@@ -133,6 +133,39 @@ class VqaConfig:
 
 
 @dataclass
+class EcotConfig:
+    """``ecot`` module: dense Embodied Chain-of-Thought (ECoT) reasoning traces.
+
+    At a configurable cadence the module anchors a timestamp, grounds a short
+    contact-sheet window of frames around it, and asks the shared VLM for a
+    structured reasoning blob — scene perception, object identification, task
+    plan, and sub-task decomposition (the high-level cognitive process ZR-0
+    shows is shared across embodiments). Each anchor becomes one
+    ``style="ecot"`` persistent row whose ``content`` is the JSON-serialized
+    reasoning; the row is camera-agnostic and stays active until the next
+    anchor, mirroring the plan/memory rows the ``plan`` module emits.
+    """
+
+    enabled: bool = True
+
+    # One reasoning trace every ``1/emission_hz`` seconds (mirrors the vqa
+    # cadence). 0.5 Hz ≈ one trace every 2s — dense enough to follow the
+    # action without doubling the VLM call count of a typical episode.
+    emission_hz: float = 0.5
+
+    # Sampled window centered on each anchor so the VLM reasons over motion,
+    # not a single frame (same idea as the interjection window).
+    window_seconds: float = 2.0
+    frames_per_second: float = 2.0
+    max_frames_per_prompt: int = 12
+
+    contact_sheet_columns: int = 4
+    contact_sheet_frames_per_sheet: int = 8
+    contact_sheet_frame_width: int = 224
+    contact_sheet_quality: int = 84
+
+
+@dataclass
 class VlmConfig:
     """Shared Qwen-VL client configuration."""
 
@@ -203,6 +236,7 @@ class AnnotationPipelineConfig:
     plan: PlanConfig = field(default_factory=PlanConfig)
     interjections: InterjectionsConfig = field(default_factory=InterjectionsConfig)
     vqa: VqaConfig = field(default_factory=VqaConfig)
+    ecot: EcotConfig = field(default_factory=EcotConfig)
 
     vlm: VlmConfig = field(default_factory=VlmConfig)
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)

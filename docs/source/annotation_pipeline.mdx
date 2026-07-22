@@ -8,8 +8,8 @@ dataset. It fills the two language columns from the
 `data/chunk-*/file-*.parquet`.
 
 In short: point it at a LeRobot dataset, and it adds subtasks, plans,
-memory, interjections, speech, and visual Q&A that a policy can be
-trained on.
+memory, interjections, speech, visual Q&A, and dense Embodied
+Chain-of-Thought (ECoT) reasoning traces that a policy can be trained on.
 
 ## How it fits together
 
@@ -24,10 +24,10 @@ trained on.
                              │
         ┌────────────────────┼────────────────────┐
         ▼                    ▼                     ▼
-  ┌──────────┐      ┌───────────────┐        ┌──────────┐       one shared Qwen-VL
-  │   plan   │      │ interjections │        │   vqa    │  ◀──   server (vLLM, OpenAI
-  └────┬─────┘      └───────┬───────┘        └────┬─────┘        API) drives all three
-       └────────────────────┼─────────────────────┘
+  ┌──────────┐      ┌───────────────┐        ┌──────────┐        ┌──────────┐   one shared Qwen-VL
+  │   plan   │      │ interjections │        │   vqa    │        │   ecot   │   server (vLLM, OpenAI
+  └────┬─────┘      └───────┬───────┘        └────┬─────┘        └────┬─────┘   API) drives all four
+       └────────────────────┼──────────────────┴─────────────┘
                             │   each module stages raw JSONL
                             ▼   into .annotate_staging/
                   ┌─────────────────┐
@@ -42,9 +42,9 @@ trained on.
               (+ meta/info.json tools)
 ```
 
-Three modules (`plan`, `interjections`, `vqa`) all talk to **one** shared
-VLM. Each module stages its output to disk, a validator checks it, and a
-single writer rewrites the dataset shards in place.
+Four modules (`plan`, `interjections`, `vqa`, `ecot`) all talk to **one**
+shared VLM. Each module stages its output to disk, a validator checks it,
+and a single writer rewrites the dataset shards in place.
 
 ## What the pipeline produces
 
@@ -57,6 +57,7 @@ the two language columns:
 | `plan` (initial + refresh on interjection)  | `language_persistent` | `plan`          |
 | `memory` (MEM-style compression)            | `language_persistent` | `plan`          |
 | `task_aug` (rephrasings of the task)        | `language_persistent` | `plan`          |
+| `ecot` (dense ECoT reasoning trace)         | `language_persistent` | `ecot`          |
 | `interjection`                              | `language_events`     | `interjections` |
 | speech tool-call atom (`style=null`, `say`) | `language_events`     | `interjections` |
 | `vqa` (user / assistant pair)               | `language_events`     | `vqa`           |
@@ -124,8 +125,8 @@ that:
 1. installs `lerobot` (from `main`) plus the annotation extras,
 2. boots one vLLM server per GPU (using the `vllm/vllm-openai` image) and
    drives it over the OpenAI-compatible API,
-3. runs the `plan` / `interjections` / `vqa` modules across the dataset
-   with `lerobot-annotate`,
+3. runs the `plan` / `interjections` / `vqa` / `ecot` modules across the
+   dataset with `lerobot-annotate`,
 4. with `--push_to_hub=true`, uploads the result to `--new_repo_id` (or
    back to `--repo_id` in place if you leave that unset).
 
@@ -160,6 +161,7 @@ Every module is on by default and can be toggled independently (set to
 | `--plan.enabled`          | `true`  | subtasks + plan + memory + task_aug |
 | `--interjections.enabled` | `true`  | interjections + speech atoms        |
 | `--vqa.enabled`           | `true`  | the VQA pairs                       |
+| `--ecot.enabled`          | `true`  | the dense ECoT reasoning traces     |
 
 ### The VLM (`--vlm.*`)
 
@@ -200,12 +202,39 @@ Every module is on by default and can be toggled independently (set to
 | `--vqa.restrict_to_default_camera`              | `false` | Ground VQA only on `--vlm.camera_key` (else every camera). |
 | `--executor.episode_parallelism`                | `16`    | Episodes processed concurrently within each phase.         |
 
+### ECoT reasoning (`--ecot.*`)
+
+The `ecot` module emits dense Embodied Chain-of-Thought (ECoT) reasoning
+traces — scene perception, object identification, task plan, and
+sub-task decomposition — as persistent, camera-agnostic `ecot` rows in
+`language_persistent`. Like the `plan` module's `plan` / `memory` rows,
+one trace stays active from its anchor until the next, so every frame
+has exactly one reasoning trace to train on. It reuses the same
+contact-sheet grounding as the other modules.
+
+| Flag                           | Default | What it does                                                           |
+| ------------------------------ | ------- | ---------------------------------------------------------------------- |
+| `--ecot.enabled`               | `true`  | Emit the dense ECoT reasoning traces.                                  |
+| `--ecot.emission_hz`           | `0.5`   | One reasoning trace every `1/hz` seconds (mirrors the VQA cadence).    |
+| `--ecot.window_seconds`        | `2.0`   | Sampled window centered on each anchor so the VLM reasons over motion. |
+| `--ecot.frames_per_second`     | `2.0`   | Frame sampling rate within the window (`2.0` = one frame every 0.5s).  |
+| `--ecot.max_frames_per_prompt` | `12`    | Frame budget per prompt; windows exceeding this are clamped.           |
+
+Iterate on it alone by disabling the other modules, and tune the cadence
+with the nested config form (never the legacy `--ecot=...` override):
+
+```bash
+lerobot-annotate --root=/path/to/dataset \
+    --plan.enabled=false --interjections.enabled=false --vqa.enabled=false \
+    --ecot.emission_hz=0.5
+```
+
 ## Contributing new modules
 
 The pipeline is built to grow, and **contributions are very welcome** —
 a brand-new module (say, trajectory traces or affordances), a new prompt
 template, a smarter grounding flow, or quality fixes to the existing
-`plan` / `interjections` / `vqa` modules.
+`plan` / `interjections` / `vqa` / `ecot` modules.
 
 Every module lives under
 `src/lerobot/annotations/steerable_pipeline/modules/`, shares the VLM
@@ -225,13 +254,16 @@ The annotations are meant to be read by recipes (see
   and the matching `plan` refresh at the same timestamp.
 - a VQA branch reads the `(vqa, user)` and `(vqa, assistant)` pairs from
   `language_events`.
+- a reasoning branch reads the active `ecot` trace from
+  `language_persistent` (same `active_at(t, ...)` semantics as
+  `subtask` / `memory`).
 
 ## Why state and events are split
 
 Two ideas shape the design:
 
 1. **Persistent state vs. exact events.** Persistent rows (`subtask`,
-   `plan`, `memory`) apply to the whole episode and answer "what's true
+   `plan`, `memory`, `ecot`) apply to the whole episode and answer "what's true
    right now?". Event rows (`interjection`, `vqa`, speech) appear only on
    the one frame whose timestamp matches. Timestamps are copied straight
    from the source parquet — never recomputed in floating point.
@@ -246,7 +278,8 @@ Each module stages its raw output to
 prompt iteration cheap: re-running one module overwrites only its own
 JSONL, then the writer recomposes the final parquet. Disable modules you
 don't want with `--plan.enabled=false` (and likewise
-`--interjections.enabled` / `--vqa.enabled`) to test one at a time.
+`--interjections.enabled` / `--vqa.enabled` / `--ecot.enabled`) to test
+one at a time.
 
 ## What the validator checks
 
@@ -281,6 +314,14 @@ while debugging.
   keypoints) and Steerable VLA Policies
   ([Zhao 2025](https://arxiv.org/abs/2509.07626)) for multi-abstraction
   grounding. Pi0.7 also grounds answers across abstraction levels.
+- **`ecot`.** ZR-0
+  ([2026](https://arxiv.org/abs/2606.30552v1)): supervise the VLA with a
+  dense structured reasoning process — scene perception, object
+  identification, task plan, and sub-task decomposition — that the paper
+  shows transfers across embodiments. This module ports that _annotation_
+  contribution as persistent, camera-agnostic rows; the dual-stream
+  architecture and flow-matching action expert are policy-training
+  concerns and are intentionally out of scope.
 
 When improving a module, tweak its prompt template in
 `src/lerobot/annotations/steerable_pipeline/prompts/` rather than
@@ -289,10 +330,12 @@ rewriting from scratch.
 ## Roughly how much it costs
 
 Per episode, the pipeline makes about `max_steps` plan calls,
-`max_interjections_per_episode` interjection calls, and
+`max_interjections_per_episode` interjection calls,
+`ecot.emission_hz × episode_seconds` ECoT calls, and
 `vqa_emission_hz × episode_seconds` VQA calls. With the defaults (8
 subtasks, 1 interjection, 1 Hz × 3 pairs) on a 30-second episode, that's
-~50 VLM calls.
+~50 VLM calls before ECoT; the `ecot` module adds roughly
+`emission_hz × episode_seconds` more (~15 traces at the default 0.5 Hz).
 
 Storage stays small: `language_persistent` is at most tens of KB per
 episode (parquet dictionary-encodes the one entry that repeats across
