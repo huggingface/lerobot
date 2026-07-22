@@ -176,14 +176,17 @@ class RolloutStrategy(abc.ABC):
     @abc.abstractmethod
     def setup(self, ctx: RolloutContext) -> None:
         """Strategy-specific initialisation (keyboard listeners, buffers, etc.)."""
+        raise NotImplementedError
 
     @abc.abstractmethod
     def run(self, ctx: RolloutContext) -> None:
         """Main rollout loop.  Returns when shutdown is requested or duration expires."""
+        raise NotImplementedError
 
     @abc.abstractmethod
     def teardown(self, ctx: RolloutContext) -> None:
         """Cleanup: save dataset, stop threads, disconnect hardware."""
+        raise NotImplementedError
 
 
 # ---------------------------------------------------------------------------

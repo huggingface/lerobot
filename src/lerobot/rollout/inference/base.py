@@ -56,18 +56,22 @@ class InferenceEngine(abc.ABC):
     @abc.abstractmethod
     def start(self) -> None:
         """Initialise the backend."""
+        raise NotImplementedError
 
     @abc.abstractmethod
     def stop(self) -> None:
         """Tear the backend down."""
+        raise NotImplementedError
 
     @abc.abstractmethod
     def reset(self) -> None:
         """Clear episode-scoped state."""
+        raise NotImplementedError
 
     @abc.abstractmethod
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Return the next action tensor, or ``None`` if unavailable."""
+        raise NotImplementedError
 
     def notify_observation(self, obs: dict) -> None:  # noqa: B027
         """Publish the latest processed observation.  Default: no-op."""

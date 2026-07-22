@@ -65,12 +65,14 @@ class SampleWeighter(ABC):
             batch: Training batch dictionary containing at minimum an "index" key
                    with global frame indices.
         """
+        raise NotImplementedError
 
     @abstractmethod
     def get_stats(self) -> dict:
         """
         Get global statistics about the weighting strategy.
         """
+        raise NotImplementedError
 
 
 @dataclass
