@@ -34,12 +34,13 @@ import torch
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc import ActionQueue, LatencyTracker, reanchor_relative_rtc_prefix
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.policies.utils import prepare_observation_for_inference
+from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
 from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
 )
+from lerobot.utils.constants import ACTION
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from ..robot_wrapper import ThreadSafeRobot
@@ -98,6 +99,7 @@ class RTCInferenceEngine(InferenceEngine):
         robot_wrapper: ThreadSafeRobot,
         rtc_config: RTCConfig,
         dataset_features: dict,
+        ordered_action_keys: list[str],
         task: str,
         fps: float,
         device: str | None,
@@ -119,9 +121,23 @@ class RTCInferenceEngine(InferenceEngine):
         # relative-action anchor. The `prefix="observation"` filter ignores the action
         # entries in the combined dict.
         self._obs_features = dataset_features
+        # The model emits actions in `dataset_features[ACTION]` order (the order it was
+        # trained on); the robot expects them in `ordered_action_keys` order. Sync remaps
+        # by NAME via `make_robot_action` + reindex (sync.py) before returning; RTC must do
+        # the SAME, otherwise the engine-agnostic strategy (`send_next_action`) maps the raw
+        # model-order tensor onto `ordered_action_keys` positionally and mis-assigns joints
+        # whenever the two orders differ — a per-joint permutation that drives the arm wrong.
+        self._ordered_action_keys = ordered_action_keys
         state_ft = dataset_features.get("observation.state")
         if state_ft is not None:
             logger.info("RTC observation.state layout: %s", state_ft.get("names"))
+        action_ft = dataset_features.get(ACTION)
+        if action_ft is not None:
+            logger.info(
+                "RTC action layout: model/dataset=%s -> robot=%s",
+                action_ft.get("names"),
+                self._ordered_action_keys,
+            )
         self._task = task
         self._fps = fps
         self._device = device or "cpu"
@@ -240,10 +256,19 @@ class RTCInferenceEngine(InferenceEngine):
     # ------------------------------------------------------------------
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
-        """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
+        """Pop the next action from the RTC queue (ignores ``obs_frame``).
+
+        The queued action is in the model's ``dataset_features[ACTION]`` order; remap it
+        by NAME into ``ordered_action_keys`` order before returning, so the engine-agnostic
+        strategy maps values onto the correct joints. Mirrors ``SyncInferenceEngine.get_action``.
+        """
         if self._action_queue is None:
             return None
-        return self._action_queue.get()
+        action = self._action_queue.get()
+        if action is None:
+            return None
+        action_dict = make_robot_action(action, self._obs_features)
+        return torch.tensor([action_dict[k] for k in self._ordered_action_keys])
 
     def notify_observation(self, obs: dict) -> None:
         """Publish the latest observation for the RTC thread to consume."""
