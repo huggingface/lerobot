@@ -64,17 +64,28 @@ _RTC_JOIN_TIMEOUT_S: float = 3.0
 
 
 def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int) -> torch.Tensor:
-    """Pad or truncate RTC prefix actions to a fixed length for stable compiled inference."""
+    """Pad or truncate RTC prefix actions to a fixed length for stable compiled inference.
+
+    Padding repeats the last real action ("hold") rather than filling with zeros. The RTC
+    guidance pulls the new chunk toward this prefix at the padded indices (they fall inside
+    the weighted region when the real leftover is shorter than ``target_steps``). A zero in
+    the model's normalized action space decodes to the dataset *mean* action — a nonzero
+    offset that yanks the spliced action toward a mean/neutral pose for one step, producing
+    an intermittent seam (e.g. 95 -> 103 -> 95). Holding the last real action keeps the
+    padded targets continuous with the prefix, so no fake target enters the guided region.
+    The fixed output length is preserved so ``torch.compile`` policies keep stable shapes.
+    """
     if prev_actions.ndim != 2:
         raise ValueError(f"Expected 2D [T, A] tensor, got shape={tuple(prev_actions.shape)}")
-    steps, action_dim = prev_actions.shape
+    steps, _ = prev_actions.shape
     if steps == target_steps:
         return prev_actions
     if steps > target_steps:
         return prev_actions[:target_steps]
-    padded = torch.zeros((target_steps, action_dim), dtype=prev_actions.dtype, device=prev_actions.device)
-    padded[:steps] = prev_actions
-    return padded
+    if steps == 0:
+        raise ValueError("Cannot pad an empty prefix: no last action to hold.")
+    hold = prev_actions[-1:].expand(target_steps - steps, -1)
+    return torch.cat([prev_actions, hold], dim=0)
 
 
 # ---------------------------------------------------------------------------
