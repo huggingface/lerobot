@@ -13,7 +13,7 @@
 # limitations under the License.
 import pytest
 
-from lerobot.configs.default import DatasetConfig
+from lerobot.configs.default import DatasetConfig, EvalConfig
 
 
 def test_dataset_config_valid():
@@ -36,3 +36,12 @@ def test_dataset_config_none_episodes_ok():
 
 def test_dataset_config_empty_episodes_ok():
     DatasetConfig(repo_id="user/repo", episodes=[])
+
+
+def test_eval_config_max_episodes_rendered_default():
+    assert EvalConfig(n_episodes=1, batch_size=1).max_episodes_rendered == 10
+
+
+def test_eval_config_negative_max_episodes_rendered():
+    with pytest.raises(ValueError, match="max_episodes_rendered"):
+        EvalConfig(max_episodes_rendered=-1)

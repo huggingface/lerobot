@@ -238,6 +238,13 @@ evo1 = ["lerobot[transformers-dep]"]
 hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.14,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]
 lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[accelerate-dep]"]
+lawam = [
+    "lerobot[transformers-dep]",
+    "lerobot[diffusers-dep]",
+    "lerobot[qwen-vl-utils-dep]",
+    "lerobot[timm-dep]",
+    "PyYAML>=6.0,<7.0",
+]
 
 # Features
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
@@ -268,7 +275,12 @@ video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 # NOTE: Explicitly listing scipy helps flatten the dependecy tree.
 aloha = ["lerobot[dataset]", "gym-aloha>=0.1.4,<0.2.0", "lerobot[scipy-dep]"]
 pusht = ["lerobot[dataset]", "gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
-libero = ["lerobot[dataset]", "lerobot[transformers-dep]", "hf-libero>=0.1.4,<0.2.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
+libero = [
+    "lerobot[dataset]",
+    "lerobot[transformers-dep]",
+    "hf-libero>=0.1.4,<0.2.0; sys_platform == 'linux'",
+    "lerobot[scipy-dep]",
+]
 metaworld = ["lerobot[dataset]", "metaworld==3.0.0", "lerobot[scipy-dep]"]
 # NOTE: vlabench is NOT exposed as a `lerobot` extra. Its only distribution
 # is the OpenMOSS/VLABench GitHub repo (package name `VLABench`, no PyPI
@@ -322,6 +334,7 @@ all = [
     "lerobot[hilserl]",
     "lerobot[vla_jepa]",
     "lerobot[lingbot_va]",
+    "lerobot[lawam]",
     "lerobot[async]",
     "lerobot[dev]",
     "lerobot[test]",
@@ -413,6 +426,10 @@ ignore = [
 "__init__.py" = ["F401", "F403", "E402"]
 # E402: conditional-import guards (TYPE_CHECKING / is_package_available) must precede the imports they protect
 "src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
+"src/lerobot/policies/lawam/lam_core/**" = ["I001", "UP006", "UP007", "UP008", "UP015", "UP032", "UP035", "UP045", "N801", "N802", "N803", "N806", "N812", "SIM105", "SIM108", "SIM114", "SIM118", "SIM300", "B006", "B009", "B905", "C414", "E402", "E731", "W291", "W293"]
+"src/lerobot/policies/lawam/latent_world/**" = ["I001", "UP006", "UP007", "UP032", "UP035", "UP037", "UP045", "N806", "N812", "SIM102", "SIM108", "SIM118", "B007", "B905", "C414", "W291", "W293"]
+"src/lerobot/policies/lawam/vlas/**" = ["I001", "UP006", "UP007", "UP035", "UP045", "N806", "N812", "SIM105", "SIM108", "SIM118", "B006", "B009", "B905", "C414", "W291", "W293"]
+
 [tool.ruff.lint.isort]
 combine-as-imports = true
 known-first-party = ["lerobot"]
