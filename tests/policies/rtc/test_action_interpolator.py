@@ -14,6 +14,8 @@
 
 """Tests for ActionInterpolator and its interaction with ActionQueue (RTC)."""
 
+import math
+
 import pytest
 import torch
 
@@ -557,3 +559,148 @@ def test_queue_interpolator_delay_skips_stale_actions():
     first_action = queue.get()
     assert first_action is not None
     torch.testing.assert_close(first_action, torch.tensor([103.0, 103.0]))
+
+
+# ====================== Rotation-vector canonicalization tests (#3691) ======================
+
+
+def _rotmat(rv: torch.Tensor) -> torch.Tensor:
+    """Rodrigues formula: rotation vector -> rotation matrix."""
+    theta = torch.linalg.vector_norm(rv)
+    if theta < 1e-12:
+        return torch.eye(3, dtype=rv.dtype)
+    k = rv / theta
+    kx = torch.tensor([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]], dtype=rv.dtype)
+    return torch.eye(3, dtype=rv.dtype) + torch.sin(theta) * kx + (1 - torch.cos(theta)) * (kx @ kx)
+
+
+def _geodesic_deg(rv_a: torch.Tensor, rv_b: torch.Tensor) -> float:
+    """Rotation angle in degrees between the rotations encoded by two rotvecs."""
+    cos = (torch.trace(_rotmat(rv_a).T @ _rotmat(rv_b)) - 1) / 2
+    return float(torch.rad2deg(torch.arccos(torch.clamp(cos, -1.0, 1.0))))
+
+
+def _antipodal_twin_pair() -> tuple[torch.Tensor, torch.Tensor]:
+    """Two rotvecs encoding the same physical rotation, ~2*pi apart in vector space.
+
+    179 deg about +x and 181 deg about -x are the same rotation (geodesic
+    distance 0) but their rotvec encodings differ by ~2*pi.
+    """
+    prev = torch.tensor([math.radians(179.0), 0.0, 0.0], dtype=torch.float64)
+    cur = torch.tensor([-math.radians(181.0), 0.0, 0.0], dtype=torch.float64)
+    return prev, cur
+
+
+def test_rotation_dims_antipodal_twins_no_identity_sweep():
+    """Interpolating between antipodal-twin rotvecs must not sweep through identity."""
+    prev, cur = _antipodal_twin_pair()
+    assert _geodesic_deg(prev, cur) < 1e-6  # same physical rotation
+
+    # Without rotation_dims the midpoint collapses to ~identity (the bug).
+    interp_bug = ActionInterpolator(multiplier=4)
+    interp_bug.add(prev)
+    interp_bug.get()
+    interp_bug.add(cur)
+    mid = [interp_bug.get() for _ in range(4)][1]  # t = 0.5
+    assert _geodesic_deg(mid, prev) > 170.0
+
+    # With rotation_dims every interpolated rotvec stays at the endpoint pose.
+    interp = ActionInterpolator(multiplier=4, rotation_dims=[0, 1, 2])
+    interp.add(prev)
+    interp.get()
+    interp.add(cur)
+    for _ in range(4):
+        step = interp.get()
+        assert step is not None
+        assert _geodesic_deg(step, prev) < 1e-6
+
+
+def test_rotation_dims_none_matches_previous_behavior():
+    """rotation_dims=None must reproduce plain linear interpolation exactly."""
+    prev, cur = _antipodal_twin_pair()
+    interp_default = ActionInterpolator(multiplier=3)
+    interp_explicit = ActionInterpolator(multiplier=3, rotation_dims=None)
+    for i in (prev, cur):
+        interp_default.add(i)
+        interp_explicit.add(i)
+    for _ in range(3):
+        torch.testing.assert_close(interp_default.get(), interp_explicit.get(), rtol=0, atol=0)
+
+
+def test_rotation_dims_close_rotvecs_identical_to_plain_lerp():
+    """When no twin is closer, canonicalization is a no-op and output equals plain lerp."""
+    prev = torch.tensor([0.1, 0.2, 0.3])
+    cur = torch.tensor([0.15, 0.25, 0.35])
+    plain = ActionInterpolator(multiplier=2)
+    canon = ActionInterpolator(multiplier=2, rotation_dims=[0, 1, 2])
+    for i in (prev, cur):
+        plain.add(i)
+        canon.add(i)
+    for _ in range(2):
+        torch.testing.assert_close(plain.get(), canon.get(), rtol=0, atol=0)
+
+
+def test_rotation_dims_other_dims_unaffected():
+    """Position and gripper dims must interpolate linearly even with rotation_dims set."""
+    prev_rot, cur_rot = _antipodal_twin_pair()
+    prev = torch.cat(
+        [
+            torch.tensor([0.0, 0.0, 0.0], dtype=torch.float64),
+            prev_rot,
+            torch.tensor([0.0], dtype=torch.float64),
+        ]
+    )
+    cur = torch.cat(
+        [
+            torch.tensor([0.3, 0.6, 0.9], dtype=torch.float64),
+            cur_rot,
+            torch.tensor([1.0], dtype=torch.float64),
+        ]
+    )
+    interp = ActionInterpolator(multiplier=3, rotation_dims=[3, 4, 5])
+    interp.add(prev)
+    interp.get()
+    interp.add(cur)
+    for i in range(1, 4):
+        t = i / 3
+        step = interp.get()
+        assert step is not None
+        expected_pos = prev[:3] + t * (cur[:3] - prev[:3])
+        expected_grip = prev[6:] + t * (cur[6:] - prev[6:])
+        torch.testing.assert_close(step[:3], expected_pos, rtol=0, atol=0)
+        torch.testing.assert_close(step[6:], expected_grip, rtol=0, atol=0)
+
+
+def test_rotation_dims_zero_rotation_no_nan():
+    """A zero rotvec (identity rotation) must not produce NaNs."""
+    interp = ActionInterpolator(multiplier=2, rotation_dims=[0, 1, 2])
+    interp.add(torch.tensor([0.5, 0.0, 0.0]))
+    interp.get()
+    interp.add(torch.zeros(3))
+    for _ in range(2):
+        step = interp.get()
+        assert step is not None
+        assert torch.isfinite(step).all()
+
+
+def test_rotation_dims_bimanual_triplets():
+    """Independent triplets: one arm needing a twin flip must not disturb the other."""
+    prev_rot, cur_rot = _antipodal_twin_pair()
+    near_prev = torch.tensor([0.1, 0.0, 0.0], dtype=torch.float64)
+    near_cur = torch.tensor([0.2, 0.0, 0.0], dtype=torch.float64)
+    prev = torch.cat([prev_rot, near_prev])
+    cur = torch.cat([cur_rot, near_cur])
+    interp = ActionInterpolator(multiplier=2, rotation_dims=[0, 1, 2, 3, 4, 5])
+    interp.add(prev)
+    interp.get()
+    interp.add(cur)
+    mid = interp.get()
+    assert mid is not None
+    assert _geodesic_deg(mid[:3], prev_rot) < 1e-6  # arm 1: stays at pose (twins)
+    torch.testing.assert_close(mid[3:], (near_prev + near_cur) / 2, rtol=0, atol=1e-12)  # arm 2: plain lerp
+
+
+def test_rotation_dims_invalid_length_raises():
+    """rotation_dims not grouped in triplets must raise ValueError."""
+    with pytest.raises(ValueError, match="triplets"):
+        ActionInterpolator(multiplier=2, rotation_dims=[3, 4])
