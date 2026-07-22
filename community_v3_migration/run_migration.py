@@ -80,10 +80,11 @@ def already_done(api: HfApi, dst: str, sub: str, dst_files: set[str]) -> bool:
     return f"{sub}/meta/info.json" in dst_files  # present in target => skip (resume)
 
 
-def _write_dataset_card(local: Path, sub: str, result: dict) -> None:
+def _write_dataset_card(local: Path, sub: str, result: dict, standalone: bool = False) -> None:
     """Regenerate the sub-dataset's card the way LeRobot does (create_lerobot_dataset_card
     from meta/info.json), then append a migration section documenting provenance and the
-    joint-encoding fix."""
+    joint-encoding fix. When ``standalone`` is set, ``sub`` is itself the source dataset's HF
+    repo id (rather than a folder inside the ``SRC_REPO`` monorepo)."""
     enc = result.get("encoding")
     converted_degrees = bool(result.get("converted"))
     approx = enc == "normalized" and not so_arm_frame.CANON_IS_CALIBRATED
@@ -112,7 +113,8 @@ def _write_dataset_card(local: Path, sub: str, result: dict) -> None:
         + (" with SO-100/101 joint state/action mapped to the post-#777 physical frame (in degrees)."
            if converted_degrees else "."),
         "",
-        f"- Source: [`{SRC_REPO}`](https://huggingface.co/datasets/{SRC_REPO}/tree/main/{sub}) (`{sub}`)",
+        (f"- Source: [`{sub}`](https://huggingface.co/datasets/{sub})" if standalone else
+         f"- Source: [`{SRC_REPO}`](https://huggingface.co/datasets/{SRC_REPO}/tree/main/{sub}) (`{sub}`)"),
         "- Codebase version: v2.1 -> v3.0",
     ]
     if result.get("is_so"):
@@ -165,11 +167,17 @@ def _write_dataset_card(local: Path, sub: str, result: dict) -> None:
             readme.write_text(f"# {sub}\n\n" + section)
 
 
-def migrate_one(api, dst_repo, sub, work_dir, no_upload) -> dict:
+def migrate_one(api, dst_repo, sub, work_dir, no_upload, src_repo: str = SRC_REPO,
+                standalone: bool = False) -> dict:
     local = Path(work_dir) / sub
     if local.parent.exists():
         shutil.rmtree(local.parent, ignore_errors=True)  # clean any partial
-    download_subfolder(sub, work_dir)
+    if standalone:
+        # ``sub`` is a self-contained HF dataset repo (not a monorepo folder): pull it whole.
+        from huggingface_hub import snapshot_download
+        snapshot_download(repo_id=sub, repo_type="dataset", local_dir=str(local))
+    else:
+        download_subfolder(sub, work_dir, repo=src_repo)
 
     info = load_info(local)
     if info.get("codebase_version") != "v2.1":
@@ -195,7 +203,7 @@ def migrate_one(api, dst_repo, sub, work_dir, no_upload) -> dict:
     from lerobot.scripts.convert_dataset_v21_to_v30 import convert_dataset
     convert_dataset(repo_id=sub, root=str(local), push_to_hub=False)  # v2.1 -> v3.0, in place
 
-    _write_dataset_card(local, sub, result)       # document the conversion in the dataset card
+    _write_dataset_card(local, sub, result, standalone=standalone)  # document conversion in the card
 
     base = {k: result.get(k) for k in
             ("robot_type", "is_so", "encoding", "action_dim", "maxabs", "ambiguous", "action")}

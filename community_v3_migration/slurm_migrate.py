@@ -53,6 +53,7 @@ class MigrateShard(PipelineStep):
         migration_dir,
         no_push=False,
         only_classify=False,
+        standalone=False,
     ):
         super().__init__()
         self.subs = subs
@@ -62,6 +63,7 @@ class MigrateShard(PipelineStep):
         self.migration_dir = migration_dir
         self.no_push = no_push
         self.only_classify = only_classify
+        self.standalone = standalone
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         # Pickled onto the worker: keep self-contained. The migration package dir must be on
@@ -116,13 +118,21 @@ class MigrateShard(PipelineStep):
             for i, sub in enumerate(my_subs):
                 try:
                     if self.only_classify:
-                        download_subfolder(sub, work_dir, patterns=[f"{sub}/meta/*"])
+                        if self.standalone:
+                            from huggingface_hub import snapshot_download
+
+                            snapshot_download(repo_id=sub, repo_type="dataset",
+                                              local_dir=str(Path(work_dir) / sub),
+                                              allow_patterns=["meta/*"])
+                        else:
+                            download_subfolder(sub, work_dir, patterns=[f"{sub}/meta/*"])
                         row = {"root": sub, **classify(Path(work_dir) / sub)}
                         shutil.rmtree(Path(work_dir) / sub.split("/")[0], ignore_errors=True)
                     elif not self.no_push and already_done(api, self.dst_repo, sub, dst_files):
                         row = {"root": sub, "action": "skipped: already present in destination repo"}
                     else:
-                        row = migrate_one(api, self.dst_repo, sub, work_dir, self.no_push)
+                        row = migrate_one(api, self.dst_repo, sub, work_dir, self.no_push,
+                                          standalone=self.standalone)
                 except Exception as e:
                     row = {"root": sub, "action": f"ERROR: {e}"}
                     traceback.print_exc()
@@ -168,12 +178,20 @@ def main():
     if MIGRATION_DIR not in sys.path:
         sys.path.insert(0, MIGRATION_DIR)
     from huggingface_hub import HfApi
+    from migrate_molmoact import REFERENCE_REPO, list_molmoact_datasets, pending_datasets
     from run_migration import SRC_REPO, list_datasets, resolve_folders
 
     p = argparse.ArgumentParser(
-        description="SLURM-distributed community_dataset_v3 -> v3.0 migration (map-only).",
+        description="SLURM-distributed migration to LeRobotDataset v3.0 (map-only). Source is "
+                    "either the community_dataset_v3 monorepo or the standalone datasets listed "
+                    "by allenai/MolmoAct2-SO100_101-Dataset.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    p.add_argument("--source", choices=("monorepo", "molmoact"), default="monorepo",
+                   help="'monorepo': HuggingFaceVLA/community_dataset_v3 subfolders. "
+                        "'molmoact': standalone datasets listed by allenai/MolmoAct2-SO100_101-Dataset.")
+    p.add_argument("--reference-repo", default=REFERENCE_REPO, metavar="ORG/NAME",
+                   help="(--source molmoact) Repo whose datasets are already migrated and skipped.")
     p.add_argument("--dst-repo", default=None, metavar="ORG/NAME", help="Destination HF dataset repo.")
     p.add_argument("--work-dir", default="./cdv3_work", help="Scratch root; each rank gets a subdir.")
     p.add_argument("--manifest-dir", default="./cdv3_manifests", help="Per-rank manifest CSVs land here.")
@@ -198,7 +216,18 @@ def main():
         p.error("--dst-repo is required unless --no-push or --only-classify is set.")
 
     api = HfApi()
-    if args.folder_name:
+    standalone = args.source == "molmoact"
+    if standalone:
+        all_ids = list_molmoact_datasets(api)
+        if args.folder_name:
+            wanted = {n.strip("/") for n in args.folder_name}
+            subs = [s for s in all_ids if s in wanted]
+        else:
+            subs = pending_datasets(api, all_ids, args.dst_repo, args.reference_repo,
+                                    args.no_push, args.only_classify)
+            if args.limit:
+                subs = subs[: args.limit]
+    elif args.folder_name:
         subs = resolve_folders(api, SRC_REPO, args.folder_name)
     else:
         subs = list_datasets(api, SRC_REPO)
@@ -222,6 +251,7 @@ def main():
                 MIGRATION_DIR,
                 no_push=args.no_push,
                 only_classify=args.only_classify,
+                standalone=standalone,
             )
         ],
         logs_dir=args.logs_dir,
