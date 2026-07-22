@@ -21,6 +21,7 @@ importing from here directly. Requires the ``viz`` extra (``pip install 'lerobot
 """
 
 import logging
+import math
 import numbers
 import time
 
@@ -65,6 +66,8 @@ _SCALARS_SCHEMA = {
     },
 }
 
+JOINT_STATES_TOPIC = "/joint_states"
+
 
 def _is_scalar(x):
     return isinstance(x, (float | numbers.Real | np.integer | np.floating)) or (
@@ -94,6 +97,11 @@ def init_foxglove(host: str = "127.0.0.1", port: int | None = 8765) -> None:
         return
     log_foxglove_data.server = foxglove.start_server(host=host, port=port or 8765)
     log_foxglove_data.channels = {}
+    app_url = log_foxglove_data.server.app_url()
+    if app_url is not None:
+        message = f"Open in Foxglove: {app_url}"
+        logging.info(message)
+        print(message)
 
 
 def shutdown_foxglove() -> None:
@@ -159,6 +167,57 @@ def _log_foxglove_scalars(
     if channel is None:
         channel = channels[topic] = foxglove.Channel(topic, schema=_SCALARS_SCHEMA, message_encoding="json")
     msg = {"scalars": [{"label": label, "value": value} for label, value in values.items()]}
+    if log_time is None:
+        channel.log(msg)
+    else:
+        channel.log(msg, log_time=log_time)
+
+
+def _observation_to_joint_positions(scalars: dict[str, float]) -> dict[str, float]:
+    """Convert observation scalars to URDF joint positions in radians.
+
+    LeRobot reports joint positions as ``<joint>.pos`` scalars. Revolute joints are assumed to be in
+    degrees; gripper joints are assumed to be a 0-100 percent (SO-101 convention) and mapped to radians.
+    """
+
+    positions: dict[str, float] = {}
+    for key, value in scalars.items():
+        if not key.endswith(".pos"):
+            continue
+        joint_name = key[: -len(".pos")]
+        if "gripper" in joint_name:
+            # SO-101 gripper: percent (0-100) -> radians (0-pi).
+            positions[joint_name] = (value / 100.0) * math.pi
+        else:
+            positions[joint_name] = math.radians(value)
+    return positions
+
+
+def _log_foxglove_joint_states(
+    topic: str,
+    positions: dict[str, float],
+    *,
+    channels: dict | None = None,
+    log_time: int | None = None,
+) -> None:
+    """Log joint positions as a ``foxglove.JointStates`` message for URDF visualization."""
+
+    if not positions:
+        return
+
+    from foxglove.channels import JointStatesChannel
+    from foxglove.messages import JointState, JointStates, Timestamp
+
+    if channels is None:
+        channels = log_foxglove_data.channels
+    channel = channels.get(topic)
+    if channel is None:
+        channel = channels[topic] = JointStatesChannel(topic=topic)
+
+    time_ns = time.time_ns() if log_time is None else log_time
+    timestamp = Timestamp(sec=time_ns // 1_000_000_000, nsec=time_ns % 1_000_000_000)
+    joints = [JointState(name=name, position=position) for name, position in positions.items()]
+    msg = JointStates(timestamp=timestamp, joints=joints)
     if log_time is None:
         channel.log(msg)
     else:
@@ -333,6 +392,11 @@ def log_foxglove_data(
                         log_time=now,
                     )
         _log_foxglove_scalars(_foxglove_topic(OBS_STATE), obs_scalars, log_time=now)
+        _log_foxglove_joint_states(
+            JOINT_STATES_TOPIC,
+            _observation_to_joint_positions(obs_scalars),
+            log_time=now,
+        )
 
     if action:
         action_scalars: dict[str, float] = {}
@@ -488,9 +552,16 @@ def serve_foxglove_dataset_playback(
                 depth_range=depth_ranges.get(key),
                 raw_depth_values=True,
             )
+        obs_scalars = _frame_to_scalars(sample, OBS_STATE, scalar_labels[OBS_STATE])
         _log_foxglove_scalars(
             _foxglove_topic(OBS_STATE),
-            _frame_to_scalars(sample, OBS_STATE, scalar_labels[OBS_STATE]),
+            obs_scalars,
+            channels=channels,
+            log_time=log_time,
+        )
+        _log_foxglove_joint_states(
+            JOINT_STATES_TOPIC,
+            _observation_to_joint_positions(obs_scalars),
             channels=channels,
             log_time=log_time,
         )
@@ -638,6 +709,9 @@ def serve_foxglove_dataset_playback(
     thread.start()
 
     print(f"Foxglove server running. Connect the Foxglove app to ws://{host}:{port}")
+    app_url = server.app_url()
+    if app_url is not None:
+        print(f"Open in Foxglove: {app_url}")
     print("Use the playback controls in Foxglove to play/pause and scrub the episode. Ctrl-C to exit.")
     try:
         while not stop_event.is_set():

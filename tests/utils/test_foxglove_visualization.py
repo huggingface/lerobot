@@ -99,3 +99,21 @@ def test_is_scalar():
     assert fv._is_scalar(np.array(3.0))  # 0-d array
     assert not fv._is_scalar(np.array([1.0, 2.0]))
     assert not fv._is_scalar("x")
+
+
+def test_observation_to_joint_positions():
+    import math
+
+    scalars = {
+        "shoulder_pan.pos": 90.0,
+        "shoulder_lift.pos": 45.0,
+        "gripper.pos": 50.0,
+        "temperature": 36.5,
+    }
+    positions = fv._observation_to_joint_positions(scalars)
+    assert positions == {
+        "shoulder_pan": math.radians(90.0),
+        "shoulder_lift": math.radians(45.0),
+        "gripper": (50.0 / 100.0) * math.pi,
+    }
+    assert fv._observation_to_joint_positions({}) == {}
