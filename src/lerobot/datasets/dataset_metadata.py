@@ -145,6 +145,12 @@ class LeRobotDatasetMetadata:
             self._pq_writer = pq.ParquetWriter(
                 path, schema=table.schema, compression="snappy", use_dictionary=True
             )
+        else:
+            # Column order in `combined_dict` follows the source episode dict's insertion
+            # order, which can differ between batches (e.g. episodes originally stored in
+            # different parquet shards with different column orders). Realign to the
+            # writer's established schema so `write_table` doesn't reject a reordered match.
+            table = table.select(self._pq_writer.schema.names)
 
         self._pq_writer.write_table(table)
 
