@@ -269,6 +269,50 @@ lerobot-train \
     --steps 200000
 ```
 
+### External model adapter checklist
+
+Many plugin policies wrap an existing robotics or VLA codebase rather than a model written directly for
+LeRobot. Keep that adapter boundary explicit: LeRobot should see normal `PreTrainedConfig`,
+`PreTrainedPolicy`, feature definitions, and processor pipelines, while the wrapped library can keep its
+own observation/action schema internally.
+
+When adapting an external model:
+
+- Register the config with `@PreTrainedConfig.register_subclass("<policy_name>")`, and make sure the
+  package import runs that registration. The installed distribution should still start with
+  `lerobot_policy_` so plugin discovery can import it.
+- Define `input_features` and `output_features` with `PolicyFeature` and `FeatureType`, not plain
+  dictionaries. Keep task- or dataset-specific defaults configurable so the package is not tied to one
+  benchmark or robot.
+- Put the schema translation in your policy module. For example, map LeRobot batch keys such as
+  `observation.images.<camera>`, `observation.state`, and `action` to the external model's camera, state,
+  prompt, and action names in one adapter class. Validate required keys early with clear errors.
+- If the wrapped model expects different state or action dimensions, make the projection, padding, or
+  cropping explicit and configurable. The policy should still expose the LeRobot action feature shape at its
+  boundary.
+- Prefer tokenized language fields from the batch when they exist, and only fall back to the external model's
+  tokenizer when needed. Heavy optional dependencies should fail with an actionable import error.
+- Keep `make_<policy_name>_pre_post_processors` serializable. Check that the returned processors can be
+  saved and loaded with the checkpoint path used by `lerobot-train` and `lerobot-eval`.
+
+A quick smoke test before publishing the plugin:
+
+```bash
+pip install -e /path/to/lerobot_policy_my_policy
+
+python - <<'PY'
+import lerobot_policy_my_policy  # noqa: F401
+from lerobot.configs import PreTrainedConfig
+
+assert "my_policy" in PreTrainedConfig.get_known_choices()
+PY
+
+lerobot-train \
+    --policy.type my_policy \
+    --env.type pusht \
+    --steps 10
+```
+
 ---
 
 ## Path B: Contributing in-tree
