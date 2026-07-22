@@ -116,7 +116,7 @@ def create_inference_engine(
             postprocessor=postprocessor,
             robot_wrapper=robot_wrapper,
             rtc_config=config.rtc,
-            hw_features=hw_features,
+            dataset_features=dataset_features,
             task=task,
             fps=fps,
             device=device,

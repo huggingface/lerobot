@@ -97,7 +97,7 @@ class RTCInferenceEngine(InferenceEngine):
         postprocessor: PolicyProcessorPipeline,
         robot_wrapper: ThreadSafeRobot,
         rtc_config: RTCConfig,
-        hw_features: dict,
+        dataset_features: dict,
         task: str,
         fps: float,
         device: str | None,
@@ -111,7 +111,17 @@ class RTCInferenceEngine(InferenceEngine):
         self._postprocessor = postprocessor
         self._robot = robot_wrapper
         self._rtc_config = rtc_config
-        self._hw_features = hw_features
+        # Build observations with the SAME feature spec sync uses (post
+        # `robot_observation_processor`), not the raw-hardware spec. `build_dataset_frame`
+        # orders `observation.state` by this spec's `names`; using the raw-hardware order
+        # here (as before) desynced the state vector from sync whenever the observation
+        # processor reorders/renames state keys, corrupting both normalization and the
+        # relative-action anchor. The `prefix="observation"` filter ignores the action
+        # entries in the combined dict.
+        self._obs_features = dataset_features
+        state_ft = dataset_features.get("observation.state")
+        if state_ft is not None:
+            logger.info("RTC observation.state layout: %s", state_ft.get("names"))
         self._task = task
         self._fps = fps
         self._device = device or "cpu"
@@ -278,7 +288,7 @@ class RTCInferenceEngine(InferenceEngine):
                         latency = latency_tracker.max()
                         delay = math.ceil(latency / time_per_chunk) if latency else 0
 
-                        obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
+                        obs_batch = build_dataset_frame(self._obs_features, obs, prefix="observation")
                         obs_batch = prepare_observation_for_inference(
                             obs_batch, policy_device, self._task, self._robot.robot_type
                         )
