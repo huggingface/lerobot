@@ -510,10 +510,12 @@ class ForwardKinematicsJointsToEEAction(RobotActionProcessorStep):
         # We only use the ee pose in the dataset, so we don't need the joint positions
         for n in self.motor_names:
             features[PipelineFeatureType.ACTION].pop(f"{n}.pos", None)
-        # We specify the dataset features of this step that we want to be stored in the dataset
+        # We specify the dataset features of this step that we want to be stored in the dataset.
+        # These live in the ACTION bucket, so they must be typed FeatureType.ACTION (the
+        # observation variant of this step uses FeatureType.STATE for its OBSERVATION features).
         for k in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
             features[PipelineFeatureType.ACTION][f"ee.{k}"] = PolicyFeature(
-                type=FeatureType.STATE, shape=(1,)
+                type=FeatureType.ACTION, shape=(1,)
             )
         return features
 
