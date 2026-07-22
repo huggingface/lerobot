@@ -13,7 +13,11 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.datasets.compute_stats import get_feature_stats
+from lerobot.datasets.compute_stats import (
+    _compute_relative_chunk_batch,
+    compute_relative_action_stats,
+    get_feature_stats,
+)
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.processor import TransitionKey, batch_to_transition
 from lerobot.processor.normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep
@@ -187,6 +191,115 @@ def test_index_map_out_of_range_raises():
     step = RelativeActionsProcessorStep(enabled=True, state_action_index_map=[0, 2, 4, 6, 8, 10, 20])
     with pytest.raises(ValueError, match="out-of-range"):
         step._resolve_state_index_map(action_dim=7, state_dim=13)
+
+
+# NumPy stats path (compute_relative_action_stats / _compute_relative_chunk_batch)
+
+
+def _make_relative_stats_dataset(n=40, constant_positions=False, seed=0):
+    """Synthetic single-episode dataset with interleaved [pos, vel] state.
+
+    state layout (13): [j0p, j0v, j1p, j1v, ..., j5p, j5v, grip]
+    action layout (7): [j0p..j5p, grip]; positions live at state cols [0,2,4,6,8,10,12].
+    When ``constant_positions`` is True, joint positions are held constant over time
+    and ``action = position + delta`` so the correct relative target is exactly ``delta``.
+    """
+    rng = np.random.default_rng(seed)
+    pos_cols = [0, 2, 4, 6, 8, 10, 12]
+    vel_cols = [1, 3, 5, 7, 9, 11]
+
+    state = np.zeros((n, 13), dtype=np.float32)
+    if constant_positions:
+        positions = np.tile(np.array([1, 2, 3, 4, 5, 6, 7], dtype=np.float32), (n, 1))
+        delta = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7], dtype=np.float32)
+        action = (positions + delta).astype(np.float32)
+    else:
+        positions = rng.uniform(-1.0, 1.0, size=(n, 7)).astype(np.float32)
+        action = rng.uniform(-1.0, 1.0, size=(n, 7)).astype(np.float32)
+    state[:, pos_cols] = positions
+    state[:, vel_cols] = rng.uniform(-0.5, 0.5, size=(n, 6)).astype(np.float32)
+
+    hf = {
+        ACTION: action,
+        OBS_STATE: state,
+        "episode_index": np.zeros(n, dtype=np.int64),
+    }
+    features = {
+        ACTION: {"shape": [7], "names": [f"joint_{i}.pos" for i in range(6)] + ["gripper.pos"]},
+        OBS_STATE: {"shape": [13]},
+    }
+    return hf, features, action, state
+
+
+def test_compute_relative_chunk_batch_matches_torch():
+    """The NumPy chunk path must equal the tested Torch conversion for a non-prefix map."""
+    _, _, action, state = _make_relative_stats_dataset(n=20)
+    idx_map = [0, 2, 4, 6, 8, 10, 12]
+    mask = [True] * 6 + [False]  # gripper excluded
+    chunk_size = 4
+    starts = np.array([0, 3, 10], dtype=np.int64)
+
+    out = _compute_relative_chunk_batch(
+        starts,
+        action,
+        state,
+        chunk_size,
+        np.array(mask, dtype=np.float32),
+        np.array(idx_map, dtype=np.int64),
+    )
+
+    ref_rows = []
+    for s in starts:
+        chunk = torch.tensor(action[s : s + chunk_size]).unsqueeze(0)  # (1, chunk, 7)
+        st = torch.tensor(state[s]).unsqueeze(0)  # (1, 13)
+        rel = to_relative_actions(chunk, st, mask, idx_map).squeeze(0)
+        ref_rows.append(rel.numpy())
+    ref = np.concatenate(ref_rows, axis=0)
+
+    np.testing.assert_allclose(out, ref, atol=1e-5)
+
+
+def test_compute_relative_action_stats_index_map_expected():
+    """Mapped relative stats recover the known delta; the prefix path does not."""
+    hf, features, _, _ = _make_relative_stats_dataset(n=40, constant_positions=True)
+    idx_map = [0, 2, 4, 6, 8, 10, 12]
+
+    fixed = compute_relative_action_stats(
+        hf, features, chunk_size=5, exclude_joints=["gripper"], state_action_index_map=idx_map
+    )
+    # Correct base -> relative target is exactly delta, with ~zero spread.
+    np.testing.assert_allclose(fixed["mean"][:6], [0.1, 0.2, 0.3, 0.4, 0.5, 0.6], atol=1e-5)
+    # std is ~0; allow a small float32 tolerance for variance-accumulation noise.
+    np.testing.assert_allclose(fixed["std"][:6], 0.0, atol=5e-3)
+
+    # The buggy prefix base (state[:7]) leaks velocities/wrong joints -> different, wrong mean.
+    buggy = compute_relative_action_stats(hf, features, chunk_size=5, exclude_joints=["gripper"])
+    assert not np.allclose(buggy["mean"][:6], fixed["mean"][:6], atol=1e-2)
+
+
+def test_compute_relative_action_stats_index_map_workers_agree():
+    """Single-threaded and threaded branches produce identical mapped stats."""
+    hf, features, _, _ = _make_relative_stats_dataset(n=60, constant_positions=True)
+    idx_map = [0, 2, 4, 6, 8, 10, 12]
+
+    single = compute_relative_action_stats(
+        hf,
+        features,
+        chunk_size=5,
+        exclude_joints=["gripper"],
+        state_action_index_map=idx_map,
+        num_workers=0,
+    )
+    threaded = compute_relative_action_stats(
+        hf,
+        features,
+        chunk_size=5,
+        exclude_joints=["gripper"],
+        state_action_index_map=idx_map,
+        num_workers=2,
+    )
+    for key in ("mean", "std", "min", "max"):
+        np.testing.assert_allclose(single[key], threaded[key], atol=1e-5)
 
 
 # Chunk-level relative stats test
