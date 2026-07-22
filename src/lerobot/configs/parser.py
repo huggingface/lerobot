@@ -27,6 +27,7 @@ from typing import Any, TypeVar, cast
 
 import draccus
 import yaml  # type: ignore[import-untyped]
+from draccus.utils import DecodingError
 
 from lerobot.utils.utils import has_method
 
@@ -312,11 +313,15 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                 else:
                     if config_path_cli:
                         cli_args = filter_arg("config_path", cli_args)
-                    cfg = draccus.parse(
-                        config_class=argtype,
-                        config_path=config_path_cli or config_path,
-                        args=cli_args,
-                    )
+                    try:
+                        cfg = draccus.parse(
+                            config_class=argtype,
+                            config_path=config_path_cli or config_path,
+                            args=cli_args,
+                        )
+                    except DecodingError as e:
+                        print(f"error: {e}", file=sys.stderr)
+                        sys.exit(1)
             response = fn(cfg, *args, **kwargs)
             return response
 
