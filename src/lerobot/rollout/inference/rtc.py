@@ -252,6 +252,8 @@ class RTCInferenceEngine(InferenceEngine):
             policy_device = torch.device(self._device)
 
             warmup_required = max(1, self._compile_warmup_inferences) if self._use_torch_compile else 0
+            # exclude the first N inferences from the latency tracker to avoid cold-start spikes
+            latency_warmup_required = max(1, warmup_required)
             inference_count = 0
             consecutive_errors = 0
 
@@ -316,7 +318,8 @@ class RTCInferenceEngine(InferenceEngine):
                         inference_count += 1
                         consecutive_errors = 0
                         is_warmup = self._use_torch_compile and inference_count <= warmup_required
-                        if is_warmup:
+                        # Ignore the first N inferences for latency tracking to avoid cold-start spikes
+                        if inference_count <= latency_warmup_required:
                             latency_tracker.reset()
                         else:
                             latency_tracker.add(new_latency)
