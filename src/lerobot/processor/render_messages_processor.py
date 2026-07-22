@@ -23,7 +23,7 @@ from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.configs.recipe import TrainingRecipe
 from lerobot.datasets.language import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 from lerobot.datasets.language_render import render_sample
-from lerobot.types import EnvTransition, TransitionKey
+from lerobot.robot_types import EnvTransition, TransitionKey
 from lerobot.utils.utils import unwrap_scalar
 
 from .pipeline import ProcessorStep, ProcessorStepRegistry

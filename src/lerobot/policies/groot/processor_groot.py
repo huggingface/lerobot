@@ -66,7 +66,7 @@ from lerobot.processor import (
     transition_to_batch,
     transition_to_policy_action,
 )
-from lerobot.types import EnvTransition, TransitionKey
+from lerobot.robot_types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     ACTION,
     OBS_IMAGE,

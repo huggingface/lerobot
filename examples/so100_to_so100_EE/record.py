@@ -33,7 +33,7 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
 )
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
-from lerobot.types import RobotAction, RobotObservation
+from lerobot.robot_types import RobotAction, RobotObservation
 from lerobot.utils.feature_utils import combine_feature_dicts
 from lerobot.utils.keyboard_input import init_keyboard_listener
 from lerobot.utils.utils import log_say

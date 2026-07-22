@@ -31,8 +31,13 @@ from lerobot.processor import (
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
-from lerobot.types import TransitionKey
-from lerobot.utils.constants import OBS_STATE
+from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
+from lerobot.robot_types import TransitionKey
+from lerobot.utils.constants import (
+    OBS_STATE,
+    POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    POLICY_PREPROCESSOR_DEFAULT_NAME,
+)
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from .configuration_eo1 import EO1Config

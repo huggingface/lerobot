@@ -20,7 +20,7 @@ from typing import Any
 import draccus
 
 from lerobot.motors.motors_bus import MotorCalibration
-from lerobot.types import RobotAction
+from lerobot.robot_types import RobotAction
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 
 from .config import TeleoperatorConfig

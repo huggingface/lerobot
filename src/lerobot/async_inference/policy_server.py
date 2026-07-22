@@ -45,7 +45,7 @@ from lerobot.transport import (
     services_pb2_grpc,  # type: ignore
 )
 from lerobot.transport.utils import receive_bytes_in_chunks
-from lerobot.types import PolicyAction
+from lerobot.robot_types import PolicyAction
 
 from .configs import PolicyServerConfig
 from .constants import SUPPORTED_POLICIES

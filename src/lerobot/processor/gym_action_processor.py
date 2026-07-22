@@ -17,7 +17,7 @@
 from dataclasses import dataclass
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.types import EnvAction, EnvTransition, PolicyAction, TransitionKey
+from lerobot.robot_types import EnvAction, EnvTransition, PolicyAction, TransitionKey
 
 from .converters import to_tensor
 from .hil_processor import TELEOP_ACTION_KEY

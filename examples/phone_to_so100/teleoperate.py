@@ -31,7 +31,7 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
 from lerobot.teleoperators.phone import Phone, PhoneConfig
 from lerobot.teleoperators.phone.config_phone import PhoneOS
 from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
-from lerobot.types import RobotAction, RobotObservation
+from lerobot.robot_types import RobotAction, RobotObservation
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 

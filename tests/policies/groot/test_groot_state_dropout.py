@@ -25,7 +25,7 @@ regularization never activated. These tests pin the train/eval split.
 import torch
 
 from lerobot.policies.groot.processor_groot import GrootN17PackInputsStep
-from lerobot.types import TransitionKey
+from lerobot.robot_types import TransitionKey
 from lerobot.utils.constants import OBS_STATE
 
 

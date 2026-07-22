@@ -38,7 +38,7 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
     ForwardKinematicsJointsToEE,
     InverseKinematicsEEToJoints,
 )
-from lerobot.types import RobotAction, RobotObservation
+from lerobot.robot_types import RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.keyboard_input import init_keyboard_listener

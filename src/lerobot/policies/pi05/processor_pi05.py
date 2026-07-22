@@ -33,8 +33,12 @@ from lerobot.processor import (
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
-from lerobot.types import EnvTransition, TransitionKey
-from lerobot.utils.constants import OBS_STATE
+from lerobot.robot_types import EnvTransition, TransitionKey
+from lerobot.utils.constants import (
+    OBS_STATE,
+    POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    POLICY_PREPROCESSOR_DEFAULT_NAME,
+)
 
 from .configuration_pi05 import PI05Config
 

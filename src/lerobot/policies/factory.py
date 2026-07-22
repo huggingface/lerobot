@@ -37,7 +37,7 @@ from lerobot.processor import (
     transition_to_batch,
     transition_to_policy_action,
 )
-from lerobot.types import PolicyAction
+from lerobot.robot_types import PolicyAction
 from lerobot.utils.constants import (
     ACTION,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,

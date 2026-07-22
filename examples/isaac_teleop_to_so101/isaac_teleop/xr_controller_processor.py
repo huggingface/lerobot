@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.processor import ProcessorStepRegistry, RobotActionProcessorStep
-from lerobot.types import RobotAction
+from lerobot.robot_types import RobotAction
 from lerobot.utils.rotation import Rotation
 
 from .base import _GRIPPER_MOTOR_SCALE

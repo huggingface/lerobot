@@ -35,7 +35,7 @@ from lerobot.policies.gaussian_actor.modeling_gaussian_actor import (
     orthogonal_init,
 )
 from lerobot.policies.utils import get_device_from_parameters
-from lerobot.types import BatchType
+from lerobot.robot_types import BatchType
 from lerobot.utils.constants import ACTION
 from lerobot.utils.transition import move_state_dict_to_device
 

@@ -23,7 +23,7 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
-from lerobot.types import RobotAction
+from lerobot.robot_types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator

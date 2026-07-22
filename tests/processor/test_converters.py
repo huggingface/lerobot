@@ -24,7 +24,7 @@ from lerobot.processor.converters import (
     to_tensor,
     transition_to_batch,
 )
-from lerobot.types import TransitionKey
+from lerobot.robot_types import TransitionKey
 from lerobot.utils.constants import ACTION, DONE, OBS_STATE, OBS_STR, REWARD
 
 

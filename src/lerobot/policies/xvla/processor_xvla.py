@@ -31,7 +31,7 @@ from lerobot.processor import (
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
-from lerobot.types import EnvTransition, TransitionKey
+from lerobot.robot_types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     IMAGENET_STATS,
     OBS_IMAGES,

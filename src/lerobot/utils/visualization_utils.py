@@ -21,7 +21,7 @@ this module does not import ``rerun`` or ``foxglove`` (each backend imports its 
 ``require_package`` guard).
 """
 
-from lerobot.types import RobotAction, RobotObservation
+from lerobot.robot_types import RobotAction, RobotObservation
 
 from .foxglove_visualization import init_foxglove, log_foxglove_data, shutdown_foxglove
 from .rerun_visualization import init_rerun, log_rerun_data, shutdown_rerun

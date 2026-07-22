@@ -27,7 +27,7 @@ import torch
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.processor import DataProcessorPipeline, TokenizerProcessorStep
 from lerobot.processor.converters import create_transition, identity_transition
-from lerobot.types import TransitionKey
+from lerobot.robot_types import TransitionKey
 from lerobot.utils.constants import (
     ACTION,
     OBS_IMAGE,
