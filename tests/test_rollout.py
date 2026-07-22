@@ -252,6 +252,152 @@ def test_create_inference_engine_sync():
 
 
 # ---------------------------------------------------------------------------
+# Observation feature-spec consistency (sync vs RTC)
+#
+# ``build_dataset_frame`` orders the ``observation.state`` vector by the ``names``
+# list of the feature spec it is handed. Sync uses ``dataset_features`` (joint
+# layout AFTER ``robot_observation_processor``); RTC must use the SAME spec, not the
+# raw-hardware layout, or its state vector desyncs from sync — corrupting both the
+# normalizer's per-joint stats and the relative-action anchor, which sends the arm
+# to systematically wrong absolute targets.
+# ---------------------------------------------------------------------------
+
+
+def test_build_dataset_frame_state_layout_depends_on_feature_spec():
+    """A reordered feature spec yields a reordered ``observation.state`` vector."""
+    import numpy as np
+
+    from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
+
+    # Raw hardware joint order.
+    obs_hw = {"shoulder.pos": float, "elbow.pos": float, "wrist.pos": float, "gripper.pos": float}
+    hw_features = hw_to_dataset_features(obs_hw, "observation")
+
+    # What a ``robot_observation_processor`` that reorders state keys would produce
+    # (e.g. gripper moved to the front). Same keys, different order.
+    dataset_features = {
+        "observation.state": {
+            "dtype": "float32",
+            "shape": (4,),
+            "names": ["gripper.pos", "shoulder.pos", "elbow.pos", "wrist.pos"],
+        }
+    }
+
+    values = {"shoulder.pos": 10.0, "elbow.pos": 20.0, "wrist.pos": 30.0, "gripper.pos": 40.0}
+
+    hw_state = build_dataset_frame(hw_features, values, prefix="observation")["observation.state"]
+    ds_state = build_dataset_frame(dataset_features, values, prefix="observation")["observation.state"]
+
+    np.testing.assert_array_equal(hw_state, [10.0, 20.0, 30.0, 40.0])
+    np.testing.assert_array_equal(ds_state, [40.0, 10.0, 20.0, 30.0])
+    # The two layouts genuinely differ: this is the sync/RTC divergence the fix removes.
+    assert not np.array_equal(hw_state, ds_state)
+
+
+def test_create_inference_engine_rtc_uses_dataset_features():
+    """The RTC engine must build observations from ``dataset_features`` (sync's spec),
+    not the raw-hardware ``hw_features`` — so its ``observation.state`` matches sync."""
+    from lerobot.rollout import RTCInferenceConfig, RTCInferenceEngine, create_inference_engine
+
+    dataset_features = {
+        "observation.state": {
+            "dtype": "float32",
+            "shape": (4,),
+            "names": ["gripper.pos", "shoulder.pos", "elbow.pos", "wrist.pos"],
+        }
+    }
+    # Deliberately different order to prove the engine ignores it.
+    hw_features = {
+        "observation.state": {
+            "dtype": "float32",
+            "shape": (4,),
+            "names": ["shoulder.pos", "elbow.pos", "wrist.pos", "gripper.pos"],
+        }
+    }
+
+    engine = create_inference_engine(
+        RTCInferenceConfig(),
+        policy=MagicMock(),
+        # No relative/normalizer steps => __init__ introspection stays trivial.
+        preprocessor=MagicMock(steps=[]),
+        postprocessor=MagicMock(steps=[]),
+        robot_wrapper=MagicMock(robot_type="mock"),
+        hw_features=hw_features,
+        dataset_features=dataset_features,
+        ordered_action_keys=["k"],
+        task="test",
+        fps=30.0,
+        device="cpu",
+    )
+    assert isinstance(engine, RTCInferenceEngine)
+    assert engine._obs_features is dataset_features
+    assert engine._obs_features["observation.state"]["names"] == [
+        "gripper.pos",
+        "shoulder.pos",
+        "elbow.pos",
+        "wrist.pos",
+    ]
+
+
+def test_rtc_get_action_remaps_model_order_to_ordered_action_keys():
+    """RTC must remap the model-order action vector to ``ordered_action_keys`` by NAME
+    before returning — matching sync. Otherwise the strategy maps model outputs onto the
+    wrong joints (a per-joint permutation) whenever the two orders differ."""
+    from lerobot.rollout import RTCInferenceConfig, RTCInferenceEngine, create_inference_engine
+    from lerobot.utils.constants import ACTION
+
+    # The model emits actions in dataset order [a, b, c]; the robot wants [c, a, b].
+    dataset_action_names = ["a.pos", "b.pos", "c.pos"]
+    ordered_action_keys = ["c.pos", "a.pos", "b.pos"]
+    dataset_features = {
+        ACTION: {"dtype": "float32", "shape": (3,), "names": dataset_action_names},
+    }
+
+    engine = create_inference_engine(
+        RTCInferenceConfig(),
+        policy=MagicMock(),
+        preprocessor=MagicMock(steps=[]),
+        postprocessor=MagicMock(steps=[]),
+        robot_wrapper=MagicMock(robot_type="mock"),
+        hw_features={},
+        dataset_features=dataset_features,
+        ordered_action_keys=ordered_action_keys,
+        task="test",
+        fps=30.0,
+        device="cpu",
+    )
+    assert isinstance(engine, RTCInferenceEngine)
+
+    # Queue yields the model-order vector a=1, b=2, c=3.
+    engine._action_queue = MagicMock()
+    engine._action_queue.get.return_value = torch.tensor([1.0, 2.0, 3.0])
+
+    out = engine.get_action(None)
+    # Remapped by name to [c, a, b] = [3, 1, 2]; positional pass-through would give [1, 2, 3].
+    torch.testing.assert_close(out, torch.tensor([3.0, 1.0, 2.0]))
+
+
+def test_normalize_prev_actions_length_holds_last_action_not_zeros():
+    """A short RTC prefix is padded by repeating the last action, never with zeros —
+    zeros decode to the mean action and cause the intermittent chunk-seam spike."""
+    from lerobot.rollout.inference.rtc import _normalize_prev_actions_length
+
+    prev = torch.tensor([[1.0, -1.0], [2.0, -2.0]])  # 2 steps, dim 2
+
+    # Pad up to 5: rows 2..4 must equal the last real row, not zeros.
+    padded = _normalize_prev_actions_length(prev, target_steps=5)
+    assert padded.shape == (5, 2)
+    torch.testing.assert_close(padded[:2], prev)
+    for i in range(2, 5):
+        torch.testing.assert_close(padded[i], prev[-1])
+    assert not torch.any(padded[2:] == 0.0), "pad rows must not be zeros"
+
+    # Exact length: unchanged. Truncation: first `target_steps` rows.
+    torch.testing.assert_close(_normalize_prev_actions_length(prev, 2), prev)
+    torch.testing.assert_close(_normalize_prev_actions_length(prev, 1), prev[:1])
+
+
+# ---------------------------------------------------------------------------
 # Pure functions
 # ---------------------------------------------------------------------------
 
