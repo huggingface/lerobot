@@ -346,6 +346,13 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 "enabled": True,
                 "exclude_joints": getattr(active_cfg, "relative_exclude_joints", []),
                 "action_names": getattr(active_cfg, "action_feature_names", None),
+                # Forward the state->action index map so the train-time relative
+                # conversion uses the SAME base channels as the recomputed relative
+                # stats. Without this, a non-prefix state (e.g. interleaved
+                # [pos, vel]) falls back to state[:action_dim] and the relative
+                # targets are computed from the wrong base, producing a train/stats
+                # mismatch and a pathological (1e5+) loss.
+                "state_action_index_map": getattr(active_cfg, "relative_state_index_map", None),
             }
             postprocessor_overrides["absolute_actions_processor"] = {"enabled": True}
         processor_kwargs["preprocessor_overrides"] = preprocessor_overrides

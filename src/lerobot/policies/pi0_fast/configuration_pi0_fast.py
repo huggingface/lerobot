@@ -46,6 +46,13 @@ class PI0FastConfig(PreTrainedConfig):
     relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
     # Populated at runtime from dataset metadata by make_policy.
     action_feature_names: list[str] | None = None
+    # Optional explicit mapping for relative actions: entry i is the
+    # observation.state column that action dim i is relative to. Set this when the
+    # state is NOT a prefix-aligned copy of the action (e.g. interleaved [pos, vel]
+    # per joint, or state augmented with force/torque/pose channels). When None,
+    # the legacy state[:action_dim] prefix behavior is used (fully backward
+    # compatible). Must match the map passed to recompute-stats.
+    relative_state_index_map: list[int] | None = None
 
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
