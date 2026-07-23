@@ -98,6 +98,7 @@ from lerobot.robots import (  # noqa: F401
     openarm_follower,
     reachy2,
     rebot_b601_follower,
+    so101_7dof_follower,
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
@@ -118,6 +119,7 @@ from lerobot.teleoperators import (  # noqa: F401
     openarm_mini,
     reachy2_teleoperator,
     rebot_102_leader,
+    so101_7dof_leader,
     so_leader,
     unitree_g1,
 )
