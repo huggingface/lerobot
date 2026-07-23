@@ -101,11 +101,23 @@ class DiffusionPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
-        # stack n latest observations from the queue
-        batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
-        actions = self.diffusion.generate_actions(batch, noise=noise)
+        """Predict a chunk of actions given environment observations.
 
+        Supports two modes:
+        - Online (queues populated via select_action): stacks observations from internal queues.
+        - Offline (empty queues, e.g. dataloader batch): uses the batch directly.
+        """
+        queues_populated = any(len(q) > 0 for q in self._queues.values())
+        if queues_populated:
+            batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
+        else:
+            batch = dict(batch)
+            if self.config.image_features:
+                for key in self.config.image_features:
+                    if batch[key].ndim == 4:
+                        batch[key] = batch[key].unsqueeze(1)
+                batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
+        actions = self.diffusion.generate_actions(batch, noise=noise)
         return actions
 
     @torch.no_grad()
@@ -380,7 +392,9 @@ class DiffusionModel(nn.Module):
                     f"{self.config.do_mask_loss_for_padding=}."
                 )
             in_episode_bound = ~batch["action_is_pad"]
-            loss = loss * in_episode_bound.unsqueeze(-1)
+            mask = in_episode_bound.unsqueeze(-1)
+            num_valid = mask.sum() * loss.shape[-1]
+            return (loss * mask).sum() / num_valid.clamp_min(1)
 
         return loss.mean()
 

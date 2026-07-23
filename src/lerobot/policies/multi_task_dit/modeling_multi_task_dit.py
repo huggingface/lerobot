@@ -688,8 +688,9 @@ class DiffusionObjective(nn.Module):
         loss = F.mse_loss(predicted, target, reduction="none")
 
         if self.do_mask_loss_for_padding and "action_is_pad" in batch:
-            valid_actions = ~batch["action_is_pad"]
-            loss = loss * valid_actions.unsqueeze(-1)
+            mask = ~batch["action_is_pad"].unsqueeze(-1)
+            num_valid = mask.sum() * loss.shape[-1]
+            return (loss * mask).sum() / num_valid.clamp_min(1)
 
         return loss.mean()
 
@@ -752,8 +753,9 @@ class FlowMatchingObjective(nn.Module):
         loss = F.mse_loss(predicted_velocity, target_velocity, reduction="none")
 
         if self.do_mask_loss_for_padding and "action_is_pad" in batch:
-            valid_mask = ~batch["action_is_pad"]
-            loss = loss * valid_mask.unsqueeze(-1)
+            mask = ~batch["action_is_pad"].unsqueeze(-1)
+            num_valid = mask.sum() * loss.shape[-1]
+            return (loss * mask).sum() / num_valid.clamp_min(1)
 
         return loss.mean()
 

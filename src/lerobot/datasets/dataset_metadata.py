@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
+import logging
+from collections.abc import Callable, Iterable
+from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
@@ -23,27 +26,27 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from huggingface_hub import snapshot_download
 
+from lerobot.configs import DEPTH_METER_UNIT, VideoEncoderConfig
 from lerobot.utils.constants import DEFAULT_FEATURES, HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
 from lerobot.utils.feature_utils import _validate_feature_names
 from lerobot.utils.utils import flatten_dict
 
 from .compute_stats import aggregate_stats
+from .depth_utils import MM_PER_METRE
 from .feature_utils import create_empty_dataset_info
 from .io_utils import (
     get_file_size_in_mb,
     load_episodes,
     load_info,
     load_stats,
-    load_subtasks,
     load_tasks,
     write_info,
-    write_json,
     write_stats,
     write_tasks,
 )
+from .language import DEFAULT_TOOLS, LANGUAGE_COLUMNS
 from .utils import (
     DEFAULT_EPISODES_PATH,
-    INFO_PATH,
     check_version_compatibility,
     get_safe_version,
     has_legacy_hub_download_metadata,
@@ -177,7 +180,6 @@ class LeRobotDatasetMetadata:
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks = load_tasks(self.root)
-        self.subtasks = load_subtasks(self.root)
         self.episodes = load_episodes(self.root)
         self.stats = load_stats(self.root)
 
@@ -190,6 +192,29 @@ class LeRobotDatasetMetadata:
         """
         if self.episodes is None:
             self._load_metadata()
+
+    def filter_episodes(
+        self,
+        predicate: Callable[[dict], bool],
+        candidates: list[int] | None = None,
+    ) -> list[int]:
+        """Filter episodes whose metadata satisfies a given predicate.
+
+        Args:
+            predicate: Predicate over per-episode metadata rows used to select episodes.
+            candidates: Optional list of episode indices to restrict evaluation to.
+
+        Returns:
+            List of sorted episode indices that satisfy the predicate.
+        """
+        self.ensure_readable()
+        if candidates is not None:
+            candidate_set = set(candidates)
+            combined = lambda ep: ep["episode_index"] in candidate_set and predicate(ep)  # noqa: E731
+        else:
+            combined = predicate
+        filtered = self.episodes.filter(combined, keep_in_memory=True, load_from_cache_file=False)
+        return sorted(int(idx) for idx in filtered["episode_index"])
 
     def _pull_from_repo(
         self,
@@ -228,7 +253,7 @@ class LeRobotDatasetMetadata:
     @property
     def _version(self) -> packaging.version.Version:
         """Codebase version used to create this dataset."""
-        return packaging.version.parse(self.info["codebase_version"])
+        return packaging.version.parse(self.info.codebase_version)
 
     def get_data_file_path(self, ep_index: int) -> Path:
         """Return the relative parquet file path for the given episode index.
@@ -283,27 +308,27 @@ class LeRobotDatasetMetadata:
     @property
     def data_path(self) -> str:
         """Formattable string for the parquet files."""
-        return self.info["data_path"]
+        return self.info.data_path
 
     @property
     def video_path(self) -> str | None:
         """Formattable string for the video files."""
-        return self.info["video_path"]
+        return self.info.video_path
 
     @property
     def robot_type(self) -> str | None:
         """Robot type used in recording this dataset."""
-        return self.info["robot_type"]
+        return self.info.robot_type
 
     @property
     def fps(self) -> int:
         """Frames per second used during data collection."""
-        return self.info["fps"]
+        return self.info.fps
 
     @property
     def features(self) -> dict[str, dict]:
         """All features contained in the dataset."""
-        return self.info["features"]
+        return self.info.features
 
     @property
     def image_keys(self) -> list[str]:
@@ -316,9 +341,100 @@ class LeRobotDatasetMetadata:
         return [key for key, ft in self.features.items() if ft["dtype"] == "video"]
 
     @property
+    def depth_keys(self) -> list[str]:
+        """Keys to access depth-map modalities stored as videos or images.
+
+        A depth key is a feature whose ``info`` dict carries ``"is_depth_map": True``
+        (or the legacy ``"video.is_depth_map"`` inside ``info`` or ``video_info``).
+        """
+
+        def _is_depth(ft: dict) -> bool:
+            info = ft.get("info") or {}
+            video_info = ft.get("video_info") or {}
+            return (
+                info.get("is_depth_map", False)
+                or info.get("video.is_depth_map", False)
+                or video_info.get("video.is_depth_map", False)
+            )
+
+        return [key for key, ft in self.features.items() if _is_depth(ft)]
+
+    def rescale_depth_stats(self, output_unit: str) -> None:
+        """Rescale depth feature stats in place from their recorded unit to ``output_unit``.
+
+        Depth stats are stored in the unit the frames were recorded in
+        (``features[key]["info"]["depth_unit"]``), while frames are returned in
+        ``output_unit`` on read. This converts the unit-bearing stat entries so
+        stats match the frames consumers see.
+        """
+        missing_unit_keys = [
+            key for key in self.depth_keys if (self.features[key].get("info") or {}).get("depth_unit") is None
+        ]
+        if missing_unit_keys:
+            logging.warning(
+                f"Depth feature(s) {missing_unit_keys} have no recorded 'depth_unit' in their info. "
+                f"Depth maps and stats for these keys will be returned AS IS, with no unit conversion "
+                f"to the requested output unit {output_unit!r}. Re-record the dataset or set 'depth_unit' "
+                f"in the feature info (meta/info.json) to enable conversion."
+            )
+        if self.stats is None:
+            return
+        for key in self.depth_keys:
+            stored_unit = (self.features[key].get("info") or {}).get("depth_unit")
+            if stored_unit is None or stored_unit == output_unit or key not in self.stats:
+                continue
+            factor = MM_PER_METRE if stored_unit == DEPTH_METER_UNIT else 1.0 / MM_PER_METRE
+            self.stats[key] = {
+                stat: value if stat == "count" else value * factor for stat, value in self.stats[key].items()
+            }
+
+    @property
     def camera_keys(self) -> list[str]:
         """Keys to access visual modalities (regardless of their storage method)."""
         return [key for key, ft in self.features.items() if ft["dtype"] in ["video", "image"]]
+
+    @property
+    def has_language_columns(self) -> bool:
+        """Return ``True`` if the dataset declares any language column.
+
+        Used to gate language-aware code paths (collate, render step) so
+        unannotated datasets keep PyTorch's default collate behavior.
+        """
+        return any(col in self.features for col in LANGUAGE_COLUMNS)
+
+    @property
+    def tools(self) -> list[dict]:
+        """OpenAI-style tool schemas declared by this dataset.
+
+        Read from ``meta/info.json["tools"]``. Returns a copy, so callers
+        can mutate the result safely. Falls back to
+        :data:`lerobot.datasets.language.DEFAULT_TOOLS` (the canonical
+        ``say`` schema) when the dataset doesn't declare any — that way
+        unannotated datasets and chat-template consumers
+        (``apply_chat_template(messages, tools=meta.tools)``) keep
+        working out of the box.
+
+        Implementations live under :mod:`lerobot.tools` (one file per
+        tool); see ``docs/source/tools.mdx`` for the authoring guide.
+        """
+        declared = self.info.tools
+        if declared:
+            return [dict(t) for t in declared]
+        return [dict(t) for t in DEFAULT_TOOLS]
+
+    @tools.setter
+    def tools(self, value: list[dict] | None) -> None:
+        """Persist a tool catalog to ``meta/info.json`` and reload metadata.
+
+        Writes ``value`` into the on-disk ``info.json`` (or clears the
+        ``tools`` key when ``value`` is ``None`` or empty), then reloads
+        ``self.info`` so the in-memory metadata matches what's on disk.
+        Saves callers from hand-editing ``info.json`` and re-instantiating
+        the metadata object.
+        """
+        self.info.tools = [dict(t) for t in value] if value else None
+        write_info(self.info, self.root)
+        self.info = load_info(self.root)
 
     @property
     def names(self) -> dict[str, list | dict]:
@@ -333,32 +449,32 @@ class LeRobotDatasetMetadata:
     @property
     def total_episodes(self) -> int:
         """Total number of episodes available."""
-        return self.info["total_episodes"]
+        return self.info.total_episodes
 
     @property
     def total_frames(self) -> int:
         """Total number of frames saved in this dataset."""
-        return self.info["total_frames"]
+        return self.info.total_frames
 
     @property
     def total_tasks(self) -> int:
         """Total number of different tasks performed in this dataset."""
-        return self.info["total_tasks"]
+        return self.info.total_tasks
 
     @property
     def chunks_size(self) -> int:
         """Max number of files per chunk."""
-        return self.info["chunks_size"]
+        return self.info.chunks_size
 
     @property
     def data_files_size_in_mb(self) -> int:
         """Max size of data file in mega bytes."""
-        return self.info["data_files_size_in_mb"]
+        return self.info.data_files_size_in_mb
 
     @property
     def video_files_size_in_mb(self) -> int:
         """Max size of video file in mega bytes."""
-        return self.info["video_files_size_in_mb"]
+        return self.info.video_files_size_in_mb
 
     def get_task_index(self, task: str) -> int | None:
         """
@@ -502,29 +618,61 @@ class LeRobotDatasetMetadata:
         self._save_episode_metadata(episode_dict)
 
         # Update info
-        self.info["total_episodes"] += 1
-        self.info["total_frames"] += episode_length
-        self.info["total_tasks"] = len(self.tasks)
-        self.info["splits"] = {"train": f"0:{self.info['total_episodes']}"}
+        self.info.total_episodes += 1
+        self.info.total_frames += episode_length
+        self.info.total_tasks = len(self.tasks)
+        self.info.splits = {"train": f"0:{self.info.total_episodes}"}
 
         write_info(self.info, self.root)
 
         self.stats = aggregate_stats([self.stats, episode_stats]) if self.stats is not None else episode_stats
         write_stats(self.stats, self.root)
 
-    def update_video_info(self, video_key: str | None = None) -> None:
-        """
+    def update_video_info(
+        self,
+        video_key: str | None = None,
+        video_encoder: VideoEncoderConfig | None = None,
+        preserve_keys: Iterable[str] | None = None,
+    ) -> None:
+        """Populate or refresh per-feature video info in ``info.json``.
+
         Warning: this function writes info from first episode videos, implicitly assuming that all videos have
         been encoded the same way. Also, this means it assumes the first episode exists.
+
+        Always re-probes the videos and overwrites existing info for every recomputed
+        key. ``preserve_keys`` lists keys whose existing values must be kept (e.g.
+        data-intrinsic entries like ``is_depth_map`` and depth quantization params)
+        instead of being recomputed.
+
+        Args:
+            video_key: If provided, only update this video key. Otherwise update
+                all video keys in the dataset.
+            video_encoder: Encoder configuration used to produce the
+                videos. When provided, its fields are recorded as
+                ``video.<field>`` entries alongside the stream-derived
+                ``video.*`` entries (see :func:`get_video_info`).
+            preserve_keys: Keys whose existing values are kept instead of being
+                recomputed. ``None`` (default) recomputes every key.
         """
         if video_key is not None and video_key not in self.video_keys:
             raise ValueError(f"Video key {video_key} not found in dataset")
 
         video_keys = [video_key] if video_key is not None else self.video_keys
+        preserve_set = set(preserve_keys or ())
         for key in video_keys:
-            if not self.features[key].get("info", None):
-                video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
-                self.info["features"][key]["info"] = get_video_info(video_path)
+            existing = self.features[key].get("info") or {}
+            video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
+            new_info = get_video_info(video_path, video_encoder=video_encoder)
+            # Drop preserved keys so the existing values win on merge.
+            new_info = {k: v for k, v in new_info.items() if k not in preserve_set}
+            merged = {**existing, **new_info}
+            # Migrate the legacy depth marker to the canonical key.
+            if "video.is_depth_map" in merged:
+                logging.warning(
+                    f"Migrating legacy 'video.is_depth_map' to 'is_depth_map' for feature {key!r}."
+                )
+                merged.setdefault("is_depth_map", merged.pop("video.is_depth_map"))
+            self.info.features[key]["info"] = merged
 
     def update_chunk_settings(
         self,
@@ -546,17 +694,17 @@ class LeRobotDatasetMetadata:
         if chunks_size is not None:
             if chunks_size <= 0:
                 raise ValueError(f"chunks_size must be positive, got {chunks_size}")
-            self.info["chunks_size"] = chunks_size
+            self.info.chunks_size = chunks_size
 
         if data_files_size_in_mb is not None:
             if data_files_size_in_mb <= 0:
                 raise ValueError(f"data_files_size_in_mb must be positive, got {data_files_size_in_mb}")
-            self.info["data_files_size_in_mb"] = data_files_size_in_mb
+            self.info.data_files_size_in_mb = data_files_size_in_mb
 
         if video_files_size_in_mb is not None:
             if video_files_size_in_mb <= 0:
                 raise ValueError(f"video_files_size_in_mb must be positive, got {video_files_size_in_mb}")
-            self.info["video_files_size_in_mb"] = video_files_size_in_mb
+            self.info.video_files_size_in_mb = video_files_size_in_mb
 
         # Update the info file on disk
         write_info(self.info, self.root)
@@ -631,11 +779,10 @@ class LeRobotDatasetMetadata:
 
         obj.root.mkdir(parents=True, exist_ok=False)
 
-        features = {**features, **DEFAULT_FEATURES}
+        features = {**deepcopy(features), **DEFAULT_FEATURES}
         _validate_feature_names(features)
 
         obj.tasks = None
-        obj.subtasks = None
         obj.episodes = None
         obj.stats = None
         obj.info = create_empty_dataset_info(
@@ -653,7 +800,7 @@ class LeRobotDatasetMetadata:
                 f"Features contain video keys {obj.video_keys}, but 'use_videos' is set to False. "
                 "Either remove video features from the features dict, or set 'use_videos=True'."
             )
-        write_json(obj.info, obj.root / INFO_PATH)
+        write_info(obj.info, obj.root)
         obj.revision = None
         obj._pq_writer = None
         obj.latest_episode = None

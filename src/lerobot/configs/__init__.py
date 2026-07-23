@@ -21,14 +21,30 @@ are intentionally NOT re-exported here to avoid circular dependencies
 Import them directly: ``from lerobot.configs.train import TrainPipelineConfig``
 """
 
-from .default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
+from .dataset import DatasetRecordConfig
+from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, WandBConfig
 from .policies import PreTrainedConfig
+from .recipe import MessageTurn, TrainingRecipe, load_recipe
 from .types import (
     FeatureType,
     NormalizationMode,
     PipelineFeatureType,
     PolicyFeature,
     RTCAttentionSchedule,
+)
+from .video import (
+    DEFAULT_DEPTH_UNIT,
+    DEPTH_METER_UNIT,
+    DEPTH_MILLIMETER_UNIT,
+    VALID_VIDEO_CODECS,
+    VIDEO_ENCODER_INFO_KEYS,
+    DepthEncoderConfig,
+    RGBEncoderConfig,
+    VideoEncoderConfig,
+    depth_encoder_defaults,
+    encoder_config_from_video_info,
+    infer_depth_unit,
+    rgb_encoder_defaults,
 )
 
 __all__ = [
@@ -39,9 +55,29 @@ __all__ = [
     "PolicyFeature",
     "RTCAttentionSchedule",
     # Config classes
+    "DatasetRecordConfig",
     "DatasetConfig",
     "EvalConfig",
+    "JobConfig",
+    "MessageTurn",
     "PeftConfig",
     "PreTrainedConfig",
+    "TrainingRecipe",
     "WandBConfig",
+    "load_recipe",
+    "VideoEncoderConfig",
+    "RGBEncoderConfig",
+    "DepthEncoderConfig",
+    # Defaults
+    "rgb_encoder_defaults",
+    "depth_encoder_defaults",
+    # Factories
+    "encoder_config_from_video_info",
+    "infer_depth_unit",
+    # Constants
+    "DEFAULT_DEPTH_UNIT",
+    "DEPTH_METER_UNIT",
+    "DEPTH_MILLIMETER_UNIT",
+    "VALID_VIDEO_CODECS",
+    "VIDEO_ENCODER_INFO_KEYS",
 ]

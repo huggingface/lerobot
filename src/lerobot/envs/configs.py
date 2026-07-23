@@ -573,6 +573,71 @@ class RoboCasaEnv(EnvConfig):
         )
 
 
+@EnvConfig.register_subclass("vlabench")
+@dataclass
+class VLABenchEnv(EnvConfig):
+    task: str = "select_fruit"
+    fps: int = 10
+    episode_length: int = 500
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    render_resolution: tuple[int, int] = (480, 480)
+    robot: str = "franka"
+    action_mode: str = "eef"
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "agent_pos": OBS_STATE,
+            "pixels/image": f"{OBS_IMAGES}.image",
+            "pixels/second_image": f"{OBS_IMAGES}.second_image",
+            "pixels/wrist_image": f"{OBS_IMAGES}.wrist_image",
+        }
+    )
+
+    def __post_init__(self):
+        h, w = self.render_resolution
+        if self.obs_type == "pixels":
+            self.features["pixels/image"] = PolicyFeature(type=FeatureType.VISUAL, shape=(h, w, 3))
+            self.features["pixels/second_image"] = PolicyFeature(type=FeatureType.VISUAL, shape=(h, w, 3))
+            self.features["pixels/wrist_image"] = PolicyFeature(type=FeatureType.VISUAL, shape=(h, w, 3))
+        elif self.obs_type == "pixels_agent_pos":
+            self.features["pixels/image"] = PolicyFeature(type=FeatureType.VISUAL, shape=(h, w, 3))
+            self.features["pixels/second_image"] = PolicyFeature(type=FeatureType.VISUAL, shape=(h, w, 3))
+            self.features["pixels/wrist_image"] = PolicyFeature(type=FeatureType.VISUAL, shape=(h, w, 3))
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(7,))
+        else:
+            raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "render_resolution": self.render_resolution,
+            "robot": self.robot,
+            "max_episode_steps": self.episode_length,
+            "action_mode": self.action_mode,
+        }
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        from .vlabench import create_vlabench_envs
+
+        if self.task is None:
+            raise ValueError("VLABenchEnv requires a task to be specified")
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
+        return create_vlabench_envs(
+            task=self.task,
+            n_envs=n_envs,
+            gym_kwargs=self.gym_kwargs,
+            env_cls=env_cls,
+        )
+
+
 @EnvConfig.register_subclass("isaaclab_arena")
 @dataclass
 class IsaaclabArenaEnv(HubEnvConfig):
@@ -692,7 +757,7 @@ class RoboTwinEnvConfig(EnvConfig):
 
     task: str = "beat_block_hammer"  # single task or comma-separated list
     fps: int = 25
-    episode_length: int = 300
+    episode_length: int = 1200
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     # Available cameras from RoboTwin's aloha-agilex embodiment: head_camera
@@ -703,6 +768,9 @@ class RoboTwinEnvConfig(EnvConfig):
     # must equal what SAPIEN actually renders.
     observation_height: int = 240
     observation_width: int = 320
+    # "joint": 14-d joint-space control. "ee": 16-d end-effector-pose deltas executed via CuRobo IK
+    # (for world-model policies like LingBot-VA that predict per-arm xyz+quaternion+gripper poses).
+    action_mode: str = "joint"
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(14,)),
@@ -719,6 +787,8 @@ class RoboTwinEnvConfig(EnvConfig):
     )
 
     def __post_init__(self):
+        if self.action_mode == "ee":
+            self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(16,))
         cam_list = [c.strip() for c in self.camera_names.split(",") if c.strip()]
         for cam in cam_list:
             self.features[f"pixels/{cam}"] = PolicyFeature(
@@ -761,6 +831,7 @@ class RoboTwinEnvConfig(EnvConfig):
             observation_height=self.observation_height,
             observation_width=self.observation_width,
             episode_length=self.episode_length,
+            action_mode=self.action_mode,
         )
 
 
