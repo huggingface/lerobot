@@ -34,7 +34,7 @@ import torch
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc import ActionQueue, LatencyTracker, reanchor_relative_rtc_prefix
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.policies.utils import prepare_observation_for_inference
+from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
 from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
@@ -66,14 +66,16 @@ def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int
     """Pad or truncate RTC prefix actions to a fixed length for stable compiled inference."""
     if prev_actions.ndim != 2:
         raise ValueError(f"Expected 2D [T, A] tensor, got shape={tuple(prev_actions.shape)}")
-    steps, action_dim = prev_actions.shape
+    steps, _ = prev_actions.shape
     if steps == target_steps:
         return prev_actions
     if steps > target_steps:
         return prev_actions[:target_steps]
-    padded = torch.zeros((target_steps, action_dim), dtype=prev_actions.dtype, device=prev_actions.device)
-    padded[:steps] = prev_actions
-    return padded
+    if steps == 0:
+        raise ValueError("Cannot pad an empty prefix: no last action to hold.")
+    # repeat the last action to fill the remaining steps to avoid a sudden jump
+    hold = prev_actions[-1:].expand(target_steps - steps, -1)
+    return torch.cat([prev_actions, hold], dim=0)
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +99,8 @@ class RTCInferenceEngine(InferenceEngine):
         postprocessor: PolicyProcessorPipeline,
         robot_wrapper: ThreadSafeRobot,
         rtc_config: RTCConfig,
-        hw_features: dict,
+        dataset_features: dict,
+        ordered_action_keys: list[str],
         task: str,
         fps: float,
         device: str | None,
@@ -111,7 +114,8 @@ class RTCInferenceEngine(InferenceEngine):
         self._postprocessor = postprocessor
         self._robot = robot_wrapper
         self._rtc_config = rtc_config
-        self._hw_features = hw_features
+        self._obs_features = dataset_features
+        self._ordered_action_keys = ordered_action_keys
         self._task = task
         self._fps = fps
         self._device = device or "cpu"
@@ -233,7 +237,13 @@ class RTCInferenceEngine(InferenceEngine):
         """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
         if self._action_queue is None:
             return None
-        return self._action_queue.get()
+        action = self._action_queue.get()
+        if action is None:
+            return None
+
+        # properly reorder the action dict to match the robot's expected order
+        action_dict = make_robot_action(action, self._obs_features)
+        return torch.tensor([action_dict[k] for k in self._ordered_action_keys])
 
     def notify_observation(self, obs: dict) -> None:
         """Publish the latest observation for the RTC thread to consume."""
@@ -252,6 +262,8 @@ class RTCInferenceEngine(InferenceEngine):
             policy_device = torch.device(self._device)
 
             warmup_required = max(1, self._compile_warmup_inferences) if self._use_torch_compile else 0
+            # exclude the first N inferences from the latency tracker to avoid cold-start spikes
+            latency_warmup_required = max(1, warmup_required)
             inference_count = 0
             consecutive_errors = 0
 
@@ -276,7 +288,7 @@ class RTCInferenceEngine(InferenceEngine):
                         latency = latency_tracker.max()
                         delay = math.ceil(latency / time_per_chunk) if latency else 0
 
-                        obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
+                        obs_batch = build_dataset_frame(self._obs_features, obs, prefix="observation")
                         obs_batch = prepare_observation_for_inference(
                             obs_batch, policy_device, self._task, self._robot.robot_type
                         )
@@ -316,7 +328,8 @@ class RTCInferenceEngine(InferenceEngine):
                         inference_count += 1
                         consecutive_errors = 0
                         is_warmup = self._use_torch_compile and inference_count <= warmup_required
-                        if is_warmup:
+                        # Ignore the first N inferences for latency tracking to avoid cold-start spikes
+                        if inference_count <= latency_warmup_required:
                             latency_tracker.reset()
                         else:
                             latency_tracker.add(new_latency)

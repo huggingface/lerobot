@@ -236,11 +236,16 @@ class ActionQueue:
         if action_index_before_inference is not None:
             indexes_diff = max(0, self.last_index - action_index_before_inference)
             if indexes_diff != real_delay:
+                # take the min of both to avoid discarding actions that were not
+                # actually consumed during inference, which would cause a jump in the queue
+                resolved = min(real_delay, indexes_diff)
                 logger.warning(
-                    "Indexes diff is not equal to real delay. indexes_diff=%d, real_delay=%d",
+                    "Indexes diff != real delay (indexes_diff=%d, real_delay=%d); "
+                    "clamping discard to %d to avoid a queue-splice jump.",
                     indexes_diff,
                     real_delay,
+                    resolved,
                 )
-                return real_delay
+                return resolved
 
         return effective_delay

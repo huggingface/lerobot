@@ -457,8 +457,9 @@ def test_merge_validates_delay_consistency(action_queue_rtc_enabled, sample_acti
         action_index_before_inference=0,
     )
 
-    # Check warning was logged
-    assert "Indexes diff is not equal to real delay" in caplog.text
+    # Check warning was logged (reworded when the discard clamp was added)
+    assert "Indexes diff != real delay" in caplog.text
+    assert "clamping discard" in caplog.text
 
 
 def test_merge_no_warning_when_delays_match(action_queue_rtc_enabled, sample_actions, caplog):
@@ -790,8 +791,12 @@ def test_typical_rtc_workflow(action_queue_rtc_enabled, sample_actions):
 
     assert action_queue_rtc_enabled.qsize() == 40
 
-    # Second inference with delay
+    # Second inference with delay. Capture the index at inference *start*, then consume
+    # `real_delay` actions to simulate the robot executing during inference, so the
+    # measured `indexes_diff` matches `real_delay` and the discard clamp is a no-op.
     action_index_before = action_queue_rtc_enabled.get_action_index()
+    for _ in range(5):
+        action_queue_rtc_enabled.get()
 
     action_queue_rtc_enabled.merge(
         sample_actions["original"],
