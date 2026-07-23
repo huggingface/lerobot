@@ -55,6 +55,7 @@ from .inference import (
     SyncInferenceConfig,
     create_inference_engine,
 )
+from .inference.rtc import supports_rtc_inference_kwargs
 from .robot_wrapper import ThreadSafeRobot
 
 logger = logging.getLogger(__name__)
@@ -203,6 +204,11 @@ def build_rollout_context(
         policy.config.rtc_config = cfg.inference.rtc
         if hasattr(policy, "init_rtc_processor"):
             policy.init_rtc_processor()
+        if not supports_rtc_inference_kwargs(policy):
+            raise ValueError(
+                f"RTC inference is not supported by policy type '{policy_config.type}': "
+                "predict_action_chunk must accept inference_delay and prev_chunk_left_over."
+            )
 
     policy = policy.to(cfg.device)
     policy.eval()
