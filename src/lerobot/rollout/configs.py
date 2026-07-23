@@ -149,6 +149,15 @@ class EpisodicStrategyConfig(RolloutStrategyConfig):
     # Note that leader -> follower handover is only supported when the leader has `send_feedback` capability.
     smooth_leader_to_follower_handover: bool = True
 
+    # Whether to turn on or off the smooth handover behavior at the start of the
+    # reset phase: the leader is driven to the follower position (actuated
+    # teleops, see `smooth_leader_to_follower_handover`), or the follower is
+    # slid to the teleop pose (non-actuated teleops). Disable for clutch-style
+    # teleoperators (e.g. VR controllers) that re-reference at the current robot
+    # pose on engage: the handover is already continuous there, and the blocking
+    # interpolation only delays the start of the reset phase.
+    smooth_handover: bool = True
+
 
 @RolloutStrategyConfig.register_subclass("dagger")
 @dataclass
