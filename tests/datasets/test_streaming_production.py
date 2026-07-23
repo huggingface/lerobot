@@ -19,7 +19,7 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset, _balanced_episode_shards
 from lerobot.utils.utils import cycle
 from tests.fixtures.constants import DUMMY_REPO_ID
 
@@ -209,6 +209,28 @@ def test_streaming_reads_video_bytes_from_configured_fsspec_root(
         assert torch.equal(sample[camera_key], reference[camera_key])
 
 
+def test_streaming_rejects_episode_larger_than_rank_byte_budget(
+    tmp_path: Path, lerobot_dataset_factory
+) -> None:
+    root = tmp_path / "dataset"
+    lerobot_dataset_factory(
+        root=root,
+        repo_id=DUMMY_REPO_ID,
+        total_episodes=2,
+        total_frames=10,
+    )
+    streaming = StreamingLeRobotDataset(
+        DUMMY_REPO_ID,
+        root=root,
+        shuffle=False,
+        buffer_size=2,
+        byte_budget_gb=1 / 1024**3,
+    )
+
+    with pytest.raises(ValueError, match="Episode .*byte budget"):
+        next(iter(streaming))
+
+
 def test_streaming_rank_shards_are_disjoint(tmp_path: Path, lerobot_dataset_factory, monkeypatch) -> None:
     root = tmp_path / "dataset"
     map_dataset = lerobot_dataset_factory(
@@ -239,9 +261,22 @@ def test_streaming_rank_shards_are_disjoint(tmp_path: Path, lerobot_dataset_fact
     assert per_rank[0] | per_rank[1] == set(range(len(map_dataset)))
 
 
-def test_streaming_workers_do_not_duplicate_frames(tmp_path: Path, lerobot_dataset_factory) -> None:
+def test_rank_shards_are_greedily_balanced_by_frame_count() -> None:
+    shards = _balanced_episode_shards(
+        [0, 1, 2, 3, 4],
+        {0: 100, 1: 90, 2: 20, 3: 10, 4: 5},
+        world_size=2,
+    )
+
+    assert {episode for shard in shards for episode in shard} == {0, 1, 2, 3, 4}
+    assert set(shards[0]).isdisjoint(shards[1])
+    totals = [sum({0: 100, 1: 90, 2: 20, 3: 10, 4: 5}[episode] for episode in shard) for shard in shards]
+    assert max(totals) - min(totals) <= 15
+
+
+def test_streaming_rejects_multiple_sampling_workers(tmp_path: Path, lerobot_dataset_factory) -> None:
     root = tmp_path / "dataset"
-    map_dataset = lerobot_dataset_factory(
+    lerobot_dataset_factory(
         root=root,
         repo_id=DUMMY_REPO_ID,
         total_episodes=8,
@@ -256,10 +291,8 @@ def test_streaming_workers_do_not_duplicate_frames(tmp_path: Path, lerobot_datas
     )
     loader = torch.utils.data.DataLoader(streaming, batch_size=None, num_workers=2)
 
-    indices = [int(item["index"]) for item in loader]
-
-    assert len(indices) == len(map_dataset)
-    assert set(indices) == set(range(len(map_dataset)))
+    with pytest.raises(RuntimeError, match="one DataLoader worker per rank"):
+        list(loader)
 
 
 def test_streaming_persistent_workers_advance_epochs(tmp_path: Path, lerobot_dataset_factory) -> None:
@@ -281,7 +314,7 @@ def test_streaming_persistent_workers_advance_epochs(tmp_path: Path, lerobot_dat
     loader = torch.utils.data.DataLoader(
         streaming,
         batch_size=None,
-        num_workers=2,
+        num_workers=1,
         persistent_workers=True,
     )
     try:
@@ -317,7 +350,7 @@ def test_streaming_worker_exception_propagates_and_workers_stop(
     loader = torch.utils.data.DataLoader(
         streaming,
         batch_size=None,
-        num_workers=2,
+        num_workers=1,
         persistent_workers=True,
     )
     try:
@@ -376,7 +409,7 @@ def test_streaming_worker_resume_reproduces_remaining_stream(
     )
 
     def load(dataset: StreamingLeRobotDataset) -> list[int]:
-        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, num_workers=2)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, num_workers=1)
         if batch_size is None:
             return [int(item["index"]) for item in loader]
         return [int(index) for batch in loader for index in batch["index"]]
@@ -450,7 +483,7 @@ def test_streaming_worker_resume_after_epoch_boundary(tmp_path: Path, lerobot_da
         loader = torch.utils.data.DataLoader(
             dataset,
             batch_size=4,
-            num_workers=2,
+            num_workers=1,
             persistent_workers=True,
         )
         try:
@@ -502,7 +535,7 @@ def test_streaming_local_training_step_smoke(tmp_path: Path, lerobot_dataset_fac
         buffer_size=2,
         repeat=True,
     )
-    loader = torch.utils.data.DataLoader(dataset, batch_size=4, num_workers=2)
+    loader = torch.utils.data.DataLoader(dataset, batch_size=4, num_workers=1)
     iterator = iter(loader)
     try:
         batch = next(iterator)

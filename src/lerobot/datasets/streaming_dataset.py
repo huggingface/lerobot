@@ -15,7 +15,7 @@
 # limitations under the License.
 import io
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
@@ -41,12 +41,31 @@ from .utils import check_version_compatibility
 from .video_utils import decode_video_frames_pyav
 
 
+def _balanced_episode_shards(
+    episode_indices: list[int],
+    episode_frame_counts: Mapping[int, int],
+    *,
+    world_size: int,
+) -> list[list[int]]:
+    """Assign whole episodes deterministically with greedy frame-count balancing."""
+    if world_size <= 0:
+        raise ValueError("world_size must be positive")
+    shards: list[list[int]] = [[] for _ in range(world_size)]
+    shard_frames = [0] * world_size
+    for episode in sorted(episode_indices, key=lambda item: (-episode_frame_counts[item], item)):
+        rank = min(range(world_size), key=lambda item: (shard_frames[item], item))
+        shards[rank].append(episode)
+        shard_frames[rank] += episode_frame_counts[episode]
+    return shards
+
+
 class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     """Episode-scoped streaming reader for LeRobot datasets.
 
-    Metadata is cached locally, while each worker reads only the Parquet rows and MP4 byte ranges
-    needed for the complete episodes it owns. Episode ownership is disjoint across distributed
-    ranks and dataloader workers, and every selected frame is yielded exactly once per iteration.
+    Metadata is cached locally, while each rank reads only the Parquet rows and MP4 byte ranges
+    needed for the complete episodes it owns. One DataLoader worker per rank owns the logical pool;
+    its bounded result queue provides decoded-batch prefetch without creating independent samplers.
+    Episode ownership is disjoint and every selected frame is yielded exactly once per iteration.
     MP4 sidecars are resolved automatically and built in a revision-keyed local cache when absent.
 
     Example:
@@ -123,8 +142,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 and fsspec URLs.
             episode_pool_size (int | None, optional): Number of complete episodes in the sampling pool.
             prefetch_episodes (int, optional): Episodes prefetched beyond the active pool.
-            byte_budget_gb (float, optional): Per-worker upper bound for synthesized episode video bytes.
-            repeat (bool, optional): Repeat worker-local exact-coverage epochs without yielding a
+            byte_budget_gb (float, optional): Per-rank upper bound for synthesized episode video bytes.
+            repeat (bool, optional): Repeat rank-local exact-coverage epochs without yielding a
                 short final training batch. The training factory enables this; direct iteration is
                 finite by default.
         """
@@ -266,39 +285,40 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self._active_epoch = epoch
 
         worker = torch.utils.data.get_worker_info()
-        worker_index = worker.id if worker is not None else 0
-        worker_count = worker.num_workers if worker is not None else 1
+        if worker is not None and worker.num_workers > 1:
+            raise RuntimeError(
+                "StreamingLeRobotDataset uses one rank-level sampling pool and supports at most "
+                "one DataLoader worker per rank"
+            )
         resume_offset = self._resume_offset
         self._resume_offset = 0
-        worker_resume_offset, logical_worker_index = self._worker_resume_state(
-            resume_offset,
-            batch_size=self._resume_batch_size,
-            worker_index=worker_index,
-            worker_count=worker_count,
-        )
-        consumer_episodes, _consumer_index, _consumer_count = self._consumer_episodes(
-            worker_id=logical_worker_index,
-            num_workers=worker_count,
-        )
+        consumer_episodes, _rank, _world_size = self._rank_episodes()
         consumer_frame_count = sum(self._episode_frame_count(episode) for episode in consumer_episodes)
         if consumer_frame_count:
-            worker_epoch_delta, worker_resume_offset = divmod(
-                worker_resume_offset,
-                consumer_frame_count,
-            )
+            worker_epoch_delta, resume_offset = divmod(resume_offset, consumer_frame_count)
         else:
             worker_epoch_delta = 0
         epoch += worker_epoch_delta
         self._active_epoch = epoch
         if self.shuffle:
             self._next_epoch = epoch + 1
+
+        max_workers = min(self.max_num_shards, max(1, self.episode_pool_size + self.prefetch_episodes))
+        video_cache = self._make_video_cache(consumer_episodes, max_workers)
+        episode_byte_sizes = (
+            {episode: video_cache.manifest.episode_byte_size(episode) for episode in consumer_episodes}
+            if video_cache is not None
+            else None
+        )
         planner = ExactCoveragePool(
             [(episode, self._episode_frame_count(episode)) for episode in consumer_episodes],
             pool_size=self.episode_pool_size,
             seed=self.seed,
             epoch=epoch,
+            episode_byte_sizes=episode_byte_sizes,
+            byte_budget=self.byte_budget if episode_byte_sizes is not None else None,
         )
-        for _ in range(worker_resume_offset):
+        for _ in range(resume_offset):
             try:
                 next(planner)
             except StopIteration:
@@ -307,11 +327,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         planner.evicted.clear()
 
         parquet_reader = EpisodeParquetReader(self._data_root, columns=self._projected_columns)
-        max_workers = min(self.max_num_shards, max(1, self.episode_pool_size + self.prefetch_episodes))
         executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="lerobot-parquet")
         episode_futures: dict[int, Future[datasets.Dataset]] = {}
-        scheduled_cursor = 0
-        video_cache = self._make_video_cache(consumer_episodes, max_workers)
+        scheduled_episodes: set[int] = set()
         retained_video_episodes: set[int] = set()
         if video_cache is not None:
             for episode_index in planner.resident:
@@ -326,17 +344,14 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             return future
 
         def schedule_frontier() -> None:
-            nonlocal scheduled_cursor
-            target = min(
-                len(planner.admission_order),
-                planner.admitted_count + self.prefetch_episodes,
-            )
-            while scheduled_cursor < target:
-                episode_index = planner.admission_order[scheduled_cursor]
+            frontier = [*planner.resident, *planner.prefetch_candidates(self.prefetch_episodes)]
+            for episode_index in frontier:
+                if episode_index in scheduled_episodes:
+                    continue
                 submit(episode_index)
                 if video_cache is not None:
                     video_cache.submit_prefetch(episode_index)
-                scheduled_cursor += 1
+                scheduled_episodes.add(episode_index)
 
         schedule_frontier()
         try:
@@ -379,12 +394,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             if video_cache is not None:
                 video_cache.close()
 
-    def _consumer_episodes(
-        self,
-        *,
-        worker_id: int | None = None,
-        num_workers: int | None = None,
-    ) -> tuple[list[int], int, int]:
+    def _rank_episodes(self) -> tuple[list[int], int, int]:
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             rank = torch.distributed.get_rank()
             world_size = torch.distributed.get_world_size()
@@ -393,49 +403,23 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             world_size = int(os.environ.get("WORLD_SIZE", "1"))
         if world_size <= 0 or rank < 0 or rank >= world_size:
             raise ValueError(f"Invalid distributed rank/world size: rank={rank}, world_size={world_size}")
-
-        worker = torch.utils.data.get_worker_info()
-        if worker_id is None:
-            worker_id = worker.id if worker is not None else 0
-        if num_workers is None:
-            num_workers = worker.num_workers if worker is not None else 1
-        consumer_index = rank * num_workers + worker_id
-        consumer_count = world_size * num_workers
-        return self._selected_episodes[consumer_index::consumer_count], consumer_index, consumer_count
-
-    @staticmethod
-    def _worker_resume_state(
-        offset: int,
-        *,
-        batch_size: int,
-        worker_index: int,
-        worker_count: int,
-    ) -> tuple[int, int]:
-        completed_batches, partial_batch = divmod(offset, batch_size)
-        completed_cycles, next_logical_worker = divmod(completed_batches, worker_count)
-        logical_worker = (worker_index + next_logical_worker) % worker_count
-        worker_batches = completed_cycles + int(logical_worker < next_logical_worker)
-        worker_offset = worker_batches * batch_size
-        if partial_batch and logical_worker == next_logical_worker:
-            worker_offset += partial_batch
-        return worker_offset, logical_worker
+        counts = {episode: self._episode_frame_count(episode) for episode in self._selected_episodes}
+        shards = _balanced_episode_shards(self._selected_episodes, counts, world_size=world_size)
+        return shards[rank], rank, world_size
 
     def _episode_frame_count(self, episode_index: int) -> int:
         episode = self.meta.episodes[episode_index]
         return int(episode["dataset_to_index"] - episode["dataset_from_index"])
 
     def num_frames_for_rank(self, rank: int, world_size: int, num_workers: int) -> int:
-        """Return frames owned by one training rank under episode-scoped worker sharding."""
+        """Return frames owned by one training rank under balanced whole-episode sharding."""
         if world_size <= 0 or rank < 0 or rank >= world_size:
             raise ValueError(f"Invalid distributed rank/world size: rank={rank}, world_size={world_size}")
-        workers = max(1, num_workers)
-        consumer_count = world_size * workers
-        consumer_indices = set(range(rank * workers, (rank + 1) * workers))
-        return sum(
-            self._episode_frame_count(episode)
-            for position, episode in enumerate(self._selected_episodes)
-            if position % consumer_count in consumer_indices
-        )
+        if num_workers > 1:
+            raise ValueError("Rank-level streaming supports at most one DataLoader worker per rank")
+        counts = {episode: self._episode_frame_count(episode) for episode in self._selected_episodes}
+        shards = _balanced_episode_shards(self._selected_episodes, counts, world_size=world_size)
+        return sum(counts[episode] for episode in shards[rank])
 
     def _load_episode_dataset(
         self,

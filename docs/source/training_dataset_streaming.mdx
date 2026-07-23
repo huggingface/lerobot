@@ -17,11 +17,16 @@ during training. Recording and rollout encoders are not used by this training pa
 
 ## How an epoch is read
 
-Each distributed rank and DataLoader worker owns a disjoint set of complete episodes. Within that
-set, an exact-coverage sampler mixes a bounded pool of episodes while visiting every selected frame
-once per epoch. Parquet columns and compressed MP4 byte ranges are prefetched from the same episode
-admission frontier. Temporal history and future windows are resolved inside the complete episode,
-including the same boundary padding masks as map-style loading.
+Each distributed rank owns a deterministic, frame-balanced set of complete episodes. One logical
+exact-coverage pool per rank mixes those episodes while visiting every selected frame once per
+rank-local coverage epoch. Parquet columns and compressed MP4 byte ranges are prefetched from the
+same byte-aware admission frontier. Temporal history and future windows are resolved inside the
+complete episode, including the same boundary padding masks as map-style loading.
+
+When `--num_workers` is nonzero, training uses one dedicated DataLoader process per rank. Its
+bounded result queue holds decoded batches while the policy trains. The configured worker count is
+instead used as internal Parquet and byte-range fetch concurrency, so increasing it does not create
+independent samplers or multiply the cache budget.
 
 The default map-style `LeRobotDataset` behavior is unchanged when `--dataset.streaming=false`.
 
@@ -55,14 +60,15 @@ The production defaults are:
 
 | Option                        | Default | Meaning                                             |
 | ----------------------------- | ------: | --------------------------------------------------- |
-| `streaming_episode_pool_size` |      32 | Complete episodes mixed by each worker              |
+| `streaming_episode_pool_size` |      32 | Maximum complete episodes mixed by each rank        |
 | `streaming_prefetch_episodes` |       8 | Episodes fetched ahead of the active pool           |
-| `streaming_byte_budget_gb`    |       8 | Maximum synthesized MP4 bytes per worker            |
+| `streaming_byte_budget_gb`    |       8 | Maximum synthesized MP4 bytes per rank              |
 | `streaming_data_root`         |   unset | Optional local, Hub, bucket, or fsspec payload root |
 
-Memory limits are per DataLoader worker. For example, four workers with the default byte budget can
-use up to 32 GiB for compressed episode video bytes, plus Parquet batches, decoders, and framework
-overhead. Start with fewer workers or a smaller budget on memory-constrained hosts:
+The active episode set is capped by both episode count and the exact synthesized mini-MP4 sizes
+computed from the sidecar. An episode larger than the complete rank budget fails before training
+fetches its payload. The cache, decoder LRU, and decoded-batch queue remain independently bounded.
+Start with a smaller pool or budget on memory-constrained hosts:
 
 ```bash
 lerobot-train \
@@ -71,7 +77,7 @@ lerobot-train \
   --dataset.streaming_episode_pool_size=16 \
   --dataset.streaming_prefetch_episodes=4 \
   --dataset.streaming_byte_budget_gb=4 \
-  --num_workers=2 \
+  --num_workers=4 \
   --policy.type=act \
   --output_dir=outputs/train/act_streaming
 ```
@@ -85,8 +91,12 @@ If metadata remains in a dataset repository while payload files are mirrored els
 The earlier streaming reader used a bounded row shuffle buffer. The episode reader instead has
 deterministic exact-coverage ordering derived from the seed and epoch. Checkpoint resume restores the
 per-rank sample offset using the checkpoint batch size. Changing distributed world size or
-DataLoader worker count changes episode ownership; changing batch size changes the batch boundaries.
-For sample-exact comparisons, resume with the same world size, worker count, and batch size.
+batch size changes ownership or batch boundaries. For sample-exact comparisons, resume with the
+same world size and batch size. Keep the same internal fetch concurrency when comparing performance.
+
+Streaming checkpoints created by the earlier multi-worker sampler record a different ownership
+topology and are rejected for sample-exact resume. Start a new run from the saved policy weights
+rather than claiming that its dataset stream resumes exactly.
 
 ## Benchmarking
 
@@ -97,7 +107,8 @@ uv run python scripts/bench_streaming_dataset.py \
   --repo-id=OWNER/DATASET \
   --revision=COMMIT_SHA \
   --batch-size=16 \
-  --num-workers=4 \
+  --num-workers=1 \
+  --fetch-workers=4 \
   --summary-json=streaming-benchmark.json
 ```
 
@@ -117,10 +128,10 @@ from the integrated dataset benchmark and end-to-end training A/B.
   publish a validated complete sidecar explicitly.
 - **A sidecar lock times out:** another process may still be indexing the same revision. Confirm it
   is healthy before removing a stale lock.
-- **A rank owns no data:** reduce the number of ranks or workers so every rank owns at least one
-  selected episode.
-- **The byte budget is exceeded:** lower the episode pool, increase the per-worker byte budget, or
-  use fewer/larger episodes per worker.
+- **A rank owns no data:** reduce the number of ranks so every rank owns at least one selected
+  episode.
+- **The byte budget is exceeded:** lower the episode pool, increase the per-rank byte budget, or
+  use an explicitly prepared payload layout with smaller episode ranges.
 - **Remote reads cannot authenticate:** verify the normal Hugging Face token or fsspec credentials
   are available in every worker environment. Credentials are never embedded in the sidecar.
 - **Refill stalls are high:** compare p95/p99 batch wait, reduce network contention, raise prefetch

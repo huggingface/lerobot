@@ -83,10 +83,12 @@ def main():
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-4)
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=4,
+        # One worker owns the rank-level pool. Internal fetch concurrency is configured through
+        # StreamingLeRobotDataset.max_num_shards (the lerobot-train CLI derives it from num_workers).
+        num_workers=1,
         batch_size=16,
         pin_memory=device.type != "cpu",
-        prefetch_factor=2,  # loads batches with multiprocessing while policy trains
+        prefetch_factor=2,  # bounded decoded-batch queue while the policy trains
         persistent_workers=True,
     )
 

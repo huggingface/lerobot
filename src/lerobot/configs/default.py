@@ -46,11 +46,11 @@ class DatasetConfig:
     streaming: bool = False
     # Optional data-plane root used by training-time streaming. Metadata still resolves from repo_id/root.
     streaming_data_root: str | None = None
-    # Number of complete episodes mixed by the exact-coverage sampler in each DataLoader worker.
+    # Number of complete episodes mixed by the rank-level exact-coverage sampler.
     streaming_episode_pool_size: int = 32
     # Complete episodes fetched ahead of the current admission frontier.
     streaming_prefetch_episodes: int = 8
-    # Hard per-worker cap for synthesized episode-video bytes.
+    # Hard per-rank cap for synthesized episode-video bytes.
     streaming_byte_budget_gb: float = 8.0
     # Fraction of episodes held out per task for offline evaluation (0.0 = disabled).
     eval_split: float = 0.0

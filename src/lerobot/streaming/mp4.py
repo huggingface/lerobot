@@ -329,8 +329,47 @@ def synthesize_mp4(index: Mp4Index, sample_slice: Mp4SampleSlice, mdat_payload: 
     sync = index.sync_samples[(index.sync_samples >= lo) & (index.sync_samples < hi)] - lo + 1
     moov = _make_moov(index, durations, sizes, rel_offsets, sync, mdat_data_offset=0)
     header_size = len(index.ftyp) + len(moov)
-    moov = _make_moov(index, durations, sizes, rel_offsets, sync, mdat_data_offset=header_size + 8)
+    mdat_header_size = 8 if len(mdat_payload) + 8 <= 0xFFFFFFFF else 16
+    moov = _make_moov(
+        index,
+        durations,
+        sizes,
+        rel_offsets,
+        sync,
+        mdat_data_offset=header_size + mdat_header_size,
+    )
     return index.ftyp + moov + _box(b"mdat", mdat_payload)
+
+
+def synthesized_mp4_size(index: Mp4Index, sample_slice: Mp4SampleSlice) -> int:
+    """Return the exact synthesized mini-MP4 size without fetching its media payload."""
+    lo = sample_slice.sample_lo
+    hi = sample_slice.sample_hi + 1
+    if lo < 0 or hi > len(index.sample_sizes) or lo >= hi:
+        raise ValueError(f"Invalid sample range [{lo}, {hi}) for {index.file_path}")
+
+    offsets = index.sample_offsets[lo:hi]
+    sizes = index.sample_sizes[lo:hi]
+    rel_offsets = offsets - sample_slice.byte_offset
+    if int(rel_offsets.min()) != 0:
+        raise ValueError("Sample slice must start at the minimum referenced sample offset")
+    if int((rel_offsets + sizes).max()) > sample_slice.byte_length:
+        raise ValueError("Sample slice does not cover all referenced samples")
+
+    durations = index.sample_durations[lo:hi]
+    sync = index.sync_samples[(index.sync_samples >= lo) & (index.sync_samples < hi)] - lo + 1
+    moov = _make_moov(index, durations, sizes, rel_offsets, sync, mdat_data_offset=0)
+    header_size = len(index.ftyp) + len(moov)
+    mdat_header_size = 8 if sample_slice.byte_length + 8 <= 0xFFFFFFFF else 16
+    moov = _make_moov(
+        index,
+        durations,
+        sizes,
+        rel_offsets,
+        sync,
+        mdat_data_offset=header_size + mdat_header_size,
+    )
+    return len(index.ftyp) + len(moov) + mdat_header_size + sample_slice.byte_length
 
 
 def iter_boxes(

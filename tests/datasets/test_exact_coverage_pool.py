@@ -16,6 +16,8 @@
 
 from collections import Counter
 
+import pytest
+
 from lerobot.streaming.episode_video import ExactCoveragePool
 
 EPISODES = [(0, 5), (1, 3), (2, 8), (3, 1), (4, 6), (5, 4), (6, 7), (7, 2)]
@@ -95,3 +97,50 @@ def test_zero_length_episodes_skipped():
     pool = ExactCoveragePool([(0, 3), (1, 0), (2, 2)], pool_size=8, seed=0)
     out, _ = _drain(pool)
     assert Counter(out) == Counter({(0, 0): 1, (0, 1): 1, (0, 2): 1, (2, 0): 1, (2, 1): 1})
+
+
+def test_byte_aware_admission_never_exceeds_budget():
+    sizes = {0: 7, 1: 6, 2: 4, 3: 3, 4: 2}
+    pool = ExactCoveragePool(
+        EPISODES[:5],
+        pool_size=4,
+        seed=9,
+        episode_byte_sizes=sizes,
+        byte_budget=10,
+    )
+    out = []
+    max_resident_bytes = pool.resident_bytes
+    while pool.remaining_total:
+        out.append(next(pool))
+        max_resident_bytes = max(max_resident_bytes, pool.resident_bytes)
+
+    assert Counter(out) == Counter((ep, frame) for ep, count in EPISODES[:5] for frame in range(count))
+    assert max_resident_bytes <= 10
+    assert len(pool.admission_order) == len(EPISODES[:5])
+
+
+def test_byte_aware_admission_rejects_one_oversized_episode():
+    with pytest.raises(ValueError, match="Episode 1.*byte budget"):
+        ExactCoveragePool(
+            [(0, 2), (1, 3)],
+            pool_size=2,
+            seed=0,
+            episode_byte_sizes={0: 4, 1: 11},
+            byte_budget=10,
+        )
+
+
+def test_prefetch_candidates_follow_deterministic_pending_frontier():
+    pool = ExactCoveragePool(
+        EPISODES,
+        pool_size=2,
+        seed=17,
+        episode_byte_sizes={episode: 1 for episode, _ in EPISODES},
+        byte_budget=2,
+    )
+
+    candidates = pool.prefetch_candidates(3)
+
+    assert len(candidates) == 3
+    assert not set(candidates) & set(pool.resident)
+    assert candidates == pool.prefetch_candidates(3)

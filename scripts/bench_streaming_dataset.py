@@ -22,6 +22,7 @@ import statistics
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 import torch
@@ -37,7 +38,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-root", default=None)
     parser.add_argument("--episodes", type=int, default=None, help="Use the first N episodes.")
     parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        choices=(0, 1),
+        default=1,
+        help="Rank-level DataLoader process count. Use 1 for the production pipeline.",
+    )
+    parser.add_argument("--fetch-workers", type=int, default=4)
     parser.add_argument("--prefetch-factor", type=int, default=2)
     parser.add_argument("--episode-pool-size", type=int, default=32)
     parser.add_argument("--prefetch-episodes", type=int, default=8)
@@ -48,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def percentile(values: list[float], quantile: float) -> float:
+def percentile(values: Sequence[float], quantile: float) -> float:
     if not values:
         return 0.0
     ordered = sorted(values)
@@ -83,6 +91,8 @@ def child_process_max_rss_mb() -> float:
 
 def main() -> None:
     args = parse_args()
+    if args.fetch_workers <= 0:
+        raise ValueError("--fetch-workers must be positive")
     episodes = list(range(args.episodes)) if args.episodes is not None else None
 
     init_start = time.perf_counter()
@@ -95,7 +105,7 @@ def main() -> None:
         episode_pool_size=args.episode_pool_size,
         prefetch_episodes=args.prefetch_episodes,
         byte_budget_gb=args.byte_budget_gb,
-        max_num_shards=max(1, args.num_workers),
+        max_num_shards=max(1, args.fetch_workers),
         return_uint8=True,
     )
     dataset_init_s = time.perf_counter() - init_start
@@ -112,6 +122,7 @@ def main() -> None:
     waits: list[float] = []
     measured_samples = 0
     measured_indices: list[int] = []
+    unique_episodes_per_batch: list[int] = []
     first_batch_s = 0.0
     exhausted = False
 
@@ -129,7 +140,9 @@ def main() -> None:
             if batch_index >= args.warmup_batches:
                 waits.append(wait_s)
                 indices = batch["index"].reshape(-1).tolist()
+                episode_indices = batch["episode_index"].reshape(-1).tolist()
                 measured_indices.extend(int(index) for index in indices)
+                unique_episodes_per_batch.append(len({int(index) for index in episode_indices}))
                 measured_samples += len(indices)
     finally:
         shutdown = getattr(iterator, "_shutdown_workers", None)
@@ -155,12 +168,18 @@ def main() -> None:
         "batch_wait_p95_ms": percentile(waits, 0.95) * 1000,
         "batch_wait_p99_ms": percentile(waits, 0.99) * 1000,
         "duplicate_indices": measured_samples - len(set(measured_indices)),
+        "unique_episodes_per_batch_mean": (
+            statistics.fmean(unique_episodes_per_batch) if unique_episodes_per_batch else 0.0
+        ),
+        "unique_episodes_per_batch_p50": percentile(unique_episodes_per_batch, 0.50),
+        "unique_episodes_per_batch_p95": percentile(unique_episodes_per_batch, 0.95),
         "epoch_exhausted": exhausted,
         "main_process_max_rss_mb": main_process_max_rss_mb(),
         "worker_process_max_rss_mb": child_process_max_rss_mb(),
         "config": {
             "batch_size": args.batch_size,
             "num_workers": args.num_workers,
+            "fetch_workers": args.fetch_workers,
             "prefetch_factor": args.prefetch_factor,
             "episode_pool_size": args.episode_pool_size,
             "prefetch_episodes": args.prefetch_episodes,

@@ -460,22 +460,16 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     else:
         shuffle = True
         sampler = None
-        train_num_workers = cfg.num_workers
-        if train_num_workers > 0:
-            max_nonempty_workers = dataset.num_episodes // accelerator.num_processes
-            if max_nonempty_workers == 0:
-                raise ValueError(
-                    "At least one distributed rank owns no streaming episode. "
-                    "Reduce the distributed world size."
-                )
-            train_num_workers = min(train_num_workers, max_nonempty_workers)
-            if train_num_workers != cfg.num_workers and is_main_process:
-                logging.warning(
-                    "Reducing streaming DataLoader workers from %d to %d so every rank/worker "
-                    "owns at least one complete episode.",
-                    cfg.num_workers,
-                    train_num_workers,
-                )
+        # One dedicated DataLoader process owns the rank-level planner/cache. Its bounded result
+        # queue provides decoded-batch prefetch; max_num_shards controls the internal Parquet/range
+        # fetch executors independently.
+        train_num_workers = min(cfg.num_workers, 1)
+        if cfg.num_workers > 1 and is_main_process:
+            logging.info(
+                "Using one streaming DataLoader worker per rank; %d configured workers remain "
+                "available as the dataset's internal fetch concurrency.",
+                cfg.num_workers,
+            )
         rank_frames = dataset.num_frames_for_rank(
             accelerator.process_index,
             accelerator.num_processes,

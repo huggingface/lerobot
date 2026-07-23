@@ -38,6 +38,7 @@ from lerobot.streaming.mp4 import (
     _vmhd,
     parse_mp4_index,
     synthesize_mp4,
+    synthesized_mp4_size,
 )
 
 
@@ -88,6 +89,15 @@ def test_synthesized_mp4_rebases_one_chunk_per_sample_offsets():
     expected = np.array([0, 50, 25], dtype=np.int64) + mini_index.mdat_payload_offset
     np.testing.assert_array_equal(mini_index.sample_offsets, expected)
     np.testing.assert_array_equal(mini_index.sample_sizes, np.array([10, 10, 10]))
+
+
+def test_synthesized_mp4_size_matches_materialized_bytes():
+    mp4 = parse_mp4_index("test.mp4", _minimal_mp4([10_000, 10_050, 10_025]))
+    sample_slice = mp4.sample_slice(0.0, 2.0, keyframe_pad_s=0, keyframe_pad_fraction=0)
+
+    mini = synthesize_mp4(mp4, sample_slice, b"x" * sample_slice.byte_length)
+
+    assert synthesized_mp4_size(mp4, sample_slice) == len(mini)
 
 
 def test_parser_accepts_co64_chunk_offsets():
