@@ -40,7 +40,6 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
 )
-from lerobot.utils.constants import ACTION
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from ..robot_wrapper import ThreadSafeRobot
@@ -64,17 +63,7 @@ _RTC_JOIN_TIMEOUT_S: float = 3.0
 
 
 def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int) -> torch.Tensor:
-    """Pad or truncate RTC prefix actions to a fixed length for stable compiled inference.
-
-    Padding repeats the last real action ("hold") rather than filling with zeros. The RTC
-    guidance pulls the new chunk toward this prefix at the padded indices (they fall inside
-    the weighted region when the real leftover is shorter than ``target_steps``). A zero in
-    the model's normalized action space decodes to the dataset *mean* action — a nonzero
-    offset that yanks the spliced action toward a mean/neutral pose for one step, producing
-    an intermittent seam (e.g. 95 -> 103 -> 95). Holding the last real action keeps the
-    padded targets continuous with the prefix, so no fake target enters the guided region.
-    The fixed output length is preserved so ``torch.compile`` policies keep stable shapes.
-    """
+    """Pad or truncate RTC prefix actions to a fixed length for stable compiled inference."""
     if prev_actions.ndim != 2:
         raise ValueError(f"Expected 2D [T, A] tensor, got shape={tuple(prev_actions.shape)}")
     steps, _ = prev_actions.shape
@@ -84,6 +73,7 @@ def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int
         return prev_actions[:target_steps]
     if steps == 0:
         raise ValueError("Cannot pad an empty prefix: no last action to hold.")
+    # repeat the last action to fill the remaining steps to avoid a sudden jump
     hold = prev_actions[-1:].expand(target_steps - steps, -1)
     return torch.cat([prev_actions, hold], dim=0)
 
@@ -124,31 +114,8 @@ class RTCInferenceEngine(InferenceEngine):
         self._postprocessor = postprocessor
         self._robot = robot_wrapper
         self._rtc_config = rtc_config
-        # Build observations with the SAME feature spec sync uses (post
-        # `robot_observation_processor`), not the raw-hardware spec. `build_dataset_frame`
-        # orders `observation.state` by this spec's `names`; using the raw-hardware order
-        # here (as before) desynced the state vector from sync whenever the observation
-        # processor reorders/renames state keys, corrupting both normalization and the
-        # relative-action anchor. The `prefix="observation"` filter ignores the action
-        # entries in the combined dict.
         self._obs_features = dataset_features
-        # The model emits actions in `dataset_features[ACTION]` order (the order it was
-        # trained on); the robot expects them in `ordered_action_keys` order. Sync remaps
-        # by NAME via `make_robot_action` + reindex (sync.py) before returning; RTC must do
-        # the SAME, otherwise the engine-agnostic strategy (`send_next_action`) maps the raw
-        # model-order tensor onto `ordered_action_keys` positionally and mis-assigns joints
-        # whenever the two orders differ — a per-joint permutation that drives the arm wrong.
         self._ordered_action_keys = ordered_action_keys
-        state_ft = dataset_features.get("observation.state")
-        if state_ft is not None:
-            logger.info("RTC observation.state layout: %s", state_ft.get("names"))
-        action_ft = dataset_features.get(ACTION)
-        if action_ft is not None:
-            logger.info(
-                "RTC action layout: model/dataset=%s -> robot=%s",
-                action_ft.get("names"),
-                self._ordered_action_keys,
-            )
         self._task = task
         self._fps = fps
         self._device = device or "cpu"
@@ -267,17 +234,14 @@ class RTCInferenceEngine(InferenceEngine):
     # ------------------------------------------------------------------
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
-        """Pop the next action from the RTC queue (ignores ``obs_frame``).
-
-        The queued action is in the model's ``dataset_features[ACTION]`` order; remap it
-        by NAME into ``ordered_action_keys`` order before returning, so the engine-agnostic
-        strategy maps values onto the correct joints. Mirrors ``SyncInferenceEngine.get_action``.
-        """
+        """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
         if self._action_queue is None:
             return None
         action = self._action_queue.get()
         if action is None:
             return None
+
+        # properly reorder the action dict to match the robot's expected order
         action_dict = make_robot_action(action, self._obs_features)
         return torch.tensor([action_dict[k] for k in self._ordered_action_keys])
 

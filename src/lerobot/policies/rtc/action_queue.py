@@ -236,13 +236,8 @@ class ActionQueue:
         if action_index_before_inference is not None:
             indexes_diff = max(0, self.last_index - action_index_before_inference)
             if indexes_diff != real_delay:
-                # The latency estimate (`real_delay`) and the number of actions the robot
-                # actually consumed during inference (`indexes_diff`) disagree. This happens
-                # when the queue starved (robot idle) or on the first chunk (nothing consumed
-                # yet). Discarding `real_delay` here would drop actions the arm never executed
-                # and splice the queue `real_delay` steps ahead of the physical pose — a hard
-                # jump/slam, worst on slow policies where `real_delay` is large. Never discard
-                # more than was actually consumed.
+                # take the min of both to avoid discarding actions that were not
+                # actually consumed during inference, which would cause a jump in the queue
                 resolved = min(real_delay, indexes_diff)
                 logger.warning(
                     "Indexes diff != real delay (indexes_diff=%d, real_delay=%d); "
