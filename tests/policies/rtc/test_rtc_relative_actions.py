@@ -505,6 +505,36 @@ class TestRTCReanchoringWithStateNormalizer:
         assert not torch.allclose(cached, post_normalize_state, atol=1e-3)
 
 
+class TestRTCReanchoringWithStateIndexMap:
+    """Reanchoring must use the same non-prefix state->action map as train/eval."""
+
+    def test_reanchor_uses_state_action_index_map(self):
+        # Interleaved [pos, vel] state (12): positions at cols [0, 2, 4, 6, 8, 10].
+        raw_state = torch.tensor([[1.0, 0.1, 2.0, 0.2, 3.0, 0.3, 4.0, 0.4, 5.0, 0.5, 6.0, 0.6]])
+        idx_map = [0, 2, 4, 6, 8, 10]
+        relative_step = RelativeActionsProcessorStep(enabled=True, state_action_index_map=idx_map)
+        relative_step(batch_to_transition({OBS_STATE: raw_state.clone()}))
+
+        prev_actions_absolute = torch.tensor([[11.0, 12.0, 13.0, 14.0, 15.0, 16.0]] * 3)
+
+        result = reanchor_relative_rtc_prefix(
+            prev_actions_absolute=prev_actions_absolute,
+            current_state=relative_step.get_cached_state(),
+            relative_step=relative_step,
+            normalizer_step=None,
+            policy_device="cpu",
+        )
+
+        # Base is the position channels -> clean per-joint offsets [10, 10, 10, 10, 10, 10].
+        expected = to_relative_actions(prev_actions_absolute, raw_state, [True] * ACTION_DIM, idx_map)
+        torch.testing.assert_close(result, expected, atol=1e-5, rtol=1e-5)
+        torch.testing.assert_close(result, torch.full((3, ACTION_DIM), 10.0), atol=1e-5, rtol=1e-5)
+
+        # The legacy prefix base (state[:6]) would leak velocities -> different result.
+        prefix = to_relative_actions(prev_actions_absolute, raw_state, [True] * ACTION_DIM)
+        assert not torch.allclose(result, prefix)
+
+
 def _detect_relative_actions(preprocessor) -> bool:
     """Mirror of the helper in lerobot-rollout for testing without importing it."""
     return any(isinstance(step, RelativeActionsProcessorStep) and step.enabled for step in preprocessor.steps)
