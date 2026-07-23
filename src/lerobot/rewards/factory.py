@@ -20,8 +20,10 @@ from typing import Any
 
 import torch
 
+from lerobot.configs import FeatureType
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
+from lerobot.utils.feature_utils import dataset_to_policy_features
 
 from .classifier.configuration_classifier import RewardClassifierConfig
 from .distributional_value_function.configuration_distributional_value_function import DistributionalVFConfig
@@ -147,6 +149,13 @@ def make_reward_model(cfg: RewardModelConfig, **kwargs) -> PreTrainedRewardModel
     Returns:
         An instantiated and device-placed reward model.
     """
+    dataset_meta = kwargs.get("dataset_meta")
+    if dataset_meta is not None and not cfg.input_features:
+        features = dataset_to_policy_features(dataset_meta.features)
+        cfg.input_features = {
+            key: feature for key, feature in features.items() if feature.type is not FeatureType.ACTION
+        }
+
     reward_cls = get_reward_model_class(cfg.type)
 
     kwargs["config"] = cfg
