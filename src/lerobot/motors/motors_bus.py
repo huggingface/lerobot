@@ -838,9 +838,11 @@ class SerialMotorsBus(MotorsBusBase):
             if enter_pressed():
                 user_pressed_enter = True
 
-            if display_values and not user_pressed_enter:
-                # Move cursor up to overwrite the previous output
-                move_cursor_up(len(motor_names) + 3)
+            if not user_pressed_enter:
+                if display_values:
+                    # Move cursor up to overwrite the previous output
+                    move_cursor_up(len(motor_names) + 3)
+                # Throttle reads even when the live table is disabled.
                 time.sleep(0.02)
 
         same_min_max = [motor for motor in motor_names if mins[motor] == maxes[motor]]
