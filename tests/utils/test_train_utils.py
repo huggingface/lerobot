@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
@@ -95,8 +96,43 @@ def test_update_last_checkpoint(tmp_path):
     checkpoint.mkdir()
     update_last_checkpoint(checkpoint)
     last_checkpoint = tmp_path / LAST_CHECKPOINT_LINK
-    assert last_checkpoint.is_symlink()
-    assert last_checkpoint.resolve() == checkpoint
+    # A junction is used when the platform denies symlink creation (see the Windows test below), so
+    # assert on what every caller relies on: `last` resolves to the checkpoint directory.
+    assert last_checkpoint.is_symlink() or os.path.isjunction(last_checkpoint)
+    assert last_checkpoint.resolve() == checkpoint.resolve()
+
+
+def test_update_last_checkpoint_replaces_previous_link(tmp_path):
+    first = tmp_path / "0005"
+    first.mkdir()
+    second = tmp_path / "0010"
+    second.mkdir()
+    update_last_checkpoint(first)
+    update_last_checkpoint(second)
+    assert (tmp_path / LAST_CHECKPOINT_LINK).resolve() == second.resolve()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Symlink privilege only applies on Windows")
+def test_update_last_checkpoint_falls_back_to_junction(tmp_path, monkeypatch):
+    # Windows raises OSError [WinError 1314] for standard users without Developer Mode.
+    def deny_symlink(self, target, target_is_directory=False):
+        raise OSError(1314, "A required privilege is not held by the client")
+
+    monkeypatch.setattr(Path, "symlink_to", deny_symlink)
+
+    checkpoint = tmp_path / "0005"
+    checkpoint.mkdir()
+    update_last_checkpoint(checkpoint)
+    last_checkpoint = tmp_path / LAST_CHECKPOINT_LINK
+    assert os.path.isjunction(last_checkpoint)
+    assert last_checkpoint.resolve() == checkpoint.resolve()
+
+    # A stale junction must be replaced, not left pointing at the previous step.
+    newer = tmp_path / "0010"
+    newer.mkdir()
+    update_last_checkpoint(newer)
+    assert last_checkpoint.resolve() == newer.resolve()
+    assert checkpoint.is_dir()
 
 
 @patch("lerobot.common.train_utils.save_training_state")
@@ -212,9 +248,9 @@ def test_resolve_resume_checkpoint_downloads_latest_and_links(tmp_path, monkeypa
 
     assert checkpoint_dir == out / CHECKPOINTS_DIR / "020000"
     last = out / CHECKPOINTS_DIR / LAST_CHECKPOINT_LINK
-    assert last.is_symlink()
+    assert last.is_symlink() or os.path.isjunction(last)
     # `last` points at the downloaded step dir.
-    assert (last.parent / last.readlink()).resolve() == checkpoint_dir.resolve()
+    assert last.resolve() == checkpoint_dir.resolve()
 
 
 def test_resolve_resume_checkpoint_raises_without_checkpoints(tmp_path, monkeypatch):

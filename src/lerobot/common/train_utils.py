@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 from pathlib import Path
 
 from huggingface_hub import HfApi, snapshot_download
@@ -84,10 +85,21 @@ def load_training_batch_size(checkpoint_dir: Path) -> int | None:
 
 def update_last_checkpoint(checkpoint_dir: Path) -> Path:
     last_checkpoint_dir = checkpoint_dir.parent / LAST_CHECKPOINT_LINK
-    if last_checkpoint_dir.is_symlink():
+    if last_checkpoint_dir.is_symlink() or os.path.isjunction(last_checkpoint_dir):
         last_checkpoint_dir.unlink()
     relative_target = checkpoint_dir.relative_to(checkpoint_dir.parent)
-    last_checkpoint_dir.symlink_to(relative_target)
+    try:
+        last_checkpoint_dir.symlink_to(relative_target)
+    except OSError:
+        if os.name != "nt":
+            raise
+        # Windows only grants symlink creation to elevated shells or to accounts with Developer Mode
+        # enabled, so a standard user gets [WinError 1314]. A directory junction needs no privilege
+        # and resolves the same way; the only trade-off is that it stores an absolute target, so the
+        # run directory can no longer be relocated without recreating the link.
+        import _winapi
+
+        _winapi.CreateJunction(str(checkpoint_dir.resolve()), str(last_checkpoint_dir))
 
 
 def save_checkpoint(
