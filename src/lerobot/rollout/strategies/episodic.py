@@ -144,21 +144,25 @@ class EpisodicStrategy(RolloutStrategy):
                             # position so the operator takes over without fighting the arm.
                             # For non-actuated teleops: slide the follower to the teleop's current
                             # pose instead, since the leader cannot be driven.
-                            obs = robot.get_observation()
-                            current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
-                            if (
-                                teleop_supports_feedback(teleop)
-                                and self.config.smooth_leader_to_follower_handover
-                            ):
-                                logger.info("Smooth handover: moving leader arm to follower position")
-                                teleop_smooth_move_to(teleop, current_pos, duration_s=2)
-                                teleop.disable_torque()
-                            else:
-                                logger.info("Smooth handover: sliding follower to teleop position")
-                                teleop_action = teleop.get_action()
-                                processed = ctx.processors.teleop_action_processor((teleop_action, obs))
-                                target = ctx.processors.robot_action_processor((processed, obs))
-                                follower_smooth_move_to(robot, current_pos, target, duration_s=1)
+                            # Disabled entirely with --strategy.smooth_handover=false (useful for
+                            # clutch-style teleops that re-reference at the current robot pose on
+                            # engage).
+                            if self.config.smooth_handover:
+                                obs = robot.get_observation()
+                                current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
+                                if (
+                                    teleop_supports_feedback(teleop)
+                                    and self.config.smooth_leader_to_follower_handover
+                                ):
+                                    logger.info("Smooth handover: moving leader arm to follower position")
+                                    teleop_smooth_move_to(teleop, current_pos, duration_s=2)
+                                    teleop.disable_torque()
+                                else:
+                                    logger.info("Smooth handover: sliding follower to teleop position")
+                                    teleop_action = teleop.get_action()
+                                    processed = ctx.processors.teleop_action_processor((teleop_action, obs))
+                                    target = ctx.processors.robot_action_processor((processed, obs))
+                                    follower_smooth_move_to(robot, current_pos, target, duration_s=1)
 
                         elif self.config.reset_to_initial_position:
                             # No teleop: return the robot to its startup position.

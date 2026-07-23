@@ -194,6 +194,7 @@ Teleop is optional — if omitted the robot holds its position during the reset 
 | `--teleop.type`                                 | Optional. Teleoperator to drive the robot during resets                    |
 | `--strategy.reset_to_initial_position`          | Whether to reset the robot to its initial position between episodes        |
 | `--strategy.smooth_leader_to_follower_handover` | Whether to turn on or off the leader -> follower smooth handover behavior. |
+| `--strategy.smooth_handover`                    | Smoothly hand control to the teleop at reset start (default: true). Disable for clutch-style teleops that re-reference at the current robot pose on engage |
 
 ---
 
