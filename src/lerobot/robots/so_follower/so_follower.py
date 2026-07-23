@@ -62,9 +62,20 @@ class SOFollower(Robot):
         )
         self.cameras = make_cameras_from_configs(config.cameras)
 
+    _TELEMETRY_REGISTERS: tuple[tuple[str, str], ...] = (
+        ("Present_Velocity", "vel"),
+        ("Present_Load", "load"),
+        ("Present_Temperature", "temp"),
+    )
+
     @property
     def _motors_ft(self) -> dict[str, type]:
-        return {f"{motor}.pos": float for motor in self.bus.motors}
+        features: dict[str, type] = {f"{motor}.pos": float for motor in self.bus.motors}
+        if self.config.record_telemetry:
+            for _, suffix in self._TELEMETRY_REGISTERS:
+                for motor in self.bus.motors:
+                    features[f"{motor}.{suffix}"] = float
+        return features
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -184,6 +195,12 @@ class SOFollower(Robot):
         start = time.perf_counter()
         obs_dict = self.bus.sync_read("Present_Position")
         obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
+
+        if self.config.record_telemetry:
+            for register, suffix in self._TELEMETRY_REGISTERS:
+                values = self.bus.sync_read(register)
+                obs_dict.update({f"{motor}.{suffix}": val for motor, val in values.items()})
+
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
