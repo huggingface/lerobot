@@ -28,6 +28,8 @@ from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
 from .configuration_gamepad import GamepadTeleopConfig
 
+logger = logging.getLogger(__name__)
+
 
 class GripperAction(IntEnum):
     CLOSE = 0
@@ -59,9 +61,9 @@ class GamepadTeleop(Teleoperator):
 
         self.hidapi_fallback = config.hidapi_fallback
         if sys.platform == "darwin" and not self.hidapi_fallback:
-            logging.warning(
-                "Warning: On macOS, pygame may not reliably detect input from some controllers. "
-                "If you experience issues with the gamepad, consider setting hidapi_fallback to True."
+            logger.warning(
+                "On macOS, pygame may not reliably detect input from some controllers. "
+                "If you experience issues, set `hidapi_fallback=true`."
             )
 
     @property
