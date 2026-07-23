@@ -10,12 +10,19 @@
 
 import json
 import struct
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
 
-from lerobot.datasets.episode_video_streaming import assert_hf_hub_range_cache_branch
-from lerobot.datasets.mp4 import (
+from lerobot.streaming.episode_video import (
+    EpisodeByteCache,
+    EpisodeVideoManifest,
+    ThreadLocalRangeFetcher,
+    _log_http_failure,
+)
+from lerobot.streaming.mp4 import (
     _box,
     _co64,
     _dinf,
@@ -89,33 +96,115 @@ def test_parser_accepts_co64_chunk_offsets():
     np.testing.assert_array_equal(mp4.sample_offsets, np.array([10_000, 10_050, 10_025]))
 
 
-def test_hf_hub_branch_assertion_accepts_requested_revision(monkeypatch):
-    class FakeDist:
-        def read_text(self, name):
-            assert name == "direct_url.json"
-            return json.dumps(
-                {
-                    "url": "https://github.com/huggingface/huggingface_hub.git",
-                    "vcs_info": {"requested_revision": "feat/hffs-cache-cdn-range-reads"},
-                }
-            )
-
+def _fake_cache(monkeypatch, tmp_path, *, byte_budget=8, max_open_decoders=1):
+    manifest = EpisodeVideoManifest(video_keys=["camera"], files=[], spans={})
+    cache = EpisodeByteCache(
+        manifest,
+        tmp_path,
+        byte_budget=byte_budget,
+        workers=1,
+        open_decoders=False,
+        max_open_decoders=max_open_decoders,
+    )
     monkeypatch.setattr(
-        "lerobot.datasets.episode_video_streaming.metadata.distribution", lambda _: FakeDist()
+        cache,
+        "_fetch_and_synthesize",
+        lambda episode_index, _camera_key: {"bytes": bytes([episode_index]) * 5, "_timings": None},
+    )
+    return cache
+
+
+def test_byte_cache_does_not_evict_retained_episode(monkeypatch, tmp_path):
+    with _fake_cache(monkeypatch, tmp_path, byte_budget=10) as cache:
+        cache.retain_episode(0)
+        cache.ensure_ready(0)
+        cache.ensure_ready(1)
+        cache.ensure_ready(2)
+
+        assert (0, "camera") in cache._cache
+        assert (1, "camera") not in cache._cache
+        assert cache.resident_bytes <= cache.byte_budget
+
+
+def test_byte_cache_rejects_retained_set_larger_than_budget(monkeypatch, tmp_path):
+    with _fake_cache(monkeypatch, tmp_path, byte_budget=4) as cache:
+        cache.retain_episode(0)
+
+        with pytest.raises(MemoryError, match="byte budget"):
+            cache.ensure_ready(0)
+
+
+def test_decoder_count_has_independent_limit(monkeypatch, tmp_path):
+    opened = []
+
+    class FakeDecoder:
+        pass
+
+    def open_decoder(_data):
+        decoder = FakeDecoder()
+        opened.append(decoder)
+        return decoder
+
+    monkeypatch.setattr("lerobot.streaming.episode_video.open_video_decoder", open_decoder)
+    with _fake_cache(monkeypatch, tmp_path, byte_budget=20, max_open_decoders=1) as cache:
+        first = cache.get_decoder(0, "camera")
+        second = cache.get_decoder(1, "camera")
+
+        assert first is not second
+        assert cache.open_decoder_count == 1
+
+
+def test_releasing_episode_allows_immediate_eviction(monkeypatch, tmp_path):
+    with _fake_cache(monkeypatch, tmp_path, byte_budget=5) as cache:
+        cache.retain_episode(0)
+        cache.ensure_ready(0)
+        cache.release_episode(0)
+        cache.ensure_ready(1)
+
+        assert (0, "camera") not in cache._cache
+        assert (1, "camera") in cache._cache
+
+
+def test_range_fetcher_closes_handles_from_all_worker_threads(tmp_path):
+    (tmp_path / "video.mp4").write_bytes(b"0123456789")
+    fetcher = ThreadLocalRangeFetcher(tmp_path)
+    barrier = threading.Barrier(2)
+
+    def read_from_worker(offset):
+        barrier.wait()
+        return fetcher.read_range("video.mp4", offset, 1)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(read_from_worker, offset) for offset in range(2)]
+        assert [future.result() for future in futures] == [b"0", b"1"]
+
+        handles = list(fetcher._all_handles.values())
+    assert len(handles) == 2
+    fetcher.close()
+
+    assert not fetcher._all_handles
+    assert all(handle.closed for handle in handles)
+
+
+def test_http_failure_log_does_not_write_credentials(tmp_path, monkeypatch):
+    log_path = tmp_path / "http-failures.jsonl"
+    monkeypatch.setenv("LEROBOT_HTTP_FAILURE_LOG", str(log_path))
+
+    _log_http_failure(
+        backend="native-http",
+        method="GET",
+        url="https://cdn.example/private/video.mp4?token=url-secret",
+        headers={
+            "Authorization": "Bearer header-secret",
+            "Range": "bytes=0-10",
+            "X-Request-Id": "safe-request-id",
+        },
+        elapsed_s=0.1,
+        status_code=403,
     )
 
-    assert_hf_hub_range_cache_branch()
-
-
-def test_hf_hub_branch_assertion_rejects_plain_install(monkeypatch):
-    class FakeDist:
-        def read_text(self, name):
-            assert name == "direct_url.json"
-            return json.dumps({"url": "https://github.com/huggingface/huggingface_hub.git"})
-
-    monkeypatch.setattr(
-        "lerobot.datasets.episode_video_streaming.metadata.distribution", lambda _: FakeDist()
-    )
-
-    with pytest.raises(AssertionError):
-        assert_hf_hub_range_cache_branch()
+    record = json.loads(log_path.read_text())
+    assert record["host"] == "cdn.example"
+    assert record["path"] == "/private/video.mp4"
+    assert record["request_id"] == "safe-request-id"
+    assert "secret" not in log_path.read_text()

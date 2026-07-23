@@ -24,6 +24,7 @@ from lerobot.common.train_utils import (
     get_step_identifier,
     load_training_batch_size,
     load_training_num_processes,
+    load_training_num_workers,
     load_training_state,
     load_training_step,
     push_checkpoint_to_hub,
@@ -88,6 +89,16 @@ def test_load_training_batch_size_absent_returns_none(tmp_path, optimizer, sched
     # Checkpoints written before the batch size was recorded must still load (back-compat).
     save_training_state(tmp_path, 10, optimizer, scheduler)
     assert load_training_batch_size(tmp_path) is None
+
+
+def test_save_training_state_records_num_workers(tmp_path, optimizer, scheduler):
+    save_training_state(tmp_path, 10, optimizer, scheduler, num_workers=6)
+    assert load_training_num_workers(tmp_path) == 6
+
+
+def test_load_training_num_workers_absent_returns_none(tmp_path, optimizer, scheduler):
+    save_training_state(tmp_path, 10, optimizer, scheduler)
+    assert load_training_num_workers(tmp_path) is None
 
 
 def test_update_last_checkpoint(tmp_path):

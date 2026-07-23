@@ -69,6 +69,9 @@ dependencies = [
     # Config & Hub
     "draccus==0.10.0", # TODO: Relax version constraint
     "huggingface-hub>=1.0.0,<2.0.0",
+    "filelock>=3.12.0,<4.0.0",
+    "fsspec>=2023.5.0,<2027.0.0",
+    "httpx>=0.27.0,<1.0.0",
     "requests>=2.32.0,<3.0.0",
 
     # Environments

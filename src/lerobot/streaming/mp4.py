@@ -6,6 +6,8 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 
+"""MP4 indexing and in-memory episode synthesis primitives."""
+
 from __future__ import annotations
 
 import struct

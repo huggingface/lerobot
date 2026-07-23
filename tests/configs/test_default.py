@@ -36,3 +36,16 @@ def test_dataset_config_none_episodes_ok():
 
 def test_dataset_config_empty_episodes_ok():
     DatasetConfig(repo_id="user/repo", episodes=[])
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("streaming_episode_pool_size", 0, "episode_pool_size"),
+        ("streaming_prefetch_episodes", -1, "prefetch_episodes"),
+        ("streaming_byte_budget_gb", 0, "byte_budget_gb"),
+    ],
+)
+def test_dataset_config_rejects_invalid_streaming_resource_limits(field, value, message):
+    with pytest.raises(ValueError, match=message):
+        DatasetConfig(repo_id="user/repo", **{field: value})

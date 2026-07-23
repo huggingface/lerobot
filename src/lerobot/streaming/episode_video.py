@@ -11,17 +11,19 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import logging
 import os
+import posixpath
 import threading
 import time
 from collections import OrderedDict
-from concurrent.futures import Future, ThreadPoolExecutor
+from collections.abc import Sequence
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from importlib import metadata
 from pathlib import Path
 from types import MethodType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urljoin, urlparse
 from uuid import uuid4
 
@@ -31,8 +33,11 @@ import numpy as np
 from huggingface_hub import HfApi, HfFileSystem, constants
 from huggingface_hub.utils import get_session, hf_raise_for_status
 
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.mp4 import Mp4Index, Mp4SampleSlice, fetch_mp4_index, synthesize_mp4
+from lerobot.streaming.mp4 import Mp4Index, Mp4SampleSlice, fetch_mp4_index, synthesize_mp4
+
+if TYPE_CHECKING:
+    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+    from lerobot.streaming.sidecar import SidecarSpec
 
 _HTTP_FAILURE_LOG_LOCK = threading.Lock()
 
@@ -134,11 +139,15 @@ class ThreadLocalRangeFetcher:
 
     def __init__(self, data_root: str | Path, *, block_size: int = 2**20, cache_type: str = "none"):
         self.data_root = str(data_root).rstrip("/")
-        protocol = "hf" if self.data_root.startswith("hf://") else "file"
-        self.fs = fsspec.filesystem(protocol)
+        self.fs, self._root_path = fsspec.core.url_to_fs(self.data_root)
+        self._is_local = self.fs.protocol in ("file", "local") or (
+            isinstance(self.fs.protocol, tuple) and "file" in self.fs.protocol
+        )
         self.block_size = block_size
         self.cache_type = cache_type
         self._local = threading.local()
+        self._handles_lock = threading.Lock()
+        self._all_handles: dict[int, Any] = {}
         self._timing_lock = threading.Lock()
         self._timing_totals = {
             "range_jobs": 0.0,
@@ -149,9 +158,9 @@ class ThreadLocalRangeFetcher:
         }
 
     def _url(self, relative_path: str) -> str:
-        if self.data_root.startswith("hf://"):
-            return f"{self.data_root}/{relative_path}"
-        return str(Path(self.data_root) / relative_path)
+        if self._is_local:
+            return str(Path(self._root_path) / relative_path)
+        return posixpath.join(self._root_path.rstrip("/"), relative_path.lstrip("/"))
 
     def _handle(self, relative_path: str):
         handles = getattr(self._local, "handles", None)
@@ -165,6 +174,8 @@ class ThreadLocalRangeFetcher:
             )
             self._instrument_hf_handle(handle)
             handles[relative_path] = handle
+            with self._handles_lock:
+                self._all_handles[id(handle)] = handle
         return handle
 
     def info_size(self, relative_path: str) -> int:
@@ -332,13 +343,15 @@ class ThreadLocalRangeFetcher:
             return dict(self._timing_totals)
 
     def close(self) -> None:
-        handles = getattr(self._local, "handles", None)
-        if handles is None:
-            return
-        for handle in handles.values():
+        with self._handles_lock:
+            handles = list(self._all_handles.values())
+            self._all_handles.clear()
+        for handle in handles:
             with contextlib.suppress(Exception):
                 handle.close()
-        handles.clear()
+        local_handles = getattr(self._local, "handles", None)
+        if local_handles is not None:
+            local_handles.clear()
 
 
 class NativeHTTPRangeFetcher:
@@ -751,7 +764,7 @@ def make_range_fetcher(
 
 
 class EpisodeVideoManifest:
-    _FILE_SIDECAR_CACHE: dict[str, dict[str, VideoFileRecord]] = {}
+    _FILE_SIDECAR_CACHE: dict[str, tuple[tuple[int, int], dict[str, VideoFileRecord]]] = {}
     _FILE_SIDECAR_CACHE_LOCK = threading.Lock()
 
     def __init__(
@@ -873,7 +886,14 @@ class EpisodeVideoManifest:
 
         try:
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                return list(pool.map(build_file, rel_paths))
+                futures = {pool.submit(build_file, path): path for path in rel_paths}
+                records = []
+                progress_interval = max(1, len(futures) // 20)
+                for completed, future in enumerate(as_completed(futures), start=1):
+                    records.append(future.result())
+                    if completed == len(futures) or completed % progress_interval == 0:
+                        logging.info("Indexed %d/%d MP4 files for streaming sidecar", completed, len(futures))
+                return sorted(records, key=lambda record: record.file_path)
         finally:
             fetcher.close()
 
@@ -884,6 +904,7 @@ class EpisodeVideoManifest:
         rel_paths: list[str],
         data_root: str | Path,
         *,
+        spec: SidecarSpec,
         range_backend: str = "native-http",
         workers: int = 8,
         header_probe_bytes: int = 4 * 1024 * 1024,
@@ -897,14 +918,22 @@ class EpisodeVideoManifest:
             header_probe_bytes=header_probe_bytes,
             max_probe_bytes=max_probe_bytes,
         )
-        cls.save_file_sidecar(sidecar_path, records)
+        cls.save_file_sidecar(sidecar_path, records, spec=spec)
 
     @staticmethod
-    def save_file_sidecar(sidecar_path: str | Path, records: list[VideoFileRecord]) -> None:
+    def save_file_sidecar(
+        sidecar_path: str | Path,
+        records: list[VideoFileRecord],
+        *,
+        spec: SidecarSpec,
+    ) -> None:
         sidecar_path = Path(sidecar_path)
         sidecar_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "version": 1,
+            "version": 2,
+            "sidecar": spec.with_source_files(
+                tuple((record.file_path, record.file_size) for record in records)
+            ).to_dict(),
             "files": [
                 {"file_path": record.file_path, "file_size": record.file_size, "mp4": record.mp4.to_dict()}
                 for record in records
@@ -918,17 +947,49 @@ class EpisodeVideoManifest:
             arrays[f"{file_idx}/sample_offsets"] = record.mp4.sample_offsets
             arrays[f"{file_idx}/sync_samples"] = record.mp4.sync_samples
         np.savez_compressed(sidecar_path, manifest_json=json.dumps(payload).encode("utf-8"), **arrays)
+        cache_key = str(sidecar_path.expanduser())
+        with EpisodeVideoManifest._FILE_SIDECAR_CACHE_LOCK:
+            EpisodeVideoManifest._FILE_SIDECAR_CACHE.pop(cache_key, None)
+
+    @staticmethod
+    def load_file_sidecar_metadata(sidecar_path: str | Path) -> dict[str, Any]:
+        with np.load(sidecar_path, allow_pickle=False) as data:
+            payload = json.loads(bytes(data["manifest_json"]).decode("utf-8"))
+        if payload.get("version") != 2 or not isinstance(payload.get("sidecar"), dict):
+            raise ValueError(f"Unsupported MP4 sidecar schema in {sidecar_path}")
+        return payload["sidecar"]
+
+    @staticmethod
+    def validate_file_sidecar(sidecar_path: str | Path, spec: SidecarSpec) -> bool:
+        try:
+            from lerobot.streaming.sidecar import SidecarSpec
+
+            candidate = SidecarSpec.from_dict(EpisodeVideoManifest.load_file_sidecar_metadata(sidecar_path))
+            if not spec.matches(candidate):
+                return False
+            records = EpisodeVideoManifest.load_file_sidecar(sidecar_path)
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            return False
+
+        expected = dict(candidate.source_files)
+        actual = {path: record.file_size for path, record in records.items()}
+        return actual == expected
 
     @staticmethod
     def load_file_sidecar(sidecar_path: str | Path) -> dict[str, VideoFileRecord]:
-        cache_key = str(Path(sidecar_path).expanduser())
+        path = Path(sidecar_path).expanduser()
+        cache_key = str(path)
+        stat = path.stat()
+        signature = (stat.st_mtime_ns, stat.st_size)
         with EpisodeVideoManifest._FILE_SIDECAR_CACHE_LOCK:
             cached = EpisodeVideoManifest._FILE_SIDECAR_CACHE.get(cache_key)
-        if cached is not None:
-            return cached
+        if cached is not None and cached[0] == signature:
+            return cached[1]
 
-        with np.load(sidecar_path, allow_pickle=False) as data:
+        with np.load(path, allow_pickle=False) as data:
             payload = json.loads(bytes(data["manifest_json"]).decode("utf-8"))
+            if payload.get("version") != 2:
+                raise ValueError(f"Unsupported MP4 sidecar schema in {path}")
             records = {}
             for file_idx, item in enumerate(payload["files"]):
                 arrays = {
@@ -944,7 +1005,7 @@ class EpisodeVideoManifest:
                 mp4 = Mp4Index.from_dict(item["mp4"], arrays)
                 records[item["file_path"]] = VideoFileRecord(item["file_path"], int(item["file_size"]), mp4)
         with EpisodeVideoManifest._FILE_SIDECAR_CACHE_LOCK:
-            EpisodeVideoManifest._FILE_SIDECAR_CACHE[cache_key] = records
+            EpisodeVideoManifest._FILE_SIDECAR_CACHE[cache_key] = (signature, records)
         return records
 
     def camera_id(self, camera_key: str) -> int:
@@ -1058,7 +1119,7 @@ class ExactCoveragePool:
     def resident(self) -> list[int]:
         return list(self._remaining)
 
-    def __iter__(self) -> "ExactCoveragePool":
+    def __iter__(self) -> ExactCoveragePool:
         return self
 
     def __next__(self) -> tuple[int, int]:
@@ -1097,7 +1158,12 @@ class EpisodeByteCache:
         native_http_retries: int = 4,
         native_http_subranges: int = 1,
         open_decoders: bool = True,
+        max_open_decoders: int = 64,
     ):
+        if byte_budget <= 0:
+            raise ValueError("byte_budget must be positive")
+        if max_open_decoders <= 0:
+            raise ValueError("max_open_decoders must be positive")
         self.manifest = manifest
         self.fetcher = make_range_fetcher(
             data_root,
@@ -1110,9 +1176,12 @@ class EpisodeByteCache:
         )
         self.byte_budget = byte_budget
         self.open_decoders = open_decoders
+        self.max_open_decoders = max_open_decoders
         self._pool = ThreadPoolExecutor(max_workers=workers)
         self._cache: OrderedDict[tuple[int, str], dict[str, Any]] = OrderedDict()
+        self._decoders: OrderedDict[tuple[int, str], Any] = OrderedDict()
         self._futures: dict[tuple[int, str], Future[dict[str, Any]]] = {}
+        self._retained_episodes: dict[int, int] = {}
         self._bytes = 0
         self._lock = threading.Lock()
         self._timing_totals = {
@@ -1124,10 +1193,12 @@ class EpisodeByteCache:
         }
 
     def close(self) -> None:
-        self._pool.shutdown(wait=True)
+        self._pool.shutdown(wait=True, cancel_futures=True)
         with self._lock:
             self._cache.clear()
+            self._decoders.clear()
             self._futures.clear()
+            self._retained_episodes.clear()
             self._bytes = 0
         self.fetcher.close()
 
@@ -1141,9 +1212,34 @@ class EpisodeByteCache:
         for camera_key in self.manifest.video_keys:
             self._submit(episode_index, camera_key)
 
+    def retain_episode(self, episode_index: int) -> None:
+        with self._lock:
+            self._retained_episodes[episode_index] = self._retained_episodes.get(episode_index, 0) + 1
+
+    def release_episode(self, episode_index: int) -> None:
+        with self._lock:
+            count = self._retained_episodes.get(episode_index, 0)
+            if count <= 1:
+                self._retained_episodes.pop(episode_index, None)
+            else:
+                self._retained_episodes[episode_index] = count - 1
+            self._evict_locked()
+
+    @property
+    def resident_bytes(self) -> int:
+        with self._lock:
+            return self._bytes
+
+    @property
+    def open_decoder_count(self) -> int:
+        with self._lock:
+            return len(self._decoders)
+
     def ensure_ready(self, episode_index: int) -> None:
         for camera_key in self.manifest.video_keys:
             self.get_bytes(episode_index, camera_key)
+            if self.open_decoders:
+                self.get_decoder(episode_index, camera_key)
 
     def is_ready(self, episode_index: int) -> bool:
         """Non-blocking: True when every camera of the episode is fetched (cached or future done).
@@ -1164,20 +1260,30 @@ class EpisodeByteCache:
     def get_bytes(self, episode_index: int, camera_key: str) -> bytes:
         return self._get_entry(episode_index, camera_key)["bytes"]
 
-    def get_decoder(self, episode_index: int, camera_key: str):
+    def get_decoder(self, episode_index: int, camera_key: str) -> Any:
+        key = (episode_index, camera_key)
         entry = self._get_entry(episode_index, camera_key)
-        decoder = entry.get("decoder")
-        if decoder is None:
-            decoder = open_video_decoder(io.BytesIO(entry["bytes"]))
-            entry["decoder"] = decoder
+        with self._lock:
+            decoder = self._decoders.get(key)
+            if decoder is not None:
+                self._decoders.move_to_end(key)
+                return decoder
+
+        decoder = open_video_decoder(io.BytesIO(entry["bytes"]))
+        with self._lock:
+            existing = self._decoders.get(key)
+            if existing is not None:
+                self._decoders.move_to_end(key)
+                return existing
+            self._decoders[key] = decoder
+            while len(self._decoders) > self.max_open_decoders:
+                self._decoders.popitem(last=False)
         return decoder
 
     def get_frames(self, episode_index: int, camera_key: str, timestamps: list[float]):
         span = self.manifest.lookup(episode_index, camera_key)
         local_ts = [ts - span.source_start_pts for ts in timestamps]
         decoder = self.get_decoder(episode_index, camera_key)
-        if hasattr(decoder, "get_frames_played_at"):
-            return decoder.get_frames_played_at(local_ts).data
         metadata = decoder.metadata
         fps = getattr(metadata, "average_fps", None)
         if fps is None:
@@ -1224,7 +1330,13 @@ class EpisodeByteCache:
                 return existing
             self._cache[key] = entry
             self._bytes += len(entry["bytes"])
-            self._evict_locked()
+            try:
+                self._evict_locked()
+            except MemoryError:
+                failed_entry = self._cache.pop(key, None)
+                if failed_entry is not None:
+                    self._bytes -= len(failed_entry["bytes"])
+                raise
             timings = entry.pop("_timings", None)
             if timings is not None:
                 self._timing_totals["lookup_s"] += timings["lookup_s"]
@@ -1235,9 +1347,18 @@ class EpisodeByteCache:
             return entry
 
     def _evict_locked(self) -> None:
-        while self._bytes > self.byte_budget and self._cache:
-            _key, entry = self._cache.popitem(last=False)
+        while self._bytes > self.byte_budget:
+            key = next(
+                (candidate for candidate in self._cache if candidate[0] not in self._retained_episodes),
+                None,
+            )
+            if key is None:
+                raise MemoryError(
+                    f"Retained episode bytes exceed byte budget ({self._bytes} > {self.byte_budget})"
+                )
+            entry = self._cache.pop(key)
             self._bytes -= len(entry["bytes"])
+            self._decoders.pop(key, None)
 
     def _fetch_and_synthesize(self, episode_index: int, camera_key: str) -> dict[str, Any]:
         lookup_start = time.perf_counter()
@@ -1263,15 +1384,12 @@ class EpisodeByteCache:
         synthesize_s = time.perf_counter() - synthesize_start
         entry: dict[str, Any] = {
             "bytes": mp4_bytes,
-            "decoder": None,
             "_timings": {
                 "lookup_s": lookup_s,
                 "fetch_s": fetch_s,
                 "synthesize_s": synthesize_s,
             },
         }
-        if self.open_decoders:
-            entry["decoder"] = open_video_decoder(io.BytesIO(mp4_bytes))
         return entry
 
 
@@ -1281,32 +1399,6 @@ def open_video_decoder(file_like_or_bytesio, frame_mappings=None):
     from torchcodec.decoders import VideoDecoder
 
     return VideoDecoder(file_like_or_bytesio, seek_mode="approximate")
-
-
-def assert_hf_hub_range_cache_branch() -> None:
-    """Fail unless huggingface_hub was installed from the required range-cache branch."""
-
-    try:
-        dist = metadata.distribution("huggingface_hub")
-    except metadata.PackageNotFoundError as exc:
-        raise AssertionError("huggingface_hub is not installed") from exc
-
-    candidates = []
-    direct_url = dist.read_text("direct_url.json")
-    if direct_url:
-        candidates.append(direct_url)
-        with contextlib.suppress(json.JSONDecodeError):
-            parsed = json.loads(direct_url)
-            candidates.append(str(parsed.get("url", "")))
-            candidates.append(str(parsed.get("vcs_info", {}).get("requested_revision", "")))
-            candidates.append(str(parsed.get("vcs_info", {}).get("commit_id", "")))
-
-    text = "\n".join(candidates)
-    if "feat/hffs-cache-cdn-range-reads" not in text:
-        raise AssertionError(
-            "huggingface_hub must be installed from "
-            "git+https://github.com/huggingface/huggingface_hub.git@feat/hffs-cache-cdn-range-reads"
-        )
 
 
 @dataclass

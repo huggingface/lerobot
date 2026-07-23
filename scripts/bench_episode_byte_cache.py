@@ -16,7 +16,6 @@ import os
 import random
 import resource
 import socket
-import tempfile
 import threading
 import time
 from collections.abc import Sequence
@@ -30,27 +29,24 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.episode_video_streaming import (
-    EpisodeByteCache,
-    ExactCoveragePool,
-    EpisodeVideoManifest,
-    NativeHTTPRangeFetcher,
-    assert_hf_hub_range_cache_branch,
-)
 from lerobot.datasets.video_utils import VideoDecoderCache, decode_video_frames_torchcodec
-
-DEFAULT_REPO = "allenai/MolmoAct2-BimanualYAM-Dataset"
-DEFAULT_REVISION = "e9f21ae15074330839f2ac25ed4b49d76dfa1f9c"
-DEFAULT_DATA_ROOT = "hf://buckets/pepijn223/MolmoAct2-BimanualYAM-Dataset-bucket"
-SIDECAR_CACHE_DIR = Path(tempfile.gettempdir()) / "lerobot-sidecars"
-FULL_SIDECAR_NAME = "molmoact2-full.npz"
+from lerobot.streaming.episode_video import (
+    EpisodeByteCache,
+    EpisodeVideoManifest,
+    ExactCoveragePool,
+)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Benchmark episode-level streaming mini-MP4 cache.")
-    parser.add_argument("--repo-id", default=DEFAULT_REPO)
-    parser.add_argument("--revision", default=DEFAULT_REVISION)
-    parser.add_argument("--data-root", default=DEFAULT_DATA_ROOT)
+    parser = argparse.ArgumentParser(description="Profile the episode-level streaming mini-MP4 cache.")
+    parser.add_argument("--repo-id", required=True)
+    parser.add_argument("--revision", default=None)
+    parser.add_argument("--data-root", required=True)
+    parser.add_argument(
+        "--sidecar-path",
+        default=None,
+        help="Optional validated sidecar built by scripts/build_mp4_sidecar.py.",
+    )
     parser.add_argument(
         "--strategy",
         choices=("both", "full", "indexed", "remote-decoder", "native-http"),
@@ -144,7 +140,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--in-memory", action="store_true", help="Accepted for compatibility; manifest is always in memory."
     )
-    parser.add_argument("--no-hub-branch-assert", action="store_true")
     return parser.parse_args()
 
 
@@ -461,7 +456,6 @@ def run_exact_coverage_stream(
 
     elapsed = time.perf_counter() - start
     result = {
-        "coverage_mode": "exact",
         "target_samples_s": target_samples_s,
         "actual_samples_s": samples_done / elapsed if elapsed > 0 else float("inf"),
         "stream_wall_s": elapsed,
@@ -582,74 +576,6 @@ def _root_join(data_root: str, relative_path: str) -> str:
     if data_root.startswith("hf://"):
         return f"{data_root.rstrip('/')}/{relative_path}"
     return str(Path(data_root) / relative_path)
-
-
-def _find_or_download_sidecar(data_root: str, manifest_episode_count: int) -> Path | None:
-    _ = manifest_episode_count
-    local = SIDECAR_CACHE_DIR / FULL_SIDECAR_NAME
-    if _valid_sidecar(local):
-        return local
-    if local.exists():
-        print(f"mp4_sidecar_invalid_local: {local}")
-        local.unlink()
-    remote_relative = f"meta/mp4-sidecars/{FULL_SIDECAR_NAME}"
-    remote = _root_join(data_root, remote_relative)
-    protocol = "hf" if data_root.startswith("hf://") else "file"
-    fs = fsspec.filesystem(protocol)
-    if not fs.exists(remote):
-        return None
-    local.parent.mkdir(parents=True, exist_ok=True)
-    print(f"downloading_mp4_sidecar: {remote} -> {local}")
-    if data_root.startswith("hf://"):
-        _download_sidecar_native_http(data_root, remote_relative, local)
-    else:
-        fs.get(remote, str(local))
-    return local
-
-
-def _valid_sidecar(path: Path) -> bool:
-    if not path.exists():
-        return False
-    try:
-        with np.load(path, allow_pickle=False) as data:
-            return "manifest_json" in data
-    except Exception:
-        return False
-
-
-def _download_sidecar_native_http(data_root: str, relative_path: str, local: Path) -> None:
-    fetcher = NativeHTTPRangeFetcher(data_root, max_connections=16)
-    tmp = local.with_suffix(local.suffix + ".tmp")
-    try:
-        size = fetcher.info_size(relative_path)
-        chunk_size = 16 * 1024 * 1024
-        ranges = [(offset, min(chunk_size, size - offset)) for offset in range(0, size, chunk_size)]
-        with tmp.open("wb") as out_file:
-            out_file.truncate(size)
-
-        def read_chunk(offset_length: tuple[int, int]) -> tuple[int, bytes]:
-            offset, length = offset_length
-            return offset, fetcher.read_range(relative_path, offset, length)
-
-        start = time.perf_counter()
-        done = 0
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            futures = [pool.submit(read_chunk, item) for item in ranges]
-            with tmp.open("r+b") as rw_file:
-                for future in futures:
-                    offset, data = future.result()
-                    rw_file.seek(offset)
-                    rw_file.write(data)
-                    done += len(data)
-                    elapsed = max(time.perf_counter() - start, 1e-9)
-                    print(
-                        f"sidecar_download: {done / 1024**2:.1f}/{size / 1024**2:.1f} MiB "
-                        f"({done / elapsed / 1024**2:.1f} MiB/s)",
-                        flush=True,
-                    )
-        tmp.replace(local)
-    finally:
-        fetcher.close()
 
 
 class EpisodeParquetReader:
@@ -1369,15 +1295,14 @@ def main() -> None:
         os.environ["LEROBOT_HTTP_FAILURE_LOG"] = args.http_failure_log
         print(f"http_failure_log: {args.http_failure_log}")
     data_root = args.data_root
-    if data_root.startswith("hf://") and not args.no_hub_branch_assert:
-        assert_hf_hub_range_cache_branch()
-
     meta = LeRobotDatasetMetadata(args.repo_id, revision=args.revision)
     meta.ensure_readable()
     parquet_reader = EpisodeParquetReader(meta, data_root)
     manifest_episode_count = args.manifest_episodes or int(meta.total_episodes)
     manifest_episode_count = min(manifest_episode_count, int(meta.total_episodes), args.num_episodes)
-    sidecar_path = _find_or_download_sidecar(data_root, manifest_episode_count)
+    sidecar_path = Path(args.sidecar_path).expanduser() if args.sidecar_path else None
+    if sidecar_path is not None and not sidecar_path.is_file():
+        raise FileNotFoundError(f"MP4 sidecar not found: {sidecar_path}")
 
     if sidecar_path is not None:
         print(f"using_mp4_sidecar: {sidecar_path}")
@@ -1419,15 +1344,7 @@ def main() -> None:
         )
         return
     if args.strategy == "both":
-        expected_sidecar = SIDECAR_CACHE_DIR / FULL_SIDECAR_NAME
-        expected_remote = _root_join(data_root, f"meta/mp4-sidecars/{FULL_SIDECAR_NAME}")
-        print(f"mp4_sidecar_missing_local: {expected_sidecar}")
-        print(f"mp4_sidecar_missing_remote: {expected_remote}")
-        print(
-            "build_mp4_sidecar: "
-            "uv run --no-sync python scripts/build_mp4_sidecar.py "
-            f"--workers {args.workers} --range-backend native-http --output {expected_sidecar}"
-        )
+        print("mp4_sidecar: none (pass --sidecar-path to profile a prebuilt sidecar)")
         print("running_without_mp4_sidecar: indexed variants will build MP4 indexes online")
         print()
 

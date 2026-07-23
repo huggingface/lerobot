@@ -66,7 +66,9 @@ def resolve_delta_timestamps(
     return delta_timestamps
 
 
-def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
+def make_dataset(
+    cfg: TrainPipelineConfig,
+) -> LeRobotDataset | StreamingLeRobotDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
     Args:
@@ -108,9 +110,15 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,
                 revision=cfg.dataset.revision,
-                max_num_shards=cfg.num_workers,
+                max_num_shards=max(1, cfg.num_workers),
                 tolerance_s=cfg.tolerance_s,
                 return_uint8=True,
+                depth_output_unit=cfg.dataset.depth_output_unit,
+                data_root=cfg.dataset.streaming_data_root,
+                episode_pool_size=cfg.dataset.streaming_episode_pool_size,
+                prefetch_episodes=cfg.dataset.streaming_prefetch_episodes,
+                byte_budget_gb=cfg.dataset.streaming_byte_budget_gb,
+                repeat=True,
             )
     else:
         raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
@@ -138,7 +146,10 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
 
 def make_train_eval_datasets(
     cfg: TrainPipelineConfig,
-) -> tuple[LeRobotDataset | MultiLeRobotDataset, LeRobotDataset | None]:
+) -> tuple[
+    LeRobotDataset | StreamingLeRobotDataset | MultiLeRobotDataset,
+    LeRobotDataset | None,
+]:
     """Create train and optional eval datasets by splitting episodes based on eval_split.
 
     The last ceil(n_episodes * eval_split) episodes per task are held out for evaluation.
@@ -181,17 +192,37 @@ def make_train_eval_datasets(
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
 
-    train_dataset = LeRobotDataset(
-        cfg.dataset.repo_id,
-        root=cfg.dataset.root,
-        episodes=train_episodes,
-        delta_timestamps=delta_timestamps,
-        image_transforms=train_image_transforms,
-        revision=cfg.dataset.revision,
-        video_backend=cfg.dataset.video_backend,
-        return_uint8=True,
-        tolerance_s=cfg.tolerance_s,
-    )
+    if cfg.dataset.streaming:
+        train_dataset = StreamingLeRobotDataset(
+            cfg.dataset.repo_id,
+            root=cfg.dataset.root,
+            episodes=train_episodes,
+            delta_timestamps=delta_timestamps,
+            image_transforms=train_image_transforms,
+            revision=cfg.dataset.revision,
+            max_num_shards=max(1, cfg.num_workers),
+            tolerance_s=cfg.tolerance_s,
+            return_uint8=True,
+            depth_output_unit=cfg.dataset.depth_output_unit,
+            data_root=cfg.dataset.streaming_data_root,
+            episode_pool_size=cfg.dataset.streaming_episode_pool_size,
+            prefetch_episodes=cfg.dataset.streaming_prefetch_episodes,
+            byte_budget_gb=cfg.dataset.streaming_byte_budget_gb,
+            repeat=True,
+        )
+    else:
+        train_dataset = LeRobotDataset(
+            cfg.dataset.repo_id,
+            root=cfg.dataset.root,
+            episodes=train_episodes,
+            delta_timestamps=delta_timestamps,
+            image_transforms=train_image_transforms,
+            revision=cfg.dataset.revision,
+            video_backend=cfg.dataset.video_backend,
+            return_uint8=True,
+            depth_output_unit=cfg.dataset.depth_output_unit,
+            tolerance_s=cfg.tolerance_s,
+        )
 
     eval_dataset = LeRobotDataset(
         cfg.dataset.repo_id,
@@ -202,6 +233,7 @@ def make_train_eval_datasets(
         revision=cfg.dataset.revision,
         video_backend=cfg.dataset.video_backend,
         return_uint8=True,
+        depth_output_unit=cfg.dataset.depth_output_unit,
         tolerance_s=cfg.tolerance_s,
     )
 

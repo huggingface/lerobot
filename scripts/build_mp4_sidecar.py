@@ -17,76 +17,78 @@ from pathlib import Path
 import fsspec
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.episode_video_streaming import EpisodeVideoManifest, assert_hf_hub_range_cache_branch
-
-DEFAULT_REPO = "allenai/MolmoAct2-BimanualYAM-Dataset"
-DEFAULT_REVISION = "e9f21ae15074330839f2ac25ed4b49d76dfa1f9c"
-DEFAULT_DATA_ROOT = "hf://buckets/pepijn223/MolmoAct2-BimanualYAM-Dataset-bucket"
+from lerobot.datasets.streaming_sidecar import (
+    build_mp4_sidecar,
+    make_sidecar_spec,
+    published_sidecar_url,
+    range_backend_for_root,
+)
+from lerobot.streaming.sidecar import SidecarSpec
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a reusable MP4 byte-index sidecar for streaming.")
-    parser.add_argument("--repo-id", default=DEFAULT_REPO)
-    parser.add_argument("--revision", default=DEFAULT_REVISION)
-    parser.add_argument("--data-root", default=DEFAULT_DATA_ROOT)
+    parser.add_argument("--repo-id", required=True)
+    parser.add_argument("--revision", default=None)
+    parser.add_argument("--data-root", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--episodes", type=int, default=None)
     parser.add_argument("--workers", type=int, default=8)
-    parser.add_argument("--range-backend", choices=("fsspec", "native-http"), default="native-http")
+    parser.add_argument("--range-backend", choices=("fsspec", "native-http"), default=None)
     parser.add_argument("--max-probe-mb", type=int, default=64)
-    parser.add_argument(
-        "--no-push", action="store_true", help="Do not upload the sidecar to data_root/meta/mp4-sidecars."
-    )
-    parser.add_argument("--no-hub-branch-assert", action="store_true")
+    parser.add_argument("--push", action="store_true", help="Explicitly publish the sidecar to data_root.")
     return parser.parse_args()
 
 
-def push_sidecar(local_path: str, data_root: str) -> list[str]:
-    if not data_root.startswith("hf://"):
-        return []
+def push_sidecar(local_path: str, spec: SidecarSpec) -> list[str]:
+    if not spec.data_root.startswith("hf://"):
+        raise ValueError("--push currently supports only hf:// data roots")
 
-    local = Path(local_path)
     fs = fsspec.filesystem("hf")
-    remote_dir = f"{data_root.rstrip('/')}/meta/mp4-sidecars"
-    remote_paths = [f"{remote_dir}/{local.name}"]
-
-    for remote in remote_paths:
-        fs.put(str(local), remote)
-    return remote_paths
+    remote = published_sidecar_url(spec)
+    fs.put(str(Path(local_path)), remote)
+    return [remote]
 
 
 def main() -> None:
     args = parse_args()
-    if args.data_root.startswith("hf://") and not args.no_hub_branch_assert:
-        assert_hf_hub_range_cache_branch()
 
     meta = LeRobotDatasetMetadata(args.repo_id, revision=args.revision)
     meta.ensure_readable()
     total = (
         int(meta.total_episodes) if args.episodes is None else min(args.episodes, int(meta.total_episodes))
     )
-    rel_paths = sorted(
-        {str(meta.get_video_file_path(ep_idx, key)) for ep_idx in range(total) for key in meta.video_keys}
-    )
+    spec = make_sidecar_spec(meta, args.data_root)
+    if total != int(meta.total_episodes):
+        selected_paths = {
+            str(meta.get_video_file_path(ep_idx, key)) for ep_idx in range(total) for key in meta.video_keys
+        }
+        spec = SidecarSpec(
+            repo_id=spec.repo_id,
+            revision=spec.revision,
+            data_root=spec.data_root,
+            source_files=tuple(item for item in spec.source_files if item[0] in selected_paths),
+        )
 
     start = time.perf_counter()
-    EpisodeVideoManifest.write_file_sidecar(
+    build_mp4_sidecar(
         args.output,
-        rel_paths,
-        args.data_root,
-        range_backend=args.range_backend,
+        spec,
+        range_backend=args.range_backend or range_backend_for_root(args.data_root),
         workers=args.workers,
         max_probe_bytes=args.max_probe_mb * 1024 * 1024,
     )
     elapsed = time.perf_counter() - start
     print(f"wrote {args.output}")
-    print(f"episodes={total} files={len(rel_paths)} elapsed_s={elapsed:.2f}")
-    if args.no_push:
-        print("push_skipped: --no-push")
-    else:
-        pushed = push_sidecar(args.output, args.data_root)
+    print(f"episodes={total} files={len(spec.source_files)} elapsed_s={elapsed:.2f}")
+    if args.push:
+        if total != int(meta.total_episodes):
+            raise ValueError("Only a complete dataset sidecar can be published")
+        pushed = push_sidecar(args.output, spec)
         for remote in pushed:
             print(f"pushed {remote}")
+    else:
+        print("push_skipped: pass --push for explicit publication")
 
 
 if __name__ == "__main__":

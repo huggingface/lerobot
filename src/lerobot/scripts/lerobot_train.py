@@ -41,6 +41,7 @@ from lerobot.common.train_utils import (
     load_fsdp_optimizer_state,
     load_training_batch_size,
     load_training_num_processes,
+    load_training_num_workers,
     load_training_state,
     push_checkpoint_to_hub,
     save_checkpoint,
@@ -201,7 +202,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     require_package("accelerate", extra="training")
     from accelerate import Accelerator
-    from accelerate.utils import DistributedDataParallelKwargs, DistributedType
+    from accelerate.utils import DistributedDataParallelKwargs, DistributedType, send_to_device
 
     cfg.validate()
 
@@ -459,6 +460,59 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     else:
         shuffle = True
         sampler = None
+        train_num_workers = cfg.num_workers
+        if train_num_workers > 0:
+            max_nonempty_workers = dataset.num_episodes // accelerator.num_processes
+            if max_nonempty_workers == 0:
+                raise ValueError(
+                    "At least one distributed rank owns no streaming episode. "
+                    "Reduce the distributed world size."
+                )
+            train_num_workers = min(train_num_workers, max_nonempty_workers)
+            if train_num_workers != cfg.num_workers and is_main_process:
+                logging.warning(
+                    "Reducing streaming DataLoader workers from %d to %d so every rank/worker "
+                    "owns at least one complete episode.",
+                    cfg.num_workers,
+                    train_num_workers,
+                )
+        rank_frames = dataset.num_frames_for_rank(
+            accelerator.process_index,
+            accelerator.num_processes,
+            train_num_workers,
+        )
+        if rank_frames == 0:
+            raise ValueError("This rank owns no streaming episodes. Reduce the distributed world size.")
+        if cfg.resume and step > 0:
+            saved_num_processes = load_training_num_processes(cfg.checkpoint_path)
+            saved_batch_size = load_training_batch_size(cfg.checkpoint_path)
+            saved_num_workers = load_training_num_workers(cfg.checkpoint_path)
+            if saved_num_processes not in (None, accelerator.num_processes):
+                raise ValueError(
+                    "Sample-exact streaming resume requires the checkpoint world size "
+                    f"({saved_num_processes}) to match the current world size "
+                    f"({accelerator.num_processes})."
+                )
+            if saved_batch_size not in (None, cfg.batch_size):
+                raise ValueError(
+                    "Sample-exact streaming resume requires the checkpoint batch size "
+                    f"({saved_batch_size}) to match the current batch size ({cfg.batch_size})."
+                )
+            if saved_num_workers not in (None, train_num_workers):
+                raise ValueError(
+                    "Sample-exact streaming resume requires the checkpoint DataLoader worker count "
+                    f"({saved_num_workers}) to match the current count ({train_num_workers})."
+                )
+            stream_offset = step * (saved_batch_size or cfg.batch_size)
+            dataset.load_state_dict(
+                {
+                    "epoch": 0,
+                    "offset": stream_offset,
+                    "batch_size": cfg.batch_size,
+                }
+            )
+            if is_main_process:
+                logging.info(f"Resuming streaming data order at local sample {stream_offset}")
 
     # Only swap in the language-aware collate when the dataset actually
     # declares language columns; otherwise stay on PyTorch's default
@@ -466,15 +520,20 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=cfg.num_workers,
+        num_workers=train_num_workers if cfg.dataset.streaming else cfg.num_workers,
         batch_size=cfg.batch_size,
         shuffle=shuffle and not cfg.dataset.streaming,
         sampler=sampler,
         pin_memory=device.type == "cuda",
         drop_last=False,
         collate_fn=collate_fn,
-        prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
-        persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
+        prefetch_factor=(
+            cfg.prefetch_factor
+            if (train_num_workers if cfg.dataset.streaming else cfg.num_workers) > 0
+            else None
+        ),
+        persistent_workers=cfg.persistent_workers
+        and (train_num_workers if cfg.dataset.streaming else cfg.num_workers) > 0,
     )
 
     # Build eval dataloader if a held-out split exists
@@ -506,7 +565,16 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     # Prepare everything with accelerator
     accelerator.wait_for_everyone()
-    if eval_dataloader is not None:
+    if cfg.dataset.streaming:
+        # StreamingLeRobotDataset already assigns complete episodes disjointly to ranks and workers.
+        # Preparing this loader would make Accelerate shard its batches a second time.
+        if eval_dataloader is not None:
+            policy, optimizer, lr_scheduler, eval_dataloader = accelerator.prepare(
+                policy, optimizer, lr_scheduler, eval_dataloader
+            )
+        else:
+            policy, optimizer, lr_scheduler = accelerator.prepare(policy, optimizer, lr_scheduler)
+    elif eval_dataloader is not None:
         policy, optimizer, dataloader, lr_scheduler, eval_dataloader = accelerator.prepare(
             policy, optimizer, dataloader, lr_scheduler, eval_dataloader
         )
@@ -569,6 +637,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+        if cfg.dataset.streaming:
+            batch = send_to_device(batch, device, non_blocking=device.type == "cuda")
         for cam_key in dataset.meta.camera_keys:
             if cam_key in batch and batch[cam_key].dtype == torch.uint8:
                 batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
@@ -665,6 +735,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     postprocessor=postprocessor,
                     num_processes=accelerator.num_processes,
                     batch_size=cfg.batch_size,
+                    num_workers=train_num_workers if cfg.dataset.streaming else cfg.num_workers,
                     model_state_dict=model_state_dict,
                     optim_state_dict=optim_state_dict,
                 )

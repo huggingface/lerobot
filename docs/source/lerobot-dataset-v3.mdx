@@ -131,15 +131,68 @@ for batch in data_loader:
     # model.forward(batch)
 ```
 
-## Stream a dataset (no downloads)
+## Stream a dataset during training
 
-Use `StreamingLeRobotDataset` to iterate directly from the Hub without local copies. This allows to stream large datasets without the need to downloading them onto disk or loading them onto memory, and is a key feature of the new dataset format.
+Enable training-time streaming with the public `--dataset.streaming=true` flag:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=yaak-ai/L2D-v3 \
+  --dataset.streaming=true \
+  --policy.type=act \
+  --output_dir=outputs/train/act_streaming
+```
+
+This is separate from `--dataset.streaming_encoding=true`, which controls video encoding while
+recording. Training-time streaming leaves the map-style `LeRobotDataset` path unchanged.
+
+`StreamingLeRobotDataset` assigns complete episodes disjointly across distributed ranks and
+DataLoader workers, reads only the selected episode rows from Parquet, and keeps a bounded pool of
+episode video bytes. Every selected frame is visited exactly once per streaming epoch.
+
+On first use, LeRobot looks for a revision-matched MP4 index sidecar. If none is published with the
+dataset, it builds one in the revision-keyed local LeRobot cache under a process lock and installs it
+atomically. Training never uploads this sidecar. Dataset maintainers can build and publish one
+explicitly with `scripts/build_mp4_sidecar.py --push`.
+
+The default memory cap is 8 GiB per DataLoader worker. It can be adjusted along with episode mixing
+and prefetch:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=yaak-ai/L2D-v3 \
+  --dataset.streaming=true \
+  --dataset.streaming_byte_budget_gb=4 \
+  --dataset.streaming_episode_pool_size=16 \
+  --dataset.streaming_prefetch_episodes=4 \
+  --policy.type=act \
+  --output_dir=outputs/train/act_streaming
+```
+
+Use `--dataset.streaming_data_root=hf://buckets/OWNER/BUCKET/PREFIX` when metadata lives in a
+dataset repository but Parquet and MP4 data are mirrored in an HF Bucket.
+
+To capture comparable data-pipeline results on a training host:
+
+```bash
+uv run python scripts/bench_streaming_dataset.py \
+  --repo-id=yaak-ai/L2D-v3 \
+  --batch-size=16 \
+  --num-workers=4 \
+  --summary-json=streaming-benchmark.json
+```
+
+The JSON records the code and dataset revisions, initialization/first-batch time, steady-state
+samples per second, batch-wait p50/p95, duplicate indices, and the exact cache/worker settings.
+Run end-to-end `lerobot-train` separately to measure GPU utilization and full training step time.
+
+The Python API uses the same implementation:
 
 ```python
 from lerobot.datasets import StreamingLeRobotDataset
 
 repo_id = "yaak-ai/L2D-v3"
-dataset = StreamingLeRobotDataset(repo_id)  # streams directly from the Hub
+dataset = StreamingLeRobotDataset(repo_id)
 ```
 
 <div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
