@@ -1,0 +1,273 @@
+# 實作您自己的機器人處理器（implementing your own robot processor）
+
+在本教學中，您將學習如何實作自己的機器人處理器（Robot Processor）。
+首先會探討為何需要自訂處理器（custom processor），接著以 `NormalizerProcessorStep` 作為貫穿全文的範例，說明如何實作（implement）、設定（configure）及序列化處理器（serialize a processor）。最後，列出 LeRobot 內建的所有 helper 處理器（processors）。
+
+## 為什麼您會需要自訂處理器？（why you might need a custom processor）
+
+在大多數情況下，從感測器讀取原始資料（raw data）或模型輸出動作（models output actions）時，您需要處理這些資料以使其與目標系統（target system）相容。例如，一個常見的需求是正規化資料範圍（normalizing data ranges），使其適用於神經網路（neural networks）。
+
+LeRobot 的 `NormalizerProcessorStep` 正是處理這項關鍵任務：
+
+```python
+# 輸入：原始關節位置，範圍 [0, 180] 度
+raw_action = torch.tensor([90.0, 45.0, 135.0])
+
+# 處理後：正規化至 [-1, 1] 範圍以供模型訓練使用
+normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=dataset_stats)
+normalized_result = normalizer(transition)
+# ...
+```
+
+其他常見的處理需求（common processing needs）包括：
+
+- **裝置配置（device placement）**：在 CPU/GPU 之間移動張量（tensors）並轉換資料類型（data types）
+- **格式轉換（format conversion）**：在不同資料結構（data structures）之間進行轉換（transforming）
+- **批次處理（batching）**：為模型相容性（model compatibility）新增/移除批次維度（batch dimensions）
+- **安全約束（safety constraints）**：對機器人指令（robot commands）施加限制（limits）
+
+```python
+# 組合多個 processors 的 pipeline 範例
+pipeline = PolicyProcessorPipeline([
+    RenameObservationsProcessorStep(rename_map={}),
+    AddBatchDimensionProcessorStep(),
+    NormalizerProcessorStep(features=features, stats=stats),
+    DeviceProcessorStep(device="cuda"),
+    # ...
+])
+```
+
+LeRobot 提供了管線機制（pipeline mechanism），用於對輸入資料（input data）和輸出動作（output actions）實作一系列處理步驟（sequences of processing steps），讓您能輕鬆地以正確順序（order）組合這些轉換（transformations），以達到最佳效能。
+
+## 如何實作您自己的處理器？（how to implement your own processor）
+
+我們將以 `NormalizerProcessorStep` 作為主要範例，因為它展示了你經常會需要的核心處理器模式（processor patterns），包括狀態管理（state management）、設定序列化（configuration serialization），以及張量處理（tensor handling）。
+
+準備好您的問題所需的處理步驟序列（sequence of processing steps）。一個處理步驟（processor step）是一個實作以下方法（methods）的類（class）：
+
+- `__call__`：實作針對輸入轉換（input transition）的處理步驟（processing step）。
+- `get_config`：取得處理步驟（processing step）的設定（configuration）。
+- `state_dict`：取得處理步驟（processing step）的狀態（state）。
+- `load_state_dict`：載入處理步驟（processing step）的狀態（state）。
+- `reset`：重置處理步驟（processing step）的狀態（state）。
+- `feature_contract`：顯示在處理步驟（processing step）期間對特徵空間（feature space）的修改（modification）。
+
+### 實作 `__call__` 方法（implement the **call** method）
+
+`__call__` 方法（method）是你的處理步驟（processing step）的核心。它接收一個 `EnvTransition` 並回傳（returns）一個修改後的 `EnvTransition`。以下是 `NormalizerProcessorStep` 的運作方式：
+
+```python
+@dataclass
+@ProcessorStepRegistry.register("normalizer_processor")
+class NormalizerProcessorStep(ProcessorStep):
+    """使用資料集統計量正規化觀察值/動作。"""
+
+    features: dict[str, PolicyFeature]
+    norm_map: dict[FeatureType, NormalizationMode]
+    stats: dict[str, dict[str, Any]] | None = None
+    eps: float = 1e-8
+    _tensor_stats: dict = field(default_factory=dict, init=False, repr=False)
+
+    def __post_init__(self):
+        """將統計量轉換為張量以提高運算效率。"""
+        self.stats = self.stats or {}
+        self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=torch.float32)
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        new_transition = transition.copy()
+        # 正規化觀察值
+        # ...
+        # 正規化動作
+        # ...
+        return new_transition
+
+```
+
+完整實作細節請參閱 `src/lerobot/processor/normalize_processor.py`。
+
+**關鍵原則（Key principles）：**
+
+- **務必使用 `transition.copy()`** 以避免副作用（side effects）
+- 一致地**處理觀測和動作（handle both observations and actions）**
+- **將設定與狀態分離（separate config from state）**：`get_config()` 回傳可 JSON 序列化的參數（JSON-serializable params），`state_dict()` 回傳張量（returns tensors）
+- **在 `__post_init__()` 中將統計量（stats）轉換為張量（tensors）**，以提高運算效率
+
+### 配置與狀態管理（configuration and state management）
+
+處理器（processors）透過三個方法（methods）支援序列化（serialization），將設定（configuration）與張量狀態（tensor state）分離。`NormalizerProcessorStep` 完美地展示了這一點——它在狀態（state）中攜帶資料集統計量（dataset statistics，張量 tensors），並在配置（config）中攜帶超參數（hyperparameters）：
+
+```python
+# 接續 NormalizerProcessorStep 範例...
+
+def get_config(self) -> dict[str, Any]:
+    """可 JSON 序列化的設定（無張量）。"""
+    return {
+        "eps": self.eps,
+        "features": {k: {"type": v.type.value, "shape": v.shape} for k, v in self.features.items()},
+        "norm_map": {ft.value: nm.value for ft, nm in self.norm_map.items()},
+        # ...
+    }
+
+def state_dict(self) -> dict[str, torch.Tensor]:
+    """僅張量狀態（例如資料集統計量）。"""
+    flat: dict[str, torch.Tensor] = {}
+    for key, sub in self._tensor_stats.items():
+        for stat_name, tensor in sub.items():
+            flat[f"{key}.{stat_name}"] = tensor.cpu() # 始終儲存至 CPU
+    return flat
+
+def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+    """在執行期還原張量狀態。"""
+    self._tensor_stats.clear()
+    for flat_key, tensor in state.items():
+        key, stat_name = flat_key.rsplit(".", 1)
+        # 載入至 processor 設定的裝置
+        self._tensor_stats.setdefault(key, {})[stat_name] = tensor.to(
+            dtype=torch.float32, device=self.device
+        )
+        # ...
+```
+
+**使用方式（usage）：**
+
+```python
+# 儲存（例如在 policy 內部）
+config = normalizer.get_config()
+tensors = normalizer.state_dict()
+
+# 還原（例如載入預訓練的 policy）
+new_normalizer = NormalizerProcessorStep(**config)
+new_normalizer.load_state_dict(tensors)
+# 現在 new_normalizer 擁有相同的統計量和配置
+```
+
+### 轉換特徵（transforming features）
+
+`transform_features` 方法定義了你的處理器（processor）如何轉換特徵名稱（feature names）和形狀（shapes）。這對策略設定（policy configuration）和除錯（debugging）至關重要。
+
+對於 `NormalizerProcessorStep`，特徵（features）通常保持不變，因為正規化（normalization）不會改變鍵名或形狀（keys or shapes）：
+
+```python
+def transform_features(self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+    """正規化保留所有特徵定義。"""
+    return features  # 不改變特徵結構
+    # ...
+```
+
+當你的處理器（processor）進行重新命名或重塑資料（renames or reshapes data）時，請實作此方法（method）以反映對應關係（reflect the mapping），供下游元件（downstream components）使用。例如，一個簡單的重新命名處理器（rename processor）：
+
+```python
+def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    # 簡單的重新命名
+    if "pixels" in features:
+        features["observation.image"] = features.pop("pixels")
+
+    # 基於模式的重新命名
+    for key in list(features.keys()):
+        if key.startswith("env_state."):
+            suffix = key[len("env_state."):]
+            features[f"observation.{suffix}"] = features.pop(key)
+            # ...
+
+    return features
+```
+
+**關鍵原則（key principles）：**
+
+- 使用 `features.pop(old_key)` 來移除並取得舊特徵（old feature）
+- 使用 `features[new_key] = old_feature` 來新增重新命名的特徵（renamed feature）
+- 始終回傳（return）修改後的特徵字典（modified features dictionary）
+- 在 docstring 中清楚記錄轉換內容（document transformations）
+
+### 使用 overrides（using overrides）
+
+你可以在載入時（load-time）使用 `overrides` 覆寫步驟參數（override step parameters）。這對於不可序列化的物件（non-serializable objects）或特定環境的設定（site-specific settings）非常方便。它在策略工廠（policy factories）和 `DataProcessorPipeline.from_pretrained(...)` 中都能使用。
+
+**基礎模型適配（foundational model adaptation）**：當你使用基礎預訓練策略（foundational pretrained policy）時，這特別有用，因為你很少能取得原始訓練的統計量（original training statistics）。你可以注入自己的資料集（dataset）統計量（statistics），使正規化器（normalizer）適配你特定的機器人或環境資料（robot or environment data）。
+
+範例：在機器人上進行策略評估（policy evaluation）時，覆寫（override）裝置和重新命名對應表（device and rename map）。
+用此方式可以在僅有 CPU 的機器人上執行以 CUDA 訓練的策略（policy trained），或在機器人使用與資料集（dataset）不同的名稱時重新對應攝影機鍵名（remap camera keys）。
+
+直接使用 `from_pretrained`：
+
+```python
+from lerobot.processor import RobotProcessorPipeline
+
+# 載入在多樣化機器人資料上訓練的基礎 policy
+# 但將正規化適配到你特定的機器人/環境
+new_stats = LeRobotDataset(repo_id="username/my-dataset").meta.stats
+processor = RobotProcessorPipeline.from_pretrained(
+    "huggingface/foundational-robot-policy",  # 預訓練的基礎模型
+    overrides={
+        "normalizer_processor": {"stats": new_stats},     # 注入你的機器人統計量
+        "device_processor": {"device": "cuda:0"},         # 已註冊步驟的註冊名稱
+        "rename_processor": {"rename_map": robot_key_map}, # 對應你的機器人觀測鍵名
+        # ...
+    },
+)
+```
+
+## 最佳實踐（best practices）
+
+根據對所有 LeRobot 處理器實作（processor implementations）的分析，以下是關鍵的模式與實踐（key patterns and practices）：
+
+### 1. **安全的資料處理（safe data handling）**
+
+務必建立輸入資料的副本（copies of input data），以避免非預期的副作用（unintended side effects）。使用 `transition.copy()` 和 `observation.copy()`，而不是就地修改資料（modifying data in-place）。這可以防止你的處理器（processor）意外影響管線（pipeline）中的其他元件（components）。
+
+在處理前檢查所需的資料，並優雅地處理缺失資料。如果你的處理器（processor）預期特定的鍵名（keys，例如用於影像處理的 `"pixels"`），請先驗證其存在。對於可選資料，使用安全的存取模式（safe access patterns）如 `transition.get()` 並適當地處理 `None` 值。
+
+當資料驗證失敗（data validation fails）時，提供清楚且可操作的錯誤訊息（error messages），幫助使用者理解出了什麼問題以及如何修正。
+
+### 2. **選擇適當的基類（choose appropriate base classes）**
+
+LeRobot 提供了專門的基類（base classes），可減少樣板程式碼（boilerplate code）並確保一致性。當你只需修改觀測（observations）時使用 `ObservationProcessorStep`，僅處理動作（action-only）時使用 `ActionProcessorStep`，專門用於字典式機器人動作（dictionary-based robot actions）時使用 `RobotActionProcessorStep`。
+
+只有在你需要完全控制整個轉換（transition），或需要同時處理多個轉換組成部分（transition components）時，才直接繼承 `ProcessorStep`。專門的基底類（base class）會為你處理轉換管理（transition management）並提供型別安全（type safety）。
+
+### 3. **註冊與命名（registration and naming）**
+
+使用 `@ProcessorStepRegistry.register()` 以描述性的、帶命名空間的名稱（namespaced names）註冊（register）你的處理器（processor）。使用組織前綴（organization prefixes）如 `"robotics_lab/safety_clipper"` 或 `"acme_corp/vision_enhancer"` 以避免命名衝突（naming conflicts）。避免使用通用名稱如 `"processor"` 或 `"step"`，因為它們可能與其他實作（other implementations）衝突。
+
+良好的註冊（registration）使你的處理器（processor）易於被發現（discoverable），並在儲存和載入管線（pipeline）時實現乾淨的序列化/反序列化（serialization/deserialization）。
+
+### 4. **狀態管理模式（state management patterns）**
+
+區分設定參數（configuration parameters, JSON-serializable values）和內部狀態（張量 tensors、緩衝區 buffers）。對不應出現在建構子（constructor）或字串表示（string representation）中的內部狀態（state），使用帶有 `init=False, repr=False` 的 dataclass 欄位（fields）。
+
+實作 `reset()` 方法以在不同回合（episodes）之間清除內部狀態（internal state）。這對於會隨時間累積（accumulate）資料的有狀態處理器（stateful processors） 至關重要，例如移動平均或時間濾波器（moving averages or temporal filters）。
+
+請記住，`get_config()` 應僅回傳（return）可 JSON 序列化的設定（JSON-serializable configuration），而 `state_dict()` 則單獨處理張量狀態（tensor state）。
+
+### 5. **輸入驗證與錯誤處理（input validation and error handling）**
+
+在處理前驗證輸入的型別和形狀（input types and shapes）。檢查張量屬性（tensor properties）如 `dtype` 和維度（dimensions），以確保與你的演算法相容。對於機器人動作（actions），驗證所需的姿態組成（pose components）部分或關節值（joint values）是否存在且在預期範圍內（expected ranges）。
+
+對不需要處理的邊界情況（edge cases）使用提前返回（early returns）。提供清楚、描述性的錯誤訊息，包含預期與實際的資料型別或形狀（expected vs. actual data types or shapes）。這使使用者的除錯工作更加容易。
+
+### 6. **裝置與資料型別感知（device and dtype awareness）**
+
+設計你的處理器（processor）使其自動適配（automatically adapt）輸入張量的裝置和資料型別（device and dtype of input tensors）。內部張量（internal tensors，如正規化統計量 normalization statistics）應與輸入張量的裝置和資料型別一致，以確保與多 GPU 訓練（multi-GPU training）、混合精度（mixed precision）及分散式設定（distributed setups）相容。
+
+實作 `to()` 方法，將你的處理器內部狀態（processor’s internal state）移動到指定的裝置（device）。在執行期檢查裝置/資料型別的相容性（device/dtype compatibility），並在需要時自動遷移內部狀態（migrate internal state）。此模式使你的處理器（processor）能在不同硬體配置之間無縫運作，而無需手動介入（manual intervention）。
+
+## 結論（conclusion）
+
+你現在已具備在 LeRobot 中實作自訂處理器（custom processors）的所有工具！關鍵步驟如下：
+
+1. **定義你的處理器（processor）** 為一個 dataclass，包含所需的方法（methods，`__call__`、`get_config`、`state_dict`、`load_state_dict`、`reset`、`transform_features`）
+2. **註冊它（register it）**，使用 `@ProcessorStepRegistry.register("name")` 以便被發現
+3. **整合它（integrate it）** 到 `DataProcessorPipeline` 中，與其他處理步驟（processing steps）一起使用
+4. **使用基底類（use base classes）**，如 `ObservationProcessorStep`，以盡可能減少樣板程式碼（boilerplate）
+5. **實作裝置/資料型別感知（implement device/dtype awareness）**，以支援多 GPU 和混合精度設定（mixed precision setups）
+
+處理器系統（processor system）的設計是模組化且可組合的（modular and composable），讓你能從簡單、專注的元件（components）建構複雜的資料處理管線（pipelines）。無論你是為訓練（training ）預處理感測器資料，還是為機器人執行後處理模型輸出（post-processing model outputs ），自訂處理器（processor）都能為你提供處理機器人應用中任何資料轉換（data transformation）的彈性。
+
+穩健處理器（robust processors）的關鍵原則（key principles）：
+
+- **裝置/資料型別適配（device/dtype adaptation）**：內部張量（tensors）應與輸入張量一致
+- **清楚的錯誤訊息（clear error messages）**：幫助使用者理解出了什麼問題
+- **使用基類（base class usage）**：善用專門的基底類（base classes）以減少樣板程式碼（boilerplate）
+- **特徵合約（feature contracts）**：使用 `transform_features()` 宣告資料結構（data structure）的變更
+
+從簡單的開始，徹底測試，並確保你的處理器（processors）能在不同硬體配置（hardware configurations）之間無縫運作！

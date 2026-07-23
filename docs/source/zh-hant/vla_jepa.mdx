@@ -1,0 +1,235 @@
+# VLA-JEPA
+
+這是 **VLA-JEPA** 的 LeRobot 移植版本（port），這是一個視覺-語言-動作模型（vision-alnguage-action model），結合了 Qwen3-VL 語言骨幹網路（language backbone）、自監督式影片世界模型（self-supervised video world model, V-JEPA2），以及一個流匹配的 DiT 動作頭（flow-matching DiT action head）。
+
+---
+
+## 架構概覽（architecture overview）
+
+VLA-JEPA 有三個主要組件（components）：
+
+| 組件（component）                    | 模組（module）                    | 角色（role）                                                                          |
+| ------------------------------------ | --------------------------------- | ------------------------------------------------------------------------------------- |
+| **Qwen3-VL 骨幹網路（backbone）**    | `Qwen3VLInterface`                | 將影像與語言指令（images + language instruction）融合（fuses）為 context tokens       |
+| **DiT-B 動作頭（action head）**      | `VLAJEPAActionHead`               | 對動作區塊（action chunk）進行流匹配擴散（flow-matching diffusion）                   |
+| **V-JEPA2 世界模型（world model ）** | `ActionConditionedVideoPredictor` | 自監督式影片預測損失（self-supervised video prediction loss，僅訓練 training 時使用） |
+
+### 資料流（data flow）
+
+**訓練（training）：**
+
+1. 一段 `num_video_frames` 影格（frames）的影片片段（video clip）會由 V-JEPA2 編碼（encode）為每影格的 patch tokens。
+2. Qwen3-VL 骨幹網路（backbone）處理多視角影像與任務指令（multi-view images + the task instruction），產生一段 context tokens 序列（sequence），其中包含特殊的動作 token（special action tokens，用於世界模型條件 world model conditioning）與具身 token（embodied tokens）。
+3. 動作頭（action head）接收這些 context tokens 作為 cross-attention 的 keys/values，並透過流匹配（flow matching）預測去噪後的動作區塊（predicts a denoised action chunk）。
+4. 世界模型預測器（world model predictor）使用從 Qwen 擷取的動作 token （action tokens）來預測未來的 V-JEPA2 影格嵌入（frame embeddings）；這些預測的迴歸損失（regression loss）會加到動作損失（action loss）上。
+
+**推論（inference）：**
+只會用到 Qwen 與動作頭（action head）。推論時（inference time）不需要世界模型（world model）。
+
+### 動作頭細節（action head details）
+
+透過 `action_model_type` 可選用的預設值：
+
+| 預設值  | Hidden dim | Heads | Head dim |
+| ------- | ---------- | ----- | -------- |
+| `DiT-B` | 768        | 12    | 64       |
+| `DiT-L` | 1536       | 32    | 48       |
+
+### 世界模型細節（world model details）
+
+影片預測器（video predictor）是一個 ViT 風格的 Transformer（ViT-style transformer, `ActionConditionedVideoPredictor`），輸入包含：
+
+- **影格 tokens（frame tokens）**：投影（project）至 `predictor_embed_dim` 的 V-JEPA2 patch 嵌入（patch embeddings）
+- **動作 tokens（action tokens）**：投影（project）至 `predictor_embed_dim` 的 Qwen 動作 token 嵌入（action token embeddings）
+
+它使用 block-causal attention，讓每個時間步（temporal step）都能關注所有先前的步驟（attend to all previous steps）。預測器的輸入（predictor’s input） `embed_dim` 等於 `num_views × video_encoder_hidden_size`（例如預訓練檢查點 pretrained checkpoint 為 2 視角 views × 1024 = 2048）。
+
+---
+
+## 預訓練檢查點（pretrained checkpoints）
+
+有三個檢查點（checkpoints）可直接在 LeRobot 組織（org）中取得：[`lerobot/VLA-JEPA`](https://huggingface.co/collections/lerobot/vla-jepa)，由 [ginwind/VLA-JEPA](https://huggingface.co/ginwind/VLA-JEPA) 轉換而來：
+
+| 檢查點（checkpoint）          | 資料集（dataset） | 攝影機（cameras）                     | 世界模型（world model） | 動作 dim（action dim） |
+| ----------------------------- | ----------------- | ------------------------------------- | ----------------------- | ---------------------- |
+| `lerobot/VLA-JEPA-LIBERO`     | LIBERO-10         | 2（agentview + 腕部 wrist）           | 啟用（enabled）         | 7                      |
+| `lerobot/VLA-JEPA-Pretrain`   | DROID 1.0.1       | 2（外部左側視角 exterior left views） | 啟用（enabled）         | 7                      |
+| `lerobot/VLA-JEPA-SimplerEnv` | OXE Bridge / RT-1 | 1（視角重複 view duplicated ×2）      | 啟用（enabled）         | 7                      |
+
+所有檢查點（checkpoint）皆使用 `Qwen/Qwen3-VL-2B-Instruct` 作為語言骨幹網路（language backbone）。
+
+---
+
+## 設定（configuration）
+
+`VLAJEPAConfig` 中的主要參數（parameters）：
+
+| 參數（parameter）         | 預設值（default） | 描述（description）                                                                                                                                                                                                                                                 |
+| ------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chunk_size`              | 7                 | 每次推論呼叫所預測的動作數量（number of actions predicted per inference call）                                                                                                                                                                                      |
+| `n_action_steps`          | 7                 | 在重新規劃（re-planning）前，從預測區塊（predicted chunk）中執行的步數（steps executed）                                                                                                                                                                            |
+| `num_video_frames`        | 8                 | 餵給世界模型（world model）的影片片段長度（video clip length）                                                                                                                                                                                                      |
+| `enable_world_model`      | `True`            | 是否載入並訓練（load and train） V-JEPA2 預測器（predictor）                                                                                                                                                                                                        |
+| `world_model_loss_weight` | 0.1               | JEPA 預測損失（prediction loss）相對於動作損失（action loss）的權重（weight）                                                                                                                                                                                       |
+| `num_inference_timesteps` | 4                 | 動作去噪（action denoising）的 Euler 積分步數（Euler integration steps）                                                                                                                                                                                            |
+| `freeze_qwen`             | `False`           | 凍結（freeze） Qwen3-VL 骨幹網路（backbone），只訓練動作頭（only train the action head）                                                                                                                                                                            |
+| `reinit_modules`          | `None`            | 載入時允許被隨機重新初始化（randomly re-initialised）的鍵值前綴（key prefixes，用於跨具身遷移 cross-embodiment transfer，請參閱[在不同具身上微調](#%E5%9C%A8%E4%B8%8D%E5%90%8C%E5%85%B7%E8%BA%AB%E4%B8%8A%E5%BE%AE%E8%AA%BFfine-tuning-on-a-different-embodiment)） |
+| `gripper_dim`             | 6                 | 夾爪維度在動作向量中的索引（index of the gripper dimension in the action vector，例如 7-DoF 手臂且夾爪為最後一個關節時為 6）                                                                                                                                        |
+| `gripper_threshold`       | 0.5               | `pre_snap_gripper_action` 與 `binarize_gripper_action` 用來將夾爪維度二值化（binarize the gripper dimension）的閾值（threshold）                                                                                                                                    |
+| `pre_snap_gripper_action` | `True`            | 在反正規化（unnormalization）前將夾爪維度貼齊為（snap the gripper dim to） {0, 1}。若機器人沒有二值夾爪（binary gripper），請設為 `False`                                                                                                                           |
+| `binarize_gripper_action` | `True`            | 在反正規化（unnormalization）後將夾爪維度二值化為（binarize the gripper dim to）{-1, 1}。若機器人沒有二值夾爪（binary gripper），請設為 `False`                                                                                                                     |
+
+---
+
+## 訓練（training）
+
+訓練步數（number of training steps）可能因資料集（dataset）大小與運算預算（compute budget）而異。原始論文在 ssv2 + droid 上聯合預訓練（pretrained）了 50k 步，接著為 LIBERO 額外訓練 30k 步，但從提供的預訓練檢查點（pretrained checkpoints）進行微調（fine-tune）時，較少的步數仍可能有良好表現。
+
+### 從頭完整訓練（full training from scratch）
+
+```bash
+lerobot-train \
+  policy.type=vla_jepa \
+  policy.repo_id=your_org/your_repo \
+  dataset.repo_id=your_org/your_dataset
+```
+
+### 從預訓練檢查點微調（fine-tuning from a pretrained checkpoint）
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.repo_id=your_org/your_repo \
+  --dataset.repo_id=your_org/your_dataset
+```
+
+如果您想凍結（freeze） Qwen 骨幹網路（backbone）、只訓練動作頭（only train the action head），請設定 `policy.freeze_qwen=True`：
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.repo_id=your_org/your_repo \
+  --policy.freeze_qwen=true \
+  --dataset.repo_id=your_org/your_dataset
+```
+
+### 在不同具身上微調（fine-tuning on a different embodiment）
+
+當目標機器人（target robot）的動作或狀態維度（action or state dimensionality）與預訓練檢查點（pretrained checkpoint）不同時，動作頭（action head）的輸入/輸出投影層（input/output projection layers）會有不相符的形狀（shapes），無法直接載入。`reinit_modules` 讓您列出允許形狀不符的鍵值前綴（key prefixes），這些層（layers）會被隨機重新初始化（randomly re-initialised），而其餘所有權重（weight）則沿用檢查點（checkpoint）的值。所列前綴（listed prefixes）以外的任何形狀不符（shape mismatch）都會引發錯誤（raises an error）。
+
+依賴 `action_dim` 與 `state_dim` 的層為：
+
+| 層（layer）                                            | 鍵值前綴（key prefix）              |
+| ------------------------------------------------------ | ----------------------------------- |
+| 動作編碼器（actionn encoder, action_dim → inner_dim）  | `model.action_model.action_encoder` |
+| 動作解碼器（action decoder, hidden_size → action_dim） | `model.action_model.action_decoder` |
+| 狀態編碼器（state encoder, state_dim → inner_dim）     | `model.action_model.state_encoder`  |
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.repo_id=your_org/your_repo \
+  --policy.freeze_qwen=true \
+  --policy.reinit_modules='["model.action_model.action_encoder", "model.action_model.action_decoder", "model.action_model.state_encoder"]' \
+  --dataset.repo_id=your_org/your_dataset
+```
+
+如果您的機器人沒有本體感覺狀態（proprioceptive state），請從列表中省略 `model.action_model.state_encoder`。
+
+### 重現 LIBERO 結果（reproducing the LIBERO results）
+
+**在 LIBERO 上訓練（training on LIBERO）：**
+從預訓練檢查點（pretrained checkpoint）開始訓練（training），在 LIBERO 資料集（dataset）上訓練 30k 步（steps）。
+原始論文提到在 8 張 GPU 上以批次大小（batch size） 32 訓練，也就是全域批次大小（global batch size） 256。
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.repo_id=your_org/your_repo \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --steps=30000
+```
+
+**評估預訓練的 LIBERO-10 檢查點（evaluating the pretrained LIBERO-10 checkpoint）：**
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/VLA-JEPA-LIBERO \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --eval.n_episodes=10 \
+  --eval.batch_size=5
+```
+
+若只想評估 evaluate 部分任務（subset of tasks）：
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/VLA-JEPA-LIBERO \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --env.task_ids='[0,1,2]' \
+  --eval.n_episodes=10 \
+  --eval.batch_size=5
+```
+
+**預期結果（expected results）：**
+
+| 任務組（suite）     | 回合（episode） | 成功數（successes） | 成功率（successes rate） |
+| ------------------- | --------------- | ------------------- | ------------------------ |
+| libero_spatial      | 100             | 93                  | **95.0%**                |
+| libero_object       | 100             | 100                 | **100.0%**               |
+| libero_goal         | 100             | 98                  | **98.0%**                |
+| libero_10           | 100             | 96                  | **93.0%**                |
+| **整體（overall）** | **400**         | **387**             | **96.5%**                |
+
+---
+
+## 在攝影機數量不同的資料集上微調（fine-tuning on datasets with a different number of cameras）
+
+預訓練世界模型預測器（pretrained world model predictor）是以 `embed_dim = jepa_tubelet_size × 1024`（預設 `jepa_tubelet_size=2`）訓練（training）而成。
+
+**預設行為 — 視角填充／裁剪（view padding / trimming，無須任何操作）**
+
+從 `VLA-JEPA-Pretrain` 微調（fine-tune）時，模型（model）會自動調整餵給世界模型的視角數量（number of views fed to the world model）以符合 `jepa_tubelet_size`：
+
+- **單視角資料集（single-view datasets，例如 BridgeV2）：** 單視角的潛在表示（single-view latent）會被複製（duplicated），以產生雙視角的世界模型輸入（two-view world-model input），在不造成任何權重形狀不符（weight mismatch）的情況下保留 JEPA 自監督訊號（self-supervised signal）。
+- **超過 2 視角的資料集（>2-view datasets，例如 3 視角的 DROID）：** 所有視角（views）都會傳入 Qwen 骨幹網路（backbone，以取得更豐富的 context），但世界模型（world model）只使用前 `jepa_tubelet_size` 個視角（一個腕部 wrist + 一個第三人稱 third-person，依設定的視角順序）。
+
+**選項 1 — 停用世界模型（disable the world model）**
+
+設定 `enable_world_model=False` 可完全略過 JEPA 損失（loss）。只會載入並訓練（loaded and trained） Qwen 骨幹網路與動作頭（backbone and action head）。這對於取得良好的動作表現（action performance）已足夠。
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.enable_world_model=false \
+  --policy.repo_id=your_org/your_repo \
+  --dataset.repo_id=your_org/single_camera_dataset
+```
+
+**選項 2 — 重新初始化預測器的輸入投影（reinitialize the predictor input projection）**
+
+如果您想將 `jepa_tubelet_size` 改為 2 以外的值，請以 `strict=False` 載入檢查點（checkpoint），並為新的 `embed_dim` 重新初始化（reinitialize） `model.video_predictor.predictor_embed`。其餘所有預測器區塊的權重（predictor block weights，attention、MLP、norm、輸出投影 projection）都與攝影機數量無關（camera-count-agnostic），可沿用預訓練檢查點（pretrained checkpoint）的值。
+
+---
+
+## 引用
+
+```bibtex
+@misc{sun2026vlajepaenhancingvisionlanguageactionmodel,
+  title         = {VLA-JEPA: Enhancing Vision-Language-Action Model with Latent World Model},
+  author        = {Jingwen Sun and Wenyao Zhang and Zekun Qi and Shaojie Ren and Zezhi Liu and Hanxin Zhu and Guangzhong Sun and Xin Jin and Zhibo Chen},
+  year          = {2026},
+  eprint        = {2602.10098},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  url           = {https://arxiv.org/abs/2602.10098},
+}
+```
+
+---
+
+## 授權
+
+權重依原始 [ginwind/VLA-JEPA](https://huggingface.co/ginwind/VLA-JEPA) 儲存庫的授權條款（**Apache 2.0 授權**）散布。LeRobot 整合程式碼遵循 **Apache 2.0 授權**。

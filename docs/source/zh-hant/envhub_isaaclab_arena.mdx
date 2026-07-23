@@ -1,0 +1,512 @@
+# NVIDIA IsaacLab Arena & LeRobot
+
+LeRobot EnvHub 現已支援透過 IsaacLab Arena 進行 **GPU 加速模擬（GPU-accelerated simulation）**，可大規模進行策略評估（policy evaluation at scale）。
+使用高擬真模擬訓練（high-fidelity simulation training）與評估模仿學習策略（evaluate imitation learning policy）——全部整合至 LeRobot 生態系統（ecosystem）中。
+
+<img
+  src="<https://huggingface.co/nvidia/isaaclab-arena-envs/resolve/main/assets/Gr1OpenMicrowaveEnvironment.png>"
+  alt="IsaacLab Arena - GR1 Microwave Environment"
+  style={{ maxWidth: "100%", borderRadius: "8px", marginBottom: "1rem" }}
+/>
+
+[IsaacLab Arena](https://github.com/isaac-sim/IsaacLab-Arena) 與 NVIDIA IsaacLab 整合，提供：
+
+- 🤖 **人形機器人實體（humanoid embodiments）**：GR1、G1、Galileo 及各種配置（configurations）
+- 🎯 **操作與移動操作任務（manipulation & loco-manipulation tasks）**：開門、取放物品、按按鈕等
+- ⚡ **GPU 加速 rollouts（GPU-accelerated rollouts）**：在 NVIDIA GPU 上平行執行環境（parallel environment execution）
+- 🖼️ **RTX 渲染（RTX rendering）**：以逼真的渲染（realistic rendering）、反射（reflections）與折射（refractions）效果評估基於視覺的策略（evaluate vision-based policies）
+- 📦 **LeRobot 相容資料集（LeRobot-compatible datasets）**：可直接用於 GR00T N1x、PI0、SmolVLA、ACT 和 Diffusion 策略（policies）的訓練（training）
+- 🔄 **EnvHub 整合（EnvHub integration）**：一行程式碼即可從 HuggingFace EnvHub 載入環境（environments）
+
+## 安裝（installation）
+
+### 先決條件（prerequisites）
+
+硬體需求與 Isaac Sim 相同，詳見 [Isaac Sim 系統需求（Isaac Sim Requirements）](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/requirements.html)。
+
+- 支援 CUDA 的 NVIDIA GPU
+- 與 IsaacSim 5.1.0 相容的 NVIDIA 驅動程式（driver）
+- Linux（Ubuntu 22.04 / 24.04）
+
+### 設定（setup）
+
+```bash
+# 1. 建立 conda 環境
+conda create -y -n lerobot-arena python=3.11
+conda activate lerobot-arena
+conda install -y -c conda-forge ffmpeg=7.1.1
+
+# 2. 安裝 Isaac Sim 5.1.0
+pip install "isaacsim[all,extscache]==5.1.0" --extra-index-url https://pypi.nvidia.com
+
+# 接受 NVIDIA EULA（必要）
+export ACCEPT_EULA=Y
+export PRIVACY_CONSENT=Y
+
+# 3. 安裝 IsaacLab 2.3.0
+git clone https://github.com/isaac-sim/IsaacLab.git
+cd IsaacLab
+git checkout v2.3.0
+./isaaclab.sh -i
+cd ..
+
+# 4. 安裝 IsaacLab Arena
+git clone https://github.com/isaac-sim/IsaacLab-Arena.git
+cd IsaacLab-Arena
+git checkout release/0.1.1
+pip install -e .
+cd ..
+
+
+# 5. 安裝 LeRobot（evaluation extra 用於環境/策略評估）
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+pip install -e ".[evaluation]"
+cd ..
+
+
+# 6. 安裝額外依賴項
+pip install onnxruntime==1.23.2 lightwheel-sdk==1.0.1 vuer[all]==0.0.70 qpsolvers==4.8.1
+pip install numpy==1.26.0 # Isaac Sim 5.1 依賴 numpy==1.26.0，這將在下一版修正
+```
+
+## 評估策略（evaluating policies）
+
+### 預訓練策略（pre-trained policies）
+
+以下為可用的已訓練策略（trained policy）：
+
+| 策略（policy）              | 架構（architecture） | 任務（task） | 連結（link）                                                             |
+| :-------------------------- | :------------------- | :----------- | :----------------------------------------------------------------------- |
+| pi05-arena-gr1-microwave    | PI0.5                | GR1 微波爐   | [HuggingFace](https://huggingface.co/nvidia/pi05-arena-gr1-microwave)    |
+| smolvla-arena-gr1-microwave | SmolVLA              | GR1 微波爐   | [HuggingFace](https://huggingface.co/nvidia/smolvla-arena-gr1-microwave) |
+
+### 評估 SmolVLA（evaluate SmolVLA）
+
+```bash
+pip install -e ".[smolvla]"
+pip install numpy==1.26.0 # 將 numpy 還原至 1.26 版
+```
+
+```bash
+lerobot-eval \
+    --policy.path=nvidia/smolvla-arena-gr1-microwave \
+    --env.type=isaaclab_arena \
+    --env.hub_path=nvidia/isaaclab-arena-envs \
+    --rename_map='{"observation.images.robot_pov_cam_rgb": "observation.images.robot_pov_cam"}' \
+    --policy.device=cuda \
+    --env.environment=gr1_microwave \
+    --env.embodiment=gr1_pink \
+    --env.object=mustard_bottle \
+    --env.headless=false \
+    --env.enable_cameras=true \
+    --env.video=true \
+    --env.video_length=10 \
+    --env.video_interval=15 \
+    --env.state_keys=robot_joint_pos \
+    --env.camera_keys=robot_pov_cam_rgb \
+    --trust_remote_code=True \
+    --eval.batch_size=1
+```
+
+### 評估 PI0.5（evaluate PI0.5）
+
+```bash
+pip install -e ".[pi]"
+pip install numpy==1.26.0 # 將 numpy 還原至 1.26 版
+```
+
+<Tip>PI0.5 評估（evaluation）時需要停用 torch compile：</Tip>
+
+```bash
+TORCH_COMPILE_DISABLE=1 TORCHINDUCTOR_DISABLE=1 lerobot-eval \
+    --policy.path=nvidia/pi05-arena-gr1-microwave \
+    --env.type=isaaclab_arena \
+    --env.hub_path=nvidia/isaaclab-arena-envs \
+    --rename_map='{"observation.images.robot_pov_cam_rgb": "observation.images.robot_pov_cam"}' \
+    --policy.device=cuda \
+    --env.environment=gr1_microwave \
+    --env.embodiment=gr1_pink \
+    --env.object=mustard_bottle \
+    --env.headless=false \
+    --env.enable_cameras=true \
+    --env.video=true \
+    --env.video_length=15 \
+    --env.video_interval=15 \
+    --env.state_keys=robot_joint_pos \
+    --env.camera_keys=robot_pov_cam_rgb \
+    --trust_remote_code=True \
+    --eval.batch_size=1
+```
+
+<Tip>
+  若要更改平行環境數量（number of parallel environments），請使用
+  ```--eval.batch_size``` 旗標（flag）。
+</Tip>
+
+### 預期結果（what to expect）
+
+評估期間，您將看到進度條顯示當前的成功率：
+
+```
+Stepping through eval batches: 8%|██████▍ | 4/50 [00:45<08:06, 10.58s/it, running_success_rate=25.0%]
+```
+
+### 影片錄製（video recording）
+
+若要在評估（evaluation）期間啟用影片錄製（video recording），請在指令中加入以下旗標（flag）：
+
+```bash
+--env.video=true \
+--env.video_length=15 \
+--env.video_interval=15
+```
+
+更多影片錄製（video recording）詳情，請參閱 [IsaacLab 錄製文件（IsaacLab Recording Documentation）](https://isaac-sim.github.io/IsaacLab/main/source/how-to/record_video.html)。
+
+<Tip>
+使用 `--env.headless=true` 以無頭模式（headless）執行時，必須為啟用攝影機的環境（environments）明確啟用攝影機（enable cameras explicitly）：
+
+```bash
+--env.headless=true --env.enable_cameras=true
+```
+
+</Tip>
+
+### 輸出目錄（output directory）
+
+評估影片（evaluation videos）會儲存至輸出目錄（output directory），結構（structure）如下：
+
+```
+outputs/eval/<date>/<timestamp>_<env>_<policy>/videos/<task>_<env_id>/eval_episode_<n>.mp4
+```
+
+例如：
+
+```
+outputs/eval/2026-01-02/14-38-01_isaaclab_arena_smolvla/videos/gr1_microwave_0/eval_episode_0.mp4
+```
+
+## 訓練策略（training policies）
+
+若要瞭解更多使用 LeRobot 訓練策略（train a policy）的資訊，請參閱訓練文件（training documentation）：
+
+- [SmolVLA](./smolvla)
+- [Pi0.5](./pi05)
+- [GR00T N1.7](./groot)
+
+HuggingFace Hub 上提供 IsaacLab Arena 範例資料集（dataset）供實驗使用：
+
+| 資料集（dataset）                                                                                         | 描述（description） | 影格數（frames） |
+| :-------------------------------------------------------------------------------------------------------- | :------------------ | :--------------- |
+| [Arena-GR1-Manipulation-Task](https://huggingface.co/datasets/nvidia/Arena-GR1-Manipulation-Task-v3)      | GR1 微波爐操作      | ~4K              |
+| [Arena-G1-Loco-Manipulation-Task](https://huggingface.co/datasets/nvidia/Arena-G1-Loco-Manipulation-Task) | G1 移動操作         | ~4K              |
+
+## 環境配置（environment configuration）
+
+### 完整配置選項（full configuration options）
+
+```python
+from lerobot.envs.configs import IsaaclabArenaEnv
+
+config = IsaaclabArenaEnv(
+    # 環境選擇
+    environment="gr1_microwave", # 任務環境
+    embodiment="gr1_pink", # 機器人實體
+    object="power_drill", # 要操作的物件
+
+    # 模擬設定
+    episode_length=300,               # 每個回合的最大步數
+    headless=True,                    # 無 GUI 模式執行
+    device="cuda:0",                  # GPU 裝置
+    seed=42,                          # 隨機種子
+
+    # 觀測設定
+    state_keys="robot_joint_pos",     # 狀態觀測鍵（以逗號分隔）
+    camera_keys="robot_pov_cam_rgb",  # 相機觀測鍵（以逗號分隔）
+    state_dim=54,                     # 預期狀態維度
+    action_dim=36,                    # 預期動作維度
+    camera_height=512,                # 相機影像高度
+    camera_width=512,                 # 相機影像寬度
+    enable_cameras=True,              # 啟用相機觀測
+
+    # 影片錄製
+    video=False,                      # 啟用影片錄製
+    video_length=100,                 # 每段影片的幀數
+    video_interval=200,               # 錄製間隔步數
+
+    # 進階
+    mimic=False,                      # 啟用模仿模式
+    teleop_device=None,               # 遙操作裝置
+    disable_fabric=False,             # 停用 fabric 最佳化
+    enable_pinocchio=True,            # 啟用 Pinocchio 進行逆運動學
+)
+```
+
+### 直接使用 Environment Hub 進行進階用途（using Environment Hub directly for advanced usage）
+
+建立一個名為 `test_env_load_arena.py` 的檔案，或[從 EnvHub 下載](https://huggingface.co/nvidia/isaaclab-arena-envs/blob/main/tests/test_env_load_arena.py)：
+
+```python
+import logging
+from dataclasses import asdict
+from pprint import pformat
+import torch
+import tqdm
+from lerobot.configs import parser
+from lerobot.configs.eval import EvalPipelineConfig
+
+
+@parser.wrap()
+def main(cfg: EvalPipelineConfig):
+    """對 IsaacLab Arena 環境執行隨機動作推演。"""
+    logging.info(pformat(asdict(cfg)))
+
+    from lerobot.envs import make_env
+
+    env_dict = make_env(
+        cfg.env,
+        n_envs=cfg.env.num_envs,
+        trust_remote_code=True,
+    )
+    env = next(iter(env_dict.values()))[0]
+    env.reset()
+    for _ in tqdm.tqdm(range(cfg.env.episode_length)):
+        with torch.inference_mode():
+            actions = env.action_space.sample()
+            obs, rewards, terminated, truncated, info = env.step(actions)
+            if terminated.any() or truncated.any():
+                obs, info = env.reset()
+    env.close()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+執行方式（run with）：
+
+```bash
+python test_env_load_arena.py \
+    --env.environment=g1_locomanip_pnp \
+    --env.embodiment=gr1_pink \
+    --env.object=cracker_box \
+    --env.num_envs=4 \
+    --env.enable_cameras=true \
+    --env.seed=1000 \
+    --env.video=true \
+    --env.video_length=10 \
+    --env.video_interval=15 \
+    --env.headless=false \
+    --env.hub_path=nvidia/isaaclab-arena-envs \
+    --env.type=isaaclab_arena
+```
+
+## 建立新環境（creating new environments）
+
+首先按照 [IsaacLab Arena 文件](https://isaac-sim.github.io/IsaacLab-Arena/release/0.1.1/index.html) 建立新的 IsaacLab Arena 環境（environment）。
+
+複製我們的 EnvHub 儲存庫（repository）：
+
+```bash
+git clone https://huggingface.co/nvidia/isaaclab-arena-envs
+```
+
+根據您的新環境修（new environment）改 `example_envs.yaml` 檔案。
+將修改後的儲存庫（repository）[上傳](./envhub#%E6%AD%A5%E9%A9%9F-3%E4%B8%8A%E5%82%B3%E5%88%B0-hubupload-to-the-hub)至 HuggingFace EnvHub。
+
+<Tip>
+  您的 IsaacLab Arena 環境程式碼（environment
+  code）必須在評估期間（evaluation）可於本地取得 （locally
+  available）。使用者可以另外複製（clone）您的環境儲存庫（environment
+  repository） 或者您也可以將環境程式碼和資產（assets）直接打包在 EnvHub
+  儲存庫（repo）中。
+</Tip>
+
+然後在評估（evaluating）時使用您的新環境（new environment）：
+
+```bash
+lerobot-eval \
+    --env.hub_path=<your-env-hub-path>/isaaclab-arena-envs \
+    --env.environment=<your new environment> \
+    ...其他旗標...
+```
+
+我們期待您的貢獻！
+
+## 疑難排解
+
+### CUDA 記憶體不足（CUDA out of memory）
+
+減少 `batch_size` 或使用擁有更多 VRAM 的 GPU：
+
+```bash
+--eval.batch_size=1
+```
+
+### EULA 未接受（EULA not accepted）
+
+執行前設定環境變數（environment variables）：
+
+```bash
+export ACCEPT_EULA=Y
+export PRIVACY_CONSENT=Y
+```
+
+### 影片錄製無法運作（video recording not working）
+
+以無頭模式（headless）執行時啟用攝影機（enable cameras）：
+
+```bash
+--env.video=true --env.enable_cameras=true --env.headless=true
+```
+
+### 策略輸出維度不匹配（policy output dimension mismatch）
+
+確保 `action_dim` 與您的策略（policy）匹配：
+
+```bash
+--env.action_dim=36
+```
+
+### Isaac Sim 初始化期間出現 libGLU.so.1 錯誤
+
+確保已安裝以下依賴（dependencies），這在無頭機器（headless machines）上較容易發生。
+
+```bash
+sudo apt update && sudo apt install -y libglu1-mesa libxt6
+```
+
+## 另請參閱
+
+- [EnvHub 文件](./envhub.mdx) - EnvHub 的一般用法
+- [IsaacLab Arena GitHub](https://github.com/isaac-sim/IsaacLab-Arena)
+- [IsaacLab 文件](https://isaac-sim.github.io/IsaacLab/)
+
+## Lightwheel LW-BenchHub
+
+[Lightwheel](https://www.lightwheel.ai) 正在為 LeRobot 生態系統帶來 `Lightwheel-Libero-Tasks` 和 `Lightwheel-RoboCasa-Tasks`，包含 268 個任務（tasks）。
+LW-BenchHub 透過遙操作（teleoperation）收集並生成符合 LeRobot 規範的大規模資料集（large-scale datasets），實現開箱即用的訓練與評估工作流程（out-of-the-box training and evaluation workflows）。
+藉由 EnvHub 提供的統一介面（unified interface），開發者可以快速建立端到端的實驗管線（end-to-end experimental pipelines）。
+
+### 安裝（install）
+
+假設您已按照[安裝](#%E5%AE%89%E8%A3%9Dinstallation)步驟完成設定，您可以透過以下方式安裝 LW-BenchHub：
+
+```bash
+conda install pinocchio -c conda-forge -y
+pip install numpy==1.26.0 # 將 numpy 還原至 1.26 版
+
+sudo apt-get install git-lfs && git lfs install
+
+git clone https://github.com/LightwheelAI/lw_benchhub
+git lfs pull # 確保 LFS 檔案（例如 .usd 資產）已下載
+
+cd lw_benchhub
+pip install -e .
+```
+
+更詳細的說明請參閱 [LW-BenchHub 文件](https://docs.lightwheel.net/lw_benchhub/usage/Installation)。
+
+### Lightwheel 任務資料集（Lightwheel task dataset）
+
+LW-BenchHub 資料集（dataset）可在 HuggingFace Hub 上取得：
+
+| 資料集（dataset）                                                                                             | 描述（description）    | 任務數（tasks） | 影格數（frames） |
+| :------------------------------------------------------------------------------------------------------------ | :--------------------- | :-------------- | :--------------- |
+| [Lightwheel-Tasks-X7S](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-X7S)                     | X7S LIBERO 與 RoboCasa | 117             | ~10.3M           |
+| [Lightwheel-Tasks-Double-Piper](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-Double-Piper)   | Double-Piper LIBERO    | 130             | ~6.0M            |
+| [Lightwheel-Tasks-G1-Controller](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-G1-Controller) | G1-Controller LIBERO   | 62              | ~2.7M            |
+| [Lightwheel-Tasks-G1-WBC](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-G1-WBC)               | G1-WBC RoboCasa        | 32              | ~1.5M            |
+
+如需訓練策略（train a policy），請參閱[訓練策略](#%E8%A8%93%E7%B7%B4%E7%AD%96%E7%95%A5training-policies)章節。
+
+### 評估策略（evaluating a policies）
+
+#### 預訓練策略（pretrained policies）
+
+以下為可用的已訓練策略（trained policy）：
+
+| 策略（policy）           | 架構（architecture） | 任務（task）                   | 佈局（layout） | 機器人（robot） | 連結（link）                                                                          |
+| :----------------------- | :------------------- | :----------------------------- | :------------- | :-------------- | :------------------------------------------------------------------------------------ |
+| smolvla-double-piper-pnp | SmolVLA              | L90K1PutTheBlackBowlOnThePlate | libero-1-1     | DoublePiper-Abs | [HuggingFace](https://huggingface.co/LightwheelAI/smolvla-double-piper-pnp/tree/main) |
+
+#### 評估 SmolVLA（evaluate SmolVLA）
+
+```bash
+lerobot-eval \
+  --policy.path=LightwheelAI/smolvla-double-piper-pnp \
+  --env.type=isaaclab_arena \
+  --rename_map='{"observation.images.left_hand_camera_rgb": "observation.images.left_hand", "observation.images.right_hand_camera_rgb": "observation.images.right_hand", "observation.images.first_person_camera_rgb": "observation.images.first_person"}' \
+  --env.hub_path=LightwheelAI/lw_benchhub_env \
+  --env.kwargs='{"config_path": "configs/envhub/example.yml"}' \
+  --trust_remote_code=true \
+  --env.state_keys=joint_pos \
+  --env.action_dim=12 \
+  --env.camera_keys=left_hand_camera_rgb,right_hand_camera_rgb,first_person_camera_rgb \
+  --policy.device=cuda \
+  --eval.batch_size=10 \
+  --eval.n_episodes=100
+```
+
+### 環境配置（environment configuration）
+
+可透過修改設定檔（configuration file）中的 `robot`、`task` 和 `layout` 設定快速啟動評估（evaluation）。
+
+#### 完整設定選項（full configuration options）
+
+```yml
+# =========================
+# 基本設定
+# =========================
+disable_fabric: false
+device: cuda:0
+sensitivity: 1.0
+step_hz: 50
+enable_cameras: true
+execute_mode: eval
+episode_length_s: 20.0 # 回合時長（秒），若評估期間回合超時可增加此值
+
+# =========================
+# 機器人設定
+# =========================
+robot: DoublePiper-Abs # 機器人類型：DoublePiper-Abs、X7S-Abs、G1-Controller 或 G1-Controller-DecoupledWBC
+robot_scale: 1.0
+
+# =========================
+# 任務與場景設定
+# =========================
+task: L90K1PutTheBlackBowlOnThePlate # 任務名稱
+scene_backend: robocasa
+task_backend: robocasa
+debug_assets: null
+layout: libero-1-1 # 佈局與樣式 ID
+sources:
+  - objaverse
+  - lightwheel
+  - aigen_objs
+object_projects: []
+usd_simplify: false
+seed: 42
+
+# =========================
+# 物件放置重試設定
+# =========================
+max_scene_retry: 4
+max_object_placement_retry: 3
+
+resample_objects_placement_on_reset: true
+resample_robot_placement_on_reset: true
+
+# =========================
+# 重播配置設定
+# =========================
+replay_cfgs:
+  add_camera_to_observation: true
+  render_resolution: [640, 480]
+```
+
+### 另請參閱
+
+- [LW-BenchHub GitHub](https://github.com/LightwheelAI/LW-BenchHub)
+- [LW-BenchHub 文件](https://docs.lightwheel.net/lw_benchhub/)
