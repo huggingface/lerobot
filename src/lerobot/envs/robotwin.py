@@ -384,7 +384,9 @@ class RoboTwinEnv(gym.Env):
 
         self._env: Any | None = None  # deferred — created on first reset() inside worker
         self._step_count: int = 0
-        self._black_frame = np.zeros((self.observation_height, self.observation_width, 3), dtype=np.uint8)
+        self._black_frame: np.ndarray = np.zeros(
+            (self.observation_height, self.observation_width, 3), dtype=np.uint8
+        )
 
         image_spaces = {
             cam: spaces.Box(
