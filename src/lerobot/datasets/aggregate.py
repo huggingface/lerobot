@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import logging
 import shutil
 from pathlib import Path
@@ -23,18 +24,21 @@ import datasets
 import pandas as pd
 import tqdm
 
-from lerobot.datasets.compute_stats import aggregate_stats
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.feature_utils import get_hf_features_from_features
-from lerobot.datasets.io_utils import (
+from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
+
+from .compute_stats import aggregate_stats
+from .dataset_metadata import LeRobotDatasetMetadata
+from .feature_utils import features_equal_for_merge, get_hf_features_from_features
+from .io_utils import (
     get_file_size_in_mb,
     get_parquet_file_size_in_mb,
+    to_parquet_one_row_group_per_episode,
     to_parquet_with_hf_images,
     write_info,
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.utils import (
+from .utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
@@ -43,7 +47,49 @@ from lerobot.datasets.utils import (
     DEFAULT_VIDEO_PATH,
     update_chunk_file_indices,
 )
-from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
+from .video_utils import concatenate_video_files, get_video_duration_in_s
+
+
+def merge_video_feature_info_for_aggregate(all_metadata: list[LeRobotDatasetMetadata]) -> dict[str, dict]:
+    """Create a merged video feature info dictionary for aggregation. The video encoder info is merged field-by-field: each key is kept only when every source agrees; otherwise that key is set to ``null`` (or ``{}`` for ``video.extra_options``) and a warning is logged.
+
+    Args:
+        all_metadata: List of LeRobotDatasetMetadata objects to merge.
+
+    Returns:
+        dict: A dictionary of merged video feature info.
+    """
+    merged_info = copy.deepcopy(all_metadata[0].features)
+    video_keys = [k for k in merged_info if merged_info[k].get("dtype") == "video"]
+
+    for vk in video_keys:
+        video_infos = [m.features.get(vk, {}).get("info") or {} for m in all_metadata]
+        base_video_info = video_infos[0]
+
+        merged_encoder_info: dict = {}
+        fallback_keys: list[str] = []
+        for info_key in VIDEO_ENCODER_INFO_KEYS:
+            values = [info.get(info_key, None) for info in video_infos]
+            first_value = values[0]
+            all_match = all(v == first_value for v in values[1:])
+
+            if all_match:
+                merged_encoder_info[info_key] = first_value
+            else:
+                fallback_keys.append(info_key)
+                merged_encoder_info[info_key] = {} if info_key == "video.extra_options" else None
+
+        if fallback_keys:
+            logging.warning(
+                f"Merging heterogeneous or incomplete video encoder metadata for feature {vk}. "
+                f"Setting these keys to null: {fallback_keys}.",
+            )
+
+        merged_info[vk]["info"] = {**base_video_info, **merged_encoder_info}
+        # TODO(CarolinePascal): make this variable once we have support for other video backends.
+        merged_info[vk]["info"]["video.video_backend"] = "pyav"
+
+    return merged_info
 
 
 def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
@@ -51,6 +97,7 @@ def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
 
     Ensures all datasets have the same fps, robot_type, and features to guarantee
     compatibility when aggregating them into a single dataset.
+    Video encoder info is not considered for validation but is merged during aggregation in ``merge_video_feature_info_for_aggregate``.
 
     Args:
         all_metadata: List of LeRobotDatasetMetadata objects to validate.
@@ -74,7 +121,7 @@ def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
             raise ValueError(
                 f"Same robot_type is expected, but got robot_type={meta.robot_type} instead of {robot_type}."
             )
-        if features != meta.features:
+        if not features_equal_for_merge(features, meta.features):
             raise ValueError(
                 f"Same features is expected, but got features={meta.features} instead of {features}."
             )
@@ -97,8 +144,8 @@ def update_data_df(df, src_meta, dst_meta):
         pd.DataFrame: Updated DataFrame with adjusted indices.
     """
 
-    df["episode_index"] = df["episode_index"] + dst_meta.info["total_episodes"]
-    df["index"] = df["index"] + dst_meta.info["total_frames"]
+    df["episode_index"] = df["episode_index"] + dst_meta.info.total_episodes
+    df["index"] = df["index"] + dst_meta.info.total_frames
 
     src_task_names = src_meta.tasks.index.take(df["task_index"].to_numpy())
     df["task_index"] = dst_meta.tasks.loc[src_task_names, "task_index"].to_numpy()
@@ -225,9 +272,9 @@ def update_meta_data(
         # Clean up temporary columns
         df = df.drop(columns=["_orig_chunk", "_orig_file"])
 
-    df["dataset_from_index"] = df["dataset_from_index"] + dst_meta.info["total_frames"]
-    df["dataset_to_index"] = df["dataset_to_index"] + dst_meta.info["total_frames"]
-    df["episode_index"] = df["episode_index"] + dst_meta.info["total_episodes"]
+    df["dataset_from_index"] = df["dataset_from_index"] + dst_meta.info.total_frames
+    df["dataset_to_index"] = df["dataset_to_index"] + dst_meta.info.total_frames
+    df["episode_index"] = df["episode_index"] + dst_meta.info.total_episodes
 
     return df
 
@@ -237,9 +284,11 @@ def aggregate_datasets(
     aggr_repo_id: str,
     roots: list[Path] | None = None,
     aggr_root: Path | None = None,
-    data_files_size_in_mb: float | None = None,
-    video_files_size_in_mb: float | None = None,
+    data_files_size_in_mb: int | None = None,
+    video_files_size_in_mb: int | None = None,
     chunk_size: int | None = None,
+    concatenate_videos: bool = True,
+    concatenate_data: bool = True,
 ):
     """Aggregates multiple LeRobot datasets into a single unified dataset.
 
@@ -257,6 +306,8 @@ def aggregate_datasets(
         data_files_size_in_mb: Maximum size for data files in MB (defaults to DEFAULT_DATA_FILE_SIZE_IN_MB)
         video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
         chunk_size: Maximum number of files per chunk (defaults to DEFAULT_CHUNK_SIZE)
+        concatenate_videos: When False, keep one mp4 per source file instead of packing into shards.
+        concatenate_data: When False, keep one parquet per source file instead of packing into shards.
     """
     logging.info("Start aggregate_datasets")
 
@@ -274,7 +325,8 @@ def aggregate_datasets(
             LeRobotDatasetMetadata(repo_id, root=root) for repo_id, root in zip(repo_ids, roots, strict=False)
         ]
     )
-    fps, robot_type, features = validate_all_metadata(all_metadata)
+    fps, robot_type, _ = validate_all_metadata(all_metadata)
+    features = merge_video_feature_info_for_aggregate(all_metadata)
     video_keys = [key for key in features if features[key]["dtype"] == "video"]
 
     dst_meta = LeRobotDatasetMetadata.create(
@@ -304,8 +356,12 @@ def aggregate_datasets(
     dst_meta.episodes = {}
 
     for src_meta in tqdm.tqdm(all_metadata, desc="Copy data and videos"):
-        videos_idx = aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size)
-        data_idx = aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size)
+        videos_idx = aggregate_videos(
+            src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size, concatenate_videos
+        )
+        data_idx = aggregate_data(
+            src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size, concatenate_data
+        )
 
         meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx)
 
@@ -313,14 +369,16 @@ def aggregate_datasets(
         # to avoid interference between different source datasets
         data_idx.pop("src_to_dst", None)
 
-        dst_meta.info["total_episodes"] += src_meta.total_episodes
-        dst_meta.info["total_frames"] += src_meta.total_frames
+        dst_meta.info.total_episodes += src_meta.total_episodes
+        dst_meta.info.total_frames += src_meta.total_frames
 
     finalize_aggregation(dst_meta, all_metadata)
     logging.info("Aggregation complete.")
 
 
-def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size):
+def aggregate_videos(
+    src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size, concatenate_videos=True
+):
     """Aggregates video chunks from a source dataset into the destination dataset.
 
     Handles video file concatenation and rotation based on file size limits.
@@ -332,7 +390,7 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
         videos_idx: Dictionary tracking video chunk and file indices.
         video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
         chunk_size: Maximum number of files per chunk (defaults to DEFAULT_CHUNK_SIZE)
-
+        concatenate_videos: When False, keep one mp4 per source file instead of packing into shards.
     Returns:
         dict: Updated videos_idx with current chunk and file indices.
     """
@@ -393,7 +451,7 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
             src_size = get_file_size_in_mb(src_path)
             dst_size = get_file_size_in_mb(dst_path)
 
-            if dst_size + src_size >= video_files_size_in_mb:
+            if not concatenate_videos or dst_size + src_size >= video_files_size_in_mb:
                 # Rotate to a new file - offset is 0
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, chunk_size)
                 dst_key = (chunk_idx, file_idx)
@@ -414,9 +472,11 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                 current_dst_duration = dst_file_durations.get(dst_key, 0)
                 videos_idx[key]["src_to_offset"][(src_chunk_idx, src_file_idx)] = current_dst_duration
                 videos_idx[key]["src_to_dst"][(src_chunk_idx, src_file_idx)] = dst_key
+                # TODO(CarolinePascal): Move the check before the loop to avoid failing in the middle + add possibility to re-encode the video if the check fails
                 concatenate_video_files(
                     [dst_path, src_path],
                     dst_path,
+                    compatibility_check=True,
                 )
                 # Update duration of this destination file
                 dst_file_durations[dst_key] = current_dst_duration + src_duration
@@ -429,7 +489,7 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
     return videos_idx
 
 
-def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size):
+def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size, concatenate_data=True):
     """Aggregates data chunks from a source dataset into the destination dataset.
 
     Reads source data files, updates indices to match the aggregated dataset,
@@ -445,6 +505,7 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
         data_idx: Dictionary tracking data chunk and file indices.
         data_files_size_in_mb: Maximum size for data files in MB.
         chunk_size: Maximum number of files per chunk.
+        concatenate_data: When False, keep one parquet per source file instead of packing into shards.
 
     Returns:
         dict: Updated data_idx with current chunk and file indices.
@@ -490,6 +551,8 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
             contains_images=contains_images,
             aggr_root=dst_meta.root,
             hf_features=hf_features,
+            concatenate=concatenate_data,
+            one_row_group_per_episode=True,
         )
 
         # Record the mapping from source to actual destination
@@ -566,6 +629,8 @@ def append_or_create_parquet_file(
     contains_images: bool = False,
     aggr_root: Path = None,
     hf_features: datasets.Features | None = None,
+    concatenate: bool = True,
+    one_row_group_per_episode: bool = False,
 ) -> tuple[dict[str, int], tuple[int, int]]:
     """Appends data to an existing parquet file or creates a new one based on size constraints.
 
@@ -582,6 +647,9 @@ def append_or_create_parquet_file(
         contains_images: Whether the data contains images requiring special handling.
         aggr_root: Root path for the aggregated dataset.
         hf_features: Optional HuggingFace Features schema for proper image typing.
+        concatenate: When False, always rotate to a new file instead of appending to the current one.
+        one_row_group_per_episode: True for DATA parquet (emit one row group per episode); False for
+            the episodes-metadata parquet (already one row per episode).
 
     Returns:
         tuple: (updated_idx, (dst_chunk, dst_file)) where updated_idx is the index dict
@@ -594,6 +662,8 @@ def append_or_create_parquet_file(
         dst_path.parent.mkdir(parents=True, exist_ok=True)
         if contains_images:
             to_parquet_with_hf_images(df, dst_path, features=hf_features)
+        elif one_row_group_per_episode:
+            to_parquet_one_row_group_per_episode(df, dst_path)
         else:
             df.to_parquet(dst_path)
         return idx, (dst_chunk, dst_file)
@@ -601,7 +671,7 @@ def append_or_create_parquet_file(
     src_size = get_parquet_file_size_in_mb(src_path)
     dst_size = get_parquet_file_size_in_mb(dst_path)
 
-    if dst_size + src_size >= max_mb:
+    if not concatenate or dst_size + src_size >= max_mb:
         idx["chunk"], idx["file"] = update_chunk_file_indices(idx["chunk"], idx["file"], chunk_size)
         dst_chunk, dst_file = idx["chunk"], idx["file"]
         new_path = aggr_root / default_path.format(chunk_index=dst_chunk, file_index=dst_file)
@@ -620,6 +690,8 @@ def append_or_create_parquet_file(
 
     if contains_images:
         to_parquet_with_hf_images(final_df, target_path, features=hf_features)
+    elif one_row_group_per_episode:
+        to_parquet_one_row_group_per_episode(final_df, target_path)
     else:
         final_df.to_parquet(target_path)
 
@@ -640,14 +712,10 @@ def finalize_aggregation(aggr_meta, all_metadata):
     write_tasks(aggr_meta.tasks, aggr_meta.root)
 
     logging.info("write info")
-    aggr_meta.info.update(
-        {
-            "total_tasks": len(aggr_meta.tasks),
-            "total_episodes": sum(m.total_episodes for m in all_metadata),
-            "total_frames": sum(m.total_frames for m in all_metadata),
-            "splits": {"train": f"0:{sum(m.total_episodes for m in all_metadata)}"},
-        }
-    )
+    aggr_meta.info.total_tasks = len(aggr_meta.tasks)
+    aggr_meta.info.total_episodes = sum(m.total_episodes for m in all_metadata)
+    aggr_meta.info.total_frames = sum(m.total_frames for m in all_metadata)
+    aggr_meta.info.splits = {"train": f"0:{sum(m.total_episodes for m in all_metadata)}"}
     write_info(aggr_meta.info, aggr_meta.root)
 
     logging.info("write stats")

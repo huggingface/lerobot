@@ -37,6 +37,7 @@ ACTION_TOKEN_MASK = ACTION + ".token_mask"
 REWARD = "next.reward"
 TRUNCATED = "next.truncated"
 DONE = "next.done"
+SUCCESS = "next.success"
 INFO = "info"
 
 ROBOTS = "robots"
@@ -47,6 +48,7 @@ CHECKPOINTS_DIR = "checkpoints"
 LAST_CHECKPOINT_LINK = "last"
 PRETRAINED_MODEL_DIR = "pretrained_model"
 TRAINING_STATE_DIR = "training_state"
+ALGORITHM_DIR = "algorithm"
 RNG_STATE = "rng_state.safetensors"
 TRAINING_STEP = "training_step.json"
 OPTIMIZER_STATE = "optimizer_state.safetensors"
@@ -74,6 +76,21 @@ HF_LEROBOT_HUB_CACHE = HF_LEROBOT_HOME / "hub"
 default_calibration_path = HF_LEROBOT_HOME / "calibration"
 HF_LEROBOT_CALIBRATION = Path(os.getenv("HF_LEROBOT_CALIBRATION", default_calibration_path)).expanduser()
 
+
+# Dataset meta-features (auto-populated by the recording pipeline)
+DEFAULT_FEATURES = {
+    "timestamp": {"dtype": "float32", "shape": (1,), "names": None},
+    "frame_index": {"dtype": "int64", "shape": (1,), "names": None},
+    "episode_index": {"dtype": "int64", "shape": (1,), "names": None},
+    "index": {"dtype": "int64", "shape": (1,), "names": None},
+    "task_index": {"dtype": "int64", "shape": (1,), "names": None},
+}
+
+# ImageNet normalization constants
+IMAGENET_STATS = {
+    "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
+    "std": [[[0.229]], [[0.224]], [[0.225]]],  # (c,1,1)
+}
 
 # streaming datasets
 LOOKBACK_BACKTRACKTABLE = 100

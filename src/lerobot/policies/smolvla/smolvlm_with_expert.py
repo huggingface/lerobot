@@ -13,16 +13,29 @@
 # limitations under the License.
 
 import copy
+from typing import TYPE_CHECKING
 
 import torch
 from torch import nn
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoModelForImageTextToText,
-    AutoProcessor,
-    SmolVLMForConditionalGeneration,
-)
+
+from lerobot.utils.import_utils import _transformers_available, require_package
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import (
+        AutoConfig,
+        AutoModel,
+        AutoModelForImageTextToText,
+        AutoProcessor,
+        DynamicCache,
+        SmolVLMForConditionalGeneration,
+    )
+else:
+    AutoConfig = None
+    AutoModel = None
+    AutoModelForImageTextToText = None
+    AutoProcessor = None
+    DynamicCache = None
+    SmolVLMForConditionalGeneration = None
 
 
 def apply_rope(x, positions, max_wavelength=10_000):
@@ -73,6 +86,7 @@ class SmolVLMWithExpertModel(nn.Module):
         device: str = "auto",
     ):
         super().__init__()
+        require_package("transformers", extra="smolvla")
         if load_vlm_weights:
             print(f"Loading  {model_id} weights ...")
             self.vlm = AutoModelForImageTextToText.from_pretrained(
@@ -204,9 +218,8 @@ class SmolVLMWithExpertModel(nn.Module):
         batch_size,
         head_dim,
         use_cache: bool = True,
-        fill_kv_cache: bool = True,
-        past_key_values=None,
-    ) -> list[torch.Tensor]:
+        past_key_values: "DynamicCache | None" = None,
+    ) -> "tuple[list[torch.Tensor], DynamicCache | None]":
         query_states = []
         key_states = []
         value_states = []
@@ -247,22 +260,16 @@ class SmolVLMWithExpertModel(nn.Module):
         query_states = apply_rope(query_states, position_ids_)
         key_states = apply_rope(key_states, position_ids_)
 
-        if use_cache and past_key_values is None:
-            past_key_values = {}
-
         if use_cache:
-            if fill_kv_cache:
-                past_key_values[layer_idx] = {
-                    "key_states": key_states,
-                    "value_states": value_states,
-                }
-            else:
-                # TODO here, some optimization can be done - similar to a `StaticCache` we can declare the `max_len` before.
-                # so we create an empty cache, with just one cuda malloc, and if (in autoregressive case) we reach
-                # the max len, then we (for instance) double the cache size. This implementation already exists
-                # in `transformers`. (molbap)
-                key_states = torch.cat([past_key_values[layer_idx]["key_states"], key_states], dim=1)
-                value_states = torch.cat([past_key_values[layer_idx]["value_states"], value_states], dim=1)
+            # `DynamicCache` stores tensors as [batch, heads, seq, head_dim]; this module works with
+            # [batch, seq, heads, head_dim]. During prefix prefill this stores the (post-RoPE) K/V and
+            # returns them unchanged; during denoising it appends the suffix K/V and returns
+            # [prefix; suffix], exactly like the previous hand-rolled dict cache.
+            key_states, value_states = past_key_values.update(
+                key_states.transpose(1, 2), value_states.transpose(1, 2), layer_idx
+            )
+            key_states = key_states.transpose(1, 2)
+            value_states = value_states.transpose(1, 2)
 
         attention_interface = self.get_attention_interface()
 
@@ -281,13 +288,12 @@ class SmolVLMWithExpertModel(nn.Module):
         batch_size,
         head_dim,
         use_cache: bool = True,
-        fill_kv_cache: bool = True,
-        past_key_values=None,
-    ) -> list[torch.Tensor]:
+        past_key_values: "DynamicCache | None" = None,
+    ) -> "tuple[list[torch.Tensor], DynamicCache | None]":
         attention_interface = self.get_attention_interface()
 
         att_outputs = []
-        assert len(inputs_embeds) == 2 or (use_cache and past_key_values is not None and not fill_kv_cache), (
+        assert len(inputs_embeds) == 2 or (use_cache and past_key_values is not None), (
             f"Both len(inputs_embeds) == {len(inputs_embeds)} and past_key_values is {past_key_values}"
         )
 
@@ -320,22 +326,13 @@ class SmolVLMWithExpertModel(nn.Module):
         else:
             expert_position_id = position_ids
 
-        if use_cache and past_key_values is None:
-            past_key_values = {}
-
-        if use_cache:
-            if fill_kv_cache:
-                past_key_values[layer_idx] = {
-                    "key_states": key_states,
-                    "value_states": value_states,
-                }
-            else:
-                # TODO here, some optimization can be done - similar to a `StaticCache` we can declare the `max_len` before.
-                # so we create an empty cache, with just one cuda malloc, and if (in autoregressive case) we reach
-                # the max len, then we (for instance) double the cache size. This implementation already exists
-                # in `transformers`. (molbap)
-                key_states = past_key_values[layer_idx]["key_states"]
-                value_states = past_key_values[layer_idx]["value_states"]
+        if use_cache and past_key_values is not None:
+            # Cross-attention layers never fill the cache themselves: during the prefix prefill every
+            # layer goes through `forward_attn_layer`, which stores the (post-RoPE) VLM K/V for this
+            # layer index. Here we only read them back (no concatenation: the expert cross-attends to
+            # the fixed prefix). `DynamicCache` stores [batch, heads, seq, head_dim]; transpose back.
+            key_states = past_key_values.layers[layer_idx].keys.transpose(1, 2)
+            value_states = past_key_values.layers[layer_idx].values.transpose(1, 2)
 
         # Expert
         expert_layer = model_layers[1][layer_idx]
@@ -348,14 +345,15 @@ class SmolVLMWithExpertModel(nn.Module):
             expert_hidden_states = expert_hidden_states.to(dtype=expert_layer.self_attn.q_proj.weight.dtype)
             expert_query_state = expert_layer.self_attn.q_proj(expert_hidden_states).view(expert_hidden_shape)
 
-            _key_states = key_states.to(dtype=expert_layer.self_attn.k_proj.weight.dtype).view(
+            # reshape (not view): K/V read back from the cache are transposed, hence non-contiguous
+            _key_states = key_states.to(dtype=expert_layer.self_attn.k_proj.weight.dtype).reshape(
                 *key_states.shape[:2], -1
             )
             expert_key_states = expert_layer.self_attn.k_proj(_key_states).view(
                 *_key_states.shape[:-1], -1, expert_layer.self_attn.head_dim
             )  # k_proj should have same dim as kv
 
-            _value_states = value_states.to(dtype=expert_layer.self_attn.v_proj.weight.dtype).view(
+            _value_states = value_states.to(dtype=expert_layer.self_attn.v_proj.weight.dtype).reshape(
                 *value_states.shape[:2], -1
             )
             expert_value_states = expert_layer.self_attn.v_proj(_value_states).view(
@@ -404,10 +402,9 @@ class SmolVLMWithExpertModel(nn.Module):
         self,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        past_key_values: list[torch.FloatTensor] | None = None,
+        past_key_values: "DynamicCache | None" = None,
         inputs_embeds: list[torch.FloatTensor] = None,
         use_cache: bool | None = None,
-        fill_kv_cache: bool | None = None,
     ):
         models = [self.get_vlm_model().text_model, self.lm_expert]
         model_layers = self.get_model_layers(models)
@@ -418,6 +415,13 @@ class SmolVLMWithExpertModel(nn.Module):
             if hidden_states is None:
                 continue
             batch_size = hidden_states.shape[0]
+
+        # Prefix prefill: no cache was passed, so create one and fill it (every layer runs
+        # self-attention over the prefix). When a filled cache is passed (denoising), layers
+        # read from it instead.
+        fill_kv_cache = use_cache and past_key_values is None
+        if fill_kv_cache:
+            past_key_values = DynamicCache()
 
         # RMSNorm
         num_layers = self.num_vlm_layers
@@ -437,7 +441,6 @@ class SmolVLMWithExpertModel(nn.Module):
                     batch_size,
                     head_dim,
                     use_cache=use_cache,
-                    fill_kv_cache=fill_kv_cache,
                     past_key_values=past_key_values,
                 )
             else:
@@ -450,7 +453,6 @@ class SmolVLMWithExpertModel(nn.Module):
                     batch_size,
                     head_dim,
                     use_cache=use_cache,
-                    fill_kv_cache=fill_kv_cache,
                     past_key_values=past_key_values,
                 )
             outputs_embeds = []

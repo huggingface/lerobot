@@ -10,6 +10,8 @@ import numpy as np
 import pytest
 import torch
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.compute_stats import get_feature_stats
 from lerobot.datasets.lerobot_dataset import LeRobotDataset

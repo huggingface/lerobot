@@ -14,14 +14,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+import logging
 from unittest.mock import patch
 
-import datasets
+import pytest
+
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+import datasets  # noqa: E402
 import torch
 
+from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
 from lerobot.datasets.aggregate import aggregate_datasets
+from lerobot.datasets.feature_utils import features_equal_for_merge
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from tests.fixtures.constants import DUMMY_REPO_ID
+from tests.fixtures.constants import (
+    DUMMY_CAMERA_FEATURES_WITH_DEPTH,
+    DUMMY_REPO_ID,
+)
+
+
+def assert_data_shards_one_row_group_per_episode(root):
+    """Every aggregated DATA shard must have exactly one parquet row group per episode."""
+    import pyarrow.parquet as pq
+
+    shards = sorted((root / "data").rglob("*.parquet"))
+    assert shards, f"no data shards found under {root}/data"
+    n_episodes = 0
+    for shard in shards:
+        pf = pq.ParquetFile(shard)
+        episodes = pf.read(columns=["episode_index"]).column("episode_index").to_pylist()
+        assert pf.metadata.num_row_groups == len(set(episodes)), shard
+        for i in range(pf.metadata.num_row_groups):
+            rg_episodes = set(
+                pf.read_row_group(i, columns=["episode_index"]).column("episode_index").to_pylist()
+            )
+            assert len(rg_episodes) == 1, f"{shard} row group {i} spans episodes {rg_episodes}"
+        n_episodes += len(set(episodes))
+    return n_episodes
 
 
 def assert_episode_and_frame_counts(aggr_ds, expected_episodes, expected_frames):
@@ -109,12 +140,13 @@ def assert_metadata_consistency(aggr_ds, ds_0, ds_1):
     """Test that metadata is correctly aggregated."""
     # Test basic info
     assert aggr_ds.fps == ds_0.fps == ds_1.fps, "FPS should be the same across all datasets"
-    assert aggr_ds.meta.info["robot_type"] == ds_0.meta.info["robot_type"] == ds_1.meta.info["robot_type"], (
+    assert aggr_ds.meta.info.robot_type == ds_0.meta.info.robot_type == ds_1.meta.info.robot_type, (
         "Robot type should be the same"
     )
 
-    # Test features are the same
-    assert aggr_ds.features == ds_0.features == ds_1.features, "Features should be the same"
+    # Schema matches; merged video ``info`` is reconciled separately from per-source ``info``.
+    assert features_equal_for_merge(aggr_ds.features, ds_0.features)
+    assert features_equal_for_merge(aggr_ds.features, ds_1.features)
 
     # Test tasks aggregation
     expected_tasks = set(ds_0.meta.tasks.index) | set(ds_1.meta.tasks.index)
@@ -149,8 +181,8 @@ def assert_video_frames_integrity(aggr_ds, ds_0, ds_1):
 
     video_keys = list(
         filter(
-            lambda key: aggr_ds.meta.info["features"][key]["dtype"] == "video",
-            aggr_ds.meta.info["features"].keys(),
+            lambda key: aggr_ds.meta.info.features[key]["dtype"] == "video",
+            aggr_ds.meta.info.features.keys(),
         )
     )
 
@@ -180,6 +212,26 @@ def assert_dataset_iteration_works(aggr_ds):
     """Test that we can iterate through the entire dataset without errors."""
     for _ in aggr_ds:
         pass
+
+
+def assert_depth_keys_preserved(aggr_ds, ds_0, ds_1):
+    """Test that depth keys are correctly preserved after aggregation.
+
+    Ensures that the ``is_depth_map`` marker on visual features survives
+    aggregation, so that downstream consumers (e.g. the dataset reader's
+    depth decoding path) keep working on the merged dataset.
+    """
+    expected_depth_keys = set(ds_0.meta.depth_keys)
+    assert expected_depth_keys == set(ds_1.meta.depth_keys), (
+        "Source datasets disagree on depth_keys; test setup is inconsistent"
+    )
+    actual_depth_keys = set(aggr_ds.meta.depth_keys)
+    assert actual_depth_keys == expected_depth_keys, (
+        f"Expected depth_keys {expected_depth_keys}, got {actual_depth_keys}"
+    )
+    for key in expected_depth_keys:
+        info = aggr_ds.meta.info.features[key].get("info") or {}
+        assert info.get("is_depth_map") is True, f"Depth marker lost on feature {key!r} after aggregation"
 
 
 def assert_video_timestamps_within_bounds(aggr_ds):
@@ -231,7 +283,11 @@ def assert_video_timestamps_within_bounds(aggr_ds):
 
 
 def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
-    """Test basic aggregation functionality with standard parameters."""
+    """Test basic aggregation functionality with standard parameters.
+
+    Source datasets include both RGB and depth video features so the same
+    aggregation flow is exercised on the ``is_depth_map`` branch.
+    """
     ds_0_num_frames = 400
     ds_1_num_frames = 800
     ds_0_num_episodes = 10
@@ -243,13 +299,20 @@ def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
         repo_id=f"{DUMMY_REPO_ID}_0",
         total_episodes=ds_0_num_episodes,
         total_frames=ds_0_num_frames,
+        camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     )
     ds_1 = lerobot_dataset_factory(
         root=tmp_path / "test_1",
         repo_id=f"{DUMMY_REPO_ID}_1",
         total_episodes=ds_1_num_episodes,
         total_frames=ds_1_num_frames,
+        camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     )
+
+    # Confirm depth was actually wired into the source datasets so the
+    # rest of the assertions exercise the depth aggregation path.
+    assert len(ds_0.meta.depth_keys) > 0, "ds_0 should expose at least one depth key"
+    assert len(ds_1.meta.depth_keys) > 0, "ds_1 should expose at least one depth key"
 
     aggregate_datasets(
         repo_ids=[ds_0.repo_id, ds_1.repo_id],
@@ -277,11 +340,129 @@ def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
     assert_episode_indices_updated_correctly(aggr_ds, ds_0, ds_1)
     assert_video_frames_integrity(aggr_ds, ds_0, ds_1)
     assert_video_timestamps_within_bounds(aggr_ds)
+    assert_depth_keys_preserved(aggr_ds, ds_0, ds_1)
     assert_dataset_iteration_works(aggr_ds)
 
 
+def test_aggregate_datasets_without_concatenation(tmp_path, lerobot_dataset_factory):
+    """With concatenation disabled, each source file is kept as its own destination file."""
+    ds_0 = lerobot_dataset_factory(
+        root=tmp_path / "no_stitch_0",
+        repo_id=f"{DUMMY_REPO_ID}_no_stitch_0",
+        total_episodes=3,
+        total_frames=60,
+    )
+    ds_1 = lerobot_dataset_factory(
+        root=tmp_path / "no_stitch_1",
+        repo_id=f"{DUMMY_REPO_ID}_no_stitch_1",
+        total_episodes=4,
+        total_frames=80,
+    )
+
+    aggr_root = tmp_path / "no_stitch_aggr"
+    aggregate_datasets(
+        repo_ids=[ds_0.repo_id, ds_1.repo_id],
+        roots=[ds_0.root, ds_1.root],
+        aggr_repo_id=f"{DUMMY_REPO_ID}_no_stitch_aggr",
+        aggr_root=aggr_root,
+        concatenate_videos=False,
+        concatenate_data=False,
+    )
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(aggr_root)
+        aggr_ds = LeRobotDataset(f"{DUMMY_REPO_ID}_no_stitch_aggr", root=aggr_root)
+
+    assert_episode_and_frame_counts(
+        aggr_ds, ds_0.num_episodes + ds_1.num_episodes, ds_0.num_frames + ds_1.num_frames
+    )
+    assert_dataset_iteration_works(aggr_ds)
+    assert_video_timestamps_within_bounds(aggr_ds)
+
+    # Two single-file sources stay as two files each, instead of being packed together.
+    assert len(list((aggr_root / "data").rglob("*.parquet"))) == 2
+    assert aggr_ds.meta.video_keys, "Test fixture should produce at least one video feature"
+    for key in aggr_ds.meta.video_keys:
+        assert len(list((aggr_root / "videos" / key).rglob("*.mp4"))) == 2
+
+
+@pytest.mark.parametrize("mutation", ["mismatched_value", "missing_key"])
+def test_aggregate_incomplete_video_encoder_info_warns_and_nuls_encoders(
+    tmp_path, lerobot_dataset_factory, caplog, mutation
+):
+    """Mismatched or missing encoder ``info`` is merged per-key with fallbacks and a warning."""
+    suffix = "enc_mismatch" if mutation == "mismatched_value" else "enc_missing"
+    ds_0 = lerobot_dataset_factory(
+        root=tmp_path / f"{suffix}_a",
+        repo_id=f"{DUMMY_REPO_ID}_{suffix}_a",
+        total_episodes=2,
+        total_frames=20,
+    )
+    ds_1 = lerobot_dataset_factory(
+        root=tmp_path / f"{suffix}_b",
+        repo_id=f"{DUMMY_REPO_ID}_{suffix}_b",
+        total_episodes=2,
+        total_frames=20,
+    )
+
+    info_path = ds_1.root / "meta" / "info.json"
+    data = json.loads(info_path.read_text())
+    for ft in data["features"].values():
+        if ft.get("dtype") != "video":
+            continue
+        inf = ft.setdefault("info", {})
+        if mutation == "mismatched_value":
+            inf["video.crf"] = 99
+            inf["video.extra_options"] = {"tune": "film"}
+        else:
+            inf.pop("video.crf", None)
+            inf.pop("video.extra_options", None)
+    info_path.write_text(json.dumps(data))
+
+    aggr_id = f"{DUMMY_REPO_ID}_{suffix}_aggr"
+    aggr_root = tmp_path / f"{suffix}_aggr"
+    with caplog.at_level(logging.WARNING):
+        aggregate_datasets(
+            repo_ids=[ds_0.repo_id, ds_1.repo_id],
+            roots=[ds_0.root, ds_1.root],
+            aggr_repo_id=aggr_id,
+            aggr_root=aggr_root,
+        )
+
+    assert "heterogeneous" in caplog.text.lower() or "incomplete" in caplog.text.lower()
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(aggr_root)
+        aggr_ds = LeRobotDataset(aggr_id, root=aggr_root)
+
+    for key, ft in aggr_ds.meta.info.features.items():
+        if ft.get("dtype") != "video":
+            continue
+        info = ft["info"]
+        reference = ds_0.meta.info.features[key]["info"]
+        for info_key in VIDEO_ENCODER_INFO_KEYS:
+            if info_key == "video.crf":
+                assert info[info_key] is None
+            elif info_key == "video.extra_options":
+                assert info[info_key] == {}
+            else:
+                assert info[info_key] == reference[info_key]
+
+
 def test_aggregate_with_low_threshold(tmp_path, lerobot_dataset_factory):
-    """Test aggregation with small file size limits to force file rotation/sharding."""
+    """Test aggregation with small file size limits to force file rotation/sharding.
+
+    Depth video features are included to verify that file rotation/concat
+    correctly handles depth-marked features alongside regular RGB ones.
+    """
     ds_0_num_episodes = ds_1_num_episodes = 10
     ds_0_num_frames = ds_1_num_frames = 400
 
@@ -290,13 +471,18 @@ def test_aggregate_with_low_threshold(tmp_path, lerobot_dataset_factory):
         repo_id=f"{DUMMY_REPO_ID}_small_0",
         total_episodes=ds_0_num_episodes,
         total_frames=ds_0_num_frames,
+        camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     )
     ds_1 = lerobot_dataset_factory(
         root=tmp_path / "small_1",
         repo_id=f"{DUMMY_REPO_ID}_small_1",
         total_episodes=ds_1_num_episodes,
         total_frames=ds_1_num_frames,
+        camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     )
+
+    assert len(ds_0.meta.depth_keys) > 0, "ds_0 should expose at least one depth key"
+    assert len(ds_1.meta.depth_keys) > 0, "ds_1 should expose at least one depth key"
 
     # Use the new configurable parameters to force file rotation
     aggregate_datasets(
@@ -328,6 +514,7 @@ def test_aggregate_with_low_threshold(tmp_path, lerobot_dataset_factory):
     assert_episode_indices_updated_correctly(aggr_ds, ds_0, ds_1)
     assert_video_frames_integrity(aggr_ds, ds_0, ds_1)
     assert_video_timestamps_within_bounds(aggr_ds)
+    assert_depth_keys_preserved(aggr_ds, ds_0, ds_1)
     assert_dataset_iteration_works(aggr_ds)
 
     # Check that multiple files were actually created due to small size limits
@@ -347,7 +534,8 @@ def test_video_timestamps_regression(tmp_path, lerobot_dataset_factory):
     """Regression test for video timestamp bug when merging datasets.
 
     This test specifically checks that video timestamps are correctly calculated
-    and accumulated when merging multiple datasets.
+    and accumulated when merging multiple datasets. Depth video features are
+    included so depth timestamps are also covered by the regression.
     """
     datasets = []
     for i in range(3):
@@ -356,8 +544,12 @@ def test_video_timestamps_regression(tmp_path, lerobot_dataset_factory):
             repo_id=f"{DUMMY_REPO_ID}_regression_{i}",
             total_episodes=2,
             total_frames=100,
+            camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
         )
         datasets.append(ds)
+
+    for i, ds in enumerate(datasets):
+        assert len(ds.meta.depth_keys) > 0, f"Dataset {i} should expose at least one depth key"
 
     aggregate_datasets(
         repo_ids=[ds.repo_id for ds in datasets],
@@ -375,12 +567,21 @@ def test_video_timestamps_regression(tmp_path, lerobot_dataset_factory):
         aggr_ds = LeRobotDataset(f"{DUMMY_REPO_ID}_regression_aggr", root=tmp_path / "regression_aggr")
 
     assert_video_timestamps_within_bounds(aggr_ds)
+    # Depth keys must survive the merge for the regression to cover the
+    # ``is_depth_map`` decoding branch.
+    assert set(aggr_ds.meta.depth_keys) == set(datasets[0].meta.depth_keys)
 
+    depth_keys = set(aggr_ds.meta.depth_keys)
     for i in range(len(aggr_ds)):
         item = aggr_ds[i]
         for key in aggr_ds.meta.video_keys:
             assert key in item, f"Video key {key} missing from item {i}"
-            assert item[key].shape[0] == 3, f"Expected 3 channels for video key {key}"
+            # Depth frames are single-channel (1, H, W) after dequantization;
+            # standard RGB frames keep the 3-channel layout.
+            expected_channels = 1 if key in depth_keys else 3
+            assert item[key].shape[0] == expected_channels, (
+                f"Expected {expected_channels} channels for video key {key}, got {item[key].shape}"
+            )
 
 
 def assert_image_schema_preserved(aggr_ds):
@@ -444,6 +645,41 @@ def assert_image_frames_integrity(aggr_ds, ds_0, ds_1):
             )
 
 
+@pytest.mark.parametrize("use_videos", [True, False], ids=["video", "image"])
+def test_aggregate_one_row_group_per_episode(tmp_path, lerobot_dataset_factory, use_videos):
+    """Aggregated DATA shards keep one row group per episode (not one collapsed group).
+
+    Covers both the non-image (``df.to_parquet``) and image
+    (``to_parquet_with_hf_images``) write branches, including the merge-into-
+    existing-file branch via a low file-size threshold that forces packing.
+    """
+    ds_0 = lerobot_dataset_factory(
+        root=tmp_path / "rg_0",
+        repo_id=f"{DUMMY_REPO_ID}_rg_0",
+        total_episodes=3,
+        total_frames=60,
+        use_videos=use_videos,
+    )
+    ds_1 = lerobot_dataset_factory(
+        root=tmp_path / "rg_1",
+        repo_id=f"{DUMMY_REPO_ID}_rg_1",
+        total_episodes=4,
+        total_frames=80,
+        use_videos=use_videos,
+    )
+
+    aggr_root = tmp_path / "rg_aggr"
+    aggregate_datasets(
+        repo_ids=[ds_0.repo_id, ds_1.repo_id],
+        roots=[ds_0.root, ds_1.root],
+        aggr_repo_id=f"{DUMMY_REPO_ID}_rg_aggr",
+        aggr_root=aggr_root,
+    )
+
+    n_episodes = assert_data_shards_one_row_group_per_episode(aggr_root)
+    assert n_episodes == ds_0.num_episodes + ds_1.num_episodes
+
+
 def test_aggregate_image_datasets(tmp_path, lerobot_dataset_factory):
     """Test aggregation of image-based datasets preserves HuggingFace Image schema.
 
@@ -462,25 +698,31 @@ def test_aggregate_image_datasets(tmp_path, lerobot_dataset_factory):
     ds_0_num_episodes = 2
     ds_1_num_episodes = 3
 
-    # Create two image-based datasets (use_videos=False)
+    # Create two image-based datasets (use_videos=False) with a mix of RGB
+    # and depth-marked cameras so the depth path is exercised in image mode.
     ds_0 = lerobot_dataset_factory(
         root=tmp_path / "image_0",
         repo_id=f"{DUMMY_REPO_ID}_image_0",
         total_episodes=ds_0_num_episodes,
         total_frames=ds_0_num_frames,
-        use_videos=False,  # Image-based dataset
+        use_videos=False,
+        camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     )
     ds_1 = lerobot_dataset_factory(
         root=tmp_path / "image_1",
         repo_id=f"{DUMMY_REPO_ID}_image_1",
         total_episodes=ds_1_num_episodes,
         total_frames=ds_1_num_frames,
-        use_videos=False,  # Image-based dataset
+        use_videos=False,
+        camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     )
 
     # Verify source datasets have image keys
     assert len(ds_0.meta.image_keys) > 0, "ds_0 should have image keys"
     assert len(ds_1.meta.image_keys) > 0, "ds_1 should have image keys"
+    # And that the depth marker actually made it onto an image feature.
+    assert len(ds_0.meta.depth_keys) > 0, "ds_0 should expose at least one depth key"
+    assert len(ds_1.meta.depth_keys) > 0, "ds_1 should expose at least one depth key"
 
     # Aggregate the datasets
     aggregate_datasets(
@@ -515,6 +757,7 @@ def test_aggregate_image_datasets(tmp_path, lerobot_dataset_factory):
     # Image-specific assertions
     assert_image_schema_preserved(aggr_ds)
     assert_image_frames_integrity(aggr_ds, ds_0, ds_1)
+    assert_depth_keys_preserved(aggr_ds, ds_0, ds_1)
 
     # Verify images can be accessed and have correct shape
     sample_item = aggr_ds[0]

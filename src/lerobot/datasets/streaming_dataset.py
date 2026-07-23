@@ -22,20 +22,24 @@ import numpy as np
 import torch
 from datasets import load_dataset
 
-from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
-from lerobot.datasets.feature_utils import get_delta_indices
-from lerobot.datasets.io_utils import item_to_torch
-from lerobot.datasets.utils import (
+from lerobot.configs import DEFAULT_DEPTH_UNIT, DEPTH_METER_UNIT, DepthEncoderConfig
+from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
+
+from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
+from .depth_utils import MM_PER_METRE, dequantize_depth
+from .feature_utils import get_delta_indices
+from .io_utils import item_to_torch
+from .utils import (
     check_version_compatibility,
     find_float_index,
     is_float_in_list,
     safe_shard,
 )
-from lerobot.datasets.video_utils import (
+from .video_utils import (
     VideoDecoderCache,
+    decode_video_frames,
     decode_video_frames_torchcodec,
 )
-from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
 
 
 class LookBackError(Exception):
@@ -250,6 +254,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         seed: int = 42,
         rng: np.random.Generator | None = None,
         shuffle: bool = True,
+        return_uint8: bool = False,
+        depth_output_unit: str = DEFAULT_DEPTH_UNIT,
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -270,6 +276,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             seed (int, optional): Reproducibility random seed.
             rng (np.random.Generator | None, optional): Random number generator.
             shuffle (bool, optional): Whether to shuffle the dataset across exhaustions. Defaults to True.
+            depth_output_unit (str, optional): Physical unit depth maps are dequantized to ("m" or "mm").
+                Defaults to "mm".
         """
         super().__init__()
         self.repo_id = repo_id
@@ -287,6 +295,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         self.streaming = streaming
         self.buffer_size = buffer_size
+        self._return_uint8 = return_uint8
+        self._depth_output_unit = depth_output_unit
 
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
         self.video_decoder_cache = None
@@ -300,8 +310,21 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
+        self.meta.rescale_depth_stats(self._depth_output_unit)
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
+
+        self._depth_encoder_configs: dict[str, DepthEncoderConfig] = {
+            vid_key: DepthEncoderConfig.from_video_info(self.meta.features[vid_key].get("info"))
+            for vid_key in self.meta.depth_keys
+        }
+
+        # Input unit of each depth feature stored as raw images (dequantized separately from videos).
+        self._image_depth_units: dict[str, str | None] = {
+            key: (self.meta.features[key].get("info") or {}).get("depth_unit")
+            for key in self.meta.depth_keys
+            if key in self.meta.image_keys
+        }
 
         self.delta_timestamps = None
         self.delta_indices = None
@@ -332,6 +355,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     @property
     def fps(self):
         return self.meta.fps
+
+    @property
+    def depth_output_unit(self) -> str:
+        """Physical unit (``"m"`` or ``"mm"``) depth maps are returned in on read."""
+        return self._depth_output_unit
 
     @staticmethod
     def _iter_random_indices(
@@ -431,7 +459,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
     def _make_padding_camera_frame(self, camera_key: str):
         """Variable-shape padding frame for given camera keys, given in (H, W, C)"""
-        return torch.zeros(self.meta.info["features"][camera_key]["shape"]).permute(-1, 0, 1)
+        return torch.zeros(self.meta.info.features[camera_key]["shape"]).permute(-1, 0, 1)
 
     def _get_video_frame_padding_mask(
         self,
@@ -515,6 +543,15 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         for update in updates:
             result.update(update)
 
+        # Convert raw-image depth features to the output unit (video depth is already converted).
+        for key, stored_unit in self._image_depth_units.items():
+            if key in result and stored_unit is not None and stored_unit != self._depth_output_unit:
+                result[key] = (
+                    result[key] * MM_PER_METRE
+                    if stored_unit == DEPTH_METER_UNIT
+                    else result[key] / MM_PER_METRE
+                )
+
         result["task"] = self.meta.tasks.iloc[item["task_index"]].name
 
         yield result
@@ -551,9 +588,34 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         for video_key, query_ts in query_timestamps.items():
             root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
             video_path = f"{root}/{self.meta.get_video_file_path(ep_idx, video_key)}"
-            frames = decode_video_frames_torchcodec(
-                video_path, query_ts, self.tolerance_s, decoder_cache=self.video_decoder_cache
-            )
+            if video_key in self.meta.depth_keys:
+                # Depth maps are 12-bit quantized and only decodable via pyav; dequantize back
+                # to physical units to match the non-streaming reader.
+                frames = decode_video_frames(
+                    video_path,
+                    query_ts,
+                    self.tolerance_s,
+                    backend="pyav",
+                    return_uint8=False,
+                    is_depth=True,
+                )
+                depth_encoder = self._depth_encoder_configs[video_key]
+                frames = dequantize_depth(
+                    frames,
+                    depth_min=depth_encoder.depth_min,
+                    depth_max=depth_encoder.depth_max,
+                    shift=depth_encoder.shift,
+                    use_log=depth_encoder.use_log,
+                    output_unit=self._depth_output_unit,
+                )
+            else:
+                frames = decode_video_frames_torchcodec(
+                    video_path,
+                    query_ts,
+                    self.tolerance_s,
+                    decoder_cache=self.video_decoder_cache,
+                    return_uint8=self._return_uint8,
+                )
 
             item[video_key] = frames.squeeze(0) if len(query_ts) == 1 else frames
 

@@ -17,9 +17,9 @@
 from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
-from lerobot.robots.openarm_follower import OpenArmFollowerConfigBase
 
 from ..config import RobotConfig
+from ..openarm_follower import OpenArmFollowerConfigBase
 
 
 @RobotConfig.register_subclass("bi_openarm_follower")
@@ -32,5 +32,7 @@ class BiOpenArmFollowerConfig(RobotConfig):
     left_arm_config: OpenArmFollowerConfigBase
     right_arm_config: OpenArmFollowerConfigBase
 
-    # Top-level cameras shared across both arms.
+    # Top-level cameras not attached to a specific side. Keys are kept as-is in
+    # observations (no `left_`/`right_` prefix). Per-arm cameras (declared on
+    # `{left,right}_arm_config.cameras`) are prefixed.
     cameras: dict[str, CameraConfig] = field(default_factory=dict)

@@ -20,32 +20,27 @@ from typing import Any
 import numpy as np
 import torch
 
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.datasets.factory import IMAGENET_STATS
-from lerobot.policies.xvla.configuration_xvla import XVLAConfig
-from lerobot.policies.xvla.utils import rotate6d_to_axis_angle
+from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
-    AddBatchDimensionProcessorStep,
-    DeviceProcessorStep,
-    NormalizerProcessorStep,
     ObservationProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
-    RenameObservationsProcessorStep,
     TokenizerProcessorStep,
-    UnnormalizerProcessorStep,
+    make_default_policy_processor_steps,
+    make_policy_processor_pipelines,
 )
-from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
+    IMAGENET_STATS,
     OBS_IMAGES,
     OBS_PREFIX,
     OBS_STATE,
-    POLICY_POSTPROCESSOR_DEFAULT_NAME,
-    POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+
+from .configuration_xvla import XVLAConfig
+from .utils import rotate6d_to_axis_angle
 
 
 def make_xvla_pre_post_processors(
@@ -59,10 +54,11 @@ def make_xvla_pre_post_processors(
     Build the LeRobot processor pipelines for XVLA.
     """
 
-    features = {**config.input_features, **config.output_features}
+    steps = make_default_policy_processor_steps(config, dataset_stats)
+
     input_steps = [
-        RenameObservationsProcessorStep(rename_map={}),
-        AddBatchDimensionProcessorStep(),
+        steps.rename_observations,
+        steps.add_batch_dim,
         TokenizerProcessorStep(
             tokenizer_name=config.tokenizer_name,
             max_length=config.tokenizer_max_length,
@@ -72,32 +68,15 @@ def make_xvla_pre_post_processors(
         XVLAImageToFloatProcessorStep(),
         XVLAImageNetNormalizeProcessorStep(),
         XVLAAddDomainIdProcessorStep(),
-        DeviceProcessorStep(device=config.device),
-        NormalizerProcessorStep(
-            features=features, norm_map=config.normalization_mapping, stats=dataset_stats
-        ),
+        steps.to_device,
+        steps.normalize,
     ]
     output_steps = [
-        UnnormalizerProcessorStep(
-            features=config.output_features,
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats,
-        ),
-        DeviceProcessorStep(device="cpu"),
+        steps.unnormalize,
+        steps.to_cpu,
     ]
 
-    return (
-        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
-            steps=input_steps,
-            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-        ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
-            steps=output_steps,
-            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-        ),
-    )
+    return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
 
 
 # Custom XVLA processor steps

@@ -21,11 +21,12 @@ import datasets
 import torch
 import torch.utils
 
-from lerobot.datasets.compute_stats import aggregate_stats
-from lerobot.datasets.feature_utils import get_hf_features_from_features
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.video_utils import VideoFrame
 from lerobot.utils.constants import HF_LEROBOT_HOME
+
+from .compute_stats import aggregate_stats
+from .feature_utils import get_hf_features_from_features
+from .lerobot_dataset import LeRobotDataset
+from .video_utils import VideoFrame
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
 
         NOTE: Fow now, this relies on a check in __init__ to make sure all sub-datasets have the same info.
         """
-        return self._datasets[0].meta.info["fps"]
+        return self._datasets[0].meta.info.fps
 
     @property
     def video(self) -> bool:
@@ -132,7 +133,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
 
         NOTE: Fow now, this relies on a check in __init__ to make sure all sub-datasets have the same info.
         """
-        return self._datasets[0].meta.info.get("video", False)
+        return len(self._datasets[0].meta.video_keys) > 0
 
     @property
     def features(self) -> datasets.Features:

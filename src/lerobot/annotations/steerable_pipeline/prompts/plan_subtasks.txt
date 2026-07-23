@@ -1,0 +1,68 @@
+You are annotating a teleoperated robot demonstration shown as
+timestamped contact sheets (each tile has its time in seconds burned
+into the top-left corner). The operator's goal was: "{episode_task}"
+
+{observation_block}Reconstruct the sequence of COMPLETED manipulation events the robot
+performs, in chronological order. Output one segment per event with a
+[start, end] time in seconds and a short action label.
+
+GROUNDING — read first, it overrides everything below:
+- Label ONLY events you can SEE in the frames. The instruction is the
+  goal; the VIDEO is the ground truth for what actually happened.
+- Do NOT invent, anticipate, or pad steps that are not shown.
+
+Granularity — segment by completed events, not by motion:
+- Start a NEW segment whenever the world state changes: an object is
+  grasped, lifted, transported, placed, or released; a held object
+  changes; a drawer/door/lid/container opens or closes; contents move
+  between containers (poured); a tool starts or stops acting on a
+  surface. Watch the gripper open/close transitions — they usually mark
+  boundaries.
+- Do NOT split approach, reach, grasp adjustment, small repositioning,
+  hesitation, or retreat into their own segments. Fold each into the
+  event it belongs to (the approach is part of the pick; the retreat is
+  part of the place).
+- Do NOT merge separate completed events. Each distinct pick, place,
+  open, close, pour, push, wipe, or insert is its own segment, even when
+  they repeat on different objects or locations.
+- Most segments last 2-10 seconds. Shorter segments are okay ONLY for
+  fast pick / place / open / close / release events. Never emit a
+  segment shorter than {min_subtask_seconds} seconds; merge a too-short
+  candidate into its neighbour instead.
+- Skip idle time, pure camera motion, and tiny hand jitter.
+
+Labels — short imperative phrases:
+- One concise command naming the action and the manipulated object, e.g.
+  "pick up the red cup", "put the cup on the shelf", "open the top
+  drawer", "pour water into the glass", "insert the plug into the
+  socket".
+- Include source, destination, side, direction, or the final
+  open/closed state when it is visible and central to the event.
+- Prefer these verbs (extend only when none fits): pick up, put, place,
+  push, pull, turn, press, open, close, pour, insert, wipe, stack.
+  Disambiguate by what you SEE:
+    * STACK vs PUT: object placed ON TOP OF another object -> "stack".
+    * INSERT vs PUT: object pushed INTO a fitted slot/hole/socket -> "insert".
+    * PICK UP vs PUT (direction): gripper CLOSES and object moves WITH
+      the hand -> "pick up"; gripper OPENS and object stays -> "put".
+    * POUR vs PUT: source is tilted and contents flow -> "pour".
+- Use the exact object nouns implied by the task; stay consistent across
+  the episode (don't switch "cube" to "block").
+- Write imperative commands, never third person ("the robot ..."), and
+  drop articles/adverbs.
+
+Timing:
+- Use the burned-in timestamps to set start and end. Boundaries should
+  land on or near a printed time, and every [start, end] must lie within
+  [0.0, {episode_duration}] seconds, be non-overlapping, and cover the
+  episode in order.
+- Emit at most {max_steps} segments.
+
+Output strictly valid JSON of shape:
+
+  {{
+    "subtasks": [
+      {{"text": "<short imperative action label>", "start": <float>, "end": <float>}},
+      ...
+    ]
+  }}

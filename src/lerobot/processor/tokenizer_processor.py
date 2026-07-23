@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
-from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.types import EnvTransition, RobotObservation, TransitionKey
 from lerobot.utils.constants import (
     ACTION_TOKEN_MASK,

@@ -216,7 +216,7 @@ class MyBenchmarkEnvConfig(EnvConfig):
 
     def get_env_processors(self):
         """Override if your benchmark needs observation/action transforms."""
-        from lerobot.processor.pipeline import PolicyProcessorPipeline
+        from lerobot.processor import PolicyProcessorPipeline
         from lerobot.processor.env_processor import MyBenchmarkProcessorStep
         return (
             PolicyProcessorPipeline(steps=[MyBenchmarkProcessorStep()]),

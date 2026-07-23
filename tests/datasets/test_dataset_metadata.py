@@ -20,6 +20,8 @@ import json
 import numpy as np
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.utils import INFO_PATH
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_ROBOT_TYPE
@@ -57,11 +59,13 @@ def _make_dummy_stats(features: dict) -> dict:
     stats = {}
     for key, ft in features.items():
         if ft["dtype"] in ("image", "video"):
+            channels = ft["shape"][-1]
+            stat_shape = (channels, 1, 1)
             stats[key] = {
-                "max": np.ones((3, 1, 1), dtype=np.float32),
-                "mean": np.full((3, 1, 1), 0.5, dtype=np.float32),
-                "min": np.zeros((3, 1, 1), dtype=np.float32),
-                "std": np.full((3, 1, 1), 0.25, dtype=np.float32),
+                "max": np.ones(stat_shape, dtype=np.float32),
+                "mean": np.full(stat_shape, 0.5, dtype=np.float32),
+                "min": np.zeros(stat_shape, dtype=np.float32),
+                "std": np.full(stat_shape, 0.25, dtype=np.float32),
                 "count": np.array([5]),
             }
         elif ft["dtype"] in ("float32", "float64", "int64"):
@@ -140,6 +144,45 @@ def test_create_without_videos_has_no_video_path(tmp_path):
     assert meta.video_keys == []
 
 
+@pytest.mark.parametrize(
+    ("marker_field", "marker_key"),
+    [
+        ("info", "is_depth_map"),
+        ("info", "video.is_depth_map"),
+        ("video_info", "video.is_depth_map"),
+    ],
+    ids=["info.is_depth_map", "info.video.is_depth_map_legacy", "video_info.video.is_depth_map_legacy"],
+)
+def test_depth_keys_property_filters_by_marker(tmp_path, marker_field, marker_key):
+    """``depth_keys`` recognises the canonical and the two legacy marker variants."""
+    depth_feature = {
+        "dtype": "video",
+        "shape": (64, 96, 1),
+        "names": ["height", "width", "channels"],
+        marker_field: {marker_key: True},
+    }
+    features = {
+        **VIDEO_FEATURES,
+        "observation.images.laptop_depth": depth_feature,
+    }
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/depth_keys",
+        fps=DEFAULT_FPS,
+        features=features,
+        root=tmp_path / f"depth_keys_{marker_field}_{marker_key.replace('.', '_')}",
+    )
+
+    assert set(meta.video_keys) == {"observation.images.laptop", "observation.images.laptop_depth"}
+    assert meta.depth_keys == ["observation.images.laptop_depth"]
+
+
+def test_depth_keys_empty_when_no_marker(tmp_path):
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/no_depth", fps=DEFAULT_FPS, features=VIDEO_FEATURES, root=tmp_path / "no_depth"
+    )
+    assert meta.depth_keys == []
+
+
 def test_create_raises_on_existing_directory(tmp_path):
     """create() raises if root directory already exists."""
     root = tmp_path / "existing"
@@ -159,7 +202,7 @@ def test_init_loads_existing_metadata(tmp_path, lerobot_dataset_metadata_factory
 
     assert meta.total_episodes == 3
     assert meta.total_frames == 150
-    assert meta.fps == info["fps"]
+    assert meta.fps == info.fps
 
 
 # ── Property accessors ───────────────────────────────────────────────
@@ -383,3 +426,140 @@ def test_finalize_flushes_buffered_metadata(tmp_path):
     assert episodes_dir.exists()
     parquet_files = list(episodes_dir.rglob("*.parquet"))
     assert len(parquet_files) > 0
+
+
+# ── Tools accessor ───────────────────────────────────────────────────
+
+
+def test_tools_falls_back_to_default_when_info_has_no_tools_field(tmp_path):
+    """meta.tools returns DEFAULT_TOOLS when info.json doesn't declare any."""
+    from lerobot.datasets.language import DEFAULT_TOOLS
+
+    root = tmp_path / "no_tools"
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/no_tools",
+        fps=DEFAULT_FPS,
+        features=SIMPLE_FEATURES,
+        root=root,
+        use_videos=False,
+    )
+
+    assert meta.tools == DEFAULT_TOOLS
+    # info.json on disk should NOT include a `tools` key for clean datasets
+    with open(root / INFO_PATH) as f:
+        info_on_disk = json.load(f)
+    assert "tools" not in info_on_disk
+
+
+def test_tools_reads_declared_tools_from_info_json(tmp_path):
+    """A `tools` list written into info.json survives load → meta.tools.
+
+    Regression test for the bug where ``DatasetInfo.from_dict`` silently
+    dropped the ``tools`` key (no matching dataclass field), so
+    ``meta.tools`` always returned ``DEFAULT_TOOLS`` regardless of
+    what was on disk.
+    """
+    from lerobot.datasets.io_utils import load_info
+
+    root = tmp_path / "with_tools"
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/with_tools",
+        fps=DEFAULT_FPS,
+        features=SIMPLE_FEATURES,
+        root=root,
+        use_videos=False,
+    )
+
+    custom_tool = {
+        "type": "function",
+        "function": {
+            "name": "record_observation",
+            "description": "Capture a still image.",
+            "parameters": {
+                "type": "object",
+                "properties": {"label": {"type": "string"}},
+                "required": ["label"],
+            },
+        },
+    }
+    info_path = root / INFO_PATH
+    with open(info_path) as f:
+        raw = json.load(f)
+    raw["tools"] = [custom_tool]
+    with open(info_path, "w") as f:
+        json.dump(raw, f)
+
+    # Reload info from disk and rebind it on the metadata object
+    meta.info = load_info(root)
+    assert meta.tools == [custom_tool]
+
+
+def test_tools_round_trip_through_dataset_info(tmp_path):
+    """A `tools` list survives DatasetInfo.from_dict / to_dict."""
+    from lerobot.datasets.utils import DatasetInfo
+
+    raw = {
+        "codebase_version": "v3.1",
+        "fps": 30,
+        "features": SIMPLE_FEATURES,
+        "tools": [{"type": "function", "function": {"name": "say"}}],
+    }
+    info = DatasetInfo.from_dict(raw)
+    assert info.tools == raw["tools"]
+    assert info.to_dict()["tools"] == raw["tools"]
+
+
+def test_tools_setter_persists_to_info_json_and_reloads(tmp_path):
+    """Assigning meta.tools writes info.json and reloads meta.info."""
+    from lerobot.datasets.io_utils import load_info
+
+    root = tmp_path / "set_tools"
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/set_tools",
+        fps=DEFAULT_FPS,
+        features=SIMPLE_FEATURES,
+        root=root,
+        use_videos=False,
+    )
+
+    custom_tool = {
+        "type": "function",
+        "function": {
+            "name": "record_observation",
+            "description": "Capture a still image.",
+            "parameters": {
+                "type": "object",
+                "properties": {"label": {"type": "string"}},
+                "required": ["label"],
+            },
+        },
+    }
+    meta.tools = [custom_tool]
+
+    # In-memory metadata reflects the new catalog ...
+    assert meta.tools == [custom_tool]
+    assert meta.info.tools == [custom_tool]
+    # ... and a fresh read from disk agrees.
+    assert load_info(root).tools == [custom_tool]
+
+
+def test_tools_setter_clears_key_when_set_to_none(tmp_path):
+    """Setting meta.tools back to None drops the key and restores the default."""
+    from lerobot.datasets.language import DEFAULT_TOOLS
+
+    root = tmp_path / "clear_tools"
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/clear_tools",
+        fps=DEFAULT_FPS,
+        features=SIMPLE_FEATURES,
+        root=root,
+        use_videos=False,
+    )
+
+    meta.tools = [{"type": "function", "function": {"name": "say"}}]
+    meta.tools = None
+
+    assert meta.tools == DEFAULT_TOOLS
+    with open(root / INFO_PATH) as f:
+        info_on_disk = json.load(f)
+    assert "tools" not in info_on_disk

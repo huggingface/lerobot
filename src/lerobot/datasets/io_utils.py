@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import json
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +20,7 @@ import datasets
 import numpy as np
 import pandas
 import pandas as pd
+import pyarrow as pa
 import pyarrow.dataset as pa_ds
 import pyarrow.parquet as pq
 import torch
@@ -29,19 +29,20 @@ from datasets.table import embed_table_storage
 from PIL import Image as PILImage
 from torchvision import transforms
 
-from lerobot.datasets.utils import (
+from lerobot.utils.io_utils import load_json, write_json
+from lerobot.utils.utils import SuppressProgressBars, flatten_dict, unflatten_dict
+
+from .language import LANGUAGE_COLUMNS
+from .utils import (
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_EPISODES_PATH,
-    DEFAULT_SUBTASKS_PATH,
     DEFAULT_TASKS_PATH,
     EPISODES_DIR,
     INFO_PATH,
     STATS_PATH,
-    flatten_dict,
+    DatasetInfo,
     serialize_dict,
-    unflatten_dict,
 )
-from lerobot.utils.utils import SuppressProgressBars
 
 
 def get_parquet_file_size_in_mb(parquet_path: str | Path) -> float:
@@ -116,52 +117,21 @@ def embed_images(dataset: datasets.Dataset) -> datasets.Dataset:
     return dataset
 
 
-def load_json(fpath: Path) -> Any:
-    """Load data from a JSON file.
-
-    Args:
-        fpath (Path): Path to the JSON file.
-
-    Returns:
-        Any: The data loaded from the JSON file.
-    """
-    with open(fpath) as f:
-        return json.load(f)
+def write_info(info: DatasetInfo, local_dir: Path) -> None:
+    write_json(info.to_dict(), local_dir / INFO_PATH)
 
 
-def write_json(data: dict, fpath: Path) -> None:
-    """Write data to a JSON file.
-
-    Creates parent directories if they don't exist.
-
-    Args:
-        data (dict): The dictionary to write.
-        fpath (Path): The path to the output JSON file.
-    """
-    fpath.parent.mkdir(exist_ok=True, parents=True)
-    with open(fpath, "w") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
-
-
-def write_info(info: dict, local_dir: Path) -> None:
-    write_json(info, local_dir / INFO_PATH)
-
-
-def load_info(local_dir: Path) -> dict:
+def load_info(local_dir: Path) -> DatasetInfo:
     """Load dataset info metadata from its standard file path.
-
-    Also converts shape lists to tuples for consistency.
 
     Args:
         local_dir (Path): The root directory of the dataset.
 
     Returns:
-        dict: The dataset information dictionary.
+        DatasetInfo: The typed dataset information object.
     """
-    info = load_json(local_dir / INFO_PATH)
-    for ft in info["features"].values():
-        ft["shape"] = tuple(ft["shape"])
-    return info
+    raw = load_json(local_dir / INFO_PATH)
+    return DatasetInfo.from_dict(raw)
 
 
 def write_stats(stats: dict, local_dir: Path) -> None:
@@ -184,7 +154,7 @@ def cast_stats_to_numpy(stats: dict) -> dict[str, dict[str, np.ndarray]]:
     Returns:
         dict: The statistics dictionary with values cast to numpy arrays.
     """
-    stats = {key: np.array(value) for key, value in flatten_dict(stats).items()}
+    stats = {key: np.atleast_1d(np.array(value)) for key, value in flatten_dict(stats).items()}
     return unflatten_dict(stats)
 
 
@@ -215,14 +185,6 @@ def load_tasks(local_dir: Path) -> pandas.DataFrame:
     tasks = pd.read_parquet(local_dir / DEFAULT_TASKS_PATH)
     tasks.index.name = "task"
     return tasks
-
-
-def load_subtasks(local_dir: Path) -> pandas.DataFrame | None:
-    """Load subtasks from subtasks.parquet if it exists."""
-    subtasks_path = local_dir / DEFAULT_SUBTASKS_PATH
-    if subtasks_path.exists():
-        return pd.read_parquet(subtasks_path)
-    return None
 
 
 def write_episodes(episodes: Dataset, local_dir: Path) -> None:
@@ -264,28 +226,50 @@ def load_image_as_numpy(
     Args:
         fpath (str | Path): Path to the image file.
         dtype (np.dtype): The desired data type of the output array. If floating,
-            pixels are scaled to [0, 1].
+            pixels are scaled to [0, 1]. Only used for RGB images.
         channel_first (bool): If True, converts the image to (C, H, W) format.
             Otherwise, it remains in (H, W, C) format.
 
     Returns:
         np.ndarray: The image as a numpy array.
     """
-    img = PILImage.open(fpath).convert("RGB")
-    img_array = np.array(img, dtype=dtype)
+    is_depth = fpath.endswith(".tiff") or fpath.endswith(".tif")
+    if is_depth:
+        # Preserve the native depth dtype (uint16 -> "I;16", float32 -> "F").
+        img = PILImage.open(fpath)
+        img_array = np.array(img)
+    else:
+        img = PILImage.open(fpath).convert("RGB")
+        img_array = np.array(img, dtype=dtype)
+        if np.issubdtype(dtype, np.floating):
+            img_array /= 255.0
     if channel_first:  # (H, W, C) -> (C, H, W)
-        img_array = np.transpose(img_array, (2, 0, 1))
-    if np.issubdtype(dtype, np.floating):
-        img_array /= 255.0
+        img_array = img_array[np.newaxis, ...] if img_array.ndim == 2 else np.transpose(img_array, (2, 0, 1))
     return img_array
+
+
+# PIL modes for 16-bit unsigned depth maps.
+UINT16_PIL_MODES = {"I;16", "I;16B", "I;16L"}
+
+
+def pil_to_chw_tensor(img: PILImage.Image) -> torch.Tensor:
+    """Convert a PIL image to a channel-first tensor.
+
+    ``uint16`` depth maps become ``float32 (1, H, W)`` in native units (``ToTensor``
+    would overflow them to ``int16``); all other modes use the standard ``ToTensor`` path.
+    """
+    if img.mode in UINT16_PIL_MODES:
+        return torch.from_numpy(np.array(img, dtype=np.float32))[None, ...]
+    return transforms.ToTensor()(img)
 
 
 def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[torch.Tensor | str]]:
     """Convert a batch from a Hugging Face dataset to torch tensors.
 
     This transform function converts items from Hugging Face dataset format (pyarrow)
-    to torch tensors. Importantly, images are converted from PIL objects (H, W, C, uint8)
-    to a torch image representation (C, H, W, float32) in the range [0, 1]. Other
+    to torch tensors. RGB images are converted from PIL objects (H, W, C, uint8)
+    to a torch image representation (C, H, W, float32) in the range [0, 1]. Depth
+    maps are returned as float32 (1, H, W) in their native units. Other
     types are converted to torch.tensor.
 
     Args:
@@ -296,32 +280,61 @@ def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[to
         dict: The batch with items converted to torch tensors.
     """
     for key in items_dict:
+        if key in LANGUAGE_COLUMNS:
+            continue
         first_item = items_dict[key][0]
         if isinstance(first_item, PILImage.Image):
-            to_tensor = transforms.ToTensor()
-            items_dict[key] = [to_tensor(img) for img in items_dict[key]]
-        elif first_item is None:
+            items_dict[key] = [pil_to_chw_tensor(img) for img in items_dict[key]]
+        elif first_item is None or isinstance(first_item, dict):
             pass
         else:
             items_dict[key] = [x if isinstance(x, str) else torch.tensor(x) for x in items_dict[key]]
     return items_dict
 
 
+def write_table_one_row_group_per_episode(table: pa.Table, path: Path) -> None:
+    """Write ``table`` with one parquet row group per episode (in episode order).
+
+    Keeps shards random-access friendly (``read_row_group(i)`` fetches episode i),
+    mirroring the recording writer. ``table`` must carry a contiguous
+    ``episode_index`` column.
+    """
+    episode_index = table.column("episode_index").to_numpy(zero_copy_only=False)
+    starts = np.concatenate(([0], np.nonzero(np.diff(episode_index))[0] + 1))
+    writer = pq.ParquetWriter(str(path), table.schema, compression="snappy", use_dictionary=True)
+    try:
+        for start, stop in zip(starts, np.append(starts[1:], len(episode_index)), strict=True):
+            writer.write_table(table.slice(start, stop - start))  # one episode -> one row group
+    finally:
+        writer.close()
+
+
 def to_parquet_with_hf_images(
     df: pandas.DataFrame, path: Path, features: datasets.Features | None = None
 ) -> None:
-    """This function correctly writes to parquet a panda DataFrame that contains images encoded by HF dataset.
-    This way, it can be loaded by HF dataset and correctly formatted images are returned.
+    """Write a DataFrame with HF-encoded images to parquet, one row group per episode.
 
-    Args:
-        df: DataFrame to write to parquet.
-        path: Path to write the parquet file.
-        features: Optional HuggingFace Features schema. If provided, ensures image columns
-                  are properly typed as Image() in the parquet schema.
+    Images are embedded into the arrow table first (``ParquetWriter.write_table``
+    does not embed external image files like ``Dataset.to_parquet`` does).
+    ``features`` types image columns as ``Image()`` in the parquet schema.
     """
-    # TODO(qlhoest): replace this weird synthax by `df.to_parquet(path)` only
     ds = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=features)
-    ds.to_parquet(path)
+    ds = embed_images(ds)
+    table = ds.with_format("arrow")[:]
+    if "episode_index" in table.column_names:
+        write_table_one_row_group_per_episode(table, path)
+    else:
+        # No episode boundaries to align row groups to — keep a single write.
+        pq.write_table(table, str(path))
+
+
+def to_parquet_one_row_group_per_episode(df: pandas.DataFrame, path: Path) -> None:
+    """Write a (non-image) DataFrame to parquet with one row group per episode."""
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    if "episode_index" in table.column_names:
+        write_table_one_row_group_per_episode(table, path)
+    else:
+        pq.write_table(table, str(path))
 
 
 def item_to_torch(item: dict) -> dict:
@@ -335,8 +348,13 @@ def item_to_torch(item: dict) -> dict:
     Returns:
         dict: Dictionary with all tensor-like items converted to torch.Tensor.
     """
+    skip_keys = {"task", *LANGUAGE_COLUMNS}
     for key, val in item.items():
-        if isinstance(val, (np.ndarray | list)) and key not in ["task"]:
+        if key in skip_keys:
+            continue
+        if isinstance(val, PILImage.Image):
+            item[key] = pil_to_chw_tensor(val)
+        elif isinstance(val, (np.ndarray | list)):
             # Convert numpy arrays and lists to torch tensors
             item[key] = torch.tensor(val)
     return item

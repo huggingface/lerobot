@@ -21,11 +21,10 @@ import numpy as np
 import torch
 from torch import nn
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.datasets.feature_utils import build_dataset_frame
+from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
 from lerobot.types import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.feature_utils import build_dataset_frame
 
 
 def populate_queues(
@@ -127,7 +126,8 @@ def prepare_observation_for_inference(
     for name in observation:
         observation[name] = torch.from_numpy(observation[name])
         if "image" in name:
-            observation[name] = observation[name].type(torch.float32) / 255
+            if observation[name].dtype == torch.uint8:
+                observation[name] = observation[name].type(torch.float32) / 255
             observation[name] = observation[name].permute(2, 0, 1).contiguous()
         observation[name] = observation[name].unsqueeze(0)
         observation[name] = observation[name].to(device)

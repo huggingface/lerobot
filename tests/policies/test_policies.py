@@ -20,16 +20,17 @@ from pathlib import Path
 import einops
 import pytest
 import torch
+
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from packaging import version
 from safetensors.torch import load_file
 
-from lerobot import available_policies
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.feature_utils import dataset_to_policy_features
-from lerobot.datasets.utils import cycle
+from lerobot.datasets import make_dataset
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import close_envs, preprocess_observation
 from lerobot.optim.factory import make_optimizer_and_scheduler
@@ -45,9 +46,22 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.vqbet.modeling_vqbet import VQBeTHead
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+from lerobot.utils.feature_utils import dataset_to_policy_features
+from lerobot.utils.import_utils import is_package_available
 from lerobot.utils.random_utils import seeded_context
+from lerobot.utils.utils import cycle
 from tests.artifacts.policies.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
+
+# Policies that require optional heavy dependencies to instantiate
+_POLICY_REQUIRED_PACKAGES: dict[str, tuple[str, ...]] = {
+    "diffusion": ("diffusers",),
+}
+
+_ALL_POLICIES = ["act", "diffusion", "tdmpc", "vqbet"]
+AVAILABLE_POLICIES = [
+    p for p in _ALL_POLICIES if all(is_package_available(pkg) for pkg in _POLICY_REQUIRED_PACKAGES.get(p, ()))
+]
 
 
 @pytest.fixture
@@ -84,7 +98,7 @@ def dummy_dataset_metadata(lerobot_dataset_metadata_factory, info_factory, tmp_p
     return ds_meta
 
 
-@pytest.mark.parametrize("policy_name", available_policies)
+@pytest.mark.parametrize("policy_name", AVAILABLE_POLICIES)
 def test_get_policy_and_config_classes(policy_name: str):
     """Check that the correct policy and config classes are returned."""
     policy_cls = get_policy_class(policy_name)
@@ -183,6 +197,8 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
 
     for key in batch:
         if isinstance(batch[key], torch.Tensor):
+            if batch[key].dtype == torch.uint8:
+                batch[key] = batch[key].to(dtype=torch.float32) / 255.0
             batch[key] = batch[key].to(DEVICE, non_blocking=True)
 
     # Test updating the policy (and test that it does not mutate the batch)
@@ -255,7 +271,7 @@ def test_act_backbone_lr():
     assert len(optimizer.param_groups[1]["params"]) == 20
 
 
-@pytest.mark.parametrize("policy_name", available_policies)
+@pytest.mark.parametrize("policy_name", AVAILABLE_POLICIES)
 def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
     """Check that the policy can be instantiated with defaults."""
     policy_cls = get_policy_class(policy_name)
@@ -268,7 +284,7 @@ def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
     policy_cls(policy_cfg)
 
 
-@pytest.mark.parametrize("policy_name", available_policies)
+@pytest.mark.parametrize("policy_name", AVAILABLE_POLICIES)
 def test_save_and_load_pretrained(dummy_dataset_metadata, tmp_path, policy_name: str):
     policy_cls = get_policy_class(policy_name)
     policy_cfg = make_policy_config(policy_name)
@@ -281,6 +297,29 @@ def test_save_and_load_pretrained(dummy_dataset_metadata, tmp_path, policy_name:
     policy.to(policy_cfg.device)
     save_dir = tmp_path / f"test_save_and_load_pretrained_{policy_cls.__name__}"
     policy.save_pretrained(save_dir)
+    loaded_policy = policy_cls.from_pretrained(save_dir, config=policy_cfg)
+    torch.testing.assert_close(list(policy.parameters()), list(loaded_policy.parameters()), rtol=0, atol=0)
+
+
+def test_save_pretrained_with_state_dict(dummy_dataset_metadata, tmp_path):
+    """Exercise the FSDP checkpoint path: save_pretrained with a pre-gathered state_dict."""
+    policy_cls = get_policy_class("act")
+    policy_cfg = make_policy_config("act")
+    features = dataset_to_policy_features(dummy_dataset_metadata.features)
+    policy_cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    policy_cfg.input_features = {
+        key: ft for key, ft in features.items() if key not in policy_cfg.output_features
+    }
+    policy = policy_cls(policy_cfg)
+    policy.to(policy_cfg.device)
+
+    save_dir = tmp_path / "fsdp_state_dict"
+    policy.save_pretrained(save_dir, state_dict=policy.state_dict())
+
+    # A single, unsharded safetensors file (no sharded set + index).
+    assert (save_dir / SAFETENSORS_SINGLE_FILE).is_file()
+    assert not (save_dir / f"{SAFETENSORS_SINGLE_FILE}.index.json").exists()
+
     loaded_policy = policy_cls.from_pretrained(save_dir, config=policy_cfg)
     torch.testing.assert_close(list(policy.parameters()), list(loaded_policy.parameters()), rtol=0, atol=0)
 
@@ -343,7 +382,7 @@ def test_multikey_construction(multikey: bool):
         # to normalize the image at all. In our current codebase we dont normalize at all. But there is still a minor difference
         # that fails the test. However, by testing to normalize the image with 0.5 0.5 in the current codebase, the test pass.
         # Thus, we deactivate this test for now.
-        (
+        pytest.param(
             "lerobot/pusht",
             "diffusion",
             {
@@ -352,6 +391,7 @@ def test_multikey_construction(multikey: bool):
                 "down_dims": [128, 256, 512],
             },
             "",
+            marks=pytest.mark.skipif(not is_package_available("diffusers"), reason="diffusers not installed"),
         ),
         ("lerobot/aloha_sim_insertion_human", "act", {"n_action_steps": 10}, ""),
         (

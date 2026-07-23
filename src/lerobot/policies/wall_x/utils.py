@@ -25,15 +25,22 @@ import random
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
-from transformers import BatchFeature
 
-from lerobot.policies.wall_x.constant import (
+from lerobot.utils.import_utils import _transformers_available
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import BatchFeature
+else:
+    BatchFeature = None
+
+from lerobot.utils.constants import OBS_IMAGES
+
+from .constant import (
     CAMERA_NAME_MAPPING,
 )
-from lerobot.utils.constants import OBS_IMAGES
 
 
 @dataclass
@@ -109,6 +116,7 @@ def preprocesser_call(
     images: list | Any | None = None,
     text: str | list[str] | None = None,
     videos: list | Any | None = None,
+    device: torch.device | str | None = None,
     padding: bool | str = False,
     truncation: bool | None = None,
     max_length: int | None = None,
@@ -127,6 +135,7 @@ def preprocesser_call(
         images: Input images (PIL, numpy arrays, or torch tensors)
         text: Text or list of texts to tokenize
         videos: Input videos (numpy arrays or torch tensors)
+        device: Device on which image/video preprocessing should run
         padding: Whether to pad sequences to same length
         truncation: Whether to truncate sequences longer than max_length
         max_length: Maximum length for truncation/padding
@@ -144,7 +153,11 @@ def preprocesser_call(
     """
     # Process image inputs
     if images is not None and len(images) > 0:
-        image_inputs = processor.image_processor(images=images, return_tensors=return_tensors)
+        image_inputs = processor.image_processor(
+            images=images,
+            return_tensors=return_tensors,
+            device=device,
+        )
         image_grid_thw = image_inputs["image_grid_thw"]
     else:
         image_inputs = {}
@@ -152,7 +165,11 @@ def preprocesser_call(
 
     # Process video inputs
     if videos is not None:
-        videos_inputs = processor.image_processor(videos=videos, return_tensors=return_tensors)
+        videos_inputs = processor.image_processor(
+            videos=videos,
+            return_tensors=return_tensors,
+            device=device,
+        )
         video_grid_thw = videos_inputs["video_grid_thw"]
     else:
         videos_inputs = {}
@@ -406,10 +423,7 @@ def get_task_instruction(
         }
     )
 
-    if priority_order is not None:
-        priority_order = OrderedDict(priority_order)
-    else:
-        priority_order = default_priority_order
+    priority_order = OrderedDict(priority_order) if priority_order is not None else default_priority_order
 
     got_instruction = False
     task_instruction = ""
@@ -417,9 +431,8 @@ def get_task_instruction(
     # Sample instruction components based on priority probabilities
     for key, prob in priority_order.items():
         if key in frame_instruction_info and frame_instruction_info[key] != "":
-            if got_instruction:
-                if random.random() >= prob:
-                    continue
+            if got_instruction and random.random() >= prob:
+                continue
 
             task_instruction += f"\n{frame_instruction_info[key]}"
             got_instruction = True
@@ -531,10 +544,7 @@ def img_key_mapping(img_keys: list[str]) -> list[str]:
         if key in CAMERA_NAME_MAPPING:
             key = CAMERA_NAME_MAPPING[key]
         else:
-            if "view" in key:
-                key = key.replace("_", " ")
-            else:
-                key = key + " view"
+            key = key.replace("_", " ") if "view" in key else key + " view"
         processed_img_keys.append(key)
     return processed_img_keys
 

@@ -18,11 +18,16 @@ import logging
 import threading
 from collections import deque
 from pprint import pformat
-
-import serial
+from typing import TYPE_CHECKING
 
 from lerobot.motors.motors_bus import MotorCalibration, MotorNormMode
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.import_utils import _serial_available, require_package
+
+if TYPE_CHECKING or _serial_available:
+    import serial
+else:
+    serial = None  # type: ignore[assignment]
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 from ..teleoperator import Teleoperator
@@ -40,6 +45,7 @@ class HomunculusArm(Teleoperator):
     name = "homunculus_arm"
 
     def __init__(self, config: HomunculusArmConfig):
+        require_package("pyserial", extra="pyserial-dep", import_name="serial")
         super().__init__(config)
         self.config = config
         self.serial = serial.Serial(config.port, config.baud_rate, timeout=1)
