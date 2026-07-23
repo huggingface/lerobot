@@ -32,6 +32,7 @@ from lerobot.datasets.lancedb_dataset import (
     VIDEO_BLOB_COLUMN,
     VIDEOS_TABLE,
     LanceDBDataset,
+    build_video_byte_index,
     is_lance_dataset,
     lance_mp_context,
     to_lance_column,
@@ -66,6 +67,11 @@ def convert_frames_to_lance(src_root: Path, dst_root: Path) -> None:
                 pa.field("video_key", pa.string()),
                 pa.field("chunk_index", pa.int64()),
                 pa.field("file_index", pa.int64()),
+                pa.field("file_size", pa.int64()),
+                pa.field("moov_offset", pa.int64()),
+                pa.field("moov_size", pa.int64()),
+                pa.field("kf_indices", pa.list_(pa.int64())),
+                pa.field("kf_positions", pa.list_(pa.int64())),
                 lancedb.blob(VIDEO_BLOB_COLUMN),
             ]
         )
@@ -76,6 +82,7 @@ def convert_frames_to_lance(src_root: Path, dst_root: Path) -> None:
                     "video_key": mp4.parts[-3],
                     "chunk_index": int(mp4.parent.name.split("-")[1]),
                     "file_index": int(mp4.stem.split("-")[1]),
+                    **build_video_byte_index(mp4),
                     VIDEO_BLOB_COLUMN: mp4.read_bytes(),
                 }
                 for mp4 in video_files
@@ -193,6 +200,30 @@ def test_video_delta_timestamps_parity(video_dataset_roots):
         actual = lance_ds[idx]
         assert actual[f"{video_key}_is_pad"].tolist() == expected[f"{video_key}_is_pad"].tolist()
         assert_items_equal(actual, expected)
+
+
+@pytest.mark.skipif(
+    not hasattr(lancedb.table.LanceTable, "fetch_blob_ranges"),
+    reason="lancedb without fetch_blob_ranges",
+)
+def test_remote_ranged_path_parity(video_dataset_roots, monkeypatch, tmp_path):
+    """file:// routes through the remote path: byte-index ranges + fetch_blob_ranges."""
+    import lerobot.datasets.lancedb_dataset as module
+
+    monkeypatch.setattr(module, "HF_LEROBOT_HOME", tmp_path / "cache")
+    src_root, lance_root = video_dataset_roots
+    fps = LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta.fps
+    video_key = LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta.video_keys[0]
+    delta_timestamps = {video_key: [-2 / fps, 0.0, 1 / fps], "action": [0.0, 1 / fps]}
+    upstream = LeRobotDataset(
+        DUMMY_REPO_ID, root=src_root, delta_timestamps=delta_timestamps, video_backend="torchcodec"
+    )
+    remote_ds = LanceDBDataset(root=f"file://{lance_root}", delta_timestamps=delta_timestamps)
+
+    indices = [0, len(upstream) // 2, len(upstream) - 1]
+    batched = remote_ds.__getitems__(indices)
+    for idx, item in zip(indices, batched, strict=True):
+        assert_items_equal(item, upstream[idx])
 
 
 def test_video_return_uint8(video_dataset_roots):

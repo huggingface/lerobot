@@ -60,12 +60,176 @@ from .video_utils import FrameTimestampError
 FRAMES_TABLE = "frames"
 VIDEOS_TABLE = "videos"
 VIDEO_BLOB_COLUMN = "video_bytes"
-# Remote video files serving at least this many windows in a batch are
-# materialized with one sequential read; below it, decoding streams sparse
-# ranges through a buffered handle (a window needs ~100 KB; a file can be
-# hundreds of MB).
-_REMOTE_MATERIALIZE_MIN_WINDOWS = 4
-_REMOTE_READ_BUFFER = 1 << 20
+# Byte-index columns on the videos table, written at conversion time by
+# ``build_video_byte_index``. They let the remote reader translate a frame
+# window into the exact byte ranges its decode needs, fetched for the whole
+# batch in one parallel ``fetch_blob_ranges`` call.
+#
+# Scope of validity:
+# - ``kf_indices``/``kf_positions`` (frame index and byte offset of each
+#   keyframe) are container/codec agnostic: any video a demuxer can walk has
+#   them. Mapping timestamps to frame indices assumes constant frame rate,
+#   the same assumption the upstream torchcodec reader makes.
+# - ``moov_offset``/``moov_size`` are mp4-specific (the sample-table box a
+#   decoder must read before anything else; LeRobot videos are always mp4).
+#   For a container without them a converter can store 0/0.
+#
+# None of this affects correctness: these columns and the constants below
+# only decide what gets PREFETCHED. Any byte the decoder needs that was not
+# prefetched is served by a fallback ``read_range`` on the blob handle —
+# slower (one round trip), never wrong. A dataset with missing or stale
+# index data decodes correctly at reduced speed.
+VIDEO_INDEX_COLUMNS = ("file_size", "moov_offset", "moov_size", "kf_indices", "kf_positions")
+# Prefetch paddings for ffmpeg's I/O pattern. These are not tunables and not
+# derivable at runtime (ffmpeg does not expose its read plan); they bound two
+# stable, documented behaviors, with the fallback read as the safety net:
+# - on open, ffmpeg probes the container head (avio buffer reads over the
+#   first ~128 KB on mp4; we prefetch 2x that),
+# - after the last requested packet it reads ahead by up to one avio buffer
+#   (32 KiB default; we pad each range by 2x that).
+# If an ffmpeg upgrade ever reads differently, decodes stay correct and the
+# per-source ``fallback_bytes`` counter makes the added round trips visible.
+_HEAD_BYTES = 256 * 1024
+_RANGE_SLACK = 64 * 1024
+
+
+def _find_moov(read_at, file_size: int) -> tuple[int, int]:
+    """Locate the mp4 ``moov`` box by walking top-level box headers."""
+    offset = 0
+    while offset < file_size:
+        header = read_at(offset, 16)
+        box_size = int.from_bytes(header[:4], "big")
+        box_type = header[4:8]
+        if box_size == 1:
+            box_size = int.from_bytes(header[8:16], "big")
+        elif box_size == 0:
+            box_size = file_size - offset
+        if box_type == b"moov":
+            return offset, box_size
+        offset += box_size
+    raise ValueError("no moov box found")
+
+
+def build_video_byte_index(path: str | Path) -> dict:
+    """Compute the byte-index columns for one video file.
+
+    Converters store the returned dict alongside the video's blob row; the
+    remote reader uses it to translate frame windows into byte ranges (from
+    the keyframe preceding the window to the next keyframe after it).
+
+    Works for any container/codec pyav can demux (keyframe flags and packet
+    byte offsets are universal). Frame indices are derived as
+    ``round(pts * average_rate)``, i.e. constant frame rate is assumed —
+    matching the upstream reader's timestamp-to-index conversion. The moov
+    fields are meaningful for mp4 only; see ``VIDEO_INDEX_COLUMNS``.
+    """
+    import av
+
+    path = Path(path)
+    file_size = path.stat().st_size
+    kf_entries = []
+    with av.open(str(path)) as container:
+        stream = container.streams.video[0]
+        fps = float(stream.average_rate)
+        for packet in container.demux(stream):
+            if packet.pts is None or not packet.is_keyframe or packet.pos is None:
+                continue
+            kf_entries.append((round(float(packet.pts * packet.time_base) * fps), packet.pos))
+    kf_entries.sort()
+    with open(path, "rb") as f:
+
+        def read_at(offset: int, length: int) -> bytes:
+            f.seek(offset)
+            return f.read(length)
+
+        moov_offset, moov_size = _find_moov(read_at, file_size)
+    return {
+        "file_size": file_size,
+        "moov_offset": moov_offset,
+        "moov_size": moov_size,
+        "kf_indices": [index for index, _ in kf_entries],
+        "kf_positions": [position for _, position in kf_entries],
+    }
+
+
+class _SparseBlobSource(io.RawIOBase):
+    """File-like view over a remote blob backed by prefetched byte ranges.
+
+    Reads inside a prefetched range are served from memory; reads outside
+    fall back to one ``read_range`` on the lazy blob handle. The fallback is
+    what makes the prefetch heuristics (head bytes, range slack) safe: a
+    miss costs one network round trip, never incorrect data.
+    ``fallback_bytes`` counts miss traffic — near zero on healthy datasets,
+    and the number to check first when remote throughput looks off.
+    """
+
+    def __init__(self, size: int, fallback):
+        super().__init__()
+        self._size = size
+        self._fallback = fallback
+        self._starts: list[int] = []
+        self._chunks: list[bytes] = []
+        self._pos = 0
+        self.buffered = 0
+        self.fallback_bytes = 0
+
+    def add(self, offset: int, data: bytes) -> None:
+        import bisect
+
+        index = bisect.bisect_left(self._starts, offset)
+        self._starts.insert(index, offset)
+        self._chunks.insert(index, data)
+        self.buffered += len(data)
+
+    def covers(self, start: int, end: int) -> bool:
+        import bisect
+
+        index = bisect.bisect_right(self._starts, start) - 1
+        return index >= 0 and self._starts[index] + len(self._chunks[index]) >= end
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        if whence == io.SEEK_SET:
+            self._pos = offset
+        elif whence == io.SEEK_CUR:
+            self._pos += offset
+        else:
+            self._pos = self._size + offset
+        return self._pos
+
+    def tell(self) -> int:
+        return self._pos
+
+    def readinto(self, buffer) -> int:
+        import bisect
+
+        if self._pos >= self._size:
+            return 0
+        want = min(len(buffer), self._size - self._pos)
+        index = bisect.bisect_right(self._starts, self._pos) - 1
+        if index >= 0:
+            start, chunk = self._starts[index], self._chunks[index]
+            inside = self._pos - start
+            if inside < len(chunk):
+                data = chunk[inside : inside + want]
+                buffer[: len(data)] = data
+                self._pos += len(data)
+                return len(data)
+        # Cap the miss at the next buffered range so we never re-fetch bytes
+        # we already hold.
+        next_index = bisect.bisect_right(self._starts, self._pos)
+        if next_index < len(self._starts):
+            want = min(want, self._starts[next_index] - self._pos)
+        data = self._fallback.read_range(self._pos, want)
+        self.fallback_bytes += len(data)
+        buffer[: len(data)] = data
+        self._pos += len(data)
+        return len(data)
 
 
 class _VideoDecoderLRU:
@@ -346,6 +510,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self._frames_perm = None
         self._videos_table = None
         self._video_row_ids: dict[tuple, int] | None = None
+        self._file_meta: OrderedDict[tuple, dict] = OrderedDict()
         if video_decoder_cache_size is None:
             video_decoder_cache_size = 100 if self._is_local else 16
         # Remote decoders hold materialized video bytes: cap them at 2 GiB per
@@ -391,6 +556,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         state["_frames_perm"] = None
         state["_videos_table"] = None
         state["_video_row_ids"] = None
+        state["_file_meta"] = OrderedDict()
         state["_decoder_cache"] = _VideoDecoderLRU(
             self._decoder_cache.capacity, byte_budget=self._decoder_cache.byte_budget
         )
@@ -503,35 +669,10 @@ class LanceDBDataset(torch.utils.data.Dataset):
                     (sample_idx, shifted_ts)
                 )
 
-        # Fetch all missing video files in one call. Local references keep
-        # this batch's decoders alive even if the LRU evicts them.
-        from torchcodec.decoders import VideoDecoder
-
-        decoders = {key: self._decoder_cache.get(key) for key in requests if key in self._decoder_cache}
-        missing = [key for key in requests if key not in decoders]
-        if missing:
-            blob_files = self._videos_table.fetch_blob_files(
-                VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in missing]
-            )
-            for key, blob_file in zip(missing, blob_files, strict=True):
-                # Local tables decode straight off the seekable blob handle.
-                # Remote tables pick per file: many windows from one file ->
-                # materialize it with one sequential read; few windows ->
-                # stream sparse ranges through a buffered handle (fetches KBs
-                # instead of the whole file).
-                nbytes = 0
-                if self._is_local:
-                    source = blob_file
-                elif len(requests[key]) >= _REMOTE_MATERIALIZE_MIN_WINDOWS:
-                    source = blob_file.readall()
-                    nbytes = len(source)
-                else:
-                    source = io.BufferedReader(blob_file, buffer_size=_REMOTE_READ_BUFFER)
-                # approximate seek mode skips the full-file scan that exact
-                # mode performs on decoder creation.
-                decoder = VideoDecoder(source, seek_mode="approximate")
-                decoders[key] = decoder
-                self._decoder_cache.put(key, decoder, nbytes=nbytes)
+        if self._is_local:
+            decoders = self._ensure_decoders_local(requests)
+        else:
+            decoders = self._ensure_decoders_remote(requests)
 
         results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
 
@@ -570,6 +711,145 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 for future in futures:
                     future.result()
         return results
+
+    def _ensure_decoders_local(self, requests: dict) -> dict:
+        """Local tables: decoders read straight off seekable blob handles."""
+        from torchcodec.decoders import VideoDecoder
+
+        decoders = {}
+        for key in requests:
+            if key in self._decoder_cache:
+                decoders[key], _ = self._decoder_cache.get(key)
+        missing = [key for key in requests if key not in decoders]
+        if missing:
+            blob_files = self._videos_table.fetch_blob_files(
+                VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in missing]
+            )
+            for key, blob_file in zip(missing, blob_files, strict=True):
+                # approximate seek mode skips the full-file scan that exact
+                # mode performs on decoder creation.
+                decoder = VideoDecoder(blob_file, seek_mode="approximate")
+                decoders[key] = decoder
+                self._decoder_cache.put(key, (decoder, None))
+        return decoders
+
+    def _ensure_decoders_remote(self, requests: dict) -> dict:
+        """Remote tables: fetch every byte the batch needs in one parallel call.
+
+        Uses the byte-index columns to translate each frame window into a
+        keyframe-aligned byte range, batches all ranges (plus container
+        head/moov for new files) into a single ``fetch_blob_ranges`` request,
+        and feeds decoders through sparse in-memory sources.
+        """
+        from torchcodec.decoders import VideoDecoder
+
+        self._load_file_meta([key for key in requests if key not in self._file_meta])
+
+        decoders: dict[tuple, object] = {}
+        sources: dict[tuple, _SparseBlobSource] = {}
+        new_files = []
+        for key in requests:
+            if key in self._decoder_cache:
+                decoders[key], sources[key] = self._decoder_cache.get(key)
+            else:
+                new_files.append(key)
+
+        range_requests: list[tuple[int, int, int]] = []
+        range_targets: list[tuple[tuple, int]] = []  # (file_key, offset)
+
+        def request_range(file_key: tuple, start: int, end: int) -> None:
+            source = sources.get(file_key)
+            if source is not None and source.covers(start, end):
+                return
+            range_requests.append((self._video_row_ids[file_key], start, end - start))
+            range_targets.append((file_key, start))
+
+        for key in new_files:
+            meta = self._file_meta[key]
+            request_range(key, 0, min(_HEAD_BYTES, meta["file_size"]))
+            request_range(key, meta["moov_offset"], meta["moov_offset"] + meta["moov_size"])
+        fps = float(self.meta.fps)
+        for key, file_requests in requests.items():
+            meta = self._file_meta[key]
+            for _, shifted_ts in file_requests:
+                first = round(shifted_ts[0] * fps)
+                last = round(shifted_ts[-1] * fps)
+                start, end = self._window_byte_range(meta, min(first, last), max(first, last))
+                request_range(key, start, end)
+
+        if range_requests:
+            payloads = self._videos_table.fetch_blob_ranges(VIDEO_BLOB_COLUMN, range_requests)
+            fallback_handles: dict[tuple, object] = {}
+            if new_files:
+                handles = self._videos_table.fetch_blob_files(
+                    VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in new_files]
+                )
+                fallback_handles = dict(zip(new_files, handles, strict=True))
+            for (file_key, offset), payload in zip(range_targets, payloads, strict=True):
+                if file_key not in sources:
+                    sources[file_key] = _SparseBlobSource(
+                        self._file_meta[file_key]["file_size"], fallback_handles[file_key]
+                    )
+                sources[file_key].add(offset, payload.as_py())
+
+        for key in new_files:
+            decoder = VideoDecoder(sources[key], seek_mode="approximate")
+            decoders[key] = decoder
+        for key in requests:
+            source = sources[key]
+            # A cached entry costs its buffered bytes plus the decoder's
+            # ffmpeg context, which scales with resolution. Re-accounted every
+            # batch as sources grow, so the cache's byte budget alone bounds
+            # memory: an oversized entry is simply evicted and rebuilt from
+            # two extra prefetch ranges on its next touch.
+            height = decoders[key].metadata.height or 0
+            width = decoders[key].metadata.width or 0
+            context_cost = (8 << 20) + 8 * height * width
+            self._decoder_cache.put(key, (decoders[key], source), nbytes=source.buffered + context_cost)
+        return decoders
+
+    def _load_file_meta(self, missing: list[tuple]) -> None:
+        """Fetch byte-index columns for files not yet in the per-worker cache."""
+        if not missing:
+            return
+        clauses = " OR ".join(
+            f"(video_key = '{key}' AND chunk_index = {chunk} AND file_index = {file})"
+            for key, chunk, file in missing
+        )
+        rows = (
+            self._videos_table.search()
+            .where(clauses)
+            .select(["video_key", "chunk_index", "file_index", *VIDEO_INDEX_COLUMNS])
+            .to_arrow()
+            .to_pylist()
+        )
+        if len(rows) < len(missing):
+            raise ValueError(
+                "videos table is missing byte-index columns or rows "
+                f"({len(rows)} matches for {len(missing)} files). Re-convert the dataset "
+                f"with a converter that writes {VIDEO_INDEX_COLUMNS}."
+            )
+        for row in rows:
+            file_key = (row["video_key"], row["chunk_index"], row["file_index"])
+            self._file_meta[file_key] = {
+                "file_size": row["file_size"],
+                "moov_offset": row["moov_offset"],
+                "moov_size": row["moov_size"],
+                "kf_indices": np.asarray(row["kf_indices"], dtype=np.int64),
+                "kf_positions": np.asarray(row["kf_positions"], dtype=np.int64),
+            }
+            self._file_meta.move_to_end(file_key)
+        while len(self._file_meta) > 512:
+            self._file_meta.popitem(last=False)
+
+    @staticmethod
+    def _window_byte_range(meta: dict, first_frame: int, last_frame: int) -> tuple[int, int]:
+        """Byte range covering frames [first, last]: preceding keyframe to next keyframe."""
+        kf_indices, kf_positions = meta["kf_indices"], meta["kf_positions"]
+        start_idx = max(int(np.searchsorted(kf_indices, first_frame, side="right")) - 1, 0)
+        end_idx = int(np.searchsorted(kf_indices, last_frame, side="right"))
+        end = int(kf_positions[end_idx]) if end_idx < len(kf_positions) else meta["file_size"]
+        return int(kf_positions[start_idx]), min(end + _RANGE_SLACK, meta["file_size"])
 
     def _build_item(self, plan: dict, columns: dict[str, np.ndarray], row_pos: dict[int, int]) -> dict:
         base = row_pos[plan["abs_idx"]]
