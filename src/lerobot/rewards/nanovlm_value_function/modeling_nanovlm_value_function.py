@@ -9,14 +9,14 @@ from typing import Any
 import torch
 from torch import Tensor, nn
 
-from lerobot.configs.types import FeatureType
 from lerobot.rewards.distributional_value_function.common import DistributionalValueMixin
 from lerobot.rewards.distributional_value_function.modeling_distributional_value_function import ValueHead
-from lerobot.rewards.distributional_value_function.processor_distributional_value_function import (
-    IMAGE_MASK_SUFFIX,
+from lerobot.rewards.nanovlm_value_function.processor_nanovlm_value_function import (
+    NANOVLM_ATTENTION_MASK,
+    NANOVLM_IMAGES,
+    NANOVLM_INPUT_IDS,
 )
 from lerobot.rewards.pretrained import PreTrainedRewardModel
-from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 
 from .configuration_nanovlm_value_function import NanoVLMVFConfig
 
@@ -31,9 +31,6 @@ class NanoVLMVFRewardModel(DistributionalValueMixin, PreTrainedRewardModel):
         super().__init__(config)
         self.config = config
         config.validate_features()
-        self.image_keys = [
-            key for key, feature in config.input_features.items() if feature.type == FeatureType.VISUAL
-        ]
         code_path = Path(config.nanovlm_code_path)
         if not code_path.is_absolute():
             code_path = Path(__file__).resolve().parents[4] / code_path
@@ -80,25 +77,33 @@ class NanoVLMVFRewardModel(DistributionalValueMixin, PreTrainedRewardModel):
         return self._distributional_forward(batch)
 
     def _get_value_readout(self, batch: dict[str, Tensor]) -> Tensor:
-        batch_size = batch[OBS_LANGUAGE_TOKENS].shape[0]
-        image_tokens = []
-        image_masks = []
-        for key in self.image_keys:
-            image = batch[key]
-            mask = batch[key + IMAGE_MASK_SUFFIX].bool()
-            features = self.nanovlm.MP(self.nanovlm.vision_encoder(image))
-            image_tokens.append(features * mask[:, None, None].to(features.dtype))
-            image_masks.append(mask[:, None].expand(batch_size, features.shape[1]))
-
-        text_tokens = self.nanovlm.decoder.token_embedding(batch[OBS_LANGUAGE_TOKENS])
+        input_ids = batch[NANOVLM_INPUT_IDS]
+        attention_mask = batch[NANOVLM_ATTENTION_MASK].bool()
+        batch_size = input_ids.shape[0]
+        images = self.nanovlm._process_images(batch[NANOVLM_IMAGES], input_ids.device)
+        text_tokens = self.nanovlm.decoder.token_embedding(input_ids)
+        if images is not None:
+            image_tokens = self.nanovlm.MP(self.nanovlm.vision_encoder(images))
+            placeholder_count = (input_ids == self.nanovlm.tokenizer.image_token_id).sum().item()
+            image_token_count = image_tokens.shape[0] * image_tokens.shape[1]
+            if placeholder_count != image_token_count:
+                raise ValueError(
+                    "nanoVLM image placeholders do not match projected image tokens: "
+                    f"{placeholder_count} placeholders versus {image_token_count} tokens. "
+                    "The prompt may have been truncated; increase tokenizer_max_length."
+                )
+            text_tokens = self.nanovlm._replace_img_tokens_with_embd(
+                input_ids,
+                text_tokens,
+                image_tokens,
+            )
         query = self.value_query(torch.zeros(batch_size, 1, dtype=torch.long, device=text_tokens.device)).to(
             text_tokens.dtype
         )
-        inputs = torch.cat([*image_tokens, text_tokens, query], dim=1)
+        inputs = torch.cat([text_tokens, query], dim=1)
         attention_mask = torch.cat(
             [
-                *image_masks,
-                batch[OBS_LANGUAGE_ATTENTION_MASK].bool(),
+                attention_mask,
                 torch.ones(batch_size, 1, dtype=torch.bool, device=text_tokens.device),
             ],
             dim=1,

@@ -20,6 +20,11 @@ from lerobot.rewards.factory import make_reward_model, make_reward_pre_post_proc
 from lerobot.rewards.nanovlm_value_function.configuration_nanovlm_value_function import (
     NanoVLMVFConfig,
 )
+from lerobot.rewards.nanovlm_value_function.processor_nanovlm_value_function import (
+    NANOVLM_ATTENTION_MASK,
+    NANOVLM_IMAGES,
+    NANOVLM_INPUT_IDS,
+)
 from lerobot.rewards.temporal_siglip_value_function.configuration_temporal_siglip_value_function import (
     TemporalSiglipVFConfig,
 )
@@ -132,6 +137,20 @@ def main():
 
 
 def _collate_processed(samples):
+    if NANOVLM_IMAGES in samples[0]:
+        max_length = max(sample[NANOVLM_INPUT_IDS].shape[1] for sample in samples)
+        input_ids = []
+        attention_masks = []
+        for sample in samples:
+            padding = max_length - sample[NANOVLM_INPUT_IDS].shape[1]
+            input_ids.append(torch.nn.functional.pad(sample[NANOVLM_INPUT_IDS], (padding, 0)))
+            attention_masks.append(torch.nn.functional.pad(sample[NANOVLM_ATTENTION_MASK], (padding, 0)))
+        return {
+            NANOVLM_IMAGES: [sample[NANOVLM_IMAGES][0] for sample in samples],
+            NANOVLM_INPUT_IDS: torch.cat(input_ids),
+            NANOVLM_ATTENTION_MASK: torch.cat(attention_masks),
+        }
+
     keys = {
         *[key for key in samples[0] if key.startswith("observation.images.")],
         OBS_LANGUAGE_TOKENS,
@@ -192,8 +211,11 @@ def _image_shuffle_diagnostic(model, batch, camera_keys):
     matched_loss, _ = model(batch)
     shuffled = dict(batch)
     permutation = torch.roll(torch.arange(batch["mc_return"].shape[0], device=matched_loss.device), 1)
+    if NANOVLM_IMAGES in batch:
+        shuffled[NANOVLM_IMAGES] = [batch[NANOVLM_IMAGES][index] for index in permutation.cpu().tolist()]
     for key in camera_keys:
-        shuffled[key] = batch[key][permutation]
+        if key in batch:
+            shuffled[key] = batch[key][permutation]
     shuffled_loss, _ = model(shuffled)
     print(
         f"\nvisual dependence: matched_loss={matched_loss.item():.4f} "

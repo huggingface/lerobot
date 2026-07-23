@@ -12,9 +12,9 @@ from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 class NanoVLMVFConfig(RewardModelConfig):
     nanovlm_pretrained_path: str = "lusxvr/nanoVLM-460M-8k"
     nanovlm_code_path: str = "third_party/nanoVLM"
-    tokenizer_path: str = "HuggingFaceTB/SmolLM2-360M-Instruct"
-    image_resolution: tuple[int, int] = (512, 512)
-    tokenizer_max_length: int = 256
+    # The checkpoint was aligned with an 8k context. Native image tiling can
+    # require thousands of placeholder tokens for several robot cameras.
+    tokenizer_max_length: int = 8192
     num_value_bins: int = 201
     value_support_min: float = -1.0
     value_support_max: float = 0.0

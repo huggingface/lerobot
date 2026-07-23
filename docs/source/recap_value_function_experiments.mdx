@@ -52,8 +52,13 @@ lerobot-train \
   --dataset.repo_id=<dataset_repo_id> \
   --output_dir=outputs/vf_nanovlm_probe \
   --steps=5000 \
-  --batch_size=16
+  --batch_size=1
 ```
+
+The released checkpoint's native preprocessing resizes the long image side to
+2048 and creates 512px global/split views. A 480x640 camera therefore produces
+13 vision inputs and roughly 832 image placeholders; use batch size 1 initially
+for a three-camera setup.
 
 Then load the probe checkpoint and selectively fine-tune the projector/decoder
 at a lower learning rate.
@@ -106,6 +111,9 @@ uv run python scripts/overfit_vf_variant.py \
   --num_samples=16 \
   --steps=500
 ```
+
+For `nanovlm_value_function`, start with `--num_samples=2` because all overfit
+samples are held in one batch and native image tiling is memory intensive.
 
 Compare runs using held-out episode NLL/MAE, per-episode return rank correlation,
 terminal success/failure separation, and the matched-versus-shuffled image loss gap.
