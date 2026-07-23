@@ -55,6 +55,7 @@ from .helpers import (
     RemotePolicyConfig,
     TimedAction,
     TimedObservation,
+    decode_raw_observation_images,
     get_logger,
     observations_similar,
     raw_observation_to_observation,
@@ -176,12 +177,22 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.logger.debug(f"Receiving observations from {client_id}")
 
         receive_time = time.time()  # comparing timestamps so need time.time()
-        start_deserialize = time.perf_counter()
+        start_receive = time.perf_counter()
         received_bytes = receive_bytes_in_chunks(
             request_iterator, None, self.shutdown_event, self.logger
         )  # blocking call while looping over request_iterator
+        receive_duration = time.perf_counter() - start_receive
+
+        start_deserialize = time.perf_counter()
         timed_observation = pickle.loads(received_bytes)  # nosec
         deserialize_time = time.perf_counter() - start_deserialize
+
+        start_decode = time.perf_counter()
+        decoded_observation, decoded_image_count = decode_raw_observation_images(
+            timed_observation.get_observation()
+        )
+        timed_observation.observation = decoded_observation
+        decode_time = time.perf_counter() - start_decode
 
         self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")
 
@@ -201,7 +212,10 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.logger.debug(
             f"Server timestamp: {receive_time:.6f} | "
             f"Client timestamp: {obs_timestamp:.6f} | "
-            f"Deserialization time: {deserialize_time:.6f}s"
+            f"Payload size: {len(received_bytes) / 1024 / 1024:.3f} MiB | "
+            f"Receive time: {receive_duration:.6f}s | "
+            f"Deserialization time: {deserialize_time:.6f}s | "
+            f"JPEG decode time: {decode_time:.6f}s ({decoded_image_count} image(s))"
         )
 
         if not self._enqueue_observation(

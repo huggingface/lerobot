@@ -164,6 +164,7 @@ wandb/
 
 # Data folders
 data/
+downloaded_models/
 outputs/
 
 # Translations

@@ -19,6 +19,7 @@ no real hardware is accessed. Only the queue-update mechanism is verified.
 
 from __future__ import annotations
 
+import threading
 import time
 from queue import Queue
 
@@ -233,6 +234,89 @@ def test_ready_to_send_observation_with_varying_threshold(robot_client, g_thresh
         robot_client.action_queue.put(act)
 
     assert robot_client._ready_to_send_observation() is expected
+
+
+def test_observation_queue_keeps_latest_and_preserves_must_go(robot_client):
+    from lerobot.async_inference.helpers import TimedObservation
+
+    first = TimedObservation(
+        timestamp=time.time(),
+        timestep=10,
+        observation={"state": 1},
+        must_go=True,
+    )
+    latest = TimedObservation(
+        timestamp=time.time(),
+        timestep=11,
+        observation={"state": 2},
+        must_go=False,
+    )
+
+    robot_client._queue_observation(first)
+    robot_client._queue_observation(latest)
+
+    queued = robot_client.observation_queue.get_nowait()
+    robot_client.observation_queue.task_done()
+    assert queued is latest
+    assert queued.must_go is True
+    assert robot_client.observation_request_pending.is_set()
+
+
+def test_observation_upload_runs_in_background(monkeypatch, robot_client):
+    from lerobot.async_inference.helpers import TimedObservation
+
+    upload_started = threading.Event()
+    upload_finished = threading.Event()
+
+    def slow_send(_observation):
+        upload_started.set()
+        time.sleep(0.2)
+        upload_finished.set()
+        return True
+
+    monkeypatch.setattr(robot_client, "send_observation", slow_send)
+    robot_client._start_observation_sender()
+
+    observation = TimedObservation(
+        timestamp=time.time(),
+        timestep=0,
+        observation={"state": 1},
+        must_go=True,
+    )
+    queue_start = time.perf_counter()
+    robot_client._queue_observation(observation)
+    queue_duration = time.perf_counter() - queue_start
+
+    assert queue_duration < 0.05
+    assert upload_started.wait(timeout=1)
+    assert upload_finished.wait(timeout=1)
+
+
+def test_pending_observation_blocks_normal_send_but_not_must_go(robot_client):
+    robot_client.action_chunk_size = 20
+    robot_client.action_queue = Queue()
+    for action in _make_actions(start_ts=time.time(), start_t=0, count=8):
+        robot_client.action_queue.put(action)
+
+    robot_client.must_go.clear()
+    robot_client.observation_request_pending.set()
+    assert robot_client._ready_to_send_observation() is False
+
+    robot_client.action_queue = Queue()
+    robot_client.must_go.set()
+    assert robot_client._ready_to_send_observation() is True
+
+
+def test_threshold_observation_is_forced_through_server_filter(monkeypatch, robot_client):
+    queued_observations = []
+    monkeypatch.setattr(robot_client, "_queue_observation", queued_observations.append)
+
+    robot_client.must_go.set()
+    robot_client.control_loop_observation(task="test task")
+
+    assert len(queued_observations) == 1
+    assert queued_observations[0].must_go is True
+    assert robot_client.must_go.is_set() is False
 
 
 # -----------------------------------------------------------------------------

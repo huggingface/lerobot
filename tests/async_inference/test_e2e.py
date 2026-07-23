@@ -123,7 +123,8 @@ def test_async_inference_e2e(monkeypatch):
     monkeypatch.setattr(PolicyServer, "SendPolicyInstructions", _fake_send_policy_instructions, raising=True)
 
     # Build gRPC server running a PolicyServer
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="policy_server"))
+    server_executor = futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="policy_server")
+    server = grpc.server(server_executor)
     services_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
 
     # Use the host/port specified in the fixture's config
@@ -184,4 +185,5 @@ def test_async_inference_e2e(monkeypatch):
     action_thread.join()
     control_thread.join()
     policy_server.stop()
-    server.stop(grace=None)
+    server.stop(grace=None).wait()
+    server_executor.shutdown(wait=True)

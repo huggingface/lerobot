@@ -137,6 +137,16 @@ class RobotClientConfig:
     chunk_size_threshold: float = field(default=0.5, metadata={"help": "Threshold for chunk size control"})
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
 
+    # Observation transport configuration
+    observation_image_compression: str = field(
+        default="jpeg",
+        metadata={"help": "Image transport codec. Supported values: 'jpeg' and 'none'"},
+    )
+    jpeg_quality: int = field(
+        default=85,
+        metadata={"help": "JPEG quality for camera observations (1-100)"},
+    )
+
     # Aggregate function configuration (CLI-compatible)
     aggregate_fn_name: str = field(
         default="weighted_average",
@@ -179,6 +189,15 @@ class RobotClientConfig:
         if self.actions_per_chunk <= 0:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
 
+        if self.observation_image_compression not in {"jpeg", "none"}:
+            raise ValueError(
+                "observation_image_compression must be either 'jpeg' or 'none', "
+                f"got {self.observation_image_compression!r}"
+            )
+
+        if self.jpeg_quality < 1 or self.jpeg_quality > 100:
+            raise ValueError(f"jpeg_quality must be between 1 and 100, got {self.jpeg_quality}")
+
         self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)
 
     @classmethod
@@ -195,6 +214,8 @@ class RobotClientConfig:
             "policy_device": self.policy_device,
             "client_device": self.client_device,
             "chunk_size_threshold": self.chunk_size_threshold,
+            "observation_image_compression": self.observation_image_compression,
+            "jpeg_quality": self.jpeg_quality,
             "fps": self.fps,
             "actions_per_chunk": self.actions_per_chunk,
             "task": self.task,

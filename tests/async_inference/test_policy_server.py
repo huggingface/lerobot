@@ -17,8 +17,10 @@ Monkey-patch the `policy` attribute with a stub so that no real model inference 
 
 from __future__ import annotations
 
+import pickle
 import time
 
+import numpy as np
 import pytest
 import torch
 
@@ -187,6 +189,32 @@ def test_obs_sanity_checks(policy_server):
     # Case 3 – genuinely new & dissimilar observation passes
     obs_ok = _make_obs(torch.ones(6) * 5, timestep=3)
     assert policy_server._obs_sanity_checks(obs_ok, prev) is True
+
+
+def test_send_observations_decodes_jpeg_payload(policy_server):
+    from lerobot.async_inference.helpers import encode_image_to_jpeg
+    from lerobot.transport import services_pb2
+    from lerobot.transport.utils import send_bytes_in_chunks
+
+    class FakeContext:
+        @staticmethod
+        def peer():
+            return "test-client"
+
+    image = np.full((48, 64, 3), [200, 20, 10], dtype=np.uint8)
+    observation = _make_obs(torch.zeros(6), timestep=4, must_go=True)
+    observation.observation["front"] = encode_image_to_jpeg(image, quality=90)
+    payload = pickle.dumps(observation)
+    request_iterator = send_bytes_in_chunks(payload, services_pb2.Observation)
+
+    policy_server.SendObservations(request_iterator, FakeContext())
+
+    queued_observation = policy_server.observation_queue.get_nowait()
+    decoded_image = queued_observation.get_observation()["front"]
+    assert isinstance(decoded_image, np.ndarray)
+    assert decoded_image.shape == image.shape
+    assert decoded_image.dtype == np.uint8
+    assert decoded_image[24, 32, 0] > 180
 
 
 def test_predict_action_chunk(monkeypatch, policy_server):

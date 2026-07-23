@@ -16,10 +16,13 @@ import logging
 import logging.handlers
 import os
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import cv2
+import numpy as np
 import torch
 
 from lerobot.configs import PolicyFeature
@@ -48,6 +51,124 @@ LeRobotObservation = dict[str, torch.Tensor]
 
 # observation, ready for policy inference (image keys resized)
 Observation = dict[str, torch.Tensor]
+
+
+@dataclass(frozen=True)
+class EncodedImage:
+    """Self-describing image payload used by the async-inference transport."""
+
+    data: bytes
+    codec: str
+    original_shape: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class ImageCompressionStats:
+    """Image compression metrics for one robot observation."""
+
+    image_count: int = 0
+    raw_bytes: int = 0
+    encoded_bytes: int = 0
+
+    @property
+    def compression_ratio(self) -> float:
+        if self.raw_bytes == 0:
+            return 1.0
+        return self.encoded_bytes / self.raw_bytes
+
+
+def encode_image_to_jpeg(image: np.ndarray, quality: int) -> EncodedImage:
+    """Encode an RGB uint8 image as JPEG while preserving its color ordering."""
+    if not isinstance(image, np.ndarray):
+        raise TypeError(f"JPEG transport expects a numpy array, got {type(image)}")
+    if image.dtype != np.uint8:
+        raise ValueError(f"JPEG transport expects uint8 images, got {image.dtype}")
+    if image.ndim != 3 or image.shape[-1] != 3:
+        raise ValueError(f"JPEG transport expects an (H, W, 3) RGB image, got shape {image.shape}")
+    if quality < 1 or quality > 100:
+        raise ValueError(f"JPEG quality must be between 1 and 100, got {quality}")
+
+    rgb_image = np.ascontiguousarray(image)
+    bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
+    success, encoded = cv2.imencode(
+        ".jpg",
+        bgr_image,
+        [int(cv2.IMWRITE_JPEG_QUALITY), quality],
+    )
+    if not success:
+        raise RuntimeError("OpenCV failed to encode an observation image as JPEG")
+
+    return EncodedImage(
+        data=encoded.tobytes(),
+        codec="jpeg",
+        original_shape=tuple(image.shape),
+    )
+
+
+def decode_encoded_image(image: EncodedImage) -> np.ndarray:
+    """Decode an async-inference image payload back to an RGB uint8 array."""
+    if image.codec != "jpeg":
+        raise ValueError(f"Unsupported async-inference image codec: {image.codec}")
+
+    encoded = np.frombuffer(image.data, dtype=np.uint8)
+    decoded_bgr = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+    if decoded_bgr is None:
+        raise ValueError("OpenCV failed to decode a JPEG observation image")
+
+    decoded_rgb = cv2.cvtColor(decoded_bgr, cv2.COLOR_BGR2RGB)
+    if decoded_rgb.shape != image.original_shape:
+        raise ValueError(
+            "Decoded JPEG shape does not match the original image shape: "
+            f"{decoded_rgb.shape} != {image.original_shape}"
+        )
+    return decoded_rgb
+
+
+def encode_raw_observation_images(
+    raw_observation: RawObservation,
+    image_keys: Iterable[str],
+    quality: int,
+) -> tuple[RawObservation, ImageCompressionStats]:
+    """Return a shallow copy with selected camera images JPEG-encoded."""
+    encoded_observation = raw_observation.copy()
+    raw_bytes = 0
+    encoded_bytes = 0
+    image_count = 0
+
+    for key in image_keys:
+        if key not in encoded_observation:
+            continue
+
+        image = encoded_observation[key]
+        if isinstance(image, EncodedImage):
+            continue
+
+        encoded_image = encode_image_to_jpeg(image, quality)
+        encoded_observation[key] = encoded_image
+        raw_bytes += image.nbytes
+        encoded_bytes += len(encoded_image.data)
+        image_count += 1
+
+    return encoded_observation, ImageCompressionStats(
+        image_count=image_count,
+        raw_bytes=raw_bytes,
+        encoded_bytes=encoded_bytes,
+    )
+
+
+def decode_raw_observation_images(
+    raw_observation: RawObservation,
+) -> tuple[RawObservation, int]:
+    """Decode any transport-encoded images in a raw robot observation."""
+    decoded_observation = raw_observation.copy()
+    image_count = 0
+
+    for key, value in decoded_observation.items():
+        if isinstance(value, EncodedImage):
+            decoded_observation[key] = decode_encoded_image(value)
+            image_count += 1
+
+    return decoded_observation, image_count
 
 
 def visualize_action_queue_size(action_queue_size: list[int]) -> None:

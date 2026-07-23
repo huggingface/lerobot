@@ -28,6 +28,8 @@ python src/lerobot/async_inference/robot_client.py \
     --client_device=cpu \
     --actions_per_chunk=50 \
     --chunk_size_threshold=0.5 \
+    --observation_image_compression=jpeg \
+    --jpeg_quality=85 \
     --aggregate_fn_name=weighted_average \
     --debug_visualize_queue_size=True
 ```
@@ -38,9 +40,9 @@ import pickle  # nosec
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pprint import pformat
-from queue import Queue
+from queue import Empty, Full, Queue
 from typing import Any
 
 import draccus
@@ -74,6 +76,7 @@ from .helpers import (
     RemotePolicyConfig,
     TimedAction,
     TimedObservation,
+    encode_raw_observation_images,
     get_logger,
     map_robot_keys_to_lerobot_features,
     visualize_action_queue_size,
@@ -127,6 +130,17 @@ class RobotClient:
         self.action_queue_size = []
         self.start_barrier = threading.Barrier(2)  # 2 threads: action receiver, control loop
 
+        # Observation upload runs independently from the real-time action loop.
+        # A size-one queue implements a "latest frame wins" policy under congestion.
+        self.observation_queue: Queue[TimedObservation] = Queue(maxsize=1)
+        self.observation_sender_thread: threading.Thread | None = None
+        self.observation_request_pending = threading.Event()
+        self.image_keys = {
+            key
+            for key, feature in self.robot.observation_features.items()
+            if isinstance(feature, tuple) and len(feature) == 3 and feature[-1] == 3
+        }
+
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
 
@@ -134,7 +148,7 @@ class RobotClient:
 
         # Use an event for thread-safe coordination
         self.must_go = threading.Event()
-        self.must_go.set()  # Initially set - observations qualify for direct processing
+        self.must_go.set()  # The first observation must be processed immediately.
 
     @property
     def running(self):
@@ -163,6 +177,7 @@ class RobotClient:
             self.stub.SendPolicyInstructions(policy_setup)
 
             self.shutdown_event.clear()
+            self._start_observation_sender()
 
             return True
 
@@ -174,11 +189,82 @@ class RobotClient:
         """Stop the robot client"""
         self.shutdown_event.set()
 
+        self.channel.close()
+        self.logger.debug("Client stopped, channel closed")
+
+        if self.observation_sender_thread is not None:
+            self.observation_sender_thread.join(timeout=2)
+            if self.observation_sender_thread.is_alive():
+                self.logger.warning("Observation sender thread did not stop within 2 seconds")
+
         self.robot.disconnect()
         self.logger.debug("Robot disconnected")
 
-        self.channel.close()
-        self.logger.debug("Client stopped, channel closed")
+    def _start_observation_sender(self) -> None:
+        if self.observation_sender_thread is not None and self.observation_sender_thread.is_alive():
+            return
+
+        self.observation_sender_thread = threading.Thread(
+            target=self._observation_sender_loop,
+            name="observation_sender",
+            daemon=True,
+        )
+        self.observation_sender_thread.start()
+
+    def _observation_sender_loop(self) -> None:
+        """Encode and upload observations without blocking action execution."""
+        self.logger.info("Observation sender thread starting")
+
+        while self.running:
+            try:
+                observation = self.observation_queue.get(timeout=0.1)
+            except Empty:
+                continue
+
+            try:
+                if not self.send_observation(observation):
+                    self.must_go.set()
+                    self.observation_request_pending.clear()
+            except Exception as e:
+                self.must_go.set()
+                self.observation_request_pending.clear()
+                if self.running:
+                    self.logger.error(f"Error in observation sender thread: {e}")
+            finally:
+                self.observation_queue.task_done()
+
+    def _queue_observation(self, observation: TimedObservation) -> None:
+        """Queue the latest observation, replacing stale unsent data if necessary."""
+        self.observation_request_pending.set()
+        while True:
+            try:
+                self.observation_queue.put_nowait(observation)
+                return
+            except Full:
+                try:
+                    stale_observation = self.observation_queue.get_nowait()
+                except Empty:
+                    continue
+
+                observation.must_go = observation.must_go or stale_observation.must_go
+                self.observation_queue.task_done()
+                self.logger.debug(
+                    f"Replaced unsent observation #{stale_observation.get_timestep()} "
+                    f"with newer observation #{observation.get_timestep()}"
+                )
+
+    def _discard_queued_observations(self) -> None:
+        discarded = 0
+        while True:
+            try:
+                self.observation_queue.get_nowait()
+            except Empty:
+                break
+            self.observation_queue.task_done()
+            discarded += 1
+
+        if discarded:
+            self.logger.debug(f"Discarded {discarded} stale queued observation(s)")
 
     def send_observation(
         self,
@@ -192,8 +278,26 @@ class RobotClient:
         if not isinstance(obs, TimedObservation):
             raise ValueError("Input observation needs to be a TimedObservation!")
 
+        transport_observation = obs
+        if self.config.observation_image_compression == "jpeg":
+            encoded_observation, compression_stats = encode_raw_observation_images(
+                obs.get_observation(),
+                self.image_keys,
+                self.config.jpeg_quality,
+            )
+            transport_observation = replace(obs, observation=encoded_observation)
+
+            if compression_stats.image_count > 0:
+                reduction = compression_stats.raw_bytes / compression_stats.encoded_bytes
+                self.logger.debug(
+                    f"JPEG encoded {compression_stats.image_count} image(s) | "
+                    f"Raw: {compression_stats.raw_bytes / 1024 / 1024:.3f} MiB | "
+                    f"Encoded: {compression_stats.encoded_bytes / 1024 / 1024:.3f} MiB | "
+                    f"Reduction: {reduction:.1f}x"
+                )
+
         start_time = time.perf_counter()
-        observation_bytes = pickle.dumps(obs)
+        observation_bytes = pickle.dumps(transport_observation)
         serialize_time = time.perf_counter() - start_time
         self.logger.debug(f"Observation serialization time: {serialize_time:.6f}s")
 
@@ -205,7 +309,7 @@ class RobotClient:
                 silent=True,
             )
             _ = self.stub.SendObservations(observation_iterator)
-            obs_timestep = obs.get_timestep()
+            obs_timestep = transport_observation.get_timestep()
             self.logger.debug(f"Sent observation #{obs_timestep} | ")
 
             return True
@@ -334,7 +438,11 @@ class RobotClient:
                 self._aggregate_action_queues(timed_actions, self.config.aggregate_fn)
                 queue_update_time = time.perf_counter() - start_time
 
-                self.must_go.set()  # after receiving actions, next empty queue triggers must-go processing!
+                # Keep the request gated until stale work is removed and the
+                # next observation is guaranteed to bypass server filtering.
+                self._discard_queued_observations()
+                self.must_go.set()  # The next threshold-triggered observation must be processed.
+                self.observation_request_pending.clear()
 
                 if verbose:
                     # Get queue state after changes
@@ -403,7 +511,12 @@ class RobotClient:
     def _ready_to_send_observation(self):
         """Flags when the client is ready to send an observation"""
         with self.action_queue_lock:
-            return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
+            queue_is_empty = self.action_queue.empty()
+            queue_ratio = self.action_queue.qsize() / self.action_chunk_size
+
+        must_go_required = queue_is_empty and self.must_go.is_set()
+        threshold_reached = queue_ratio <= self._chunk_size_threshold
+        return must_go_required or (threshold_reached and not self.observation_request_pending.is_set())
 
     def control_loop_observation(self, task: str, verbose: bool = False) -> RawObservation:
         try:
@@ -424,16 +537,17 @@ class RobotClient:
 
             obs_capture_time = time.perf_counter() - start_time
 
-            # If there are no actions left in the queue, the observation must go through processing!
+            # Each gated request must produce a replacement chunk. This bypasses
+            # state-only similarity filtering that can otherwise starve the queue.
             with self.action_queue_lock:
-                observation.must_go = self.must_go.is_set() and self.action_queue.empty()
+                observation.must_go = self.must_go.is_set()
                 current_queue_size = self.action_queue.qsize()
 
-            _ = self.send_observation(observation)
+            self._queue_observation(observation)
 
             self.logger.debug(f"QUEUE SIZE: {current_queue_size} (Must go: {observation.must_go})")
             if observation.must_go:
-                # must-go event will be set again after receiving actions
+                # The event is set again after receiving the requested action chunk.
                 self.must_go.clear()
 
             if verbose:

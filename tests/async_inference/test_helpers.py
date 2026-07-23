@@ -24,9 +24,14 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 from lerobot.async_inference.helpers import (  # noqa: E402
+    EncodedImage,
     FPSTracker,
     TimedAction,
     TimedObservation,
+    decode_encoded_image,
+    decode_raw_observation_images,
+    encode_image_to_jpeg,
+    encode_raw_observation_images,
     observations_similar,
     prepare_image,
     prepare_raw_observation,
@@ -167,6 +172,69 @@ def test_timed_data_deserialization_data_getters():
     assert to_out.must_go is True
     assert to_out.get_observation().keys() == obs_dict.keys()
     torch.testing.assert_close(to_out.get_observation()[OBS_STATE], obs_dict[OBS_STATE])
+
+
+# ---------------------------------------------------------------------
+# JPEG observation transport
+# ---------------------------------------------------------------------
+
+
+def test_jpeg_image_transport_round_trip():
+    image = np.zeros((240, 320, 3), dtype=np.uint8)
+    image[:, :160] = [240, 20, 10]
+    image[:, 160:] = [10, 30, 230]
+
+    encoded = encode_image_to_jpeg(image, quality=90)
+    decoded = decode_encoded_image(encoded)
+
+    assert isinstance(encoded, EncodedImage)
+    assert encoded.codec == "jpeg"
+    assert len(encoded.data) < image.nbytes / 10
+    assert decoded.shape == image.shape
+    assert decoded.dtype == np.uint8
+    assert decoded[120, 80, 0] > 200
+    assert decoded[120, 240, 2] > 200
+    assert np.abs(decoded.astype(np.int16) - image.astype(np.int16)).mean() < 5
+
+
+def test_raw_observation_jpeg_transport_preserves_non_image_data():
+    image = np.full((120, 160, 3), 127, dtype=np.uint8)
+    raw_observation = {
+        "front": image,
+        "joint": 12.5,
+        "task": "pick up the block",
+    }
+
+    encoded_observation, stats = encode_raw_observation_images(
+        raw_observation,
+        image_keys={"front"},
+        quality=85,
+    )
+
+    assert raw_observation["front"] is image
+    assert isinstance(encoded_observation["front"], EncodedImage)
+    assert encoded_observation["joint"] == raw_observation["joint"]
+    assert encoded_observation["task"] == raw_observation["task"]
+    assert stats.image_count == 1
+    assert stats.raw_bytes == image.nbytes
+    assert stats.encoded_bytes == len(encoded_observation["front"].data)
+    assert stats.compression_ratio < 0.1
+
+    decoded_observation, decoded_count = decode_raw_observation_images(encoded_observation)
+
+    assert decoded_count == 1
+    assert decoded_observation["front"].shape == image.shape
+    assert decoded_observation["front"].dtype == np.uint8
+    assert decoded_observation["joint"] == raw_observation["joint"]
+    assert decoded_observation["task"] == raw_observation["task"]
+
+
+@pytest.mark.parametrize("quality", [0, 101])
+def test_jpeg_image_transport_rejects_invalid_quality(quality: int):
+    image = np.zeros((10, 10, 3), dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="JPEG quality"):
+        encode_image_to_jpeg(image, quality)
 
 
 # ---------------------------------------------------------------------
