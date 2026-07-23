@@ -178,7 +178,7 @@ class Backtrackable[T]:
         """
         Check if we can go back `steps` items without raising an IndexError.
         """
-        return steps <= len(self._back_buf) + self._cursor
+        return steps < len(self._back_buf) + self._cursor
 
     def can_peek_ahead(self, steps: int = 1) -> bool:
         """
