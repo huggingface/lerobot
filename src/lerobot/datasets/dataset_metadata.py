@@ -179,8 +179,8 @@ class LeRobotDatasetMetadata:
     def _load_metadata(self):
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
-        self.tasks = load_tasks(self.root)
-        self.episodes = load_episodes(self.root)
+        self.tasks = load_tasks(self.root) if self.total_tasks > 0 else None
+        self.episodes = load_episodes(self.root) if self.total_episodes > 0 else None
         self.stats = load_stats(self.root)
 
     def ensure_readable(self) -> None:

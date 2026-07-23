@@ -439,6 +439,20 @@ def test_add_frame_works_in_write_mode(tmp_path):
 # ── Resume mode ──────────────────────────────────────────────────────
 
 
+def test_resume_freshly_created_empty_dataset(tmp_path):
+    """resume() accepts a local dataset created before any episode was recorded."""
+    root = tmp_path / "resume_empty_ds"
+    LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=root)
+
+    resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
+
+    assert isinstance(resumed.writer, DatasetWriter)
+    assert resumed.meta.total_episodes == 0
+    assert resumed.meta.total_frames == 0
+    assert resumed.meta.tasks is None
+    assert resumed.meta.episodes is None
+
+
 def test_resume_creates_writer(tmp_path):
     """After resume(), writer is a DatasetWriter."""
     root = tmp_path / "resume_ds"
