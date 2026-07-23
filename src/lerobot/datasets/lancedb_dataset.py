@@ -792,9 +792,14 @@ class LanceDBDataset(torch.utils.data.Dataset):
                     )
                 sources[file_key].add(offset, payload.as_py())
 
-        for key in new_files:
-            decoder = VideoDecoder(sources[key], seek_mode="approximate")
-            decoders[key] = decoder
+        # Decoder creation parses the moov sample tables (~tens of ms per
+        # file, GIL-released C++): parallelize across the batch's new files.
+        if len(new_files) > 1:
+            with ThreadPoolExecutor(max_workers=min(len(new_files), 16)) as pool:
+                created = pool.map(lambda key: VideoDecoder(sources[key], seek_mode="approximate"), new_files)
+            decoders.update(zip(new_files, created, strict=True))
+        elif new_files:
+            decoders[new_files[0]] = VideoDecoder(sources[new_files[0]], seek_mode="approximate")
         for key in requests:
             source = sources[key]
             # A cached entry costs its buffered bytes plus the decoder's
@@ -812,31 +817,41 @@ class LanceDBDataset(torch.utils.data.Dataset):
         """Fetch byte-index columns for files not yet in the per-worker cache."""
         if not missing:
             return
-        clauses = " OR ".join(
-            f"(video_key = '{key}' AND chunk_index = {chunk} AND file_index = {file})"
-            for key, chunk, file in missing
-        )
-        rows = (
+        # Point reads by _rowid: a filter on plain columns would scan (and
+        # decode the large keyframe list columns for) the whole table. Keep
+        # the keyframe lists in Arrow/numpy — converting them to Python lists
+        # costs seconds per batch at droid scale (~50k entries per file).
+        row_ids = ",".join(str(self._video_row_ids[file_key]) for file_key in missing)
+        batch = (
             self._videos_table.search()
-            .where(clauses)
+            .where(f"_rowid IN ({row_ids})")
             .select(["video_key", "chunk_index", "file_index", *VIDEO_INDEX_COLUMNS])
             .to_arrow()
-            .to_pylist()
         )
-        if len(rows) < len(missing):
+        if batch.num_rows != len(missing):
             raise ValueError(
                 "videos table is missing byte-index columns or rows "
-                f"({len(rows)} matches for {len(missing)} files). Re-convert the dataset "
+                f"({batch.num_rows} matches for {len(missing)} files). Re-convert the dataset "
                 f"with a converter that writes {VIDEO_INDEX_COLUMNS}."
             )
-        for row in rows:
-            file_key = (row["video_key"], row["chunk_index"], row["file_index"])
+        scalars = {
+            name: batch.column(name).to_pylist()
+            for name in ("video_key", "chunk_index", "file_index", "file_size", "moov_offset", "moov_size")
+        }
+        kf_index_column = batch.column("kf_indices").combine_chunks()
+        kf_position_column = batch.column("kf_positions").combine_chunks()
+        index_offsets = kf_index_column.offsets.to_numpy(zero_copy_only=False)
+        index_values = kf_index_column.values.to_numpy(zero_copy_only=False)
+        position_offsets = kf_position_column.offsets.to_numpy(zero_copy_only=False)
+        position_values = kf_position_column.values.to_numpy(zero_copy_only=False)
+        for i in range(batch.num_rows):
+            file_key = (scalars["video_key"][i], scalars["chunk_index"][i], scalars["file_index"][i])
             self._file_meta[file_key] = {
-                "file_size": row["file_size"],
-                "moov_offset": row["moov_offset"],
-                "moov_size": row["moov_size"],
-                "kf_indices": np.asarray(row["kf_indices"], dtype=np.int64),
-                "kf_positions": np.asarray(row["kf_positions"], dtype=np.int64),
+                "file_size": scalars["file_size"][i],
+                "moov_offset": scalars["moov_offset"][i],
+                "moov_size": scalars["moov_size"][i],
+                "kf_indices": index_values[index_offsets[i] : index_offsets[i + 1]],
+                "kf_positions": position_values[position_offsets[i] : position_offsets[i + 1]],
             }
             self._file_meta.move_to_end(file_key)
         while len(self._file_meta) > 512:
