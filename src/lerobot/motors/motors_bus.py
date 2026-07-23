@@ -1061,7 +1061,7 @@ class SerialMotorsBus(MotorsBusBase):
 
     @check_if_not_connected
     def write(
-        self, data_name: str, motor: str, value: Value, *, normalize: bool = True, num_retry: int = 0
+        self, data_name: str, motor: str, value: Value, *, normalize: bool = True, num_retry: int = 99
     ) -> None:
         """Write a value to a single motor's register.
 
