@@ -1,0 +1,134 @@
+# GR00T N1.5 정책
+
+GR00T N1.5는 NVIDIA에서 공개한 오픈 파운데이션 모델로, 범용 휴머노이드 로봇의 추론과 스킬 수행을 위해 설계되었습니다. 언어와 이미지를 포함한 멀티모달 입력을 받아 다양한 환경에서 조작(manipulation) 작업을 수행하는 교차 임바디먼트(cross-embodiment) 모델입니다.
+
+이 문서는 GR00T를 LeRobot 프레임워크에 통합하고 사용하는 방법에 대한 구체적인 내용을 다룹니다.
+
+## 모델 개요
+
+NVIDIA Isaac GR00T N1.5는 GR00T N1 파운데이션 모델의 업그레이드 버전입니다. 휴머노이드 로봇의 일반화 능력과 언어 지시 수행 능력을 향상시키기 위해 설계되었습니다.
+
+개발자와 연구자는 자신의 실제 데이터나 합성 데이터를 이용해 GR00T N1.5를 사후 학습(post-train)하여 특정 휴머노이드 로봇이나 작업에 맞게 적응시킬 수 있습니다.
+
+GR00T N1.5(특히 GR00T-N1.5-3B 모델)는 사전 학습된 비전 및 언어 인코더를 사용하여 구축되었습니다. 비전, 언어, 고유수용감각(proprioception)에 조건화된 액션 청크(chunk of actions)를 모델링하기 위해 flow matching 기반 액션 트랜스포머(action transformer)를 활용합니다.
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-groot-paper1%20(1).png"
+  alt="An overview of GR00T"
+  width="80%"
+/>
+
+뛰어난 성능은 다음과 같은 방대하고 다양한 휴머노이드 데이터셋으로 학습된 덕분입니다:
+
+- 로봇에서 실제로 수집된 데이터.
+- NVIDIA Isaac GR00T Blueprint를 사용하여 생성된 합성 데이터.
+- 인터넷 규모의 비디오 데이터.
+
+이러한 접근 방식 덕분에 모델은 사후 학습을 통해 특정 임바디먼트, 작업, 환경에 높은 적응성을 보입니다.
+
+## 설치 요구사항
+
+현재 기준으로, GR00T N1.5는 내부 동작에 flash attention을 필요로 합니다.
+
+이를 선택 사항으로 만드는 작업을 진행 중이지만, 그동안은 추가 설치 단계가 필요하며 CUDA를 지원하는 장치에서만 사용할 수 있습니다.
+
+1. [설치 가이드](./installation)의 환경 설정(Environment Setup)을 따릅니다. **주의**: 이 단계에서 `lerobot`을 설치하지 마세요.
+2. 다음을 실행하여 [Flash Attention](https://github.com/Dao-AILab/flash-attention)을 설치합니다:
+
+```bash
+# 사용 환경에 맞는 설치 옵션은 https://pytorch.org/get-started/locally/ 에서 확인하세요
+pip install "torch>=2.2.1,<2.8.0" "torchvision>=0.21.0,<0.23.0" # --index-url https://download.pytorch.org/whl/cu1XX
+pip install ninja "packaging>=24.2,<26.0" # flash attention 의존성
+pip install "flash-attn>=2.5.9,<3.0.0" --no-build-isolation
+python -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} imported successfully')"
+```
+
+3. 다음을 실행하여 LeRobot을 설치합니다:
+
+```bash
+pip install lerobot[groot]
+```
+
+## 사용법
+
+LeRobot 구성에서 GR00T를 사용하려면, 정책 타입을 다음과 같이 지정합니다:
+
+```python
+policy.type=groot
+```
+
+## 학습
+
+### 학습 명령 예시
+
+다음은 자신의 데이터셋에 대해 기본 GR00T 모델을 파인튜닝(finetuning)하는 전체 학습 명령의 예시입니다:
+
+```bash
+# 멀티 GPU 설정 사용
+accelerate launch \
+  --multi_gpu \
+  --num_processes=$NUM_GPUS \
+  $(which lerobot-train) \
+  --output_dir=$OUTPUT_DIR \
+  --save_checkpoint=true \
+  --batch_size=$BATCH_SIZE \
+  --steps=$NUM_STEPS \
+  --save_freq=$SAVE_FREQ \
+  --log_freq=$LOG_FREQ \
+  --policy.push_to_hub=true \
+  --policy.type=groot \
+  --policy.repo_id=$REPO_ID \
+  --policy.tune_diffusion_model=false \
+  --dataset.repo_id=$DATASET_ID \
+  --wandb.enable=true \
+  --wandb.disable_artifact=true \
+  --job_name=$JOB_NAME
+```
+
+## 성능 결과
+
+### Libero 벤치마크 결과
+
+> [!NOTE]
+> Libero 사용에 대한 지침을 참고하세요: [Libero](./libero)
+
+GR00T는 Libero 벤치마크 스위트에서 강력한 성능을 보여주었습니다. LeRobot 구현을 비교·테스트하기 위해, GR00T N1.5 모델을 Libero 데이터셋에서 30k 스텝 동안 파인튜닝하고 GR00T 참조 결과와 비교하였습니다.
+
+| Benchmark          | LeRobot Implementation | GR00T Reference |
+| ------------------ | ---------------------- | --------------- |
+| **Libero Spatial** | 82.0%                  | 92.0%           |
+| **Libero Object**  | 99.0%                  | 92.0%           |
+| **Libero Long**    | 82.0%                  | 76.0%           |
+| **Average**        | 87.0%                  | 87.0%           |
+
+이 결과들은 다양한 로봇 조작 작업에 걸친 GR00T의 강력한 일반화 능력을 보여줍니다. 이 결과를 재현하려면 [Libero](./libero) 섹션의 지침을 따르세요.
+
+### 하드웨어 환경에서 평가하기
+
+원하는 매개변수로 모델을 학습한 뒤에는 다운스트림 작업에서 추론을 실행할 수 있습니다. [Imitation Learning for Robots](./il_robots)의 지침을 따르세요. 예시:
+
+```bash
+lerobot-record \
+  --robot.type=bi_so_follower \
+  --robot.left_arm_port=/dev/ttyACM1 \
+  --robot.right_arm_port=/dev/ttyACM0 \
+  --robot.id=bimanual_follower \
+  --robot.cameras='{ right: {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
+    left: {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30},
+    top: {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 30},
+  }' \
+  --display_data=true \
+  --dataset.repo_id=<user>/eval_groot-bimanual  \
+  --dataset.num_episodes=10 \
+  --dataset.single_task="Grab and handover the red cube to the other arm" \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2 \
+  # --dataset.vcodec=auto \
+  --policy.path=<user>/groot-bimanual \ # 학습한 모델
+  --dataset.episode_time_s=30 \
+  --dataset.reset_time_s=10
+```
+
+## 라이선스
+
+이 모델은 원본 [GR00T repository](https://github.com/NVIDIA/Isaac-GR00T)와 일관되게 NVIDIA의 독점 라이선스를 따릅니다. 향후 버전(N1.7부터)은 **Apache 2.0 License**를 따를 예정입니다.
