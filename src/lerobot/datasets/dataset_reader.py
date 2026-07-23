@@ -22,7 +22,14 @@ from pathlib import Path
 import datasets
 import torch
 
+from lerobot.configs import (
+    DEFAULT_DEPTH_UNIT,
+    DEPTH_METER_UNIT,
+    DepthEncoderConfig,
+)
+
 from .dataset_metadata import LeRobotDatasetMetadata
+from .depth_utils import MM_PER_METRE, dequantize_depth
 from .feature_utils import (
     check_delta_timestamps,
     get_delta_indices,
@@ -51,6 +58,7 @@ class DatasetReader:
         delta_timestamps: dict[str, list[float]] | None,
         image_transforms: Callable | None,
         return_uint8: bool = False,
+        depth_output_unit: str = DEFAULT_DEPTH_UNIT,
     ):
         """Initialize the reader with metadata, filtering, and transform config.
 
@@ -68,14 +76,21 @@ class DatasetReader:
                 relative timestamp offsets for temporal context windows.
             image_transforms: Optional torchvision v2 transform applied to
                 visual features.
+            return_uint8: If True, return RGB video frames as raw uint8 tensors
+                instead of normalized float32.
+            depth_output_unit: Physical unit depth maps are dequantized to
+                (``"m"`` or ``"mm"``). Defaults to ``"mm"``.
         """
         self._meta = meta
         self.root = root
         self.episodes = episodes
         self._tolerance_s = tolerance_s
         self._video_backend = video_backend
+        if image_transforms is not None and not callable(image_transforms):
+            raise TypeError("image_transforms must be callable or None.")
         self._image_transforms = image_transforms
         self._return_uint8 = return_uint8
+        self._depth_output_unit = depth_output_unit
 
         self.hf_dataset: datasets.Dataset | None = None
         self._absolute_to_relative_idx: dict[int, int] | None = None
@@ -85,6 +100,28 @@ class DatasetReader:
         if delta_timestamps is not None:
             check_delta_timestamps(delta_timestamps, meta.fps, tolerance_s)
             self.delta_indices = get_delta_indices(delta_timestamps, meta.fps)
+
+        self._depth_encoder_configs: dict[str, DepthEncoderConfig] = {
+            vid_key: DepthEncoderConfig.from_video_info(self._meta.features[vid_key].get("info"))
+            for vid_key in self._meta.depth_keys
+        }
+
+        # Get the input unit of each depth feature stored as raw images.
+        self._image_depth_units: dict[str, str | None] = {
+            key: (self._meta.features[key].get("info") or {}).get("depth_unit")
+            for key in self._meta.depth_keys
+            if key in self._meta.image_keys
+        }
+
+    def set_image_transforms(self, image_transforms: Callable | None) -> None:
+        """Replace the transform applied to visual observations."""
+        if image_transforms is not None and not callable(image_transforms):
+            raise TypeError("image_transforms must be callable or None.")
+        self._image_transforms = image_transforms
+
+    def clear_image_transforms(self) -> None:
+        """Remove the transform applied to visual observations."""
+        self._image_transforms = None
 
     def try_load(self) -> bool:
         """Attempt to load from local cache. Returns True if data is sufficient."""
@@ -247,7 +284,18 @@ class DatasetReader:
                 self._tolerance_s,
                 self._video_backend,
                 return_uint8=self._return_uint8,
+                is_depth=vid_key in self._meta.depth_keys,
             )
+            if vid_key in self._meta.depth_keys:
+                depth_encoder = self._depth_encoder_configs[vid_key]
+                frames = dequantize_depth(
+                    frames,
+                    depth_min=depth_encoder.depth_min,
+                    depth_max=depth_encoder.depth_max,
+                    shift=depth_encoder.shift,
+                    use_log=depth_encoder.use_log,
+                    output_unit=self._depth_output_unit,
+                )
             return vid_key, frames.squeeze(0)
 
         items = list(query_timestamps.items())
@@ -287,9 +335,17 @@ class DatasetReader:
             item = {**video_frames, **item}
 
         if self._image_transforms is not None:
-            image_keys = self._meta.camera_keys
-            for cam in image_keys:
+            for cam in self._meta.camera_keys:
+                if cam in self._meta.depth_keys:
+                    continue
                 item[cam] = self._image_transforms(item[cam])
+
+        # Convert depth features to the output unit.
+        for key, stored_unit in self._image_depth_units.items():
+            if key in item and stored_unit is not None and stored_unit != self._depth_output_unit:
+                item[key] = (
+                    item[key] * MM_PER_METRE if stored_unit == DEPTH_METER_UNIT else item[key] / MM_PER_METRE
+                )
 
         # Add task as a string
         task_idx = item["task_index"].item()

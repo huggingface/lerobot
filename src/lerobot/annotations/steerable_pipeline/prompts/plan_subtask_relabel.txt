@@ -1,0 +1,35 @@
+Annotate one fixed segment from a longer robot demonstration.
+
+Return only JSON:
+  {{"label": "<short descriptive subtask label>"}}
+
+You are shown up to three timestamped contact sheets, in order:
+- The FIRST sheet is the PREVIOUS segment (context only); it may be absent.
+- The SECOND sheet is the CURRENT target segment.
+- The THIRD sheet is the NEXT segment (context only); it may be absent.
+Each tile has its timestamp (seconds, absolute video time) burned into its
+top-left corner.
+
+Episode instruction: "{episode_task}"
+Target segment: {segment_index} of {segment_count}
+Target time: {start:.2f}s to {end:.2f}s
+Original predicted label for this exact segment: "{seed_label}"
+
+Rules:
+- Label ONLY the current target segment (the second sheet). Use the
+  previous/next sheets only to disambiguate what changed.
+- Treat the original predicted label as a STRONG PRIOR, not ground truth:
+  verify it against the current segment and correct it minimally.
+- If it already names the right action and main object, keep it; only fix
+  grammar or add a clearly visible essential detail.
+- If it is vague but directionally correct, make it more specific.
+- If it describes the previous/next segment, the wrong action, wrong
+  object, wrong destination, or a wrong state change, replace it.
+- Do not describe the previous or next segment, and do not split, merge,
+  or move the fixed segment.
+- Do not introduce an action that is not clearly visible in the current
+  target segment.
+- Use one concise imperative phrase. Name the manipulated object and the
+  action / state change. Include source, destination, side, direction,
+  final placement, or opened/closed state when visible and central.
+- Do not mention timestamps, frame numbers, uncertainty, or intent.
