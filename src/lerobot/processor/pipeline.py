@@ -42,6 +42,7 @@ from typing import Any, TypedDict, TypeVar, cast
 
 import torch
 from huggingface_hub import hf_hub_download
+from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_file, save_file
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
@@ -864,6 +865,11 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                     return json.load(f), Path(config_path).parent
 
             except Exception as e:
+                if cls._hub_model_requires_migration(model_id, hub_download_kwargs):
+                    cls._suggest_processor_migration(
+                        model_id,
+                        f"Config file '{config_filename}' not found on the Hugging Face Hub",
+                    )
                 raise FileNotFoundError(
                     f"Could not find '{config_filename}' on the HuggingFace Hub at '{model_id}'"
                 ) from e
@@ -1315,6 +1321,43 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         # Have JSON files but no processor configs - suggest migration
         return True
+
+    @classmethod
+    def _hub_model_requires_migration(cls, model_id: str, hub_download_kwargs: dict[str, Any]) -> bool:
+        """Check whether a Hub repository contains a legacy LeRobot policy config.
+
+        A missing processor file is not sufficient evidence by itself: the repository
+        may be private, unavailable, or unrelated to LeRobot. This method therefore
+        fetches the policy's ``config.json`` and checks for the feature declarations
+        that identify a LeRobot policy checkpoint. Any lookup or parsing failure is
+        ignored so the original processor-file error remains visible.
+
+        Args:
+            model_id: Hugging Face Hub model repository ID.
+            hub_download_kwargs: Authentication, cache, and revision arguments used
+                for the original processor lookup.
+
+        Returns:
+            True when the repository has a legacy LeRobot policy configuration.
+        """
+        try:
+            config_path = hf_hub_download(
+                repo_id=model_id,
+                filename="config.json",
+                repo_type="model",
+                **hub_download_kwargs,
+            )
+            with open(config_path) as f:
+                config = json.load(f)
+        except (HfHubHTTPError, json.JSONDecodeError, OSError):
+            return False
+
+        return (
+            isinstance(config, dict)
+            and isinstance(config.get("type"), str)
+            and isinstance(config.get("input_features"), dict)
+            and isinstance(config.get("output_features"), dict)
+        )
 
     @classmethod
     def _is_processor_config(cls, config: Any) -> bool:
