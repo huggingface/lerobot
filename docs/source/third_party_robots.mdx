@@ -1,0 +1,171 @@
+# Third-Party Robots & Teleoperators
+
+The LeRobot ecosystem extends far beyond its officially supported hardware. Thanks to LeRobot's plugin architecture, the community has built integrations for a wide range of robot arms and teleoperation devices — from industrial manipulators to affordable hobbyist platforms, VR headsets, haptic devices, and full arm-plus-leader kits. This page showcases community-maintained integrations you can use for teleoperation, data collection, and policy deployment.
+
+<Tip>
+These projects are developed and maintained by third parties. Please refer to each repository for installation instructions, hardware requirements, and support.
+</Tip>
+
+## Industrial & Collaborative Arms
+
+**[lerobot-robot-xarm](https://github.com/SpesRobotics/lerobot-robot-xarm)** — by SpesRobotics
+
+xArm integration for LeRobot, bringing UFACTORY's popular collaborative arm series into the LeRobot workflow.
+
+**[lerobot_trossen](https://github.com/TrossenRobotics/lerobot_trossen)** — by Trossen Robotics
+
+Official hardware integrations from Trossen Robotics, makers of the WidowX and ALOHA-style arms widely used in robot learning research.
+
+**[lerobot_lebai](https://github.com/lebai-robotics/lerobot_lebai)** — by Lebai Robotics
+
+Integration for Lebai collaborative robot arms, bringing them into the LeRobot teleoperation and recording workflow.
+
+**[LeFranX](https://github.com/wengmister/LeFranX)** — by wengmister
+
+LeRobot extension for the Franka robot paired with the XHand dexterous hand. An instantiation of the LeVR framework, combining a research-grade arm with VR-based teleoperation.
+
+**[UR5e-LeRobot](https://github.com/yechen056/UR5e-LeRobot)** — by yechen056
+
+LeRobot extension for the Universal Robots UR5e, with both single-arm and bimanual support.
+
+**[lerobot_ur5e_auto](https://github.com/scy-v/lerobot_ur5e_auto)** — by scy-v
+
+Automated data collection for a mobile UR5e platform, built on LeRobot — great for scaling up dataset creation with minimal human supervision.
+
+**[lerobot_ur5e_gello](https://github.com/F-Fer/lerobot_ur5e_gello)** — by F-Fer
+
+Custom LeRobot plugins for a UR5e follower and GELLO leader arm, with ready-to-use scripts for data collection and VLA policy inference.
+
+## Research & Learning Platforms
+
+**[lerobot-arx5](https://github.com/villekuosmanen/lerobot-arx5)** — by villekuosmanen
+
+An ARX5 robot arm plugin for LeRobot, integrating this compact, learning-friendly manipulator into the ecosystem.
+
+**[lerobot_robot_piper (AgRobotics Research)](https://github.com/AgRoboticsResearch/lerobot_robot_piper)** — by AgRoboticsResearch
+
+Integration of the AgileX Piper arm with LeRobot, developed in the context of agricultural robotics research.
+
+**[lerobot_robot_piper (WeGo Robotics)](https://github.com/WeGo-Robotics/lerobot_robot_piper)** — by WeGo-Robotics
+
+Multi-arm teleoperation plugin for the AgileX Piper robot, integrating with LeRobot for data collection and policy deployment.
+
+## Affordable & Hobbyist Arms
+
+**[fashionstar-lerobot-robot-cello](https://github.com/servodevelop/fashionstar-lerobot-robot-cello)** — by servodevelop
+
+LeRobot integration for the FashionStar Cello robot arm.
+
+**[fashionstar-lerobot-robot-viola](https://github.com/servodevelop/fashionstar-lerobot-robot-viola)** — by servodevelop
+
+LeRobot integration for the FashionStar Viola robot arm — a sibling to the Cello integration above.
+
+**[lerobot-robot-seeed-b601](https://github.com/Seeed-Projects/lerobot-robot-seeed-b601)** — by Seeed Studio
+
+Integration for Seeed Studio's reBot Arm B601, enabling the low-cost B601 to be used as a follower arm within LeRobot.
+
+## Multi-Device & Specialized Integrations
+
+**[lerobot-robot-ugo-pro](https://github.com/ugo-plus/lerobot-robot-ugo-pro)** — by ugo (ugo-plus)
+
+ugo Pro integration for LeRobot, bringing this service robot platform into the LeRobot ecosystem.
+
+**[lerobot_robot_lekiwi_pincopen](https://github.com/zuoxingdong/lerobot_robot_lekiwi_pincopen)** — by zuoxingdong
+
+A drop-in plugin that lets unmodified LeRobot drive a LeKiwi mobile manipulator built with STS3250 servos on the main arm joints and a PincOpen gripper, with tunable servo parameters exposed as config fields — no source edits required.
+
+**[lerobot_robot_ros2_zenoh](https://github.com/ROBOTIS-GIT/lerobot_robot_ros2_zenoh)** — by ROBOTIS
+
+A ROS 2 (Zenoh-based) robot integration for LeRobot, letting you drive ROS 2 robots through the LeRobot interface.
+
+**[lerobot-robot-dummy](https://github.com/KillingJacky/lerobot-robot-dummy)** — by KillingJacky
+
+A virtual follower arm for debugging: it drives no hardware and instead prints the actions it receives (with an optional silent mode), handy for testing leaders and pipelines. Defaults to Seeed B601 joint names, with configurable motor names for other leaders.
+
+## Teleoperators
+
+**[lerobot-teleoperator-teleop](https://github.com/SpesRobotics/lerobot-teleoperator-teleop)** — by SpesRobotics
+
+Phone and VR teleoperation integration for LeRobot, one of the community plugins referenced in the official Bring Your Own Hardware guide.
+
+**[lerobot-teleoperator-spacemouse](https://github.com/Jas000n/lerobot-teleoperator-spacemouse)** — by Jas000n
+
+Turns a 3Dconnexion SpaceMouse into a 6-DoF teleoperator, with built-in inverse kinematics for SO-101/SO-ARM followers, a direct end-effector mode, axis remapping, and custom-URDF profiles.
+
+**[vr-teleop-kit](https://github.com/Dream-Machines-Robotics/vr-teleop-kit)** — by Dream-Machines-Robotics
+
+An open-source VR teleoperation kit that drives robot arms from a Meta Quest (WebXR) headset via differential inverse kinematics, exposed as a drop-in LeRobot `Teleoperator` (single-arm and bimanual).
+
+**[lerobot-teleoperator-pico4](https://github.com/xensedyl/lerobot-teleoperator-pico4)** — by xensedyl
+
+Teleoperation plugin driving LeRobot from a PICO 4 VR headset, with a companion [hand-tracking variant](https://github.com/xensedyl/lerobot-teleoperator-pico4-hand).
+
+**[lerobot_teleoperator_yamactiveleader](https://github.com/uynitsuj/lerobot_teleoperator_yamactiveleader)** — by uynitsuj
+
+Active YAM teleop leader device integration for LeRobot.
+
+**[lerobot_teleoperator_omy](https://github.com/charlie8612/lerobot_teleoperator_omy)** — by charlie8612
+
+LeRobot teleoperator plugin for the ROBOTIS OMY-L100 6-DoF leader arm (no ROS 2 required).
+
+**[lerobot-teleoperator-deltas-gamepad](https://github.com/jpizarrom/lerobot-teleoperator-deltas-gamepad)** — by jpizarrom
+
+Teleoperate LeRobot with a standard gamepad, sending incremental (delta) end-effector commands.
+
+**[lerobot_teleoperator_inverse3](https://github.com/chohh7391/lerobot_teleoperator_inverse3)** — by chohh7391
+
+Teleoperator plugin for the Haply Inverse3 haptic device.
+
+**[lerobot_teleoperator_omega7](https://github.com/hzhz112/lerobot_teleoperator_omega7)** — by hzhz112
+
+Teleoperator plugin for the Force Dimension omega.7 haptic device.
+
+**[lerobot-teleoperator-arx5](https://pypi.org/project/lerobot-teleoperator-arx5/)** — by villekuosmanen
+
+ARX5 leader/teleoperator plugin — the leader counterpart to the ARX5 robot plugin listed above, from the same author.
+
+**[lerobot-teleoperator-seeed-b601](https://github.com/Seeed-Projects/lerobot-teleoperator-seeed-b601)** — by Seeed Studio
+
+Leader-arm teleoperator for the Seeed reBot Arm B601 (Damiao CAN motors), pairing with the B601 follower listed above.
+
+**[lerobot-teleoperator-rebot-arm-102](https://pypi.org/project/lerobot-teleoperator-rebot-arm-102/)** — by Seeed Studio
+
+reBot Arm 102 leader arm (FashionStar UART servos) designed to teleoperate the Seeed reBot B601 follower.
+
+**[lerobot-teleoperator-pipermate](https://pypi.org/project/lerobot-teleoperator-pipermate/)** — by Welt-liu
+
+PiperMate leader teleoperator (FashionStar UART servos) for the AgileX Piper arm.
+
+**[lerobot-teleoperator-livekit](https://pypi.org/project/lerobot-teleoperator-livekit/)** — by binhpham_lk
+
+Robot-side teleoperator that receives commands over a LiveKit Portal (WebRTC), enabling remote teleoperation across the network.
+
+## Robots + Teleoperators
+
+**[Nextis-AIRA-3D](https://github.com/robertorobotics/Nextis-AIRA-3D)** — by robertorobotics
+
+An open-source, 3D-printable 7-DoF arm that ships as a LeRobot plugin (not a fork), registering both a robot (`aira_follower`) and its Dynamixel leader teleoperator (`aira_leader`) for teleoperation, recording, and training.
+
+**[lerobot_yam](https://github.com/pravsels/lerobot_yam)** — by pravsels
+
+A plugin suite for the YAM arm shipping both a follower robot (`yam_follower`, CAN-driven) and a GELLO leader teleoperator (`yam_leader`), plus shared utilities — installable together or component-by-component (e.g. follower-only for policy inference).
+
+**[leros2](https://github.com/ngres/leros2)** — by ngres
+
+Maps ROS 2 topics and actions to LeRobot robots and teleoperators, bridging existing ROS 2 hardware into the LeRobot interface on both the robot and teleoperator sides.
+
+**[lerobot_robot_bi_so101_follower](https://github.com/SIGRobotics-UIUC/lerobot_robot_bi_so101_follower)** — by SIGRobotics-UIUC
+
+A bimanual (dual-arm) SO-101 setup: a follower robot package paired with its [bi-so101 leader teleoperator](https://pypi.org/project/lerobot-teleoperator-bi-so101-leader/) for dual-arm manipulation.
+
+**[trlc-dk1](https://github.com/robot-learning-co/trlc-dk1)** — by The Robot Learning Company
+
+An open-source dev kit for AI-native robotics. The repo ships a `lerobot_robot_trlc_dk1` plugin (auto-detected via LeRobot's plugin conventions despite the repo name) registering single-arm `dk1_follower`/`dk1_leader` and bimanual `bi_dk1_follower`/`bi_dk1_leader` types.
+
+**[hex_lerobot_drivers](https://github.com/hexfellow/hex_lerobot_drivers)** — by hexfellow
+
+A full suite of drop-in plugins for HEXFELLOW devices, published individually on PyPI: Hex Arm robots (`hex_arm`, `hex_arm_double`, and a `hex_arm_sim` MuJoCo variant), matching leader teleoperators (`hello`, `hex_arm`, and their double-arm versions), and cameras (see the [Cameras & Sensors](./third_party_sensors) page).
+
+## Contributing
+
+Built your own LeRobot hardware integration? The plugin system makes it straightforward to add new robots and teleoperators — check out the [Bring Your Own Hardware](./integrate_hardware) guide to get started, and share your project with the community!
