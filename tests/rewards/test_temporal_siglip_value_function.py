@@ -64,6 +64,31 @@ def test_temporal_image_processor():
     assert -1.0 <= observation[CAMERAS[0]].min() <= observation[CAMERAS[0]].max() <= 1.0
 
 
+def test_siglip_tokenizer_builds_missing_attention_mask(monkeypatch):
+    from lerobot.rewards.temporal_siglip_value_function import (
+        processor_temporal_siglip_value_function as processing,
+    )
+
+    class FakeTokenizer:
+        pad_token_id = 0
+
+        def __call__(self, *args, **kwargs):
+            return {"input_ids": torch.tensor([[5, 1, 0, 0]])}
+
+    monkeypatch.setattr(
+        processing.AutoTokenizer,
+        "from_pretrained",
+        lambda *args, **kwargs: FakeTokenizer(),
+    )
+    step = processing.TemporalSiglipTokenizerStep("fake", max_length=4)
+    transition = {
+        TransitionKey.OBSERVATION: {},
+        TransitionKey.COMPLEMENTARY_DATA: {"task": ["Task: stack blocks."]},
+    }
+    observation = step(transition)[TransitionKey.OBSERVATION]
+    assert observation[OBS_LANGUAGE_ATTENTION_MASK].tolist() == [[True, True, False, False]]
+
+
 def test_temporal_model_forward(monkeypatch):
     from lerobot.rewards.temporal_siglip_value_function import (
         modeling_temporal_siglip_value_function as modeling,
