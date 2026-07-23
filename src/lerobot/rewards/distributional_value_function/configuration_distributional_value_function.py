@@ -16,17 +16,19 @@
 
 Paper: "π*0.6: a VLA That Learns From Experience" (Physical Intelligence, 2025)
        https://pi.website/blog/pistar06
+Architecture source of truth: "π0.6 Model Card", Section 2 (Model Design)
+       https://website.pi-asset.com/pi06star/PI06_model_card.pdf
 
 Distributional value function V^{pi_ref}(o_t, l) (Section IV-A).
 
 Architecture (~670M params):
-    Vision:  SigLIP2-so400m — 27 layers, 1152-dim, 256 patches/image
+    Vision:  SigLIP2-so400m — 27 layers, 1152-dim, 1024 patches/image at 448px
     LM:      Gemma3-270M   — 18 layers, 640-dim
-    Proj:    Linear(1152, 640) fresh init
-    Head:    [CLS] → Linear(640→320) → LN → GELU → Dropout → Linear(320→201)
+    Proj:    2x2 pool → RMSNorm → Linear(1152, 640), 256 soft tokens/image
+    Readout: one-way learned value query → 2-layer MLP → 201 bins
 
-Inputs:  multi-camera images (3 x 256 patches) + ``"Task: {task}."`` prompt
-Targets: MC returns in [-1, 0], cross-entropy on HL-Gauss (default) or Dirac delta
+Inputs:  multi-camera images (3 x 256 soft tokens) + ``"Task: {task}."`` prompt
+Targets: MC returns in [-1, 0], cross-entropy on Dirac delta (default) or HL-Gauss
 Init:    SigLIP2 + Gemma3 from pretrained HF checkpoints; head normal_(std=0.02)
 """
 
@@ -43,16 +45,23 @@ class DistributionalVFConfig(RewardModelConfig):
     """Configuration for RECAP's distributional value function.
 
     Predicts V^{pi_ref}(o_t, l) as a categorical distribution over B=201 bins in [-1, 0].
-    Trained with cross-entropy on HL-Gauss soft targets (default) or Dirac delta (C51),
+    Trained with cross-entropy on Dirac delta (C51, default) or HL-Gauss soft targets,
     with optional one-hot targets for terminal states.
 
-    Architecture: monolithic VLM — SigLIP2-so400m (vision) + Gemma3-270M (language),
-    bidirectional prefix attention, one-way [CLS] readout, 2-layer MLP value head.
+    Architecture: adapted from the native Gemma3 multimodal VLM design and
+    scaled to π0.6's ~670M value backbone:
+    448px SigLIP2-so400m images are pooled from 1024 patches to 256 soft
+    tokens, RMS-normalized, projected into Gemma3-270M, and followed by a
+    one-way learned value-query token. Image tokens attend bidirectionally;
+    text and the value query remain causal.
     """
 
     # Backbone pretrained paths
-    siglip_path: str = "google/siglip2-so400m-patch14-224"
+    siglip_path: str = "google/siglip2-so400m-patch14-384"
     gemma3_path: str = "google/gemma-3-270m"
+    # Optional standard Gemma3ForConditionalGeneration checkpoint produced by
+    # standalone VLM alignment. When set, it supplies vision, connector, and LM.
+    vlm_pretrained_path: str | None = None
 
     # Distributional head
     num_value_bins: int = 201
@@ -60,14 +69,15 @@ class DistributionalVFConfig(RewardModelConfig):
     value_support_max: float = 0.0
     hl_gauss_sigma_ratio: float = 5.0
 
-    # Target distribution method: "hl_gauss" (default, soft) or "dirac_delta" (C51, hard)
-    target_method: str = "hl_gauss"
+    # Target distribution method: "dirac_delta" (paper-faithful C51) or "hl_gauss" (soft)
+    target_method: str = "dirac_delta"
 
     # Whether to use one-hot targets for terminal states (exact return, no smoothing).
     use_one_hot_terminal: bool = True
 
     # Image
-    image_resolution: tuple[int, int] = (224, 224)
+    image_resolution: tuple[int, int] = (448, 448)
+    num_image_tokens: int = 256
 
     # Tokenizer (uses Gemma3's tokenizer)
     tokenizer_max_length: int = 200
@@ -78,9 +88,6 @@ class DistributionalVFConfig(RewardModelConfig):
     freeze_language_model: bool = False
     stop_gradient_to_vlm: bool = False
     vision_encoder_lr_multiplier: float = 0.5
-
-    # Readout: "mean_pool" (average all tokens) or "last_token" (causal LM last position)
-    readout: str = "mean_pool"
 
     # Normalization
     normalization_mapping: dict[str, NormalizationMode] = field(

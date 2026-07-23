@@ -16,18 +16,19 @@
 
 Paper: "π*0.6: a VLA That Learns From Experience" (Physical Intelligence, 2025)
        https://pi.website/blog/pistar06
+Architecture source of truth: "π0.6 Model Card", Section 2 (Model Design)
+       https://website.pi-asset.com/pi06star/PI06_model_card.pdf
 
 Implements the distributional value function V^{pi_ref}(o_t, l) from Section IV-A.
-Architecture: the paper uses a 670M-parameter Gemma 3 VLM (Figure 3) —
-SigLIP2-so400m (27 layers, 1152-dim) + Gemma3-270M (18 layers, 640-dim),
-with a [CLS] token readout predicting a categorical distribution over
-B=201 discrete value bins in [-1, 0]. This implementation uses a 2-layer
-MLP value head (Linear→LN→GELU→Dropout→Linear) inspired by Robometer
-(Chen et al., 2025).
+It adapts the native Gemma3 multimodal VLM design to π0.6's smaller ~670M scale:
+448px SigLIP images are pooled to 256 soft tokens, RMS-normalized, projected
+into Gemma3-270M, and processed with bidirectional image / causal text
+attention. A final learned value-query token supplies the 201-bin readout.
 """
 
 from __future__ import annotations
 
+import copy
 import math
 from typing import TYPE_CHECKING, Any
 
@@ -40,7 +41,6 @@ from lerobot.rewards.pretrained import PreTrainedRewardModel
 from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
-    OPENPI_ATTENTION_MASK_VALUE as _ATTENTION_MASK_VALUE,
 )
 from lerobot.utils.import_utils import _transformers_available, require_package
 
@@ -48,16 +48,33 @@ from .configuration_distributional_value_function import DistributionalVFConfig
 from .processor_distributional_value_function import IMAGE_MASK_SUFFIX
 
 if TYPE_CHECKING or _transformers_available:
-    from transformers import Gemma3ForCausalLM, SiglipVisionModel
+    from transformers import (
+        Gemma3Config,
+        Gemma3ForCausalLM,
+        Gemma3ForConditionalGeneration,
+        SiglipVisionModel,
+    )
+    from transformers.models.gemma3.modeling_gemma3 import (
+        Gemma3MultiModalProjector,
+        create_causal_mask_mapping,
+    )
 else:
+    Gemma3Config = None  # type: ignore[assignment]
     Gemma3ForCausalLM = None  # type: ignore[assignment]
+    Gemma3ForConditionalGeneration = None  # type: ignore[assignment]
+    Gemma3MultiModalProjector = None  # type: ignore[assignment]
     SiglipVisionModel = None  # type: ignore[assignment]
+    create_causal_mask_mapping = None  # type: ignore[assignment]
 
 
 class ValueHead(nn.Module):
     """Categorical value projection: hidden state → bin logits.
 
-    2-layer MLP: Linear → LayerNorm → GELU → Dropout → Linear.
+    The 2-layer MLP topology is adapted from Robometer's prediction head:
+    Linear → LayerNorm → GELU → Dropout → Linear. Unlike Robometer's progress
+    and success heads, this head predicts RECAP's 201-bin MC-return
+    distribution over [-1, 0] from the final value-query representation.
+
     Also holds the ``bin_centers`` buffer used to compute E[V] = Σ p_i · c_i.
     """
 
@@ -96,12 +113,11 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
     Trained with cross-entropy on HL-Gauss or Dirac delta targets centered on
     per-task normalized Monte Carlo returns.
 
-    Architecture: SigLIP2-so400m + Linear(1152→640) + Gemma3-270M.
-    Multi-camera images are encoded by SigLIP2 (256 patches each), projected to
-    Gemma3's hidden dim, concatenated with tokenized language, and processed by
-    all 18 Gemma3 transformer layers.
-
-    Mean-pooled last-layer hidden states are read out through a 2-layer MLP value head.
+    Architecture: adapted from the native Gemma3 multimodal VLM using a
+    448px SigLIP2-so400m vision tower, Gemma3 multimodal projector, and
+    Gemma3-270M language backbone. Each camera is represented by 256 soft
+    image tokens. Image tokens are bidirectional, text is causal, and a final
+    one-way value query supplies the hidden state consumed by the value head.
     """
 
     name = "distributional_value_function"
@@ -112,18 +128,42 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         super().__init__(config)
         self.config = config
 
-        self.vision_encoder = SiglipVisionModel.from_pretrained(config.siglip_path)
-        siglip_hidden = self.vision_encoder.config.hidden_size  # 1152
+        if config.vlm_pretrained_path:
+            aligned_vlm = Gemma3ForConditionalGeneration.from_pretrained(config.vlm_pretrained_path)
+            self._vlm_config = aligned_vlm.config
+            self.vision_encoder = aligned_vlm.model.vision_tower
+            self.multi_modal_projector = aligned_vlm.model.multi_modal_projector
+            self.language_model = aligned_vlm.model.language_model
+        else:
+            self.vision_encoder = SiglipVisionModel.from_pretrained(config.siglip_path)
+            gemma3 = Gemma3ForCausalLM.from_pretrained(config.gemma3_path)
+            self.language_model = gemma3.model
 
-        self.gemma3 = Gemma3ForCausalLM.from_pretrained(config.gemma3_path)
-        self.gemma3_hidden = self.gemma3.config.hidden_size  # 640
+            # Adapt Gemma3's native multimodal connector to the 270M text
+            # backbone and π0.6's 448px input layout.
+            vision_config = copy.deepcopy(self.vision_encoder.config)
+            vision_config.image_size = config.image_resolution[0]
+            text_config = copy.deepcopy(gemma3.config)
+            self._vlm_config = Gemma3Config(
+                vision_config=vision_config,
+                text_config=text_config,
+                mm_tokens_per_image=config.num_image_tokens,
+            )
+            self.multi_modal_projector = Gemma3MultiModalProjector(self._vlm_config)
+            nn.init.normal_(
+                self.multi_modal_projector.mm_input_projection_weight,
+                mean=0.0,
+                std=self._vlm_config.initializer_range,
+            )
 
-        # Fresh image projection: SigLIP2 1152-dim → Gemma3 640-dim
-        self.image_proj = nn.Linear(siglip_hidden, self.gemma3_hidden, bias=True)
-        nn.init.normal_(self.image_proj.weight, std=0.02)
-        nn.init.zeros_(self.image_proj.bias)
+        self._validate_vlm_config()
+        self.gemma3_hidden = self._vlm_config.text_config.hidden_size  # 640
 
-        # Value head: last-token hidden state → MLP → num_bins logits
+        # One-way suffix query, analogous to PI05's suffix/action tokens.
+        self.value_query = nn.Embedding(1, self.gemma3_hidden)
+        nn.init.normal_(self.value_query.weight, std=0.02)
+
+        # Value head: value-query hidden state → MLP → num_bins logits
         self.value_head = ValueHead(
             hidden_size=self.gemma3_hidden,
             num_bins=config.num_value_bins,
@@ -139,6 +179,35 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         # Apply freezing
         self._set_requires_grad()
 
+    @property
+    def gemma3(self) -> nn.Module:
+        """Backward-compatible access to the Gemma3 text backbone."""
+        return self.language_model
+
+    def _validate_vlm_config(self) -> None:
+        """Validate the π0.6 448px → 256-token multimodal layout."""
+        vision_config = self._vlm_config.vision_config
+        image_size = self.config.image_resolution[0]
+        if vision_config.image_size != image_size:
+            raise ValueError(
+                f"VLM vision image_size ({vision_config.image_size}) does not match "
+                f"DistributionalVFConfig.image_resolution ({image_size})"
+            )
+
+        patches_per_side = image_size // vision_config.patch_size
+        tokens_per_side = int(self.config.num_image_tokens**0.5)
+        if tokens_per_side**2 != self.config.num_image_tokens:
+            raise ValueError("num_image_tokens must be a perfect square")
+        if patches_per_side % tokens_per_side:
+            raise ValueError(
+                f"{patches_per_side} patches/side cannot be evenly pooled to {tokens_per_side} tokens/side"
+            )
+        if self._vlm_config.mm_tokens_per_image != self.config.num_image_tokens:
+            raise ValueError(
+                f"VLM emits {self._vlm_config.mm_tokens_per_image} image tokens, "
+                f"expected {self.config.num_image_tokens}"
+            )
+
     def _set_requires_grad(self) -> None:
         if self.config.freeze_vision_encoder:
             for param in self.vision_encoder.parameters():
@@ -146,16 +215,16 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
             self.vision_encoder.eval()
 
         if self.config.freeze_language_model:
-            for param in self.gemma3.parameters():
+            for param in self.language_model.parameters():
                 param.requires_grad = False
-            self.gemma3.eval()
+            self.language_model.eval()
 
     def train(self, mode: bool = True):
         super().train(mode)
         if self.config.freeze_vision_encoder:
             self.vision_encoder.eval()
         if self.config.freeze_language_model:
-            self.gemma3.eval()
+            self.language_model.eval()
         return self
 
     def get_optim_params(self) -> list[dict]:
@@ -178,18 +247,25 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         ]
 
     def embed_image(self, image: Tensor) -> Tensor:
-        """Embed images: SigLIP2 → projection → [B, num_patches, gemma3_hidden].
+        """Embed images with π0.6's Gemma3 visual connector.
 
         Args:
             image: [batch_size, channels, height, width] preprocessed image in [-1, 1].
 
         Returns:
-            [B, 256, gemma3_hidden] projected image features.
+            [B, 256, gemma3_hidden] pooled, normalized, projected features.
         """
-        if image.dtype != torch.float32:
-            image = image.to(torch.float32)
-        feats = self.vision_encoder(pixel_values=image).last_hidden_state
-        return self.image_proj(feats)
+        vision_dtype = next(self.vision_encoder.parameters()).dtype
+        image_features = self.vision_encoder(
+            pixel_values=image.to(dtype=vision_dtype),
+            interpolate_pos_encoding=True,
+        ).last_hidden_state
+        projected_features = self.multi_modal_projector(image_features)
+        if projected_features.shape[1] != self.config.num_image_tokens:
+            raise RuntimeError(
+                f"Expected {self.config.num_image_tokens} image tokens, got {projected_features.shape[1]}"
+            )
+        return projected_features
 
     def embed_text(self, token_ids: Tensor) -> Tensor:
         """Embed text using Gemma3's embedding table (includes sqrt(d) scaling).
@@ -200,7 +276,7 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         Returns:
             [B, seq_len, gemma3_hidden] text embeddings.
         """
-        return self.gemma3.model.embed_tokens(token_ids)
+        return self.language_model.embed_tokens(token_ids)
 
     def embed_prefix(
         self,
@@ -208,28 +284,30 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         img_masks: list[Tensor],
         text_embeddings: Tensor,
         text_padding_mask: Tensor,
-    ) -> tuple[Tensor, Tensor]:
-        """Build prefix: [img1_patches, img2_patches, ..., lang_tokens].
-
-        All prefix tokens use bidirectional attention (att_mask=0).
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Build [image soft tokens..., text] plus masks.
 
         Returns:
             embs: [B, total_prefix_len, hidden_dim]
             pad_masks: [B, total_prefix_len] boolean
+            token_type_ids: [B, total_prefix_len], 1=image and 0=text
         """
         embs: list[Tensor] = []
         pad_masks: list[Tensor] = []
+        token_types: list[Tensor] = []
 
         for img, img_mask in zip(images, img_masks, strict=True):
             img_emb = self.embed_image(img)
-            bsize, num_patches = img_emb.shape[:2]
+            bsize, num_image_tokens = img_emb.shape[:2]
             embs.append(img_emb)
-            pad_masks.append(img_mask[:, None].expand(bsize, num_patches))
+            pad_masks.append(img_mask[:, None].expand(bsize, num_image_tokens))
+            token_types.append(torch.ones(bsize, num_image_tokens, dtype=torch.long, device=img_emb.device))
 
         embs.append(text_embeddings)
         pad_masks.append(text_padding_mask)
+        token_types.append(torch.zeros_like(text_padding_mask, dtype=torch.long))
 
-        return torch.cat(embs, dim=1), torch.cat(pad_masks, dim=1)
+        return torch.cat(embs, dim=1), torch.cat(pad_masks, dim=1), torch.cat(token_types, dim=1)
 
     def hl_gauss_target(self, target_value: Tensor) -> Tensor:
         """HL-Gauss soft target distribution.
@@ -371,50 +449,64 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         terminal_distribution = self.one_hot_target(target_value)
         return torch.where(is_terminal[:, None].bool(), terminal_distribution, base_distribution)
 
-    def _vlm_forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
-        """Shared VLM forward: images + text → Gemma3 → last-token hidden → logits.
-
-        Returns:
-            (value_logits [B, num_bins], predicted_value [B, 1])
-        """
+    def _get_vlm_readout(self, batch: dict[str, Tensor]) -> Tensor:
+        """Run Gemma3 image-bidirectional/text-causal attention plus value query."""
         images, img_masks, token_ids, text_pad_mask = self._get_model_inputs(batch)
 
         text_embs = self.embed_text(token_ids)
-        prefix_embs, prefix_pad_masks = self.embed_prefix(images, img_masks, text_embs, text_pad_mask)
+        prefix_embs, prefix_pad_masks, prefix_token_types = self.embed_prefix(
+            images, img_masks, text_embs, text_pad_mask
+        )
 
         if self.config.stop_gradient_to_vlm:
             prefix_embs = prefix_embs.detach()
 
+        batch_size, prefix_len = prefix_pad_masks.shape
         device = prefix_embs.device
-        model_dtype = next(self.gemma3.parameters()).dtype
+        model_dtype = next(self.language_model.parameters()).dtype
 
-        # Bidirectional attention: every valid token attends to every valid token
-        att_2d = prefix_pad_masks[:, None, :] * prefix_pad_masks[:, :, None]
-        att_4d = torch.where(
-            att_2d[:, None, :, :],
-            torch.tensor(0.0, dtype=model_dtype, device=device),
-            torch.tensor(_ATTENTION_MASK_VALUE, dtype=model_dtype, device=device),
+        query_ids = torch.zeros(batch_size, 1, dtype=torch.long, device=device)
+        query_emb = self.value_query(query_ids)
+        hidden_states = torch.cat([prefix_embs, query_emb], dim=1)
+
+        query_pad_mask = torch.ones(batch_size, 1, dtype=torch.bool, device=device)
+        pad_masks = torch.cat([prefix_pad_masks, query_pad_mask], dim=1)
+        token_type_ids = torch.cat(
+            [prefix_token_types, torch.zeros(batch_size, 1, dtype=torch.long, device=device)],
+            dim=1,
         )
 
-        position_ids = torch.cumsum(prefix_pad_masks.long(), dim=1) - 1
+        prefix_position_ids = torch.cumsum(prefix_pad_masks.long(), dim=1) - 1
+        query_position_ids = prefix_pad_masks.sum(dim=1, keepdim=True).long()
+        position_ids = torch.cat([prefix_position_ids, query_position_ids], dim=1).clamp_min(0)
 
-        if prefix_embs.dtype != model_dtype:
-            prefix_embs = prefix_embs.to(model_dtype)
+        if hidden_states.dtype != model_dtype:
+            hidden_states = hidden_states.to(model_dtype)
 
-        outputs = self.gemma3.model(
-            inputs_embeds=prefix_embs,
-            attention_mask=att_4d,
+        attention_masks = create_causal_mask_mapping(
+            self._vlm_config,
+            inputs_embeds=hidden_states,
+            attention_mask=pad_masks,
+            past_key_values=None,
             position_ids=position_ids,
+            token_type_ids=token_type_ids,
+            is_training=self.training,
         )
+        outputs = self.language_model(
+            inputs_embeds=hidden_states,
+            attention_mask=attention_masks,
+            position_ids=position_ids,
+            use_cache=False,
+        )
+        return outputs.last_hidden_state[:, -1, :]
 
-        # Readout from last hidden layer
-        if self.config.readout == "mean_pool":
-            hidden = outputs.last_hidden_state
-            mask = prefix_pad_masks.unsqueeze(-1).to(dtype=hidden.dtype)
-            readout = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
-        else:
-            readout = outputs.last_hidden_state[:, -1, :]
+    def _vlm_forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
+        """Run the VLM and value head.
 
+        Returns:
+            (value_logits [B, num_bins], predicted_value [B, 1])
+        """
+        readout = self._get_vlm_readout(batch)
         value_logits = self.value_head(readout)
         value_probs = F.softmax(value_logits, dim=-1)
         predicted_value = (value_probs * self.value_head.bin_centers.to(dtype=value_probs.dtype)).sum(

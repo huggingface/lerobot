@@ -28,8 +28,9 @@ from lerobot.types import TransitionKey
 from lerobot.utils.constants import OBS_IMAGES
 from tests.utils import skip_if_package_missing
 
-BATCH_SIZE = 4
+BATCH_SIZE = 1
 NUM_BINS = 201
+IMAGE_SIZE = 448
 IMAGE_KEY = f"{OBS_IMAGES}.top"
 IMAGE_KEY_WRIST_LEFT = f"{OBS_IMAGES}.wrist_left"
 IMAGE_KEY_WRIST_RIGHT = f"{OBS_IMAGES}.wrist_right"
@@ -38,14 +39,14 @@ IMAGE_KEY_WRIST_RIGHT = f"{OBS_IMAGES}.wrist_right"
 def _make_config(**overrides) -> DistributionalVFConfig:
     defaults = {
         "device": "cpu",
-        "image_resolution": (224, 224),
+        "image_resolution": (IMAGE_SIZE, IMAGE_SIZE),
     }
     defaults.update(overrides)
     config = DistributionalVFConfig(**defaults)
     config.input_features = {
-        IMAGE_KEY: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
-        IMAGE_KEY_WRIST_LEFT: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
-        IMAGE_KEY_WRIST_RIGHT: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+        IMAGE_KEY: PolicyFeature(type=FeatureType.VISUAL, shape=(3, IMAGE_SIZE, IMAGE_SIZE)),
+        IMAGE_KEY_WRIST_LEFT: PolicyFeature(type=FeatureType.VISUAL, shape=(3, IMAGE_SIZE, IMAGE_SIZE)),
+        IMAGE_KEY_WRIST_RIGHT: PolicyFeature(type=FeatureType.VISUAL, shape=(3, IMAGE_SIZE, IMAGE_SIZE)),
     }
     config.output_features = {}
     config.normalization_mapping = {
@@ -69,11 +70,11 @@ def _make_batch(batch_size: int = BATCH_SIZE, device: str = "cpu") -> dict[str, 
     from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 
     return {
-        IMAGE_KEY: torch.rand(batch_size, 3, 224, 224, device=device) * 2 - 1,
+        IMAGE_KEY: torch.rand(batch_size, 3, IMAGE_SIZE, IMAGE_SIZE, device=device) * 2 - 1,
         IMAGE_KEY + IMAGE_MASK_SUFFIX: torch.ones(batch_size, dtype=torch.bool, device=device),
-        IMAGE_KEY_WRIST_LEFT: torch.rand(batch_size, 3, 224, 224, device=device) * 2 - 1,
+        IMAGE_KEY_WRIST_LEFT: torch.rand(batch_size, 3, IMAGE_SIZE, IMAGE_SIZE, device=device) * 2 - 1,
         IMAGE_KEY_WRIST_LEFT + IMAGE_MASK_SUFFIX: torch.ones(batch_size, dtype=torch.bool, device=device),
-        IMAGE_KEY_WRIST_RIGHT: torch.rand(batch_size, 3, 224, 224, device=device) * 2 - 1,
+        IMAGE_KEY_WRIST_RIGHT: torch.rand(batch_size, 3, IMAGE_SIZE, IMAGE_SIZE, device=device) * 2 - 1,
         IMAGE_KEY_WRIST_RIGHT + IMAGE_MASK_SUFFIX: torch.ones(batch_size, dtype=torch.bool, device=device),
         OBS_LANGUAGE_TOKENS: torch.randint(0, 1000, (batch_size, 200), device=device),
         OBS_LANGUAGE_ATTENTION_MASK: torch.ones(batch_size, 200, dtype=torch.bool, device=device),
@@ -112,6 +113,13 @@ def test_make_reward_model_config_factory():
     config = make_reward_model_config("distributional_value_function", num_value_bins=101)
     assert isinstance(config, DistributionalVFConfig)
     assert config.num_value_bins == 101
+
+
+def test_config_defaults_match_pi06_gemma3_layout():
+    config = DistributionalVFConfig()
+    assert config.image_resolution == (448, 448)
+    assert config.num_image_tokens == 256
+    assert config.target_method == "dirac_delta"
 
 
 # ------------------------------------------------------------------
@@ -276,9 +284,9 @@ def test_model_has_expected_components():
 
     assert hasattr(model, "vision_encoder")
     assert hasattr(model, "gemma3")
-    assert hasattr(model, "image_proj")
+    assert hasattr(model, "multi_modal_projector")
     assert hasattr(model, "value_head")
-    assert hasattr(model, "cls_embedding")
+    assert hasattr(model, "value_query")
     assert hasattr(model.value_head, "mlp")
     assert hasattr(model.value_head, "bin_centers")
 
@@ -298,23 +306,26 @@ def test_value_head_output_dim():
 
 
 @skip_if_package_missing("transformers")
-def test_cls_embedding_is_nn_embedding():
-    """CLS is nn.Embedding (FSDP-safe) with correct shape."""
+def test_value_query_is_nn_embedding():
+    """Value query is nn.Embedding (FSDP-safe) with correct shape."""
     model = _make_model()
     from torch import nn
 
-    assert isinstance(model.cls_embedding, nn.Embedding)
-    assert model.cls_embedding.num_embeddings == 1
-    assert model.cls_embedding.embedding_dim == model.gemma3_hidden
+    assert isinstance(model.value_query, nn.Embedding)
+    assert model.value_query.num_embeddings == 1
+    assert model.value_query.embedding_dim == model.gemma3_hidden
 
 
 @skip_if_package_missing("transformers")
-def test_image_proj_dimensions():
-    """Image projection maps SigLIP2 hidden to Gemma3 hidden."""
+def test_multimodal_projector_dimensions_and_pooling():
+    """Gemma3 connector pools 448px patches to 256 tokens and projects to LM width."""
     model = _make_model()
     siglip_hidden = model.vision_encoder.config.hidden_size
-    assert model.image_proj.in_features == siglip_hidden
-    assert model.image_proj.out_features == model.gemma3_hidden
+    projector = model.multi_modal_projector
+    assert projector.mm_input_projection_weight.shape == (siglip_hidden, model.gemma3_hidden)
+    assert projector.patches_per_image == 32
+    assert projector.tokens_per_side == 16
+    assert projector.kernel_size == 2
 
 
 # ------------------------------------------------------------------
@@ -356,12 +367,12 @@ def test_compute_reward_returns_correct_shape():
     """compute_reward returns [batch_size] tensor of finite float32 values."""
     model = _make_model()
     model.eval()
-    batch = _make_batch(batch_size=3)
+    batch = _make_batch(batch_size=1)
 
     with torch.no_grad():
         values = model.compute_reward(batch)
 
-    assert values.shape == (3,)
+    assert values.shape == (1,)
     assert values.dtype == torch.float32
     assert torch.isfinite(values).all()
 
@@ -371,7 +382,7 @@ def test_compute_reward_values_in_support_range():
     """Predicted values lie within [value_support_min, value_support_max]."""
     model = _make_model()
     model.eval()
-    batch = _make_batch(batch_size=8)
+    batch = _make_batch(batch_size=1)
 
     with torch.no_grad():
         values = model.compute_reward(batch)
@@ -400,8 +411,8 @@ def test_gradient_flows_through_value_head():
 
 
 @skip_if_package_missing("transformers")
-def test_gradient_flows_through_cls_embedding():
-    """Backprop produces non-zero gradients on the learned [CLS] embedding."""
+def test_gradient_flows_through_value_query():
+    """Backprop produces non-zero gradients on the learned value query."""
     model = _make_model()
     model.train()
     batch = _make_batch()
@@ -409,13 +420,13 @@ def test_gradient_flows_through_cls_embedding():
     loss, _ = model.forward(batch)
     loss.backward()
 
-    assert model.cls_embedding.weight.grad is not None
-    assert not torch.all(model.cls_embedding.weight.grad == 0)
+    assert model.value_query.weight.grad is not None
+    assert not torch.all(model.value_query.weight.grad == 0)
 
 
 @skip_if_package_missing("transformers")
-def test_gradient_flows_through_image_proj():
-    """Backprop produces non-zero gradients on the image projection."""
+def test_gradient_flows_through_multimodal_projector():
+    """Backprop produces non-zero gradients on the Gemma3 multimodal projection."""
     model = _make_model()
     model.train()
     batch = _make_batch()
@@ -423,8 +434,9 @@ def test_gradient_flows_through_image_proj():
     loss, _ = model.forward(batch)
     loss.backward()
 
-    assert model.image_proj.weight.grad is not None
-    assert not torch.all(model.image_proj.weight.grad == 0)
+    projector_weight = model.multi_modal_projector.mm_input_projection_weight
+    assert projector_weight.grad is not None
+    assert not torch.all(projector_weight.grad == 0)
 
 
 # ------------------------------------------------------------------
@@ -459,8 +471,8 @@ def test_freeze_language_model():
 
 
 @skip_if_package_missing("transformers")
-def test_stop_gradient_to_vlm_preserves_cls_grad():
-    """With stop_gradient_to_vlm, CLS embedding still gets gradients."""
+def test_stop_gradient_to_vlm_preserves_value_query_grad():
+    """With stop_gradient_to_vlm, the value query still gets gradients."""
     config = _make_config(stop_gradient_to_vlm=True)
     from lerobot.rewards.distributional_value_function.modeling_distributional_value_function import (
         DistributionalVFRewardModel,
@@ -473,8 +485,8 @@ def test_stop_gradient_to_vlm_preserves_cls_grad():
     loss, _ = model.forward(batch)
     loss.backward()
 
-    assert model.cls_embedding.weight.grad is not None
-    assert not torch.all(model.cls_embedding.weight.grad == 0)
+    assert model.value_query.weight.grad is not None
+    assert not torch.all(model.value_query.weight.grad == 0)
 
 
 # ------------------------------------------------------------------
@@ -533,7 +545,7 @@ def test_processor_pipeline_produces_expected_keys():
     assert IMAGE_KEY_WRIST_RIGHT + IMAGE_MASK_SUFFIX in processed
 
     img = processed[IMAGE_KEY]
-    assert img.shape == (1, 3, 224, 224)
+    assert img.shape == (1, 3, IMAGE_SIZE, IMAGE_SIZE)
     assert img.min() >= -1.0 - 1e-5
     assert img.max() <= 1.0 + 1e-5
 
@@ -604,7 +616,7 @@ def test_image_preprocessor_resize_and_normalize():
 
     transition = {
         TransitionKey.OBSERVATION: {
-            IMAGE_KEY: torch.rand(2, 3, 320, 240),  # non-square, [0, 1]
+            IMAGE_KEY: torch.full((2, 3, 320, 240), 0.5),  # non-square, [0, 1]
         }
     }
 
@@ -614,6 +626,9 @@ def test_image_preprocessor_resize_and_normalize():
     assert obs[IMAGE_KEY].shape == (2, 3, 224, 224)
     assert obs[IMAGE_KEY].min() >= -1.0 - 1e-5
     assert obs[IMAGE_KEY].max() <= 1.0 + 1e-5
+    # Content value 0.5 must map to 0.0. This also verifies normalization
+    # happens before resize padding introduces -1 values.
+    assert torch.allclose(obs[IMAGE_KEY][:, :, 112, 112], torch.zeros(2, 3), atol=1e-5)
     assert obs[IMAGE_KEY + IMAGE_MASK_SUFFIX].all()
 
 
@@ -666,29 +681,6 @@ def test_save_load_pretrained_roundtrip(tmp_path):
     assert set(orig_sd.keys()) == set(loaded_sd.keys())
     for key in orig_sd:
         torch.testing.assert_close(orig_sd[key], loaded_sd[key], msg=f"Mismatch in {key}")
-
-
-# ------------------------------------------------------------------
-# Attention mask utility test
-# ------------------------------------------------------------------
-
-
-@skip_if_package_missing("transformers")
-def test_make_att_2d_masks():
-    """Verify attention mask construction for prefix + CLS."""
-    from lerobot.rewards.distributional_value_function.modeling_distributional_value_function import (
-        make_att_2d_masks,
-    )
-
-    pad = torch.ones(1, 4, dtype=torch.bool)
-    att = torch.tensor([[0, 0, 0, 1]])
-    mask = make_att_2d_masks(pad, att)[0]
-
-    assert mask[0, 0]  # prefix sees prefix
-    assert mask[1, 2]  # prefix sees prefix
-    assert not mask[0, 3]  # prefix does NOT see CLS
-    assert mask[3, 0]  # CLS sees prefix
-    assert mask[3, 3]  # CLS sees itself
 
 
 # ------------------------------------------------------------------

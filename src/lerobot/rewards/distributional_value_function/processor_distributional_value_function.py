@@ -18,7 +18,7 @@ Paper: "π*0.6: a VLA That Learns From Experience" (Physical Intelligence, 2025)
        https://pi.website/blog/pistar06
 
 Prepares inputs for V^{pi_ref}(o_t, l):
-1. Resize multi-camera images to 224x224 (with aspect-preserving padding)
+1. Resize multi-camera images to 448x448 (with aspect-preserving padding)
 2. Normalize images from [0,1] → [-1,1] (SigLIP standard)
 3. Handle missing cameras (placeholder + mask)
 4. Format task prompt: ``"Task: {task}."``
@@ -132,12 +132,13 @@ def resize_with_pad_torch(
 class DistributionalVFImagePreprocessorStep(ProcessorStep):
     """Resize and normalize multi-camera images for the VF.
 
+    Expects LeRobot's standard float image range [0, 1].
     Produces [B, 3, H, W] tensors in [-1, 1] for each camera, plus boolean
     masks indicating which cameras are present. Missing cameras get a black
     placeholder image and mask=False.
     """
 
-    image_resolution: tuple[int, int] = (224, 224)
+    image_resolution: tuple[int, int] = (448, 448)
     image_keys: tuple[str, ...] = ()
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -154,11 +155,11 @@ class DistributionalVFImagePreprocessorStep(ProcessorStep):
                 if is_channels_first:
                     img = img.permute(0, 2, 3, 1)  # BCHW → BHWC
 
+                # Gemma3's SigLIP vision tower expects [-1, 1].
+                img = img * 2.0 - 1.0
+
                 if img.shape[1:3] != self.image_resolution:
                     img = resize_with_pad_torch(img, *self.image_resolution)
-
-                if img.min() >= 0.0 and img.max() <= 1.0:
-                    img = img * 2.0 - 1.0
 
                 observation[key] = img.permute(0, 3, 1, 2)  # BHWC → BCHW
                 observation[key + IMAGE_MASK_SUFFIX] = torch.ones(
@@ -240,7 +241,7 @@ def make_distributional_vf_pre_post_processors(
         1. Rename observations (no-op by default)
         2. Add a batch dimension
         3. Normalize features (identity for images)
-        4. Resize + normalize images → [B, 3, 224, 224] in [-1, 1]
+        4. Resize + normalize images → [B, 3, 448, 448] in [-1, 1]
         5. Format task prompt: ``"Task: {task}."``
         6. Tokenize with Gemma3 tokenizer
         7. Move tensors to the configured device
@@ -265,7 +266,7 @@ def make_distributional_vf_pre_post_processors(
             ),
             DistributionalVFPrepareTaskPromptStep(),
             TokenizerProcessorStep(
-                tokenizer_name=config.gemma3_path,
+                tokenizer_name=config.vlm_pretrained_path or config.gemma3_path,
                 max_length=config.tokenizer_max_length,
                 padding_side="right",
                 padding="max_length",
