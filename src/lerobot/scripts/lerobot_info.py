@@ -92,6 +92,7 @@ def get_sys_info() -> dict[str, str]:
     info.update(
         {
             "PyTorch version": torch_version,
+            "Torchcodec version": get_package_version("torchcodec"),
             "Is PyTorch built with CUDA support?": str(torch_cuda_available),
             "Cuda version": cuda_version,
             "GPU model": gpu_model,
