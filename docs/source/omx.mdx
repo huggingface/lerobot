@@ -1,3 +1,11 @@
+# OMX
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/omx_mainimage.png"
+  alt="OMX"
+  width=600
+/>
+
 ## Order and Assemble the parts
 
 First, assemble the OMX hardware following the official assembly guide.
