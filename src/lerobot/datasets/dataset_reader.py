@@ -353,10 +353,10 @@ class DatasetReader:
 
     def get_items(self, idx: slice) -> list[dict]:
         """Return processed items for a native Hugging Face dataset slice."""
-        batch = self.hf_dataset[idx]
-        if not batch:
+        if len(range(*idx.indices(len(self.hf_dataset)))) == 0:
             return []
 
+        batch = self.hf_dataset[idx]
         batch_size = len(next(iter(batch.values())))
         return [
             self._prepare_item({key: values[item_idx] for key, values in batch.items()})
