@@ -20,6 +20,29 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from lerobot.configs.default import JobConfig
+
+# The annotation pipeline boots its own vLLM server, so the pod starts from the
+# official vLLM runtime rather than the prebuilt `lerobot-gpu` training image;
+# `lerobot` is pip-installed on top (see `lerobot.jobs.annotate`).
+DEFAULT_ANNOTATE_JOB_IMAGE = "vllm/vllm-openai:latest"
+
+
+@dataclass
+class AnnotationJobConfig(JobConfig):
+    """`JobConfig` with the annotation runtime's defaults.
+
+    Adds `lerobot_ref` because the vLLM image ships no lerobot: the pod installs
+    it from git, and the ref decides which code actually annotates. Point it at a
+    branch/tag/SHA to try unmerged changes remotely.
+    """
+
+    image: str = DEFAULT_ANNOTATE_JOB_IMAGE
+    # Annotation is a bounded pass over a dataset; a tighter cap than training's
+    # "2d" keeps a wedged vLLM server from burning a day of GPU time.
+    timeout: str | None = "2h"
+    lerobot_ref: str = "main"
+
 
 @dataclass
 class PlanConfig:
@@ -206,6 +229,11 @@ class AnnotationPipelineConfig:
 
     vlm: VlmConfig = field(default_factory=VlmConfig)
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)
+
+    # Where the annotation runs: omitted / "local" annotates on this machine, any
+    # other value is an HF Jobs flavor (e.g. "h200") and submits the run there.
+    # List flavors + pricing with `hf jobs hardware`.
+    job: AnnotationJobConfig = field(default_factory=AnnotationJobConfig)
 
     skip_validation: bool = False
     only_episodes: tuple[int, ...] | None = None

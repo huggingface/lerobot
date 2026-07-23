@@ -194,12 +194,13 @@ def make_vlm_client(config: VlmConfig) -> VlmClient:
     """Build the shared VLM client.
 
     Only the ``openai`` backend is supported for now. The shipped workflow
-    is Hugging Face Jobs (``examples/annotations/run_hf_job.py``): it boots
-    a vLLM server inside the ``vllm/vllm-openai`` image and the pipeline
-    talks to it over the OpenAI-compatible API (``--vlm.backend=openai``,
-    optionally auto-spawning the server via ``auto_serve`` /
-    ``serve_command``). The former in-process ``vllm`` / ``transformers``
-    backends were removed to keep the support surface to the HF Jobs path.
+    is Hugging Face Jobs (``lerobot-annotate --job.target=<flavor>``): it
+    boots a vLLM server inside the ``vllm/vllm-openai`` image and the
+    pipeline talks to it over the OpenAI-compatible API
+    (``--vlm.backend=openai``, optionally auto-spawning the server via
+    ``auto_serve`` / ``serve_command``). The former in-process ``vllm`` /
+    ``transformers`` backends were removed to keep the support surface to
+    the HF Jobs path.
 
     For ``stub``, construct :class:`StubVlmClient` directly with a responder
     callable; it is rejected here to make accidental misuse obvious.
@@ -213,8 +214,8 @@ def make_vlm_client(config: VlmConfig) -> VlmClient:
     if config.backend in {"vllm", "transformers"}:
         raise ValueError(
             f"backend={config.backend!r} (in-process local model) is not supported for now — "
-            "only backend='openai' (the Hugging Face Jobs flow) is. Run the pipeline via "
-            "examples/annotations/run_hf_job.py, which serves the model with vLLM in the "
+            "only backend='openai' (the Hugging Face Jobs flow) is. Run the pipeline with "
+            "`lerobot-annotate --job.target=<flavor>`, which serves the model with vLLM in the "
             "vllm/vllm-openai image and talks to it over the OpenAI-compatible API."
         )
     raise ValueError(f"Unknown VLM backend: {config.backend!r}")
