@@ -755,13 +755,13 @@ def test_aggregate_feature_stats_quantile_skewed_distribution():
     np.testing.assert_allclose(result["q01"], np.array([-45.0]))
     np.testing.assert_allclose(result["q99"], np.array([50.0]))
 
-    # Old buggy behavior would give q99 = (10*900 + 50*100)/1000 = 14.0
-    # which is drastically wrong (corresponds to ~90th percentile, not 99th)
+    # The old weighted-mean aggregation would give q99 = 14.0. The true
+    # combined q99 cannot be recovered from these summaries alone.
     assert result["q99"][0] > 14.0, "q99 should not be diluted by weighted averaging"
 
 
 def test_aggregate_feature_stats_quantile_all_keys():
-    """Test that all quantile keys use the correct aggregation direction."""
+    """Test that all quantile keys use the configured conservative direction."""
     stats_a = {
         "min": np.array([0.0]),
         "max": np.array([100.0]),
@@ -1087,7 +1087,7 @@ def test_aggregate_stats_dataset_merge():
 
     # Old buggy behavior for action q99 would give:
     # (12*5000 + 65*500)/5500 = 14.4 — essentially the left workspace's q99
-    # This would clip all right-workspace actions, making them unreachable.
+    # This produces a much narrower normalization interval than the conservative envelope.
     assert merged["action"]["q99"][0] > 14.4
 
     # observation.state should also use conservative bounds

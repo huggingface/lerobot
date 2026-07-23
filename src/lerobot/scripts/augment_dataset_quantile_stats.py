@@ -75,13 +75,12 @@ def has_quantile_stats(stats: dict[str, dict] | None, quantile_list_keys: list[s
     return False
 
 
-def compute_quantile_stats_for_dataset(
-    dataset: LeRobotDataset, skip_images: bool = False
-) -> dict[str, dict]:
+def compute_quantile_stats_for_dataset(dataset: LeRobotDataset, skip_images: bool = False) -> dict[str, dict]:
     """Compute quantile statistics for all episodes in the dataset.
 
-    Uses a single RunningQuantileStats per feature across all episodes to compute
-    exact quantiles from the full data, avoiding the lossy per-episode aggregation.
+    Uses a single RunningQuantileStats per feature across all episodes to estimate
+    global quantiles from histograms, avoiding aggregation of per-episode quantile
+    summaries. Estimates are subject to histogram discretization and rebinning error.
 
     Args:
         dataset: The LeRobot dataset to compute statistics for
@@ -89,7 +88,7 @@ def compute_quantile_stats_for_dataset(
             are already correct and recomputation is expensive)
 
     Returns:
-        Dictionary containing statistics with exact quantiles
+        Dictionary containing statistics with histogram-based global quantile estimates
     """
     logging.info(f"Computing quantile statistics for dataset with {dataset.num_episodes} episodes")
 
@@ -112,7 +111,7 @@ def compute_quantile_stats_for_dataset(
                 collected_data[key].append(value)
 
         for key, data_list in collected_data.items():
-            if dataset.features[key]["dtype"] == "string":
+            if dataset.features[key]["dtype"] in {"string", "language"}:
                 continue
 
             is_image_video = dataset.features[key]["dtype"] in ["image", "video"]
@@ -152,7 +151,7 @@ def compute_quantile_stats_for_dataset(
 
         aggregated_stats[key] = stats
 
-    logging.info(f"Computed exact quantile statistics from {len(running_stats)} features")
+    logging.info(f"Computed global histogram statistics from {len(running_stats)} features")
     return aggregated_stats
 
 
