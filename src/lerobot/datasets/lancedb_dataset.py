@@ -771,7 +771,14 @@ class LanceDBDataset(torch.utils.data.Dataset):
         for key in new_files:
             meta = self._file_meta[key]
             request_range(key, 0, min(_HEAD_BYTES, meta["file_size"]))
-            request_range(key, meta["moov_offset"], meta["moov_offset"] + meta["moov_size"])
+            # Slack past the moov covers the next box header (e.g. mdat) that
+            # ffmpeg reads while walking the container — without it, every
+            # decoder open pays one ~16-byte round trip.
+            request_range(
+                key,
+                meta["moov_offset"],
+                min(meta["moov_offset"] + meta["moov_size"] + _RANGE_SLACK, meta["file_size"]),
+            )
             if len(meta["kf_positions"]):
                 first_packet = int(meta["kf_positions"][0])
                 request_range(key, first_packet, min(first_packet + _OPEN_READAHEAD, meta["file_size"]))
