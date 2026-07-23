@@ -136,6 +136,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     postprocessor_config_filename: str | None
     preprocessor_overrides: dict[str, Any] | None
     postprocessor_overrides: dict[str, Any] | None
+    strict_overrides: bool
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
     dataset_meta: Any | None
 
@@ -195,6 +196,7 @@ def make_pre_post_processors(
                 "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
             ),
             overrides=kwargs.get("preprocessor_overrides", {}),
+            strict_overrides=kwargs.get("strict_overrides", True),
             to_transition=batch_to_transition,
             to_output=transition_to_batch,
             revision=pretrained_revision,
@@ -205,6 +207,7 @@ def make_pre_post_processors(
                 "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
             ),
             overrides=kwargs.get("postprocessor_overrides", {}),
+            strict_overrides=kwargs.get("strict_overrides", True),
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
             revision=pretrained_revision,
