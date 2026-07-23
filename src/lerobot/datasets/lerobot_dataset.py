@@ -500,12 +500,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
             raise RuntimeError(
                 "Cannot read from a dataset that is being recorded. Call finalize() first, then access items."
             )
+        if isinstance(idx, slice):
+            return [self[item_idx] for item_idx in range(*idx.indices(len(self)))]
+
         reader = self._ensure_reader()
         if reader.hf_dataset is None:
             # One-shot load after finalize()
             reader.load_and_activate()
-        if isinstance(idx, slice):
-            return reader.get_items(idx)
         return reader.get_item(idx)
 
     def select_columns(self, column_names: str | list[str]):

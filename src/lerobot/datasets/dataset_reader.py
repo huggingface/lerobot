@@ -309,8 +309,14 @@ class DatasetReader:
             futures = [pool.submit(_decode_single, k, ts) for k, ts in items]
             return dict(f.result() for f in futures)
 
-    def _prepare_item(self, item: dict) -> dict:
-        """Expand temporal features, decode videos, and apply transforms to one raw item."""
+    def get_item(self, idx) -> dict:
+        """Core __getitem__ logic. Assumes hf_dataset is loaded.
+
+        ``idx`` is a *relative* index into the (possibly episode-filtered)
+        HF dataset, **not** the absolute frame index stored in the ``index``
+        column.  The absolute index is retrieved from the row itself.
+        """
+        item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
         abs_idx = item["index"].item()
 
@@ -346,19 +352,3 @@ class DatasetReader:
         item["task"] = self._meta.tasks.iloc[task_idx].name
 
         return item
-
-    def get_item(self, idx: int) -> dict:
-        """Return one processed item at a relative dataset index."""
-        return self._prepare_item(self.hf_dataset[idx])
-
-    def get_items(self, idx: slice) -> list[dict]:
-        """Return processed items for a native Hugging Face dataset slice."""
-        if len(range(*idx.indices(len(self.hf_dataset)))) == 0:
-            return []
-
-        batch = self.hf_dataset[idx]
-        batch_size = len(next(iter(batch.values())))
-        return [
-            self._prepare_item({key: values[item_idx] for key, values in batch.items()})
-            for item_idx in range(batch_size)
-        ]
