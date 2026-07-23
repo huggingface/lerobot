@@ -102,6 +102,7 @@ class ImageServer:
                 fps=self.fps,
                 width=shape[1],
                 height=shape[0],
+                fourcc=cfg.get("fourcc"),
                 color_mode=ColorMode.RGB,
             )
             camera = OpenCVCamera(cam_config)
