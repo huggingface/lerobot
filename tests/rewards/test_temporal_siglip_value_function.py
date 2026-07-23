@@ -53,12 +53,15 @@ def test_temporal_image_processor():
     )
     transition = {
         TransitionKey.OBSERVATION: {
-            CAMERAS[0]: torch.full((1, 2, 3, 20, 16), 0.5),
+            CAMERAS[0]: torch.full((1, 2, 3, 20, 16), 128, dtype=torch.uint8),
+            CAMERAS[0] + "_is_pad": torch.tensor([[True, False]]),
         }
     }
     observation = step(transition)[TransitionKey.OBSERVATION]
     assert observation[CAMERAS[0]].shape == (1, 2, 3, 32, 32)
     assert observation[CAMERAS[0] + ".mask"].shape == (1, 2)
+    assert observation[CAMERAS[0] + ".mask"].tolist() == [[False, True]]
+    assert -1.0 <= observation[CAMERAS[0]].min() <= observation[CAMERAS[0]].max() <= 1.0
 
 
 def test_temporal_model_forward(monkeypatch):
@@ -89,7 +92,7 @@ def test_temporal_model_forward(monkeypatch):
     model = modeling.TemporalSiglipVFRewardModel(_config())
     batch = {
         **{key: torch.rand(1, 2, 3, 16, 16) for key in CAMERAS},
-        **{key + ".mask": torch.ones(1, 2, dtype=torch.bool) for key in CAMERAS},
+        **{key + ".mask": torch.tensor([[False, True]]) for key in CAMERAS},
         OBS_STATE: torch.rand(1, 2, 4),
         OBS_LANGUAGE_TOKENS: torch.ones(1, 4, dtype=torch.long),
         OBS_LANGUAGE_ATTENTION_MASK: torch.ones(1, 4, dtype=torch.bool),

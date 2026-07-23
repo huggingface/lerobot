@@ -52,20 +52,24 @@ class TemporalSiglipImageProcessorStep(ProcessorStep):
                 )
                 continue
 
-            image = observation[key].float()
+            image = observation[key]
             if image.ndim == 4:
                 image = image[:, None]
             if image.ndim != 5 or image.shape[2] != 3:
                 raise ValueError(f"Expected {key} as [B,T,3,H,W], got {tuple(image.shape)}")
             batch_size, history = image.shape[:2]
+            image = image.float() / 127.5 - 1.0 if image.dtype == torch.uint8 else image.float() * 2.0 - 1.0
             image = image.flatten(0, 1).permute(0, 2, 3, 1)
-            image = image * 2.0 - 1.0
             if image.shape[1:3] != self.image_resolution:
                 image = resize_with_pad_torch(image, *self.image_resolution)
             observation[key] = image.permute(0, 3, 1, 2).unflatten(0, (batch_size, history))
-            observation[key + IMAGE_MASK_SUFFIX] = torch.ones(
-                batch_size, history, dtype=torch.bool, device=image.device
-            )
+            padding_key = f"{key}_is_pad"
+            if padding_key in observation:
+                observation[key + IMAGE_MASK_SUFFIX] = ~observation[padding_key].bool()
+            else:
+                observation[key + IMAGE_MASK_SUFFIX] = torch.ones(
+                    batch_size, history, dtype=torch.bool, device=image.device
+                )
         transition[TransitionKey.OBSERVATION] = observation
         return transition
 

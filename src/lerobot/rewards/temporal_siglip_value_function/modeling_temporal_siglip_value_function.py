@@ -142,8 +142,9 @@ class TemporalSiglipVFRewardModel(DistributionalValueMixin, PreTrainedRewardMode
             src_key_padding_mask=~frame_valid,
             is_causal=True,
         )
-        last_valid = frame_valid.long().sum(-1).sub(1).clamp_min(0)
-        return hidden[torch.arange(batch_size, device=hidden.device), last_valid]
+        # The history window is ordered oldest→current and the current frame is
+        # always the final, non-padding element.
+        return hidden[:, -1]
 
     def _fit_state_dim(self, state: Tensor) -> Tensor:
         if state.shape[-1] > self.config.state_dim:
