@@ -25,9 +25,13 @@ from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 
 from .classifier.configuration_classifier import RewardClassifierConfig
 from .distributional_value_function.configuration_distributional_value_function import DistributionalVFConfig
+from .nanovlm_value_function.configuration_nanovlm_value_function import NanoVLMVFConfig
 from .pretrained import PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig
 from .sarm.configuration_sarm import SARMConfig
+from .temporal_siglip_value_function.configuration_temporal_siglip_value_function import (
+    TemporalSiglipVFConfig,
+)
 from .topreward.configuration_topreward import TOPRewardConfig
 
 
@@ -70,6 +74,18 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
         )
 
         return DistributionalVFRewardModel
+    elif name == "temporal_siglip_value_function":
+        from lerobot.rewards.temporal_siglip_value_function.modeling_temporal_siglip_value_function import (
+            TemporalSiglipVFRewardModel,
+        )
+
+        return TemporalSiglipVFRewardModel
+    elif name == "nanovlm_value_function":
+        from lerobot.rewards.nanovlm_value_function.modeling_nanovlm_value_function import (
+            NanoVLMVFRewardModel,
+        )
+
+        return NanoVLMVFRewardModel
     else:
         try:
             return _get_reward_model_cls_from_name(name=name)
@@ -105,6 +121,10 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
         return TOPRewardConfig(**kwargs)
     elif reward_type == "distributional_value_function":
         return DistributionalVFConfig(**kwargs)
+    elif reward_type == "temporal_siglip_value_function":
+        return TemporalSiglipVFConfig(**kwargs)
+    elif reward_type == "nanovlm_value_function":
+        return NanoVLMVFConfig(**kwargs)
     else:
         try:
             config_cls = RewardModelConfig.get_choice_class(reward_type)
@@ -207,6 +227,24 @@ def make_reward_pre_post_processors(
         )
 
         return make_distributional_vf_pre_post_processors(
+            config=reward_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+    elif isinstance(reward_cfg, TemporalSiglipVFConfig):
+        from lerobot.rewards.temporal_siglip_value_function.processor_temporal_siglip_value_function import (
+            make_temporal_siglip_vf_pre_post_processors,
+        )
+
+        return make_temporal_siglip_vf_pre_post_processors(
+            config=reward_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+    elif isinstance(reward_cfg, NanoVLMVFConfig):
+        from lerobot.rewards.nanovlm_value_function.processor_nanovlm_value_function import (
+            make_nanovlm_vf_pre_post_processors,
+        )
+
+        return make_nanovlm_vf_pre_post_processors(
             config=reward_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )

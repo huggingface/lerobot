@@ -22,18 +22,26 @@ from .factory import (
     make_reward_model_config as make_reward_model_config,
     make_reward_pre_post_processors as make_reward_pre_post_processors,
 )
+from .nanovlm_value_function.configuration_nanovlm_value_function import (
+    NanoVLMVFConfig as NanoVLMVFConfig,
+)
 from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig as RobometerConfig
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
+from .temporal_siglip_value_function.configuration_temporal_siglip_value_function import (
+    TemporalSiglipVFConfig as TemporalSiglipVFConfig,
+)
 from .topreward.configuration_topreward import TOPRewardConfig as TOPRewardConfig
 
 __all__ = [
     # Configuration classes
     "DistributionalVFConfig",
+    "NanoVLMVFConfig",
     "RewardClassifierConfig",
     "RobometerConfig",
     "SARMConfig",
     "TOPRewardConfig",
+    "TemporalSiglipVFConfig",
     # Base class
     "PreTrainedRewardModel",
     # Factory functions

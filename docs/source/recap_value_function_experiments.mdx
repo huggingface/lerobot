@@ -1,0 +1,111 @@
+# RECAP value-function experiments
+
+All variants use the same `mc_return`, `is_terminal`, 201-bin support, Dirac/HL-Gauss
+targets, metrics, and LeRobot training pipeline. Only the representation backbone changes.
+
+## Current RECAP Gemma3 baseline
+
+```bash
+lerobot-train \
+  --reward_model.type=distributional_value_function \
+  --reward_model.target_method=dirac_delta \
+  --reward_model.device=cuda \
+  --dataset.repo_id=<dataset_repo_id> \
+  --output_dir=outputs/vf_recap_gemma3 \
+  --steps=40000 \
+  --batch_size=8
+```
+
+This initializes SigLIP2 and Gemma3-270M from unimodal checkpoints and creates a
+fresh Gemma3 multimodal connector.
+
+## Temporal SigLIP2
+
+```bash
+lerobot-train \
+  --reward_model.type=temporal_siglip_value_function \
+  --reward_model.history_steps=6 \
+  --reward_model.frame_gap=30 \
+  --reward_model.target_method=dirac_delta \
+  --reward_model.device=cuda \
+  --dataset.repo_id=<dataset_repo_id> \
+  --output_dir=outputs/vf_temporal_siglip2 \
+  --steps=40000 \
+  --batch_size=16
+```
+
+The dataset factory supplies six past-only frames for every observation key.
+The model requires `observation.state` and all configured camera streams.
+
+## nanoVLM-460M
+
+Run a frozen-backbone probe first:
+
+```bash
+lerobot-train \
+  --reward_model.type=nanovlm_value_function \
+  --reward_model.nanovlm_pretrained_path=lusxvr/nanoVLM-460M-8k \
+  --reward_model.freeze_vision_encoder=true \
+  --reward_model.freeze_multimodal_projector=true \
+  --reward_model.freeze_language_model=true \
+  --reward_model.device=cuda \
+  --dataset.repo_id=<dataset_repo_id> \
+  --output_dir=outputs/vf_nanovlm_probe \
+  --steps=5000 \
+  --batch_size=16
+```
+
+Then load the probe checkpoint and selectively fine-tune the projector/decoder
+at a lower learning rate.
+
+## Standalone Gemma3 VLM alignment
+
+The VLM trainer is intentionally separate from LeRobot:
+
+```bash
+cd third_party/nanoVLM
+
+# Projector warmup
+torchrun --standalone --nproc_per_node=4 train_recap_gemma3.py \
+  --output_dir=checkpoints/recap_vlm_warmup \
+  --steps=8000 \
+  --freeze_language_model
+
+# Full multimodal alignment
+torchrun --standalone --nproc_per_node=4 train_recap_gemma3.py \
+  --resume_from_checkpoint=checkpoints/recap_vlm_warmup/final \
+  --output_dir=checkpoints/recap_vlm_aligned \
+  --steps=50000
+```
+
+The output is a standard Hugging Face `Gemma3ForConditionalGeneration`
+checkpoint.
+
+## Aligned RECAP value function (run last)
+
+```bash
+lerobot-train \
+  --reward_model.type=distributional_value_function \
+  --reward_model.vlm_pretrained_path=third_party/nanoVLM/checkpoints/recap_vlm_aligned/final \
+  --reward_model.freeze_vision_encoder=true \
+  --reward_model.device=cuda \
+  --dataset.repo_id=<dataset_repo_id> \
+  --output_dir=outputs/vf_recap_aligned \
+  --steps=40000 \
+  --batch_size=8
+```
+
+## Small-batch verification
+
+Before each full run:
+
+```bash
+uv run python scripts/overfit_vf_variant.py \
+  --dataset_repo_id=<dataset_repo_id> \
+  --reward_type=<distributional_value_function|temporal_siglip_value_function|nanovlm_value_function> \
+  --num_samples=16 \
+  --steps=500
+```
+
+Compare runs using held-out episode NLL/MAE, per-episode return rank correlation,
+terminal success/failure separation, and the matched-versus-shuffled image loss gap.
