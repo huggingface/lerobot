@@ -85,11 +85,15 @@ VIDEO_INDEX_COLUMNS = ("file_size", "moov_offset", "moov_size", "kf_indices", "k
 # stable, documented behaviors, with the fallback read as the safety net:
 # - on open, ffmpeg probes the container head (avio buffer reads over the
 #   first ~128 KB on mp4; we prefetch 2x that),
+# - after parsing the moov it primes the demuxer by reading the first media
+#   packets (measured: one 64 KiB read at the first packet's offset; we
+#   prefetch 4x that from the first keyframe position),
 # - after the last requested packet it reads ahead by up to one avio buffer
 #   (32 KiB default; we pad each range by 2x that).
 # If an ffmpeg upgrade ever reads differently, decodes stay correct and the
 # per-source ``fallback_bytes`` counter makes the added round trips visible.
 _HEAD_BYTES = 256 * 1024
+_OPEN_READAHEAD = 256 * 1024
 _RANGE_SLACK = 64 * 1024
 
 
@@ -768,6 +772,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
             meta = self._file_meta[key]
             request_range(key, 0, min(_HEAD_BYTES, meta["file_size"]))
             request_range(key, meta["moov_offset"], meta["moov_offset"] + meta["moov_size"])
+            if len(meta["kf_positions"]):
+                first_packet = int(meta["kf_positions"][0])
+                request_range(key, first_packet, min(first_packet + _OPEN_READAHEAD, meta["file_size"]))
         fps = float(self.meta.fps)
         for key, file_requests in requests.items():
             meta = self._file_meta[key]
