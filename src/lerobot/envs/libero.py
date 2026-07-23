@@ -380,6 +380,11 @@ class LiberoEnv(gym.Env):
     def close(self):
         if self._env is not None:
             self._env.close()
+            # Drop the handle so _ensure_env() rebuilds the env on the next reset.
+            # libero's ControlEnv.close() does `del self.env`, so reusing this
+            # instance after close() (e.g. across eval cycles) would otherwise hit
+            # `AttributeError: 'OffScreenRenderEnv' object has no attribute 'env'`.
+            self._env = None
 
 
 def _make_env_fns(
