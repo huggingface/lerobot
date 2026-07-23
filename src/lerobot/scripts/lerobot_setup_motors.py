@@ -53,6 +53,7 @@ from lerobot.teleoperators import (  # noqa: F401
 )
 from lerobot.utils.import_utils import register_third_party_plugins
 
+
 @dataclass
 class SetupConfig:
     teleop: TeleoperatorConfig | None = None
@@ -72,7 +73,10 @@ def setup_motors(cfg: SetupConfig):
     else:
         device = make_teleoperator_from_config(cfg.device)
 
-    device.setup_motors()
+    setup = getattr(device, "setup_motors", None)
+    if not callable(setup):
+        raise NotImplementedError(f"Device type '{cfg.device.type}' does not support motor setup.")
+    setup()
 
 
 def main():
