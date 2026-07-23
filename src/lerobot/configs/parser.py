@@ -23,10 +23,11 @@ from functools import wraps
 from pathlib import Path
 from pkgutil import ModuleInfo
 from types import ModuleType
-from typing import Any, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast, get_args
 
 import draccus
 import yaml  # type: ignore[import-untyped]
+from draccus.utils import DecodingError
 
 from lerobot.utils.utils import has_method
 
@@ -41,6 +42,16 @@ _config_path_args: dict[str, str] = {}
 
 # Storage for non-path YAML overrides so validate() can pass them to from_pretrained.
 _config_yaml_overrides: dict[str, list[str]] = {}
+
+
+def _decode_literal(literal_type: Any, raw_value: Any, path: Sequence[str] = ()) -> Any:
+    choices = get_args(literal_type)
+    if raw_value not in choices:
+        raise DecodingError(path, f"Invalid choice: {raw_value!r}. Must be one of {choices}.")
+    return raw_value
+
+
+draccus.decode.register(Literal, func=_decode_literal, include_subclasses=True)
 
 
 def _flatten_to_cli_args(d: dict, prefix: str = "") -> list[str]:
