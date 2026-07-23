@@ -42,6 +42,11 @@ from lerobot.utils.constants import (
     OBS_IMAGE,
     OBS_IMAGES,
     OBS_STATE,
+    MOLMO_SPACES_KEY_JOINT_POS,
+    MOLMO_SPACES_KEY_JOINT_VEL,
+    MOLMO_SPACES_KEY_EEF_POS,
+    MOLMO_SPACES_KEY_EEF_QUAT,
+    MOLMO_SPACES_KEY_GRIPPER_QPOS,
 )
 
 
@@ -889,4 +894,101 @@ class RoboMMEEnv(EnvConfig):
             episode_length=self.episode_length,
             task_ids=self.task_ids,
             env_cls=env_cls,
+        )
+
+
+@EnvConfig.register_subclass("molmospaces")
+@dataclass
+class MolmoSpacesEnv(EnvConfig):
+    """MolmoSpaces benchmark for robot manipulation and navigation.
+
+    MolmoSpaces is a large-scale benchmark from Allen AI with tasks for
+    pick, open, close, and navigation in MuJoCo simulation.
+
+    See: https://github.com/allenai/molmospaces
+    """
+
+    task: str = "pick"
+    fps: int = 30
+    episode_length: int = 500
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    camera_name: str = "front"
+    observation_height: int = 256
+    observation_width: int = 256
+    robot: str = "franka"
+    benchmark_name: str = "molmospaces_bench_v1"
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            MOLMO_SPACES_KEY_JOINT_POS: f"{OBS_STATE}.joint_pos",
+            MOLMO_SPACES_KEY_JOINT_VEL: f"{OBS_STATE}.joint_vel",
+            MOLMO_SPACES_KEY_EEF_POS: f"{OBS_STATE}.eef_pos",
+            MOLMO_SPACES_KEY_EEF_QUAT: f"{OBS_STATE}.eef_quat",
+            MOLMO_SPACES_KEY_GRIPPER_QPOS: f"{OBS_STATE}.gripper_qpos",
+            "pixels/front": f"{OBS_IMAGES}.front",
+        }
+    )
+
+    def __post_init__(self):
+        if self.obs_type not in ("pixels", "pixels_agent_pos"):
+            raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
+        if self.obs_type == "pixels_agent_pos" or self.obs_type == "pixels":
+            self.features["pixels/front"] = PolicyFeature(
+                type=FeatureType.VISUAL,
+                shape=(self.observation_height, self.observation_width, 3),
+            )
+
+        if self.obs_type == "pixels_agent_pos":
+            self.features[MOLMO_SPACES_KEY_JOINT_POS] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(7,),
+            )
+            self.features[MOLMO_SPACES_KEY_JOINT_VEL] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(7,),
+            )
+            self.features[MOLMO_SPACES_KEY_EEF_POS] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(3,),
+            )
+            self.features[MOLMO_SPACES_KEY_EEF_QUAT] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(4,),
+            )
+            self.features[MOLMO_SPACES_KEY_GRIPPER_QPOS] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(1,),
+            )
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "observation_height": self.observation_height,
+            "observation_width": self.observation_width,
+            "max_episode_steps": self.episode_length,
+            "benchmark_name": self.benchmark_name,
+        }
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        from .molmospaces import create_molmospaces_envs
+
+        if self.task is None:
+            raise ValueError("MolmoSpacesEnv requires a task to be specified")
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
+        return create_molmospaces_envs(
+            task=self.task,
+            n_envs=n_envs,
+            camera_name=self.camera_name,
+            gym_kwargs=self.gym_kwargs,
+            env_cls=env_cls,
+            benchmark_name=self.benchmark_name,
         )
