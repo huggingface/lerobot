@@ -79,6 +79,8 @@ class DiffusionConfig(PreTrainedConfig):
         use_film_scale_modulation: FiLM (https://huggingface.co/papers/1709.07871) is used for the Unet conditioning.
             Bias modulation is used be default, while this parameter indicates whether to also use scale
             modulation.
+        gradient_checkpointing: Whether to checkpoint the Unet residual blocks during training. This reduces
+            activation memory at the cost of recomputing those blocks during the backward pass.
         noise_scheduler_type: Name of the noise scheduler to use. Supported options: ["DDPM", "DDIM"].
         num_train_timesteps: Number of diffusion steps for the forward diffusion schedule.
         beta_schedule: Name of the diffusion beta schedule as per DDPMScheduler from Hugging Face diffusers.

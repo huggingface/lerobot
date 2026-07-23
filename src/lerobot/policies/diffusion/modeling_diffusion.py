@@ -31,6 +31,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
 from torch import Tensor, nn
+from torch.utils.checkpoint import checkpoint
 
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from lerobot.utils.import_utils import _diffusers_available, require_package
@@ -733,8 +734,8 @@ class DiffusionConditionalUnet1d(nn.Module):
         encoder_skip_features: list[Tensor] = []
         for resnet, resnet2, downsample in self.down_modules:
             if use_gc:
-                x = torch.utils.checkpoint.checkpoint(resnet, x, global_feature, use_reentrant=False)
-                x = torch.utils.checkpoint.checkpoint(resnet2, x, global_feature, use_reentrant=False)
+                x = checkpoint(resnet, x, global_feature, use_reentrant=False)
+                x = checkpoint(resnet2, x, global_feature, use_reentrant=False)
             else:
                 x = resnet(x, global_feature)
                 x = resnet2(x, global_feature)
@@ -743,7 +744,7 @@ class DiffusionConditionalUnet1d(nn.Module):
 
         for mid_module in self.mid_modules:
             if use_gc:
-                x = torch.utils.checkpoint.checkpoint(mid_module, x, global_feature, use_reentrant=False)
+                x = checkpoint(mid_module, x, global_feature, use_reentrant=False)
             else:
                 x = mid_module(x, global_feature)
 
@@ -751,8 +752,8 @@ class DiffusionConditionalUnet1d(nn.Module):
         for resnet, resnet2, upsample in self.up_modules:
             x = torch.cat((x, encoder_skip_features.pop()), dim=1)
             if use_gc:
-                x = torch.utils.checkpoint.checkpoint(resnet, x, global_feature, use_reentrant=False)
-                x = torch.utils.checkpoint.checkpoint(resnet2, x, global_feature, use_reentrant=False)
+                x = checkpoint(resnet, x, global_feature, use_reentrant=False)
+                x = checkpoint(resnet2, x, global_feature, use_reentrant=False)
             else:
                 x = resnet(x, global_feature)
                 x = resnet2(x, global_feature)
