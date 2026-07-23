@@ -136,6 +136,10 @@ config = RealSenseCameraConfig(
     height=480,
     color_mode=ColorMode.RGB,
     use_depth=True,
+    # Optional fixed color controls. Omit them to leave the current sensor settings unchanged.
+    exposure=120,
+    gain=64,
+    white_balance=4600,
     rotation=Cv2Rotation.NO_ROTATION
 )
 
@@ -153,6 +157,12 @@ finally:
     camera.disconnect()
 ```
 <!-- prettier-ignore-end -->
+
+Manual color controls disable the corresponding automatic exposure or white-balance mode. Their
+supported ranges vary by camera model; an invalid value raises an error at connection time that
+includes the range reported by the sensor. Requesting an unsupported control also raises an error.
+Omitted controls leave the sensor's existing automatic or manual setting unchanged. These options
+require `use_rgb=True`.
 
 </hfoption>
 </hfoptions>

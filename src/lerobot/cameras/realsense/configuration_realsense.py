@@ -48,13 +48,14 @@ class RealSenseCameraConfig(CameraConfig):
         warmup_s: Time reading frames before returning from connect (in seconds)
         exposure: Manual exposure value for the color sensor. When set, auto-exposure is
             disabled and this fixed value is used. Valid range depends on the camera model
-            (e.g., 1-10000 for D400 series). Defaults to None (auto-exposure).
+            (e.g., 1-10000 for D400 series). Defaults to None (leave unchanged).
         gain: Manual gain value for the color sensor. When set, auto-exposure is disabled
             and this fixed gain is used. Valid range depends on the camera model
-            (e.g., 16-248 for D400 series). Defaults to None (auto).
+            (e.g., 16-248 for D400 series). Defaults to None (leave unchanged).
         white_balance: Manual white balance value for the color sensor. When set, auto
             white balance is disabled and this fixed value is used. Valid range depends on
-            the camera model (e.g., 2800-6500 for D400 series). Defaults to None (auto).
+            the camera model (e.g., 2800-6500 for D400 series). Defaults to None
+            (leave unchanged).
 
     Note:
         - Either name or serial_number must be specified.
@@ -80,6 +81,18 @@ class RealSenseCameraConfig(CameraConfig):
 
         if not self.use_rgb and not self.use_depth:
             raise ValueError("At least one of `use_rgb` or `use_depth` must be enabled.")
+
+        manual_color_options = {
+            "exposure": self.exposure,
+            "gain": self.gain,
+            "white_balance": self.white_balance,
+        }
+        configured_color_options = [name for name, value in manual_color_options.items() if value is not None]
+        if configured_color_options and not self.use_rgb:
+            raise ValueError(
+                "Manual color sensor options require `use_rgb=True`. "
+                f"Configured options: {configured_color_options}."
+            )
 
         values = (self.fps, self.width, self.height)
         if any(v is not None for v in values) and any(v is None for v in values):

@@ -121,6 +121,9 @@ class RealSenseCamera(Camera):
 
         self.config = config
 
+        self.width: int | None = config.width
+        self.height: int | None = config.height
+
         if config.serial_number_or_name.isdigit():
             self.serial_number = config.serial_number_or_name
         else:
@@ -190,23 +193,30 @@ class RealSenseCamera(Camera):
                 f"Failed to open {self}.Run `lerobot-find-cameras realsense` to find available cameras."
             ) from e
 
-        self._configure_capture_settings()
-        self._configure_sensor_options()
-        self._start_read_thread()
+        try:
+            self._configure_capture_settings()
+            self._configure_sensor_options()
+            self._start_read_thread()
 
-        # NOTE(Steven/Caroline): Enforcing at least one second of warmup as RS cameras need a bit of time before the first read. If we don't wait, the first read from the warmup will raise.
-        self.warmup_s = max(self.warmup_s, 1)
+            # NOTE(Steven/Caroline): Enforcing at least one second of warmup as RS cameras need a bit of time before the first read. If we don't wait, the first read from the warmup will raise.
+            self.warmup_s = max(self.warmup_s, 1)
 
-        warmup_read = self.async_read if self.use_rgb else self.async_read_depth
-        start_time = time.time()
-        while time.time() - start_time < self.warmup_s:
-            warmup_read(timeout_ms=self.warmup_s * 1000)
-            time.sleep(0.1)
-        with self.frame_lock:
-            if (self.use_rgb and self.latest_color_frame is None) or (
-                self.use_depth and self.latest_depth_frame is None
-            ):
-                raise ConnectionError(f"{self} failed to capture frames during warmup.")
+            warmup_read = self.async_read if self.use_rgb else self.async_read_depth
+            start_time = time.time()
+            while time.time() - start_time < self.warmup_s:
+                warmup_read(timeout_ms=self.warmup_s * 1000)
+                time.sleep(0.1)
+            with self.frame_lock:
+                if (self.use_rgb and self.latest_color_frame is None) or (
+                    self.use_depth and self.latest_depth_frame is None
+                ):
+                    raise ConnectionError(f"{self} failed to capture frames during warmup.")
+        except Exception:
+            try:
+                self._cleanup_connection()
+            except Exception:
+                logger.exception(f"Failed to clean up {self} after a connection error.")
+            raise
 
         logger.info(f"{self} connected.")
 
@@ -382,17 +392,34 @@ class RealSenseCamera(Camera):
         """Applies manual sensor options (exposure, gain, white balance) to the color sensor.
 
         When exposure or gain is set, auto-exposure is disabled first. When white_balance
-        is set, auto white balance is disabled first. Skipped entirely if no options are set.
+        is set, auto white balance is disabled first. An omitted option is left unchanged,
+        and configuration is skipped entirely if all options are omitted.
 
         Raises:
-            ValueError: If a requested value is outside the sensor's supported range. The
-                error message includes the option name, requested value, and supported range.
+            ValueError: If the sensor does not support a requested option or a requested
+                value is invalid. Invalid-value errors include the option name, requested
+                value, and supported range when available.
         """
         config = self.config
         if config.exposure is None and config.gain is None and config.white_balance is None:
             return
 
         color_sensor = self._get_color_sensor()
+
+        requested_options = (
+            (rs.option.exposure, config.exposure, "exposure"),
+            (rs.option.gain, config.gain, "gain"),
+            (rs.option.white_balance, config.white_balance, "white balance"),
+        )
+        unsupported_options = [
+            label
+            for option, value, label in requested_options
+            if value is not None and not color_sensor.supports(option)
+        ]
+        if unsupported_options:
+            raise ValueError(
+                f"{self}: color sensor does not support requested manual options: {unsupported_options}."
+            )
 
         if (config.exposure is not None or config.gain is not None) and color_sensor.supports(
             rs.option.enable_auto_exposure
@@ -401,18 +428,12 @@ class RealSenseCamera(Camera):
             logger.info(f"{self} auto-exposure disabled.")
 
         if config.exposure is not None:
-            if color_sensor.supports(rs.option.exposure):
-                self._set_sensor_option(color_sensor, rs.option.exposure, config.exposure, "exposure")
-                logger.info(f"{self} exposure set to {config.exposure}.")
-            else:
-                logger.warning(f"{self} sensor does not support manual exposure.")
+            self._set_sensor_option(color_sensor, rs.option.exposure, config.exposure, "exposure")
+            logger.info(f"{self} exposure set to {config.exposure}.")
 
         if config.gain is not None:
-            if color_sensor.supports(rs.option.gain):
-                self._set_sensor_option(color_sensor, rs.option.gain, config.gain, "gain")
-                logger.info(f"{self} gain set to {config.gain}.")
-            else:
-                logger.warning(f"{self} sensor does not support manual gain.")
+            self._set_sensor_option(color_sensor, rs.option.gain, config.gain, "gain")
+            logger.info(f"{self} gain set to {config.gain}.")
 
         if config.white_balance is not None:
             if color_sensor.supports(rs.option.enable_auto_white_balance):
@@ -420,13 +441,10 @@ class RealSenseCamera(Camera):
                     color_sensor, rs.option.enable_auto_white_balance, 0, "auto white balance"
                 )
                 logger.info(f"{self} auto white balance disabled.")
-            if color_sensor.supports(rs.option.white_balance):
-                self._set_sensor_option(
-                    color_sensor, rs.option.white_balance, config.white_balance, "white balance"
-                )
-                logger.info(f"{self} white balance set to {config.white_balance}.")
-            else:
-                logger.warning(f"{self} sensor does not support manual white balance.")
+            self._set_sensor_option(
+                color_sensor, rs.option.white_balance, config.white_balance, "white balance"
+            )
+            logger.info(f"{self} white balance set to {config.white_balance}.")
 
     @check_if_not_connected
     def read_depth(self, timeout_ms: int = 200) -> NDArray[Any]:
@@ -773,13 +791,17 @@ class RealSenseCamera(Camera):
                 f"Attempted to disconnect {self}, but it appears already disconnected."
             )
 
+        self._cleanup_connection()
+        logger.info(f"{self} disconnected.")
+
+    def _cleanup_connection(self) -> None:
+        """Release connection resources and reset state after disconnect or failed connect."""
         if self.thread is not None:
             self._stop_read_thread()
 
-        if self.rs_pipeline is not None:
-            self.rs_pipeline.stop()
-            self.rs_pipeline = None
-            self.rs_profile = None
+        pipeline = self.rs_pipeline
+        self.rs_pipeline = None
+        self.rs_profile = None
 
         with self.frame_lock:
             self.latest_color_frame = None
@@ -787,4 +809,5 @@ class RealSenseCamera(Camera):
             self.latest_timestamp = None
             self.new_frame_event.clear()
 
-        logger.info(f"{self} disconnected.")
+        if pipeline is not None:
+            pipeline.stop()
