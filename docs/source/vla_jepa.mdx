@@ -64,26 +64,58 @@ All checkpoints use `Qwen/Qwen3-VL-2B-Instruct` as the language backbone.
 
 Key parameters in `VLAJEPAConfig`:
 
-| Parameter                 | Default | Description                                                                                                                                                                     |
-| ------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `chunk_size`              | 7       | Number of actions predicted per inference call                                                                                                                                  |
-| `n_action_steps`          | 7       | Steps executed from the predicted chunk before re-planning                                                                                                                      |
-| `num_video_frames`        | 8       | Video clip length fed to the world model                                                                                                                                        |
-| `enable_world_model`      | `True`  | Whether to load and train the V-JEPA2 predictor                                                                                                                                 |
-| `world_model_loss_weight` | 0.1     | Weight of the JEPA prediction loss relative to the action loss                                                                                                                  |
-| `num_inference_timesteps` | 4       | Euler integration steps for action denoising                                                                                                                                    |
-| `freeze_qwen`             | `False` | Freeze the Qwen3-VL backbone and only train the action head                                                                                                                     |
-| `reinit_modules`          | `None`  | Key prefixes allowed to be randomly re-initialised on load (for cross-embodiment transfer, see [Fine-tuning on a different embodiment](#fine-tuning-on-a-different-embodiment)) |
-| `gripper_dim`             | 6       | Index of the gripper dimension in the action vector (e.g. 6 for a 7-DoF arm with gripper as the last joint)                                                                     |
-| `gripper_threshold`       | 0.5     | Threshold used by `pre_snap_gripper_action` and `binarize_gripper_action` to binarize the gripper dimension                                                                     |
-| `pre_snap_gripper_action` | `True`  | Snap the gripper dim to {0, 1} before unnormalization. Set to `False` for robots without a binary gripper                                                                       |
-| `binarize_gripper_action` | `True`  | Binarize the gripper dim to {-1, 1} after unnormalization. Set to `False` for robots without a binary gripper                                                                   |
+| Parameter                     | Default | Description                                                                                                                                                                     |
+| ----------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chunk_size`                  | 7       | Number of actions predicted per inference call                                                                                                                                  |
+| `n_action_steps`              | 7       | Steps executed from the predicted chunk before re-planning                                                                                                                      |
+| `num_video_frames`            | 8       | Video clip length fed to the world model                                                                                                                                        |
+| `enable_world_model`          | `True`  | Whether to load and train the V-JEPA2 predictor                                                                                                                                 |
+| `world_model_loss_weight`     | 0.1     | Weight of the JEPA prediction loss relative to the action loss                                                                                                                  |
+| `prediction_horizons`         | `None`  | Optional encoded-position horizons for experimental multi-horizon world-model training; supported values are 1 and 2                                                            |
+| `temporal_consistency_weight` | 0.0     | Weight of the recursive one-step versus direct two-step consistency loss; requires prediction horizons 1 and 2                                                                  |
+| `num_inference_timesteps`     | 4       | Euler integration steps for action denoising                                                                                                                                    |
+| `freeze_qwen`                 | `False` | Freeze the Qwen3-VL backbone and only train the action head                                                                                                                     |
+| `reinit_modules`              | `None`  | Key prefixes allowed to be randomly re-initialised on load (for cross-embodiment transfer, see [Fine-tuning on a different embodiment](#fine-tuning-on-a-different-embodiment)) |
+| `gripper_dim`                 | 6       | Index of the gripper dimension in the action vector (e.g. 6 for a 7-DoF arm with gripper as the last joint)                                                                     |
+| `gripper_threshold`           | 0.5     | Threshold used by `pre_snap_gripper_action` and `binarize_gripper_action` to binarize the gripper dimension                                                                     |
+| `pre_snap_gripper_action`     | `True`  | Snap the gripper dim to {0, 1} before unnormalization. Set to `False` for robots without a binary gripper                                                                       |
+| `binarize_gripper_action`     | `True`  | Binarize the gripper dim to {-1, 1} after unnormalization. Set to `False` for robots without a binary gripper                                                                   |
 
 ---
 
 ## Training
 
 Number of training steps may vary based on dataset size and compute budget. The original paper pretrained for 50k on ssv2 + droid jointly, then additional 30k steps for LIBERO, but fewer steps may still yield good performance when fine-tuning from the provided pretrained checkpoints.
+
+### Experimental multi-horizon world-model training
+
+Set `prediction_horizons` to opt in to direct latent prediction at multiple temporal
+horizons:
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.repo_id=your_org/your_repo \
+  --policy.prediction_horizons='[1,2]' \
+  --policy.temporal_consistency_weight=0.1 \
+  --dataset.repo_id=your_org/your_dataset
+```
+
+Horizons are measured in **encoded temporal positions**, not raw frames. One encoded
+position spans `jepa_tubelet_size` raw frames, so the default tubelet size of 2 makes
+horizons 1 and 2 correspond to 2 and 4 raw frames. Only horizons 1 and 2 are currently
+supported. A positive `temporal_consistency_weight` also requires both horizons: it
+compares the direct two-step prediction with a recursive one-step prediction.
+
+The mode excludes padded temporal spans from every loss. It logs `wm_loss_h1` and/or
+`wm_loss_h2`, their valid-origin counts (`wm_valid_h1` and `wm_valid_h2`), the combined
+`wm_direct_loss`, and `wm_consistency_loss` when consistency is enabled.
+
+This feature is disabled by default to preserve checkpoint and training behavior.
+V-JEPA2 uses bidirectional temporal attention, so the opt-in path encodes one raw-frame
+prefix per encoded temporal position to prevent target leakage. This is substantially
+more expensive than the legacy single full-clip encoder call: with the default 8 frames
+and tubelet size 2, the video encoder runs four times per clip.
 
 ### Full training from scratch
 

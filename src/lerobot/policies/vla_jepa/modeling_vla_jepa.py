@@ -39,6 +39,62 @@ from .configuration_vla_jepa import VLAJEPAConfig
 from .qwen_interface import Qwen3VLInterface
 from .world_model import ActionConditionedVideoPredictor
 
+
+def _encoded_video_validity(video_is_pad: Tensor, tubelet_size: int) -> Tensor:
+    """Combine view/tubelet padding and invalidate every position after the first invalid one."""
+    if video_is_pad.ndim != 3:
+        raise ValueError("`video_is_pad` must have shape [B, V, T].")
+    if tubelet_size <= 0 or video_is_pad.shape[-1] % tubelet_size != 0:
+        raise ValueError("Video mask length must be divisible by a positive tubelet size.")
+
+    batch_size, num_views, num_frames = video_is_pad.shape
+    num_encoded_frames = num_frames // tubelet_size
+    grouped = video_is_pad.to(dtype=torch.bool).reshape(
+        batch_size, num_views, num_encoded_frames, tubelet_size
+    )
+    encoded_valid = (~grouped).all(dim=3).all(dim=1)
+    return encoded_valid.cumprod(dim=1).bool()
+
+
+def _horizon_validity(encoded_valid: Tensor, horizon: int) -> Tensor:
+    """Return valid origins whose complete context-to-target span is valid."""
+    if encoded_valid.ndim != 2:
+        raise ValueError("`encoded_valid` must have shape [B, T].")
+    if horizon <= 0 or horizon >= encoded_valid.shape[1]:
+        raise ValueError("Horizon must be positive and smaller than the encoded sequence length.")
+    return encoded_valid.unfold(dimension=1, size=horizon + 1, step=1).all(dim=2)
+
+
+def _masked_l1_components(prediction: Tensor, target: Tensor, valid_origins: Tensor) -> tuple[Tensor, Tensor]:
+    """Return an L1 numerator and scalar-element denominator for masked latent states."""
+    if prediction.shape != target.shape or prediction.ndim != 4:
+        raise ValueError("Prediction and target must share shape [B, T, P, D].")
+    if valid_origins.shape != prediction.shape[:2]:
+        raise ValueError("`valid_origins` must match the prediction batch and temporal dimensions.")
+    error = (prediction - target).abs()
+    mask = valid_origins.to(device=error.device, dtype=torch.bool)[:, :, None, None].expand_as(error)
+    numerator = error.masked_select(mask).sum()
+    denominator = mask.sum().to(error.dtype)
+    return numerator, denominator
+
+
+def _safe_ratio(numerator: Tensor, denominator: Tensor) -> Tensor:
+    """Divide masked loss components while returning differentiable zero when all entries are invalid."""
+    return numerator / denominator.clamp_min(1)
+
+
+def _action_token_windows(action_tokens: Tensor, horizon: int, num_origins: int) -> Tensor:
+    """Collect ordered Qwen transition-token groups for each prediction origin."""
+    if action_tokens.ndim != 4:
+        raise ValueError("`action_tokens` must have shape [B, T-1, A, Q].")
+    if horizon <= 0 or num_origins <= 0 or num_origins + horizon - 1 > action_tokens.shape[1]:
+        raise ValueError("Action-token sequence is too short for the requested horizon and origins.")
+    windows = torch.stack(
+        [action_tokens[:, offset : offset + num_origins] for offset in range(horizon)], dim=2
+    )
+    return windows.flatten(2, 3)
+
+
 # ============================================================================
 # Native VLA-JEPA Model - follows original starVLA VLA_JEPA.py implementation
 # ============================================================================
@@ -92,6 +148,11 @@ class VLAJEPAModel(nn.Module):
             self.video_processor = AutoVideoProcessor.from_pretrained(config.jepa_encoder_name)
             num_views = config.jepa_tubelet_size
             tubelet_size = self.video_encoder.config.tubelet_size
+            if config.prediction_horizons is not None and tubelet_size != config.jepa_tubelet_size:
+                raise ValueError(
+                    "Multi-horizon mode requires `jepa_tubelet_size` to match the video encoder's "
+                    f"tubelet size ({tubelet_size})."
+                )
             image_size = getattr(self.video_encoder.config, "image_size", None)
             if image_size is None:
                 first_image_shape = next(iter(config.image_features.values())).shape
@@ -194,15 +255,157 @@ class VLAJEPAModel(nn.Module):
             )
         return embodied_action_tokens, action_tokens
 
-    def _world_model_loss(self, videos: Tensor, action_tokens: Tensor) -> Tensor:
+    def _multi_horizon_world_model_loss(
+        self,
+        video_embeddings: Tensor,
+        action_tokens: Tensor,
+        video_is_pad: Tensor,
+        tubelet_size: int,
+    ) -> tuple[Tensor, dict[str, Tensor]]:
+        """Compute direct encoded-position losses for the configured research horizons."""
+        horizons = self.config.prediction_horizons
+        if horizons is None:
+            raise ValueError("Multi-horizon loss requires configured prediction horizons.")
+
+        batch_size = video_embeddings.shape[0]
+        num_encoded_frames = self.config.num_video_frames // tubelet_size
+        if video_embeddings.shape[1] % num_encoded_frames != 0:
+            raise ValueError("Video-embedding tokens must divide evenly into encoded temporal positions.")
+        tokens_per_frame = video_embeddings.shape[1] // num_encoded_frames
+        states = video_embeddings.reshape(
+            batch_size, num_encoded_frames, tokens_per_frame, video_embeddings.shape[2]
+        ).float()
+
+        tokens_per_action = self.config.num_action_tokens_per_timestep
+        expected_action_tokens = (num_encoded_frames - 1) * tokens_per_action
+        if action_tokens.shape[1] != expected_action_tokens:
+            raise ValueError(
+                "Multi-horizon mode requires exactly "
+                f"{expected_action_tokens} Qwen action tokens, got {action_tokens.shape[1]}."
+            )
+        action_tokens = action_tokens.reshape(
+            batch_size, num_encoded_frames - 1, tokens_per_action, action_tokens.shape[2]
+        )
+
+        encoded_valid = _encoded_video_validity(video_is_pad, tubelet_size)
+        numerators: list[Tensor] = []
+        denominators: list[Tensor] = []
+        metrics: dict[str, Tensor] = {}
+        direct_predictions: dict[int, Tensor] = {}
+        valid_origins_by_horizon: dict[int, Tensor] = {}
+
+        for horizon in horizons:
+            num_origins = num_encoded_frames - horizon
+            context = states[:, :num_origins]
+            target = states[:, horizon:]
+            conditioning = _action_token_windows(action_tokens, horizon, num_origins)
+            prediction = self.video_predictor(
+                context.flatten(1, 2), conditioning.flatten(1, 2).float()
+            ).reshape_as(target)
+            valid_origins = _horizon_validity(encoded_valid, horizon)
+            direct_predictions[horizon] = prediction
+            valid_origins_by_horizon[horizon] = valid_origins
+            numerator, denominator = _masked_l1_components(prediction, target, valid_origins)
+            numerators.append(numerator)
+            denominators.append(denominator)
+            metrics[f"wm_loss_h{horizon}"] = _safe_ratio(numerator, denominator).detach()
+            metrics[f"wm_valid_h{horizon}"] = valid_origins.sum().to(prediction.dtype)
+
+        direct_loss = _safe_ratio(torch.stack(numerators).sum(), torch.stack(denominators).sum())
+        metrics["wm_direct_loss"] = direct_loss.detach()
+        if self.config.temporal_consistency_weight == 0:
+            return direct_loss, metrics
+
+        num_recursive_origins = num_encoded_frames - 2
+        recursive_input = direct_predictions[1][:, :num_recursive_origins].detach()
+        recursive_action_tokens = action_tokens[:, 1 : 1 + num_recursive_origins]
+        with torch.no_grad():
+            recursive_prediction = self.video_predictor(
+                recursive_input.flatten(1, 2), recursive_action_tokens.flatten(1, 2).float()
+            ).reshape_as(direct_predictions[2])
+        consistency_numerator, consistency_denominator = _masked_l1_components(
+            direct_predictions[2], recursive_prediction.detach(), valid_origins_by_horizon[2]
+        )
+        consistency_loss = _safe_ratio(consistency_numerator, consistency_denominator)
+        metrics["wm_consistency_loss"] = consistency_loss.detach()
+        return direct_loss + self.config.temporal_consistency_weight * consistency_loss, metrics
+
+    def _causal_video_embeddings(
+        self,
+        video_pixels: Tensor,
+        batch_size: int,
+        num_views: int,
+        tubelet_size: int,
+    ) -> Tensor:
+        """Encode every temporal position from only its raw-frame prefix."""
+        if video_pixels.ndim != 5:
+            raise ValueError("Processed videos must have shape [B*V, T, C, H, W].")
+        if video_pixels.shape[0] != batch_size * num_views:
+            raise ValueError("Processed video batch must equal batch size times the number of views.")
+        if video_pixels.shape[1] != self.config.num_video_frames:
+            raise ValueError("Processed video length must match configured `num_video_frames`.")
+        if tubelet_size <= 0 or video_pixels.shape[1] % tubelet_size != 0:
+            raise ValueError("Processed video length must be divisible by a positive tubelet size.")
+
+        num_encoded_frames = video_pixels.shape[1] // tubelet_size
+        causal_positions: list[Tensor] = []
+        tokens_per_position: int | None = None
+        hidden_size: int | None = None
+        for position in range(num_encoded_frames):
+            prefix_frames = (position + 1) * tubelet_size
+            prefix_embeddings = self.video_encoder.get_vision_features(
+                pixel_values_videos=video_pixels[:, :prefix_frames]
+            )
+            if prefix_embeddings.ndim != 3 or prefix_embeddings.shape[0] != video_pixels.shape[0]:
+                raise ValueError("Video encoder must return embeddings with shape [B*V, tokens, D].")
+            if prefix_embeddings.shape[1] % (position + 1) != 0:
+                raise ValueError("Video-embedding tokens must divide evenly across encoded positions.")
+
+            current_tokens_per_position = prefix_embeddings.shape[1] // (position + 1)
+            if tokens_per_position is None:
+                tokens_per_position = current_tokens_per_position
+                hidden_size = prefix_embeddings.shape[2]
+            elif (
+                current_tokens_per_position != tokens_per_position
+                or prefix_embeddings.shape[2] != hidden_size
+            ):
+                raise ValueError("Video encoder must keep spatial token and hidden dimensions stable.")
+            # Clone the suffix so the list does not retain every larger prefix tensor's storage.
+            causal_positions.append(prefix_embeddings[:, -current_tokens_per_position:].clone())
+
+        causal_embeddings = torch.stack(causal_positions, dim=1)
+        causal_embeddings = causal_embeddings.reshape(
+            batch_size,
+            num_views,
+            num_encoded_frames,
+            causal_embeddings.shape[2],
+            causal_embeddings.shape[3],
+        )
+        causal_embeddings = causal_embeddings.permute(0, 2, 3, 1, 4).flatten(3, 4)
+        return causal_embeddings.flatten(1, 2)
+
+    def _world_model_loss(
+        self, videos: Tensor, action_tokens: Tensor, video_is_pad: Tensor | None = None
+    ) -> Tensor | tuple[Tensor, dict[str, Tensor]]:
         """JEPA encode + predictor L1 loss. `videos` is [B, V, T, C, H, W] float in [0, 1]."""
+        if self.config.prediction_horizons is not None:
+            if video_is_pad is None:
+                video_is_pad = torch.zeros(videos.shape[:3], dtype=torch.bool, device=videos.device)
+            if video_is_pad.shape != videos.shape[:3]:
+                raise ValueError("`video_is_pad` must match video batch, view, and temporal dimensions.")
+            video_is_pad = video_is_pad.to(device=videos.device, dtype=torch.bool)
+
         # Match the world model's expected view count: pad with the first view, or trim extras.
         num_views = self.config.jepa_tubelet_size
         if videos.shape[1] < num_views:
             missing = num_views - videos.shape[1]
             videos = torch.cat([videos, videos[:, :1].repeat(1, missing, 1, 1, 1, 1)], dim=1)
+            if video_is_pad is not None:
+                video_is_pad = torch.cat([video_is_pad, video_is_pad[:, :1].repeat(1, missing, 1)], dim=1)
         elif videos.shape[1] > num_views:
             videos = videos[:, :num_views]
+            if video_is_pad is not None:
+                video_is_pad = video_is_pad[:, :num_views]
 
         b, v, t_frames, c, h_img, w_img = videos.shape
         flat = videos.reshape(b * v, t_frames, c, h_img, w_img)
@@ -214,12 +417,27 @@ class VLAJEPAModel(nn.Module):
             do_rescale=False,
         )["pixel_values_videos"]  # [B*V, T, C, H, W]
 
-        with torch.no_grad():
-            video_embeddings = self.video_encoder.get_vision_features(pixel_values_videos=video_pixels)
-            # Merge views: [B*V, ...] -> [B, ..., V*embed_dim]
-            video_embeddings = torch.cat(torch.chunk(video_embeddings, chunks=v, dim=0), dim=2)
-
         tubelet_size = self.video_encoder.config.tubelet_size
+        with torch.no_grad():
+            if self.config.prediction_horizons is None:
+                video_embeddings = self.video_encoder.get_vision_features(pixel_values_videos=video_pixels)
+                # Preserve the legacy checkpoint path exactly when the research feature is disabled.
+                video_embeddings = torch.cat(torch.chunk(video_embeddings, chunks=v, dim=0), dim=2)
+            else:
+                # V-JEPA2 uses bidirectional temporal attention. Encode one raw-frame prefix per
+                # temporal position so context latents cannot observe future targets or padding.
+                video_embeddings = self._causal_video_embeddings(
+                    video_pixels,
+                    batch_size=b,
+                    num_views=v,
+                    tubelet_size=tubelet_size,
+                )
+
+        if self.config.prediction_horizons is not None:
+            return self._multi_horizon_world_model_loss(
+                video_embeddings, action_tokens, video_is_pad, tubelet_size
+            )
+
         # num_video_frames raw frames → t_enc_total temporal positions after tubelet compression
         t_enc_total = self.config.num_video_frames // tubelet_size
         if t_enc_total < 2:
@@ -267,22 +485,32 @@ class VLAJEPAModel(nn.Module):
         actions: Tensor | None = None,
         state: Tensor | None = None,
         action_is_pad: Tensor | None = None,
+        video_is_pad: Tensor | None = None,
     ) -> dict[str, Tensor]:
         """Native forward: Qwen encode → optional world-model loss → optional action-head loss."""
         embodied_action_tokens, action_tokens = self._encode_qwen(
             images, instructions, need_action_tokens=self.config.enable_world_model
         )
 
+        wm_metrics: dict[str, Tensor] = {}
         if self.config.enable_world_model and videos is not None:
-            wm_loss = self._world_model_loss(videos, action_tokens)
+            wm_result = self._world_model_loss(videos, action_tokens, video_is_pad)
+            if isinstance(wm_result, tuple):
+                wm_loss, wm_metrics = wm_result
+            else:
+                wm_loss = wm_result
         else:
             wm_loss = torch.zeros((), device=embodied_action_tokens.device)
 
         if actions is None:
-            return {"wm_loss": wm_loss}
+            return {"wm_loss": wm_loss, **wm_metrics}
 
         action_loss = self._action_loss(embodied_action_tokens, actions, state, action_is_pad)
-        return {"action_loss": action_loss, "wm_loss": wm_loss * self.config.world_model_loss_weight}
+        return {
+            "action_loss": action_loss,
+            "wm_loss": wm_loss * self.config.world_model_loss_weight,
+            **wm_metrics,
+        }
 
     # ---- Native predict_action (follows original VLA_JEPA.predict_action) ----
 
@@ -389,6 +617,20 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         if self.model.config.enable_world_model and training:
             views = [batch[k].unsqueeze(1) if batch[k].ndim == 4 else batch[k] for k in image_keys]
             inputs["videos"] = self.model.qwen.to_pixel_values(torch.stack(views, dim=1))
+            if self.model.config.prediction_horizons is not None:
+                view_masks = [
+                    batch.get(
+                        f"{key}_is_pad",
+                        torch.zeros(
+                            batch_size,
+                            view.shape[1],
+                            dtype=torch.bool,
+                            device=view.device,
+                        ),
+                    )
+                    for key, view in zip(image_keys, views, strict=True)
+                ]
+                inputs["video_is_pad"] = torch.stack(view_masks, dim=1)
 
         actions = batch.get(ACTION)
         if actions is not None:
