@@ -347,14 +347,21 @@ def test_configure_sensor_options_raises_when_requested_option_is_unsupported(co
     sensor.set_option.assert_not_called()
 
 
-def test_configure_sensor_options_only_exposure_disables_auto_exposure():
+@pytest.mark.parametrize(
+    ("config_field", "option", "value"),
+    [
+        ("exposure", rs.option.exposure, 120),
+        ("gain", rs.option.gain, 64),
+    ],
+)
+def test_configure_sensor_options_exposure_or_gain_disables_auto_exposure(config_field, option, value):
     """white_balance=None should not touch auto white balance."""
-    config = RealSenseCameraConfig(serial_number_or_name="042", exposure=120)
+    config = RealSenseCameraConfig(serial_number_or_name="042", **{config_field: value})
     camera = RealSenseCamera(config)
 
     sensor = _make_mock_sensor(
         "RGB Camera",
-        supported_options={rs.option.enable_auto_exposure, rs.option.exposure},
+        supported_options={rs.option.enable_auto_exposure, option},
     )
     _attach_mock_color_sensor(camera, sensor)
 
@@ -362,10 +369,38 @@ def test_configure_sensor_options_only_exposure_disables_auto_exposure():
 
     calls = [call.args for call in sensor.set_option.call_args_list]
     assert (rs.option.enable_auto_exposure, 0) in calls
-    assert (rs.option.exposure, 120) in calls
+    assert (option, value) in calls
     for opt, _ in calls:
         assert opt != rs.option.enable_auto_white_balance
         assert opt != rs.option.white_balance
+
+
+def test_configure_sensor_options_warns_when_auto_exposure_control_is_unsupported(caplog):
+    config = RealSenseCameraConfig(serial_number_or_name="042", exposure=120)
+    camera = RealSenseCamera(config)
+
+    sensor = _make_mock_sensor("RGB Camera", supported_options={rs.option.exposure})
+    _attach_mock_color_sensor(camera, sensor)
+
+    with caplog.at_level("WARNING"):
+        camera._configure_sensor_options()
+
+    sensor.set_option.assert_called_once_with(rs.option.exposure, 120)
+    assert "does not support disabling auto-exposure" in caplog.text
+
+
+def test_configure_sensor_options_warns_when_auto_white_balance_control_is_unsupported(caplog):
+    config = RealSenseCameraConfig(serial_number_or_name="042", white_balance=4600)
+    camera = RealSenseCamera(config)
+
+    sensor = _make_mock_sensor("RGB Camera", supported_options={rs.option.white_balance})
+    _attach_mock_color_sensor(camera, sensor)
+
+    with caplog.at_level("WARNING"):
+        camera._configure_sensor_options()
+
+    sensor.set_option.assert_called_once_with(rs.option.white_balance, 4600)
+    assert "does not support disabling auto white balance" in caplog.text
 
 
 def test_configure_sensor_options_out_of_range_raises_value_error():

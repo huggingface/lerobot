@@ -134,6 +134,9 @@ class RealSenseCamera(Camera):
         self.use_rgb = config.use_rgb
         self.use_depth = config.use_depth
         self.warmup_s = config.warmup_s
+        self.exposure: int | None = config.exposure
+        self.gain: int | None = config.gain
+        self.white_balance: int | None = config.white_balance
 
         self.rs_pipeline: rs.pipeline | None = None
         self.rs_profile: rs.pipeline_profile | None = None
@@ -175,7 +178,8 @@ class RealSenseCamera(Camera):
 
         Raises:
             DeviceAlreadyConnectedError: If the camera is already connected.
-            ValueError: If the configuration is invalid (e.g., missing serial/name, name not unique).
+            ValueError: If the configuration is invalid, a requested sensor option is unsupported,
+                or a requested sensor value is invalid.
             ConnectionError: If the camera is found but fails to start the pipeline or no RealSense devices are detected at all.
             RuntimeError: If the pipeline starts but fails to apply requested settings.
         """
@@ -400,16 +404,15 @@ class RealSenseCamera(Camera):
                 value is invalid. Invalid-value errors include the option name, requested
                 value, and supported range when available.
         """
-        config = self.config
-        if config.exposure is None and config.gain is None and config.white_balance is None:
+        if self.exposure is None and self.gain is None and self.white_balance is None:
             return
 
         color_sensor = self._get_color_sensor()
 
         requested_options = (
-            (rs.option.exposure, config.exposure, "exposure"),
-            (rs.option.gain, config.gain, "gain"),
-            (rs.option.white_balance, config.white_balance, "white balance"),
+            (rs.option.exposure, self.exposure, "exposure"),
+            (rs.option.gain, self.gain, "gain"),
+            (rs.option.white_balance, self.white_balance, "white balance"),
         )
         unsupported_options = [
             label
@@ -421,30 +424,40 @@ class RealSenseCamera(Camera):
                 f"{self}: color sensor does not support requested manual options: {unsupported_options}."
             )
 
-        if (config.exposure is not None or config.gain is not None) and color_sensor.supports(
-            rs.option.enable_auto_exposure
-        ):
-            self._set_sensor_option(color_sensor, rs.option.enable_auto_exposure, 0, "auto-exposure")
-            logger.info(f"{self} auto-exposure disabled.")
+        manual_exposure_requested = self.exposure is not None or self.gain is not None
+        if manual_exposure_requested:
+            if color_sensor.supports(rs.option.enable_auto_exposure):
+                self._set_sensor_option(color_sensor, rs.option.enable_auto_exposure, 0, "auto-exposure")
+                logger.info(f"{self} auto-exposure disabled.")
+            else:
+                logger.warning(
+                    f"{self} sensor does not support disabling auto-exposure; "
+                    "applying manual exposure/gain directly."
+                )
 
-        if config.exposure is not None:
-            self._set_sensor_option(color_sensor, rs.option.exposure, config.exposure, "exposure")
-            logger.info(f"{self} exposure set to {config.exposure}.")
+        if self.exposure is not None:
+            self._set_sensor_option(color_sensor, rs.option.exposure, self.exposure, "exposure")
+            logger.info(f"{self} exposure set to {self.exposure}.")
 
-        if config.gain is not None:
-            self._set_sensor_option(color_sensor, rs.option.gain, config.gain, "gain")
-            logger.info(f"{self} gain set to {config.gain}.")
+        if self.gain is not None:
+            self._set_sensor_option(color_sensor, rs.option.gain, self.gain, "gain")
+            logger.info(f"{self} gain set to {self.gain}.")
 
-        if config.white_balance is not None:
+        if self.white_balance is not None:
             if color_sensor.supports(rs.option.enable_auto_white_balance):
                 self._set_sensor_option(
                     color_sensor, rs.option.enable_auto_white_balance, 0, "auto white balance"
                 )
                 logger.info(f"{self} auto white balance disabled.")
+            else:
+                logger.warning(
+                    f"{self} sensor does not support disabling auto white balance; "
+                    "applying manual white balance directly."
+                )
             self._set_sensor_option(
-                color_sensor, rs.option.white_balance, config.white_balance, "white balance"
+                color_sensor, rs.option.white_balance, self.white_balance, "white balance"
             )
-            logger.info(f"{self} white balance set to {config.white_balance}.")
+            logger.info(f"{self} white balance set to {self.white_balance}.")
 
     @check_if_not_connected
     def read_depth(self, timeout_ms: int = 200) -> NDArray[Any]:

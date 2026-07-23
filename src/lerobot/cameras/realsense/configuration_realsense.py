@@ -47,14 +47,15 @@ class RealSenseCameraConfig(CameraConfig):
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
         warmup_s: Time reading frames before returning from connect (in seconds)
         exposure: Manual exposure value for the color sensor. When set, auto-exposure is
-            disabled and this fixed value is used. Valid range depends on the camera model
-            (e.g., 1-10000 for D400 series). Defaults to None (leave unchanged).
+            disabled and this fixed value is used. Valid ranges are camera-model specific
+            and reported if the value is rejected. Defaults to None (leave unchanged).
         gain: Manual gain value for the color sensor. When set, auto-exposure is disabled
-            and this fixed gain is used. Valid range depends on the camera model
-            (e.g., 16-248 for D400 series). Defaults to None (leave unchanged).
+            and this fixed gain is used, which also freezes exposure at its current value
+            when no exposure is configured. Valid ranges are camera-model specific and
+            reported if the value is rejected. Defaults to None (leave unchanged).
         white_balance: Manual white balance value for the color sensor. When set, auto
-            white balance is disabled and this fixed value is used. Valid range depends on
-            the camera model (e.g., 2800-6500 for D400 series). Defaults to None
+            white balance is disabled and this fixed value is used. Valid ranges are
+            camera-model specific and reported if the value is rejected. Defaults to None
             (leave unchanged).
 
     Note:
