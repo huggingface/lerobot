@@ -534,6 +534,31 @@ def test_sync_engine_no_relative_step_is_none():
     assert engine._relative_step is None
 
 
+def test_sync_relative_exclude_joints_stay_absolute():
+    """With ``exclude_joints``, excluded dims pass through absolute while the relative
+    dims still hold the tick-0 anchor across the chunk."""
+    n = 4
+    # Distinct offset per step *and* per dim so a wrong anchor or a wrong mask shows up.
+    chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.1 * (i + 1)) for i in range(n)])
+    pre, post, relative_step = _relative_pre_post(exclude_joints=["gripper"])
+    policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
+    engine = _build_sync_engine(policy, pre, post)
+
+    # gripper (last dim) is kept absolute; j0..j2 are relative.
+    mask = torch.tensor([1.0, 1.0, 1.0, 0.0])
+    s0 = [1.0, 2.0, 3.0, 4.0]
+    outputs = []
+    for tick in range(n):
+        state = [v + tick for v in s0]  # moving state; a drifting anchor would use it
+        outputs.append(engine.get_action(_obs_frame(state)))
+
+    assert policy._predict_state["predict_calls"] == 1  # one chunk held across n ticks
+    for tick in range(n):
+        # relative dims: anchor held at s0; excluded gripper dim: raw predicted value.
+        expected = chunk_rel[tick] + torch.tensor(s0) * mask
+        torch.testing.assert_close(outputs[tick], expected)
+
+
 def test_sync_relative_stop_restores_policy_method():
     """``stop()`` un-patches the probe so the policy object isn't permanently modified."""
     n = 3
