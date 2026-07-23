@@ -242,6 +242,38 @@ python src/lerobot/scripts/augment_dataset_quantile_stats.py \
   --repo-id=your_dataset
 ```
 
+During recording, resume, and dataset merge, `aggregate_feature_stats` only has
+access to quantile summaries. It therefore stores a conservative envelope
+(`min` for `q <= 50`, `max` for `q > 50`), not global quantiles. The augment
+script scans the dataset and uses one running histogram per feature to produce
+global quantile estimates. These estimates are subject to histogram
+discretization and rebinning error, and may differ from the conservative values.
+
+Because these statistics define the normalized state and action coordinates,
+recomputing them can change MolmoAct2 training targets and the loss scale. Run
+the augment script before training when global estimates are required. Updating
+a dataset's `stats.json` does not change normalization statistics already saved
+inside an existing policy checkpoint.
+
+The script accepts the following options:
+
+| Option          | Description                                                                                                                                                      |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--repo-id`     | (required) Dataset repository ID on the Hugging Face Hub (e.g. `lerobot/pusht`).                                                                                 |
+| `--root`        | Local dataset root directory. When omitted, the dataset is downloaded from the Hub.                                                                              |
+| `--overwrite`   | Recompute and overwrite statistics even if quantiles already exist. Use this to replace legacy or conservative quantiles with full-dataset histogram estimates.  |
+| `--skip-images` | Skip image/video features and preserve their existing statistics. This avoids expensive video decoding when only action/state quantiles need to be (re)computed. |
+
+For example, to recompute only the action/state statistics of a dataset that
+already contains (possibly inaccurate) quantile statistics:
+
+```bash
+python src/lerobot/scripts/augment_dataset_quantile_stats.py \
+  --repo-id=your_dataset \
+  --overwrite \
+  --skip-images
+```
+
 Alternatively, train MolmoAct2 with mean/std normalization:
 
 ```bash

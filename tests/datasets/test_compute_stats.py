@@ -688,7 +688,7 @@ def test_compute_episode_stats_string_features_skipped():
 
 
 def test_aggregate_feature_stats_with_quantiles():
-    """Test aggregating feature stats that include quantiles."""
+    """Test aggregating feature stats that include quantiles uses conservative bounds."""
     stats_ft_list = [
         {
             "min": np.array([1.0]),
@@ -716,12 +716,86 @@ def test_aggregate_feature_stats_with_quantiles():
     assert "q01" in result
     assert "q99" in result
 
-    # Verify quantile aggregation (weighted average)
-    expected_q01 = (1.5 * 100 + 2.5 * 150) / 250  # ≈ 2.1
-    expected_q99 = (9.5 * 100 + 11.5 * 150) / 250  # ≈ 10.7
+    # q01 (lower quantile) uses min across episodes for conservative bound
+    np.testing.assert_allclose(result["q01"], np.array([1.5]), atol=1e-6)
+    # q99 (upper quantile) uses max across episodes for conservative bound
+    np.testing.assert_allclose(result["q99"], np.array([11.5]), atol=1e-6)
 
-    np.testing.assert_allclose(result["q01"], np.array([expected_q01]), atol=1e-6)
-    np.testing.assert_allclose(result["q99"], np.array([expected_q99]), atol=1e-6)
+
+def test_aggregate_feature_stats_quantile_skewed_distribution():
+    """Test that conservative quantile aggregation handles skewed distributions correctly.
+
+    Reproduces the scenario where weighted-mean aggregation severely underestimates
+    tail quantiles: a large episode with narrow range + a small episode with wide range.
+    """
+    # Episode A: 900 frames, mostly left-side motion
+    stats_a = {
+        "min": np.array([-50.0]),
+        "max": np.array([15.0]),
+        "mean": np.array([-5.0]),
+        "std": np.array([15.0]),
+        "count": np.array([900]),
+        "q01": np.array([-45.0]),
+        "q99": np.array([10.0]),
+    }
+    # Episode B: 100 frames, reaches far right
+    stats_b = {
+        "min": np.array([-45.0]),
+        "max": np.array([55.0]),
+        "mean": np.array([10.0]),
+        "std": np.array([20.0]),
+        "count": np.array([100]),
+        "q01": np.array([-40.0]),
+        "q99": np.array([50.0]),
+    }
+
+    result = aggregate_feature_stats([stats_a, stats_b])
+
+    # Conservative bounds: q01 = min(-45, -40) = -45, q99 = max(10, 50) = 50
+    np.testing.assert_allclose(result["q01"], np.array([-45.0]))
+    np.testing.assert_allclose(result["q99"], np.array([50.0]))
+
+    # The old weighted-mean aggregation would give q99 = 14.0. The true
+    # combined q99 cannot be recovered from these summaries alone.
+    assert result["q99"][0] > 14.0, "q99 should not be diluted by weighted averaging"
+
+
+def test_aggregate_feature_stats_quantile_all_keys():
+    """Test that all quantile keys use the configured conservative direction."""
+    stats_a = {
+        "min": np.array([0.0]),
+        "max": np.array([100.0]),
+        "mean": np.array([50.0]),
+        "std": np.array([10.0]),
+        "count": np.array([500]),
+        "q01": np.array([5.0]),
+        "q10": np.array([20.0]),
+        "q50": np.array([48.0]),
+        "q90": np.array([80.0]),
+        "q99": np.array([95.0]),
+    }
+    stats_b = {
+        "min": np.array([-10.0]),
+        "max": np.array([110.0]),
+        "mean": np.array([55.0]),
+        "std": np.array([12.0]),
+        "count": np.array([500]),
+        "q01": np.array([2.0]),
+        "q10": np.array([15.0]),
+        "q50": np.array([52.0]),
+        "q90": np.array([85.0]),
+        "q99": np.array([98.0]),
+    }
+
+    result = aggregate_feature_stats([stats_a, stats_b])
+
+    # Lower quantiles (<=50): use min for conservative lower bound
+    np.testing.assert_allclose(result["q01"], np.array([2.0]))
+    np.testing.assert_allclose(result["q10"], np.array([15.0]))
+    np.testing.assert_allclose(result["q50"], np.array([48.0]))
+    # Upper quantiles (>50): use max for conservative upper bound
+    np.testing.assert_allclose(result["q90"], np.array([85.0]))
+    np.testing.assert_allclose(result["q99"], np.array([98.0]))
 
 
 def test_aggregate_stats_mixed_quantiles():
@@ -878,3 +952,195 @@ def test_fixed_quantiles_always_computed():
         for q_key in expected_quantiles:
             assert q_key in episode_stats[key]
             assert episode_stats[key][q_key].shape == (features[key]["shape"][0],)
+
+
+def test_aggregate_stats_incremental_resume():
+    """Simulate save_episode resume: aggregate existing stats with new episode stats incrementally.
+
+    This mirrors dataset_metadata.py L577:
+        self.stats = aggregate_stats([self.stats, episode_stats])
+    Verifies conservative quantile aggregation across incremental additions.
+    """
+    # Start with episode 1 stats (narrow distribution)
+    ep1_stats = {
+        "action": {
+            "min": np.array([-10.0, -5.0]),
+            "max": np.array([10.0, 5.0]),
+            "mean": np.array([0.0, 0.0]),
+            "std": np.array([3.0, 1.5]),
+            "count": np.array([500]),
+            "q01": np.array([-9.0, -4.5]),
+            "q99": np.array([9.0, 4.5]),
+        },
+    }
+
+    # Episode 2: wider distribution on dim 0
+    ep2_stats = {
+        "action": {
+            "min": np.array([-30.0, -5.0]),
+            "max": np.array([40.0, 6.0]),
+            "mean": np.array([5.0, 0.5]),
+            "std": np.array([15.0, 2.0]),
+            "count": np.array([100]),
+            "q01": np.array([-25.0, -4.0]),
+            "q99": np.array([35.0, 5.5]),
+        },
+    }
+
+    # First aggregation: ep1 + ep2 (simulates save_episode for ep2)
+    cumulative = aggregate_stats([ep1_stats, ep2_stats])
+
+    # q01 should take min (conservative lower bound)
+    np.testing.assert_allclose(cumulative["action"]["q01"], np.array([-25.0, -4.5]))
+    # q99 should take max (conservative upper bound)
+    np.testing.assert_allclose(cumulative["action"]["q99"], np.array([35.0, 5.5]))
+
+    # Episode 3: even wider on dim 1
+    ep3_stats = {
+        "action": {
+            "min": np.array([-8.0, -20.0]),
+            "max": np.array([8.0, 25.0]),
+            "mean": np.array([0.0, 3.0]),
+            "std": np.array([2.0, 8.0]),
+            "count": np.array([50]),
+            "q01": np.array([-7.0, -18.0]),
+            "q99": np.array([7.0, 22.0]),
+        },
+    }
+
+    # Second aggregation: cumulative + ep3 (simulates save_episode for ep3)
+    cumulative2 = aggregate_stats([cumulative, ep3_stats])
+
+    # Bounds should widen monotonically
+    np.testing.assert_allclose(cumulative2["action"]["q01"], np.array([-25.0, -18.0]))
+    np.testing.assert_allclose(cumulative2["action"]["q99"], np.array([35.0, 22.0]))
+
+
+def test_aggregate_stats_dataset_merge():
+    """Simulate dataset merge (aggregate.py): aggregate stats from multiple datasets.
+
+    Verifies that quantile ranges are preserved when merging datasets with
+    very different distributions (e.g., different robot workspaces).
+    """
+    # Dataset A: robot working in left workspace
+    dataset_a_stats = {
+        "action": {
+            "min": np.array([-60.0]),
+            "max": np.array([15.0]),
+            "mean": np.array([-20.0]),
+            "std": np.array([18.0]),
+            "count": np.array([5000]),
+            "q01": np.array([-55.0]),
+            "q10": np.array([-40.0]),
+            "q50": np.array([-18.0]),
+            "q90": np.array([5.0]),
+            "q99": np.array([12.0]),
+        },
+        "observation.state": {
+            "min": np.array([0.0]),
+            "max": np.array([100.0]),
+            "mean": np.array([50.0]),
+            "std": np.array([20.0]),
+            "count": np.array([5000]),
+            "q01": np.array([5.0]),
+            "q99": np.array([95.0]),
+        },
+    }
+
+    # Dataset B: robot working in right workspace (much smaller, different range)
+    dataset_b_stats = {
+        "action": {
+            "min": np.array([-10.0]),
+            "max": np.array([70.0]),
+            "mean": np.array([30.0]),
+            "std": np.array([20.0]),
+            "count": np.array([500]),
+            "q01": np.array([-5.0]),
+            "q10": np.array([5.0]),
+            "q50": np.array([28.0]),
+            "q90": np.array([55.0]),
+            "q99": np.array([65.0]),
+        },
+        "observation.state": {
+            "min": np.array([-5.0]),
+            "max": np.array([110.0]),
+            "mean": np.array([55.0]),
+            "std": np.array([25.0]),
+            "count": np.array([500]),
+            "q01": np.array([2.0]),
+            "q99": np.array([105.0]),
+        },
+    }
+
+    merged = aggregate_stats([dataset_a_stats, dataset_b_stats])
+
+    # action q01: min(-55, -5) = -55 (preserves left workspace range)
+    np.testing.assert_allclose(merged["action"]["q01"], np.array([-55.0]))
+    # action q10: min(-40, 5) = -40
+    np.testing.assert_allclose(merged["action"]["q10"], np.array([-40.0]))
+    # action q50: min(-18, 28) = -18
+    np.testing.assert_allclose(merged["action"]["q50"], np.array([-18.0]))
+    # action q90: max(5, 55) = 55
+    np.testing.assert_allclose(merged["action"]["q90"], np.array([55.0]))
+    # action q99: max(12, 65) = 65 (preserves right workspace range)
+    np.testing.assert_allclose(merged["action"]["q99"], np.array([65.0]))
+
+    # Old buggy behavior for action q99 would give:
+    # (12*5000 + 65*500)/5500 = 14.4 — essentially the left workspace's q99
+    # This produces a much narrower normalization interval than the conservative envelope.
+    assert merged["action"]["q99"][0] > 14.4
+
+    # observation.state should also use conservative bounds
+    np.testing.assert_allclose(merged["observation.state"]["q01"], np.array([2.0]))
+    np.testing.assert_allclose(merged["observation.state"]["q99"], np.array([105.0]))
+
+
+def test_aggregate_stats_multi_dataset():
+    """Simulate MultiLeRobotDataset: aggregate stats from multiple dataset metadata.
+
+    This mirrors multi_dataset.py L97:
+        self.stats = aggregate_stats([d.meta.stats for d in self._datasets])
+    """
+    stats_list = [
+        {
+            "action": {
+                "min": np.array([-10.0, -20.0, -5.0]),
+                "max": np.array([10.0, 20.0, 5.0]),
+                "mean": np.array([0.0, 0.0, 0.0]),
+                "std": np.array([3.0, 6.0, 1.5]),
+                "count": np.array([1000]),
+                "q01": np.array([-9.5, -19.0, -4.8]),
+                "q99": np.array([9.5, 19.0, 4.8]),
+            },
+        },
+        {
+            "action": {
+                "min": np.array([-15.0, -10.0, -8.0]),
+                "max": np.array([15.0, 10.0, 8.0]),
+                "mean": np.array([2.0, -2.0, 1.0]),
+                "std": np.array([5.0, 3.0, 2.5]),
+                "count": np.array([2000]),
+                "q01": np.array([-14.0, -9.0, -7.5]),
+                "q99": np.array([14.0, 9.0, 7.5]),
+            },
+        },
+        {
+            "action": {
+                "min": np.array([-5.0, -30.0, -3.0]),
+                "max": np.array([5.0, 30.0, 3.0]),
+                "mean": np.array([-1.0, 5.0, -0.5]),
+                "std": np.array([1.5, 10.0, 1.0]),
+                "count": np.array([500]),
+                "q01": np.array([-4.5, -28.0, -2.8]),
+                "q99": np.array([4.5, 28.0, 2.8]),
+            },
+        },
+    ]
+
+    result = aggregate_stats(stats_list)
+
+    # Per-dimension conservative bounds across 3 datasets
+    # q01: element-wise min
+    np.testing.assert_allclose(result["action"]["q01"], np.array([-14.0, -28.0, -7.5]))
+    # q99: element-wise max
+    np.testing.assert_allclose(result["action"]["q99"], np.array([14.0, 28.0, 7.5]))
