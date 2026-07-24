@@ -64,6 +64,9 @@ class ACTPolicy(PreTrainedPolicy):
 
         self.model = ACT(config)
 
+        if config.gradient_checkpointing:
+            self.model.gradient_checkpointing_enable()
+
         if config.temporal_ensemble_coeff is not None:
             self.temporal_ensembler = ACTTemporalEnsembler(config.temporal_ensemble_coeff, config.chunk_size)
 
@@ -255,6 +258,14 @@ class ACTTemporalEnsembler:
         return action
 
 
+def _backbone_forward(backbone: nn.Module, img: Tensor) -> Tensor:
+    """Vision backbone forward pass, factored out so it can be wrapped in `torch.utils.checkpoint`.
+
+    `backbone` is an `IntermediateLayerGetter` returning a dict; checkpoint needs a plain tensor output.
+    """
+    return backbone(img)["feature_map"]
+
+
 class ACT(nn.Module):
     """Action Chunking Transformer: The underlying neural network for ACTPolicy.
 
@@ -371,11 +382,30 @@ class ACT(nn.Module):
 
         self._reset_parameters()
 
+        # Gradient checkpointing flag for the vision backbone (encoder/decoder flags live on those submodules).
+        self.gradient_checkpointing_enabled = False
+
     def _reset_parameters(self):
         """Xavier-uniform initialization of the transformer parameters as in the original code."""
         for p in chain(self.encoder.parameters(), self.decoder.parameters()):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
+
+    def gradient_checkpointing_enable(self) -> None:
+        """Enable gradient checkpointing for memory optimization (backbone + transformer layers)."""
+        self.gradient_checkpointing_enabled = True
+        if self.config.use_vae:
+            self.vae_encoder.gradient_checkpointing_enable()
+        self.encoder.gradient_checkpointing_enable()
+        self.decoder.gradient_checkpointing_enable()
+
+    def gradient_checkpointing_disable(self) -> None:
+        """Disable gradient checkpointing."""
+        self.gradient_checkpointing_enabled = False
+        if self.config.use_vae:
+            self.vae_encoder.gradient_checkpointing_disable()
+        self.encoder.gradient_checkpointing_disable()
+        self.decoder.gradient_checkpointing_disable()
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
         """A forward pass through the Action Chunking Transformer (with optional VAE encoder).
@@ -472,7 +502,12 @@ class ACT(nn.Module):
             # NOTE: If modifying this section, verify on MPS devices that
             # gradients remain stable (no explosions or NaNs).
             for img in batch[OBS_IMAGES]:
-                cam_features = self.backbone(img)["feature_map"]
+                if self.gradient_checkpointing_enabled and self.training:
+                    cam_features = torch.utils.checkpoint.checkpoint(
+                        _backbone_forward, self.backbone, img, use_reentrant=False, preserve_rng_state=False
+                    )
+                else:
+                    cam_features = _backbone_forward(self.backbone, img)
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
                 cam_features = self.encoder_img_feat_input_proj(cam_features)
 
@@ -521,12 +556,31 @@ class ACTEncoder(nn.Module):
         num_layers = config.n_vae_encoder_layers if self.is_vae_encoder else config.n_encoder_layers
         self.layers = nn.ModuleList([ACTEncoderLayer(config) for _ in range(num_layers)])
         self.norm = nn.LayerNorm(config.dim_model) if config.pre_norm else nn.Identity()
+        self.gradient_checkpointing_enabled = False
+
+    def gradient_checkpointing_enable(self) -> None:
+        self.gradient_checkpointing_enabled = True
+
+    def gradient_checkpointing_disable(self) -> None:
+        self.gradient_checkpointing_enabled = False
 
     def forward(
         self, x: Tensor, pos_embed: Tensor | None = None, key_padding_mask: Tensor | None = None
     ) -> Tensor:
         for layer in self.layers:
-            x = layer(x, pos_embed=pos_embed, key_padding_mask=key_padding_mask)
+            if self.gradient_checkpointing_enabled and self.training:
+                # preserve_rng_state=True: layers contain dropout, so backward-pass recompute must draw the
+                # same dropout mask as the original forward pass.
+                x = torch.utils.checkpoint.checkpoint(
+                    layer,
+                    x,
+                    pos_embed=pos_embed,
+                    key_padding_mask=key_padding_mask,
+                    use_reentrant=False,
+                    preserve_rng_state=True,
+                )
+            else:
+                x = layer(x, pos_embed=pos_embed, key_padding_mask=key_padding_mask)
         x = self.norm(x)
         return x
 
@@ -576,6 +630,13 @@ class ACTDecoder(nn.Module):
         super().__init__()
         self.layers = nn.ModuleList([ACTDecoderLayer(config) for _ in range(config.n_decoder_layers)])
         self.norm = nn.LayerNorm(config.dim_model)
+        self.gradient_checkpointing_enabled = False
+
+    def gradient_checkpointing_enable(self) -> None:
+        self.gradient_checkpointing_enabled = True
+
+    def gradient_checkpointing_disable(self) -> None:
+        self.gradient_checkpointing_enabled = False
 
     def forward(
         self,
@@ -585,9 +646,22 @@ class ACTDecoder(nn.Module):
         encoder_pos_embed: Tensor | None = None,
     ) -> Tensor:
         for layer in self.layers:
-            x = layer(
-                x, encoder_out, decoder_pos_embed=decoder_pos_embed, encoder_pos_embed=encoder_pos_embed
-            )
+            if self.gradient_checkpointing_enabled and self.training:
+                # preserve_rng_state=True: layers contain dropout, so backward-pass recompute must draw the
+                # same dropout mask as the original forward pass.
+                x = torch.utils.checkpoint.checkpoint(
+                    layer,
+                    x,
+                    encoder_out,
+                    decoder_pos_embed=decoder_pos_embed,
+                    encoder_pos_embed=encoder_pos_embed,
+                    use_reentrant=False,
+                    preserve_rng_state=True,
+                )
+            else:
+                x = layer(
+                    x, encoder_out, decoder_pos_embed=decoder_pos_embed, encoder_pos_embed=encoder_pos_embed
+                )
         if self.norm is not None:
             x = self.norm(x)
         return x
