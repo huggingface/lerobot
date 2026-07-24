@@ -13,22 +13,18 @@ from lerobot.datasets.factory import resolve_delta_timestamps
 from lerobot.rewards.distributional_value_function.configuration_distributional_value_function import (
     DistributionalVFConfig,
 )
-from lerobot.rewards.distributional_value_function.processor_distributional_value_function import (
-    IMAGE_MASK_SUFFIX,
-)
 from lerobot.rewards.factory import make_reward_model, make_reward_pre_post_processors
 from lerobot.rewards.nanovlm_value_function.configuration_nanovlm_value_function import (
     NanoVLMVFConfig,
 )
 from lerobot.rewards.nanovlm_value_function.processor_nanovlm_value_function import (
-    NANOVLM_ATTENTION_MASK,
     NANOVLM_IMAGES,
-    NANOVLM_INPUT_IDS,
 )
 from lerobot.rewards.temporal_siglip_value_function.configuration_temporal_siglip_value_function import (
     TemporalSiglipVFConfig,
 )
-from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.utils.collate import lerobot_collate_fn
+from lerobot.utils.constants import OBS_STATE
 
 
 def main():
@@ -102,15 +98,18 @@ def main():
         dataset_stats=metadata.stats,
     )
 
-    processed_samples = []
+    samples = []
     returns = []
     terminals = []
     for index in indices:
         sample = dataset[index]
         returns.append(torch.as_tensor(sample["mc_return"]).reshape(-1)[0])
         terminals.append(torch.as_tensor(sample["is_terminal"]).reshape(-1)[0])
-        processed_samples.append(preprocessor(sample))
-    batch = _collate_processed(processed_samples)
+        samples.append(sample)
+    raw_batch = lerobot_collate_fn(samples)
+    if raw_batch is None:
+        raise ValueError("The selected overfit samples produced an empty batch")
+    batch = preprocessor(raw_batch)
     batch["mc_return"] = torch.stack(returns).to(device)
     batch["is_terminal"] = torch.stack(terminals).bool().to(device)
 
@@ -134,34 +133,6 @@ def main():
         label="fine-tune",
     )
     _image_shuffle_diagnostic(model, batch, metadata.camera_keys)
-
-
-def _collate_processed(samples):
-    if NANOVLM_IMAGES in samples[0]:
-        max_length = max(sample[NANOVLM_INPUT_IDS].shape[1] for sample in samples)
-        input_ids = []
-        attention_masks = []
-        for sample in samples:
-            padding = max_length - sample[NANOVLM_INPUT_IDS].shape[1]
-            input_ids.append(torch.nn.functional.pad(sample[NANOVLM_INPUT_IDS], (padding, 0)))
-            attention_masks.append(torch.nn.functional.pad(sample[NANOVLM_ATTENTION_MASK], (padding, 0)))
-        return {
-            NANOVLM_IMAGES: [sample[NANOVLM_IMAGES][0] for sample in samples],
-            NANOVLM_INPUT_IDS: torch.cat(input_ids),
-            NANOVLM_ATTENTION_MASK: torch.cat(attention_masks),
-        }
-
-    keys = {
-        *[key for key in samples[0] if key.startswith("observation.images.") and not key.endswith("_is_pad")],
-        OBS_LANGUAGE_TOKENS,
-        OBS_LANGUAGE_ATTENTION_MASK,
-    }
-    if OBS_STATE in samples[0]:
-        keys.add(OBS_STATE)
-    for key in list(keys):
-        if key.startswith("observation.images.") and not key.endswith(IMAGE_MASK_SUFFIX):
-            keys.add(key + IMAGE_MASK_SUFFIX)
-    return {key: torch.cat([sample[key] for sample in samples], dim=0) for key in keys}
 
 
 def _set_trainable(model, *, head_only: bool):
