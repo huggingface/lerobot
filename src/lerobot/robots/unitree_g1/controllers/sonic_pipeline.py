@@ -128,7 +128,15 @@ DEBUG_PRINT_EVERY = 100  # ticks between debug prints
 
 
 def _to_mujoco(a):
-    """Reorder a 29-vector from IsaacLab order into MuJoCo/deploy order."""
+    """Apply the ``MUJOCO_TO_ISAACLAB`` gather to a 29-vector (deploy-order reorder).
+
+    NOTE: this returns ``a[MUJOCO_TO_ISAACLAB]``. The ``_mj`` suffixes and the exact
+    permutation direction throughout this module are a fixed convention validated
+    against the deployed SONIC ONNX policy (the encoder/decoder consume vectors in
+    this order). Do not "correct" the table or rename toward the opposite direction
+    without re-validating on hardware — the labels are historical, the ordering is
+    load-bearing.
+    """
     return a[MUJOCO_TO_ISAACLAB]
 
 
@@ -318,6 +326,23 @@ class StandingEncoderDecoder:
         self.smpl_root_quat = None
         self.set_zero_reference()
 
+    def reset(self):
+        """Clear the token, 10-frame proprioception history and heading init.
+
+        ``UnitreeG1.reset()`` relies on this so the first decoder outputs of a new
+        episode are not contaminated by the previous episode's state.
+        """
+        self.token = np.zeros(TOKEN_DIM, np.float32)
+        self.last_action_mj = np.zeros(29, np.float32)
+        self.h_q_mj = [np.zeros(29, np.float32)] * 10
+        self.h_dq_mj = [np.zeros(29, np.float32)] * 10
+        self.h_ang = [np.zeros(3, np.float32)] * 10
+        self.h_act_mj = [np.zeros(29, np.float32)] * 10
+        self.h_quat = [np.array([1, 0, 0, 0], np.float32)] * 10
+        self.init_base_quat = np.array([1, 0, 0, 0], np.float32)
+        self.init_ref_quat = np.array([1, 0, 0, 0], np.float32)
+        self._heading_init = False
+
     def update_history(self, q, dq, ang, quat):
         """Push the latest proprioception (pos/vel/gyro/orientation) into the 10-frame buffers."""
         quat = quat / (np.linalg.norm(quat) + 1e-8)
@@ -498,6 +523,28 @@ class PlannerController(StandingEncoderDecoder):
         self.reinit_heading = False
         self.playing = self.first_motion = False
         self.motion_lock = threading.Lock()
+
+    def reset(self):
+        """Full reset: clear enc/dec state (super) plus the motion buffer and heading.
+
+        Forces a heading re-init on the next ``step`` so the reference frame is
+        re-latched to the post-reset robot orientation.
+        """
+        super().reset()
+        with self.motion_lock:
+            self.ref_cursor = 0
+            self.motion_timesteps = 0
+            self.motion_joint_positions[:] = 0.0
+            self.motion_joint_velocities[:] = 0.0
+            self.motion_body_quats[:] = 0.0
+            self.motion_body_quats[:, 0] = 1.0
+            self.motion_body_pos[:] = 0.0
+        self.init_ref_quat = np.array([1, 0, 0, 0], np.float64)
+        self.heading_init_base_quat = np.array([1, 0, 0, 0], np.float64)
+        self.delta_heading = 0.0
+        self.first_motion = False
+        self.playing = False
+        self.reinit_heading = True
 
     def _heading_apply_delta(self):
         """Heading correction quaternion (init base-vs-ref heading + operator ``delta_heading``)."""

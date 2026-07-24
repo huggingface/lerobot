@@ -80,9 +80,7 @@ class UnitreeG1Config(RobotConfig):
     publish_hands: bool = False
     hand_open_grip_value: float = 1.0
     hand_closed_grip_value: float = 0.0
-    hand_closed_pose: list[float] = field(
-        default_factory=lambda: [1.0, 0.9, 0.9, 1.3, 1.3, 1.3, 1.3]
-    )
+    hand_closed_pose: list[float] = field(default_factory=lambda: [1.0, 0.9, 0.9, 1.3, 1.3, 1.3, 1.3])
     hand_kp: float = 1.5
     hand_kd: float = 0.1
 

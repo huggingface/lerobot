@@ -12,11 +12,11 @@ targets for the robot's PD controller.
 
 Selected with `--robot.controller=<ClassName>`:
 
-| Controller                     | Purpose                                                       |
+| Controller                     | Purpose                                                      |
 | ------------------------------ | ------------------------------------------------------------ |
 | `SonicWholeBodyController`     | SONIC encoder/decoder driven by a 34-D OpenHLM/pi0.5 command |
-| `GrootLocomotionController`    | GR00T locomotion policy                                       |
-| `HolosomaLocomotionController` | Holosoma locomotion policy                                    |
+| `GrootLocomotionController`    | GR00T locomotion policy                                      |
+| `HolosomaLocomotionController` | Holosoma locomotion policy                                   |
 
 The rest of this document covers the SONIC whole-body path.
 
