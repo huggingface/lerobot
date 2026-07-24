@@ -13,12 +13,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pytest
 import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.datasets.utils import safe_shard
 from lerobot.utils.constants import ACTION
@@ -392,3 +395,93 @@ def test_frames_with_delta_consistency_with_shards(
         assert all(t[1] for t in key_checks), (
             f"Checking {list(filter(lambda t: not t[1], key_checks))[0][0]} left and right were found different (i: {i}, frame_idx: {frame_idx})"
         )
+
+
+class _StopConstructionError(Exception):
+    """Sentinel raised from a patched load_dataset to halt __init__ after the branch under test."""
+
+
+def _fake_meta(*args, **kwargs):
+    """Minimal LeRobotDatasetMetadata stand-in exposing only what __init__ reads."""
+    meta = type("_Meta", (), {})()
+    meta.root = kwargs.get("root") or "/tmp/_streaming_meta"
+    meta.revision = kwargs.get("revision") or "v0"
+    meta._version = "v3.0"
+    meta.depth_keys = []
+    meta.image_keys = []
+    meta.rescale_depth_stats = lambda *_a, **_k: None
+    meta.repo_type = kwargs.get("repo_type", "dataset")
+    return meta
+
+
+@pytest.mark.parametrize(
+    "repo_type, expected_source, expected_data_files",
+    [
+        ("bucket", "parquet", "hf://buckets/{repo_id}/data/*/*.parquet"),
+        ("dataset", "{repo_id}", "data/*/*.parquet"),
+    ],
+)
+def test_streaming_repo_type_routes_load_dataset(repo_type, expected_source, expected_data_files):
+    """repo_type='bucket' loads parquet from hf://buckets/...; 'dataset' keeps the Hub-repo path."""
+    captured = {}
+
+    def fake_load_dataset(source, **kwargs):
+        captured["source"] = source
+        captured["data_files"] = kwargs.get("data_files")
+        raise _StopConstructionError
+
+    with (
+        patch("lerobot.datasets.streaming_dataset.LeRobotDatasetMetadata", _fake_meta),
+        patch("lerobot.datasets.streaming_dataset.check_version_compatibility", lambda *a, **k: None),
+        patch("lerobot.datasets.streaming_dataset.load_dataset", fake_load_dataset),
+        pytest.raises(_StopConstructionError),
+    ):
+        StreamingLeRobotDataset(DUMMY_REPO_ID, repo_type=repo_type)
+
+    assert captured["source"] == expected_source.format(repo_id=DUMMY_REPO_ID)
+    assert captured["data_files"] == expected_data_files.format(repo_id=DUMMY_REPO_ID)
+
+
+def test_bucket_metadata_url_root(tmp_path):
+    """repo_type='bucket' produces url_root pointing at hf://buckets/..."""
+    mock_fs = MagicMock()
+    with (
+        patch("huggingface_hub.HfFileSystem", return_value=mock_fs),
+        patch.object(LeRobotDatasetMetadata, "_load_metadata"),
+    ):
+        meta = LeRobotDatasetMetadata(
+            DUMMY_REPO_ID,
+            root=tmp_path,
+            repo_type="bucket",
+        )
+    assert meta.url_root == f"hf://buckets/{DUMMY_REPO_ID}"
+
+
+def test_bucket_skips_get_safe_version(tmp_path):
+    """repo_type='bucket' must NOT call get_safe_version (buckets have no git refs).
+
+    The first ``_load_metadata()`` raises ``FileNotFoundError`` so ``__init__``
+    enters the except branch where the ``repo_type != "bucket"`` guard and
+    ``get_safe_version`` live; the second call (after the bucket meta pull)
+    succeeds. ``_pull_from_repo`` is stubbed so the except path runs without a
+    network call. Without the raise, the try block would succeed and the guard
+    branch would never execute, so the assertion would pass vacuously.
+    """
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_gsv,
+        patch.object(
+            LeRobotDatasetMetadata,
+            "_load_metadata",
+            side_effect=[FileNotFoundError, None],
+        ),
+        patch.object(LeRobotDatasetMetadata, "_pull_from_repo") as mock_pull,
+    ):
+        LeRobotDatasetMetadata(
+            DUMMY_REPO_ID,
+            root=tmp_path,
+            repo_type="bucket",
+        )
+    # The except branch ran (proven by the pull), but the bucket guard skipped
+    # version resolution.
+    mock_pull.assert_called_once()
+    mock_gsv.assert_not_called()
