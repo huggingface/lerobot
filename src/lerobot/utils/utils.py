@@ -219,7 +219,7 @@ def get_elapsed_time_in_days_hours_minutes_seconds(elapsed_time_s: float):
     return days, hours, minutes, seconds
 
 
-def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
+def flatten_dict(d: dict, parent_key: str = "", sep: str = "/", keep_empty: bool = False) -> dict:
     """Flatten a nested dictionary by joining keys with a separator.
 
     Example:
@@ -231,6 +231,11 @@ def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
         d (dict): The dictionary to flatten.
         parent_key (str): The base key to prepend to the keys in this level.
         sep (str): The separator to use between keys.
+        keep_empty (bool): When True, preserve empty nested dicts as terminal
+            ``{}`` values so round-trips do not lose keys. Defaults to False to
+            match the historical behavior (empty branches are dropped), which is
+            required at serializer call sites (e.g. safetensors) that reject
+            dict-valued leaves.
 
     Returns:
         dict: A flattened dictionary.
@@ -239,7 +244,11 @@ def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
     for k, v in d.items():
         new_key = f"{parent_key}{sep}{k}" if parent_key else k
         if isinstance(v, dict):
-            items.extend(flatten_dict(v, new_key, sep=sep).items())
+            nested = flatten_dict(v, new_key, sep=sep, keep_empty=keep_empty)
+            if nested:
+                items.extend(nested.items())
+            elif keep_empty:
+                items.append((new_key, {}))
         else:
             items.append((new_key, v))
     return dict(items)
