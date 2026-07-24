@@ -71,6 +71,16 @@ from lerobot.utils.utils import (
 from .lerobot_eval import eval_policy_all
 
 
+def _dataloader_worker_kwargs(cfg: TrainPipelineConfig) -> dict[str, Any]:
+    """Return worker-only DataLoader options, disabling them for single-process loading."""
+    workers_enabled = cfg.num_workers > 0
+    return {
+        "prefetch_factor": cfg.prefetch_factor if workers_enabled else None,
+        "persistent_workers": cfg.persistent_workers and workers_enabled,
+        "multiprocessing_context": cfg.dataloader_multiprocessing_context if workers_enabled else None,
+    }
+
+
 def update_policy(
     train_metrics: MetricsTracker,
     policy: PreTrainedPolicy,
@@ -473,9 +483,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         pin_memory=device.type == "cuda",
         drop_last=False,
         collate_fn=collate_fn,
-        prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
-        persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
-        multiprocessing_context=cfg.dataloader_multiprocessing_context if cfg.num_workers > 0 else None,
+        **_dataloader_worker_kwargs(cfg),
     )
 
     # Build eval dataloader if a held-out split exists
@@ -501,8 +509,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             pin_memory=device.type == "cuda",
             drop_last=False,
             collate_fn=eval_collate_fn,
-            prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
-            persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
+            **_dataloader_worker_kwargs(cfg),
         )
 
     # Prepare everything with accelerator
