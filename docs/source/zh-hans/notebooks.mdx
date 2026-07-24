@@ -1,0 +1,29 @@
+# 🤗 LeRobot Notebooks
+
+本仓库包含使用 LeRobot 的示例 Notebook。这些 Notebook 演示了如何使用标准化策略，在真实或仿真数据集上训练策略。
+
+---
+
+### 训练 ACT
+
+[ACT](https://huggingface.co/papers/2304.13705)（Action Chunking Transformer，动作分块 Transformer）是一种基于 Transformer 的模仿学习策略架构，可处理机器人状态和相机输入，以生成平滑的分块动作序列。
+
+我们提供了一个可直接运行的 Google Colab Notebook，帮助你使用 Hugging Face Hub 上的数据集训练 ACT 策略，并可选择记录到 Weights & Biases。
+
+| Notebook                                                                                               | Colab                                                                                                                                                                               |
+| :----------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [使用 LeRobot 训练 ACT](https://github.com/huggingface/notebooks/blob/main/lerobot/training-act.ipynb) | [![在 Colab 中打开](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/notebooks/blob/main/lerobot/training-act.ipynb) |
+
+100k 步的预期训练时间：在批量大小为 `64` 的 NVIDIA A100 GPU 上约 1.5 小时。
+
+### 训练 SmolVLA
+
+[SmolVLA](https://huggingface.co/papers/2506.01844) 是一种小型但高效的视觉-语言-动作模型。它由 Hugging Face 开发，参数量为 4.5 亿，体积紧凑。
+
+我们提供了一个可直接运行的 Google Colab Notebook，帮助你使用 Hugging Face Hub 上的数据集训练 SmolVLA 策略，并可选择记录到 Weights & Biases。
+
+| Notebook                                                                                                       | Colab                                                                                                                                                                                   |
+| :------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [使用 LeRobot 训练 SmolVLA](https://github.com/huggingface/notebooks/blob/main/lerobot/training-smolvla.ipynb) | [![在 Colab 中打开](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/notebooks/blob/main/lerobot/training-smolvla.ipynb) |
+
+20k 步的预期训练时间：在批量大小为 `64` 的 NVIDIA A100 GPU 上约 5 小时。
