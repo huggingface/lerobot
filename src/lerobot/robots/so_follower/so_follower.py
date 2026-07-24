@@ -161,10 +161,9 @@ class SOFollower(Robot):
             self.bus.configure_motors()
             for motor in self.bus.motors:
                 self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
-                # Keep I/D fixed while allowing P to be tuned for hardware-specific settling behavior.
                 self.bus.write("P_Coefficient", motor, self.config.position_p_coefficient)
-                self.bus.write("I_Coefficient", motor, 0)
-                self.bus.write("D_Coefficient", motor, 32)
+                self.bus.write("I_Coefficient", motor, self.config.position_i_coefficient)
+                self.bus.write("D_Coefficient", motor, self.config.position_d_coefficient)
 
                 if motor == "gripper":
                     self.bus.write("Max_Torque_Limit", motor, 500)  # 50% of max torque to avoid burnout
