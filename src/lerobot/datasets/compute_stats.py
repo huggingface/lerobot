@@ -519,6 +519,13 @@ def compute_episode_stats(
         if features[key]["dtype"] in {"string", "language"}:
             continue
 
+        # Features with zero-width shapes are skipped (no data to compute stats on)
+        if any(d == 0 for d in features[key].get("shape", ())):
+            logging.debug(
+                f"Skipping statistics computation for feature '{key}' with a zero-width shape {features[key]['shape']}."
+            )
+            continue
+
         if features[key]["dtype"] in ["image", "video"]:
             ep_ft_array = sample_images(data)
             axes_to_reduce = (0, 2, 3)
