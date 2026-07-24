@@ -39,6 +39,7 @@ is downloaded locally). Set ``HF_TOKEN`` in the environment for private repos.
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 import shutil
@@ -534,10 +535,14 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self._feature_shapes = {
             key: tuple(self.meta.features[key].get("shape") or ()) for key in self._tabular_keys
         }
-        # Language/string features pass through as python strings, like the
-        # upstream reader; lerobot_collate_fn handles them at batch time.
+        # String features pass through as python strings and language columns
+        # (list<struct> message rows, lerobot#3467) as python lists of dicts,
+        # like the upstream reader; lerobot_collate_fn handles both at batch time.
         self._string_keys = {
             key for key in self._tabular_keys if self.meta.features[key].get("dtype") == "string"
+        }
+        self._language_keys = {
+            key for key in self._tabular_keys if self.meta.features[key].get("dtype") == "language"
         }
 
         # Per-episode video file location: which (chunk, file) mp4 holds each
@@ -719,6 +724,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         """Fetch rows from the frames table and decode columns to numpy.
 
         Vector features come back as 2-D arrays ``(n_rows, dim)``; scalars as 1-D.
+        Language columns stay python (one list of message dicts per row).
         """
         batch = self._frames_perm.__getitems__(rows)
         columns = {}
@@ -726,7 +732,19 @@ class LanceDBDataset(torch.utils.data.Dataset):
             array = batch.column(lance_name)
             if hasattr(array, "combine_chunks"):
                 array = array.combine_chunks()
-            if hasattr(array, "flatten") and hasattr(array.type, "value_type"):
+            if key in self._language_keys:
+                # Match upstream's datasets.Json() feature: tool_calls entries
+                # are stored as JSON text but surfaced as python objects.
+                rows = array.to_pylist()
+                for row in rows:
+                    for msg in row or ():
+                        if msg.get("tool_calls"):
+                            msg["tool_calls"] = [
+                                json.loads(call) if isinstance(call, str) else call
+                                for call in msg["tool_calls"]
+                            ]
+                columns[key] = rows
+            elif hasattr(array, "flatten") and hasattr(array.type, "value_type"):
                 values = array.flatten().to_numpy(zero_copy_only=False)
                 columns[key] = values.reshape(len(array), -1)
             else:
@@ -996,7 +1014,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
         for key in self._tabular_keys:
             data = columns[key]
             shape = self._feature_shapes[key]
-            if key in self._string_keys:
+            if key in self._language_keys:
+                item[key] = data[base]
+            elif key in self._string_keys:
                 value = data[base]
                 item[key] = value if isinstance(value, str) or value is None else str(value)
             elif key in plan["windows"]:

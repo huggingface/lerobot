@@ -37,12 +37,34 @@ from lerobot.datasets.lancedb_dataset import (
     lance_mp_context,
     to_lance_column,
 )
+from lerobot.datasets.language import (
+    LANGUAGE_COLUMNS,
+    LANGUAGE_EVENTS,
+    LANGUAGE_PERSISTENT,
+    language_events_arrow_type,
+    language_feature_info,
+    language_persistent_arrow_type,
+)
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.policies.factory import make_policy_config
 from tests.fixtures.constants import DUMMY_REPO_ID
 
 lancedb = pytest.importorskip("lancedb")
+
+
+def _storage_type(dtype: pa.DataType) -> pa.DataType:
+    """Replace Arrow extension types (e.g. JSON in language tool_calls) with their
+    storage type, recursively — lance rejects extension types it doesn't know."""
+    if isinstance(dtype, pa.BaseExtensionType):
+        return _storage_type(dtype.storage_type)
+    if pa.types.is_list(dtype):
+        return pa.list_(_storage_type(dtype.value_type))
+    if pa.types.is_large_list(dtype):
+        return pa.large_list(_storage_type(dtype.value_type))
+    if pa.types.is_struct(dtype):
+        return pa.struct([field.with_type(_storage_type(field.type)) for field in dtype])
+    return dtype
 
 
 def convert_frames_to_lance(src_root: Path, dst_root: Path) -> None:
@@ -53,7 +75,11 @@ def convert_frames_to_lance(src_root: Path, dst_root: Path) -> None:
     fields, arrays = [], []
     for field in table.schema:
         column = table.column(field.name).combine_chunks()
-        if pa.types.is_list(field.type) or pa.types.is_large_list(field.type):
+        if field.name in LANGUAGE_COLUMNS:
+            target = _storage_type(column.type)
+            if target != column.type:
+                column = column.cast(target)
+        elif pa.types.is_list(field.type) or pa.types.is_large_list(field.type):
             column = pa.FixedSizeListArray.from_arrays(column.flatten(), len(column[0]))
         arrays.append(column)
         fields.append(pa.field(to_lance_column(field.name), column.type))
@@ -308,3 +334,88 @@ def test_pickle_and_dataloader(dataset_roots):
     batch = next(iter(loader))
     assert batch["state"].shape[0] == 8
     assert len(batch["task"]) == 8
+
+
+def add_language_columns(src_root: Path) -> None:
+    """Augment a fixture dataset with the language columns from lerobot#3467.
+
+    Rows vary by frame index to cover the shapes the annotation pipeline
+    produces: non-empty, empty, and null lists, plus tool_calls JSON.
+    """
+    import json
+
+    for f in sorted((src_root / "data").rglob("*.parquet")):
+        table = pq.read_table(f)
+        persistent, events = [], []
+        for idx in table.column("index").to_pylist():
+            if idx % 7 == 5:
+                persistent.append(None)
+            elif idx % 3 == 0:
+                persistent.append(
+                    [
+                        {
+                            "role": "user",
+                            "content": f"subtask {idx}",
+                            "style": "subtask",
+                            "timestamp": idx / 10.0,
+                            "camera": None,
+                            "tool_calls": None,
+                        }
+                    ]
+                )
+            else:
+                persistent.append([])
+            if idx % 4 == 0:
+                events.append(
+                    [
+                        {
+                            "role": "assistant",
+                            "content": "on it",
+                            "style": "interjection",
+                            "camera": None,
+                            "tool_calls": ['{"text": "on it"}'],
+                        }
+                    ]
+                )
+            else:
+                events.append([])
+        # pa.array cannot construct nested JSON extension values directly; build
+        # with the storage types (string), which is also what lands in parquet.
+        table = table.append_column(
+            LANGUAGE_PERSISTENT,
+            pa.array(persistent, type=_storage_type(language_persistent_arrow_type())),
+        )
+        table = table.append_column(
+            LANGUAGE_EVENTS, pa.array(events, type=_storage_type(language_events_arrow_type()))
+        )
+        pq.write_table(table, f)
+
+    info_path = src_root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["features"].update(language_feature_info())
+    info_path.write_text(json.dumps(info, indent=4))
+
+
+def test_language_columns_parity(tmp_path, lerobot_dataset_factory):
+    src_root = tmp_path / "src"
+    lerobot_dataset_factory(
+        root=src_root, total_episodes=3, total_frames=90, use_videos=False, camera_features={}
+    )
+    add_language_columns(src_root)
+    lance_root = tmp_path / "lance"
+    convert_frames_to_lance(src_root, lance_root)
+
+    upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
+    lance_ds = LanceDBDataset(root=lance_root)
+    assert lance_ds.meta.has_language_columns
+
+    # Indices chosen to hit every shape: both columns populated (0, 12), only
+    # persistent (33), only events (4), persistent null (5), neither (1).
+    for idx in [0, 1, 4, 5, 12, 33, len(upstream) - 1]:
+        up_item, lance_item = upstream[idx], lance_ds[idx]
+        for col in LANGUAGE_COLUMNS:
+            assert lance_item[col] == up_item[col], (idx, col)
+        assert_items_equal(
+            {k: v for k, v in lance_item.items() if k not in LANGUAGE_COLUMNS},
+            {k: v for k, v in up_item.items() if k not in LANGUAGE_COLUMNS},
+        )
