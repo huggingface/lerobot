@@ -422,11 +422,13 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                     else:
                         frames_buffer.append(frame)
                     break  # random shard sampled, switch shard
-            except (
-                RuntimeError,
-                StopIteration,
-            ):  # NOTE: StopIteration inside a generator throws a RuntimeError since python 3.7
-                del idx_to_backtrack_dataset[shard_key]  # Remove exhausted shard, onto another shard
+            except RuntimeError as e:
+                # shard exhaustion appeared as a RuntimeError(PEP 479) with StopIteration as cause,
+                # any other RuntimeError(e.g. video decode failure) should be raised
+                if isinstance(e.__cause__, StopIteration):
+                    del idx_to_backtrack_dataset[shard_key]  # Remove exhausted shard, onto another shard
+                else:
+                    raise
 
         # Once shards are all exhausted, shuffle the buffer and yield the remaining frames
         rng.shuffle(frames_buffer)

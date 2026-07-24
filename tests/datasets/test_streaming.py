@@ -252,6 +252,35 @@ def test_frames_order_with_shards(tmp_path, lerobot_dataset_factory, shuffle):
             assert frames_match
 
 
+def test_iter_raises_on_frame_error(tmp_path, lerobot_dataset_factory, monkeypatch):
+    """A failure while building a frame (e.g. video decode failure)
+    must propagate instead of being silently ignored.
+    Test for https://github.com/huggingface/lerobot/issues/4066"""
+    ds_num_frames = 20
+    ds_num_episodes = 2
+    buffer_size = 10
+
+    local_path = tmp_path / "test"
+    repo_id = f"{DUMMY_REPO_ID}"
+
+    lerobot_dataset_factory(
+        root=local_path,
+        repo_id=repo_id,
+        total_episodes=ds_num_episodes,
+        total_frames=ds_num_frames,
+    )
+
+    streaming_ds = StreamingLeRobotDataset(repo_id=repo_id, root=local_path, buffer_size=buffer_size)
+
+    def broken_video_decode(item):
+        raise RuntimeError("Could not load libtorchcodec")
+
+    monkeypatch.setattr("lerobot.datasets.streaming_dataset.item_to_torch", broken_video_decode)
+
+    with pytest.raises(RuntimeError, match="libtorchcodec"):
+        next(iter(streaming_ds))
+
+
 @pytest.mark.parametrize(
     "state_deltas, action_deltas",
     [
