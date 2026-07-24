@@ -48,6 +48,7 @@ meta/, data/, videos/. When omitted, defaults to $HF_LEROBOT_HOME/{repo_id}.
 import argparse
 import logging
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -206,7 +207,7 @@ def concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys):
     concatenated_df.to_parquet(path, index=False, schema=schema)
 
 
-def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
+def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int, profile: bool = False):
     data_dir = root / "data"
     ep_paths = sorted(data_dir.glob("*/*.parquet"))
 
@@ -222,6 +223,7 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
     logging.info(f"Converting data files from {len(ep_paths)} episodes")
 
     for ep_idx, ep_path in enumerate(tqdm.tqdm(ep_paths, desc="convert data files")):
+        episode_start = time.perf_counter() if profile else None
         ep_size_in_mb = get_parquet_file_size_in_mb(ep_path)
         ep_num_frames = get_parquet_num_frames(ep_path)
 
@@ -249,6 +251,12 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
         num_frames += ep_num_frames
         episodes_metadata.append(ep_metadata)
         paths_to_cat.append(ep_path)
+        if episode_start is not None:
+            logging.debug(
+                "[profile] data episode %s converted in %.3fms",
+                ep_idx,
+                (time.perf_counter() - episode_start) * 1000,
+            )
 
     # Write remaining data if any
     if paths_to_cat:
@@ -271,7 +279,7 @@ def get_image_keys(root):
     return image_keys
 
 
-def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int):
+def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int, profile: bool = False):
     logging.info(f"Converting videos from {root} to {new_root}")
 
     video_keys = get_video_keys(root)
@@ -282,7 +290,7 @@ def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int):
 
     eps_metadata_per_cam = []
     for camera in video_keys:
-        eps_metadata = convert_videos_of_camera(root, new_root, camera, video_file_size_in_mb)
+        eps_metadata = convert_videos_of_camera(root, new_root, camera, video_file_size_in_mb, profile)
         eps_metadata_per_cam.append(eps_metadata)
 
     num_eps_per_cam = [len(eps_cam_map) for eps_cam_map in eps_metadata_per_cam]
@@ -307,7 +315,9 @@ def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int):
     return episodes_metadata
 
 
-def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_file_size_in_mb: int):
+def convert_videos_of_camera(
+    root: Path, new_root: Path, video_key: str, video_file_size_in_mb: int, profile: bool = False
+):
     # Access old paths to mp4
     videos_dir = root / "videos"
     ep_paths = sorted(videos_dir.glob(f"*/{video_key}/*.mp4"))
@@ -321,6 +331,7 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
     episodes_metadata = []
 
     for ep_path in tqdm.tqdm(ep_paths, desc=f"convert videos of {video_key}"):
+        episode_start = time.perf_counter() if profile else None
         ep_size_in_mb = get_file_size_in_mb(ep_path)
         ep_duration_in_s = get_video_duration_in_s(ep_path)
 
@@ -359,6 +370,13 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
         paths_to_cat.append(ep_path)
         size_in_mb += ep_size_in_mb
         duration_in_s += ep_duration_in_s
+        if episode_start is not None:
+            logging.debug(
+                "[profile] video episode %s camera %s converted in %.3fms",
+                ep_idx,
+                video_key,
+                (time.perf_counter() - episode_start) * 1000,
+            )
         ep_idx += 1
 
     # Write remaining videos if any
@@ -466,7 +484,9 @@ def convert_dataset(
     root: str | Path | None = None,
     push_to_hub: bool = True,
     force_conversion: bool = False,
+    profile: bool = False,
 ):
+    conversion_start = time.perf_counter() if profile else None
     if data_file_size_in_mb is None:
         data_file_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
     if video_file_size_in_mb is None:
@@ -510,8 +530,8 @@ def convert_dataset(
 
     convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb)
     convert_tasks(root, new_root)
-    episodes_metadata = convert_data(root, new_root, data_file_size_in_mb)
-    episodes_videos_metadata = convert_videos(root, new_root, video_file_size_in_mb)
+    episodes_metadata = convert_data(root, new_root, data_file_size_in_mb, profile)
+    episodes_videos_metadata = convert_videos(root, new_root, video_file_size_in_mb, profile)
     convert_episodes_metadata(root, new_root, episodes_metadata, episodes_videos_metadata)
 
     shutil.move(str(root), str(old_root))
@@ -534,9 +554,11 @@ def convert_dataset(
 
         LeRobotDataset(repo_id).push_to_hub()
 
+    if conversion_start is not None:
+        logging.info("[profile] total conversion completed in %.3fs", time.perf_counter() - conversion_start)
+
 
 if __name__ == "__main__":
-    init_logging()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--repo-id",
@@ -580,6 +602,20 @@ if __name__ == "__main__":
         action="store_true",
         help="Force conversion even if the dataset already has a v3.0 version.",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Log coarse conversion timing and per-episode timing.",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        help="Console logging level. Defaults to INFO.",
+    )
 
     args = parser.parse_args()
-    convert_dataset(**vars(args))
+    init_logging(console_level=args.log_level)
+    kwargs = vars(args)
+    kwargs.pop("log_level")
+    convert_dataset(**kwargs)
