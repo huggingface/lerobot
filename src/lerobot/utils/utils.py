@@ -372,8 +372,14 @@ class TimerManager:
         return self
 
     def stop(self) -> float:
+        """Stop the timer.
+
+        Calling ``stop()`` without a matching ``start()`` (or after a previous
+        stop) is a no-op that returns ``0.0`` instead of raising, so cleanup
+        paths (``finally`` / multi-exit) stay safe.
+        """
         if self._start is None:
-            raise RuntimeError("Timer was never started.")
+            return 0.0
         elapsed = time.perf_counter() - self._start
         self._history.append(elapsed)
         self._start = None
