@@ -28,7 +28,6 @@ lerobot-find-cameras
 # NOTE(Steven): macOS cameras sometimes report different FPS at init time, not an issue here as we don't specify FPS when opening the cameras, but the information displayed might not be truthful.
 
 import argparse
-import concurrent.futures
 import logging
 import time
 from pathlib import Path
@@ -40,6 +39,9 @@ from PIL import Image
 from lerobot.cameras import ColorMode
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
+from lerobot.utils.utils import (
+    init_logging,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +134,7 @@ def save_image(
     camera_identifier: str | int,
     images_dir: Path,
     camera_type: str,
-):
+) -> None:
     """
     Saves a single image to disk using Pillow. Handles color conversion if necessary.
     """
@@ -151,7 +153,7 @@ def save_image(
         logger.error(f"Failed to save image for camera {camera_identifier} (type {camera_type}): {e}")
 
 
-def create_camera_instance(cam_meta: dict[str, Any]) -> dict[str, Any] | None:
+def create_camera_instance(cam_meta: dict[str, Any], *, warmup_s: int = 1) -> dict[str, Any] | None:
     """Create and connect to a camera instance based on metadata."""
     cam_type = cam_meta.get("type")
     cam_id = cam_meta.get("id")
@@ -164,12 +166,14 @@ def create_camera_instance(cam_meta: dict[str, Any]) -> dict[str, Any] | None:
             cv_config = OpenCVCameraConfig(
                 index_or_path=cam_id,
                 color_mode=ColorMode.RGB,
+                warmup_s=warmup_s,
             )
             instance = OpenCVCamera(cv_config)
         elif cam_type == "RealSense":
             rs_config = RealSenseCameraConfig(
                 serial_number_or_name=cam_id,
                 color_mode=ColorMode.RGB,
+                warmup_s=warmup_s,
             )
             instance = RealSenseCamera(rs_config)
         else:
@@ -187,9 +191,7 @@ def create_camera_instance(cam_meta: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
 
-def process_camera_image(
-    cam_dict: dict[str, Any], output_dir: Path, current_time: float
-) -> concurrent.futures.Future | None:
+def process_camera_image(cam_dict: dict[str, Any], output_dir: Path, current_time: float) -> None:
     """Capture and process an image from a single camera."""
     cam = cam_dict["instance"]
     meta = cam_dict["meta"]
@@ -199,7 +201,7 @@ def process_camera_image(
     try:
         image_data = cam.read()
 
-        return save_image(
+        save_image(
             image_data,
             cam_id_str,
             output_dir,
@@ -214,21 +216,21 @@ def process_camera_image(
     return None
 
 
-def cleanup_cameras(cameras_to_use: list[dict[str, Any]]):
+def cleanup_camera(cam_dict: dict[str, Any]) -> None:
     """Disconnect all cameras."""
-    logger.info(f"Disconnecting {len(cameras_to_use)} cameras...")
-    for cam_dict in cameras_to_use:
-        try:
-            if cam_dict["instance"] and cam_dict["instance"].is_connected:
-                cam_dict["instance"].disconnect()
-        except Exception as e:
-            logger.error(f"Error disconnecting camera {cam_dict['meta'].get('id')}: {e}")
+    logger.info(f"Disconnecting camera with ID {cam_dict['meta'].get('id')}...")
+    try:
+        if cam_dict["instance"] and cam_dict["instance"].is_connected:
+            cam_dict["instance"].disconnect()
+    except Exception as e:
+        logger.error(f"Error disconnecting camera {cam_dict['meta'].get('id')}: {e}")
 
 
 def save_images_from_all_cameras(
     output_dir: Path,
     record_time_s: float = 2.0,
     camera_type: str | None = None,
+    warmup_s: int = 1,
 ):
     """
     Connects to detected cameras (optionally filtered by type) and saves images from each.
@@ -239,6 +241,7 @@ def save_images_from_all_cameras(
         record_time_s: Duration in seconds to record images.
         camera_type: Optional string to filter cameras ("realsense" or "opencv").
                             If None, uses all detected cameras.
+        warmup_s: Duration in seconds to warmup camera before recording images.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Saving images to {output_dir}")
@@ -248,47 +251,31 @@ def save_images_from_all_cameras(
         logger.warning("No cameras detected matching the criteria. Cannot save images.")
         return
 
-    cameras_to_use = []
-    for cam_meta in all_camera_metadata:
-        camera_instance = create_camera_instance(cam_meta)
-        if camera_instance:
-            cameras_to_use.append(camera_instance)
+    logger.info(
+        f"Starting image capture for {record_time_s} seconds from {len(all_camera_metadata)} cameras."
+    )
 
-    if not cameras_to_use:
-        logger.warning("No cameras could be connected. Aborting image save.")
-        return
-
-    logger.info(f"Starting image capture for {record_time_s} seconds from {len(cameras_to_use)} cameras.")
-    start_time = time.perf_counter()
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(cameras_to_use) * 2) as executor:
-        try:
+    try:
+        for cam_meta in all_camera_metadata:
+            cam_dict = create_camera_instance(cam_meta, warmup_s=warmup_s)
+            if cam_dict is None:
+                continue
+            start_time = time.perf_counter()
             while time.perf_counter() - start_time < record_time_s:
-                futures = []
                 current_capture_time = time.perf_counter()
-
-                for cam_dict in cameras_to_use:
-                    future = process_camera_image(cam_dict, output_dir, current_capture_time)
-                    if future:
-                        futures.append(future)
-
-                if futures:
-                    concurrent.futures.wait(futures)
-
-        except KeyboardInterrupt:
-            logger.info("Capture interrupted by user.")
-        finally:
-            print("\nFinalizing image saving...")
-            executor.shutdown(wait=True)
-            cleanup_cameras(cameras_to_use)
-            print(f"Image capture finished. Images saved to {output_dir}")
+                process_camera_image(cam_dict, output_dir, current_capture_time)
+            cleanup_camera(cam_dict)
+    except KeyboardInterrupt:
+        logger.info("Capture interrupted by user.")
+    finally:
+        print(f"Image capture finished. Images saved to {output_dir}")
 
 
 def main():
+    init_logging()
     parser = argparse.ArgumentParser(
         description="Unified camera utility script for listing cameras and capturing images."
     )
-
     parser.add_argument(
         "camera_type",
         type=str,
@@ -306,8 +293,14 @@ def main():
     parser.add_argument(
         "--record-time-s",
         type=float,
-        default=6.0,
-        help="Time duration to attempt capturing frames. Default: 6 seconds.",
+        default=2.0,
+        help="Time duration to attempt capturing frames. Default: 2 seconds.",
+    )
+    parser.add_argument(
+        "--warmup-s",
+        type=int,
+        default=1,
+        help="Time duration to warmup camera before attempting to capture frames. Default: 1 second.",
     )
     args = parser.parse_args()
     save_images_from_all_cameras(**vars(args))
