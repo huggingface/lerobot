@@ -21,12 +21,26 @@ from ..config import RobotConfig
 
 
 def lekiwi_cameras_config() -> dict[str, CameraConfig]:
+    # NOTE: width/height must match the resolution the cameras actually deliver on the host.
+    # These USB cameras return their native resolution regardless of the requested size, so we
+    # declare the native shapes here. The client declares its expected frame shapes from this same
+    # config, so host capture and client/dataset shapes stay in sync. NO_ROTATION keeps the declared
+    # (height, width) equal to the received frame shape (the client does not rotate received frames).
     return {
         "front": OpenCVCameraConfig(
-            index_or_path="/dev/video0", fps=30, width=640, height=480, rotation=Cv2Rotation.ROTATE_180
+            index_or_path="/dev/video0", fps=30, width=1280, height=720, rotation=Cv2Rotation.NO_ROTATION
         ),
         "wrist": OpenCVCameraConfig(
-            index_or_path="/dev/video2", fps=30, width=480, height=640, rotation=Cv2Rotation.ROTATE_90
+            index_or_path="/dev/video2", fps=30, width=640, height=480, rotation=Cv2Rotation.NO_ROTATION
+        ),
+        # USB "Web Camera", native 640x480, mounted rotated -> portrait (640, 480, 3) after ROTATE_90.
+        # Use the stable by-id path: the raw /dev/videoN number shuffles on replug.
+        "up": OpenCVCameraConfig(
+            index_or_path="/dev/v4l/by-id/usb-Web_Camera_Web_Camera_202512181-video-index0",
+            fps=30,
+            width=480,
+            height=640,
+            rotation=Cv2Rotation.ROTATE_90,
         ),
     }
 
@@ -63,6 +77,13 @@ class LeKiwiHostConfig:
 
     # If robot jitters decrease the frequency and monitor cpu load with `top` in cmd
     max_loop_freq_hz: int = 30
+
+    # Optional: stream live observations/actions from the host to Foxglove.
+    # When enabled, the host starts a Foxglove WebSocket server; connect the Foxglove
+    # app to ws://<host-ip>:<foxglove_port>. Requires the `viz` extra (foxglove-sdk).
+    enable_foxglove: bool = False
+    foxglove_host: str = "0.0.0.0"  # bind interface (0.0.0.0 = reachable from other machines)
+    foxglove_port: int = 8765
 
 
 @RobotConfig.register_subclass("lekiwi_client")
