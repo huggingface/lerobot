@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 import pytest
 
@@ -28,7 +28,7 @@ from lerobot.scripts.lerobot_replay import DatasetReplayConfig, ReplayConfig, re
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
 from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
-from tests.mocks.mock_teleop import MockTeleopConfig
+from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
 
 
 def test_calibrate():
@@ -127,3 +127,24 @@ def test_record_and_replay(tmp_path):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "record_and_replay")
         replay(replay_cfg)
+
+
+def test_teleoperate_calls_send_feedback_when_supported():
+    robot_cfg = MockRobotConfig()
+    teleop_cfg = MockTeleopConfig()
+    cfg = TeleoperateConfig(robot=robot_cfg, teleop=teleop_cfg, teleop_time_s=0.1)
+    with patch.object(MockTeleop, "send_feedback") as mock_send:
+        teleoperate(cfg)
+    mock_send.assert_called()
+
+
+def test_teleoperate_skips_send_feedback_when_not_supported():
+    robot_cfg = MockRobotConfig()
+    teleop_cfg = MockTeleopConfig()
+    cfg = TeleoperateConfig(robot=robot_cfg, teleop=teleop_cfg, teleop_time_s=0.1)
+    with (
+        patch.object(MockTeleop, "feedback_features", new_callable=PropertyMock, return_value={}),
+        patch.object(MockTeleop, "send_feedback") as mock_send,
+    ):
+        teleoperate(cfg)
+    mock_send.assert_not_called()
