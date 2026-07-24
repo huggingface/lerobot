@@ -221,6 +221,11 @@ class TrainPipelineConfig(HubMixin):
             )
 
         active_cfg = self.trainable_config
+
+        # Keep the policy-level `use_peft` flag in sync with the presence of a `--peft.*` config.
+        if self.peft is not None and self.policy is not None:
+            self.policy.use_peft = True
+
         if self.rename_map and active_cfg.pretrained_path is None:
             raise ValueError(
                 "`rename_map` requires a pretrained policy checkpoint. "

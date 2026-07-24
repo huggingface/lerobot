@@ -513,6 +513,37 @@ def make_pre_post_processors(
     return processors
 
 
+def _has_peft_adapter_config(
+    pretrained_path: str,
+    revision: str | None = None,
+) -> bool:
+    """Return whether ``pretrained_path`` points to an existing PEFT adapter.
+
+    A PEFT adapter checkpoint always ships an ``adapter_config.json``.
+    A plain base-model checkpoint does not. This distinction lets us tell apart
+    two very different ``use_peft=True`` scenarios that both set ``pretrained_path``:
+
+    * loading/resuming a previously trained adapter (config lives at ``pretrained_path``)
+    * starting a *fresh* PEFT fine-tune on top of a base model
+
+    Works for both local directories and Hub repo ids.
+    """
+    import os
+
+    adapter_config_name = "adapter_config.json"
+
+    if os.path.isdir(pretrained_path):
+        return os.path.isfile(os.path.join(pretrained_path, adapter_config_name))
+
+    from huggingface_hub import file_exists
+    from huggingface_hub.errors import HfHubHTTPError
+
+    try:
+        return file_exists(pretrained_path, adapter_config_name, revision=revision)
+    except (HfHubHTTPError, OSError):
+        return False
+
+
 def make_policy(
     cfg: PreTrainedConfig,
     ds_meta: LeRobotDatasetMetadata | None = None,
@@ -607,13 +638,24 @@ def make_policy(
             "the PEFT config parameters to be set. For training with PEFT, see `lerobot_train.py` on how to do that."
         )
 
-    if cfg.pretrained_path and not cfg.use_peft:
+    # When `use_peft=True` and a checkpoint is given, the checkpoint can be one of two things:
+    # 1. A base model checkpoint (e.g., a pretrained policy) on which we want to start a fresh PEFT fine-tune.
+    # 2. A PEFT adapter checkpoint (e.g., a previously trained PEFT adapter)
+    # We distinguish between these two cases
+    load_existing_adapter = (
+        cfg.pretrained_path
+        and cfg.use_peft
+        and _has_peft_adapter_config(str(cfg.pretrained_path), cfg.pretrained_revision)
+    )
+
+    if cfg.pretrained_path and not load_existing_adapter:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
-        # hyperparameters that we want to vary).
+        # hyperparameters that we want to vary). This also covers starting a fresh PEFT fine-tune on top of a
+        # base model: the base weights are loaded here and `wrap_with_peft` builds the adapter afterwards.
         kwargs["pretrained_name_or_path"] = cfg.pretrained_path
         kwargs["revision"] = cfg.pretrained_revision
         policy = policy_cls.from_pretrained(**kwargs)
-    elif cfg.pretrained_path and cfg.use_peft:
+    elif load_existing_adapter:
         # Load a pretrained PEFT model on top of the policy. The pretrained path points to the folder/repo
         # of the adapter and the adapter's config contains the path to the base policy. So we need the
         # adapter config first, then load the correct policy and then apply PEFT.
