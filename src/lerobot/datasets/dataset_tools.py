@@ -1778,6 +1778,11 @@ def convert_image_to_video_dataset(
         for ep_idx in episode_indices:
             src_episode = dataset.meta.episodes[ep_idx]
             ep_length = src_episode["length"]
+            if ep_length <= 0:
+                raise ValueError(
+                    f"Episode {ep_idx} has invalid length {ep_length}. "
+                    "Episode lengths must be positive; dataset metadata may be corrupted."
+                )
             ep_meta = {
                 "episode_index": ep_idx,
                 "length": ep_length,
