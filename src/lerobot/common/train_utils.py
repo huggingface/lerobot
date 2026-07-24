@@ -384,34 +384,62 @@ def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
 
     Raises:
         NotADirectoryError: If the checkpoint has no `training_state/` directory.
+        ValueError: If the resumed topology crosses the sharded/non-sharded boundary relative
+            to the one recorded in the checkpoint.
     """
     training_state_dir = cfg.checkpoint_path / TRAINING_STATE_DIR
     if not training_state_dir.is_dir():
         raise NotADirectoryError(training_state_dir)
-    _warn_on_resume_changes(cfg)
+    _guard_resume_changes(cfg)
     load_rng_state(training_state_dir)
     return load_training_step(training_state_dir)
 
 
-def _warn_on_resume_changes(cfg: TrainPipelineConfig) -> None:
-    """One warning naming every recorded run setting this resume changes.
+def _guard_resume_changes(cfg: TrainPipelineConfig) -> None:
+    """Check the resumed run settings against the ones recorded in the checkpoint.
 
-    Changes are legal — DCP reshards weights and optimizer state across topologies and the
-    sampler offset adapts — but a changed ``grad_accum_steps`` shifts the optimizer-update
-    cadence, so the resume says precisely what differs. The sampler-exactness warnings
-    (``dp_world_size``/``batch_size``) live with the sampler math in the dataloader factory.
+    Two tiers, both driven by the checkpoint's recorded parallelism snapshot (loaded once):
+
+    - **Hard error** when the resume crosses the sharded/non-sharded boundary in either
+      direction: the checkpoint's training-state artifacts only support resuming on the same
+      kind of topology (resharding works across sizes, not across kinds). Checkpoints without
+      a recorded snapshot skip this check.
+    - **One warning** naming every other recorded setting that differs — those changes are
+      legal (DCP reshards weights and optimizer state across topologies and the sampler offset
+      adapts), but a changed ``grad_accum_steps`` shifts the optimizer-update cadence, so the
+      resume says precisely what differs. The sampler-exactness warnings
+      (``dp_world_size``/``batch_size``) live with the sampler math in the dataloader factory.
 
     Args:
         cfg (TrainPipelineConfig): The resumed training config, compared against the settings
             recorded in the checkpoint at `cfg.checkpoint_path`.
+
+    Raises:
+        ValueError: If the checkpoint records a sharded topology and the resumed run is
+            non-sharded, or vice versa.
     """
+    snapshot = load_training_parallelism(cfg.checkpoint_path)
+
+    if snapshot is not None:
+        recorded_sharded = (
+            snapshot.get("dp_shard", 1) != 1
+            or snapshot.get("ring_degree", 1) * snapshot.get("ulysses_degree", 1) > 1
+        )
+        if recorded_sharded != cfg.parallelism.is_sharded:
+            raise ValueError(
+                f"Cannot resume: the checkpoint was written with a "
+                f"{'sharded' if recorded_sharded else 'non-sharded'} topology "
+                f"(dp_replicate={snapshot.get('dp_replicate')}, dp_shard={snapshot.get('dp_shard')}) "
+                f"but this run is {'sharded' if cfg.parallelism.is_sharded else 'non-sharded'} "
+                f"(dp_replicate={cfg.parallelism.dp_replicate}, dp_shard={cfg.parallelism.dp_shard})."
+            )
+
     recorded = {
         "grad_accum_steps": (
             load_training_grad_accum_steps(cfg.checkpoint_path),
             cfg.accelerator.gradient_accumulation.steps,
         ),
     }
-    snapshot = load_training_parallelism(cfg.checkpoint_path)
     if snapshot is not None:
         recorded.update(
             {

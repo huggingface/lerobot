@@ -32,7 +32,7 @@ from lerobot.common.train_utils import (
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR, TRAINING_STEP
-from lerobot.utils.io_utils import write_json
+from lerobot.utils.io_utils import load_json, write_json
 from tests.fixtures.dummy_checkpoint_policy import make_dummy_policy
 
 
@@ -152,6 +152,23 @@ class TestResume:
         with caplog.at_level(logging.WARNING):
             resume_before_prepare(cfg)
         assert not [m for m in caplog.messages if "differ from the checkpoint" in m]
+
+    def test_resume_rejects_non_sharded_checkpoint_on_sharded_run(self, tmp_path):
+        """Resharding works across sizes, not across kinds: non-sharded -> sharded is rejected."""
+        cfg, _, _ = self._checkpointed_run(tmp_path)
+        cfg.parallelism.dp_shard = 2
+        with pytest.raises(ValueError, match="Cannot resume"):
+            resume_before_prepare(cfg)
+
+    def test_resume_rejects_sharded_checkpoint_on_non_sharded_run(self, tmp_path):
+        """The symmetric direction: a checkpoint recorded sharded cannot resume non-sharded."""
+        cfg, _, _ = self._checkpointed_run(tmp_path)
+        state_file = tmp_path / TRAINING_STATE_DIR / TRAINING_STEP
+        state = load_json(state_file)
+        state["parallelism"]["dp_shard"] = 2
+        write_json(state, state_file)
+        with pytest.raises(ValueError, match="Cannot resume"):
+            resume_before_prepare(cfg)
 
     def test_resume_before_prepare_requires_training_state(self, tmp_path):
         cfg = make_cfg()

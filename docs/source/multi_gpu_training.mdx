@@ -144,7 +144,7 @@ lerobot-convert-dcp --checkpoint_dir=... --delete_dcp=true --push_to_hub=${HF_US
 
 ### Resuming
 
-Resume with `--resume=true --config_path=.../checkpoints/last/pretrained_model/train_config.json`, as on a single GPU. Both model formats resume; DCP resume reshards the model and optimizer state to the _current_ topology, so you can resume on a different number of GPUs or even a different `dp_replicate/dp_shard` split. If a `dcp`-format checkpoint is missing its shard directory (e.g. it was pruned after conversion), the error tells you to run `lerobot-convert-dcp` on what remains or resume from a safetensors checkpoint.
+Resume with `--resume=true --config_path=.../checkpoints/last/pretrained_model/train_config.json`, as on a single GPU. Both model formats resume; DCP resume reshards the model and optimizer state to the _current_ topology, so you can resume on a different number of GPUs or a different `dp_replicate/dp_shard` split. Resharding works across sizes, not across kinds: resuming a sharded checkpoint on a non-sharded topology (single GPU or plain DDP), or vice versa, is rejected with an error. If a `dcp`-format checkpoint is missing its shard directory (e.g. it was pruned after conversion), the error tells you to run `lerobot-convert-dcp` on what remains or resume from a safetensors checkpoint.
 
 The data sampler resumes at the right epoch and offset in all cases, but is only _sample-exact_ when the world size and batch size match the original run (a warning is logged otherwise); model and optimizer state are unaffected.
 
