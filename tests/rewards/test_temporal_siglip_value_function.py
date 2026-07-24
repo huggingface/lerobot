@@ -127,3 +127,9 @@ def test_temporal_model_forward(monkeypatch):
     loss, metrics = model(batch)
     assert torch.isfinite(loss)
     assert -1.0 <= metrics["predicted_value_mean"] <= 0.0
+
+    model.eval()
+    with torch.no_grad():
+        eval_loss, eval_metrics = model(batch)
+    assert torch.isfinite(eval_loss)
+    assert -1.0 <= eval_metrics["predicted_value_mean"] <= 0.0
