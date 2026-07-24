@@ -453,7 +453,7 @@ class RealSenseCamera(Camera):
             )
 
         processed_image = image
-        if self.color_mode == ColorMode.BGR:
+        if not depth_frame and self.color_mode == ColorMode.BGR:
             processed_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:

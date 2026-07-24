@@ -25,7 +25,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from lerobot.cameras.configs import Cv2Rotation
+from lerobot.cameras.configs import ColorMode, Cv2Rotation
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 pytest.importorskip("pyrealsense2")
@@ -107,6 +107,32 @@ def test_read_depth():
 
     img = camera.read_depth(timeout_ms=2000)  # NOTE(Steven): Reading depth takes longer in CI environments.
     assert isinstance(img, np.ndarray)
+
+
+# These exercise _postprocess_image directly rather than read(): the bag playback returns
+# non-deterministic frames we can't compare against, and the depth read() path is skipped
+# (see test_read_depth) with the current pyrealsense2 version.
+def test_color_mode_conversion(img_array_factory):
+    """RGB (native for RealSense) is passed through; BGR reverses the channel axis."""
+    color = img_array_factory(height=3, width=4)
+
+    outputs = {}
+    for color_mode in (ColorMode.RGB, ColorMode.BGR):
+        camera = RealSenseCamera(RealSenseCameraConfig(serial_number_or_name="042", color_mode=color_mode))
+        camera.capture_height, camera.capture_width = color.shape[:2]
+        outputs[color_mode] = camera._postprocess_image(color)
+
+    np.testing.assert_array_equal(outputs[ColorMode.RGB], color)
+    np.testing.assert_array_equal(outputs[ColorMode.BGR], color[..., ::-1])
+
+
+def test_depth_frame_not_color_converted(img_array_factory):
+    """Depth frames must bypass color conversion, even when a BGR color_mode is set."""
+    camera = RealSenseCamera(RealSenseCameraConfig(serial_number_or_name="042", color_mode=ColorMode.BGR))
+    depth = img_array_factory(height=3, width=4, channels=1, dtype=np.uint16)[..., 0]
+    camera.capture_height, camera.capture_width = depth.shape
+
+    np.testing.assert_array_equal(camera._postprocess_image(depth, depth_frame=True), depth)
 
 
 def test_read_before_connect():
