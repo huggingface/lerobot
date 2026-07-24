@@ -40,6 +40,7 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     bi_openarm_follower,
     bi_rebot_b601_follower,
+    bi_rebot_b601_rs_follower,
     bi_so_follower,
     hope_jr,
     koch_follower,
@@ -48,6 +49,7 @@ from lerobot.robots import (  # noqa: F401
     omx_follower,
     openarm_follower,
     rebot_b601_follower,
+    rebot_b601_rs_follower,
     so_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401

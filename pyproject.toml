@@ -162,7 +162,7 @@ pyserial-dep = ["pyserial>=3.5,<4.0"]
 deepdiff-dep = ["deepdiff>=7.0.1,<9.0.0"]
 pynput-dep = ["pynput>=1.7.8,<1.9.0"]
 pyzmq-dep = ["pyzmq>=26.2.1,<28.0.0"]
-motorbridge-dep = ["motorbridge>=0.3.2,<0.4.0"]
+motorbridge-dep = ["motorbridge>=0.5.0,<0.6.0", "lerobot[can-dep]"]
 motorbridge-smart-servo-dep = ["motorbridge-smart-servo>=0.0.4,<0.1.0"]
 timm-dep = ["timm>=1.0.0,<1.1.0"]
 
@@ -193,8 +193,9 @@ reachy2 = [
     "grpcio<=1.73.1",
     "protobuf<=6.32.0",
 ]
-# Seeed Studio reBot B601-DM follower (motorbridge / CAN) + StarArm102 / reBot Arm 102
-# leader (motorbridge-smart-servo / FashionStar UART servos).
+# Seeed Studio reBot B601 follower (B601-DM with Damiao motors, B601-RS with
+# RobStride motors; motorbridge / CAN) + StarArm102 / reBot Arm 102 leader
+# (motorbridge-smart-servo / FashionStar UART servos).
 rebot = ["lerobot[motorbridge-dep]", "lerobot[motorbridge-smart-servo-dep]"]
 kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
