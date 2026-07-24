@@ -17,6 +17,7 @@
 
 from unittest.mock import patch
 
+import datasets as hf_datasets
 import numpy as np
 import pytest
 import torch
@@ -36,7 +37,7 @@ from lerobot.datasets.dataset_tools import (
     remove_feature,
     split_dataset,
 )
-from lerobot.datasets.io_utils import load_info
+from lerobot.datasets.io_utils import load_episodes, load_info
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
 from tests.fixtures.constants import DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY
 from tests.fixtures.dataset_factories import add_frames
@@ -1421,6 +1422,34 @@ def test_convert_image_to_video_dataset_depth(tmp_path, empty_lerobot_dataset_fa
     cam_info = persisted_info.features["observation.images.cam"]["info"]
     assert cam_info.get("is_depth_map") is False
     assert "video.codec" in cam_info
+
+
+def test_convert_image_to_video_dataset_invalid_episode_length(tmp_path, sample_dataset):
+    """A corrupted episode length (<= 0) must raise ValueError instead of silently
+    producing wrong dataset_from_index/dataset_to_index boundaries."""
+    # Corrupt episode 1's length to simulate corrupted metadata.
+    if sample_dataset.meta.episodes is None:
+        sample_dataset.meta.episodes = load_episodes(sample_dataset.meta.root)
+    episodes_dict = sample_dataset.meta.episodes.to_dict()
+    episodes_dict["length"][1] = 0
+    sample_dataset.meta.episodes = hf_datasets.Dataset.from_dict(episodes_dict)
+
+    output_dir = tmp_path / "video_ds_invalid"
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+
+        with pytest.raises(ValueError, match="Episode 1 has invalid length"):
+            convert_image_to_video_dataset(
+                dataset=sample_dataset,
+                output_dir=output_dir,
+                repo_id="dummy/invalid_length_video",
+                rgb_encoder=RGBEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30),
+                num_workers=1,
+            )
 
 
 # ─── reencode_dataset ─────────────────────────────────────────────────
