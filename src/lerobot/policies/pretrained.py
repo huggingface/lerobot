@@ -92,6 +92,18 @@ def _build_card_context(
 
 class ActionSelectKwargs(TypedDict, total=False):
     noise: Tensor | None
+    return_intermediate_predictions: bool
+
+
+def unpack_action_output(out: Tensor | tuple[Tensor, dict[str, Tensor]]) -> tuple[Tensor, dict[str, Tensor]]:
+    """Normalize a ``select_action`` / ``predict_action_chunk`` return to ``(action, predictions)``.
+
+    These methods return a bare action ``Tensor`` by default, or a ``(action, predictions)`` tuple when
+    called with ``return_intermediate_predictions=True``. A bare tensor becomes ``(tensor, {})``.
+    """
+    if isinstance(out, tuple):
+        return out[0], out[1]
+    return out, {}
 
 
 class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
@@ -256,20 +268,34 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]
+    ) -> Tensor | tuple[Tensor, dict[str, Tensor]]:
         """Returns the action chunk (for action chunking policies) for a given observation, potentially in batch mode.
 
         Child classes using action chunking should use this method within `select_action` to form the action chunk
         cached for selection.
+
+        By default returns just the action `Tensor`. If `return_intermediate_predictions=True`,
+        returns `(action, predictions)` where `predictions` is a (possibly empty) `dict[str, Tensor]`
+        of additional model predictions a policy may expose (e.g. world-model predicted frames).
+        Policies that produce nothing extra may ignore the kwarg.
         """
         raise NotImplementedError
 
     @abc.abstractmethod
-    def select_action(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+    def select_action(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]
+    ) -> Tensor | tuple[Tensor, dict[str, Tensor]]:
         """Return one action to run in the environment (potentially in batch mode).
 
         When the model uses a history of observations, or outputs a sequence of actions, this method deals
         with caching.
+
+        By default returns just the action `Tensor`. If `return_intermediate_predictions=True`,
+        returns `(action, predictions)` where `predictions` is a (possibly empty) `dict[str, Tensor]`
+        of additional model predictions a policy may expose (e.g. world-model predicted frames).
+        Policies that produce nothing extra may ignore the kwarg.
         """
         raise NotImplementedError
 

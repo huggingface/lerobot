@@ -19,6 +19,7 @@ from __future__ import annotations
 import dataclasses
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import torch
 
@@ -348,3 +349,62 @@ def test_rollout_context_fields():
 
     field_names = {f.name for f in dataclasses.fields(RolloutContext)}
     assert field_names == {"runtime", "hardware", "policy", "processors", "data"}
+
+
+# ---------------------------------------------------------------------------
+# Paced prediction buffer
+# ---------------------------------------------------------------------------
+
+
+def _walk_policy_ticks(buffer, key, n_ticks):
+    """Read the buffer over ``n_ticks`` policy ticks (load counts as the first)."""
+    seen = [buffer.current()[key]]
+    for _ in range(n_ticks - 1):
+        buffer.advance()
+        seen.append(buffer.current()[key])
+    return seen
+
+
+def test_prediction_buffer_paces_over_chunk():
+    from lerobot.rollout.inference.prediction_buffer import PacedPredictionBuffer
+
+    buffer = PacedPredictionBuffer(ticks_per_chunk=4)
+    assert buffer.current() is None  # nothing until a chunk is loaded
+
+    # 2 steps spread over a 4-policy-tick chunk: first half -> step 0, second half -> step 1.
+    buffer.load({"x": ["a", "b"]})
+    assert _walk_policy_ticks(buffer, "x", 4) == ["a", "a", "b", "b"]
+
+    buffer.reset()
+    assert buffer.current() is None
+
+    # Unknown span -> one step per policy tick, clamped at the last step.
+    unpaced = PacedPredictionBuffer(ticks_per_chunk=None)
+    unpaced.load({"x": ["a", "b"]})
+    assert _walk_policy_ticks(unpaced, "x", 3) == ["a", "b", "b"]
+
+
+def test_prediction_buffer_read_is_independent_of_display_rate():
+    from lerobot.rollout.inference.prediction_buffer import PacedPredictionBuffer
+
+    # Pacing fix: the playhead advances per policy tick; the display may read it many times per tick
+    # (e.g. interpolation multiplier=3), each read returning the same frame with no side effects — so
+    # playback never races to the end and freezes.
+    buffer = PacedPredictionBuffer(ticks_per_chunk=2)
+    buffer.load({"x": ["a", "b"]})
+    assert [buffer.current()["x"] for _ in range(3)] == ["a", "a", "a"]  # policy tick 0
+    buffer.advance()
+    assert [buffer.current()["x"] for _ in range(3)] == ["b", "b", "b"]  # policy tick 1
+
+
+def test_prediction_buffer_is_modality_agnostic():
+    from lerobot.rollout.inference.prediction_buffer import PacedPredictionBuffer
+
+    # Non-image temporal predictions pass through; torch tensors are detached to numpy on the way out.
+    buffer = PacedPredictionBuffer(ticks_per_chunk=2)
+    states = torch.arange(6).reshape(2, 3)  # [T=2, D=3]
+    buffer.load({"observation.state": states})
+    out = buffer.current()["observation.state"]
+    assert isinstance(out, np.ndarray) and np.array_equal(out, states[0].numpy())
+    buffer.advance()
+    assert np.array_equal(buffer.current()["observation.state"], states[1].numpy())

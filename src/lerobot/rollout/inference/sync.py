@@ -22,11 +22,12 @@ from copy import copy
 
 import torch
 
-from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.pretrained import PreTrainedPolicy, unpack_action_output
 from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
 from lerobot.processor import PolicyProcessorPipeline
 
 from .base import InferenceEngine
+from .prediction_buffer import PacedPredictionBuffer
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ class SyncInferenceEngine(InferenceEngine):
         task: str,
         device: str | None,
         robot_type: str,
+        visualize_predictions: bool = False,
     ) -> None:
         self._policy = policy
         self._preprocessor = preprocessor
@@ -73,10 +75,18 @@ class SyncInferenceEngine(InferenceEngine):
         self._task = task
         self._device = torch.device(device or "cpu")
         self._robot_type = robot_type
+
+        # Intermediate-prediction visualization (e.g. a world model's imagined future). ``get_action``
+        # (once per policy tick) loads/advances the buffer; ``get_intermediate_predictions`` reads it
+        # for display. Pacing on policy ticks keeps playback aligned with execution regardless of
+        # action-interpolation upsampling.
+        self._visualize_predictions = visualize_predictions
+        self._predictions = PacedPredictionBuffer(getattr(policy.config, "chunk_size", None))
         logger.info(
-            "SyncInferenceEngine initialized (device=%s, action_keys=%d)",
+            "SyncInferenceEngine initialized (device=%s, action_keys=%d, visualize_predictions=%s)",
             self._device,
             len(ordered_action_keys),
+            self._visualize_predictions,
         )
 
     def start(self) -> None:
@@ -93,6 +103,11 @@ class SyncInferenceEngine(InferenceEngine):
         self._policy.reset()
         self._preprocessor.reset()
         self._postprocessor.reset()
+        self._predictions.reset()
+
+    def get_intermediate_predictions(self) -> dict | None:
+        """Read the current chunk's paced prediction frame for display (``None`` if none)."""
+        return self._predictions.current()
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Run the full inference pipeline on ``obs_frame`` and return an action tensor."""
@@ -112,7 +127,18 @@ class SyncInferenceEngine(InferenceEngine):
                 observation, self._device, self._task, self._robot_type
             )
             observation = self._preprocessor(observation)
-            action = self._policy.select_action(observation)
+            if self._visualize_predictions:
+                action, predictions = unpack_action_output(
+                    self._policy.select_action(observation, return_intermediate_predictions=True)
+                )
+                if predictions:
+                    # A fresh chunk was predicted this tick — load its stacks and rewind the playhead.
+                    self._predictions.load(predictions)
+                else:
+                    # Same chunk, later policy tick — step the playhead through the imagined frames.
+                    self._predictions.advance()
+            else:
+                action = self._policy.select_action(observation)
             action = self._postprocessor(action)
         action_tensor = action.squeeze(0).cpu()
 

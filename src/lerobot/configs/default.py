@@ -93,6 +93,9 @@ class EvalConfig:
     recording_repo_id: str | None = None
     # Whether the pushed recording repositories should be private.
     recording_private: bool = False
+    # Whether to save the policy's imagined/predicted video (world-model policies only) as mp4s.
+    # Requests intermediate predictions from the policy each step; policies that produce none are unaffected.
+    save_predicted_video: bool = False
 
     def __post_init__(self) -> None:
         if self.recording_repo_id is not None and not self.recording:
