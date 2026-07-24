@@ -28,6 +28,10 @@ python src/lerobot/async_inference/robot_client.py \
     --client_device=cpu \
     --actions_per_chunk=50 \
     --chunk_size_threshold=0.5 \
+    --inference.type=rtc \
+    --inference.rtc.execution_horizon=10 \
+    --inference.rtc.max_guidance_weight=10.0 \
+    --inference.queue_threshold=30 \
     --observation_image_compression=jpeg \
     --jpeg_quality=85 \
     --aggregate_fn_name=weighted_average \
@@ -36,6 +40,7 @@ python src/lerobot/async_inference/robot_client.py \
 """
 
 import logging
+import math
 import pickle  # nosec
 import threading
 import time
@@ -51,6 +56,7 @@ import torch
 
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.policies.rtc import LatencyTracker
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -60,6 +66,7 @@ from lerobot.robots import (  # noqa: F401
     omx_follower,
     so_follower,
 )
+from lerobot.rollout.inference.factory import RTCInferenceConfig
 from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
@@ -103,12 +110,16 @@ class RobotClient:
         # Use environment variable if server_address is not provided in config
         self.server_address = config.server_address
 
+        self._rtc_enabled = isinstance(config.inference, RTCInferenceConfig) and config.inference.rtc.enabled
+        rtc_config = config.inference.rtc if isinstance(config.inference, RTCInferenceConfig) else None
+
         self.policy_config = RemotePolicyConfig(
-            config.policy_type,
-            config.pretrained_name_or_path,
-            lerobot_features,
-            config.actions_per_chunk,
-            config.policy_device,
+            policy_type=config.policy_type,
+            pretrained_name_or_path=config.pretrained_name_or_path,
+            lerobot_features=lerobot_features,
+            actions_per_chunk=config.actions_per_chunk,
+            device=config.policy_device,
+            rtc_config=rtc_config,
         )
         self.channel = grpc.insecure_channel(
             self.server_address, grpc_channel_options(initial_backoff=f"{config.environment_dt:.4f}s")
@@ -124,6 +135,11 @@ class RobotClient:
         self.action_chunk_size = -1
 
         self._chunk_size_threshold = config.chunk_size_threshold
+        self._rtc_queue_threshold = (
+            config.inference.queue_threshold if isinstance(config.inference, RTCInferenceConfig) else None
+        )
+        self._rtc_latency_tracker = LatencyTracker()
+        self._rtc_latency_lock = threading.Lock()
 
         self.action_queue = Queue()
         self.action_queue_lock = threading.Lock()  # Protect queue operations
@@ -177,6 +193,8 @@ class RobotClient:
             self.stub.SendPolicyInstructions(policy_setup)
 
             self.shutdown_event.clear()
+            with self._rtc_latency_lock:
+                self._rtc_latency_tracker.reset()
             self._start_observation_sender()
 
             return True
@@ -325,6 +343,35 @@ class RobotClient:
         self.logger.debug(f"Queue size: {queue_size}, Queue contents: {timestamps}")
         return queue_size, timestamps
 
+    def _get_rtc_prefixes(self) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """Snapshot queued policy-space and robot-space actions for remote RTC guidance."""
+        if not self._rtc_enabled:
+            return None, None
+
+        with self.action_queue_lock:
+            queued_actions = list(self.action_queue.queue)
+
+        if not queued_actions:
+            return None, None
+
+        original_actions = [action.get_original_action() for action in queued_actions]
+        if any(action is None for action in original_actions):
+            self.logger.warning("RTC prefix unavailable because an action has no policy-space value")
+            return None, None
+
+        policy_prefix = torch.stack([action.detach().cpu() for action in original_actions])
+        processed_prefix = torch.stack([action.get_action().detach().cpu() for action in queued_actions])
+        return policy_prefix, processed_prefix
+
+    def _get_rtc_inference_delay(self) -> int:
+        """Return the maximum observed end-to-end action latency in control steps."""
+        if not self._rtc_enabled:
+            return 0
+
+        with self._rtc_latency_lock:
+            latency = self._rtc_latency_tracker.max()
+        return math.ceil(latency / self.config.environment_dt) if latency else 0
+
     def _aggregate_action_queues(
         self,
         incoming_actions: list[TimedAction],
@@ -338,9 +385,7 @@ class RobotClient:
 
         future_action_queue = Queue()
         with self.action_queue_lock:
-            internal_queue = self.action_queue.queue
-
-        current_action_queue = {action.get_timestep(): action.get_action() for action in internal_queue}
+            current_action_queue = {action.get_timestep(): action for action in self.action_queue.queue}
 
         for new_action in incoming_actions:
             with self.latest_action_lock:
@@ -357,13 +402,20 @@ class RobotClient:
 
             # If the new action's timestep is in the current action queue, aggregate it
             # TODO: There is probably a way to do this with broadcasting of the two action tensors
+            current_action = current_action_queue[new_action.get_timestep()]
+            current_original = current_action.get_original_action()
+            new_original = new_action.get_original_action()
+            aggregated_original = (
+                aggregate_fn(current_original, new_original)
+                if current_original is not None and new_original is not None
+                else new_original
+            )
             future_action_queue.put(
                 TimedAction(
                     timestamp=new_action.get_timestamp(),
                     timestep=new_action.get_timestep(),
-                    action=aggregate_fn(
-                        current_action_queue[new_action.get_timestep()], new_action.get_action()
-                    ),
+                    action=aggregate_fn(current_action.get_action(), new_action.get_action()),
+                    original_action=aggregated_original,
                 )
             )
 
@@ -389,6 +441,16 @@ class RobotClient:
                 deserialize_start = time.perf_counter()
                 timed_actions = pickle.loads(actions_chunk.data)  # nosec
                 deserialize_time = time.perf_counter() - deserialize_start
+
+                if self._rtc_enabled and timed_actions:
+                    end_to_end_latency = max(0.0, receive_time - timed_actions[0].get_timestamp())
+                    with self._rtc_latency_lock:
+                        self._rtc_latency_tracker.add(end_to_end_latency)
+                    self.logger.debug(
+                        "RTC end-to-end latency: %.2fms (%d control steps)",
+                        end_to_end_latency * 1000,
+                        math.ceil(end_to_end_latency / self.config.environment_dt),
+                    )
 
                 # Log device type of received actions
                 if len(timed_actions) > 0:
@@ -435,7 +497,8 @@ class RobotClient:
 
                 # Update action queue
                 start_time = time.perf_counter()
-                self._aggregate_action_queues(timed_actions, self.config.aggregate_fn)
+                aggregate_fn = None if self._rtc_enabled else self.config.aggregate_fn
+                self._aggregate_action_queues(timed_actions, aggregate_fn)
                 queue_update_time = time.perf_counter() - start_time
 
                 # Keep the request gated until stale work is removed and the
@@ -512,10 +575,14 @@ class RobotClient:
         """Flags when the client is ready to send an observation"""
         with self.action_queue_lock:
             queue_is_empty = self.action_queue.empty()
-            queue_ratio = self.action_queue.qsize() / self.action_chunk_size
+            queue_size = self.action_queue.qsize()
 
         must_go_required = queue_is_empty and self.must_go.is_set()
-        threshold_reached = queue_ratio <= self._chunk_size_threshold
+        if self._rtc_enabled:
+            threshold_reached = queue_size <= self._rtc_queue_threshold
+        else:
+            queue_ratio = queue_size / self.action_chunk_size
+            threshold_reached = queue_ratio <= self._chunk_size_threshold
         return must_go_required or (threshold_reached and not self.observation_request_pending.is_set())
 
     def control_loop_observation(self, task: str, verbose: bool = False) -> RawObservation:
@@ -529,10 +596,18 @@ class RobotClient:
             with self.latest_action_lock:
                 latest_action = self.latest_action
 
+            rtc_action_prefix, rtc_processed_action_prefix = self._get_rtc_prefixes()
+            rtc_inference_delay = self._get_rtc_inference_delay()
+
             observation = TimedObservation(
                 timestamp=time.time(),  # need time.time() to compare timestamps across client and server
                 observation=raw_observation,
-                timestep=max(latest_action, 0),
+                # RTC prefixes start at the next action that has not yet been executed.
+                # Keep the legacy timestamp convention for non-RTC clients.
+                timestep=max(latest_action + 1, 0) if self._rtc_enabled else max(latest_action, 0),
+                rtc_action_prefix=rtc_action_prefix,
+                rtc_processed_action_prefix=rtc_processed_action_prefix,
+                rtc_inference_delay=rtc_inference_delay,
             )
 
             obs_capture_time = time.perf_counter() - start_time

@@ -45,16 +45,29 @@ class MockPolicy:
             """Empty image features since this test doesn't use images."""
             return {}
 
-    def predict_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
+    def predict_action_chunk(self, observation: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         """Return a chunk of 20 dummy actions."""
+        self.last_predict_kwargs = kwargs
         batch_size = len(observation[OBS_STATE])
         return torch.zeros(batch_size, 20, 6)
 
     def __init__(self):
         self.config = self._Config()
+        self.last_predict_kwargs = {}
+        self.rtc_processor_initialized = False
+
+    @classmethod
+    def from_pretrained(cls, _pretrained_name_or_path):
+        return cls()
+
+    def init_rtc_processor(self):
+        self.rtc_processor_initialized = True
 
     def to(self, *args, **kwargs):
         # The server calls `policy.to(device)`. This stub ignores it.
+        return self
+
+    def eval(self):
         return self
 
     def model(self, batch: dict) -> torch.Tensor:
@@ -140,6 +153,23 @@ def test_time_action_chunk(policy_server):
     ]
     for ta, expected_ts in zip(timed_actions, expected_timestamps, strict=True):
         assert abs(ta.get_timestamp() - expected_ts) < 1e-6
+
+
+def test_time_action_chunk_carries_original_policy_actions(policy_server):
+    start_ts = time.time()
+    processed_actions = [torch.full((6,), 10.0), torch.full((6,), 20.0)]
+    original_actions = [torch.full((6,), 1.0), torch.full((6,), 2.0)]
+
+    timed_actions = policy_server._time_action_chunk(
+        start_ts,
+        processed_actions,
+        3,
+        original_actions,
+    )
+
+    torch.testing.assert_close(timed_actions[0].get_action(), processed_actions[0])
+    torch.testing.assert_close(timed_actions[0].get_original_action(), original_actions[0])
+    torch.testing.assert_close(timed_actions[1].get_original_action(), original_actions[1])
 
 
 def test_maybe_enqueue_observation_must_go(policy_server):
@@ -245,3 +275,124 @@ def test_predict_action_chunk(monkeypatch, policy_server):
     for i, ta in enumerate(timed_actions):
         expected_ts = obs.get_timestamp() + i * policy_server.config.environment_dt
         assert abs(ta.get_timestamp() - expected_ts) < 1e-6
+        torch.testing.assert_close(ta.get_original_action(), torch.zeros(action_dim))
+
+
+def test_get_action_chunk_forwards_rtc_kwargs(policy_server):
+    from lerobot.policies.rtc import RTCConfig
+
+    policy_server.rtc_config = RTCConfig(execution_horizon=4)
+    prefix = torch.ones(4, 6)
+    observation = {OBS_STATE: torch.zeros(1, 6)}
+
+    chunk = policy_server._get_action_chunk(
+        observation,
+        inference_delay=3,
+        prev_chunk_left_over=prefix,
+    )
+
+    assert chunk.shape == (1, 20, 6)
+    assert policy_server.policy.last_predict_kwargs["inference_delay"] == 3
+    assert policy_server.policy.last_predict_kwargs["execution_horizon"] == 4
+    torch.testing.assert_close(
+        policy_server.policy.last_predict_kwargs["prev_chunk_left_over"],
+        prefix,
+    )
+
+
+def test_send_policy_instructions_initializes_remote_rtc(monkeypatch, policy_server):
+    from lerobot.async_inference import policy_server as policy_server_module
+    from lerobot.async_inference.helpers import RemotePolicyConfig
+    from lerobot.policies.rtc import RTCConfig
+    from lerobot.transport import services_pb2
+
+    class FakeContext:
+        @staticmethod
+        def peer():
+            return "test-client"
+
+    class EmptyPipeline:
+        steps = []
+
+    monkeypatch.setattr(
+        policy_server_module,
+        "get_policy_class",
+        lambda _policy_type: MockPolicy,
+    )
+    monkeypatch.setattr(
+        policy_server_module,
+        "make_pre_post_processors",
+        lambda *_args, **_kwargs: (EmptyPipeline(), EmptyPipeline()),
+    )
+
+    rtc_config = RTCConfig(execution_horizon=4, max_guidance_weight=7.5)
+    policy_specs = RemotePolicyConfig(
+        policy_type="smolvla",
+        pretrained_name_or_path="test-model",
+        lerobot_features=policy_server.lerobot_features,
+        actions_per_chunk=20,
+        device="cpu",
+        rtc_config=rtc_config,
+    )
+
+    policy_server.SendPolicyInstructions(
+        services_pb2.PolicySetup(data=pickle.dumps(policy_specs)),
+        FakeContext(),
+    )
+
+    assert policy_server.rtc_enabled is True
+    assert policy_server.policy.config.rtc_config is rtc_config
+    assert policy_server.policy.rtc_processor_initialized is True
+    assert policy_server.policy.config.rtc_config.execution_horizon == 4
+
+
+def test_predict_action_chunk_passes_remote_rtc_context(monkeypatch, policy_server):
+    from lerobot.async_inference.policy_server import PolicyServer
+    from lerobot.policies.rtc import RTCConfig
+
+    policy_server.policy_type = "smolvla"
+    policy_server.rtc_config = RTCConfig(
+        execution_horizon=4,
+        max_guidance_weight=10.0,
+    )
+    policy_server.preprocessor = lambda obs: obs
+    policy_server.postprocessor = lambda tensor: tensor + 100
+
+    captured = {}
+
+    def _fake_get_action_chunk(
+        _self,
+        _obs,
+        *,
+        inference_delay=0,
+        prev_chunk_left_over=None,
+    ):
+        captured["inference_delay"] = inference_delay
+        captured["prev_chunk_left_over"] = prev_chunk_left_over
+        return torch.arange(24, dtype=torch.float32).reshape(1, 4, 6)
+
+    monkeypatch.setattr(PolicyServer, "_get_action_chunk", _fake_get_action_chunk, raising=True)
+
+    prefix = torch.full((2, 6), 0.5)
+    obs = _make_obs(torch.zeros(6), timestep=5)
+    obs.rtc_action_prefix = prefix
+    obs.rtc_processed_action_prefix = prefix + 10
+    obs.rtc_inference_delay = 3
+
+    timed_actions = policy_server._predict_action_chunk(obs)
+
+    assert captured["inference_delay"] == 3
+    assert captured["prev_chunk_left_over"].shape == (4, 6)
+    torch.testing.assert_close(captured["prev_chunk_left_over"][:2], prefix)
+    torch.testing.assert_close(
+        captured["prev_chunk_left_over"][2:],
+        torch.zeros(2, 6),
+    )
+    torch.testing.assert_close(
+        timed_actions[0].get_original_action(),
+        torch.arange(6, dtype=torch.float32),
+    )
+    torch.testing.assert_close(
+        timed_actions[0].get_action(),
+        torch.arange(6, dtype=torch.float32) + 100,
+    )

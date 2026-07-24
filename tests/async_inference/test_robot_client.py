@@ -319,6 +319,101 @@ def test_threshold_observation_is_forced_through_server_filter(monkeypatch, robo
     assert robot_client.must_go.is_set() is False
 
 
+def test_rtc_client_config_reuses_rollout_hierarchy():
+    from lerobot.async_inference.configs import RobotClientConfig
+    from lerobot.policies.rtc import RTCConfig
+    from lerobot.rollout.inference.factory import RTCInferenceConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    config = RobotClientConfig(
+        robot=MockRobotConfig(),
+        policy_type="smolvla",
+        pretrained_name_or_path="test",
+        actions_per_chunk=50,
+        inference=RTCInferenceConfig(
+            rtc=RTCConfig(execution_horizon=10, max_guidance_weight=7.5),
+            queue_threshold=30,
+        ),
+    )
+
+    assert config.inference.type == "rtc"
+    assert config.inference.rtc.execution_horizon == 10
+    assert config.inference.rtc.max_guidance_weight == 7.5
+    assert config.inference.queue_threshold == 30
+
+
+def test_rtc_prefix_snapshot_contains_policy_and_processed_actions(robot_client):
+    from lerobot.async_inference.helpers import TimedAction
+
+    robot_client._rtc_enabled = True
+    for timestep in range(5, 8):
+        robot_client.action_queue.put(
+            TimedAction(
+                timestamp=time.time(),
+                timestep=timestep,
+                action=torch.full((6,), float(timestep)),
+                original_action=torch.full((6,), float(timestep) / 10),
+            )
+        )
+
+    policy_prefix, processed_prefix = robot_client._get_rtc_prefixes()
+
+    assert policy_prefix.shape == (3, 6)
+    assert processed_prefix.shape == (3, 6)
+    torch.testing.assert_close(policy_prefix[:, 0], torch.tensor([0.5, 0.6, 0.7]))
+    torch.testing.assert_close(processed_prefix[:, 0], torch.tensor([5.0, 6.0, 7.0]))
+
+
+def test_rtc_aggregation_preserves_policy_space_prefix(robot_client):
+    from lerobot.async_inference.helpers import TimedAction
+
+    robot_client.latest_action = 4
+    robot_client.action_queue.put(
+        TimedAction(
+            timestamp=time.time(),
+            timestep=5,
+            action=torch.full((6,), 10.0),
+            original_action=torch.full((6,), 1.0),
+        )
+    )
+    incoming = [
+        TimedAction(
+            timestamp=time.time(),
+            timestep=5,
+            action=torch.full((6,), 20.0),
+            original_action=torch.full((6,), 3.0),
+        )
+    ]
+
+    robot_client._aggregate_action_queues(
+        incoming,
+        aggregate_fn=lambda old, new: 0.25 * old + 0.75 * new,
+    )
+
+    action = robot_client.action_queue.get_nowait()
+    torch.testing.assert_close(action.get_action(), torch.full((6,), 17.5))
+    torch.testing.assert_close(action.get_original_action(), torch.full((6,), 2.5))
+
+
+def test_rtc_queue_threshold_and_latency_steps(robot_client):
+    robot_client._rtc_enabled = True
+    robot_client._rtc_queue_threshold = 30
+    robot_client.action_chunk_size = 50
+    robot_client.must_go.clear()
+
+    robot_client.action_queue = Queue()
+    for action in _make_actions(start_ts=time.time(), start_t=0, count=31):
+        robot_client.action_queue.put(action)
+    assert robot_client._ready_to_send_observation() is False
+
+    robot_client.action_queue.get_nowait()
+    assert robot_client._ready_to_send_observation() is True
+
+    with robot_client._rtc_latency_lock:
+        robot_client._rtc_latency_tracker.add(0.201)
+    assert robot_client._get_rtc_inference_delay() == 7
+
+
 # -----------------------------------------------------------------------------
 # Regression test: robot type registry populated by robot_client imports
 # -----------------------------------------------------------------------------

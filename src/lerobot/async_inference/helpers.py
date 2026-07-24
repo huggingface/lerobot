@@ -36,6 +36,7 @@ from lerobot.policies import (  # noqa: F401
     SmolVLAConfig,
     VQBeTConfig,
 )
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.robots.robot import Robot
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
@@ -342,15 +343,23 @@ class TimedData:
 @dataclass
 class TimedAction(TimedData):
     action: Action
+    original_action: Action | None = None
 
     def get_action(self):
         return self.action
+
+    def get_original_action(self):
+        """Return the unprocessed policy-space action used for RTC prefixes."""
+        return getattr(self, "original_action", None)
 
 
 @dataclass
 class TimedObservation(TimedData):
     observation: RawObservation
     must_go: bool = False
+    rtc_action_prefix: Action | None = None
+    rtc_processed_action_prefix: Action | None = None
+    rtc_inference_delay: int = 0
 
     def get_observation(self):
         return self.observation
@@ -392,6 +401,7 @@ class RemotePolicyConfig:
     actions_per_chunk: int
     device: str = "cpu"
     rename_map: dict[str, str] = field(default_factory=dict)
+    rtc_config: RTCConfig | None = None
 
 
 def _compare_observation_states(obs1_state: torch.Tensor, obs2_state: torch.Tensor, atol: float) -> bool:

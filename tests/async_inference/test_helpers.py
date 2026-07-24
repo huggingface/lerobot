@@ -115,10 +115,17 @@ def test_timed_action_getters():
     """TimedAction stores & returns timestamp, action tensor and timestep."""
     ts = time.time()
     action = torch.arange(10)
-    ta = TimedAction(timestamp=ts, action=action, timestep=0)
+    original_action = action.float() / 10
+    ta = TimedAction(
+        timestamp=ts,
+        action=action,
+        original_action=original_action,
+        timestep=0,
+    )
 
     assert math.isclose(ta.get_timestamp(), ts, rel_tol=0, abs_tol=1e-6)
     torch.testing.assert_close(ta.get_action(), action)
+    torch.testing.assert_close(ta.get_original_action(), original_action)
     assert ta.get_timestep() == 0
 
 
@@ -147,7 +154,13 @@ def test_timed_data_deserialization_data_getters():
     # TimedAction
     # ------------------------------------------------------------------
     original_action = torch.randn(6)
-    ta_in = TimedAction(timestamp=ts, action=original_action, timestep=13)
+    policy_action = torch.randn(6)
+    ta_in = TimedAction(
+        timestamp=ts,
+        action=original_action,
+        original_action=policy_action,
+        timestep=13,
+    )
 
     # Serialize → bytes → deserialize
     ta_bytes = pickle.dumps(ta_in)  # nosec
@@ -157,12 +170,23 @@ def test_timed_data_deserialization_data_getters():
     assert math.isclose(ta_out.get_timestamp(), ts, rel_tol=0, abs_tol=1e-6)
     assert ta_out.get_timestep() == 13
     torch.testing.assert_close(ta_out.get_action(), original_action)
+    torch.testing.assert_close(ta_out.get_original_action(), policy_action)
 
     # ------------------------------------------------------------------
     # TimedObservation
     # ------------------------------------------------------------------
     obs_dict = {OBS_STATE: torch.arange(4).float()}
-    to_in = TimedObservation(timestamp=ts, observation=obs_dict, timestep=7, must_go=True)
+    rtc_action_prefix = torch.randn(4, 6)
+    rtc_processed_action_prefix = torch.randn(4, 6)
+    to_in = TimedObservation(
+        timestamp=ts,
+        observation=obs_dict,
+        timestep=7,
+        must_go=True,
+        rtc_action_prefix=rtc_action_prefix,
+        rtc_processed_action_prefix=rtc_processed_action_prefix,
+        rtc_inference_delay=3,
+    )
 
     to_bytes = pickle.dumps(to_in)  # nosec
     to_out: TimedObservation = pickle.loads(to_bytes)  # nosec B301
@@ -170,6 +194,9 @@ def test_timed_data_deserialization_data_getters():
     assert math.isclose(to_out.get_timestamp(), ts, rel_tol=0, abs_tol=1e-6)
     assert to_out.get_timestep() == 7
     assert to_out.must_go is True
+    assert to_out.rtc_inference_delay == 3
+    torch.testing.assert_close(to_out.rtc_action_prefix, rtc_action_prefix)
+    torch.testing.assert_close(to_out.rtc_processed_action_prefix, rtc_processed_action_prefix)
     assert to_out.get_observation().keys() == obs_dict.keys()
     torch.testing.assert_close(to_out.get_observation()[OBS_STATE], obs_dict[OBS_STATE])
 

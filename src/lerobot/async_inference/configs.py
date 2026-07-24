@@ -13,11 +13,16 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 import torch
 
 from lerobot.robots.config import RobotConfig
+from lerobot.rollout.inference.factory import (
+    InferenceEngineConfig,
+    RTCInferenceConfig,
+    SyncInferenceConfig,
+)
 
 from .constants import (
     DEFAULT_FPS,
@@ -137,6 +142,10 @@ class RobotClientConfig:
     chunk_size_threshold: float = field(default=0.5, metadata={"help": "Threshold for chunk size control"})
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
 
+    # Inference mode. Reuse rollout's config hierarchy so the async CLI exposes
+    # the same --inference.type and --inference.rtc.* flags.
+    inference: InferenceEngineConfig = field(default_factory=SyncInferenceConfig)
+
     # Observation transport configuration
     observation_image_compression: str = field(
         default="jpeg",
@@ -189,6 +198,22 @@ class RobotClientConfig:
         if self.actions_per_chunk <= 0:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
 
+        if isinstance(self.inference, RTCInferenceConfig):
+            if self.inference.queue_threshold < 0:
+                raise ValueError(
+                    f"inference.queue_threshold must be non-negative, got {self.inference.queue_threshold}"
+                )
+            if self.inference.rtc.execution_horizon <= 0:
+                raise ValueError(
+                    "inference.rtc.execution_horizon must be positive, "
+                    f"got {self.inference.rtc.execution_horizon}"
+                )
+            if self.inference.rtc.execution_horizon > self.actions_per_chunk:
+                raise ValueError(
+                    "inference.rtc.execution_horizon cannot exceed actions_per_chunk, "
+                    f"got {self.inference.rtc.execution_horizon} > {self.actions_per_chunk}"
+                )
+
         if self.observation_image_compression not in {"jpeg", "none"}:
             raise ValueError(
                 "observation_image_compression must be either 'jpeg' or 'none', "
@@ -214,6 +239,10 @@ class RobotClientConfig:
             "policy_device": self.policy_device,
             "client_device": self.client_device,
             "chunk_size_threshold": self.chunk_size_threshold,
+            "inference": {
+                "type": self.inference.type,
+                **asdict(self.inference),
+            },
             "observation_image_compression": self.observation_image_compression,
             "jpeg_quality": self.jpeg_quality,
             "fps": self.fps,
