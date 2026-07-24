@@ -183,6 +183,8 @@
     title: Updating Feetech Firmware
   - local: damiao
     title: Damiao Motors and CAN Bus
+  - local: robstride
+    title: Robstride Motors and CAN Bus
   title: "Resources"
 - sections:
   - local: contributing

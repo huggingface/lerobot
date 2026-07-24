@@ -1,0 +1,101 @@
+# Robstride Motors and CAN Bus
+
+This guide covers setup and usage of Robstride RS-series motors with LeRobot via CAN bus communication.
+
+Robstride motors speak one of three protocols — the vendor "private" protocol (the factory default), CANopen, or MIT — selected by a persisted setting plus a power cycle. A motor speaks exactly one protocol at a time. LeRobot ships two buses for them (see [#3547](https://github.com/huggingface/lerobot/issues/3547) and [#3488](https://github.com/huggingface/lerobot/issues/3488) for the motivation):
+
+- [`RobstrideMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/robstride/robstride.py) — MIT communication mode. Lean 11-bit frames where a single command/feedback exchange carries the full state, suited to the highest control-loop rates, but every motor must first be switched to MIT mode.
+- [`RobstridePrivateMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/robstride/robstride_private.py) — private protocol. Works with motors out of the box and adds parameter access plus the Position, Velocity and Current control modes.
+
+## Installation
+
+```bash
+pip install 'lerobot[robstride]'
+```
+
+## Linux CAN Setup
+
+The private protocol runs on classic CAN 2.0 at 1 Mbps — do not enable CAN FD:
+
+```bash
+sudo apt-get install can-utils
+sudo ip link set can0 up type can bitrate 1000000
+```
+
+Sanity-check the wiring with `candump can0`: powered Robstride motors stream report frames by default, so you should see extended-ID traffic immediately.
+
+USB-serial CAN adapters that show up as `/dev/tty*` are used through `slcan`. The bus auto-detects the interface from the port name (`/dev/...` → slcan, anything else → socketcan).
+
+<Tip warning={true}>
+
+Only one bus master at a time. The bus claims host id `0xFD`, the same id used by the vendor PC tools (e.g. MotorStudio) — never run them concurrently with LeRobot.
+
+</Tip>
+
+## Using the private-protocol bus
+
+`Motor.id` is the CAN device id (e.g. 1..7 on the reBot B601-RS; ids are configurable per motor) and `motor_type_str` names the RS model (`"rs00"`..`"rs06"`), which selects the frame scalings and MIT gain ranges.
+
+```python
+from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors.robstride import PrivateControlMode, RobstridePrivateMotorsBus
+
+motors = {
+    "joint_1": Motor(id=0x01, model="robstride", norm_mode=MotorNormMode.DEGREES, motor_type_str="rs06"),
+    "joint_2": Motor(id=0x02, model="robstride", norm_mode=MotorNormMode.DEGREES, motor_type_str="rs06"),
+    "gripper": Motor(id=0x07, model="robstride", norm_mode=MotorNormMode.DEGREES, motor_type_str="rs00"),
+}
+
+bus = RobstridePrivateMotorsBus(port="can0", motors=motors)
+bus.connect()  # handshake: every motor must answer a parameter read
+
+# Pick a control mode; motors are left torque-disabled after the switch.
+bus.set_control_mode(PrivateControlMode.POSITION)
+for name in motors:
+    bus.set_position_speed_limit(name, 90.0)  # deg/s — set for EVERY motor you will command
+bus.enable_torque()
+
+bus.sync_write("Goal_Position", {"joint_1": 30.0, "joint_2": -15.0})  # degrees
+positions = bus.sync_read("Present_Position")  # degrees
+
+# Parameter access, by table name or raw index
+vbus = bus.read_param("joint_1", "vbus")
+bus.write_param("joint_1", "loc_kp", 20.0, wait_ack=True)
+bus.save_parameters("joint_1")  # persist to flash
+
+# Zeroing requires torque to be disabled
+bus.disable_torque("gripper")
+bus.set_zero_position("gripper")
+
+bus.disconnect()
+```
+
+### Control modes
+
+The active mode is the motor's `run_mode` parameter. `set_control_mode()` always stops the motors first and verifies the switch by reading `run_mode` back, because some firmware revisions silently ignore the write while torque is enabled.
+
+| `run_mode` | Mode                          | Setpoint                                | Sent as                     |
+| ---------- | ----------------------------- | --------------------------------------- | --------------------------- |
+| 0          | `PrivateControlMode.MIT`      | `Goal_Position` (with stored `Kp`/`Kd`) | operation/MIT control frame |
+| 1          | `PrivateControlMode.POSITION` | `Goal_Position`                         | `loc_ref` parameter write   |
+| 2          | `PrivateControlMode.VELOCITY` | `Goal_Velocity`                         | `spd_ref` parameter write   |
+| 3          | `PrivateControlMode.CURRENT`  | `Goal_Current`                          | `iq_ref` parameter write    |
+
+In MIT mode, set the per-motor gains with `bus.write("Kp", motor, value)` / `bus.write("Kd", motor, value)` (defaults: kp=10.0, kd=0.5).
+
+## Firmware quirks
+
+- Motors stream undocumented compact type-0x18 report frames by default. The bus skips them, using an absolute deadline on every read so a report flood consumes the timeout budget instead of spinning forever.
+- Positions are read as `mech_pos` (0x7019) parameter reads, which return the exact float32. The type-0x02 feedback frames are command acknowledgments, not a telemetry stream: on tested firmware, enabling the active report yields a single frame per motor and then goes quiet.
+- `mech_vel` (0x701A) has an unreliable scale on some firmware revisions. For control-grade velocity, differentiate `Present_Position` instead of trusting `Present_Velocity`.
+- The zero set by `set_zero_position()` persists across power cycles (call `save_parameters()`), but only within a single turn: the multi-turn count is volatile. Geared joints with more than one motor turn of travel (typically grippers) can wake up reading a full turn (360°) off — re-home and re-zero them after a power cycle.
+
+## Choosing between the two buses
+
+|                  | `RobstrideMotorsBus`                                        | `RobstridePrivateMotorsBus`                                      |
+| ---------------- | ----------------------------------------------------------- | ---------------------------------------------------------------- |
+| Motor protocol   | MIT communication mode (switch + power cycle needed)        | Private protocol — works out of the box                          |
+| Control modes    | MIT, velocity                                               | MIT (operation), Position, Velocity, Current                     |
+| Parameter access | No                                                          | Yes (`read_param` / `write_param` / `save_parameters`)           |
+| Frame overhead   | 11-bit standard frames, one exchange carries the full state | 29-bit extended frames; positions need a request/reply per motor |
+| Best for         | Highest loop rates                                          | Out-of-the-box use, mode switching and parameter tuning          |
