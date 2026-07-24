@@ -28,6 +28,8 @@ python src/lerobot/async_inference/robot_client.py \
     --client_device=cpu \
     --actions_per_chunk=50 \
     --chunk_size_threshold=0.5 \
+    --observation_image_compression=jpeg \
+    --observation_image_compression_quality=90 \
     --aggregate_fn_name=weighted_average \
     --debug_visualize_queue_size=True
 ```
@@ -65,7 +67,13 @@ from lerobot.transport import (
 from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 from lerobot.utils.import_utils import register_third_party_plugins
 
+from .compression import (
+    compress_timed_observation,
+    compression_stats,
+    image_keys_from_lerobot_features,
+)
 from .configs import RobotClientConfig
+from .constants import IMAGE_COMPRESSION_NONE
 from .helpers import (
     Action,
     FPSTracker,
@@ -96,6 +104,7 @@ class RobotClient:
         self.robot.connect()
 
         lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
+        self.observation_image_keys = image_keys_from_lerobot_features(lerobot_features)
 
         # Use environment variable if server_address is not provided in config
         self.server_address = config.server_address
@@ -192,10 +201,34 @@ class RobotClient:
         if not isinstance(obs, TimedObservation):
             raise ValueError("Input observation needs to be a TimedObservation!")
 
+        observation_to_send = obs
+        compression_time = 0.0
+        stats = None
+        if self.config.observation_image_compression != IMAGE_COMPRESSION_NONE:
+            compression_start = time.perf_counter()
+            observation_to_send = compress_timed_observation(
+                obs,
+                self.observation_image_keys,
+                self.config.observation_image_compression,
+                self.config.observation_image_compression_quality,
+            )
+            compression_time = time.perf_counter() - compression_start
+            stats = compression_stats(observation_to_send.get_observation())
+
         start_time = time.perf_counter()
-        observation_bytes = pickle.dumps(obs)
+        observation_bytes = pickle.dumps(observation_to_send)
         serialize_time = time.perf_counter() - start_time
         self.logger.debug(f"Observation serialization time: {serialize_time:.6f}s")
+        if stats is not None and stats.image_count > 0:
+            self.logger.debug(
+                f"Observation compression: codec={self.config.observation_image_compression} | "
+                f"quality={self.config.observation_image_compression_quality} | "
+                f"images={stats.image_count} | "
+                f"image bytes={stats.uncompressed_nbytes}->{stats.compressed_nbytes} | "
+                f"ratio={stats.compression_ratio:.3f} | "
+                f"compression time={compression_time:.6f}s | "
+                f"payload bytes={len(observation_bytes)}"
+            )
 
         try:
             observation_iterator = send_bytes_in_chunks(
