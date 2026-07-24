@@ -256,6 +256,10 @@ class SmolVLAPolicy(PreTrainedPolicy):
         batch = self._prepare_batch(batch)
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
+        # Apply any pending flush from a online task switch (deferred from the
+        # listener thread to avoid a race between clear() and popleft()).
+        self._apply_pending_flush()
+
         if self._check_get_actions_condition():
             actions = self._get_action_chunk(batch, noise)
 

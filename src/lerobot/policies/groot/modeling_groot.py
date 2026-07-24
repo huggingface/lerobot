@@ -521,6 +521,8 @@ class GrootPolicy(PreTrainedPolicy):
 
         self.eval()
 
+        self._apply_pending_flush()
+
         if len(self._action_queue) == 0:
             actions = self.predict_action_chunk(batch)
             self._action_queue.extend(actions[:, : self._action_queue_steps].transpose(0, 1))

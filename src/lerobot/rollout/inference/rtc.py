@@ -42,6 +42,7 @@ from lerobot.processor import (
 )
 from lerobot.utils.feature_utils import build_dataset_frame
 
+from ..prompt_broker import PromptBroker
 from ..robot_wrapper import ThreadSafeRobot
 from .base import InferenceEngine
 
@@ -105,6 +106,7 @@ class RTCInferenceEngine(InferenceEngine):
         compile_warmup_inferences: int = 2,
         rtc_queue_threshold: int = 30,
         shutdown_event: Event | None = None,
+        prompt_broker: PromptBroker | None = None,
     ) -> None:
         self._policy = policy
         self._preprocessor = preprocessor
@@ -113,6 +115,7 @@ class RTCInferenceEngine(InferenceEngine):
         self._rtc_config = rtc_config
         self._hw_features = hw_features
         self._task = task
+        self._prompt_broker = prompt_broker
         self._fps = fps
         self._device = device or "cpu"
         self._use_torch_compile = use_torch_compile
@@ -277,10 +280,11 @@ class RTCInferenceEngine(InferenceEngine):
                         delay = math.ceil(latency / time_per_chunk) if latency else 0
 
                         obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
+                        _task = self._prompt_broker.get_task() if self._prompt_broker else self._task
                         obs_batch = prepare_observation_for_inference(
-                            obs_batch, policy_device, self._task, self._robot.robot_type
+                            obs_batch, policy_device, _task, self._robot.robot_type
                         )
-                        obs_batch["task"] = [self._task]
+                        obs_batch["task"] = [_task]
 
                         preprocessed = self._preprocessor(obs_batch)
 

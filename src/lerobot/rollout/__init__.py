@@ -47,6 +47,7 @@ from .inference import (
     SyncInferenceEngine,
     create_inference_engine,
 )
+from .prompt_broker import PromptBroker, StdinPromptListener
 from .strategies import (
     BaseStrategy,
     DAggerStrategy,
@@ -74,6 +75,7 @@ __all__ = [
     "InferenceEngineConfig",
     "PolicyContext",
     "ProcessorContext",
+    "PromptBroker",
     "RTCInferenceConfig",
     "RTCInferenceEngine",
     "RolloutConfig",
@@ -83,6 +85,7 @@ __all__ = [
     "RuntimeContext",
     "SentryStrategy",
     "SentryStrategyConfig",
+    "StdinPromptListener",
     "SyncInferenceConfig",
     "SyncInferenceEngine",
     "build_rollout_context",

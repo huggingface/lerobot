@@ -348,3 +348,152 @@ def test_rollout_context_fields():
 
     field_names = {f.name for f in dataclasses.fields(RolloutContext)}
     assert field_names == {"runtime", "hardware", "policy", "processors", "data"}
+
+
+# ---------------------------------------------------------------------------
+# Online task-switching integration: broker wired through SyncInferenceEngine
+# ---------------------------------------------------------------------------
+
+
+def test_sync_engine_uses_static_task_when_no_broker():
+    """Without a broker the engine uses the static task set at construction."""
+    from unittest.mock import patch
+
+    from lerobot.rollout import SyncInferenceConfig, create_inference_engine
+
+    captured = []
+
+    def fake_prepare(obs, device, task, robot_type):
+        captured.append(task)
+        return obs
+
+    engine = create_inference_engine(
+        SyncInferenceConfig(),
+        policy=MagicMock(),
+        preprocessor=MagicMock(side_effect=lambda x: x),
+        postprocessor=MagicMock(side_effect=lambda x: x),
+        robot_wrapper=MagicMock(robot_type="mock"),
+        hw_features={},
+        dataset_features={},
+        ordered_action_keys=["action"],
+        task="initial task",
+        fps=30.0,
+        device="cpu",
+        prompt_broker=None,
+    )
+    engine._policy.select_action.return_value = torch.zeros(1, 1)
+
+    with (
+        patch("lerobot.rollout.inference.sync.prepare_observation_for_inference", fake_prepare),
+        patch("lerobot.rollout.inference.sync.make_robot_action", return_value={"action": 0.0}),
+    ):
+        engine.get_action({"dummy": torch.zeros(1)})
+        engine.get_action({"dummy": torch.zeros(1)})
+
+    assert captured == ["initial task", "initial task"]
+
+
+def test_sync_engine_reflects_broker_task_change():
+    """With a broker, get_action reads the current task on every call."""
+    from unittest.mock import patch
+
+    from lerobot.rollout import SyncInferenceConfig, create_inference_engine
+    from lerobot.rollout.prompt_broker import PromptBroker
+
+    captured = []
+
+    def fake_prepare(obs, device, task, robot_type):
+        captured.append(task)
+        return obs
+
+    broker = PromptBroker(initial_task="task A")
+
+    engine = create_inference_engine(
+        SyncInferenceConfig(),
+        policy=MagicMock(),
+        preprocessor=MagicMock(side_effect=lambda x: x),
+        postprocessor=MagicMock(side_effect=lambda x: x),
+        robot_wrapper=MagicMock(robot_type="mock"),
+        hw_features={},
+        dataset_features={},
+        ordered_action_keys=["action"],
+        task="task A",
+        fps=30.0,
+        device="cpu",
+        prompt_broker=broker,
+    )
+    engine._policy.select_action.return_value = torch.zeros(1, 1)
+
+    with (
+        patch("lerobot.rollout.inference.sync.prepare_observation_for_inference", fake_prepare),
+        patch("lerobot.rollout.inference.sync.make_robot_action", return_value={"action": 0.0}),
+    ):
+        engine.get_action({"dummy": torch.zeros(1)})  # sees "task A"
+        broker.set_task("task B")
+        engine.get_action({"dummy": torch.zeros(1)})  # sees "task B" immediately
+        engine.get_action({"dummy": torch.zeros(1)})  # still "task B"
+
+    assert captured == ["task A", "task B", "task B"]
+
+
+def test_broker_task_change_is_thread_safe_under_concurrent_inference():
+    """Broker updates from a writer thread are visible to get_action immediately."""
+    import threading
+    import time
+    from unittest.mock import patch
+
+    from lerobot.rollout import SyncInferenceConfig, create_inference_engine
+    from lerobot.rollout.prompt_broker import PromptBroker
+
+    seen_tasks = []
+    lock = threading.Lock()
+
+    def fake_prepare(obs, device, task, robot_type):
+        with lock:
+            seen_tasks.append(task)
+        return obs
+
+    broker = PromptBroker(initial_task="task A")
+    engine = create_inference_engine(
+        SyncInferenceConfig(),
+        policy=MagicMock(),
+        preprocessor=MagicMock(side_effect=lambda x: x),
+        postprocessor=MagicMock(side_effect=lambda x: x),
+        robot_wrapper=MagicMock(robot_type="mock"),
+        hw_features={},
+        dataset_features={},
+        ordered_action_keys=["action"],
+        task="task A",
+        fps=30.0,
+        device="cpu",
+        prompt_broker=broker,
+    )
+    engine._policy.select_action.return_value = torch.zeros(1, 1)
+
+    stop = threading.Event()
+
+    def inference_loop():
+        with (
+            patch("lerobot.rollout.inference.sync.prepare_observation_for_inference", fake_prepare),
+            patch("lerobot.rollout.inference.sync.make_robot_action", return_value={"action": 0.0}),
+        ):
+            while not stop.is_set():
+                engine.get_action({"dummy": torch.zeros(1)})
+                time.sleep(0.005)
+
+    t = threading.Thread(target=inference_loop)
+    t.start()
+
+    time.sleep(0.02)
+    broker.set_task("task B")
+    time.sleep(0.05)
+    stop.set()
+    t.join(timeout=2.0)
+
+    # After the switch, every subsequent call must have seen "task B"
+    try:
+        first_b = seen_tasks.index("task B")
+        tail = seen_tasks[first_b:]
+        assert all(task == "task B" for task in tail), f"Stale tasks after switch: {tail}"
+    except ValueError:
+        pytest.fail("'task B' was never seen by the inference loop")
