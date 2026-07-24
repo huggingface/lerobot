@@ -8,12 +8,14 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
+# Unless required by applicable law or agreed to in writing,
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Contract tests for DatasetReader."""
+
+from pathlib import Path
 
 import pytest
 
@@ -158,7 +160,7 @@ def test_get_episodes_file_paths_returns_data_paths(tmp_path, lerobot_dataset_fa
     paths = dataset.reader.get_episodes_file_paths()
 
     assert len(paths) > 0
-    assert any("data/" in str(p) for p in paths)
+    assert any("data" in Path(p).parts for p in paths)
 
 
 def test_get_episodes_file_paths_includes_video_paths(tmp_path, lerobot_dataset_factory):
@@ -170,3 +172,35 @@ def test_get_episodes_file_paths_includes_video_paths(tmp_path, lerobot_dataset_
     if len(dataset.meta.video_keys) > 0:
         paths = dataset.reader.get_episodes_file_paths()
         assert any("video" in str(p).lower() for p in paths)
+
+
+def test_get_item_raises_helpful_error_for_invalid_task_metadata(
+    tmp_path,
+    lerobot_dataset_factory,
+):
+    """
+    DatasetReader should raise an informative IndexError when the dataset
+    metadata does not match the underlying data (for example because the
+    selected dataset revision is stale).
+    """
+
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "dataset",
+        total_episodes=2,
+        total_frames=20,
+        total_tasks=1,
+        use_videos=False,
+    )
+
+    # Simulate stale/corrupted metadata by removing every task.
+    dataset.reader._meta.tasks = dataset.reader._meta.tasks.iloc[0:0]
+
+    with pytest.raises(IndexError) as exc_info:
+        dataset.reader.get_item(0)
+
+    message = str(exc_info.value)
+
+    assert "Task index" in message
+    assert "repo_id=" in message
+    assert "revision=" in message
+    assert "revision matches the dataset contents" in message

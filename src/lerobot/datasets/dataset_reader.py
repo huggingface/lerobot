@@ -349,6 +349,19 @@ class DatasetReader:
 
         # Add task as a string
         task_idx = item["task_index"].item()
-        item["task"] = self._meta.tasks.iloc[task_idx].name
+
+        try:
+            item["task"] = self._meta.tasks.iloc[task_idx].name
+        except IndexError as e:
+            raise IndexError(
+                f"Task index {task_idx} is out of bounds for dataset metadata "
+                f"(repo_id={self._meta.repo_id!r}, "
+                f"revision={self._meta.revision!r}). "
+                "This may indicate that the dataset metadata and data are "
+                "inconsistent for the selected revision. "
+                "If loading from the Hugging Face Hub, verify that the selected "
+                "revision matches the dataset contents or specify a different "
+                "revision explicitly."
+            ) from e
 
         return item
