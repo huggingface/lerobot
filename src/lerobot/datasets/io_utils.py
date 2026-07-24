@@ -25,8 +25,10 @@ import pyarrow.dataset as pa_ds
 import pyarrow.parquet as pq
 import torch
 from datasets import Dataset
+from datasets.exceptions import DatasetGenerationError
 from datasets.table import embed_table_storage
 from PIL import Image as PILImage
+from pyarrow.lib import ArrowInvalid
 from torchvision import transforms
 
 from lerobot.utils.io_utils import load_json, write_json
@@ -43,6 +45,10 @@ from .utils import (
     DatasetInfo,
     serialize_dict,
 )
+
+
+class CorruptParquetError(RuntimeError):
+    """Raised when one or more parquet files in a LeRobot dataset cannot be read."""
 
 
 def get_parquet_file_size_in_mb(parquet_path: str | Path) -> float:
@@ -79,7 +85,31 @@ def load_nested_dataset(
     with SuppressProgressBars():
         # We use .from_parquet() memory-mapped loading for efficiency
         filters = pa_ds.field("episode_index").isin(episodes) if episodes is not None else None
-        return Dataset.from_parquet([str(path) for path in paths], filters=filters, features=features)
+        try:
+            return Dataset.from_parquet([str(path) for path in paths], filters=filters, features=features)
+        except (DatasetGenerationError, ArrowInvalid) as exc:
+            _raise_corrupt_parquet_error(pq_dir, paths, exc)
+
+
+def _raise_corrupt_parquet_error(pq_dir: Path, paths: list[Path], exc: Exception) -> None:
+    corrupt_paths = []
+    for path in paths:
+        try:
+            pq.read_metadata(path)
+        except Exception:
+            corrupt_paths.append(path)
+
+    if not corrupt_paths:
+        raise exc
+
+    rel_paths = "\n".join(f"  - {path.relative_to(pq_dir)}" for path in corrupt_paths)
+    raise CorruptParquetError(
+        "Failed to load a LeRobot parquet dataset because one or more parquet files are unreadable.\n"
+        f"Dataset directory: {pq_dir}\n"
+        f"Unreadable parquet file(s):\n{rel_paths}\n"
+        "This can happen when recording is interrupted while a parquet file is being written. "
+        "Move or delete the listed file(s), then resume recording or rebuild the affected dataset chunk."
+    ) from exc
 
 
 def get_parquet_num_frames(parquet_path: str | Path) -> int:

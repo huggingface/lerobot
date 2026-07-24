@@ -22,7 +22,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from datasets import Dataset  # noqa: E402
 from huggingface_hub import DatasetCard
 
-from lerobot.datasets.io_utils import hf_transform_to_torch
+from lerobot.datasets.io_utils import CorruptParquetError, hf_transform_to_torch, load_nested_dataset
 from lerobot.datasets.utils import create_lerobot_dataset_card
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.feature_utils import combine_feature_dicts
@@ -151,3 +151,26 @@ def test_non_dict_passthrough_last_wins():
     out = combine_feature_dicts(g1, g2)
     # For non-dict entries the last one wins
     assert out["misc"] == 456
+
+
+def test_load_nested_dataset_reports_corrupt_parquet_file(tmp_path):
+    pq_dir = tmp_path / "data"
+    chunk_dir = pq_dir / "chunk-000"
+    chunk_dir.mkdir(parents=True)
+
+    Dataset.from_dict(
+        {
+            "timestamp": [0.0],
+            "index": [0],
+            "episode_index": [0],
+        }
+    ).to_parquet(chunk_dir / "file-000.parquet")
+    (chunk_dir / "file-001.parquet").write_text("not parquet")
+
+    with pytest.raises(CorruptParquetError) as exc_info:
+        load_nested_dataset(pq_dir)
+
+    message = str(exc_info.value)
+    assert "one or more parquet files are unreadable" in message
+    assert "chunk-000/file-001.parquet" in message
+    assert "interrupted while a parquet file is being written" in message
