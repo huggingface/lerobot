@@ -32,6 +32,7 @@ Example (on the laptop):
 """
 
 import argparse
+import contextlib
 import logging
 import time
 
@@ -106,10 +107,8 @@ def main() -> None:
             rc.lx = rc.ly = rc.rx = rc.ry = 0.0
             rc.button = [0] * 16
             action = teleop.get_action()
-            try:
+            with contextlib.suppress(zmq.Again):
                 sock.send_json(_to_jsonable(action), zmq.NOBLOCK)
-            except zmq.Again:
-                pass
             n += 1
             if n % 60 == 0:
                 axes = {

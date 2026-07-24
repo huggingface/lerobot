@@ -137,7 +137,10 @@ class ImageServer:
                         last_err = e
                         logger.warning(
                             "Camera %s open attempt %d/%d failed: %s",
-                            name, attempt, self.open_attempts, e,
+                            name,
+                            attempt,
+                            self.open_attempts,
+                            e,
                         )
                         with contextlib.suppress(Exception):
                             camera.disconnect()

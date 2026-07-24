@@ -44,6 +44,7 @@ Examples (on the robot):
 """
 
 import argparse
+import contextlib
 import json
 import logging
 import os
@@ -177,8 +178,8 @@ def main() -> None:
                 logger.warning("E-STOP ('e'): going passive NOW.")
                 try:
                     robot._shutdown_event.set()  # stop the 50Hz controller loop publishing
-                    time.sleep(0.05)             # let it finish its current cycle
-                    robot._send_zero_torque()    # motors limp; nothing overwrites it now
+                    time.sleep(0.05)  # let it finish its current cycle
+                    robot._send_zero_torque()  # motors limp; nothing overwrites it now
                 except Exception as e:  # noqa: BLE001
                     logger.warning("E-stop zero-torque failed: %s", e)
                 os._exit(0)  # immediate hard exit, no slow cleanup
@@ -218,10 +219,8 @@ def main() -> None:
                             state["groot.rpy.roll"] = float(orient[0])
                             state["groot.rpy.pitch"] = float(orient[1])
                             state["groot.rpy.yaw"] = float(orient[2])
-                    try:
+                    with contextlib.suppress(zmq.Again):
                         state_sock.send_json(state, zmq.NOBLOCK)
-                    except zmq.Again:
-                        pass
                 time.sleep(max(0.0, period - (time.time() - t0)))
 
         threading.Thread(target=publish_state, daemon=True).start()

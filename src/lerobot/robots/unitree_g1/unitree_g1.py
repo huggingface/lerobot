@@ -70,8 +70,22 @@ else:
 # teleoperator's RemoteController so the onboard path reads the physical Unitree remote
 # identically.
 _REMOTE_BUTTON_MAP: list[str] = [
-    "RB", "LB", "start", "back", "RT", "LT", "", "",
-    "A", "B", "X", "Y", "up", "right", "down", "left",
+    "RB",
+    "LB",
+    "start",
+    "back",
+    "RT",
+    "LT",
+    "",
+    "",
+    "A",
+    "B",
+    "X",
+    "Y",
+    "up",
+    "right",
+    "down",
+    "left",
 ]
 
 logger = logging.getLogger(__name__)
@@ -299,8 +313,7 @@ class UnitreeG1(Robot):
                     actual_hz = loop_count / (time.time() - last_log_time)
                     eff = {k: round(float(controller_input.get(k, 0.0)), 3) for k in REMOTE_AXES}
                     logger.info(
-                        f"Controller {actual_hz:.1f}Hz | eff_axes={eff} "
-                        f"wireless={'ACTIVE' if wl else 'idle'}"
+                        f"Controller {actual_hz:.1f}Hz | eff_axes={eff} wireless={'ACTIVE' if wl else 'idle'}"
                     )
                     loop_count = 0
                     last_log_time = time.time()

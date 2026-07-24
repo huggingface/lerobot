@@ -151,11 +151,7 @@ def parse_camera_specs(spec: str, default_width: int, default_height: int) -> di
         # a pixel format. Real device-path tail segments (e.g. "1.0-video-index0")
         # won't match these strict patterns.
         fourcc = None
-        if (
-            len(tokens) >= 3
-            and wh_re.fullmatch(tokens[-2])
-            and fourcc_re.fullmatch(tokens[-1])
-        ):
+        if len(tokens) >= 3 and wh_re.fullmatch(tokens[-2]) and fourcc_re.fullmatch(tokens[-1]):
             fourcc = tokens.pop().upper()
         width, height = default_width, default_height
         if len(tokens) >= 2 and wh_re.fullmatch(tokens[-1]):
