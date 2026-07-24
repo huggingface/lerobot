@@ -94,6 +94,14 @@ Merge multiple datasets from a list of local dataset paths:
         --operation.repo_ids "['pusht_train', 'pusht_val']" \
         --operation.roots "['/path/to/pusht_train', '/path/to/pusht_val']"
 
+Merge multiple datasets while keeping one file per source file (no video/data stitching):
+    lerobot-edit-dataset \
+        --new_repo_id lerobot/pusht_merged \
+        --operation.type merge \
+        --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']" \
+        --operation.concatenate_videos false \
+        --operation.concatenate_data false
+
 Remove camera feature:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
@@ -124,6 +132,15 @@ Convert image dataset to video format and save locally:
         --repo_id lerobot/pusht_image \
         --new_root /path/to/output/pusht_video \
         --operation.type convert_image_to_video
+
+Convert image dataset (with depth maps) to video format, customizing the depth encoder:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht_image \
+        --new_root /path/to/output/pusht_video \
+        --operation.type convert_image_to_video \
+        --operation.depth_encoder.depth_min 0.01 \
+        --operation.depth_encoder.depth_max 10.0 \
+        --operation.depth_encoder.use_log true
 
 Convert image dataset to video format and save with new repo_id:
     lerobot-edit-dataset \
@@ -178,6 +195,38 @@ Recompute stats for relative actions and push to hub:
         --operation.num_workers 4 \
         --push_to_hub true
 
+Re-encode all videos in a dataset (saves to lerobot/pusht_reencoded by default):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --operation.type reencode_videos \
+        --operation.rgb_encoder.vcodec h264 \
+        --operation.rgb_encoder.pix_fmt yuv420p \
+        --operation.rgb_encoder.crf 23
+
+Re-encode videos into a new dataset using 4 parallel processes:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --new_repo_id lerobot/pusht_h264 \
+        --operation.type reencode_videos \
+        --operation.rgb_encoder.vcodec h264 \
+        --operation.rgb_encoder.crf 23 \
+        --operation.num_workers 4
+
+Re-encode videos in-place (overwrites original dataset):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --new_repo_id lerobot/pusht \
+        --operation.type reencode_videos \
+        --operation.rgb_encoder.vcodec h264 \
+        --operation.overwrite true
+
+Re-encode both RGB and depth videos in a dataset (depth quantization params are preserved):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht_depth \
+        --operation.type reencode_videos \
+        --operation.rgb_encoder.vcodec h264 \
+        --operation.depth_encoder.extra_options '{"x265-params": "lossless=1"}'
+
 Using JSON config file:
     lerobot-edit-dataset \
         --config_path path/to/edit_config.json
@@ -192,7 +241,13 @@ from pathlib import Path
 
 import draccus
 
-from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults, parser
+from lerobot.configs import (
+    DepthEncoderConfig,
+    RGBEncoderConfig,
+    depth_encoder_defaults,
+    parser,
+    rgb_encoder_defaults,
+)
 from lerobot.datasets import (
     LeRobotDataset,
     convert_image_to_video_dataset,
@@ -200,6 +255,7 @@ from lerobot.datasets import (
     merge_datasets,
     modify_tasks,
     recompute_stats,
+    reencode_dataset,
     remove_feature,
     split_dataset,
 )
@@ -231,6 +287,9 @@ class SplitConfig(OperationConfig):
 class MergeConfig(OperationConfig):
     repo_ids: list[str] | None = None
     roots: list[str] | None = None
+    # When False, keep one file per source file instead of packing into shards.
+    concatenate_videos: bool = True
+    concatenate_data: bool = True
 
 
 @OperationConfig.register_subclass("remove_feature")
@@ -250,7 +309,8 @@ class ModifyTasksConfig(OperationConfig):
 @dataclass
 class ConvertImageToVideoConfig(OperationConfig):
     output_dir: str | None = None
-    camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
+    rgb_encoder: RGBEncoderConfig = field(default_factory=rgb_encoder_defaults)
+    depth_encoder: DepthEncoderConfig = field(default_factory=depth_encoder_defaults)
     episode_indices: list[int] | None = None
     num_workers: int = 4
     max_episodes_per_batch: int | None = None
@@ -265,6 +325,16 @@ class RecomputeStatsConfig(OperationConfig):
     relative_exclude_joints: list[str] | None = None
     chunk_size: int = 50
     num_workers: int = 0
+    overwrite: bool = False
+
+
+@OperationConfig.register_subclass("reencode_videos")
+@dataclass
+class ReencodeVideosConfig(OperationConfig):
+    rgb_encoder: RGBEncoderConfig = field(default_factory=rgb_encoder_defaults)
+    depth_encoder: DepthEncoderConfig = field(default_factory=depth_encoder_defaults)
+    num_workers: int = 0
+    encoder_threads: int | None = None
     overwrite: bool = False
 
 
@@ -426,6 +496,8 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
         datasets,
         output_repo_id=cfg.new_repo_id,
         output_dir=output_dir,
+        concatenate_videos=cfg.operation.concatenate_videos,
+        concatenate_data=cfg.operation.concatenate_data,
     )
 
     logging.info(f"Merged dataset saved to {output_dir}")
@@ -553,7 +625,8 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
         dataset=dataset,
         output_dir=output_dir,
         repo_id=output_repo_id,
-        camera_encoder=getattr(cfg.operation, "camera_encoder", None) or camera_encoder_defaults(),
+        rgb_encoder=getattr(cfg.operation, "rgb_encoder", None) or rgb_encoder_defaults(),
+        depth_encoder=getattr(cfg.operation, "depth_encoder", None) or depth_encoder_defaults(),
         episode_indices=getattr(cfg.operation, "episode_indices", None),
         num_workers=getattr(cfg.operation, "num_workers", 4),
         max_episodes_per_batch=getattr(cfg.operation, "max_episodes_per_batch", None),
@@ -634,6 +707,62 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         dataset.push_to_hub()
 
 
+def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, ReencodeVideosConfig):
+        raise ValueError("Operation config must be ReencodeVideosConfig")
+
+    output_repo_id, input_root, output_root = _resolve_io_paths(
+        cfg.repo_id,
+        cfg.new_repo_id,
+        cfg.root,
+        cfg.new_root,
+        default_new_repo_id=f"{cfg.repo_id}_reencoded",
+    )
+    in_place = output_root == input_root
+
+    if in_place and not cfg.operation.overwrite:
+        raise ValueError(
+            f"reencode_videos would overwrite the dataset in-place at {input_root}. "
+            "Pass --operation.overwrite true to allow in-place modification, "
+            "or use --new_repo_id / --new_root to write to a different location. "
+            f"Default output repo_id when neither is set: '{cfg.repo_id}_reencoded'."
+        )
+
+    if in_place:
+        logging.warning(
+            f"Overwriting dataset videos in-place at {input_root}. The original videos will be lost."
+        )
+        dataset = LeRobotDataset(cfg.repo_id, root=input_root)
+    else:
+        logging.info(f"Copying dataset from {input_root} to {output_root}")
+        if output_root.exists():
+            backup_path = output_root.with_name(output_root.name + "_old")
+            logging.warning(f"Output directory {output_root} already exists. Moving to {backup_path}")
+            if backup_path.exists():
+                shutil.rmtree(backup_path)
+            shutil.move(output_root, backup_path)
+        shutil.copytree(input_root, output_root)
+        dataset = LeRobotDataset(output_repo_id, root=output_root)
+
+    logging.info(
+        f"Re-encoding videos in {output_repo_id} with RGB encoder {cfg.operation.rgb_encoder} "
+        f"and depth encoder {cfg.operation.depth_encoder}"
+    )
+    reencode_dataset(
+        dataset,
+        rgb_encoder=cfg.operation.rgb_encoder,
+        depth_encoder=cfg.operation.depth_encoder,
+        encoder_threads=cfg.operation.encoder_threads,
+        num_workers=cfg.operation.num_workers,
+    )
+
+    logging.info(f"All videos re-encoded at {dataset.root}")
+
+    if cfg.push_to_hub:
+        logging.info(f"Pushing to hub as {output_repo_id}...")
+        dataset.push_to_hub()
+
+
 def _get_dataset_size(repo_path):
     import os
 
@@ -707,6 +836,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_convert_image_to_video(cfg)
     elif operation_type == "recompute_stats":
         handle_recompute_stats(cfg)
+    elif operation_type == "reencode_videos":
+        handle_reencode_videos(cfg)
     elif operation_type == "info":
         handle_info(cfg)
     else:

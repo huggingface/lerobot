@@ -65,6 +65,9 @@ repos:
         name: Format Markdown with Prettier
         types_or: [markdown, mdx]
         args: [--prose-wrap=preserve]
+        # Jinja2 model-card templates use a .md extension but contain {% ... %} /
+        # {{ ... }} tags that prettier's Markdown formatter mangles (e.g. table loops).
+        exclude: ^src/lerobot/templates/.*\.md$
 
   ##### Security #####
   - repo: https://github.com/gitleaks/gitleaks
