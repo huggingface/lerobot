@@ -111,16 +111,25 @@ Requirements:
 - The block-causal masks use PyTorch **flex-attention**, so build the policy with
   `--policy.attn_mode=flex` for training (the default `torch` SDPA is inference-only).
 - The full 5B DiT does not fit a single 24–32 GB GPU under AdamW; fine-tune with **LoRA**
-  (`--policy.use_peft=true`) and/or optimizer offload. `get_optim_params` returns only the
-  trainable (e.g. adapter) parameters; the VAE + UMT5 text encoder stay frozen.
+  (`--peft.method_type=LORA`) and/or optimizer offload. `get_optim_params` returns only the
+  trainable (e.g. adapter) parameters; the VAE + UMT5 text encoder stay frozen. Install the
+  `lerobot[peft]` extra to enable PEFT support (see the [PEFT training guide](./peft_training)).
 
 ```bash
 lerobot-train \
   --policy.path=lerobot/lingbot_va_libero_long --policy.attn_mode=flex \
-  --policy.use_peft=true \
+  --peft.method_type=LORA --peft.r=32 --peft.lora_alpha=32 \
+  --peft.target_modules='transformer\.blocks\.\d+\.attn[12]\.(to_q|to_v)' \
   --dataset.repo_id=<your LeRobot-format dataset> \
   --batch_size=1 --steps=... --output_dir=outputs/train/lingbot_va
 ```
+
+Unlike SmolVLA / π₀, LingBot-VA does not ship built-in default LoRA targets, so you must pass
+`--peft.target_modules` explicitly. Only `self.transformer` (the dual-stream Wan transformer) is
+trainable; the example above adapts the query/value projections of both its self-attention
+(`attn1`) and cross-attention (`attn2`) blocks — the standard LoRA target set. Broaden it (e.g.
+add `to_k`/`to_out`, or the `ffn` layers) if you need a higher-capacity adapter. Passing
+`--peft.method_type` implies PEFT, so `--policy.use_peft=true` is not required.
 
 The dataset must provide camera clips (a temporal window per camera, VAE-encoded to
 `frame_chunk_size` latent frames) and `frame_chunk_size * action_per_frame` action steps per item.
