@@ -22,6 +22,7 @@ import torch
 
 pytest.importorskip("transformers")
 
+from lerobot.configs import FeatureType, PolicyFeature  # noqa: E402
 from lerobot.datasets.compute_stats import (  # noqa: E402
     compute_relative_action_stats,
     compute_state_history_stats,
@@ -36,7 +37,7 @@ from lerobot.processor.relative_action_processor import (  # noqa: E402
     RelativeActionsProcessorStep,
 )
 from lerobot.types import TransitionKey  # noqa: E402
-from lerobot.utils.constants import OBS_STATE  # noqa: E402
+from lerobot.utils.constants import ACTION, OBS_STATE  # noqa: E402
 
 
 def _transition(action: torch.Tensor | None, state: torch.Tensor | None = None) -> dict:
@@ -63,6 +64,27 @@ def test_pi05_config_requests_action_history_prefix():
     assert config.action_delta_indices == [-1, 0, 1, 2, 3]
 
 
+def test_pi05_config_accepts_se3_6d_action_and_state_with_two_step_history():
+    names = ["x", "y", "z", "rx", "ry", "rz", "gripper_width"]
+    config = PI05Config(
+        device="cpu",
+        use_relative_actions=True,
+        state_from_action=True,
+        proprioception_history_steps=2,
+        use_relative_state_history=True,
+        relative_pose_representation="se3_6d",
+        action_feature_names=names,
+        output_features={
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+        },
+    )
+
+    config.validate_features()
+
+    assert config.output_features[ACTION].shape == (10,)
+    assert config.input_features[OBS_STATE].shape == (10,)
+
+
 def test_state_from_action_extracts_history_and_preserves_target_horizon():
     action = torch.arange(2 * 5 * 3, dtype=torch.float32).reshape(2, 5, 3)
     step = Pi05StateFromActionProcessorStep(enabled=True, history_steps=2)
@@ -85,6 +107,16 @@ def test_relative_actions_use_newest_state_in_history_and_roundtrip():
 
     recovered = absolute_step(_transition(relative[TransitionKey.ACTION]))
     torch.testing.assert_close(recovered[TransitionKey.ACTION], absolute)
+
+
+def test_relative_action_reference_is_reset_between_inference_sessions():
+    step = RelativeActionsProcessorStep(enabled=True)
+    step(_transition(None, torch.tensor([[1.0, 2.0]])))
+
+    step.reset()
+
+    assert step.get_cached_state() is None
+    assert step.get_cached_mask() is None
 
 
 def test_flatten_state_history_preserves_chronological_order():
@@ -133,6 +165,27 @@ def test_state_history_can_use_se3_composition_with_absolute_gripper():
     result = step(_transition(torch.zeros(1, 2, 7), state_history))
 
     expected = torch.tensor([[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.4]])
+    torch.testing.assert_close(result[TransitionKey.OBSERVATION][OBS_STATE], expected, atol=1e-6, rtol=1e-6)
+
+
+def test_state_history_can_use_se3_6d_rotation_with_absolute_gripper():
+    state_history = torch.tensor(
+        [[[0.0, 1.0, 0.0, 0.0, 0.0, pi / 2, 0.2], [0.0, 0.0, 0.0, 0.0, 0.0, pi / 2, 0.4]]]
+    )
+    step = Pi05FlattenStateHistoryProcessorStep(
+        history_steps=2,
+        max_state_dim=20,
+        relative=True,
+        exclude_joints=["gripper"],
+        state_names=["x", "y", "z", "rx", "ry", "rz", "gripper_width"],
+        pose_representation="se3_6d",
+        se3_pose_groups=[list(range(6))],
+    )
+
+    result = step(_transition(torch.zeros(1, 2, 7), state_history))
+
+    identity_6d = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+    expected = torch.tensor([[1.0, 0.0, 0.0, *identity_6d, 0.2, 0.0, 0.0, 0.0, *identity_6d, 0.4]])
     torch.testing.assert_close(result[TransitionKey.OBSERVATION][OBS_STATE], expected, atol=1e-6, rtol=1e-6)
 
 
@@ -225,3 +278,44 @@ def test_se3_relative_action_stats_use_reference_frame():
 
     np.testing.assert_allclose(stats["mean"][:3], [0.5, 0.0, 0.0], atol=1e-6)
     np.testing.assert_allclose(stats["mean"][6], 0.25, atol=1e-6)
+
+
+def test_se3_6d_stats_expand_action_and_state_history():
+    actions = np.asarray(
+        [
+            [0.0, 0.0, 0.0, 0.0, 0.0, pi / 2, 0.2],
+            [0.0, 1.0, 0.0, 0.0, 0.0, pi / 2, 0.3],
+        ],
+        dtype=np.float32,
+    )
+    dataset = {"action": actions, "episode_index": np.zeros(2, dtype=np.int64)}
+    features = {
+        "action": {
+            "shape": [7],
+            "names": ["x", "y", "z", "rx", "ry", "rz", "gripper_width"],
+        }
+    }
+
+    action_stats = compute_relative_action_stats(
+        dataset,
+        features,
+        chunk_size=2,
+        exclude_joints=["gripper"],
+        state_from_action=True,
+        pose_representation="se3_6d",
+        se3_pose_groups=[list(range(6))],
+    )
+    state_stats = compute_state_history_stats(
+        dataset,
+        features,
+        history_steps=2,
+        exclude_joints=["gripper"],
+        relative=True,
+        pose_representation="se3_6d",
+        se3_pose_groups=[list(range(6))],
+    )
+
+    assert action_stats["mean"].shape == (10,)
+    assert state_stats["mean"].shape == (20,)
+    np.testing.assert_allclose(action_stats["mean"][:3], [0.5, 0.0, 0.0], atol=1e-6)
+    np.testing.assert_allclose(action_stats["mean"][9], 0.25, atol=1e-6)

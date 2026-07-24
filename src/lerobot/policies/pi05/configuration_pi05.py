@@ -56,6 +56,8 @@ class PI05Config(PreTrainedConfig):
     # Populated at runtime from dataset metadata by make_policy.
     action_feature_names: list[str] | None = None
     # ``se3`` uses inv(T_current) @ T_target for each xyz+rotation-vector pose group.
+    # ``se3_6d`` uses the same composition and expands each relative rotation
+    # vector to the continuous two-column 6-D rotation representation.
     # ``componentwise`` preserves the legacy action - state behavior.
     relative_pose_representation: str = "componentwise"
     relative_se3_pose_groups: list[list[int]] = field(default_factory=lambda: [list(range(6))])
@@ -136,16 +138,21 @@ class PI05Config(PreTrainedConfig):
         if self.proprioception_history_steps < 1:
             raise ValueError("proprioception_history_steps must be at least 1")
 
-        if self.relative_pose_representation not in {"componentwise", "se3"}:
+        if self.relative_pose_representation not in {"componentwise", "se3", "se3_6d"}:
             raise ValueError(
-                "relative_pose_representation must be either 'componentwise' or 'se3', got "
+                "relative_pose_representation must be 'componentwise', 'se3', or 'se3_6d', got "
                 f"{self.relative_pose_representation!r}"
             )
         for group in self.relative_se3_pose_groups:
             if len(group) != 6 or len(set(group)) != 6 or any(index < 0 for index in group):
                 raise ValueError(f"Invalid six-index SE(3) pose group: {group}")
-        if self.relative_pose_representation == "se3" and not self.relative_se3_pose_groups:
-            raise ValueError("relative_pose_representation='se3' requires relative_se3_pose_groups")
+            if self.relative_pose_representation == "se3_6d" and group != list(range(group[0], group[0] + 6)):
+                raise ValueError("se3_6d pose groups must contain six contiguous ascending indices")
+        if self.relative_pose_representation in {"se3", "se3_6d"} and not self.relative_se3_pose_groups:
+            raise ValueError(
+                f"relative_pose_representation={self.relative_pose_representation!r} "
+                "requires relative_se3_pose_groups"
+            )
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
@@ -163,6 +170,29 @@ class PI05Config(PreTrainedConfig):
                 shape=(self.max_action_dim,),  # Padded to max_action_dim
             )
             self.output_features[ACTION] = action_feature
+        elif self.relative_pose_representation == "se3_6d":
+            action_feature = self.output_features[ACTION]
+            source_dim = (
+                len(self.action_feature_names)
+                if self.action_feature_names is not None
+                else action_feature.shape[-1]
+            )
+            model_dim = source_dim + 3 * len(self.relative_se3_pose_groups)
+            if action_feature.shape[-1] == source_dim:
+                self.output_features[ACTION] = PolicyFeature(
+                    type=action_feature.type,
+                    shape=(model_dim,),
+                )
+            elif action_feature.shape[-1] != model_dim:
+                raise ValueError(
+                    "se3_6d action feature has incompatible width: "
+                    f"source={source_dim}, expected model width={model_dim}, "
+                    f"got={action_feature.shape[-1]}"
+                )
+            if model_dim > self.max_action_dim:
+                raise ValueError(
+                    f"se3_6d action width {model_dim} exceeds max_action_dim={self.max_action_dim}"
+                )
 
         if OBS_STATE not in self.input_features:
             state_shape = (self.max_state_dim,)

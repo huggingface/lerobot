@@ -1596,8 +1596,9 @@ def recompute_stats(
         state_history_steps: Number of consecutive synthesized state samples.
         relative_state_history: Express state history relative to its newest pose.
         relative_state_exclude_joints: State dimensions to retain as absolute.
-        relative_pose_representation: ``componentwise`` for legacy subtraction or
-            ``se3`` for ``inv(T_current) @ T_target`` pose composition.
+        relative_pose_representation: ``componentwise`` for legacy subtraction,
+            ``se3`` for composition with an axis-angle output, or ``se3_6d`` for
+            composition with a continuous two-column rotation output.
         relative_se3_pose_groups: Six-index xyz+rotation-vector pose groups.
 
     Returns:

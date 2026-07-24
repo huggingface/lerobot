@@ -20,7 +20,11 @@ import logging
 import numpy as np
 import torch
 
-from lerobot.processor import RelativeActionsProcessorStep, to_relative_actions
+from lerobot.processor import (
+    RelativeActionsProcessorStep,
+    relative_action_output_dim,
+    to_relative_actions,
+)
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .io_utils import load_image_as_numpy
@@ -666,26 +670,24 @@ def _compute_relative_chunk_batch(
 ) -> np.ndarray:
     """Vectorised relative-action computation for a batch of start indices.
 
-    Returns an ``(N * chunk_size, action_dim)`` float32 array.
+    Returns an ``(N * chunk_size, model_action_dim)`` float32 array.
     """
     if len(start_indices) == 0:
-        return np.empty((0, all_actions.shape[1]), dtype=np.float32)
+        output_dim = relative_action_output_dim(all_actions.shape[1], pose_representation, se3_pose_groups)
+        return np.empty((0, output_dim), dtype=np.float32)
     offsets = np.arange(chunk_size)
     frame_idx = start_indices[:, None] + offsets[None, :]
     chunks = all_actions[frame_idx].copy()
     states = all_states[start_indices]
-    if pose_representation == "se3":
-        return (
-            to_relative_actions(
-                torch.from_numpy(chunks),
-                torch.from_numpy(states),
-                relative_mask.astype(bool).tolist(),
-                pose_representation=pose_representation,
-                se3_pose_groups=se3_pose_groups,
-            )
-            .numpy()
-            .reshape(-1, all_actions.shape[1])
+    if pose_representation in {"se3", "se3_6d"}:
+        converted = to_relative_actions(
+            torch.from_numpy(chunks),
+            torch.from_numpy(states),
+            relative_mask.astype(bool).tolist(),
+            pose_representation=pose_representation,
+            se3_pose_groups=se3_pose_groups,
         )
+        return converted.numpy().reshape(-1, converted.shape[-1])
     mask_dim = len(relative_mask)
     chunks[:, :, :mask_dim] -= states[:, None, :mask_dim] * relative_mask[None, None, :]
     return chunks.reshape(-1, all_actions.shape[1])
