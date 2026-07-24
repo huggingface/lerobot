@@ -129,6 +129,16 @@ class SOLeader(Teleoperator):
         self.bus.configure_motors()
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+        if self.config.sprung_gripper:
+            # A low P gain makes resistance grow gradually with squeeze depth.
+            # The torque cap sets both the maximum squeeze resistance and the
+            # return force — they cannot be tuned independently. The P write
+            # persists in the servo's EPROM.
+            self.bus.write("P_Coefficient", "gripper", 8, normalize=False)
+            self.bus.write("Acceleration", "gripper", 0, normalize=False)  # 0 = fastest ramp
+            self.bus.write("Torque_Limit", "gripper", 75, normalize=False)
+            self.bus.enable_torque("gripper")
+            self.bus.write("Goal_Position", "gripper", 100.0)  # normalized: fully open
 
     def enable_torque(self) -> None:
         self.bus.enable_torque()
