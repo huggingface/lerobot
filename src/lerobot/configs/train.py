@@ -112,6 +112,7 @@ class TrainPipelineConfig(HubMixin):
     tolerance_s: float = 1e-4
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
+    # A non-positive value disables periodic saving, keeping only the final checkpoint.
     save_freq: int = 20_000
     use_policy_training_preset: bool = True
     optimizer: OptimizerConfig | None = None
