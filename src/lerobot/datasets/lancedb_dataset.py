@@ -21,7 +21,8 @@ Layout of a Lance-backed dataset (video layout):
 <root>/
   meta/         # standard LeRobot v3.0 metadata (info.json, stats.json, tasks, episodes)
   frames.lance  # one row per frame: tabular features, no pixels
-  videos.lance  # one row per source video file: encoded bytes in a blob column
+  videos.lance  # one row per source video file: encoded bytes in a blob v2
+                # column + byte-index columns (see VIDEO_INDEX_COLUMNS)
 ```
 
 Feature keys contain dots (``observation.state``) which Lance column names do not
@@ -257,9 +258,10 @@ class _VideoDecoderLRU:
     """Per-worker LRU of torchcodec decoders keyed by (video_key, chunk, file).
 
     Local decoders hold cheap seekable ``BlobFile`` handles (``nbytes=0``).
-    Remote decoders hold the materialized video bytes, so eviction is also
-    bounded by ``byte_budget`` — with large video files a pure entry-count
-    cap would let per-worker RAM grow to ``capacity x file_size``.
+    Remote decoders hold sparse buffers of prefetched byte ranges plus an
+    ffmpeg context, so eviction is also bounded by ``byte_budget`` — a pure
+    entry-count cap would let per-worker RAM scale with resolution and
+    window accumulation.
     """
 
     def __init__(self, capacity: int, byte_budget: int | None = None):
@@ -443,9 +445,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
         video_decoder_cache_size: Max torchcodec decoders kept per worker.
             Defaults to 100 for local tables (decoders hold cheap blob
             handles, matching the upstream decoder cache) and 16 for remote
-            tables (each decoder holds the materialized video bytes). A cache
-            smaller than the dataset's video file count causes re-fetches;
-            for remote tables that means re-downloading whole files.
+            tables (each decoder holds a sparse buffer of prefetched byte
+            ranges). An evicted remote entry re-prefetches its container
+            header ranges (~1 MB) on the next touch.
     """
 
     def __init__(
