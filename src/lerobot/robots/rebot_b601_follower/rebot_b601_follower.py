@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import logging
 import math
 import time
@@ -125,6 +126,8 @@ class RebotB601Follower(Robot):
             )
             self.calibrate()
 
+        self._check_gripper_wrap()
+
         for cam in self.cameras.values():
             cam.connect()
 
@@ -173,7 +176,141 @@ class RebotB601Follower(Robot):
         self._save_calibration()
         print(f"Calibration saved to {self.calibration_fpath}")
 
+    # --- Gripper multi-turn wrap handling -------------------------------------
+
+    def _read_gripper_rad(self) -> float | None:
+        """Fresh gripper position read in radians (None if the motor did not reply)."""
+        motor = self.motors.get(GRIPPER_MOTOR)
+        if motor is None:
+            return None
+        motor.request_feedback()
+        time.sleep(0.005)
+        if self.bus is not None:
+            with contextlib.suppress(Exception):
+                self.bus.poll_feedback_once()
+        state = motor.get_state()
+        return float(state.pos) if state is not None else None
+
+    def _check_gripper_wrap(self) -> None:
+        """Detect a 2*pi-wrapped multi-turn gripper reading and apply the configured policy.
+
+        The Damiao multi-turn counter does not survive power cycles: the single-turn
+        absolute zero is preserved but the turn count is lost, so a gripper whose
+        travel exceeds one turn can wake up reporting ``physical + 2*pi*k``. Absolute
+        targets (including the soft-limit clip in :meth:`send_action`) are then wrong
+        by whole turns and drive the mechanism into its stop through the reduction.
+        """
+        if GRIPPER_MOTOR not in self.config.joint_limits:
+            return
+        pos_rad = self._read_gripper_rad()
+        if pos_rad is None:
+            logger.warning("Gripper wrap check skipped: no feedback from the gripper motor.")
+            return
+
+        min_deg, max_deg = self.config.joint_limits[GRIPPER_MOTOR]
+        margin = math.radians(self.config.gripper_wrap_margin_deg)
+        lo = math.radians(min_deg) - margin
+        hi = math.radians(max_deg) + margin
+        if lo <= pos_rad <= hi:
+            return
+
+        message = (
+            f"Gripper reads {pos_rad:+.3f} rad ({math.degrees(pos_rad):+.1f} deg), outside its "
+            f"calibrated travel [{min_deg:.0f}, {max_deg:.0f}] deg (+/- "
+            f"{self.config.gripper_wrap_margin_deg:.0f} deg margin). The multi-turn encoder "
+            f"most likely re-woke on a different 2*pi branch after a power cycle, so absolute "
+            f"gripper targets are invalid."
+        )
+        policy = self.config.gripper_wrap_policy
+        if policy == "abort":
+            raise RuntimeError(message + " Re-run calibration or use gripper_wrap_policy='rehome'.")
+        if policy == "ignore":
+            logger.warning("%s Continuing anyway (gripper_wrap_policy='ignore').", message)
+            return
+
+        logger.warning("%s Re-homing: closing until stall, then re-zeroing there.", message)
+        self._rehome_gripper()
+
+    def _rehome_gripper(self) -> None:
+        """Close the gripper until it stalls against its mechanical stop and re-zero there.
+
+        Restores the calibration convention (fully closed == 0, opening negative)
+        regardless of which 2*pi branch the encoder woke up on. Runs BEFORE
+        :meth:`configure`, so the motor is enabled only for the sweep and left
+        disabled afterwards. Low-speed POS_VEL steps with sustained-torque/lag stall
+        detection (3 consecutive strikes), mirroring the validated calibration sweep.
+        """
+        motor = self.motors[GRIPPER_MOTOR]
+        step = self.config.gripper_rehome_step_rad
+        vlim = self.config.gripper_rehome_vlim_rad_s
+        stall_torque = self.config.gripper_rehome_stall_torque_nm
+        max_travel = self.config.gripper_rehome_max_travel_rad
+        settle_s = 0.15  # per-step dwell: ~step/settle = 0.33 rad/s sweep speed
+
+        motor.clear_error()  # Damiao latches faults (e.g. coil over-temp) across sessions
+        motor.enable()
+        try:
+            for attempt in range(_ENSURE_MODE_RETRIES + 1):
+                try:
+                    motor.ensure_mode(MotorBridgeMode.POS_VEL)
+                    break
+                except Exception:
+                    if attempt == _ENSURE_MODE_RETRIES:
+                        raise
+                    time.sleep(_SETTLE_SEC)
+
+            start = self._read_gripper_rad()
+            if start is None:
+                raise RuntimeError("Gripper re-homing failed: no feedback before the sweep.")
+            target = start
+            strikes = 0
+            stalled = False
+            # Closing direction is positive: calibration convention is closed == 0 with
+            # opening travel negative, so the closed mechanical stop lies on the
+            # positive side of any in-travel (or wrapped) reading.
+            while abs(target - start) < max_travel:
+                target += step
+                motor.send_pos_vel(target, vlim)
+                time.sleep(settle_s)
+                pos = self._read_gripper_rad()
+                state = motor.get_state()
+                if pos is None or state is None:
+                    continue
+                if abs(state.torq) > stall_torque or abs(pos - target) > 0.3:
+                    strikes += 1
+                    if strikes >= 3:
+                        stalled = True
+                        break
+                else:
+                    strikes = 0
+            if not stalled:
+                raise RuntimeError(
+                    f"Gripper re-homing failed: no stall detected within {max_travel:.1f} rad "
+                    f"of travel. Check the mechanism and recalibrate manually."
+                )
+        finally:
+            motor.disable()
+
+        # Torque is off: the gears relax onto the stop; zero the encoder there so the
+        # closed position reads 0 (the calibration convention).
+        time.sleep(0.3)
+        motor.set_zero_position()
+        time.sleep(_ZERO_SETTLE_SEC)
+
+        pos = self._read_gripper_rad()
+        if pos is None or abs(pos) > 0.2:
+            raise RuntimeError(
+                f"Gripper re-homing verification failed: expected ~0 rad at the closed stop, "
+                f"read {pos if pos is None else round(pos, 3)}."
+            )
+        logger.info("Gripper re-homed: closed stop re-zeroed (reads %+.3f rad).", pos)
+
     def configure(self) -> None:
+        if self.config.gripper_wrap_policy not in ("rehome", "abort", "ignore"):
+            raise ValueError(
+                f"Unsupported gripper_wrap_policy '{self.config.gripper_wrap_policy}'. "
+                "Use 'rehome', 'abort' or 'ignore'."
+            )
         if self.config.control_mode not in ("pos_vel", "mit"):
             raise ValueError(
                 f"Unsupported control_mode '{self.config.control_mode}'. Use 'pos_vel' or 'mit'."
