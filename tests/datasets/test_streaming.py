@@ -19,10 +19,17 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.datasets.utils import safe_shard
 from lerobot.utils.constants import ACTION
 from tests.fixtures.constants import DUMMY_REPO_ID
+
+# A dataset whose videos roll over into a second file, as v3.0 does past
+# DEFAULT_VIDEO_FILE_SIZE_IN_MB: episodes 4-7 live in file-001, whose timeline restarts at 0.
+MULTI_FILE_EPISODES = 8
+MULTI_FILE_FRAMES = 200
+MULTI_FILE_EPISODES_PER_VIDEO_FILE = 4
 
 
 def get_frames_expected_order(streaming_ds: StreamingLeRobotDataset) -> list[int]:
@@ -69,6 +76,59 @@ def get_frames_expected_order(streaming_ds: StreamingLeRobotDataset) -> list[int
     expected_indices.extend(frames_buffer)
 
     return expected_indices
+
+
+def assert_videos_roll_over(ds: LeRobotDataset) -> None:
+    """Guard the fixture: these tests are only meaningful if episodes live past ``file-000``.
+
+    If ``episodes_per_video_file`` ever stops splitting the videos, the rollover tests below
+    would still pass while silently covering nothing.
+    """
+    for key in ds.meta.video_keys:
+        episodes = [ds.meta.episodes[ep_idx] for ep_idx in range(ds.meta.total_episodes)]
+        file_indices = {ep[f"videos/{key}/file_index"] for ep in episodes}
+        assert len(file_indices) > 1, f"{key} is not split across video files (file_index: {file_indices})"
+
+        # The property under test: a later file's timeline starts back at 0, so an episode's
+        # `from_timestamp` is no longer its global position in the dataset.
+        assert any(
+            ep[f"videos/{key}/file_index"] > 0 and ep[f"videos/{key}/from_timestamp"] == 0.0
+            for ep in episodes
+        ), f"No episode of {key} restarts a video file's timeline at 0"
+
+
+def assert_frame_matches(streaming_frame: dict, target_frame: dict, ds: LeRobotDataset, context: str) -> None:
+    """Assert a streamed frame equals the same frame read by the non-streaming reader."""
+    assert set(streaming_frame.keys()) == set(target_frame.keys()), (
+        f"Keys differ between streaming frame and target one ({context}). "
+        f"Differ at: {set(streaming_frame.keys()) ^ set(target_frame.keys())}"
+    )
+
+    mismatched = []
+    for key in streaming_frame:
+        left, right = streaming_frame[key], target_frame[key]
+
+        if isinstance(left, str):
+            check = left == right
+
+        elif isinstance(left, float):
+            check = left == right.item()  # right is a torch.Tensor
+
+        elif isinstance(left, torch.Tensor):
+            if key not in ds.meta.camera_keys and "is_pad" not in key and f"{key}_is_pad" in streaming_frame:
+                # comparing frames only on non-padded regions. Padding is applied to last-valid broadcasting
+                left = left[~streaming_frame[f"{key}_is_pad"]]
+                right = right[~target_frame[f"{key}_is_pad"]]
+
+            check = left.shape == right.shape and torch.allclose(left, right)
+
+        else:
+            check = left == right
+
+        if not check:
+            mismatched.append(key)
+
+    assert not mismatched, f"Streaming and target frames differ on {mismatched} ({context})"
 
 
 def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
@@ -391,4 +451,99 @@ def test_frames_with_delta_consistency_with_shards(
 
         assert all(t[1] for t in key_checks), (
             f"Checking {list(filter(lambda t: not t[1], key_checks))[0][0]} left and right were found different (i: {i}, frame_idx: {frame_idx})"
+        )
+
+
+def test_single_frame_consistency_across_video_files(tmp_path, lerobot_dataset_factory):
+    """Streaming a dataset whose videos span several files must decode each frame from its own file.
+
+    Regression test for decoding at a *global* timestamp (`index / fps`). That position only
+    exists while the whole dataset fits in one .mp4; once v3.0 rolls the video over, every
+    episode in a later file asked for a frame past the end of the file being read
+    (`IndexError: Invalid frame index=... must be less than ...`).
+    """
+    buffer_size = 100
+
+    local_path = tmp_path / "test"
+    repo_id = f"{DUMMY_REPO_ID}-video-rollover"
+
+    ds = lerobot_dataset_factory(
+        root=local_path,
+        repo_id=repo_id,
+        total_episodes=MULTI_FILE_EPISODES,
+        total_frames=MULTI_FILE_FRAMES,
+        episodes_per_video_file=MULTI_FILE_EPISODES_PER_VIDEO_FILE,
+    )
+    assert_videos_roll_over(ds)
+
+    streaming_ds = iter(
+        StreamingLeRobotDataset(
+            repo_id=repo_id,
+            root=local_path,
+            buffer_size=buffer_size,
+            shuffle=False,
+        )
+    )
+
+    for _ in range(MULTI_FILE_FRAMES):
+        streaming_frame = next(streaming_ds)
+        frame_idx = streaming_frame["index"]
+        assert_frame_matches(streaming_frame, ds[frame_idx], ds, context=f"frame_idx: {frame_idx}")
+
+
+@pytest.mark.parametrize(
+    "state_deltas, action_deltas",
+    [
+        ([-1, -0.5, -0.20, 0], [0, 1, 2, 3]),
+        ([-2, -1, -0.5, 0], [-1.5, -1, -0.5, -0.20, -0.10, 0]),
+    ],
+)
+def test_frames_with_delta_consistency_across_video_files(
+    tmp_path, lerobot_dataset_factory, state_deltas, action_deltas
+):
+    """Same rollover, on the delta path.
+
+    Here the old global timestamp failed silently rather than raising: the query was clamped to
+    the episode's `to_timestamp`, so every frame decoded the episode's *last* frame — a frozen
+    video paired with advancing state/action.
+    """
+    buffer_size = 100
+    seed = 42
+
+    local_path = tmp_path / "test"
+    repo_id = f"{DUMMY_REPO_ID}-video-rollover-deltas"
+    camera_key = "phone"
+
+    delta_timestamps = {
+        camera_key: state_deltas,
+        "state": state_deltas,
+        ACTION: action_deltas,
+    }
+
+    ds = lerobot_dataset_factory(
+        root=local_path,
+        repo_id=repo_id,
+        total_episodes=MULTI_FILE_EPISODES,
+        total_frames=MULTI_FILE_FRAMES,
+        episodes_per_video_file=MULTI_FILE_EPISODES_PER_VIDEO_FILE,
+        delta_timestamps=delta_timestamps,
+    )
+    assert_videos_roll_over(ds)
+
+    streaming_ds = iter(
+        StreamingLeRobotDataset(
+            repo_id=repo_id,
+            root=local_path,
+            buffer_size=buffer_size,
+            seed=seed,
+            shuffle=False,
+            delta_timestamps=delta_timestamps,
+        )
+    )
+
+    for i in range(MULTI_FILE_FRAMES):
+        streaming_frame = next(streaming_ds)
+        frame_idx = streaming_frame["index"]
+        assert_frame_matches(
+            streaming_frame, ds[frame_idx], ds, context=f"i: {i}, frame_idx: {frame_idx}"
         )
