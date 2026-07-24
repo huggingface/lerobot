@@ -392,3 +392,21 @@ def test_frames_with_delta_consistency_with_shards(
         assert all(t[1] for t in key_checks), (
             f"Checking {list(filter(lambda t: not t[1], key_checks))[0][0]} left and right were found different (i: {i}, frame_idx: {frame_idx})"
         )
+
+
+@pytest.mark.parametrize(
+    "history, lookahead",
+    [
+        (0, 0),
+        (1, 0),
+        (0, 1),
+        (1, 1),
+    ],
+)
+def test_backtrackable_zero_history_and_lookahead(history, lookahead):
+    """Regression test: Backtrackable should accept history=0 and lookahead=0 without raising."""
+    from lerobot.datasets.streaming_dataset import Backtrackable
+
+    bt = Backtrackable(iter([1, 2, 3]), history=history, lookahead=lookahead)
+    items = list(bt)
+    assert items == [1, 2, 3]
