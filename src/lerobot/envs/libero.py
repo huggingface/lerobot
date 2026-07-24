@@ -277,6 +277,31 @@ class LiberoEnv(gym.Env):
         image = image[::-1, ::-1]  # flip both H and W for visualization
         return image
 
+    def snapshot(self) -> np.ndarray:
+        """Return a copy of the underlying MuJoCo simulator state."""
+        self._ensure_env()
+        assert self._env is not None
+        return self._env.get_sim_state().copy()
+
+    def restore(self, mujoco_state: np.ndarray, timestep: int | None = None) -> RobotObservation:
+        """Restore a MuJoCo simulator state and return the corresponding observation."""
+        self._ensure_env()
+        assert self._env is not None
+        raw_obs = self._env.regenerate_obs_from_state(np.asarray(mujoco_state).copy())
+        self._restore_step_bookkeeping(timestep)
+        return self._format_raw_obs(raw_obs)
+
+    def _restore_step_bookkeeping(self, timestep: int | None = None) -> None:
+        """Keep robosuite episode bookkeeping consistent with restored simulator states."""
+        assert self._env is not None
+        robosuite_env = getattr(self._env, "env", self._env)
+        robosuite_env.done = False
+        if timestep is None:
+            return
+        robosuite_env.timestep = int(timestep)
+        if hasattr(robosuite_env, "cur_time") and hasattr(robosuite_env, "control_timestep"):
+            robosuite_env.cur_time = robosuite_env.timestep * robosuite_env.control_timestep
+
     def _format_raw_obs(self, raw_obs: RobotObservation) -> RobotObservation:
         assert self._env is not None, "_format_raw_obs called before _ensure_env()"
         images = {}
@@ -379,6 +404,36 @@ class LiberoEnv(gym.Env):
         observation = self._format_raw_obs(raw_obs)
         if terminated:
             self.reset()
+        truncated = False
+        return observation, reward, terminated, truncated, info
+
+    def step_no_reset(self, action: np.ndarray) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
+        """Step without autoresetting after success.
+
+        This is intended for planning algorithms that need to snapshot terminal
+        simulator states. The public ``step`` method keeps existing evaluation
+        behavior and autoresets after termination.
+        """
+        self._ensure_env()
+        assert self._env is not None
+        if action.ndim != 1:
+            raise ValueError(
+                f"Expected action to be 1-D (shape (action_dim,)), "
+                f"but got shape {action.shape} with ndim={action.ndim}"
+            )
+        raw_obs, reward, done, info = self._env.step(action)
+
+        is_success = self._env.check_success()
+        terminated = done or is_success
+        info.update(
+            {
+                "task": self.task,
+                "task_id": self.task_id,
+                "done": done,
+                "is_success": is_success,
+            }
+        )
+        observation = self._format_raw_obs(raw_obs)
         truncated = False
         return observation, reward, terminated, truncated, info
 
