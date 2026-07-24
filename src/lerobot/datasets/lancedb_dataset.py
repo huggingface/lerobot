@@ -515,6 +515,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self._videos_table = None
         self._video_row_ids: dict[tuple, int] | None = None
         self._file_meta: OrderedDict[tuple, dict] = OrderedDict()
+        self._prefetch_pool: ThreadPoolExecutor | None = None
         if video_decoder_cache_size is None:
             video_decoder_cache_size = 100 if self._is_local else 16
         # Remote decoders hold materialized video bytes: cap them at 2 GiB per
@@ -536,6 +537,12 @@ class LanceDBDataset(torch.utils.data.Dataset):
         import lancedb
         from lancedb.permutation import Permutation
 
+        if not self._is_local:
+            # A remote batch issues hundreds of parallel range reads; lance's
+            # default of 64 concurrent IOPS leaves ~40% throughput on the
+            # table (measured on S3). Respect an explicit user override.
+            os.environ.setdefault("LANCE_IO_THREADS", "256")
+            self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
         connect_kwargs = {"storage_options": self._storage_options} if self._storage_options else {}
         db = lancedb.connect(self._db_uri, **connect_kwargs)
         table = db.open_table(FRAMES_TABLE)
@@ -561,6 +568,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         state["_videos_table"] = None
         state["_video_row_ids"] = None
         state["_file_meta"] = OrderedDict()
+        state["_prefetch_pool"] = None
         state["_decoder_cache"] = _VideoDecoderLRU(
             self._decoder_cache.capacity, byte_budget=self._decoder_cache.byte_budget
         )
@@ -600,11 +608,32 @@ class LanceDBDataset(torch.utils.data.Dataset):
         plans = self._plan_batch(indices)
         rows = sorted({row for plan in plans for row in plan["rows"]})
         row_pos = {row: pos for pos, row in enumerate(rows)}
+
+        # Remote video prep (byte-index metadata, header ranges, decoder
+        # creation) needs only the batch's file set, so it overlaps with the
+        # frames-table fetch.
+        prepared_future = None
+        if self.meta.video_keys and not self._is_local:
+            file_keys = sorted(
+                {
+                    (
+                        key,
+                        int(self._video_locator[key][0][plan["ep_idx"]]),
+                        int(self._video_locator[key][1][plan["ep_idx"]]),
+                    )
+                    for plan in plans
+                    for key in self.meta.video_keys
+                }
+            )
+            prepared_future = self._prefetch_pool.submit(self._prepare_remote_files, file_keys)
+
         columns = self._fetch_rows(rows)
         items = [self._build_item(plan, columns, row_pos) for plan in plans]
 
         if self.meta.video_keys:
-            for item, frames in zip(items, self._decode_videos(plans, columns, row_pos), strict=True):
+            prepared = prepared_future.result() if prepared_future is not None else None
+            decoded = self._decode_videos(plans, columns, row_pos, prepared)
+            for item, frames in zip(items, decoded, strict=True):
                 item.update(frames)
         if self.image_transforms is not None:
             for item in items:
@@ -652,7 +681,11 @@ class LanceDBDataset(torch.utils.data.Dataset):
         return columns
 
     def _decode_videos(
-        self, plans: list[dict], columns: dict[str, np.ndarray], row_pos: dict[int, int]
+        self,
+        plans: list[dict],
+        columns: dict[str, np.ndarray],
+        row_pos: dict[int, int],
+        prepared: dict[tuple, tuple] | None = None,
     ) -> list[dict[str, torch.Tensor]]:
         """Decode all camera frames a batch needs, one blob fetch and one decode pass per video file.
 
@@ -676,7 +709,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
         if self._is_local:
             decoders = self._ensure_decoders_local(requests)
         else:
-            decoders = self._ensure_decoders_remote(requests)
+            if prepared is None:
+                prepared = self._prepare_remote_files(list(requests))
+            decoders = self._ensure_decoders_remote(requests, prepared)
 
         results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
 
@@ -737,83 +772,101 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 self._decoder_cache.put(key, (decoder, None))
         return decoders
 
-    def _ensure_decoders_remote(self, requests: dict) -> dict:
-        """Remote tables: fetch every byte the batch needs in one parallel call.
+    def _prepare_remote_files(self, file_keys: list[tuple]) -> dict[tuple, tuple]:
+        """Stage 1 of remote decoding: everything that doesn't need timestamps.
 
-        Uses the byte-index columns to translate each frame window into a
-        keyframe-aligned byte range, batches all ranges (plus container
-        head/moov for new files) into a single ``fetch_blob_ranges`` request,
-        and feeds decoders through sparse in-memory sources.
+        Loads byte-index metadata, fetches container head/moov/first-packet
+        ranges for uncached files in one parallel call, and creates their
+        decoders. Timestamp-independent, so ``__getitems__`` runs it in a
+        background thread concurrently with the frames-table fetch.
         """
         from torchcodec.decoders import VideoDecoder
 
-        self._load_file_meta([key for key in requests if key not in self._file_meta])
+        self._load_file_meta([key for key in file_keys if key not in self._file_meta])
 
-        decoders: dict[tuple, object] = {}
-        sources: dict[tuple, _SparseBlobSource] = {}
+        prepared: dict[tuple, tuple] = {}
         new_files = []
-        for key in requests:
+        for key in file_keys:
             if key in self._decoder_cache:
-                decoders[key], sources[key] = self._decoder_cache.get(key)
+                prepared[key] = self._decoder_cache.get(key)
             else:
                 new_files.append(key)
+        if not new_files:
+            return prepared
 
         range_requests: list[tuple[int, int, int]] = []
-        range_targets: list[tuple[tuple, int]] = []  # (file_key, offset)
-
-        def request_range(file_key: tuple, start: int, end: int) -> None:
-            source = sources.get(file_key)
-            if source is not None and source.covers(start, end):
-                return
-            range_requests.append((self._video_row_ids[file_key], start, end - start))
-            range_targets.append((file_key, start))
-
+        range_targets: list[tuple[tuple, int]] = []
         for key in new_files:
             meta = self._file_meta[key]
-            request_range(key, 0, min(_HEAD_BYTES, meta["file_size"]))
-            # Slack past the moov covers the next box header (e.g. mdat) that
-            # ffmpeg reads while walking the container — without it, every
-            # decoder open pays one ~16-byte round trip.
-            request_range(
-                key,
-                meta["moov_offset"],
-                min(meta["moov_offset"] + meta["moov_size"] + _RANGE_SLACK, meta["file_size"]),
-            )
+            spans = [
+                (0, min(_HEAD_BYTES, meta["file_size"])),
+                # Slack past the moov covers the next box header (e.g. mdat)
+                # that ffmpeg reads while walking the container — without it,
+                # every decoder open pays one ~16-byte round trip.
+                (
+                    meta["moov_offset"],
+                    min(meta["moov_offset"] + meta["moov_size"] + _RANGE_SLACK, meta["file_size"]),
+                ),
+            ]
             if len(meta["kf_positions"]):
                 first_packet = int(meta["kf_positions"][0])
-                request_range(key, first_packet, min(first_packet + _OPEN_READAHEAD, meta["file_size"]))
+                spans.append((first_packet, min(first_packet + _OPEN_READAHEAD, meta["file_size"])))
+            for start, end in spans:
+                range_requests.append((self._video_row_ids[key], start, end - start))
+                range_targets.append((key, start))
+
+        payloads = self._videos_table.fetch_blob_ranges(VIDEO_BLOB_COLUMN, range_requests)
+        handles = dict(
+            zip(
+                new_files,
+                self._videos_table.fetch_blob_files(
+                    VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in new_files]
+                ),
+                strict=True,
+            )
+        )
+        sources: dict[tuple, _SparseBlobSource] = {}
+        for (key, offset), payload in zip(range_targets, payloads, strict=True):
+            if key not in sources:
+                sources[key] = _SparseBlobSource(self._file_meta[key]["file_size"], handles[key])
+            sources[key].add(offset, payload.as_py())
+
+        # Decoder creation parses the moov sample tables (~ms per file):
+        # parallelize across the batch's new files.
+        with ThreadPoolExecutor(max_workers=min(len(new_files), 16)) as pool:
+            created = pool.map(lambda key: VideoDecoder(sources[key], seek_mode="approximate"), new_files)
+        for key, decoder in zip(new_files, created, strict=True):
+            prepared[key] = (decoder, sources[key])
+        return prepared
+
+    def _ensure_decoders_remote(self, requests: dict, prepared: dict[tuple, tuple]) -> dict:
+        """Stage 2 of remote decoding: fetch this batch's frame windows.
+
+        Translates each window into a keyframe-aligned byte range via the
+        byte-index columns and fetches all of them in one parallel
+        ``fetch_blob_ranges`` call.
+        """
+        decoders = {key: decoder for key, (decoder, _) in prepared.items()}
+        sources = {key: source for key, (_, source) in prepared.items()}
+
+        range_requests: list[tuple[int, int, int]] = []
+        range_targets: list[tuple[tuple, int]] = []
         fps = float(self.meta.fps)
         for key, file_requests in requests.items():
             meta = self._file_meta[key]
+            source = sources[key]
             for _, shifted_ts in file_requests:
                 first = round(shifted_ts[0] * fps)
                 last = round(shifted_ts[-1] * fps)
                 start, end = self._window_byte_range(meta, min(first, last), max(first, last))
-                request_range(key, start, end)
+                if not source.covers(start, end):
+                    range_requests.append((self._video_row_ids[key], start, end - start))
+                    range_targets.append((key, start))
 
         if range_requests:
             payloads = self._videos_table.fetch_blob_ranges(VIDEO_BLOB_COLUMN, range_requests)
-            fallback_handles: dict[tuple, object] = {}
-            if new_files:
-                handles = self._videos_table.fetch_blob_files(
-                    VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in new_files]
-                )
-                fallback_handles = dict(zip(new_files, handles, strict=True))
-            for (file_key, offset), payload in zip(range_targets, payloads, strict=True):
-                if file_key not in sources:
-                    sources[file_key] = _SparseBlobSource(
-                        self._file_meta[file_key]["file_size"], fallback_handles[file_key]
-                    )
-                sources[file_key].add(offset, payload.as_py())
-
-        # Decoder creation parses the moov sample tables (~tens of ms per
-        # file, GIL-released C++): parallelize across the batch's new files.
-        if len(new_files) > 1:
-            with ThreadPoolExecutor(max_workers=min(len(new_files), 16)) as pool:
-                created = pool.map(lambda key: VideoDecoder(sources[key], seek_mode="approximate"), new_files)
-            decoders.update(zip(new_files, created, strict=True))
-        elif new_files:
-            decoders[new_files[0]] = VideoDecoder(sources[new_files[0]], seek_mode="approximate")
+            for (key, offset), payload in zip(range_targets, payloads, strict=True):
+                sources[key].add(offset, payload.as_py())
         for key in requests:
             source = sources[key]
             # A cached entry costs its buffered bytes plus the decoder's
@@ -868,7 +921,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 "kf_positions": position_values[position_offsets[i] : position_offsets[i + 1]],
             }
             self._file_meta.move_to_end(file_key)
-        while len(self._file_meta) > 512:
+        while len(self._file_meta) > 2048:
             self._file_meta.popitem(last=False)
 
     @staticmethod
