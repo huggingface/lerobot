@@ -18,10 +18,7 @@ import logging
 import time
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-    OperatingMode,
-)
+from lerobot.motors.feetech import OperatingMode
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
@@ -40,18 +37,21 @@ class SOLeader(Teleoperator):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        self.bus = FeetechMotorsBus(
-            port=self.config.port,
-            motors={
-                "shoulder_pan": Motor(1, "sts3215", norm_mode_body),
-                "shoulder_lift": Motor(2, "sts3215", norm_mode_body),
-                "elbow_flex": Motor(3, "sts3215", norm_mode_body),
-                "wrist_flex": Motor(4, "sts3215", norm_mode_body),
-                "wrist_roll": Motor(5, "sts3215", norm_mode_body),
-                "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
-            },
-            calibration=self.calibration,
-        )
+        motor_model = getattr(config, "motor_model", "sts3215")
+        motors = {
+            "shoulder_pan": Motor(1, motor_model, norm_mode_body),
+            "shoulder_lift": Motor(2, motor_model, norm_mode_body),
+            "elbow_flex": Motor(3, motor_model, norm_mode_body),
+            "wrist_flex": Motor(4, motor_model, norm_mode_body),
+            "wrist_roll": Motor(5, motor_model, norm_mode_body),
+            "gripper": Motor(6, motor_model, MotorNormMode.RANGE_0_100),
+        }
+        if motor_model == "hx30hm":
+            from lerobot.motors.hiwonder import HiwonderMotorsBus
+            self.bus = HiwonderMotorsBus(port=self.config.port, motors=motors, calibration=self.calibration)
+        else:
+            from lerobot.motors.feetech import FeetechMotorsBus
+            self.bus = FeetechMotorsBus(port=self.config.port, motors=motors, calibration=self.calibration)
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -59,7 +59,7 @@ class SOLeader(Teleoperator):
 
     @property
     def feedback_features(self) -> dict[str, type]:
-        return self.action_features
+        return {}
 
     @property
     def is_connected(self) -> bool:
@@ -130,12 +130,6 @@ class SOLeader(Teleoperator):
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
-    def enable_torque(self) -> None:
-        self.bus.enable_torque()
-
-    def disable_torque(self) -> None:
-        self.bus.disable_torque()
-
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
@@ -151,11 +145,9 @@ class SOLeader(Teleoperator):
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return action
 
-    @check_if_not_connected
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        goals = {k.removesuffix(".pos"): v for k, v in feedback.items() if k.endswith(".pos")}
-        if goals:
-            self.bus.sync_write("Goal_Position", goals)
+        # TODO: Implement force feedback
+        raise NotImplementedError
 
     @check_if_not_connected
     def disconnect(self) -> None:
