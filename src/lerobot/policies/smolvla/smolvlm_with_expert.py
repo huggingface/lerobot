@@ -146,6 +146,22 @@ class SmolVLMWithExpertModel(nn.Module):
         self.expert_hidden_size = lm_expert_config.hidden_size
         self.set_requires_grad()
 
+        # Gradient checkpointing flag. Note: the vision encoder (`embed_image`, called separately from
+        # `forward` below) is intentionally NOT checkpointed here. With the default
+        # `freeze_vision_encoder=True` / `train_expert_only=True`, none of its inputs or parameters require
+        # grad, so PyTorch's autograd never builds a graph for it in the first place (nothing to save,
+        # nothing for checkpointing to trade away). Checkpointing targets the joint VLM+expert layer loop in
+        # `forward`, where the trainable expert actually needs backward activations.
+        self.gradient_checkpointing_enabled = False
+
+    def gradient_checkpointing_enable(self) -> None:
+        """Enable gradient checkpointing for memory optimization."""
+        self.gradient_checkpointing_enabled = True
+
+    def gradient_checkpointing_disable(self) -> None:
+        """Disable gradient checkpointing."""
+        self.gradient_checkpointing_enabled = False
+
     def get_vlm_model(self):
         return self.vlm.model
 
@@ -398,6 +414,86 @@ class SmolVLMWithExpertModel(nn.Module):
             expert_layers.append(expert_layer)
         return [vlm_layers, expert_layers]
 
+    def _compute_layer(
+        self,
+        model_layers,
+        inputs_embeds,
+        layer_idx,
+        position_ids,
+        attention_mask,
+        batch_size,
+        head_dim,
+        use_cache,
+        fill_kv_cache,
+        past_key_values,
+    ):
+        """One VLM+expert transformer layer (joint attention + per-stream residual/MLP).
+
+        Factored out of `forward` so it can be wrapped in `torch.utils.checkpoint`. Only called under
+        checkpointing when `not use_cache` (see `forward`), so the `past_key_values.update(...)`
+        mutation inside `forward_attn_layer` never actually fires in that path (it's gated on
+        `use_cache`) — safe to recompute.
+        """
+        if (
+            fill_kv_cache
+            or "cross" not in self.attention_mode
+            or (self.self_attn_every_n_layers > 0 and layer_idx % self.self_attn_every_n_layers == 0)
+        ):
+            att_outputs, past_key_values = self.forward_attn_layer(
+                model_layers,
+                inputs_embeds,
+                layer_idx,
+                position_ids,
+                attention_mask,
+                batch_size,
+                head_dim,
+                use_cache=use_cache,
+                past_key_values=past_key_values,
+            )
+        else:
+            att_outputs, past_key_values = self.forward_cross_attn_layer(
+                model_layers,
+                inputs_embeds,
+                layer_idx,
+                position_ids,
+                attention_mask,
+                batch_size,
+                head_dim,
+                use_cache=use_cache,
+                past_key_values=past_key_values,
+            )
+        outputs_embeds = []
+        start = 0
+        for i, hidden_states in enumerate(inputs_embeds):
+            layer = model_layers[i][layer_idx]
+            att_output = att_outputs[i] if i < len(att_outputs) else att_outputs[0]  # in case of self_attn
+            if hidden_states is not None:
+                if layer is None:
+                    outputs_embeds.append(hidden_states)
+                    continue
+                end = start + hidden_states.shape[1]
+
+                if att_output.dtype != layer.self_attn.o_proj.weight.dtype:
+                    att_output = att_output.to(layer.self_attn.o_proj.weight.dtype)
+                att_out = att_output[:, start:end]
+                out_emb = layer.self_attn.o_proj(att_out)
+
+                out_emb += hidden_states
+                after_first_residual = out_emb.clone()
+
+                out_emb = layer.post_attention_layernorm(out_emb)
+                out_emb = layer.mlp(out_emb)
+
+                out_emb += after_first_residual
+
+                outputs_embeds.append(out_emb)
+
+                start = end if len(att_outputs) == 1 else 0
+            else:
+                outputs_embeds.append(None)
+
+        return outputs_embeds, past_key_values
+
     def forward(
         self,
         attention_mask: torch.Tensor | None = None,
@@ -426,13 +522,14 @@ class SmolVLMWithExpertModel(nn.Module):
         # RMSNorm
         num_layers = self.num_vlm_layers
         head_dim = self.vlm.config.text_config.head_dim
+        # Checkpointing is only safe when `not use_cache`: the KV-cache mutation inside `_compute_layer`
+        # is gated on `use_cache`, so it never fires here, and recomputing during backward is side-effect
+        # free. `use_cache=True` is only used for inference/generation, never for the training forward pass.
+        checkpoint_layers = self.gradient_checkpointing_enabled and self.training and not use_cache
         for layer_idx in range(num_layers):
-            if (
-                fill_kv_cache
-                or "cross" not in self.attention_mode
-                or (self.self_attn_every_n_layers > 0 and layer_idx % self.self_attn_every_n_layers == 0)
-            ):
-                att_outputs, past_key_values = self.forward_attn_layer(
+            if checkpoint_layers:
+                outputs_embeds, past_key_values = torch.utils.checkpoint.checkpoint(
+                    self._compute_layer,
                     model_layers,
                     inputs_embeds,
                     layer_idx,
@@ -440,11 +537,14 @@ class SmolVLMWithExpertModel(nn.Module):
                     attention_mask,
                     batch_size,
                     head_dim,
-                    use_cache=use_cache,
-                    past_key_values=past_key_values,
+                    use_cache,
+                    fill_kv_cache,
+                    past_key_values,
+                    use_reentrant=False,
+                    preserve_rng_state=False,  # no dropout/randomness anywhere in _compute_layer
                 )
             else:
-                att_outputs, past_key_values = self.forward_cross_attn_layer(
+                outputs_embeds, past_key_values = self._compute_layer(
                     model_layers,
                     inputs_embeds,
                     layer_idx,
@@ -452,40 +552,10 @@ class SmolVLMWithExpertModel(nn.Module):
                     attention_mask,
                     batch_size,
                     head_dim,
-                    use_cache=use_cache,
-                    past_key_values=past_key_values,
+                    use_cache,
+                    fill_kv_cache,
+                    past_key_values,
                 )
-            outputs_embeds = []
-            start = 0
-            for i, hidden_states in enumerate(inputs_embeds):
-                layer = model_layers[i][layer_idx]
-                att_output = (
-                    att_outputs[i] if i < len(att_outputs) else att_outputs[0]
-                )  # in case of self_attn
-                if hidden_states is not None:
-                    if layer is None:
-                        outputs_embeds.append(hidden_states)
-                        continue
-                    end = start + hidden_states.shape[1]
-
-                    if att_output.dtype != layer.self_attn.o_proj.weight.dtype:
-                        att_output = att_output.to(layer.self_attn.o_proj.weight.dtype)
-                    att_out = att_output[:, start:end]
-                    out_emb = layer.self_attn.o_proj(att_out)
-
-                    out_emb += hidden_states
-                    after_first_residual = out_emb.clone()
-
-                    out_emb = layer.post_attention_layernorm(out_emb)
-                    out_emb = layer.mlp(out_emb)
-
-                    out_emb += after_first_residual
-
-                    outputs_embeds.append(out_emb)
-
-                    start = end if len(att_outputs) == 1 else 0
-                else:
-                    outputs_embeds.append(None)
 
             inputs_embeds = outputs_embeds
 
