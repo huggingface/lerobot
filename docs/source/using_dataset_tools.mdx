@@ -50,11 +50,11 @@ lerobot-edit-dataset \
 Divide a dataset into multiple subsets.
 
 ```bash
-# Split by fractions (e.g. 80% train, 20% test, 20% val)
+# Split by fractions (e.g. 60% train, 20% val, 20% test)
 lerobot-edit-dataset \
     --repo_id lerobot/pusht \
     --operation.type split \
-    --operation.splits '{"train": 0.8, "test": 0.2, "val": 0.2}'
+    --operation.splits '{"train": 0.6, "val": 0.2, "test": 0.2}'
 
 # Split by specific episode indices
 lerobot-edit-dataset \
