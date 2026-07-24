@@ -19,9 +19,9 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import datasets
 import torch
 
+import datasets
 from lerobot.configs import (
     DEFAULT_DEPTH_UNIT,
     DEPTH_METER_UNIT,

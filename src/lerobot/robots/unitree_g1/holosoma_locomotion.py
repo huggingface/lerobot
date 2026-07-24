@@ -78,7 +78,14 @@ def load_policy(
     logger.info(f"Loading {policy_type.upper()} policy from: {repo_id}/{filename}")
     policy_path = hf_hub_download(repo_id=repo_id, filename=filename)
 
-    policy = ort.InferenceSession(policy_path)
+    # Cap onnxruntime to a single thread: this is a tiny policy run in the
+    # real-time control loop, and letting ORT grab one intra-op thread per core
+    # oversubscribes the CPU and starves the teleop/IK loop (abysmally slow teleop).
+    so = ort.SessionOptions()
+    so.intra_op_num_threads = 1
+    so.inter_op_num_threads = 1
+    so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    policy = ort.InferenceSession(policy_path, sess_options=so)
     logger.info(f"Policy loaded: {policy.get_inputs()[0].shape} → {policy.get_outputs()[0].shape}")
 
     # Extract KP/KD from ONNX metadata

@@ -241,7 +241,12 @@ class OpenCVCamera(Camera):
         actual_fps = self.videocapture.get(cv2.CAP_PROP_FPS)
         # Use math.isclose for robust float comparison
         if not success or not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
-            raise RuntimeError(f"{self} failed to set fps={self.fps} ({actual_fps=}).")
+            # Some cameras only run at a fixed rate (e.g. 90 fps). Rather than abort, adopt the
+            # camera's actual fps; downstream consumers can sample frames at whatever rate they need.
+            logger.warning(
+                f"{self} failed to set fps={self.fps} ({actual_fps=}); using the camera's actual fps."
+            )
+            self.fps = actual_fps
 
     def _validate_fourcc(self) -> None:
         """Validates and sets the camera's FOURCC code."""
@@ -276,16 +281,24 @@ class OpenCVCamera(Camera):
         width_success = self.videocapture.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.capture_width))
         height_success = self.videocapture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
 
+        # Trust the measured resolution: some fixed-format V4L2 cameras return False from
+        # set() even when the value is already correct. Only fail if the actual value is wrong.
         actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
-        if not width_success or self.capture_width != actual_width:
+        if self.capture_width != actual_width:
             raise RuntimeError(
                 f"{self} failed to set capture_width={self.capture_width} ({actual_width=}, {width_success=})."
             )
+        if not width_success:
+            logger.warning(f"{self} set(CAP_PROP_FRAME_WIDTH) returned False but {actual_width=} is correct.")
 
         actual_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-        if not height_success or self.capture_height != actual_height:
+        if self.capture_height != actual_height:
             raise RuntimeError(
                 f"{self} failed to set capture_height={self.capture_height} ({actual_height=}, {height_success=})."
+            )
+        if not height_success:
+            logger.warning(
+                f"{self} set(CAP_PROP_FRAME_HEIGHT) returned False but {actual_height=} is correct."
             )
 
     @staticmethod
