@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import dataclasses
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -283,6 +284,96 @@ def test_safe_push_to_hub():
     ds.num_episodes = 5
     assert safe_push_to_hub(ds, tags=["test"]) is True
     ds.push_to_hub.assert_called_once_with(tags=["test"], private=False)
+
+
+def test_action_smoothing_config_defaults_off():
+    from lerobot.rollout import RolloutConfig
+
+    defaults = {field.name: field.default for field in dataclasses.fields(RolloutConfig)}
+    assert defaults["action_smoothing_enabled"] is False
+    assert defaults["action_smoothing_alpha"] == 0.25
+    assert defaults["action_smoothing_max_delta"] == 1.25
+    assert defaults["action_smoothing_reset_threshold"] == 10.0
+
+
+def test_action_smoother_ema_clip_and_reset():
+    from lerobot.rollout.strategies.core import ActionSmoother
+
+    smoother = ActionSmoother()
+    assert smoother.apply({"joint.pos": 0.0}, alpha=0.25, max_delta=100.0, reset_threshold=100.0) == {
+        "joint.pos": 0.0
+    }
+    assert smoother.apply({"joint.pos": 8.0}, alpha=0.25, max_delta=100.0, reset_threshold=100.0) == {
+        "joint.pos": 2.0
+    }
+
+    smoother.reset()
+    assert smoother.apply({"joint.pos": 8.0}, alpha=0.25, max_delta=100.0, reset_threshold=100.0) == {
+        "joint.pos": 8.0
+    }
+
+    smoother = ActionSmoother()
+    smoother.apply({"joint.pos": 0.0}, alpha=1.0, max_delta=2.0, reset_threshold=100.0)
+    assert smoother.apply({"joint.pos": 8.0}, alpha=1.0, max_delta=2.0, reset_threshold=100.0) == {
+        "joint.pos": 2.0
+    }
+
+    smoother = ActionSmoother()
+    smoother.apply({"joint.pos": 0.0}, alpha=0.25, max_delta=100.0, reset_threshold=1.0)
+    assert smoother.apply({"joint.pos": 8.0}, alpha=0.25, max_delta=100.0, reset_threshold=1.0) == {
+        "joint.pos": 8.0
+    }
+
+
+def test_send_next_action_applies_action_smoothing_before_send():
+    from lerobot.rollout.context import (
+        DatasetContext,
+        HardwareContext,
+        PolicyContext,
+        ProcessorContext,
+        RolloutContext,
+        RuntimeContext,
+    )
+    from lerobot.rollout.strategies.core import ActionSmoother, send_next_action
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    engine = MagicMock()
+    engine.get_action.side_effect = [torch.tensor([0.0]), torch.tensor([8.0])]
+    robot_wrapper = MagicMock()
+    robot_action_processor = MagicMock(side_effect=lambda action_and_obs: dict(action_and_obs[0]))
+    cfg = SimpleNamespace(
+        action_smoothing_enabled=True,
+        action_smoothing_alpha=1.0,
+        action_smoothing_max_delta=2.0,
+        action_smoothing_reset_threshold=100.0,
+    )
+    ctx = RolloutContext(
+        runtime=RuntimeContext(cfg=cfg, shutdown_event=MagicMock()),
+        hardware=HardwareContext(robot_wrapper=robot_wrapper, teleop=None),
+        policy=PolicyContext(
+            policy=MagicMock(),
+            preprocessor=MagicMock(),
+            postprocessor=MagicMock(),
+            inference=engine,
+        ),
+        processors=ProcessorContext(
+            teleop_action_processor=MagicMock(),
+            robot_action_processor=robot_action_processor,
+            robot_observation_processor=MagicMock(),
+        ),
+        data=DatasetContext(
+            dataset=None,
+            dataset_features={"observation.state": {"dtype": "float32", "shape": (0,), "names": []}},
+            ordered_action_keys=["joint.pos"],
+        ),
+    )
+    interpolator = ActionInterpolator()
+    smoother = ActionSmoother()
+
+    assert send_next_action({}, {}, ctx, interpolator, smoother) == {"joint.pos": 0.0}
+    assert send_next_action({}, {}, ctx, interpolator, smoother) == {"joint.pos": 8.0}
+    robot_wrapper.send_action.assert_any_call({"joint.pos": 0.0})
+    robot_wrapper.send_action.assert_called_with({"joint.pos": 2.0})
 
 
 # ---------------------------------------------------------------------------
