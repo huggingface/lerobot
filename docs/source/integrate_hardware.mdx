@@ -12,10 +12,11 @@ To that end, we provide the [`Robot`](https://github.com/huggingface/lerobot/blo
 
 ## Choose your motors
 
-If you're using Feetech or Dynamixel motors, LeRobot provides built-in bus interfaces:
+If you're using Feetech, Dynamixel or Robstride motors, LeRobot provides built-in bus interfaces:
 
 - [`FeetechMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/feetech/feetech.py) – for controlling Feetech servos
 - [`DynamixelMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/dynamixel/dynamixel.py) – for controlling Dynamixel servos
+- [`RobstrideMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/robstride/robstride.py) and [`RobstridePrivateMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/robstride/robstride_private.py) – for controlling Robstride motors over CAN. The first targets motors switched to the MIT communication mode, the second speaks the factory-default private protocol; see [Robstride Motors and CAN Bus](./robstride) for choosing between them.
 
 Please refer to the [`MotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/motors_bus.py) abstract class to learn about its API.
 For a good example of how it can be used, you can have a look at our own [SO101 follower implementation](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/so_follower/so101_follower/so101_follower.py)
