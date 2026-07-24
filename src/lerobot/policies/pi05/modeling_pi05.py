@@ -878,8 +878,34 @@ class PI05Policy(PreTrainedPolicy):
             if remap_count > 0:
                 print(f"Remapped {remap_count} state dict keys")
 
-            # Load the remapped state dict into the model
-            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
+            # Load non-strict, then enforce strictness ourselves so we can allow ONE expected
+            # gap: TE's LayerNormMLP registers a per-layer `_extra_state` buffer (fp8 amax
+            # history + scale). A bf16 checkpoint (e.g. pi05_base) has none, so with fp8 enabled
+            # those `...layernorm_mlp._extra_state` keys are EXPECTED to be missing — TE inits them
+            # fresh, which is correct when starting fp8 from a bf16 checkpoint (scales calibrate
+            # during training). Not a load error. (strict=True previously RAISED on these; the
+            # outer except then swallowed it as a scary "Could not load state dict" — which would
+            # have hidden a genuinely missing weight the exact same way.)
+            load_result = model.load_state_dict(remapped_state_dict, strict=False)
+            missing_keys = list(load_result.missing_keys)
+            unexpected_keys = list(load_result.unexpected_keys)
+
+            if getattr(model.config, "vlm_mlp_fp8_enable", False):
+                fp8_extra = [k for k in missing_keys if k.endswith("._extra_state")]
+                if fp8_extra:
+                    missing_keys = [k for k in missing_keys if k not in set(fp8_extra)]
+                    print(
+                        f"fp8: {len(fp8_extra)} TE LayerNormMLP _extra_state buffers initialized "
+                        "fresh (expected — starting fp8 from a bf16 checkpoint; not a load error)"
+                    )
+
+            # Honor strict for any REMAINING (genuine) gap — after the fp8 _extra_state is excluded.
+            if strict and (missing_keys or unexpected_keys):
+                raise RuntimeError(
+                    f"Error(s) in loading state_dict for {type(model).__name__}: "
+                    f"{len(missing_keys)} missing and {len(unexpected_keys)} unexpected key(s) "
+                    "remain after excluding expected fp8 _extra_state buffers."
+                )
 
             if missing_keys:
                 print(f"Missing keys when loading state dict: {len(missing_keys)} keys")

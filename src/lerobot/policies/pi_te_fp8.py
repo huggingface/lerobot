@@ -58,9 +58,9 @@ def _ensure_transformer_engine() -> bool:
     try:
         import transformer_engine.pytorch as _te
         from transformer_engine.common.recipe import (
-            DelayedScaling as _DS,
-            Float8BlockScaling as _F8B,
-            Format as _Fmt,
+            DelayedScaling as _DS,  # noqa: N814
+            Float8BlockScaling as _F8B,  # noqa: N814
+            Format as _Fmt,  # noqa: N814
         )
         from transformer_engine.pytorch.distributed import checkpoint as _te_ckpt
 
