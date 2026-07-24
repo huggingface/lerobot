@@ -374,7 +374,11 @@ torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 
 [tool.setuptools.package-data]
-lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt"]
+lerobot = [
+    "envs/*.json",
+    "annotations/steerable_pipeline/prompts/*.txt",
+    "teleoperators/pico_headset/assets/*.npz",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
