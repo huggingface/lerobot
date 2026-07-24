@@ -290,8 +290,8 @@ def main():
     parser.add_argument(
         "--record-time-s",
         type=float,
-        default=6.0,
-        help="Time duration to attempt capturing frames. Default: 6 seconds.",
+        default=2.0,
+        help="Time duration to attempt capturing frames. Default: 2 seconds.",
     )
     parser.add_argument(
         "--warmup-s",
