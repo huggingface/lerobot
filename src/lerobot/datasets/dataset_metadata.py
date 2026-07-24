@@ -535,13 +535,29 @@ class LeRobotDatasetMetadata:
             # Initialize indices and frame count for a new dataset made of the first episode data
             chunk_idx, file_idx = 0, 0
             if self.episodes is not None and len(self.episodes) > 0:
-                # It means we are resuming recording, so we need to load the latest episode
-                # Update the indices to avoid overwriting the latest episode
-                chunk_idx = self.episodes[-1]["meta/episodes/chunk_index"]
-                file_idx = self.episodes[-1]["meta/episodes/file_index"]
-                latest_num_frames = self.episodes[-1]["dataset_to_index"]
-                episode_dict["dataset_from_index"] = [latest_num_frames]
-                episode_dict["dataset_to_index"] = [latest_num_frames + num_frames]
+                # It means we are resuming recording, so we need to continue after the latest
+                # episode. ``self.episodes`` is sorted by ``episode_index`` (see load_episodes),
+                # so ``[-1]`` is the true latest episode.
+                latest_episode = self.episodes[-1]
+                chunk_idx = latest_episode["meta/episodes/chunk_index"]
+                file_idx = latest_episode["meta/episodes/file_index"]
+
+                # The new episode's frame range MUST start where the data writer numbers it,
+                # i.e. at ``self.total_frames`` (the same authoritative counter used for the
+                # data ``index`` column). Deriving it from ``episodes[-1]["dataset_to_index"]``
+                # instead can silently diverge if the metadata is inconsistent, producing
+                # duplicate indices / orphan rows that later crash training. Guard against that.
+                latest_to_index = latest_episode["dataset_to_index"]
+                if latest_to_index != self.total_frames:
+                    raise RuntimeError(
+                        "Dataset metadata is inconsistent and unsafe to resume: the latest "
+                        f"episode ends at frame {latest_to_index} but info.total_frames is "
+                        f"{self.total_frames}. This usually means a previous recording was "
+                        "interrupted or left duplicate/orphan episodes. Repair the dataset "
+                        "(e.g. scripts/repair_dataset.py) before resuming."
+                    )
+                episode_dict["dataset_from_index"] = [self.total_frames]
+                episode_dict["dataset_to_index"] = [self.total_frames + num_frames]
 
                 # When resuming, move to the next file
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)

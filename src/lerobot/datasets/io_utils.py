@@ -215,6 +215,13 @@ def load_episodes(local_dir: Path) -> datasets.Dataset:
     # (e.g. tasks, dataset_from_index, dataset_to_index, data/chunk_index, data/file_index, etc.)
     # This is to speedup access to these data, instead of having to load episode stats.
     episodes = episodes.select_columns([key for key in episodes.features if not key.startswith("stats/")])
+    # Parquet files are concatenated in sorted-filename order, which is NOT guaranteed to
+    # match episode order (e.g. a stale/duplicate meta file sorts last). Several call sites
+    # rely on positional access reflecting episode order — most importantly resume logic that
+    # reads ``episodes[-1]`` as "the latest episode" and ``episodes[ep_idx]`` as a lookup by
+    # index. Sort by ``episode_index`` so positional access is always correct.
+    if "episode_index" in episodes.column_names and len(episodes) > 0:
+        episodes = episodes.sort("episode_index")
     return episodes
 
 

@@ -430,8 +430,13 @@ class DatasetWriter:
             global_frame_index = 0
             self._current_file_start_frame = 0
             if self._meta.episodes is not None and len(self._meta.episodes) > 0:
+                # Resuming: continue after the true latest episode. ``episodes`` is sorted by
+                # ``episode_index`` (see load_episodes), so ``[-1]`` is the latest. Use the
+                # authoritative ``total_frames`` counter for the starting frame index so it
+                # matches the data ``index`` column (np.arange(total_frames, ...)) and never
+                # diverges from the metadata.
                 latest_ep = self._meta.episodes[-1]
-                global_frame_index = latest_ep["dataset_to_index"]
+                global_frame_index = self._meta.total_frames
                 chunk_idx = latest_ep["data/chunk_index"]
                 file_idx = latest_ep["data/file_index"]
 
