@@ -29,10 +29,15 @@ class Rotation:
     def __init__(self, quat: np.ndarray) -> None:
         """Initialize rotation from quaternion [x, y, z, w]."""
         self._quat = np.asarray(quat, dtype=float)
-        # Normalize quaternion
+        if self._quat.shape != (4,):
+            raise ValueError(f"Quaternion must have shape (4,), got {self._quat.shape}")
+        # Normalize quaternion. Reject the zero vector — it has no orientation.
         norm = np.linalg.norm(self._quat)
-        if norm > 0:
-            self._quat = self._quat / norm
+        if norm <= 0.0 or not np.isfinite(norm):
+            raise ValueError(
+                f"Quaternion must be a non-zero finite vector; got {self._quat} (norm={norm})"
+            )
+        self._quat = self._quat / norm
 
     @classmethod
     def from_rotvec(cls, rotvec: np.ndarray) -> "Rotation":
