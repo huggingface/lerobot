@@ -16,9 +16,13 @@
 
 """Unitree G1 locomotion controllers (Groot, Holosoma, SONIC)."""
 
+from .gr00t_locomotion import GrootLocomotionController
+from .holosoma_locomotion import HolosomaLocomotionController
+from .sonic_whole_body import SonicRuntime, SonicWholeBodyController
+
 __all__ = [
     "GrootLocomotionController",
     "HolosomaLocomotionController",
-    "SonicWholeBodyController",
     "SonicRuntime",
+    "SonicWholeBodyController",
 ]

@@ -65,10 +65,15 @@ def _extract_wb34_from_action(action: dict | None) -> np.ndarray | None:
     units. The ``.pos`` suffix lets these flow through ``lerobot-rollout`` as normal
     joint-position action features.
     """
-    if not action or wb_action_key(0) not in action:
+    if not action:
+        return None
+    keys = [wb_action_key(i) for i in range(WB_ACTION_DIM)]
+    # Require the full dense command: a partial action (e.g. only ``wb.0.pos``)
+    # must not be silently zero-filled, which would drive most joints toward 0.
+    if any(key not in action for key in keys):
         return None
     return np.fromiter(
-        (float(action.get(wb_action_key(i), 0.0)) for i in range(WB_ACTION_DIM)),
+        (float(action[key]) for key in keys),
         dtype=np.float32,
         count=WB_ACTION_DIM,
     )
@@ -86,14 +91,15 @@ def _wb34_to_reference(wb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     The 29 joints are first assembled in MuJoCo / Unitree-SDK order
     ([L-leg 0:6, R-leg 6:12, waist 12:15, L-arm 15:22, R-arm 22:29] — the
     ``G1_29_JointIndex`` grouping OpenHLM uses), then permuted to IsaacLab order via
-    ``MUJOCO_TO_ISAACLAB``. Grippers (7, 15) and yaw-rate (33) are not part of the
-    29-DoF SONIC reference.
+    ``MUJOCO_TO_ISAACLAB``. Grippers (7, 15) are not part of the 29-DoF SONIC
+    reference, and yaw-rate (33) is integrated into the heading by the caller (it
+    cannot be represented in this static per-tick anchor).
     """
     ref_mj = np.zeros(29, np.float32)  # MuJoCo / Unitree-SDK grouped order
-    ref_mj[0:6] = wb[16:22]   # left leg
+    ref_mj[0:6] = wb[16:22]  # left leg
     ref_mj[6:12] = wb[22:28]  # right leg
     ref_mj[12:15] = wb[28:31]  # waist
-    ref_mj[15:22] = wb[0:7]   # left arm
+    ref_mj[15:22] = wb[0:7]  # left arm
     ref_mj[22:29] = wb[8:15]  # right arm
     ref = ref_mj[MUJOCO_TO_ISAACLAB].astype(np.float32)  # -> IsaacLab order for SONIC
     roll, pitch = float(wb[31]), float(wb[32])
@@ -129,8 +135,10 @@ class SonicRuntime:
         return self.controller
 
     def reset(self):
-        self.controller.reinit_heading = True
-        self.controller.playing = True
+        # Full pipeline reset: clears the encoder token, proprioception history and
+        # heading, and rewinds the motion buffer. reinit_heading is set so the next
+        # step re-latches the reference frame to the current robot orientation.
+        self.controller.reset()
 
     def shutdown(self):
         pass
@@ -165,6 +173,9 @@ class SonicWholeBodyController:
         # stream of per-tick whole-body commands, fed to the encoder as a batch.
         self._wb_traj: deque[np.ndarray] = deque(maxlen=50)
         self._wb_quat_traj: deque[np.ndarray] = deque(maxlen=50)
+        # Integrated heading (rad) from the whole-body command's yaw-rate (index 33),
+        # forwarded to the pipeline as ``delta_heading`` so turn commands take effect.
+        self._heading = 0.0
 
         logger.info("SONIC ready (encoder/decoder, 34-D whole-body command path)")
 
@@ -181,6 +192,11 @@ class SonicWholeBodyController:
         if c.encode_mode != 0:
             c.encode_mode = 0
             c.reinit_heading = True
+        # Index 33 is a yaw-rate (rad/s): integrate it into a heading offset and hand
+        # it to the pipeline as ``delta_heading`` so commanded turns are tracked rather
+        # than silently dropped (the anchor from _wb34_to_reference only carries r/p).
+        self._heading += float(wb[33]) * CONTROL_DT
+        c.delta_heading = self._heading
         # Capture the heading/anchor reference on the first whole-body tick. The
         # controller only latches ``init_ref_quat`` (and the base heading) inside
         # ``step()`` when ``first_motion or reinit_heading`` — but it already boots in
@@ -282,6 +298,7 @@ class SonicWholeBodyController:
         self._wb_step = 0
         self._wb_traj.clear()
         self._wb_quat_traj.clear()
+        self._heading = 0.0
 
     def shutdown(self):
         self._runtime.shutdown()

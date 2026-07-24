@@ -161,40 +161,61 @@ class UnitreeG1(Robot):
 
         # Controller thread state
         self._controller_thread = None
+        # When set, the controller loop stops publishing low commands so reset() can
+        # drive the joints directly without two publishers fighting (single-publisher).
+        self._controller_paused = threading.Event()
         self._controller_action_lock = threading.Lock()
         self.controller_input = default_remote_input()
         self.controller_output = {}
 
-        # Replay-camera state (decoded frames per robot camera name + play cursor).
-        self._replay_frames: dict[str, list[np.ndarray]] = {}
+        # Replay-camera state: keep the encoded (raw) cells per camera and decode
+        # frames lazily as the play cursor advances, with a small frame cache, so we
+        # don't materialize gigabytes of decoded RGB at construction time.
+        self._replay_raw: dict[str, list] = {}
+        self._replay_cache: dict[tuple[str, int], np.ndarray] = {}
+        self._replay_cache_cap = 8
         self._replay_len = 0
         self._replay_idx = 0
         if config.replay_camera_parquet and config.replay_camera_map:
             self._load_replay_frames()
 
     def _load_replay_frames(self) -> None:
-        """Decode recorded episode frames from a parquet into per-camera image lists."""
-        import io
-
+        """Load only the mapped parquet columns (encoded frames); decode on demand."""
         import pyarrow.parquet as pq
-        from PIL import Image
 
-        table = pq.read_table(self.config.replay_camera_parquet)
-        cols = {col: table.column(col).to_pylist() for col in self.config.replay_camera_map.values()}
+        cols_needed = list(dict.fromkeys(self.config.replay_camera_map.values()))
+        table = pq.read_table(self.config.replay_camera_parquet, columns=cols_needed)
         self._replay_len = table.num_rows
-
-        def decode(cell) -> np.ndarray:
-            data = cell["bytes"] if isinstance(cell, dict) else cell
-            return np.asarray(Image.open(io.BytesIO(data)).convert("RGB"), dtype=np.uint8)
-
-        for cam_name, column in self.config.replay_camera_map.items():
-            self._replay_frames[cam_name] = [decode(c) for c in cols[column]]
+        self._replay_raw = {
+            cam_name: table.column(column).to_pylist()
+            for cam_name, column in self.config.replay_camera_map.items()
+        }
         logger.info(
-            "Loaded %d replay frames for cameras %s from %s",
+            "Loaded %d replay frames (lazy-decode) for cameras %s from %s",
             self._replay_len,
             list(self.config.replay_camera_map),
             self.config.replay_camera_parquet,
         )
+
+    def _decode_replay_cell(self, cell) -> np.ndarray:
+        import io
+
+        from PIL import Image
+
+        data = cell["bytes"] if isinstance(cell, dict) else cell
+        return np.asarray(Image.open(io.BytesIO(data)).convert("RGB"), dtype=np.uint8)
+
+    def _replay_frame(self, cam_name: str, idx: int) -> np.ndarray:
+        """Decode (and briefly cache) a single replay frame for a camera."""
+        key = (cam_name, idx)
+        cached = self._replay_cache.get(key)
+        if cached is not None:
+            return cached
+        frame = self._decode_replay_cell(self._replay_raw[cam_name][idx])
+        if len(self._replay_cache) >= self._replay_cache_cap:
+            self._replay_cache.pop(next(iter(self._replay_cache)))
+        self._replay_cache[key] = frame
+        return frame
 
     def _subscribe_lowstate(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
@@ -292,8 +313,10 @@ class UnitreeG1(Robot):
 
     @property
     def _replay_cameras_ft(self) -> dict[str, tuple]:
-        """Replay cameras, shaped from their first decoded frame."""
-        return {name: frames[0].shape for name, frames in self._replay_frames.items() if frames}
+        """Replay cameras, shaped from their first (lazily decoded) frame."""
+        if not self._replay_len:
+            return {}
+        return {name: self._replay_frame(name, 0).shape for name in self._replay_raw}
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -332,6 +355,11 @@ class UnitreeG1(Robot):
 
         while not self._shutdown_event.is_set():
             start_time = time.time()
+
+            # Paused during reset() so the reset routine is the sole low-cmd publisher.
+            if self._controller_paused.is_set():
+                time.sleep(control_dt)
+                continue
 
             with self._lowstate_lock:
                 lowstate = self._lowstate
@@ -495,14 +523,23 @@ class UnitreeG1(Robot):
     def disconnect(self):
         # Stop the controller loop first so it isn't fighting the shutdown ramp.
         self._shutdown_event.set()
+        controller_stopped = True
         if self._controller_thread is not None:
-            self._controller_thread.join(timeout=2.0)
+            # Wait long enough for any in-flight inference tick to finish and the loop
+            # to observe the shutdown flag, so no stray low command is published while
+            # the ramp runs (the shutdown routine must be the single publisher).
+            self._controller_thread.join(timeout=5.0)
             if self._controller_thread.is_alive():
-                logger.warning("Controller thread did not stop cleanly")
+                controller_stopped = False
+                logger.error(
+                    "Controller thread did not stop; skipping graceful ramp to avoid "
+                    "concurrent low commands (fail-safe: joints keep last command until exit)"
+                )
 
         # Soft, damped settle instead of an instant limp (real robot only; the
-        # subscribe thread is still alive here to supply the current pose).
-        if not self.config.is_simulation:
+        # subscribe thread is still alive here to supply the current pose). Only ramp
+        # once the controller thread has definitely exited.
+        if not self.config.is_simulation and controller_stopped:
             self._graceful_stop()
 
         if self.controller is not None and hasattr(self.controller, "shutdown"):
@@ -569,8 +606,8 @@ class UnitreeG1(Robot):
             idx = self._replay_idx
             if idx >= self._replay_len:
                 idx = self._replay_len - 1 if not self.config.replay_camera_loop else idx % self._replay_len
-            for name, frames in self._replay_frames.items():
-                obs[name] = frames[idx]
+            for name in self._replay_raw:
+                obs[name] = self._replay_frame(name, idx)
             self._replay_idx += 1
 
         # Cameras - read images from ZMQ cameras
@@ -709,43 +746,64 @@ class UnitreeG1(Robot):
         if default_positions is None:
             default_positions = np.array(self.config.default_positions, dtype=np.float32)
 
-        if self.config.is_simulation and self.sim_env is not None:
-            self.sim_env.reset()
-            self.publish_lowcmd(
-                {f"{motor.name}.q": float(default_positions[motor.value]) for motor in G1_29_JointIndex}
-            )
-        else:
-            total_time = 3.0
-            num_steps = int(total_time / control_dt)
+        # Full-body controllers (SONIC / OpenHLM) own the whole 29-DoF command and
+        # ignore ``<joint>.q`` in send_action(), so reset() must publish the default
+        # pose directly. Pause the background controller first so the two aren't both
+        # writing low commands while the robot moves to the default pose.
+        full_body = getattr(self.controller, "full_body", False)
+        paused = False
+        if full_body and self._controller_thread is not None:
+            self._controller_paused.set()
+            paused = True
+            time.sleep(control_dt)  # let any in-flight controller tick settle
 
-            # get current state
-            obs = self.get_observation()
+        try:
+            if self.config.is_simulation and self.sim_env is not None:
+                self.sim_env.reset()
+                self.publish_lowcmd(
+                    {f"{motor.name}.q": float(default_positions[motor.value]) for motor in G1_29_JointIndex}
+                )
+            else:
+                total_time = 3.0
+                num_steps = int(total_time / control_dt)
 
-            # record current positions
-            init_dof_pos = np.zeros(29, dtype=np.float32)
-            for motor in G1_29_JointIndex:
-                init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
+                # get current state
+                obs = self.get_observation()
 
-            # Interpolate to default position
-            for step in range(num_steps):
-                start_time = time.time()
-
-                alpha = step / num_steps
-                action_dict = {}
+                # record current positions
+                init_dof_pos = np.zeros(29, dtype=np.float32)
                 for motor in G1_29_JointIndex:
-                    target_pos = default_positions[motor.value]
-                    interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
-                    action_dict[f"{motor.name}.q"] = float(interp_pos)
+                    init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
 
-                self.send_action(action_dict)
+                # Interpolate to default position
+                for step in range(num_steps):
+                    start_time = time.time()
 
-                # Maintain constant control rate
-                elapsed = time.time() - start_time
-                sleep_time = max(0, control_dt - elapsed)
-                time.sleep(sleep_time)
+                    alpha = step / num_steps
+                    action_dict = {}
+                    for motor in G1_29_JointIndex:
+                        target_pos = default_positions[motor.value]
+                        interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
+                        action_dict[f"{motor.name}.q"] = float(interp_pos)
 
-        # Reset controller internal state (gait phase, obs history, etc.)
-        if self.controller is not None and hasattr(self.controller, "reset"):
-            self.controller.reset()
+                    # Full-body controllers no-op in send_action(); publish the pose
+                    # directly (arm-only controllers keep the send_action() path).
+                    if full_body:
+                        self.publish_lowcmd(action_dict)
+                    else:
+                        self.send_action(action_dict)
+
+                    # Maintain constant control rate
+                    elapsed = time.time() - start_time
+                    sleep_time = max(0, control_dt - elapsed)
+                    time.sleep(sleep_time)
+
+            # Reset controller internal state (gait phase, obs history, etc.) before
+            # resuming so its buffers reflect the post-reset pose.
+            if self.controller is not None and hasattr(self.controller, "reset"):
+                self.controller.reset()
+        finally:
+            if paused:
+                self._controller_paused.clear()
 
         logger.info("Reached default position")
