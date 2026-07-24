@@ -53,7 +53,9 @@ class PI05Pytorch(PI05PytorchBase):  # see openpi `PI0Pytorch`
     use_on_device_suffix_mask = True
     precompute_denoise_times = True
 
-    def forward(self, images, img_masks, tokens, masks, actions, noise, time) -> Tensor:
+    def forward(
+        self, images, img_masks, tokens, masks, actions, noise, time, states=None, state_masks=None
+    ) -> Tensor:
         """Do a full training forward pass and compute the loss."""
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
@@ -63,7 +65,7 @@ class PI05Pytorch(PI05PytorchBase):  # see openpi `PI0Pytorch`
         suppress_prefix = bool(getattr(self.config, "knowledge_insulation", False))
         with torch.no_grad() if suppress_prefix else nullcontext():
             prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-                images, img_masks, tokens, masks
+                images, img_masks, tokens, masks, states, state_masks
             )
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
 
@@ -1107,11 +1109,12 @@ class PI052Policy(PI05Policy):
 
         # ---- prefix: images + language + (optional FAST) -------------
         images, img_masks = self._preprocess_images(batch)
+        states, state_masks = self._prepare_memory_states(batch)
         lang_tokens = batch[OBS_LANGUAGE_TOKENS]
         lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
         with torch.no_grad() if suppress_prefix_grads else nullcontext():
             prefix_embs, prefix_pad, prefix_att = self.model.embed_prefix(
-                images, img_masks, lang_tokens, lang_masks
+                images, img_masks, lang_tokens, lang_masks, states, state_masks
             )
         non_fast_prefix_len = prefix_embs.shape[1]  # images + language only
 
@@ -1448,11 +1451,12 @@ class PI052Policy(PI05Policy):
         """
 
         images, img_masks = self._preprocess_images(batch)
+        states, state_masks = self._prepare_memory_states(batch)
         lang_tokens = batch[OBS_LANGUAGE_TOKENS]
         lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
 
         prefix_embs, prefix_pad, prefix_att = self.model.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks
+            images, img_masks, lang_tokens, lang_masks, states, state_masks
         )
 
         # Make supervised text causal before appending FAST tokens.
@@ -1576,11 +1580,12 @@ class PI052Policy(PI05Policy):
             special_ids.add(int(eos_token_id))
 
         images, img_masks = self._preprocess_images(batch)
+        states, state_masks = self._prepare_memory_states(batch)
         tokens = batch[OBS_LANGUAGE_TOKENS]
         masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.model.embed_prefix(
-            images, img_masks, tokens, masks
+            images, img_masks, tokens, masks, states, state_masks
         )
 
         device = prefix_embs.device
@@ -1667,6 +1672,9 @@ class PI052Policy(PI05Policy):
         return decoded
 
     def _prepare_action_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        if not self.config.recipe_path:
+            return super()._prepare_action_batch(batch)
+
         from .inference.pi052_adapter import _build_text_batch, _get_loc_tokenizer  # noqa: PLC0415
         from .text_processor_pi052 import (  # noqa: PLC0415
             discretize_state_str,
@@ -1679,6 +1687,7 @@ class PI052Policy(PI05Policy):
         tasks = self._tasks_from_batch(batch, n)
         # Mirror training by appending the already normalized state to low-level prompts.
         state_all = batch.get(OBS_STATE)
+        prompt_state = state_all[:, -1] if torch.is_tensor(state_all) and state_all.ndim == 3 else state_all
 
         joint = bool(getattr(self.config, "joint_subtask_conditioning", False))
         joint_tokenizer = None
@@ -1705,7 +1714,7 @@ class PI052Policy(PI05Policy):
                 # Hold the previously generated subtask; only the state in the
                 # prompt below is refreshed to the current observation.
                 subtask = self.last_subtasks[i]
-            state_str = discretize_state_str(state_all[i]) if torch.is_tensor(state_all) else None
+            state_str = discretize_state_str(prompt_state[i]) if torch.is_tensor(prompt_state) else None
             if joint:
                 # Joint sequences keep the task turn (with state) and render the
                 # subtask as a causal assistant turn, exactly as trained.
@@ -1934,6 +1943,7 @@ class PI052Policy(PI05Policy):
         return torch.multinomial(probs, num_samples=1).squeeze(-1)
 
     def _prepare_pretrained_state_dict(self, remapped_state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
+        remapped_state_dict = super()._prepare_pretrained_state_dict(remapped_state_dict)
         lm_head_key = "model.paligemma_with_expert.paligemma.lm_head.weight"
         embed_tokens_key = "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
         if lm_head_key not in remapped_state_dict and embed_tokens_key in remapped_state_dict:

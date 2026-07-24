@@ -52,12 +52,12 @@ annotations only if the recipe trains those capabilities.
 
 The provided recipes are:
 
-| Recipe                                | Required annotations                                                    | Trains                                             |
-| ------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------- |
-| `recipes/subtask.yaml`                | `subtask`                                                               | Subtask prediction and subtask-conditioned actions |
+| Recipe                                | Required annotations                                                    | Trains                                                             |
+| ------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `recipes/subtask.yaml`                | `subtask`                                                               | Subtask prediction and subtask-conditioned actions                 |
 | `recipes/subtask_joint.yaml`          | `subtask`                                                               | Paper-style joint sequence: subtask text and actions in one sample |
-| `recipes/subtask_mem.yaml`            | `subtask`, `memory`                                                     | Subtasks, actions, and memory updates              |
-| `recipes/subtask_mem_vqa_speech.yaml` | `subtask`, `memory`, `vqa`; interjection/speech rows for those branches | Subtasks, actions, memory, VQA, and spoken replies |
+| `recipes/subtask_mem.yaml`            | `subtask`, `memory`                                                     | Subtasks, actions, and memory updates                              |
+| `recipes/subtask_mem_vqa_speech.yaml` | `subtask`, `memory`, `vqa`; interjection/speech rows for those branches | Subtasks, actions, memory, VQA, and spoken replies                 |
 
 The blend recipes factorize training into separate high-level (task → subtask)
 and low-level (subtask → actions) samples, matching how inference decomposes
@@ -118,18 +118,18 @@ the expected prompt, text target, and action endpoints before scaling up.
 
 ### Main training controls
 
-| Option                           |                    Default | Purpose                                                        |
-| -------------------------------- | -------------------------: | -------------------------------------------------------------- |
-| `policy.recipe_path`             | `recipes/subtask_mem.yaml` | Selects the language/action objective mixture                  |
-| `policy.text_loss_weight`        |                      `1.0` | Language-head cross-entropy weight; `0` disables text training |
-| `policy.flow_loss_weight`        |                     `10.0` | Continuous action flow-loss weight                             |
-| `policy.enable_fast_action_loss` |                     `true` | Adds discrete FAST action-token supervision                    |
-| `policy.fast_action_loss_weight` |                      `1.0` | FAST cross-entropy weight                                      |
-| `policy.knowledge_insulation`    |                     `true` | Blocks action-loss gradients through the VLM K/V path          |
-| `policy.flow_num_repeats`        |                        `5` | Reuses one VLM prefix for independent denoising targets        |
-| `policy.lm_head_lr_scale`        |                      `1.0` | Scales language-head learning rate; `1.0` uses the base rate   |
-| `policy.fast_skip_tokens`        |                     `1152` | FAST id offset; skips `<seg>`+`<loc>` so VQA and FAST never collide |
-| `policy.joint_subtask_conditioning` |                  `false` | Rebuilds the joint-sequence prefix at inference (see recipes)  |
+| Option                              |                    Default | Purpose                                                             |
+| ----------------------------------- | -------------------------: | ------------------------------------------------------------------- |
+| `policy.recipe_path`                | `recipes/subtask_mem.yaml` | Selects the language/action objective mixture                       |
+| `policy.text_loss_weight`           |                      `1.0` | Language-head cross-entropy weight; `0` disables text training      |
+| `policy.flow_loss_weight`           |                     `10.0` | Continuous action flow-loss weight                                  |
+| `policy.enable_fast_action_loss`    |                     `true` | Adds discrete FAST action-token supervision                         |
+| `policy.fast_action_loss_weight`    |                      `1.0` | FAST cross-entropy weight                                           |
+| `policy.knowledge_insulation`       |                     `true` | Blocks action-loss gradients through the VLM K/V path               |
+| `policy.flow_num_repeats`           |                        `5` | Reuses one VLM prefix for independent denoising targets             |
+| `policy.lm_head_lr_scale`           |                      `1.0` | Scales language-head learning rate; `1.0` uses the base rate        |
+| `policy.fast_skip_tokens`           |                     `1152` | FAST id offset; skips `<seg>`+`<loc>` so VQA and FAST never collide |
+| `policy.joint_subtask_conditioning` |                    `false` | Rebuilds the joint-sequence prefix at inference (see recipes)       |
 
 `fast_skip_tokens=1152` places FAST codes below PaliGemma's `<loc>` range.
 openpi's pi0-FAST convention is `128` (FAST occupies the `<loc>` ids); use that
@@ -140,6 +140,45 @@ embedding rows with FAST codes.
 The loss weights are starting points, not dataset-independent constants. Track
 flow loss and text/FAST losses separately, and inspect generated subtasks rather
 than selecting a checkpoint from total loss alone.
+
+### Visual memory (MEM)
+
+Pi052 can optionally use short-horizon visual context based on
+[MEM](https://arxiv.org/abs/2603.03596). Visual memory is disabled by default,
+so existing checkpoints and training commands keep the single-frame Pi052
+behavior.
+
+Enable it with:
+
+```bash
+lerobot-train \
+    ... \
+    --policy.use_visual_memory=true \
+    --policy.memory_frames=6 \
+    --policy.memory_stride=10 \
+    --policy.memory_temporal_attention_every=4
+```
+
+`memory_frames` includes the current observation. `memory_stride` is measured
+in dataset frames, so the example above uses the current image plus five
+historical images spaced one second apart for a 10 Hz dataset. Every fourth
+SigLIP layer applies causal temporal attention between matching patch tokens.
+Only the current-frame tokens leave the vision tower, keeping the downstream
+language/action prefix length unchanged.
+
+At the beginning of an episode, unavailable history is padded and masked. At
+inference, Pi052 maintains the same strided image history internally and clears
+it whenever the policy is reset.
+
+Historical proprioception is an independent option:
+
+```bash
+--policy.use_proprioceptive_memory=true
+```
+
+When enabled, one projected continuous state token is added for each retained
+frame. Visual and proprioceptive memory use the same `memory_frames` and
+`memory_stride` settings, but either path can be enabled on its own.
 
 ### Dataset-specific FAST tokenizer
 

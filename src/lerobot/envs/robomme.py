@@ -58,16 +58,22 @@ class RoboMMEGymEnv(gym.Env):
         dataset: str = "test",
         episode_idx: int = 0,
         max_steps: int = 300,
+        front_camera_name: str = "camera1",
+        wrist_camera_name: str = "camera2",
     ):
         super().__init__()
         from robomme.env_record_wrapper import BenchmarkEnvBuilder
 
         self._task = task
+        self.task = task
+        self.task_description = task
         self._action_space_type = action_space_type
         self._dataset = dataset
         self._episode_idx = episode_idx
         self._max_steps = max_steps
         self._max_episode_steps = max_steps
+        self._front_camera_name = front_camera_name
+        self._wrist_camera_name = wrist_camera_name
 
         self._builder = BenchmarkEnvBuilder(
             env_id=task,
@@ -89,8 +95,8 @@ class RoboMMEGymEnv(gym.Env):
             {
                 "pixels": spaces.Dict(
                     {
-                        "image": spaces.Box(0, 255, shape=(256, 256, 3), dtype=np.uint8),
-                        "wrist_image": spaces.Box(0, 255, shape=(256, 256, 3), dtype=np.uint8),
+                        front_camera_name: spaces.Box(0, 255, shape=(256, 256, 3), dtype=np.uint8),
+                        wrist_camera_name: spaces.Box(0, 255, shape=(256, 256, 3), dtype=np.uint8),
                     }
                 ),
                 "agent_pos": spaces.Box(-np.inf, np.inf, shape=(8,), dtype=np.float32),
@@ -99,13 +105,30 @@ class RoboMMEGymEnv(gym.Env):
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
+        # A wrapper may be reset more than once when n_episodes > n_envs. Close
+        # the previous SAPIEN environment before replacing it; otherwise every
+        # reset retains Vulkan file descriptors and fence allocations.
+        self.close()
         self._env = self._builder.make_env_for_episode(
             episode_idx=self._episode_idx,
             max_steps=self._max_steps,
         )
         obs, info = self._env.reset()
         self._last_raw_obs = obs
+        task_goal = info.get("task_goal")
+        if isinstance(task_goal, list | tuple):
+            task_goal = task_goal[0] if task_goal else ""
+        self.task_description = str(task_goal or self._task)
         return self._convert_obs(obs), self._convert_info(info)
+
+    def close(self):
+        """Release the underlying ManiSkill/SAPIEN environment immediately."""
+        if self._env is not None:
+            try:
+                self._env.close()
+            finally:
+                self._env = None
+        self._last_raw_obs = None
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self._env.step(action)
@@ -155,8 +178,10 @@ class RoboMMEGymEnv(gym.Env):
         gripper = np.asarray(gripper_state, dtype=np.float32).flatten()[:1]
         state = np.concatenate([joint, gripper])
 
+        front_camera_name = getattr(self, "_front_camera_name", "camera1")
+        wrist_camera_name = getattr(self, "_wrist_camera_name", "camera2")
         return {
-            "pixels": {"image": front_rgb, "wrist_image": wrist_rgb},
+            "pixels": {front_camera_name: front_rgb, wrist_camera_name: wrist_rgb},
             "agent_pos": state,
         }
 
@@ -175,6 +200,8 @@ def _make_env_fns(
     dataset: str,
     episode_length: int,
     task_id: int,
+    front_camera_name: str,
+    wrist_camera_name: str,
 ) -> list[Callable[[], RoboMMEGymEnv]]:
     """Build n_envs factory callables for one RoboMME task id."""
 
@@ -185,6 +212,8 @@ def _make_env_fns(
             dataset=dataset,
             episode_idx=episode_index,
             max_steps=episode_length,
+            front_camera_name=front_camera_name,
+            wrist_camera_name=wrist_camera_name,
         )
 
     return [partial(_make_one, task_id + i) for i in range(n_envs)]
@@ -197,6 +226,8 @@ def create_robomme_envs(
     dataset: str = "test",
     episode_length: int = 300,
     task_ids: list[int] | None = None,
+    front_camera_name: str = "camera1",
+    wrist_camera_name: str = "camera2",
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
     """Create vectorized RoboMME environments for evaluation.
@@ -231,6 +262,8 @@ def create_robomme_envs(
                 dataset=dataset,
                 episode_length=episode_length,
                 task_id=task_id,
+                front_camera_name=front_camera_name,
+                wrist_camera_name=wrist_camera_name,
             )
             if is_async:
                 lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space, cached_metadata)
