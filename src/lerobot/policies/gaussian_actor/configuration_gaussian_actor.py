@@ -37,13 +37,19 @@ def is_image_feature(key: str) -> bool:
 @dataclass
 class ConcurrencyConfig:
     """Configuration for the concurrency of the actor and learner.
+
     Possible values are:
     - "threads": Use threads for the actor and learner.
     - "processes": Use processes for the actor and learner.
+
+    ``multiprocessing_context`` selects the process-wide start method when
+    processes are used. Set it to ``None`` to preserve Python's default or a
+    method already selected by the embedding application.
     """
 
     actor: str = "threads"
     learner: str = "threads"
+    multiprocessing_context: str | None = "spawn"
 
 
 @dataclass
