@@ -180,6 +180,14 @@ class DAggerStrategyConfig(RolloutStrategyConfig):
     # Target video file size in MB for episode rotation (record_autonomous
     # mode only).  Defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB when None.
     target_video_file_size_mb: int | None = None
+    # Whether to turn on or off the smooth handover behavior at phase transitions:
+    # the leader is driven to the follower position on pause (teleops with
+    # `send_feedback` capability), and the follower is slid to the teleop pose when
+    # a correction starts (non-actuated teleops). Disable for clutch-style
+    # teleoperators (e.g. VR controllers) that re-reference at the current robot
+    # pose on engage: the handover is already continuous there, and the blocking
+    # interpolation only delays the start of the correction.
+    smooth_handover: bool = True
     input_device: str = "keyboard"
     keyboard: DAggerKeyboardConfig = field(default_factory=DAggerKeyboardConfig)
     pedal: DAggerPedalConfig = field(default_factory=DAggerPedalConfig)
