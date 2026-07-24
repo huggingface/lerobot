@@ -152,7 +152,7 @@ def _collate_processed(samples):
         }
 
     keys = {
-        *[key for key in samples[0] if key.startswith("observation.images.")],
+        *[key for key in samples[0] if key.startswith("observation.images.") and not key.endswith("_is_pad")],
         OBS_LANGUAGE_TOKENS,
         OBS_LANGUAGE_ATTENTION_MASK,
     }
