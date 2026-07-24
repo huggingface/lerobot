@@ -346,3 +346,10 @@ def test_state_not_modified_by_relative_processor(dataset, action_dim):
 
     result_state = result[TransitionKey.OBSERVATION][OBS_STATE]
     torch.testing.assert_close(result_state, original_state)
+
+
+def test_cached_anchor_not_in_config():
+    """The cached anchor is ephemeral runtime state and must not leak into the config."""
+    step = RelativeActionsProcessorStep(enabled=True)
+    step.set_cached_state(torch.tensor([[1.0, 2.0, 3.0, 4.0]]))
+    assert set(step.get_config()) == {"enabled", "exclude_joints", "action_names"}
