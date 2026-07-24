@@ -229,3 +229,86 @@ def follower_smooth_move_to(
         interp = {k: current[k] * (1 - t) + target[k] * t if k in target else current[k] for k in current}
         robot.send_action(interp)
         time.sleep(1 / fps)
+
+
+def _joint_pos_from_observation(observation: dict, action_keys: dict | None = None) -> dict:
+    """Extract joint position targets from a robot observation.
+
+    Prefers keys that also appear in ``action_keys`` (robot action space). Falls back to
+    every observation key ending with ``.pos``.
+    """
+    if action_keys is not None:
+        keys = [k for k in action_keys if k in observation]
+        if keys:
+            return {k: observation[k] for k in keys}
+    return {k: v for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")}
+
+
+def smooth_teleop_session_start(
+    robot,
+    teleop,
+    *,
+    robot_action_processor=None,
+    duration_s: float = 2.0,
+    fps: int = 30,
+) -> None:
+    """Soft-start a teleoperate/record session so the first controlled frame does not jerk.
+
+    - Actuated teleops (feedback support): slide the leader to the follower's current joints.
+    - Non-actuated teleops: slide the follower to the teleoperator's current command (processed
+      into robot action space when ``robot_action_processor`` is provided).
+
+    No-ops harmlessly if required poses cannot be inferred.
+    """
+    if duration_s <= 0:
+        return
+
+    obs = robot.get_observation()
+    action_keys = getattr(robot, "action_features", None)
+    follower_pos = _joint_pos_from_observation(obs, action_keys)
+
+    if teleop_supports_feedback(teleop):
+        if not follower_pos:
+            return
+        teleop_smooth_move_to(teleop, follower_pos, duration_s=duration_s, fps=fps)
+        return
+
+    # Non-actuated: bring follower to teleop pose
+    raw = teleop.get_action()
+    if robot_action_processor is not None:
+        target = robot_action_processor((raw, obs))
+    else:
+        target = raw
+    if not isinstance(target, dict) or not target or not follower_pos:
+        return
+    # Align on overlapping numeric keys
+    common = {k: target[k] for k in target if k in follower_pos}
+    if not common:
+        return
+    current = {k: follower_pos[k] for k in common}
+    follower_smooth_move_to(robot, current, common, duration_s=duration_s, fps=fps)
+
+
+def smooth_follower_to_action(
+    robot,
+    target_action: dict,
+    *,
+    duration_s: float = 1.0,
+    fps: int = 30,
+) -> None:
+    """Slide the follower from its current joint observation toward ``target_action``."""
+    if duration_s <= 0 or not target_action:
+        return
+    obs = robot.get_observation()
+    action_keys = getattr(robot, "action_features", None)
+    current_full = _joint_pos_from_observation(obs, action_keys)
+    common_keys = [k for k in target_action if k in current_full]
+    if not common_keys:
+        # target may use dataset FEATURE names without .pos; try mapping observation only
+        common_keys = [k for k in current_full if k in target_action]
+    if not common_keys:
+        return
+    current = {k: current_full[k] for k in common_keys}
+    target = {k: target_action[k] for k in common_keys}
+    follower_smooth_move_to(robot, current, target, duration_s=duration_s, fps=fps)
+

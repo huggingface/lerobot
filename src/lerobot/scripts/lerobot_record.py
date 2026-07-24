@@ -188,6 +188,9 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    # Soft-start handover before the first recorded frame (0 disables).
+    smooth_handover_duration_s: float = 2.0
+    smooth_handover_fps: int = 30
 
     def __post_init__(self):
         if self.teleop is None:
@@ -456,6 +459,19 @@ def record(
         robot.connect()
         if teleop is not None:
             teleop.connect()
+            if cfg.smooth_handover_duration_s > 0:
+                logging.info(
+                    "Smooth handover at record start (%.2fs @ %d Hz)",
+                    cfg.smooth_handover_duration_s,
+                    cfg.smooth_handover_fps,
+                )
+                smooth_teleop_session_start(
+                    robot,
+                    teleop,
+                    robot_action_processor=robot_action_processor,
+                    duration_s=cfg.smooth_handover_duration_s,
+                    fps=cfg.smooth_handover_fps,
+                )
 
         listener, events = init_keyboard_listener()
 

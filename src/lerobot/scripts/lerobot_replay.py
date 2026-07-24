@@ -69,6 +69,7 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1,
 )
+from lerobot.common.control_utils import smooth_follower_to_action
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
@@ -96,6 +97,9 @@ class ReplayConfig:
     dataset: DatasetReplayConfig
     # Use vocal synthesis to read events.
     play_sounds: bool = True
+    # Smoothly move to episode start (and back on exit). Set 0 to disable.
+    smooth_handover_duration_s: float = 1.0
+    smooth_handover_fps: int = 30
 
 
 @parser.wrap()
@@ -111,6 +115,38 @@ def replay(cfg: ReplayConfig):
     actions = dataset.select_columns(ACTION)
 
     robot.connect()
+
+    # Capture pre-replay pose for optional soft return.
+    pre_replay_pose = None
+    first_processed = None
+    if cfg.smooth_handover_duration_s > 0 and dataset.num_frames > 0:
+        robot_obs = robot.get_observation()
+        action_keys = getattr(robot, "action_features", {}) or {}
+        pre_replay_pose = {
+            k: robot_obs[k]
+            for k in action_keys
+            if k in robot_obs
+        }
+        if not pre_replay_pose:
+            pre_replay_pose = {
+                k: v for k, v in robot_obs.items() if isinstance(k, str) and k.endswith(".pos")
+            }
+        action_array0 = actions[0][ACTION]
+        action0 = {
+            name: action_array0[i] for i, name in enumerate(dataset.features[ACTION]["names"])
+        }
+        first_processed = robot_action_processor((action0, robot_obs))
+        logging.info(
+            "Smooth handover to episode start (%.2fs @ %d Hz)",
+            cfg.smooth_handover_duration_s,
+            cfg.smooth_handover_fps,
+        )
+        smooth_follower_to_action(
+            robot,
+            first_processed,
+            duration_s=cfg.smooth_handover_duration_s,
+            fps=cfg.smooth_handover_fps,
+        )
 
     try:
         log_say("Replaying episode", cfg.play_sounds, blocking=True)
@@ -131,6 +167,25 @@ def replay(cfg: ReplayConfig):
             dt_s = time.perf_counter() - start_episode_t
             precise_sleep(max(1 / dataset.fps - dt_s, 0.0))
     finally:
+        if (
+            cfg.smooth_handover_duration_s > 0
+            and pre_replay_pose
+            and robot.is_connected
+        ):
+            logging.info(
+                "Smooth return to pre-replay pose (%.2fs @ %d Hz)",
+                cfg.smooth_handover_duration_s,
+                cfg.smooth_handover_fps,
+            )
+            try:
+                smooth_follower_to_action(
+                    robot,
+                    pre_replay_pose,
+                    duration_s=cfg.smooth_handover_duration_s,
+                    fps=cfg.smooth_handover_fps,
+                )
+            except Exception:
+                logging.exception("Smooth return to pre-replay pose failed; disconnecting anyway")
         robot.disconnect()
 
 
