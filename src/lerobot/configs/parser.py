@@ -27,6 +27,12 @@ from typing import Any, TypeVar, cast
 
 import draccus
 import yaml  # type: ignore[import-untyped]
+from draccus.help_formatter import SimpleHelpFormatter
+from draccus.wrappers import DataclassWrapper
+from draccus.wrappers.choice_wrapper import ChoiceWrapper, UnionWrapper
+from draccus.wrappers.field_wrapper import FieldWrapper
+from draccus.wrappers.suppressing_argparse import SuppressingArgumentParser
+from draccus.wrappers.wrapper import AggregateWrapper, Wrapper
 
 from lerobot.utils.utils import has_method
 
@@ -185,6 +191,59 @@ def get_type_arg(field_name: str, args: Sequence[str] | None = None) -> str | No
     return parse_arg(f"{field_name}.{draccus.CHOICE_TYPE_KEY}", args)
 
 
+def _register_scoped_actions(
+    wrapper: Wrapper, parser: SuppressingArgumentParser, cli_args: Sequence[str]
+) -> None:
+    """Like draccus's own Wrapper.register_actions, but for a ChoiceType field only recurses into
+    the already-selected subclass (per CLI `.type=` args), instead of every registered choice."""
+    if isinstance(wrapper, ChoiceWrapper):
+        group = parser.add_argument_group(title=wrapper.title, description=wrapper.description)
+        children = wrapper._children
+        arg_name = f"{wrapper.dest}.{draccus.CHOICE_TYPE_KEY}" if wrapper.dest else draccus.CHOICE_TYPE_KEY
+        group.add_argument(
+            f"--{arg_name}",
+            choices=list(children.keys()),
+            help=f"Which type of {wrapper.title} to use",
+            required=wrapper.required,
+        )
+        selected = get_type_arg(wrapper.dest, cli_args) if wrapper.dest else None
+        if selected in children:
+            _register_scoped_actions(children[selected], parser, cli_args)
+    elif isinstance(wrapper, DataclassWrapper):
+        group = parser.add_argument_group(title=wrapper.title, description=wrapper.description)
+        for child in wrapper._children:
+            if isinstance(child, AggregateWrapper):
+                parser.add_argument(
+                    f"--{child.name}", type=str, required=False, help=f"Config file for {child.name}"
+                )
+                _register_scoped_actions(child, parser, cli_args)
+            elif isinstance(child, FieldWrapper):
+                child.add_action(group)
+    elif isinstance(wrapper, UnionWrapper):
+        group = parser.add_argument_group(title=wrapper.title, description=wrapper.description)
+        has_field_wrapper = False
+        for child in wrapper._children:
+            if isinstance(child, (DataclassWrapper, ChoiceWrapper)):
+                _register_scoped_actions(child, parser, cli_args)
+            elif isinstance(child, FieldWrapper):
+                has_field_wrapper = True
+        if has_field_wrapper:
+            group.add_argument(f"--{wrapper.dest}", required=False)
+    else:
+        wrapper.register_actions(parser)
+
+
+def print_scoped_help(config_class: type, cli_args: Sequence[str]) -> None:
+    """Prints --help output scoped to the choices already resolved on the CLI (e.g. --env.type=pusht),
+    instead of draccus's default of expanding every registered subclass of every ChoiceType field."""
+    parser = SuppressingArgumentParser(formatter_class=SimpleHelpFormatter)
+    parser.add_argument(
+        f"--{draccus.utils.CONFIG_ARG}", type=str, help="Path for a config file to parse with draccus"
+    )
+    _register_scoped_actions(DataclassWrapper(config_class), parser, cli_args)
+    parser.print_help()
+
+
 def filter_arg(field_to_filter: str, args: Sequence[str] | None = None) -> list[str]:
     if args is None:
         return []
@@ -299,6 +358,9 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                         # add the relevant CLI arg to the error message
                         raise PluginLoadError(f"{e}\nFailed plugin CLI Arg: {plugin_cli_arg}") from e
                     cli_args = filter_arg(plugin_cli_arg, cli_args)
+                if "--help" in cli_args or "-h" in cli_args:
+                    print_scoped_help(argtype, cli_args)
+                    sys.exit(0)
                 config_path_cli = parse_arg("config_path", cli_args)
                 if has_method(argtype, "__get_path_fields__"):
                     path_fields = argtype.__get_path_fields__()
