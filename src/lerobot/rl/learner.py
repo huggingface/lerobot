@@ -102,7 +102,7 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.io_utils import load_json, write_json
-from lerobot.utils.process import ProcessSignalHandler
+from lerobot.utils.process import ProcessSignalHandler, ensure_multiprocessing_start_method
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
     format_big_number,
@@ -123,9 +123,7 @@ def train_cli(cfg: TrainRLServerPipelineConfig):
     # Fail fast with a friendly error if the optional ``hilserl`` extra is missing.
     require_package("grpcio", extra="hilserl", import_name="grpc")
     if not use_threads(cfg):
-        import torch.multiprocessing as mp
-
-        mp.set_start_method("spawn")
+        ensure_multiprocessing_start_method(cfg.policy.concurrency.multiprocessing_context)
 
     # Use the job_name from the config
     train(

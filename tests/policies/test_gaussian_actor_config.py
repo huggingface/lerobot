@@ -113,6 +113,7 @@ def test_gaussian_actor_config_default_initialization():
     # Concurrency configuration
     assert config.concurrency.actor == "threads"
     assert config.concurrency.learner == "threads"
+    assert config.concurrency.multiprocessing_context == "spawn"
 
     assert isinstance(config.actor_network_kwargs, ActorNetworkConfig)
     assert isinstance(config.policy_kwargs, PolicyConfig)
@@ -152,6 +153,7 @@ def test_concurrency_config():
     config = ConcurrencyConfig()
     assert config.actor == "threads"
     assert config.learner == "threads"
+    assert config.multiprocessing_context == "spawn"
 
 
 def test_gaussian_actor_config_custom_initialization():
