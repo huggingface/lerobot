@@ -20,6 +20,7 @@ property delegation, and the full create-record-finalize-read lifecycle.
 """
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -189,6 +190,48 @@ def test_metadata_without_root_uses_hub_cache_snapshot_download(
         "allow_patterns": "meta/",
         "ignore_patterns": None,
     }
+
+
+@pytest.mark.parametrize("token", ["hf_test_token", True, False])
+def test_metadata_download_forwards_token(tmp_path, monkeypatch, token):
+    snapshot_root = tmp_path / "snapshot"
+    snapshot_download = Mock(return_value=str(snapshot_root))
+    get_safe_version = Mock(return_value="v3.0")
+    load_metadata = Mock(side_effect=[FileNotFoundError, None])
+    monkeypatch.setattr(dataset_metadata_module, "snapshot_download", snapshot_download)
+    monkeypatch.setattr(dataset_metadata_module, "get_safe_version", get_safe_version)
+    monkeypatch.setattr(LeRobotDatasetMetadata, "_load_metadata", load_metadata)
+
+    meta = LeRobotDatasetMetadata(
+        repo_id=DUMMY_REPO_ID,
+        revision="v3.0",
+        token=token,
+    )
+
+    assert meta.root == snapshot_root
+    assert not hasattr(meta, "_token")
+    get_safe_version.assert_called_once_with(DUMMY_REPO_ID, "v3.0", token=token)
+    assert snapshot_download.call_args.kwargs["token"] is token
+
+
+@pytest.mark.parametrize("token", ["hf_test_token", True, False])
+def test_data_download_forwards_token(tmp_path, monkeypatch, token):
+    snapshot_root = tmp_path / "snapshot"
+    snapshot_download = Mock(return_value=str(snapshot_root))
+    monkeypatch.setattr(lerobot_dataset_module, "snapshot_download", snapshot_download)
+
+    dataset = LeRobotDataset.__new__(LeRobotDataset)
+    dataset.repo_id = DUMMY_REPO_ID
+    dataset.revision = "main"
+    dataset.episodes = None
+    dataset._requested_root = None
+    dataset.meta = SimpleNamespace(root=None)
+    dataset.reader = SimpleNamespace(root=None)
+
+    dataset._download(token=token)
+
+    assert dataset.root == snapshot_root
+    assert snapshot_download.call_args.kwargs["token"] is token
 
 
 def test_without_root_reads_different_revisions_from_distinct_snapshot_roots(
