@@ -458,16 +458,30 @@ def test_bucket_metadata_url_root(tmp_path):
 
 
 def test_bucket_skips_get_safe_version(tmp_path):
-    """repo_type='bucket' must NOT call get_safe_version (buckets have no git refs)."""
-    mock_fs = MagicMock()
+    """repo_type='bucket' must NOT call get_safe_version (buckets have no git refs).
+
+    The first ``_load_metadata()`` raises ``FileNotFoundError`` so ``__init__``
+    enters the except branch where the ``repo_type != "bucket"`` guard and
+    ``get_safe_version`` live; the second call (after the bucket meta pull)
+    succeeds. ``_pull_from_repo`` is stubbed so the except path runs without a
+    network call. Without the raise, the try block would succeed and the guard
+    branch would never execute, so the assertion would pass vacuously.
+    """
     with (
         patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_gsv,
-        patch("huggingface_hub.HfFileSystem", return_value=mock_fs),
-        patch.object(LeRobotDatasetMetadata, "_load_metadata"),
+        patch.object(
+            LeRobotDatasetMetadata,
+            "_load_metadata",
+            side_effect=[FileNotFoundError, None],
+        ),
+        patch.object(LeRobotDatasetMetadata, "_pull_from_repo") as mock_pull,
     ):
         LeRobotDatasetMetadata(
             DUMMY_REPO_ID,
             root=tmp_path,
             repo_type="bucket",
         )
+    # The except branch ran (proven by the pull), but the bucket guard skipped
+    # version resolution.
+    mock_pull.assert_called_once()
     mock_gsv.assert_not_called()
