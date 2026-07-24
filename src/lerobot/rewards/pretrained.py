@@ -18,10 +18,9 @@ import logging
 import os
 from importlib.resources import files
 from pathlib import Path
-from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, TypeVar
 
-from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download
+from huggingface_hub import ModelCard, ModelCardData, hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor, save_model as save_model_as_safetensor
@@ -30,9 +29,6 @@ from torch import Tensor, nn
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
-
-if TYPE_CHECKING:
-    from lerobot.configs.train import TrainPipelineConfig
 
 T = TypeVar("T", bound="PreTrainedRewardModel")
 
@@ -61,6 +57,22 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
             raise TypeError(f"Class {cls.__name__} must define 'name'")
 
     def _save_pretrained(self, save_directory: Path) -> None:
+        """Serialize this reward model's parameters (and config) into `save_directory`.
+
+        Safe to call on every rank: replicas carry identical weights, so only the main process
+        writes (sharded reward models are rejected at config validation — no collective gather).
+
+        Args:
+            save_directory (Path): Target directory for the reward model config (`config.json`)
+                and `model.safetensors`.
+        """
+        from lerobot.distributed.utils import is_main_process
+
+        # save_checkpoint calls this on every rank; replicas carry identical
+        # weights, so the main process is the only writer. Sharded reward models are rejected
+        # at config validation, so no collective gather is needed here.
+        if not is_main_process():
+            return
         self.config._save_pretrained(save_directory)
         model_to_save = self.module if hasattr(self, "module") else self
         save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
@@ -174,36 +186,6 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
         inherit the base implementation that raises ``NotImplementedError``.
         """
         return type(self).forward is not PreTrainedRewardModel.forward
-
-    def push_model_to_hub(self, cfg: "TrainPipelineConfig"):
-        api = HfApi()
-        repo_id = api.create_repo(
-            repo_id=self.config.repo_id, private=self.config.private, exist_ok=True
-        ).repo_id
-
-        # Push the files to the repo in a single commit
-        with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-            saved_path = Path(tmp) / repo_id
-
-            self.save_pretrained(saved_path)  # Calls _save_pretrained and stores model tensors
-
-            card = self.generate_model_card(
-                cfg.dataset.repo_id, self.config.type, self.config.license, self.config.tags
-            )
-            card.save(str(saved_path / "README.md"))
-
-            cfg.save_pretrained(saved_path)  # Calls _save_pretrained and stores train config
-
-            commit_info = api.upload_folder(
-                repo_id=repo_id,
-                repo_type="model",
-                folder_path=saved_path,
-                commit_message="Upload reward model weights, train config and readme",
-                allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
-                ignore_patterns=["*.tmp", "*.log"],
-            )
-
-            logging.info(f"Model pushed to {commit_info.repo_url.url}")
 
     def generate_model_card(
         self, dataset_repo_id: str, model_type: str, license: str | None, tags: list[str] | None

@@ -234,6 +234,7 @@ def make_policy(
     ds_meta: LeRobotDatasetMetadata | None = None,
     env_cfg: EnvConfig | None = None,
     rename_map: dict[str, str] | None = None,
+    defer_weight_load: bool = False,
 ) -> PreTrainedPolicy:
     """
     Instantiate a policy model.
@@ -244,22 +245,27 @@ def make_policy(
     can either initialize a new policy from scratch or load a pretrained one.
 
     Args:
-        cfg: The configuration for the policy to be created. If `cfg.pretrained_path` is
-             set, the policy will be loaded with weights from that path.
-        ds_meta: Dataset metadata used to infer feature shapes and types. Also provides
-                 statistics for normalization layers.
-        env_cfg: Environment configuration used to infer feature shapes and types.
-                 One of `ds_meta` or `env_cfg` must be provided.
-        rename_map: Optional mapping of dataset or environment feature keys to match
-                 expected policy feature names (e.g., `"left"` → `"camera1"`).
+        cfg (PreTrainedConfig): The configuration for the policy to be created. If
+            `cfg.pretrained_path` is set, the policy will be loaded with weights from that path.
+        ds_meta (LeRobotDatasetMetadata | None): Dataset metadata used to infer feature shapes and
+            types. Also provides statistics for normalization layers.
+        env_cfg (EnvConfig | None): Environment configuration used to infer feature shapes and
+            types. One of `ds_meta` or `env_cfg` must be provided.
+        rename_map (dict[str, str] | None): Optional mapping of dataset or environment feature
+            keys to match expected policy feature names (e.g., `"left"` → `"camera1"`).
+        defer_weight_load (bool): Build the exact policy `from_pretrained` would build — same
+            config resolution, same stats-derived buffers, same device placement and eval mode —
+            but skip the safetensors weight load. Used when resuming from a DCP checkpoint, whose
+            sharded weights stream in after `accelerator.prepare()` (the distributed checkpoint
+            engine overwrites the random init).
 
     Returns:
-        An instantiated and device-placed policy model.
+        PreTrainedPolicy: An instantiated and device-placed policy model.
 
     Raises:
         ValueError: If both or neither of `ds_meta` and `env_cfg` are provided.
-        NotImplementedError: If attempting to use an unsupported policy-backend
-                             combination (e.g., VQBeT with 'mps').
+        NotImplementedError: If attempting to use an unsupported policy-backend combination
+            (e.g., VQBeT with 'mps').
     """
     if bool(ds_meta) == bool(env_cfg):
         raise ValueError("Either one of a dataset metadata or a sim env must be provided.")
@@ -324,11 +330,18 @@ def make_policy(
         )
 
     if cfg.pretrained_path and not cfg.use_peft:
-        # Load a pretrained policy and override the config if needed (for example, if there are inference-time
-        # hyperparameters that we want to vary).
-        kwargs["pretrained_name_or_path"] = cfg.pretrained_path
-        kwargs["revision"] = cfg.pretrained_revision
-        policy = policy_cls.from_pretrained(**kwargs)
+        if defer_weight_load:
+            # Same construction path as from_pretrained (config already resolved from the
+            # checkpoint by the caller; dataset_stats/dataset_meta kwargs identical), minus the
+            # weight load — parity by construction.
+            policy = policy_cls(**kwargs)
+            policy.eval()
+        else:
+            # Load a pretrained policy and override the config if needed (for example, if there
+            # are inference-time hyperparameters that we want to vary).
+            kwargs["pretrained_name_or_path"] = cfg.pretrained_path
+            kwargs["revision"] = cfg.pretrained_revision
+            policy = policy_cls.from_pretrained(**kwargs)
     elif cfg.pretrained_path and cfg.use_peft:
         # Load a pretrained PEFT model on top of the policy. The pretrained path points to the folder/repo
         # of the adapter and the adapter's config contains the path to the base policy. So we need the

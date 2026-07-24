@@ -18,20 +18,16 @@ import builtins
 import dataclasses
 import logging
 import os
-from importlib.resources import files
 from pathlib import Path
-from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, TypedDict, TypeVar, Unpack
+from typing import Any, ClassVar, TypedDict, TypeVar, Unpack
 
-from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download, save_torch_state_dict
+from huggingface_hub import hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
-from safetensors.torch import load_model as load_model_as_safetensor, save_model as save_model_as_safetensor
+from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
-from lerobot.__version__ import __version__
 from lerobot.configs import PreTrainedConfig
-from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
 
@@ -39,55 +35,9 @@ from .utils import log_model_loading_keys
 
 T = TypeVar("T", bound="PreTrainedPolicy")
 
-if TYPE_CHECKING:
-    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-
-
-def _build_card_context(
-    cfg: TrainPipelineConfig | None,
-    dataset_meta: LeRobotDatasetMetadata | None,
-    input_features: dict | None,
-    output_features: dict | None,
-) -> dict:
-    """Collect optional data for the model-card template.
-
-    Returns plain values only (no Markdown) — the template in
-    ``lerobot/templates/lerobot_modelcard_template.md`` decides how and whether to show
-    each one. Everything is best-effort: anything unavailable is left empty/None and the
-    template simply skips that section, so this never breaks a Hub push.
-    """
-    context = {
-        "training": None,
-        "input_features": input_features or {},
-        "output_features": output_features or {},
-        "dataset": None,
-        "robot_type": None,
-        "cameras": [],
-    }
-
-    if cfg is not None:
-        optimizer = getattr(cfg, "optimizer", None)
-        context["training"] = {
-            "steps": cfg.steps,
-            "batch_size": cfg.batch_size,
-            "seed": cfg.seed,
-            "optimizer": getattr(optimizer, "type", None) if optimizer else None,
-            "lr": getattr(optimizer, "lr", None) if optimizer else None,
-            "lerobot_version": __version__,
-        }
-
-    if dataset_meta is not None:
-        context["dataset"] = {
-            "repo_id": dataset_meta.repo_id,
-            "episodes": dataset_meta.total_episodes,
-            "frames": dataset_meta.total_frames,
-            "fps": dataset_meta.fps,
-            "tasks": [str(task) for task in dataset_meta.tasks.index],
-        }
-        context["robot_type"] = dataset_meta.robot_type
-        context["cameras"] = [key.split(".")[-1] for key in dataset_meta.camera_keys]
-
-    return context
+# Pinned far above any policy's total size so save_torch_state_dict always emits exactly one
+# `model.safetensors` (no shards, no index) — a constant, not a computed byte count.
+_SINGLE_FILE_SHARD_SIZE = "1TB"
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -101,6 +51,22 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     config_class: None
     name: None
+
+    # --- declarative parallelism/acceleration surface ----------------------------------------
+    # Module CLASS names forming the FSDP2 wrap units (and, once wired, the activation-
+    # checkpointing units). Resolved onto the accelerate plugin right before
+    # `accelerator.prepare()` by `lerobot.distributed.set_fsdp_wrap_modules`; sharded training
+    # with no wrap source anywhere fails loudly instead of silently wrapping only the root.
+    _fsdp_wrap_modules: ClassVar[list[str] | None] = None
+    # Non-`forward` entry points that must trigger FSDP2 unshard/reshard hooks when called on a
+    # sharded policy (registered post-prepare via `torch.distributed.fsdp
+    # .register_fsdp_forward_method`); calling them unregistered crashes on mixed Tensor/DTensor.
+    _fsdp_forward_methods: ClassVar[tuple[str, ...]] = ("select_action", "predict_action_chunk")
+    # Capability gate for the (future) activation-checkpointing wiring.
+    supports_gradient_checkpointing: ClassVar[bool] = False
+    # Declarative context-parallel plan (diffusers `ContextParallelModelPlan` semantics:
+    # module FQN -> sequence split/gather spec). Reserved for the CP engine round.
+    _cp_plan: ClassVar[dict[str, Any] | None] = None
 
     def __init__(self, config: PreTrainedConfig, *inputs, **kwargs):
         super().__init__()
@@ -119,43 +85,33 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         if not getattr(cls, "name", None):
             raise TypeError(f"Class {cls.__name__} must define 'name'")
 
-    def save_pretrained(
-        self,
-        save_directory: str | Path,
-        *,
-        state_dict: dict[str, Tensor] | None = None,
-        repo_id: str | None = None,
-        push_to_hub: bool = False,
-        card_kwargs: dict | None = None,
-        **push_to_hub_kwargs,
-    ) -> str | None:
-        """Save the policy to a directory (and optionally push to the Hub).
+    def _save_pretrained(self, save_directory: Path) -> None:
+        """Serialize this policy's parameters (and config) into `save_directory`.
 
-        Overrides `HubMixin.save_pretrained` to add a `state_dict` argument (mirroring
-        `transformers.PreTrainedModel.save_pretrained`). Under FSDP, `self.state_dict()` would
-        return sharded tensors, so the caller gathers the full state dict via a cross-rank
-        collective and passes it here for `_save_pretrained` to write directly.
+        Sharding is handled internally: under FSDP2 the full state dict is gathered through a
+        COLLECTIVE, so when the policy is sharded this method (via `save_pretrained`) must be
+        called on EVERY rank — a rank-0-gated call deadlocks. File writes happen on the main
+        process only, in all layouts (single, DDP, sharded).
+
+        Args:
+            save_directory (Path): Target directory for the policy config (`config.json`) and the
+                safetensors weight file(s).
         """
-        save_directory = Path(save_directory)
-        save_directory.mkdir(parents=True, exist_ok=True)
-        self._save_pretrained(save_directory, state_dict=state_dict)
-        if push_to_hub:
-            if repo_id is None:
-                repo_id = save_directory.name
-            return self.push_to_hub(repo_id=repo_id, card_kwargs=card_kwargs, **push_to_hub_kwargs)
-        return None
+        # Lazy imports: the persistence layer pulls in lerobot.distributed only when saving.
+        from lerobot.distributed.checkpoint import full_model_state_dict, is_sharded_module
+        from lerobot.distributed.utils import is_main_process
 
-    def _save_pretrained(self, save_directory: Path, state_dict: dict[str, Tensor] | None = None) -> None:
-        self.config._save_pretrained(save_directory)
         model_to_save = self.module if hasattr(self, "module") else self
-        if state_dict is None:
-            save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
+        if is_sharded_module(model_to_save):
+            logging.info("Gathering the full state dict from all ranks (sharded policy).")
+        state_dict = full_model_state_dict(model_to_save)  # collective when sharded; {} off-main
+        if not state_dict or not is_main_process():
+            # Sharded: the gather materializes on the main rank only (emptiness check).
+            # Non-sharded multi-rank (DDP): every rank holds a full dict — the explicit rank
+            # gate prevents N ranks racing on the same files. Single process: never taken.
             return
-        # A pre-gathered (e.g. FSDP full) state dict was supplied: write it directly.
-        # `save_torch_state_dict` discards shared-tensor duplicates just like `save_model` does;
-        # pin `max_shard_size` above the total size so the output stays a single `model.safetensors`
-        total_bytes = sum(t.numel() * t.element_size() for t in state_dict.values())
-        save_torch_state_dict(state_dict, str(save_directory), max_shard_size=max(total_bytes, 1))
+        self.config._save_pretrained(save_directory)
+        save_torch_state_dict(state_dict, str(save_directory), max_shard_size=_SINGLE_FILE_SHARD_SIZE)
 
     @classmethod
     def from_pretrained(
@@ -272,99 +228,6 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         with caching.
         """
         raise NotImplementedError
-
-    def push_model_to_hub(
-        self,
-        cfg: TrainPipelineConfig,
-        peft_model=None,
-        state_dict: dict[str, Tensor] | None = None,
-        dataset_meta: LeRobotDatasetMetadata | None = None,
-    ):
-        api = HfApi()
-        repo_id = api.create_repo(
-            repo_id=self.config.repo_id, private=self.config.private, exist_ok=True
-        ).repo_id
-
-        # Push the files to the repo in a single commit
-        with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-            saved_path = Path(tmp) / repo_id
-
-            if peft_model is not None:
-                # Since PEFT just forwards calls to `push_model_to_hub`, `self` is not the PeftModel wrapper
-                # but the actual policy which is why we need the PEFT model passed to us to save the adapter.
-                # That also means that we need to store the policy config ourselves since PEFT can't.
-                peft_model.save_pretrained(saved_path)
-                self.config.save_pretrained(saved_path)
-            else:
-                # Calls _save_pretrained and stores model tensors
-                self.save_pretrained(saved_path, state_dict=state_dict)
-
-            card = self.generate_model_card(
-                cfg.dataset.repo_id,
-                self.config.type,
-                self.config.license,
-                self.config.tags,
-                cfg=cfg,
-                dataset_meta=dataset_meta,
-            )
-            card.save(str(saved_path / "README.md"))
-
-            cfg.save_pretrained(saved_path)  # Calls _save_pretrained and stores train config
-
-            commit_info = api.upload_folder(
-                repo_id=repo_id,
-                repo_type="model",
-                folder_path=saved_path,
-                commit_message="Upload policy weights, train config and readme",
-                allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
-                ignore_patterns=["*.tmp", "*.log"],
-            )
-
-            # Contract: lerobot.jobs.hf.submit_to_hf watches for this exact
-            # "Model pushed to <url>" line to end a remote run early. Keep the wording
-            # and URL format in sync (it falls back to status polling if they drift).
-            logging.info(f"Model pushed to {commit_info.repo_url.url}")
-
-    def generate_model_card(
-        self,
-        dataset_repo_id: str,
-        model_type: str,
-        license: str | None,
-        tags: list[str] | None,
-        cfg: TrainPipelineConfig | None = None,
-        dataset_meta: LeRobotDatasetMetadata | None = None,
-    ) -> ModelCard:
-        base_model_mapping = {
-            "smolvla": "lerobot/smolvla_base",
-            "pi0": "lerobot/pi0_base",
-            "pi05": "lerobot/pi05_base",
-            "pi0_fast": "lerobot/pi0fast-base",
-            "xvla": "lerobot/xvla-base",
-        }
-
-        card_data = ModelCardData(
-            license=license or "apache-2.0",
-            library_name="lerobot",
-            pipeline_tag="robotics",
-            tags=list(set(tags or []).union({"robotics", "lerobot", model_type})),
-            model_name=model_type,
-            datasets=dataset_repo_id,
-            base_model=base_model_mapping.get(model_type),
-        )
-
-        context = _build_card_context(
-            cfg, dataset_meta, self.config.input_features, self.config.output_features
-        )
-        # Used by the template to pre-fill commands and the "Fine-tuned from" line.
-        context["policy_repo_id"] = getattr(self.config, "repo_id", None)
-        context["base_model"] = base_model_mapping.get(model_type)
-
-        template_card = (
-            files("lerobot.templates").joinpath("lerobot_modelcard_template.md").read_text(encoding="utf-8")
-        )
-        card = ModelCard.from_template(card_data, template_str=template_card, **context)
-        card.validate()
-        return card
 
     def wrap_with_peft(
         self,

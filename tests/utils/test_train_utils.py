@@ -15,7 +15,7 @@
 # limitations under the License.
 
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -23,15 +23,15 @@ from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
     load_training_batch_size,
-    load_training_num_processes,
-    load_training_state,
+    load_training_dp_world_size,
     load_training_step,
     push_checkpoint_to_hub,
-    save_checkpoint,
     save_training_state,
     save_training_step,
     update_last_checkpoint,
 )
+from lerobot.configs.default import DatasetConfig
+from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
@@ -56,38 +56,22 @@ def test_get_step_checkpoint_dir():
     assert step_dir == output_dir / CHECKPOINTS_DIR / "000005"
 
 
+def make_cfg(batch_size: int = 32) -> TrainPipelineConfig:
+    cfg = TrainPipelineConfig(dataset=DatasetConfig(repo_id="lerobot/dummy"), batch_size=batch_size)
+    cfg.parallelism.resolve(1)
+    return cfg
+
+
 def test_save_load_training_step(tmp_path):
-    save_training_step(5000, tmp_path)
+    save_training_step(5000, tmp_path, make_cfg())
     assert (tmp_path / TRAINING_STEP).is_file()
+    assert load_training_step(tmp_path) == 5000
 
 
-def test_load_training_step(tmp_path):
-    step = 5000
-    save_training_step(step, tmp_path)
-    loaded_step = load_training_step(tmp_path)
-    assert loaded_step == step
-
-
-def test_save_training_state_records_num_processes(tmp_path, optimizer, scheduler):
-    save_training_state(tmp_path, 10, optimizer, scheduler, num_processes=4)
-    assert load_training_num_processes(tmp_path) == 4
-
-
-def test_load_training_num_processes_absent_returns_none(tmp_path, optimizer, scheduler):
-    # Checkpoints written before the world size was recorded must still load (back-compat).
-    save_training_state(tmp_path, 10, optimizer, scheduler)
-    assert load_training_num_processes(tmp_path) is None
-
-
-def test_save_training_state_records_batch_size(tmp_path, optimizer, scheduler):
-    save_training_state(tmp_path, 10, optimizer, scheduler, batch_size=32)
+def test_save_training_state_records_topology(tmp_path, optimizer, scheduler):
+    save_training_state(tmp_path, 10, make_cfg(batch_size=32), optimizer, scheduler)
+    assert load_training_dp_world_size(tmp_path) == 1
     assert load_training_batch_size(tmp_path) == 32
-
-
-def test_load_training_batch_size_absent_returns_none(tmp_path, optimizer, scheduler):
-    # Checkpoints written before the batch size was recorded must still load (back-compat).
-    save_training_state(tmp_path, 10, optimizer, scheduler)
-    assert load_training_batch_size(tmp_path) is None
 
 
 def test_update_last_checkpoint(tmp_path):
@@ -99,32 +83,12 @@ def test_update_last_checkpoint(tmp_path):
     assert last_checkpoint.resolve() == checkpoint
 
 
-@patch("lerobot.common.train_utils.save_training_state")
-def test_save_checkpoint(mock_save_training_state, tmp_path, optimizer):
-    policy = Mock()
-    cfg = Mock()
-    save_checkpoint(tmp_path, 10, cfg, policy, optimizer)
-    policy.save_pretrained.assert_called_once()
-    cfg.save_pretrained.assert_called_once()
-    mock_save_training_state.assert_called_once()
+# save_checkpoint round-trips (all formats, real policies) live in
+# tests/common/test_checkpoint_save_resume.py.
 
 
-@patch("lerobot.common.train_utils.save_training_state")
-def test_save_checkpoint_peft(mock_save_training_state, tmp_path, optimizer):
-    policy = Mock()
-    policy.config = Mock()
-    policy.config.save_pretrained = Mock()
-    cfg = Mock()
-    cfg.use_peft = True
-    save_checkpoint(tmp_path, 10, cfg, policy, optimizer)
-    policy.save_pretrained.assert_called_once()
-    cfg.save_pretrained.assert_called_once()
-    policy.config.save_pretrained.assert_called_once()
-    mock_save_training_state.assert_called_once()
-
-
-def test_save_training_state(tmp_path, optimizer, scheduler):
-    save_training_state(tmp_path, 10, optimizer, scheduler)
+def test_save_training_state_layout(tmp_path, optimizer, scheduler):
+    save_training_state(tmp_path, 10, make_cfg(), optimizer, scheduler)
     assert (tmp_path / TRAINING_STATE_DIR).is_dir()
     assert (tmp_path / TRAINING_STATE_DIR / TRAINING_STEP).is_file()
     assert (tmp_path / TRAINING_STATE_DIR / RNG_STATE).is_file()
@@ -133,27 +97,8 @@ def test_save_training_state(tmp_path, optimizer, scheduler):
     assert (tmp_path / TRAINING_STATE_DIR / SCHEDULER_STATE).is_file()
 
 
-def test_save_load_training_state(tmp_path, optimizer, scheduler):
-    save_training_state(tmp_path, 10, optimizer, scheduler)
-    loaded_step, loaded_optimizer, loaded_scheduler = load_training_state(tmp_path, optimizer, scheduler)
-    assert loaded_step == 10
-    assert loaded_optimizer is optimizer
-    assert loaded_scheduler is scheduler
-
-
-def test_load_training_state_skip_optimizer(tmp_path, optimizer, scheduler):
-    # FSDP loads optimizer separately (after accelerator.prepare)
-    # load_training_state(load_optimizer=False) must restore step + scheduler but leave the
-    # optimizer untouched and never touch the on-disk optimizer state.
-    save_training_state(tmp_path, 10, optimizer, scheduler)
-    with patch("lerobot.common.train_utils.load_optimizer_state") as mock_load_optimizer_state:
-        loaded_step, loaded_optimizer, loaded_scheduler = load_training_state(
-            tmp_path, optimizer, scheduler, load_optimizer=False
-        )
-    mock_load_optimizer_state.assert_not_called()
-    assert loaded_step == 10
-    assert loaded_optimizer is optimizer
-    assert loaded_scheduler is scheduler
+# The two-phase resume (resume_before_prepare / resume_after_prepare) is covered in
+# tests/common/test_checkpoint_save_resume.py with real policies and optimizer state.
 
 
 def test_push_checkpoint_to_hub_creates_repo_and_uploads(tmp_path, monkeypatch):

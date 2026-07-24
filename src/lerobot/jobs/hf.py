@@ -432,7 +432,7 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
 
     # Finish as soon as the model is pushed, rather than waiting out the platform's
     # post-run finalization before the job stage flips to COMPLETED. This matches the
-    # exact log line emitted by PreTrainedPolicy.push_model_to_hub — the two must stay
+    # exact log line emitted by lerobot.common.train_utils.publish_trained_model — the two must stay
     # in sync. If it ever stops matching we just fall back to stage-based completion
     # (~30s slower), so the contract is an optimization, not a correctness requirement.
     success_marker = f"Model pushed to https://huggingface.co/{repo_id}"
