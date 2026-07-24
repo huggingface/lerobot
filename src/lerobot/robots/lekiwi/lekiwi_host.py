@@ -68,7 +68,22 @@ def main(cfg: LeKiwiServerConfig):
     logging.info("Starting HostAgent")
     host = LeKiwiHost(cfg.host)
 
+    # Optional live streaming to Foxglove directly from the host.
+    if cfg.host.enable_foxglove:
+        from lerobot.utils.foxglove_visualization import (
+            init_foxglove,
+            log_foxglove_data,
+            shutdown_foxglove,
+        )
+
+        init_foxglove(host=cfg.host.foxglove_host, port=cfg.host.foxglove_port)
+        logging.info(
+            f"Foxglove streaming enabled. Connect the Foxglove app to "
+            f"ws://{cfg.host.foxglove_host}:{cfg.host.foxglove_port}"
+        )
+
     last_cmd_time = time.time()
+    last_action = None
     watchdog_active = False
     logging.info("Waiting for commands...")
     try:
@@ -80,7 +95,7 @@ def main(cfg: LeKiwiServerConfig):
             try:
                 msg = host.zmq_cmd_socket.recv_string(zmq.NOBLOCK)
                 data = dict(json.loads(msg))
-                _action_sent = robot.send_action(data)
+                last_action = robot.send_action(data)
                 last_cmd_time = time.time()
                 watchdog_active = False
             except zmq.Again:
@@ -98,6 +113,10 @@ def main(cfg: LeKiwiServerConfig):
                 robot.stop_base()
 
             last_observation = robot.get_observation()
+
+            # Stream to Foxglove BEFORE encoding frames to base64 (needs raw ndarrays).
+            if cfg.host.enable_foxglove:
+                log_foxglove_data(observation=last_observation, action=last_action)
 
             # Encode ndarrays to base64 strings
             for cam_key, _ in robot.cameras.items():
@@ -126,6 +145,8 @@ def main(cfg: LeKiwiServerConfig):
         print("Keyboard interrupt received. Exiting...")
     finally:
         print("Shutting down Lekiwi Host.")
+        if cfg.host.enable_foxglove:
+            shutdown_foxglove()
         robot.disconnect()
         host.disconnect()
 
