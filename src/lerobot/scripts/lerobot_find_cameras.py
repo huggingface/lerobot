@@ -131,7 +131,7 @@ def save_image(
     camera_identifier: str | int,
     images_dir: Path,
     camera_type: str,
-):
+) -> None:
     """
     Saves a single image to disk using Pillow. Handles color conversion if necessary.
     """
@@ -198,7 +198,7 @@ def process_camera_image(cam_dict: dict[str, Any], output_dir: Path, current_tim
     try:
         image_data = cam.read()
 
-        return save_image(
+        save_image(
             image_data,
             cam_id_str,
             output_dir,
