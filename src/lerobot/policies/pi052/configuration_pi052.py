@@ -145,6 +145,8 @@ class PI052Config(PI05Config):
     # Reuse each VLM prefix across independent denoising draws; 1 restores single-draw flow.
     flow_num_repeats: int = 5
 
+    # Training-time RTC configuration is inherited from PI05Config.
+
     # PaLM-style z-loss stabilizes large-vocabulary CE; 0 disables it.
     text_ce_z_loss_weight: float = 1e-4
 

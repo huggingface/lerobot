@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import dataclasses
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -96,6 +97,131 @@ def test_inference_config_types():
     assert rtc.type == "rtc"
     assert rtc.queue_threshold == 30
     assert rtc.rtc is not None
+
+
+def test_trained_rtc_retries_chunk_when_measured_delay_exceeds_conditioning():
+    from lerobot.rollout.inference.rtc import _trained_rtc_chunk_can_merge
+
+    assert not _trained_rtc_chunk_can_merge(
+        conditioned_delay=2,
+        measured_delay=3,
+        training_max_delay=4,
+        has_previous_actions=True,
+    )
+    assert _trained_rtc_chunk_can_merge(
+        conditioned_delay=2,
+        measured_delay=5,
+        training_max_delay=4,
+        has_previous_actions=False,
+    )
+
+
+def test_trained_rtc_bootstraps_first_overlap_with_checkpoint_capacity():
+    from lerobot.rollout.inference.rtc import _estimate_rtc_delay
+
+    assert (
+        _estimate_rtc_delay(
+            latency=0,
+            time_per_step=1 / 30,
+            mode="trained",
+            training_max_delay=10,
+            has_previous_actions=False,
+        )
+        == 0
+    )
+    assert (
+        _estimate_rtc_delay(
+            latency=0,
+            time_per_step=1 / 30,
+            mode="trained",
+            training_max_delay=10,
+            has_previous_actions=True,
+        )
+        == 10
+    )
+
+
+def test_trained_rtc_rejects_measured_delay_above_checkpoint_support():
+    from lerobot.rollout.inference.rtc import (
+        _trained_rtc_chunk_can_merge,
+        _TrainedRTCDelayExceededError,
+    )
+
+    with pytest.raises(_TrainedRTCDelayExceededError, match="rtc_training_max_delay"):
+        _trained_rtc_chunk_can_merge(
+            conditioned_delay=3,
+            measured_delay=5,
+            training_max_delay=4,
+            has_previous_actions=True,
+        )
+
+
+def test_trained_rtc_rejects_prefix_shorter_than_conditioned_delay():
+    from lerobot.rollout.inference.rtc import (
+        _TrainedRTCPrefixUnavailableError,
+        _validate_trained_rtc_prefix_available,
+    )
+
+    with pytest.raises(_TrainedRTCPrefixUnavailableError, match="only 2"):
+        _validate_trained_rtc_prefix_available(conditioned_delay=4, available_steps=2)
+
+
+@pytest.mark.parametrize(
+    ("execution_horizon", "queue_threshold", "match"),
+    [
+        (3, 4, "execution_horizon"),
+        (4, 3, "queue_threshold"),
+    ],
+)
+def test_trained_rtc_rollout_requires_capacity_for_max_delay(execution_horizon, queue_threshold, match):
+    from lerobot.policies.rtc.configuration_rtc import RTCConfig
+    from lerobot.rollout.context import _validate_trained_rtc_rollout_config
+    from lerobot.rollout.inference import RTCInferenceConfig
+
+    policy_config = SimpleNamespace(type="pi052", rtc_training_max_delay=4)
+    inference_config = RTCInferenceConfig(
+        rtc=RTCConfig(mode="trained", execution_horizon=execution_horizon),
+        queue_threshold=queue_threshold,
+    )
+
+    with pytest.raises(ValueError, match=match):
+        _validate_trained_rtc_rollout_config(policy_config, inference_config)
+
+
+def test_relative_state_order_follows_checkpoint_action_names():
+    from lerobot.rollout.context import _align_relative_state_feature_order
+    from lerobot.utils.constants import OBS_STATE
+    from lerobot.utils.feature_utils import build_dataset_frame
+
+    hw_features = {
+        OBS_STATE: {
+            "dtype": "float32",
+            "shape": (4,),
+            "names": ["left_joint.pos", "left_gripper.pos", "right_joint.pos", "right_gripper.pos"],
+        }
+    }
+    checkpoint_order = [
+        "right_joint.pos",
+        "right_gripper.pos",
+        "left_joint.pos",
+        "left_gripper.pos",
+    ]
+
+    aligned = _align_relative_state_feature_order(hw_features, checkpoint_order)
+    frame = build_dataset_frame(
+        aligned,
+        {
+            "left_joint.pos": 1.0,
+            "left_gripper.pos": 2.0,
+            "right_joint.pos": 3.0,
+            "right_gripper.pos": 4.0,
+        },
+        prefix="observation",
+    )
+
+    assert aligned[OBS_STATE]["names"] == checkpoint_order
+    assert frame[OBS_STATE].tolist() == [3.0, 4.0, 1.0, 2.0]
+    assert hw_features[OBS_STATE]["names"][0] == "left_joint.pos"
 
 
 def test_sentry_config_defaults():
