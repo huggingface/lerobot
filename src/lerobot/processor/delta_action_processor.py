@@ -83,12 +83,15 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
 
     Attributes:
         position_scale: A factor to scale the delta position inputs.
+        rotation_scale: A factor (radians per unit input) to scale the optional
+                        delta_pitch / delta_roll rotation inputs.
         noise_threshold: The magnitude below which delta inputs are considered noise
                          and do not trigger an "enabled" state.
     """
 
     # Scale factors for delta movements
     position_scale: float = 1.0
+    rotation_scale: float = 1.0
     noise_threshold: float = 1e-3  # 1 mm threshold to filter out noise
 
     def action(self, action: RobotAction) -> RobotAction:
@@ -97,23 +100,26 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
         delta_x = action.pop("delta_x")
         delta_y = action.pop("delta_y")
         delta_z = action.pop("delta_z")
+        # Optional orientation deltas (e.g. KeyboardEndEffectorTeleop with use_orientation=True):
+        # rotations about the end-effector body-frame y (pitch) and z (roll/approach) axes.
+        delta_pitch = float(action.pop("delta_pitch", 0.0))
+        delta_roll = float(action.pop("delta_roll", 0.0))
         gripper = action.pop("gripper")
-
-        # Determine if the teleoperator is actively providing input
-        # Consider enabled if any significant movement delta is detected
-        position_magnitude = (delta_x**2 + delta_y**2 + delta_z**2) ** 0.5  # Use Euclidean norm for position
-        enabled = position_magnitude > self.noise_threshold  # Small threshold to avoid noise
 
         # Scale the deltas appropriately
         scaled_delta_x = delta_x * self.position_scale
         scaled_delta_y = delta_y * self.position_scale
         scaled_delta_z = delta_z * self.position_scale
 
-        # For gamepad/keyboard, we don't have rotation input, so set to 0
-        # These could be extended in the future for more sophisticated teleoperators
         target_wx = 0.0
-        target_wy = 0.0
-        target_wz = 0.0
+        target_wy = delta_pitch * self.rotation_scale
+        target_wz = delta_roll * self.rotation_scale
+
+        # Determine if the teleoperator is actively providing input
+        # Consider enabled if any significant movement or rotation delta is detected
+        position_magnitude = (delta_x**2 + delta_y**2 + delta_z**2) ** 0.5  # Use Euclidean norm for position
+        rotation_magnitude = (target_wy**2 + target_wz**2) ** 0.5
+        enabled = position_magnitude > self.noise_threshold or rotation_magnitude > self.noise_threshold
 
         # Update action with robot target format
         action = {
@@ -132,7 +138,7 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        for axis in ["x", "y", "z", "gripper"]:
+        for axis in ["x", "y", "z", "pitch", "roll", "gripper"]:
             features[PipelineFeatureType.ACTION].pop(f"delta_{axis}", None)
 
         for feat in ["enabled", "target_x", "target_y", "target_z", "target_wx", "target_wy", "target_wz"]:
