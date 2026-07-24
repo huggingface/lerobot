@@ -174,6 +174,24 @@ class AddBatchDimensionComplementaryDataStep(ComplementaryDataProcessorStep):
             task_index_value = complementary_data["task_index"]
             if isinstance(task_index_value, Tensor) and task_index_value.dim() == 0:
                 complementary_data["task_index"] = task_index_value.unsqueeze(0)
+
+        complementary_data.pop("language_persistent", None)
+        complementary_data.pop("language_events", None)
+
+        if "messages" in complementary_data:
+            messages = complementary_data["messages"]
+            if isinstance(messages, list) and (not messages or isinstance(messages[0], dict)):
+                complementary_data["messages"] = [messages]
+
+        if "message_streams" in complementary_data:
+            streams = complementary_data["message_streams"]
+            if isinstance(streams, list) and (not streams or isinstance(streams[0], str)):
+                complementary_data["message_streams"] = [streams]
+
+        if "target_message_indices" in complementary_data:
+            indices = complementary_data["target_message_indices"]
+            if isinstance(indices, list) and (not indices or isinstance(indices[0], int)):
+                complementary_data["target_message_indices"] = [indices]
         return complementary_data
 
     def transform_features(

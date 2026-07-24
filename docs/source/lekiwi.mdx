@@ -319,7 +319,7 @@ If you want to dive deeper into this important topic, you can check out the [blo
 
 #### Troubleshooting:
 
-- On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
+- On Linux, the recording control-flow keys (arrow keys, Escape) work on X11, Wayland, and headless/SSH sessions as long as you run the recording from an interactive terminal (keep it focused) — no `$DISPLAY` setup is needed; the letter equivalents `n` / `r` / `q` also work. Note that **keyboard teleoperation of the LeKiwi base** is different: it relies on a global key backend and therefore works only on an X11 session, a Windows desktop, or macOS with Accessibility/Input Monitoring granted — not on Wayland or headless machines. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
 
 ## Replay an episode
 

@@ -20,7 +20,7 @@ from queue import Queue
 
 import pytest
 
-pytest.importorskip("grpc")
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from torch.multiprocessing import Queue as TorchMPQueue  # noqa: E402
 

@@ -87,12 +87,14 @@ DATA_DIR = "data"
 VIDEO_DIR = "videos"
 
 CHUNK_FILE_PATTERN = "chunk-{chunk_index:03d}/file-{file_index:03d}"
+IMAGE_FILE_PATTERN = "frame-{frame_index:06d}.png"
+DEPTH_FILE_PATTERN = "frame-{frame_index:06d}.tiff"
 DEFAULT_TASKS_PATH = "meta/tasks.parquet"
-DEFAULT_SUBTASKS_PATH = "meta/subtasks.parquet"
 DEFAULT_EPISODES_PATH = EPISODES_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_DATA_PATH = DATA_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_VIDEO_PATH = VIDEO_DIR + "/{video_key}/" + CHUNK_FILE_PATTERN + ".mp4"
-DEFAULT_IMAGE_PATH = "images/{image_key}/episode-{episode_index:06d}/frame-{frame_index:06d}.png"
+DEFAULT_IMAGE_PATH = "images/{image_key}/episode-{episode_index:06d}/" + IMAGE_FILE_PATTERN
+DEFAULT_DEPTH_PATH = "images/{image_key}/episode-{episode_index:06d}/" + DEPTH_FILE_PATTERN
 
 LEGACY_EPISODES_PATH = "meta/episodes.jsonl"
 LEGACY_EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
@@ -130,6 +132,9 @@ class DatasetInfo:
     # Optional metadata
     robot_type: str | None = None
     splits: dict[str, str] = field(default_factory=dict)
+    # OpenAI-style tool schemas declared by the dataset. ``None`` means the
+    # dataset doesn't declare any — readers fall back to ``DEFAULT_TOOLS``.
+    tools: list[dict] | None = None
 
     def __post_init__(self) -> None:
         # Coerce feature shapes from list to tuple — JSON deserialisation
@@ -151,11 +156,15 @@ class DatasetInfo:
         """Return a JSON-serialisable dict.
 
         Converts tuple shapes back to lists so ``json.dump`` can handle them.
+        Drops ``tools`` when unset so existing datasets keep a clean
+        ``info.json``.
         """
         d = dataclasses.asdict(self)
         for ft in d["features"].values():
             if isinstance(ft.get("shape"), tuple):
                 ft["shape"] = list(ft["shape"])
+        if d.get("tools") is None:
+            d.pop("tools", None)
         return d
 
     @classmethod

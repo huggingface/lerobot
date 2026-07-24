@@ -125,10 +125,13 @@ class LiberoEnv(gym.Env):
         n_envs: int = 1,
         camera_name_mapping: dict[str, str] | None = None,
         num_steps_wait: int = 10,
+        control_freq: int = 20,
         control_mode: str = "relative",
         is_libero_plus: bool = False,
     ):
         super().__init__()
+        if control_freq <= 0:
+            raise ValueError(f"control_freq must be positive, got {control_freq}")
         self.task_id = task_id
         self.is_libero_plus = is_libero_plus
         self.obs_type = obs_type
@@ -154,6 +157,7 @@ class LiberoEnv(gym.Env):
             }
         self.camera_name_mapping = camera_name_mapping
         self.num_steps_wait = num_steps_wait
+        self.control_freq = control_freq
         self.episode_index = episode_index
         self.episode_length = episode_length
         # Load once and keep
@@ -260,6 +264,7 @@ class LiberoEnv(gym.Env):
             bddl_file_name=self._task_bddl_file,
             camera_heights=self.observation_height,
             camera_widths=self.observation_width,
+            control_freq=self.control_freq,
         )
         env.reset()
         self._env = env

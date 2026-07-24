@@ -79,6 +79,8 @@ class DiffusionConfig(PreTrainedConfig):
         use_film_scale_modulation: FiLM (https://huggingface.co/papers/1709.07871) is used for the Unet conditioning.
             Bias modulation is used be default, while this parameter indicates whether to also use scale
             modulation.
+        gradient_checkpointing: Whether to checkpoint the Unet residual blocks during training. This reduces
+            activation memory at the cost of recomputing those blocks during the backward pass.
         noise_scheduler_type: Name of the noise scheduler to use. Supported options: ["DDPM", "DDIM"].
         num_train_timesteps: Number of diffusion steps for the forward diffusion schedule.
         beta_schedule: Name of the diffusion beta schedule as per DDPMScheduler from Hugging Face diffusers.
@@ -100,8 +102,8 @@ class DiffusionConfig(PreTrainedConfig):
 
     # Inputs / output structure.
     n_obs_steps: int = 2
-    horizon: int = 16
-    n_action_steps: int = 8
+    horizon: int = 64
+    n_action_steps: int = 32
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -122,16 +124,17 @@ class DiffusionConfig(PreTrainedConfig):
     crop_ratio: float = 1.0
     crop_shape: tuple[int, int] | None = None
     crop_is_random: bool = True
-    pretrained_backbone_weights: str | None = None
-    use_group_norm: bool = True
+    pretrained_backbone_weights: str | None = "ResNet18_Weights.IMAGENET1K_V1"
+    use_group_norm: bool = False
     spatial_softmax_num_keypoints: int = 32
-    use_separate_rgb_encoder_per_camera: bool = False
+    use_separate_rgb_encoder_per_camera: bool = True
     # Unet.
     down_dims: tuple[int, ...] = (512, 1024, 2048)
     kernel_size: int = 5
     n_groups: int = 8
     diffusion_step_embed_dim: int = 128
     use_film_scale_modulation: bool = True
+    gradient_checkpointing: bool = False
     # Noise scheduler.
     noise_scheduler_type: str = "DDPM"
     num_train_timesteps: int = 100
