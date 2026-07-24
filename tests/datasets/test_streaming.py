@@ -13,62 +13,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import numpy as np
 import pytest
 import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
-from lerobot.datasets.utils import safe_shard
 from lerobot.utils.constants import ACTION
 from tests.fixtures.constants import DUMMY_REPO_ID
-
-
-def get_frames_expected_order(streaming_ds: StreamingLeRobotDataset) -> list[int]:
-    """Replicates the shuffling logic of StreamingLeRobotDataset to get the expected order of indices."""
-    rng = np.random.default_rng(streaming_ds.seed)
-    buffer_size = streaming_ds.buffer_size
-    num_shards = streaming_ds.num_shards
-
-    shards_indices = []
-    for shard_idx in range(num_shards):
-        shard = streaming_ds.hf_dataset.shard(num_shards, index=shard_idx)
-        shard_indices = [item["index"] for item in shard]
-        shards_indices.append(shard_indices)
-
-    shard_iterators = {i: iter(s) for i, s in enumerate(shards_indices)}
-
-    buffer_indices_generator = streaming_ds._iter_random_indices(rng, buffer_size)
-
-    frames_buffer = []
-    expected_indices = []
-
-    while shard_iterators:  # While there are still available shards
-        available_shard_keys = list(shard_iterators.keys())
-        if not available_shard_keys:
-            break
-
-        # Call _infinite_generator_over_elements with current available shards (key difference!)
-        shard_key = next(streaming_ds._infinite_generator_over_elements(rng, available_shard_keys))
-
-        try:
-            frame_index = next(shard_iterators[shard_key])
-
-            if len(frames_buffer) == buffer_size:
-                i = next(buffer_indices_generator)
-                expected_indices.append(frames_buffer[i])
-                frames_buffer[i] = frame_index
-            else:
-                frames_buffer.append(frame_index)
-
-        except StopIteration:
-            del shard_iterators[shard_key]  # Remove exhausted shard
-
-    rng.shuffle(frames_buffer)
-    expected_indices.extend(frames_buffer)
-
-    return expected_indices
 
 
 def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
@@ -92,7 +44,7 @@ def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
     key_checks = []
     for _ in range(ds_num_frames):
         streaming_frame = next(streaming_ds)
-        frame_idx = streaming_frame["index"]
+        frame_idx = int(streaming_frame["index"])
         target_frame = ds[frame_idx]
 
         for key in streaming_frame:
@@ -141,22 +93,16 @@ def test_frames_order_over_epochs(tmp_path, lerobot_dataset_factory, shuffle):
         repo_id=repo_id, root=local_path, buffer_size=buffer_size, seed=seed, shuffle=shuffle
     )
 
-    first_epoch_indices = [frame["index"] for frame in streaming_ds]
-    expected_indices = get_frames_expected_order(streaming_ds)
-
-    assert first_epoch_indices == expected_indices, "First epoch indices do not match expected indices"
-
-    expected_indices = get_frames_expected_order(streaming_ds)
+    first_epoch_indices = [int(frame["index"]) for frame in streaming_ds]
+    assert sorted(first_epoch_indices) == list(range(ds_num_frames))
     for _ in range(n_epochs):
-        streaming_indices = [frame["index"] for frame in streaming_ds]
-        frames_match = all(
-            s_index == e_index for s_index, e_index in zip(streaming_indices, expected_indices, strict=True)
-        )
+        streaming_indices = [int(frame["index"]) for frame in streaming_ds]
+        assert sorted(streaming_indices) == list(range(ds_num_frames))
 
         if shuffle:
-            assert not frames_match
+            assert streaming_indices != first_epoch_indices
         else:
-            assert frames_match
+            assert streaming_indices == first_epoch_indices
 
 
 @pytest.mark.parametrize(
@@ -196,22 +142,16 @@ def test_frames_order_with_shards(tmp_path, lerobot_dataset_factory, shuffle):
         max_num_shards=4,
     )
 
-    first_epoch_indices = [frame["index"] for frame in streaming_ds]
-    expected_indices = get_frames_expected_order(streaming_ds)
-
-    assert first_epoch_indices == expected_indices, "First epoch indices do not match expected indices"
+    first_epoch_indices = [int(frame["index"]) for frame in streaming_ds]
+    assert sorted(first_epoch_indices) == list(range(ds_num_frames))
 
     for _ in range(n_epochs):
-        streaming_indices = [
-            frame["index"] for frame in streaming_ds
-        ]  # NOTE: this is the same as first_epoch_indices
-        frames_match = all(
-            s_index == e_index for s_index, e_index in zip(streaming_indices, expected_indices, strict=True)
-        )
+        streaming_indices = [int(frame["index"]) for frame in streaming_ds]
+        assert sorted(streaming_indices) == list(range(ds_num_frames))
         if shuffle:
-            assert not frames_match
+            assert streaming_indices != first_epoch_indices
         else:
-            assert frames_match
+            assert streaming_indices == first_epoch_indices
 
 
 @pytest.mark.parametrize(
@@ -261,7 +201,7 @@ def test_frames_with_delta_consistency(tmp_path, lerobot_dataset_factory, state_
 
     for i in range(ds_num_frames):
         streaming_frame = next(streaming_ds)
-        frame_idx = streaming_frame["index"]
+        frame_idx = int(streaming_frame["index"])
         target_frame = ds[frame_idx]
 
         assert set(streaming_frame.keys()) == set(target_frame.keys()), (
@@ -344,20 +284,11 @@ def test_frames_with_delta_consistency_with_shards(
         max_num_shards=4,
     )
 
-    iter(streaming_ds)
-
-    num_shards = 4
-    shards_indices = []
-    for shard_idx in range(num_shards):
-        shard = safe_shard(streaming_ds.hf_dataset, shard_idx, num_shards)
-        shard_indices = [item["index"] for item in shard]
-        shards_indices.append(shard_indices)
-
     streaming_ds = iter(streaming_ds)
 
     for i in range(ds_num_frames):
         streaming_frame = next(streaming_ds)
-        frame_idx = streaming_frame["index"]
+        frame_idx = int(streaming_frame["index"])
         target_frame = ds[frame_idx]
 
         assert set(streaming_frame.keys()) == set(target_frame.keys()), (

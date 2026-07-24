@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""This script demonstrates how to train a Diffusion Policy on the PushT environment,
-using a dataset processed in streaming mode."""
+"""Train directly from episode-scoped Parquet and MP4 streams.
+
+For normal training, prefer ``lerobot-train --dataset.streaming=true`` so distributed sharding,
+checkpoint resume, and device placement are configured by the training pipeline. This lower-level
+example shows the underlying Python API.
+"""
 
 from pathlib import Path
 
@@ -64,18 +68,28 @@ def main():
         ACTION: [t / dataset_metadata.fps for t in range(cfg.n_action_steps)],
     }
 
-    # Instantiating the training dataset in streaming mode allows to not consume up memory as the data is fetched
-    # iteratively rather than being load into memory all at once. Retrieved frames are shuffled across epochs
-    dataset = StreamingLeRobotDataset(dataset_id, delta_timestamps=delta_timestamps, tolerance_s=1e-3)
+    # The first run resolves or locally builds a revision-safe MP4 index sidecar. It is never
+    # uploaded implicitly. Episode rows and video byte ranges are then prefetched together.
+    dataset = StreamingLeRobotDataset(
+        dataset_id,
+        delta_timestamps=delta_timestamps,
+        tolerance_s=1e-3,
+        episode_pool_size=16,
+        prefetch_episodes=4,
+        byte_budget_gb=4,
+        repeat=True,
+    )
 
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-4)
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=4,
+        # One worker owns the rank-level pool. Internal fetch concurrency is configured through
+        # StreamingLeRobotDataset.max_num_shards (the lerobot-train CLI derives it from num_workers).
+        num_workers=1,
         batch_size=16,
         pin_memory=device.type != "cpu",
-        drop_last=True,
-        prefetch_factor=2,  # loads batches with multiprocessing while policy trains
+        prefetch_factor=2,  # bounded decoded-batch queue while the policy trains
+        persistent_workers=True,
     )
 
     # Run training loop.

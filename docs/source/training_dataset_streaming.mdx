@@ -1,0 +1,138 @@
+# Training Dataset Streaming
+
+Training-time dataset streaming lets `lerobot-train` consume a LeRobotDataset v3 without first
+downloading its complete Parquet and video payload. Enable it through the existing public switch:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=OWNER/DATASET \
+  --dataset.streaming=true \
+  --policy.type=act \
+  --output_dir=outputs/train/act_streaming
+```
+
+This feature is independent of `--dataset.streaming_encoding=true`. `streaming_encoding` controls
+how videos are written while recording; `dataset.streaming` controls how an existing dataset is read
+during training. Recording and rollout encoders are not used by this training path.
+
+## How an epoch is read
+
+Each distributed rank owns a deterministic, frame-balanced set of complete episodes. One logical
+exact-coverage pool per rank mixes those episodes while visiting every selected frame once per
+rank-local coverage epoch. Parquet columns and compressed MP4 byte ranges are prefetched from the
+same byte-aware admission frontier. Temporal history and future windows are resolved inside the
+complete episode, including the same boundary padding masks as map-style loading.
+
+When `--num_workers` is nonzero, training uses one dedicated DataLoader process per rank. Its
+bounded result queue holds decoded batches while the policy trains. The configured worker count is
+instead used as internal Parquet and byte-range fetch concurrency, so increasing it does not create
+independent samplers or multiply the cache budget.
+
+The default map-style `LeRobotDataset` behavior is unchanged when `--dataset.streaming=false`.
+
+## MP4 sidecars and the first run
+
+Video streaming uses a small MP4 index sidecar. Dataset initialization first checks the
+revision-keyed local cache, then looks for a valid published sidecar. If neither is available,
+LeRobot builds the sidecar locally while holding a process lock and installs it atomically. A
+failed or interrupted build does not replace the previous valid file.
+
+Training is read-only: it never uploads a sidecar or modifies the dataset repository. On a cluster
+with node-local caches, the first job may build once per node. A shared LeRobot cache avoids that
+duplication.
+
+Dataset maintainers can build a sidecar ahead of time:
+
+```bash
+uv run python scripts/build_mp4_sidecar.py \
+  --repo-id=OWNER/DATASET \
+  --revision=COMMIT_SHA \
+  --data-root=hf://datasets/OWNER/DATASET@COMMIT_SHA \
+  --output=/tmp/dataset-mp4-sidecar.npz
+```
+
+Publication is always explicit. Add `--push` only after validating the complete-dataset sidecar.
+Subset sidecars cannot be published.
+
+## Configuration
+
+The production defaults are:
+
+| Option                        | Default | Meaning                                             |
+| ----------------------------- | ------: | --------------------------------------------------- |
+| `streaming_episode_pool_size` |      32 | Maximum complete episodes mixed by each rank        |
+| `streaming_prefetch_episodes` |       8 | Episodes fetched ahead of the active pool           |
+| `streaming_byte_budget_gb`    |       8 | Maximum synthesized MP4 bytes per rank              |
+| `streaming_data_root`         |   unset | Optional local, Hub, bucket, or fsspec payload root |
+
+The active episode set is capped by both episode count and the exact synthesized mini-MP4 sizes
+computed from the sidecar. An episode larger than the complete rank budget fails before training
+fetches its payload. The cache, decoder LRU, and decoded-batch queue remain independently bounded.
+Start with a smaller pool or budget on memory-constrained hosts:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=OWNER/DATASET \
+  --dataset.streaming=true \
+  --dataset.streaming_episode_pool_size=16 \
+  --dataset.streaming_prefetch_episodes=4 \
+  --dataset.streaming_byte_budget_gb=4 \
+  --num_workers=4 \
+  --policy.type=act \
+  --output_dir=outputs/train/act_streaming
+```
+
+If metadata remains in a dataset repository while payload files are mirrored elsewhere, set
+`--dataset.streaming_data_root`. Supported values include local paths, revision-qualified
+`hf://datasets/...` roots, `hf://buckets/...` roots, and fsspec URLs.
+
+## Resume and shuffle migration
+
+The earlier streaming reader used a bounded row shuffle buffer. The episode reader instead has
+deterministic exact-coverage ordering derived from the seed and epoch. Checkpoint resume restores the
+per-rank sample offset using the checkpoint batch size. Changing distributed world size or
+batch size changes ownership or batch boundaries. For sample-exact comparisons, resume with the
+same world size and batch size. Keep the same internal fetch concurrency when comparing performance.
+
+Streaming checkpoints created by the earlier multi-worker sampler record a different ownership
+topology and are rejected for sample-exact resume. Start a new run from the saved policy weights
+rather than claiming that its dataset stream resumes exactly.
+
+## Benchmarking
+
+Measure the integrated path on the same hosts used for training:
+
+```bash
+uv run python scripts/bench_streaming_dataset.py \
+  --repo-id=OWNER/DATASET \
+  --revision=COMMIT_SHA \
+  --batch-size=16 \
+  --num-workers=1 \
+  --fetch-workers=4 \
+  --summary-json=streaming-benchmark.json
+```
+
+The output records source revisions, startup and first-batch latency, steady-state throughput,
+batch-wait percentiles, duplicate indices, memory high-water marks, and the exact settings. Run a
+separate end-to-end training A/B to include policy compute, device transfer, and optimizer time.
+Do not compare results unless the code revision, dataset revision, hardware, and settings match.
+
+For lower-level byte-fetch, retry, decoder-open, and refill diagnostics, build the sidecar explicitly
+and run `scripts/bench_episode_byte_cache.py` with the same `--repo-id`, `--revision`,
+`--data-root`, and `--sidecar-path`. Treat this as a stage profiler; throughput claims should come
+from the integrated dataset benchmark and end-to-end training A/B.
+
+## Troubleshooting
+
+- **The first batch takes a long time:** check logs for a sidecar build. Reuse a shared cache or
+  publish a validated complete sidecar explicitly.
+- **A sidecar lock times out:** another process may still be indexing the same revision. Confirm it
+  is healthy before removing a stale lock.
+- **A rank owns no data:** reduce the number of ranks so every rank owns at least one selected
+  episode.
+- **The byte budget is exceeded:** lower the episode pool, increase the per-rank byte budget, or
+  use an explicitly prepared payload layout with smaller episode ranges.
+- **Remote reads cannot authenticate:** verify the normal Hugging Face token or fsspec credentials
+  are available in every worker environment. Credentials are never embedded in the sidecar.
+- **Refill stalls are high:** compare p95/p99 batch wait, reduce network contention, raise prefetch
+  gradually, and verify that the dataset sidecar matches the exact revision.
