@@ -14,22 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
+from .config_so102_follower import SO102FollowerConfig
+from .so102_follower import SO102Follower
 
-from lerobot.cameras import CameraConfig
-from lerobot.so101_7dof import DEFAULT_MOTOR_IDS, validate_motor_ids
-
-from ..config import RobotConfig
-
-
-@RobotConfig.register_subclass("so101_7dof_follower")
-@dataclass
-class SO1017DoFFollowerConfig(RobotConfig):
-    port: str
-    disable_torque_on_disconnect: bool = True
-    motor_ids: dict[str, int] = field(default_factory=lambda: DEFAULT_MOTOR_IDS.copy())
-    cameras: dict[str, CameraConfig] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        validate_motor_ids(self.motor_ids)
+__all__ = ["SO102Follower", "SO102FollowerConfig"]

@@ -20,23 +20,23 @@ import pytest
 
 from lerobot.motors import MotorNormMode
 from lerobot.robots import make_robot_from_config
-from lerobot.robots.so101_7dof_follower import (
-    SO1017DoFFollower,
-    SO1017DoFFollowerConfig,
+from lerobot.robots.so102_follower import (
+    SO102Follower,
+    SO102FollowerConfig,
 )
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
-from lerobot.so101_7dof import (
+from lerobot.so102 import (
     ACTION_KEYS,
     DEFAULT_MOTOR_IDS,
     action_gripper_to_native,
     native_gripper_to_action,
 )
-from lerobot.teleoperators.so101_7dof_leader import SO1017DoFLeader, SO1017DoFLeaderConfig
+from lerobot.teleoperators.so102_leader import SO102Leader, SO102LeaderConfig
 from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from lerobot.teleoperators.utils import make_teleoperator_from_config
 
-_FOLLOWER_MODULE = "lerobot.robots.so101_7dof_follower.so101_7dof_follower"
-_LEADER_MODULE = "lerobot.teleoperators.so101_7dof_leader.so101_7dof_leader"
+_FOLLOWER_MODULE = "lerobot.robots.so102_follower.so102_follower"
+_LEADER_MODULE = "lerobot.teleoperators.so102_leader.so102_leader"
 
 
 def _bus_mock(native_positions: dict[str, float] | None = None) -> MagicMock:
@@ -63,14 +63,12 @@ def _make_devices(tmp_path, native_positions: dict[str, float] | None = None):
         patch(f"{_LEADER_MODULE}.FeetechMotorsBus", side_effect=_leader_bus_factory),
         patch(f"{_FOLLOWER_MODULE}.FeetechMotorsBus", side_effect=_follower_bus_factory),
     ):
-        leader = SO1017DoFLeader(SO1017DoFLeaderConfig(port="/dev/null", calibration_dir=tmp_path / "leader"))
-        follower = SO1017DoFFollower(
-            SO1017DoFFollowerConfig(port="/dev/null", calibration_dir=tmp_path / "follower")
-        )
+        leader = SO102Leader(SO102LeaderConfig(port="/dev/null", calibration_dir=tmp_path / "leader"))
+        follower = SO102Follower(SO102FollowerConfig(port="/dev/null", calibration_dir=tmp_path / "follower"))
     return leader, follower
 
 
-def test_leader_and_follower_expose_same_seven_action_keys(tmp_path):
+def test_so102_leader_and_follower_expose_same_seven_action_keys(tmp_path):
     leader, follower = _make_devices(tmp_path)
     assert tuple(leader.action_features) == ACTION_KEYS
     assert tuple(follower.action_features) == ACTION_KEYS
@@ -101,16 +99,35 @@ def test_factories_register_new_types(tmp_path):
         patch(f"{_FOLLOWER_MODULE}.FeetechMotorsBus", return_value=follower_bus),
     ):
         leader = make_teleoperator_from_config(
-            SO1017DoFLeaderConfig(port="/dev/null", calibration_dir=tmp_path / "leader")
+            SO102LeaderConfig(port="/dev/null", calibration_dir=tmp_path / "leader")
         )
         follower = make_robot_from_config(
-            SO1017DoFFollowerConfig(port="/dev/null", calibration_dir=tmp_path / "follower")
+            SO102FollowerConfig(port="/dev/null", calibration_dir=tmp_path / "follower")
         )
 
-    assert isinstance(leader, SO1017DoFLeader)
-    assert isinstance(follower, SO1017DoFFollower)
-    assert leader.config.type == "so101_7dof_leader"
-    assert follower.config.type == "so101_7dof_follower"
+    assert isinstance(leader, SO102Leader)
+    assert isinstance(follower, SO102Follower)
+    assert leader.config.type == "so102_leader"
+    assert follower.config.type == "so102_follower"
+
+
+def test_so102_uses_new_calibration_directories(tmp_path, monkeypatch):
+    monkeypatch.setattr("lerobot.teleoperators.teleoperator.HF_LEROBOT_CALIBRATION", tmp_path)
+    monkeypatch.setattr("lerobot.robots.robot.HF_LEROBOT_CALIBRATION", tmp_path)
+    leader_bus = _bus_mock()
+    follower_bus = _bus_mock()
+
+    with (
+        patch(f"{_LEADER_MODULE}.FeetechMotorsBus", return_value=leader_bus),
+        patch(f"{_FOLLOWER_MODULE}.FeetechMotorsBus", return_value=follower_bus),
+    ):
+        leader = SO102Leader(SO102LeaderConfig(port="/dev/null", id="leader_so102_v1"))
+        follower = SO102Follower(SO102FollowerConfig(port="/dev/null", id="follower_so102_v1"))
+
+    assert leader.calibration_fpath == tmp_path / "teleoperators/so102_leader/leader_so102_v1.json"
+    assert follower.calibration_fpath == tmp_path / "robots/so102_follower/follower_so102_v1.json"
+    assert leader.calibration == {}
+    assert follower.calibration == {}
 
 
 @pytest.mark.parametrize(

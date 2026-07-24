@@ -66,7 +66,7 @@ from lerobot.robots import (  # noqa: F401
     openarm_follower,
     reachy2,
     rebot_b601_follower,
-    so101_7dof_follower,
+    so102_follower,
     so_follower,
     unitree_g1,
 )

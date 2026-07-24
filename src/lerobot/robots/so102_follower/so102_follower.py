@@ -21,7 +21,7 @@ from functools import cached_property
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus, OperatingMode
-from lerobot.so101_7dof import (
+from lerobot.so102 import (
     ACTION_KEYS,
     JOINT_NAMES,
     action_to_native_position,
@@ -31,22 +31,31 @@ from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
-from .config_so101_7dof_follower import SO1017DoFFollowerConfig
+from .config_so102_follower import SO102FollowerConfig
 
 logger = logging.getLogger(__name__)
 
 
-class SO1017DoFFollower(Robot):
-    """Seven-actuator Feetech follower accepting the reBot-compatible action contract."""
+class SO102Follower(Robot):
+    """Seven-actuator Feetech follower derived from the SO-101 follower.
 
-    config_class = SO1017DoFFollowerConfig
-    name = "so101_7dof_follower"
+    SO-101 대비 변경점:
+    - ``wrist_yaw``를 추가한 7개 Feetech 모터를 제어한다.
+    - arm joints는 기존처럼 calibrated degree를 직접 사용한다.
+    - 외부 gripper Action 0..-270°를 Feetech 내부 0..100으로 되돌려 쓴다.
+    - B601 전용 zero pose와 Action 변환은 이 Follower에 적용하지 않는다.
+    """
 
-    def __init__(self, config: SO1017DoFFollowerConfig):
+    config_class = SO102FollowerConfig
+    name = "so102_follower"
+
+    def __init__(self, config: SO102FollowerConfig):
         super().__init__(config)
         self.config = config
         self.bus = FeetechMotorsBus(
             port=config.port,
+            # Leader와 동일한 7개 이름/ID를 사용하므로 SO-102끼리는 별도 좌표 변환 없이
+            # 각 장치의 표준 Feetech calibration 결과를 degree로 직접 주고받는다.
             motors={
                 motor: Motor(
                     config.motor_ids[motor],
@@ -168,8 +177,7 @@ class SO1017DoFFollower(Robot):
 
     def _native_positions_to_action(self, native_positions: dict[str, float]) -> dict[str, float]:
         return {
-            motor: native_to_action_position(motor, float(native_positions[motor]))
-            for motor in JOINT_NAMES
+            motor: native_to_action_position(motor, float(native_positions[motor])) for motor in JOINT_NAMES
         }
 
     def _read_action_positions(self) -> dict[str, float]:
@@ -193,14 +201,13 @@ class SO1017DoFFollower(Robot):
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
         goal_positions = {
-            key.removesuffix(".pos"): float(value)
-            for key, value in action.items()
-            if key.endswith(".pos")
+            key.removesuffix(".pos"): float(value) for key, value in action.items() if key.endswith(".pos")
         }
 
+        # arm degree는 그대로 두고, 공통 gripper Action(0..-270°)만 Feetech
+        # Goal_Position 단위(0..100)로 역변환한다.
         native_goals = {
-            motor: action_to_native_position(motor, goal_positions[motor])
-            for motor in goal_positions
+            motor: action_to_native_position(motor, goal_positions[motor]) for motor in goal_positions
         }
         self.bus.sync_write("Goal_Position", native_goals)
         return {f"{motor}.pos": value for motor, value in goal_positions.items()}

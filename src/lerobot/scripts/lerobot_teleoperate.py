@@ -98,10 +98,11 @@ from lerobot.robots import (  # noqa: F401
     openarm_follower,
     reachy2,
     rebot_b601_follower,
-    so101_7dof_follower,
+    so102_follower,
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
+from lerobot.so102 import build_b601_action_conversion
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -119,7 +120,7 @@ from lerobot.teleoperators import (  # noqa: F401
     openarm_mini,
     reachy2_teleoperator,
     rebot_102_leader,
-    so101_7dof_leader,
+    so102_leader,
     so_leader,
     unitree_g1,
 )
@@ -152,6 +153,43 @@ class TeleoperateConfig:
     display_port: int | None = None
     # Whether to display compressed (JPEG) images instead of raw frames
     display_compressed_images: bool = False
+
+
+def configure_follower_action_conversion(
+    teleop: Teleoperator,
+    teleop_cfg: TeleoperatorConfig,
+    robot_cfg: RobotConfig,
+) -> None:
+    # SO-101/SO-102 Feetech Leader-Follower 조합은 calibrated degree를 직접 사용한다.
+    # 서로 다른 zero/range를 사용하는 SO-102 Leader → B601 조합에서만
+    # 별도로 저장한 B601 zero pose와 SO-102 min/max를 이용한 변환을 주입한다.
+    if not (
+        teleop_cfg.type == "so102_leader"
+        and robot_cfg.type == "rebot_b601_follower"
+    ):
+        return
+
+    if not hasattr(teleop, "set_b601_action_conversion"):
+        raise ValueError(
+            f"Teleoperator type {teleop_cfg.type} does not support B601 action mapping"
+        )
+    if not teleop.b601_zero_positions:
+        raise ValueError(
+            "SO-102 calibration has no B601 zero pose. Run lerobot-calibrate for this "
+            "SO-102 leader, type 'c', and complete the new zero/middle/min-max calibration."
+        )
+
+    profile = build_b601_action_conversion(
+        calibration=teleop.calibration,
+        motors=teleop.bus.motors,
+        model_resolution_table=teleop.bus.model_resolution_table,
+        joint_limits=robot_cfg.joint_limits,
+        zero_positions=teleop.b601_zero_positions,
+    )
+    teleop.set_b601_action_conversion(profile)
+    logging.info(
+        "Configured follower-specific SO-102 min/zero/max to reBot B601 Action conversion"
+    )
 
 
 def teleop_loop(
@@ -258,6 +296,7 @@ def teleoperate(cfg: TeleoperateConfig):
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
     teleop.connect()
+    configure_follower_action_conversion(teleop, cfg.teleop, cfg.robot)
     robot.connect()
 
     try:

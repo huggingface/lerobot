@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_so101_7dof_follower import SO1017DoFFollowerConfig
-from .so101_7dof_follower import SO1017DoFFollower
+from .config_so102_leader import SO102LeaderConfig
+from .so102_leader import SO102Leader
 
-__all__ = ["SO1017DoFFollower", "SO1017DoFFollowerConfig"]
+__all__ = ["SO102Leader", "SO102LeaderConfig"]

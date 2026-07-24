@@ -16,15 +16,16 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.so101_7dof import DEFAULT_MOTOR_IDS, validate_motor_ids
+from lerobot.so102 import DEFAULT_MOTOR_IDS, validate_motor_ids
 
 from ..config import TeleoperatorConfig
 
 
-@TeleoperatorConfig.register_subclass("so101_7dof_leader")
+@TeleoperatorConfig.register_subclass("so102_leader")
 @dataclass
-class SO1017DoFLeaderConfig(TeleoperatorConfig):
+class SO102LeaderConfig(TeleoperatorConfig):
     port: str
+    # SO-101의 기본 ID 1..6과 달리 wrist_yaw=5, wrist_roll=6, gripper=7을 사용한다.
     motor_ids: dict[str, int] = field(default_factory=lambda: DEFAULT_MOTOR_IDS.copy())
 
     def __post_init__(self) -> None:
