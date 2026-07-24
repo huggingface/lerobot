@@ -14,12 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+from lerobot.common import train_utils as train_utils_module
 from lerobot.common.train_utils import (
+    _is_windows_symlink_privilege_error,
+    _link_latest_checkpoint,
     get_step_checkpoint_dir,
     get_step_identifier,
     load_training_batch_size,
@@ -42,6 +46,34 @@ from lerobot.utils.constants import (
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
+
+
+def _make_winerror(code: int, message: str) -> OSError:
+    exc = OSError(message)
+    exc.winerror = code
+    return exc
+
+
+def test_is_windows_symlink_privilege_error_true_on_nt_with_1314(monkeypatch):
+    monkeypatch.setattr(train_utils_module.os, "name", "nt")
+    assert _is_windows_symlink_privilege_error(_make_winerror(1314, "privilege not held"))
+
+
+def test_is_windows_symlink_privilege_error_false_for_other_winerror(monkeypatch):
+    monkeypatch.setattr(train_utils_module.os, "name", "nt")
+    assert not _is_windows_symlink_privilege_error(_make_winerror(183, "already exists"))
+
+
+def test_is_windows_symlink_privilege_error_false_on_non_windows(monkeypatch):
+    monkeypatch.setattr(train_utils_module.os, "name", "posix")
+    assert not _is_windows_symlink_privilege_error(_make_winerror(1314, "privilege not held"))
+
+
+def _assert_last_points_to(last: Path, checkpoint: Path) -> None:
+    assert last.exists()
+    assert last.is_dir()
+    assert last.resolve() == checkpoint.resolve()
+    assert os.path.samefile(last, checkpoint)
 
 
 def test_get_step_identifier():
@@ -95,8 +127,129 @@ def test_update_last_checkpoint(tmp_path):
     checkpoint.mkdir()
     update_last_checkpoint(checkpoint)
     last_checkpoint = tmp_path / LAST_CHECKPOINT_LINK
-    assert last_checkpoint.is_symlink()
-    assert last_checkpoint.resolve() == checkpoint
+    _assert_last_points_to(last_checkpoint, checkpoint)
+    if os.name != "nt" or last_checkpoint.is_symlink():
+        assert last_checkpoint.is_symlink()
+
+
+def test_link_latest_checkpoint_falls_back_to_junction_on_winerror_1314(tmp_path, monkeypatch):
+    checkpoint = tmp_path / "0005"
+    checkpoint.mkdir()
+    link = tmp_path / "last"
+    junction_mock = MagicMock()
+
+    def symlink_side_effect(self, target, target_is_directory=False):
+        raise _make_winerror(1314, "A required privilege is not held by the client")
+
+    monkeypatch.setattr(Path, "symlink_to", symlink_side_effect)
+    monkeypatch.setattr("lerobot.common.train_utils._create_directory_junction", junction_mock)
+    monkeypatch.setattr(
+        "lerobot.common.train_utils._is_windows_symlink_privilege_error",
+        lambda exc: getattr(exc, "winerror", None) == 1314,
+    )
+
+    _link_latest_checkpoint(link, checkpoint)
+
+    junction_mock.assert_called_once_with(link, checkpoint)
+
+
+def test_link_latest_checkpoint_reraises_non_privilege_oserror(tmp_path, monkeypatch):
+    checkpoint = tmp_path / "0005"
+    checkpoint.mkdir()
+    link = tmp_path / "last"
+    junction_mock = MagicMock()
+    original_error = _make_winerror(183, "Cannot create a file when that file already exists")
+
+    def symlink_side_effect(self, target, target_is_directory=False):
+        raise original_error
+
+    monkeypatch.setattr(Path, "symlink_to", symlink_side_effect)
+    monkeypatch.setattr("lerobot.common.train_utils._create_directory_junction", junction_mock)
+    monkeypatch.setattr("lerobot.common.train_utils._is_windows_symlink_privilege_error", lambda exc: False)
+
+    with pytest.raises(OSError) as exc_info:
+        _link_latest_checkpoint(link, checkpoint)
+    assert exc_info.value is original_error
+    junction_mock.assert_not_called()
+
+
+def test_link_latest_checkpoint_non_privilege_error_does_not_call_junction(tmp_path, monkeypatch):
+    checkpoint = tmp_path / "0005"
+    checkpoint.mkdir()
+    link = tmp_path / "last"
+    junction_mock = MagicMock()
+
+    def symlink_side_effect(self, target, target_is_directory=False):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(Path, "symlink_to", symlink_side_effect)
+    monkeypatch.setattr("lerobot.common.train_utils._create_directory_junction", junction_mock)
+    monkeypatch.setattr("lerobot.common.train_utils._is_windows_symlink_privilege_error", lambda exc: False)
+
+    with pytest.raises(OSError, match="permission denied"):
+        _link_latest_checkpoint(link, checkpoint)
+    junction_mock.assert_not_called()
+
+
+def test_update_last_checkpoint_replaces_existing_pointer(tmp_path):
+    ckpt1 = tmp_path / "0005"
+    ckpt2 = tmp_path / "0010"
+    ckpt1.mkdir()
+    ckpt2.mkdir()
+    update_last_checkpoint(ckpt1)
+    update_last_checkpoint(ckpt2)
+    _assert_last_points_to(tmp_path / LAST_CHECKPOINT_LINK, ckpt2)
+
+
+def test_update_last_checkpoint_readable_via_last_pointer(tmp_path):
+    checkpoint = tmp_path / "0005"
+    checkpoint.mkdir()
+    update_last_checkpoint(checkpoint)
+    last = tmp_path / LAST_CHECKPOINT_LINK
+    save_training_step(42, last)
+    assert load_training_step(last) == 42
+
+
+def test_update_last_checkpoint_does_not_copy_checkpoint_dir(tmp_path):
+    checkpoint = tmp_path / "0005"
+    checkpoint.mkdir()
+    marker = checkpoint / "marker.txt"
+    marker.write_text("original")
+    update_last_checkpoint(checkpoint)
+    last = tmp_path / LAST_CHECKPOINT_LINK
+    _assert_last_points_to(last, checkpoint)
+    assert (last / "marker.txt").read_text() == "original"
+    (last / "marker.txt").write_text("updated")
+    assert marker.read_text() == "updated"
+    assert {path.name for path in tmp_path.iterdir()} == {checkpoint.name, LAST_CHECKPOINT_LINK}
+
+
+def test_update_last_checkpoint_path_with_spaces(tmp_path):
+    checkpoints_dir = tmp_path / "my checkpoints"
+    checkpoints_dir.mkdir()
+    checkpoint = checkpoints_dir / "0005"
+    checkpoint.mkdir()
+    update_last_checkpoint(checkpoint)
+    _assert_last_points_to(checkpoints_dir / LAST_CHECKPOINT_LINK, checkpoint)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction integration")
+def test_update_last_checkpoint_real_junction_without_symlink_privilege(tmp_path, monkeypatch):
+    checkpoint = tmp_path / "0005"
+    checkpoint.mkdir()
+
+    def symlink_side_effect(self, target, target_is_directory=False):
+        raise _make_winerror(1314, "A required privilege is not held by the client")
+
+    monkeypatch.setattr(Path, "symlink_to", symlink_side_effect)
+
+    update_last_checkpoint(checkpoint)
+    last = tmp_path / LAST_CHECKPOINT_LINK
+    _assert_last_points_to(last, checkpoint)
+    assert not last.is_symlink()
+    assert (last / "..").resolve() == tmp_path.resolve()
+    save_training_step(42, last)
+    assert load_training_step(last) == 42
 
 
 @patch("lerobot.common.train_utils.save_training_state")
@@ -212,9 +365,9 @@ def test_resolve_resume_checkpoint_downloads_latest_and_links(tmp_path, monkeypa
 
     assert checkpoint_dir == out / CHECKPOINTS_DIR / "020000"
     last = out / CHECKPOINTS_DIR / LAST_CHECKPOINT_LINK
-    assert last.is_symlink()
-    # `last` points at the downloaded step dir.
-    assert (last.parent / last.readlink()).resolve() == checkpoint_dir.resolve()
+    _assert_last_points_to(last, checkpoint_dir)
+    if last.is_symlink():
+        assert (last.parent / last.readlink()).resolve() == checkpoint_dir.resolve()
 
 
 def test_resolve_resume_checkpoint_raises_without_checkpoints(tmp_path, monkeypatch):
