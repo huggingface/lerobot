@@ -323,6 +323,7 @@ class RecomputeStatsConfig(OperationConfig):
     skip_image_video: bool = True
     relative_action: bool = False
     relative_exclude_joints: list[str] | None = None
+    relative_state_index_map: list[int] | None = None
     chunk_size: int = 50
     num_workers: int = 0
     overwrite: bool = False
@@ -688,7 +689,8 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
     if cfg.operation.relative_action:
         logging.info(
             f"Relative action stats enabled (chunk_size={cfg.operation.chunk_size}, "
-            f"exclude_joints={cfg.operation.relative_exclude_joints})"
+            f"exclude_joints={cfg.operation.relative_exclude_joints}, "
+            f"state_index_map={cfg.operation.relative_state_index_map})"
         )
 
     recompute_stats(
@@ -696,6 +698,7 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         skip_image_video=cfg.operation.skip_image_video,
         relative_action=cfg.operation.relative_action,
         relative_exclude_joints=cfg.operation.relative_exclude_joints,
+        relative_state_index_map=cfg.operation.relative_state_index_map,
         chunk_size=cfg.operation.chunk_size,
         num_workers=cfg.operation.num_workers,
     )

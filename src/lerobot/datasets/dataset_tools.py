@@ -1564,6 +1564,7 @@ def recompute_stats(
     skip_image_video: bool = True,
     relative_action: bool = False,
     relative_exclude_joints: list[str] | None = None,
+    relative_state_index_map: list[int] | None = None,
     chunk_size: int = 50,
     num_workers: int = 0,
 ) -> LeRobotDataset:
@@ -1579,6 +1580,8 @@ def recompute_stats(
             training with ``use_relative_actions=True``.
         relative_exclude_joints: Joint names to exclude from relative conversion when
             relative_action=True. These dims keep absolute stats.
+        relative_state_index_map: Optional observation.state index for each action
+            dimension. Defaults to the legacy state prefix behavior.
         chunk_size: Action chunk size used for relative stats computation. Should match
             ``policy.chunk_size``. Only used when ``relative_action=True``.
         num_workers: Number of parallel threads for relative action stats computation.
@@ -1614,6 +1617,7 @@ def recompute_stats(
             features=features,
             chunk_size=chunk_size,
             exclude_joints=relative_exclude_joints,
+            state_action_index_map=relative_state_index_map,
             num_workers=num_workers,
         )
         features_to_compute.pop(ACTION, None)
