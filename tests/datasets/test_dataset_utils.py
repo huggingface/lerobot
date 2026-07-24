@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest.mock import patch
+
 import pytest
 import torch
 
@@ -21,11 +23,13 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from datasets import Dataset  # noqa: E402
 from huggingface_hub import DatasetCard
+from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.datasets.io_utils import hf_transform_to_torch
-from lerobot.datasets.utils import create_lerobot_dataset_card
+from lerobot.datasets.utils import create_lerobot_dataset_card, get_safe_version
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.feature_utils import combine_feature_dicts
+from tests.fixtures.constants import DUMMY_REPO_ID
 
 
 def calculate_episode_data_index(hf_dataset: Dataset) -> dict[str, torch.Tensor]:
@@ -151,3 +155,21 @@ def test_non_dict_passthrough_last_wins():
     out = combine_feature_dicts(g1, g2)
     # For non-dict entries the last one wins
     assert out["misc"] == 456
+
+
+def test_get_safe_version_raises_on_repo_without_version_tags():
+    with (
+        patch("lerobot.datasets.utils.get_repo_versions", return_value=[]),
+        pytest.raises(RevisionNotFoundError, match="must be tagged with a codebase version"),
+    ):
+        get_safe_version(DUMMY_REPO_ID, "v3.0")
+
+
+def test_get_safe_version_error_reports_repo_id():
+    with (
+        patch("lerobot.datasets.utils.get_repo_versions", return_value=[]),
+        pytest.raises(RevisionNotFoundError) as exc_info,
+    ):
+        get_safe_version(DUMMY_REPO_ID, "v3.0")
+
+    assert DUMMY_REPO_ID in str(exc_info.value)
