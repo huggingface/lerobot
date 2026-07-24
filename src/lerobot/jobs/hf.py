@@ -223,6 +223,74 @@ def _poll_until_done(
     return None
 
 
+def follow_job(job_id: str, *, detach: bool = False, success_marker: str | None = None) -> bool:
+    """Watch a submitted job to the end, streaming its logs to stdout.
+
+    Returns True when the job finished successfully and False when we stopped watching
+    without a verdict — `detach`, or the user pressing Ctrl-C, which detaches rather than
+    cancelling the remote job. Raises RuntimeError when the job reaches a terminal stage
+    other than COMPLETED.
+
+    `success_marker` finishes as soon as that string appears in the logs instead of waiting
+    out the platform's post-run finalization (~30s). Callers that have a log line meaning
+    "the artifact is on the Hub" should pass it; without one, completion is stage-based.
+    """
+    if detach:
+        return False
+
+    done = threading.Event()
+    detached = threading.Event()
+    marker_seen = threading.Event()
+    stage_holder: dict[str, str | None] = {}
+
+    def _poll() -> None:
+        stage_holder["stage"] = _poll_until_done(job_id, done, status_holder=stage_holder)
+
+    poll_thread = threading.Thread(target=_poll, daemon=True)
+    poll_thread.start()
+    log_thread = threading.Thread(
+        target=_tail_logs, args=(job_id, done, success_marker, marker_seen), daemon=True
+    )
+    log_thread.start()
+
+    def _detach(sig, frame):
+        detached.set()
+        done.set()
+        print("\nDetached. Job is still running.")
+        print(f"  Monitor: hf jobs logs {job_id}")
+        print(f"  Cancel:  hf jobs cancel {job_id}")
+
+    # signal.signal only works on the main thread; when called from a worker thread
+    # (e.g. an orchestration framework) skip the Ctrl-C-detaches-instead-of-cancels
+    # handler rather than crashing with ValueError.
+    install_sigint = threading.current_thread() is threading.main_thread()
+    original_sigint = signal.getsignal(signal.SIGINT) if install_sigint else None
+    if install_sigint:
+        signal.signal(signal.SIGINT, _detach)
+    try:
+        # Timeout-based join so SIGINT is delivered to the main thread promptly.
+        while poll_thread.is_alive():
+            poll_thread.join(timeout=0.5)
+        log_thread.join(timeout=5)
+    finally:
+        if install_sigint:
+            signal.signal(signal.SIGINT, original_sigint)
+
+    if detached.is_set():
+        return False
+    if marker_seen.is_set():
+        return True
+
+    stage = stage_holder.get("stage")
+    if stage != "COMPLETED":
+        message = stage_holder.get("message")
+        detail = f" ({message})" if message else ""
+        raise RuntimeError(
+            f"Job {job_id} ended with stage={stage}{detail}. Check logs: hf jobs logs {job_id}"
+        )
+    return True
+
+
 def _pod_forwarded_args(
     argv: list[str], drop_names: tuple[str, ...] = (), drop_prefixes: tuple[str, ...] = ()
 ) -> list[str]:
@@ -362,64 +430,11 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
     print(f"  Monitor:    hf jobs logs {job_id}")
     print(f"  Cancel:     hf jobs cancel {job_id}")
 
-    if cfg.job.detach:
-        return
-
-    done = threading.Event()
-    detached = threading.Event()
-    pushed_ok = threading.Event()
-    stage_holder: dict[str, str | None] = {}
-
-    def _poll() -> None:
-        stage_holder["stage"] = _poll_until_done(job_id, done, status_holder=stage_holder)
-
-    poll_thread = threading.Thread(target=_poll, daemon=True)
-    poll_thread.start()
     # Finish as soon as the model is pushed, rather than waiting out the platform's
     # post-run finalization before the job stage flips to COMPLETED. This matches the
     # exact log line emitted by lerobot.common.train_utils.publish_trained_model — the two must stay
     # in sync. If it ever stops matching we just fall back to stage-based completion
     # (~30s slower), so the contract is an optimization, not a correctness requirement.
     success_marker = f"Model pushed to https://huggingface.co/{repo_id}"
-    log_thread = threading.Thread(
-        target=_tail_logs, args=(job_id, done, success_marker, pushed_ok), daemon=True
-    )
-    log_thread.start()
-
-    def _detach(sig, frame):
-        detached.set()
-        done.set()
-        print("\nDetached. Job is still running.")
-        print(f"  Monitor: hf jobs logs {job_id}")
-        print(f"  Cancel:  hf jobs cancel {job_id}")
-
-    # signal.signal only works on the main thread; when called from a worker thread
-    # (e.g. an orchestration framework) skip the Ctrl-C-detaches-instead-of-cancels
-    # handler rather than crashing with ValueError.
-    install_sigint = threading.current_thread() is threading.main_thread()
-    original_sigint = signal.getsignal(signal.SIGINT) if install_sigint else None
-    if install_sigint:
-        signal.signal(signal.SIGINT, _detach)
-    try:
-        # Timeout-based join so SIGINT is delivered to the main thread promptly.
-        while poll_thread.is_alive():
-            poll_thread.join(timeout=0.5)
-        log_thread.join(timeout=5)
-    finally:
-        if install_sigint:
-            signal.signal(signal.SIGINT, original_sigint)
-
-    if detached.is_set():
-        return
-
-    if pushed_ok.is_set():
+    if follow_job(job_id, detach=cfg.job.detach, success_marker=success_marker):
         print(f"\nTraining complete — model pushed to https://huggingface.co/{repo_id}")
-        return
-
-    stage = stage_holder.get("stage")
-    if stage != "COMPLETED":
-        message = stage_holder.get("message")
-        detail = f" ({message})" if message else ""
-        raise RuntimeError(
-            f"Job {job_id} ended with stage={stage}{detail}. Check logs: hf jobs logs {job_id}"
-        )

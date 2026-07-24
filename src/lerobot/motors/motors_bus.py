@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import abc
 import logging
+import time
 from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -818,13 +819,13 @@ class SerialMotorsBus(MotorsBusBase):
         """
         motor_names = self._get_motors_list(motors)
 
-        start_positions = self.sync_read("Present_Position", motor_names, normalize=False)
+        start_positions = self.sync_read("Present_Position", motor_names, normalize=False, num_retry=5)
         mins = start_positions.copy()
         maxes = start_positions.copy()
 
         user_pressed_enter = False
         while not user_pressed_enter:
-            positions = self.sync_read("Present_Position", motor_names, normalize=False)
+            positions = self.sync_read("Present_Position", motor_names, normalize=False, num_retry=5)
             mins = {motor: min(positions[motor], min_) for motor, min_ in mins.items()}
             maxes = {motor: max(positions[motor], max_) for motor, max_ in maxes.items()}
 
@@ -837,9 +838,12 @@ class SerialMotorsBus(MotorsBusBase):
             if enter_pressed():
                 user_pressed_enter = True
 
-            if display_values and not user_pressed_enter:
-                # Move cursor up to overwrite the previous output
-                move_cursor_up(len(motor_names) + 3)
+            if not user_pressed_enter:
+                if display_values:
+                    # Move cursor up to overwrite the previous output
+                    move_cursor_up(len(motor_names) + 3)
+                # Throttle reads even when the live table is disabled.
+                time.sleep(0.02)
 
         same_min_max = [motor for motor in motor_names if mins[motor] == maxes[motor]]
         if same_min_max:

@@ -35,6 +35,17 @@ def test_unknown_type():
         make_env_config("nonexistent")
 
 
+def test_libero_fps_controls_simulator_frequency():
+    cfg = LiberoEnv(fps=17)
+
+    assert cfg.gym_kwargs["control_freq"] == 17
+
+
+def test_libero_rejects_nonpositive_fps():
+    with pytest.raises(ValueError, match="fps must be positive"):
+        LiberoEnv(fps=0)
+
+
 def test_identity_processors():
     """Base class get_env_processors() returns identity pipelines."""
     cfg = make_env_config("aloha")
