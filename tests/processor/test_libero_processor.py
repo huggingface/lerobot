@@ -70,3 +70,13 @@ assert isinstance(processed_obs["observation.images.image2"], torch.Tensor)
 
 assert processed_obs["observation.images.image"].shape == (B, 3, 256, 256)
 assert processed_obs["observation.images.image2"].shape == (B, 3, 256, 256)
+
+
+def test_libero_processor_horizontally_flips_image_observations_only():
+    image = np.arange(1 * 4 * 5 * 3, dtype=np.uint8).reshape(1, 4, 5, 3)
+    observation = preprocess_observation({"pixels": {"image": image}})
+
+    processed_obs = libero_preprocessor(observation)
+
+    expected = torch.from_numpy(image[:, :, ::-1, :].copy()).permute(0, 3, 1, 2).float() / 255
+    torch.testing.assert_close(processed_obs["observation.images.image"], expected)
