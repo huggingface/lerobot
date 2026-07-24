@@ -118,13 +118,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--target-samples-s", type=float, default=500.0)
     parser.add_argument("--stream-samples", type=int, default=4096)
-    parser.add_argument(
-        "--pool-samples-per-episode",
-        type=int,
-        default=256,
-        help="Deprecated / ignored: streaming is always exact-coverage now (an episode is evicted "
-        "only when all its frames have been emitted). Kept so existing commands still parse.",
-    )
     parser.add_argument("--stream-prefetch-episodes", type=int, default=16)
     parser.add_argument("--decode-workers", type=int, default=1)
     parser.add_argument("--prefetch-ahead", type=int, default=8)
@@ -135,9 +128,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--distributed-shard-count", type=int, default=1)
     parser.add_argument("--distributed-shard-index", type=int, default=0)
     parser.add_argument("--summary-json", default=None)
-    parser.add_argument(
-        "--in-memory", action="store_true", help="Accepted for compatibility; manifest is always in memory."
-    )
     return parser.parse_args()
 
 
