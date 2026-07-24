@@ -16,12 +16,8 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pytest
 
-from lerobot.streaming.episode_video import (
-    EpisodeByteCache,
-    EpisodeVideoManifest,
-    ThreadLocalRangeFetcher,
-    _log_http_failure,
-)
+from lerobot.streaming.episode_cache import EpisodeByteCache
+from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.streaming.mp4 import (
     _box,
     _co64,
@@ -40,6 +36,7 @@ from lerobot.streaming.mp4 import (
     synthesize_mp4,
     synthesized_mp4_size,
 )
+from lerobot.streaming.range_fetch import ThreadLocalRangeFetcher, _log_http_failure
 
 
 def _minimal_mp4(sample_offsets: list[int], *, use_co64: bool = False) -> bytes:
@@ -155,7 +152,7 @@ def test_decoder_count_has_independent_limit(monkeypatch, tmp_path):
         opened.append(decoder)
         return decoder
 
-    monkeypatch.setattr("lerobot.streaming.episode_video.open_video_decoder", open_decoder)
+    monkeypatch.setattr("lerobot.streaming.episode_cache.open_video_decoder", open_decoder)
     with _fake_cache(monkeypatch, tmp_path, byte_budget=20, max_open_decoders=1) as cache:
         first = cache.get_decoder(0, "camera")
         second = cache.get_decoder(1, "camera")

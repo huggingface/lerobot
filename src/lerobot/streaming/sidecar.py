@@ -22,7 +22,7 @@ from uuid import uuid4
 
 from filelock import FileLock, Timeout
 
-from lerobot.streaming.episode_video import EpisodeVideoManifest
+from lerobot.streaming.manifest import EpisodeVideoManifest
 
 SIDECAR_SCHEMA_VERSION = 2
 

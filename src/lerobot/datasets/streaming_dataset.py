@@ -24,7 +24,9 @@ import numpy as np
 import torch
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT, DEPTH_METER_UNIT, DepthEncoderConfig
-from lerobot.streaming.episode_video import EpisodeByteCache, EpisodeVideoManifest, ExactCoveragePool
+from lerobot.streaming.episode_cache import EpisodeByteCache
+from lerobot.streaming.episode_pool import ExactCoveragePool
+from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata

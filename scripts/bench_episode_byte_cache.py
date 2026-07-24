@@ -30,11 +30,9 @@ import pyarrow.parquet as pq
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.video_utils import VideoDecoderCache, decode_video_frames_torchcodec
-from lerobot.streaming.episode_video import (
-    EpisodeByteCache,
-    EpisodeVideoManifest,
-    ExactCoveragePool,
-)
+from lerobot.streaming.episode_cache import EpisodeByteCache
+from lerobot.streaming.episode_pool import ExactCoveragePool
+from lerobot.streaming.manifest import EpisodeVideoManifest
 
 
 def parse_args() -> argparse.Namespace:

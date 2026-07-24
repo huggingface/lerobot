@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 from filelock import FileLock
 
-from lerobot.streaming.episode_video import EpisodeVideoManifest, VideoFileRecord
+from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
 from lerobot.streaming.mp4 import Mp4Index
 from lerobot.streaming.sidecar import (
     SidecarLockTimeoutError,

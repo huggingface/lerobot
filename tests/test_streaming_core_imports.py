@@ -26,7 +26,9 @@ class BlockDatasets(importlib.abc.MetaPathFinder):
         return None
 
 sys.meta_path.insert(0, BlockDatasets())
-from lerobot.streaming.episode_video import EpisodeByteCache, ExactCoveragePool
+from lerobot.streaming.episode_cache import EpisodeByteCache
+from lerobot.streaming.episode_pool import ExactCoveragePool
+from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.streaming.mp4 import Mp4Index
 """
     result = subprocess.run(
@@ -37,3 +39,15 @@ from lerobot.streaming.mp4 import Mp4Index
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_episode_video_compatibility_imports() -> None:
+    from lerobot.streaming.episode_cache import EpisodeByteCache
+    from lerobot.streaming.episode_pool import ExactCoveragePool
+    from lerobot.streaming.episode_video import (
+        EpisodeByteCache as CompatibilityEpisodeByteCache,
+        ExactCoveragePool as CompatibilityExactCoveragePool,
+    )
+
+    assert CompatibilityEpisodeByteCache is EpisodeByteCache
+    assert CompatibilityExactCoveragePool is ExactCoveragePool

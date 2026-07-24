@@ -17,7 +17,7 @@ from pathlib import Path
 import fsspec
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.streaming.episode_video import EpisodeVideoManifest
+from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.streaming.sidecar import SidecarSpec, ensure_mp4_sidecar, sidecar_cache_path
 from lerobot.utils.constants import HF_LEROBOT_HOME
 

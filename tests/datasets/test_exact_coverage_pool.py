@@ -18,7 +18,7 @@ from collections import Counter
 
 import pytest
 
-from lerobot.streaming.episode_video import ExactCoveragePool
+from lerobot.streaming.episode_pool import ExactCoveragePool
 
 EPISODES = [(0, 5), (1, 3), (2, 8), (3, 1), (4, 6), (5, 4), (6, 7), (7, 2)]
 TOTAL = sum(n for _, n in EPISODES)
