@@ -3,12 +3,16 @@
     title: LeRobot
   - local: installation
     title: Installation
+  - local: cheat-sheet
+    title: Cheat sheet
   title: Get started
 - sections:
   - local: il_robots
     title: Imitation Learning for Robots
+  - local: lelab
+    title: LeLab - Lerobot GUI
   - local: bring_your_own_policies
-    title: Bring Your Own Policies
+    title: Adding a Policy
   - local: integrate_hardware
     title: Bring Your Own Hardware
   - local: hilserl
@@ -25,14 +29,26 @@
     title: Using Rename Map and Empty Cameras
   title: "Tutorials"
 - sections:
+  - local: hardware_guide
+    title: Compute Hardware Guide
+  - local: torch_accelerators
+    title: PyTorch accelerators
+  title: "Compute & Hardware"
+- sections:
   - local: lerobot-dataset-v3
     title: Using LeRobotDataset
   - local: porting_datasets_v3
     title: Porting Large Datasets
   - local: using_dataset_tools
     title: Using the Dataset Tools
-  - local: dataset_subtask
-    title: Using Subtasks in the Dataset
+  - local: language_and_recipes
+    title: Language Columns and Recipes
+  - local: tools
+    title: Tools
+  - local: annotation_pipeline
+    title: Annotation Pipeline
+  - local: video_encoding_parameters
+    title: Video encoding parameters
   - local: streaming_video_encoding
     title: Streaming Video Encoding
   title: "Datasets"
@@ -47,10 +63,20 @@
     title: π₀-FAST (Pi0Fast)
   - local: pi05
     title: π₀.₅ (Pi05)
+  - local: molmoact2
+    title: MolmoAct2
+  - local: vla_jepa
+    title: VLA-JEPA
   - local: eo1
     title: EO-1
+  - local: lingbot_va
+    title: LingBot-VA
+  - local: fastwam
+    title: FastWAM
+  - local: evo1
+    title: EVO1
   - local: groot
-    title: NVIDIA GR00T N1.5
+    title: NVIDIA GR00T
   - local: xvla
     title: X-VLA
   - local: multi_task_dit
@@ -61,6 +87,10 @@
 - sections:
   - local: sarm
     title: SARM
+  - local: robometer
+    title: ROBOMETER
+  - local: topreward
+    title: TOPReward
   title: "Reward Models"
 - sections:
   - local: inference
@@ -133,19 +163,19 @@
     title: OMX
   - local: openarm
     title: OpenArm
+  - local: rebot_b601
+    title: reBot B601-DM
   title: "Robots"
 - sections:
   - local: phone_teleop
     title: Phone
+  - local: isaac_teleop
+    title: Isaac Teleop
   title: "Teleoperators"
 - sections:
   - local: cameras
     title: Cameras
   title: "Sensors"
-- sections:
-  - local: torch_accelerators
-    title: PyTorch accelerators
-  title: "Supported Hardware"
 - sections:
   - local: notebooks
     title: Notebooks

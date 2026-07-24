@@ -138,7 +138,7 @@ lerobot-replay --robot.type=so101_follower --robot.port=<FOLLOWER_PORT> --robot.
   --dataset.repo_id=${HF_USER}/my_task --dataset.episode=0
 ```
 
-**4.9 Train** (default: ACT — fastest, lowest memory). Apple silicon: `--policy.device=mps`. See §6/§7 for policy and duration.
+**4.9 Train** (default: ACT — fastest, lowest memory). Apple silicon: `--policy.device=mps`. No local GPU? Add `--job.target=<flavor>` (e.g. `a10g-small`, list them with `hf jobs hardware`) to run on Hugging Face Jobs instead. See §6/§7 for policy and duration.
 
 ```bash
 lerobot-train \
@@ -231,6 +231,8 @@ Match the policy to the user's **GPU memory** and **time budget**. Numbers below
 ### 6.1 Profiling snapshot (indicative)
 
 All policies typically train for **5–10 epochs** (see §7).
+
+> **Human-facing version:** the [Compute Hardware Guide](./docs/source/hardware_guide.mdx) reuses the table below and adds a cloud-GPU tier guide and a Hugging Face Jobs pointer.
 
 | Policy      | Batch | Update (ms) | Peak GPU mem (GB) | Best for                                                                                         |
 | ----------- | ----: | ----------: | ----------------: | ------------------------------------------------------------------------------------------------ |

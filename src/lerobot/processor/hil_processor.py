@@ -4,7 +4,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -321,6 +320,7 @@ class GymHILAdapterProcessorStep(ProcessorStep):
     This step normalizes the `transition` object by:
     1. Copying `teleop_action` from `info` to `complementary_data`.
     2. Copying `is_intervention` from `info` (using the string key) to `info` (using the enum key).
+    3. Copying `discrete_penalty` from `info` to `complementary_data`.
     """
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -329,6 +329,9 @@ class GymHILAdapterProcessorStep(ProcessorStep):
 
         if TELEOP_ACTION_KEY in info:
             complementary_data[TELEOP_ACTION_KEY] = info[TELEOP_ACTION_KEY]
+
+        if DISCRETE_PENALTY_KEY in info:
+            complementary_data[DISCRETE_PENALTY_KEY] = info[DISCRETE_PENALTY_KEY]
 
         if "is_intervention" in info:
             info[TeleopEvents.IS_INTERVENTION] = info["is_intervention"]
@@ -348,18 +351,24 @@ class GymHILAdapterProcessorStep(ProcessorStep):
 @ProcessorStepRegistry.register("gripper_penalty_processor")
 class GripperPenaltyProcessorStep(ProcessorStep):
     """
-    Applies a penalty for inefficient gripper usage.
+    Applies a small per-transition cost on the discrete gripper action.
 
-    This step penalizes actions that attempt to close an already closed gripper or
-    open an already open one, based on position thresholds.
+    Fires only when the commanded action would actually transition the gripper
+    from one extreme to the other (close-while-open or open-while-closed).
+    This discourages gripper oscillation while leaving "stay" and saturating-further
+    commands unpenalized.
 
     Attributes:
         penalty: The negative reward value to apply.
         max_gripper_pos: The maximum position value for the gripper, used for normalization.
+        open_threshold: Normalized state below which the gripper is considered "open".
+        closed_threshold: Normalized state above which the gripper is considered "closed".
     """
 
-    penalty: float = -0.01
+    penalty: float = -0.02
     max_gripper_pos: float = 30.0
+    open_threshold: float = 0.1
+    closed_threshold: float = 0.9
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
@@ -379,11 +388,15 @@ class GripperPenaltyProcessorStep(ProcessorStep):
         if raw_joint_positions is None:
             return new_transition
 
-        current_gripper_pos = raw_joint_positions.get(GRIPPER_KEY, None)
+        current_gripper_pos = raw_joint_positions.get(f"{GRIPPER_KEY}.pos", None)
         if current_gripper_pos is None:
             return new_transition
 
-        # Gripper action is a PolicyAction at this stage
+        # During reset, the transition may not carry any action yet.
+        if action is None:
+            return new_transition
+
+        # Gripper action is expected as the last action dimension.
         gripper_action = action[-1].item()
         gripper_action_normalized = gripper_action / self.max_gripper_pos
 
@@ -391,9 +404,13 @@ class GripperPenaltyProcessorStep(ProcessorStep):
         gripper_state_normalized = current_gripper_pos / self.max_gripper_pos
 
         # Calculate penalty boolean as in original
-        gripper_penalty_bool = (gripper_state_normalized < 0.5 and gripper_action_normalized > 0.5) or (
-            gripper_state_normalized > 0.75 and gripper_action_normalized < 0.5
-        )
+        #   - currently open  AND target is closed  -> close transition
+        #   - currently closed AND target is open   -> open transition
+        is_open = gripper_state_normalized < self.open_threshold
+        is_closed = gripper_state_normalized > self.closed_threshold
+        cmd_close = gripper_action_normalized > self.closed_threshold
+        cmd_open = gripper_action_normalized < self.open_threshold
+        gripper_penalty_bool = (is_open and cmd_close) or (is_closed and cmd_open)
 
         gripper_penalty = self.penalty * int(gripper_penalty_bool)
 
@@ -409,11 +426,14 @@ class GripperPenaltyProcessorStep(ProcessorStep):
         Returns the configuration of the step for serialization.
 
         Returns:
-            A dictionary containing the penalty value and max gripper position.
+            A dictionary containing the penalty value, max gripper position,
+            and the open/closed thresholds.
         """
         return {
             "penalty": self.penalty,
             "max_gripper_pos": self.max_gripper_pos,
+            "open_threshold": self.open_threshold,
+            "closed_threshold": self.closed_threshold,
         }
 
     def reset(self) -> None:

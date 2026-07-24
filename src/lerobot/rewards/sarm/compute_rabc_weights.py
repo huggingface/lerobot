@@ -58,9 +58,10 @@ import torch
 from tqdm import tqdm
 
 from lerobot.datasets import LeRobotDataset
-from lerobot.rewards.sarm.modeling_sarm import SARMRewardModel
-from lerobot.rewards.sarm.processor_sarm import make_sarm_pre_post_processors
-from lerobot.rewards.sarm.sarm_utils import normalize_stage_tau
+
+from .modeling_sarm import SARMRewardModel
+from .processor_sarm import make_sarm_pre_post_processors
+from .sarm_utils import normalize_stage_tau
 
 
 def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
