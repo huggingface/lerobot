@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import os
 from collections import deque
 
 import numpy as np
@@ -63,22 +64,30 @@ DEFAULT_GROOT_REPO_ID = "nepyope/GR00T-WholeBodyControl_g1"
 def load_groot_policies(
     repo_id: str = DEFAULT_GROOT_REPO_ID,
 ) -> tuple[ort.InferenceSession, ort.InferenceSession]:
-    """Load GR00T dual-policy system (Balance + Walk) from the hub.
+    """Load GR00T dual-policy system (Balance + Walk).
+
+    If the env var ``LEROBOT_GROOT_POLICY_DIR`` is set, the two ONNX files are
+    loaded from that local directory (e.g. finetuned checkpoints) instead of the
+    Hub. Otherwise they are downloaded from ``repo_id``.
 
     Args:
         repo_id: Hugging Face Hub repository ID containing the ONNX policies.
     """
-    logger.info(f"Loading GR00T dual-policy system from the hub ({repo_id})...")
-
-    # Download ONNX policies from Hugging Face Hub
-    balance_path = hf_hub_download(
-        repo_id=repo_id,
-        filename="GR00T-WholeBodyControl-Balance.onnx",
-    )
-    walk_path = hf_hub_download(
-        repo_id=repo_id,
-        filename="GR00T-WholeBodyControl-Walk.onnx",
-    )
+    local_dir = os.environ.get("LEROBOT_GROOT_POLICY_DIR")
+    if local_dir:
+        balance_path = os.path.join(local_dir, "GR00T-WholeBodyControl-Balance.onnx")
+        walk_path = os.path.join(local_dir, "GR00T-WholeBodyControl-Walk.onnx")
+        logger.info(f"Loading GR00T dual-policy system from local dir ({local_dir})...")
+    else:
+        logger.info(f"Loading GR00T dual-policy system from the hub ({repo_id})...")
+        balance_path = hf_hub_download(
+            repo_id=repo_id,
+            filename="GR00T-WholeBodyControl-Balance.onnx",
+        )
+        walk_path = hf_hub_download(
+            repo_id=repo_id,
+            filename="GR00T-WholeBodyControl-Walk.onnx",
+        )
 
     # Load ONNX policies. Cap onnxruntime to a single thread: these are tiny MLP
     # policies run in the real-time control loop, and letting ORT grab one intra-op
