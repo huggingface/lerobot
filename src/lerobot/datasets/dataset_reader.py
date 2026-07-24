@@ -156,6 +156,8 @@ class DatasetReader(BaseDatasetReader):
 
         self.hf_dataset: datasets.Dataset | None = None
         self._absolute_to_relative_idx: dict[int, int] | None = None
+        self._column_views: dict[str, datasets.Dataset] = {}
+        self._column_views_source: datasets.Dataset | None = None
 
         # Setup delta_indices (doesn't depend on hf_dataset)
         self.delta_indices = None
@@ -324,14 +326,35 @@ class DatasetReader(BaseDatasetReader):
             if query_indices is not None and key in query_indices:
                 if self._absolute_to_relative_idx is not None:
                     relative_indices = [self._absolute_to_relative_idx[idx] for idx in query_indices[key]]
-                    timestamps = self.hf_dataset[relative_indices]["timestamp"]
+                    timestamps = self._column_view("timestamp")[relative_indices]["timestamp"]
                 else:
-                    timestamps = self.hf_dataset[query_indices[key]]["timestamp"]
+                    timestamps = self._column_view("timestamp")[query_indices[key]]["timestamp"]
                 query_timestamps[key] = torch.stack(timestamps).tolist()
             else:
                 query_timestamps[key] = [current_ts]
 
         return query_timestamps
+
+    def _column_view(self, key: str) -> datasets.Dataset:
+        """Return a cached single-column view of ``hf_dataset``.
+
+        ``select_columns`` is a zero-copy schema projection: row queries on the
+        view fetch and decode only ``key``. By contrast, ``hf_dataset[indices]``
+        (and, since a custom transform disables the lazy-``Column`` fast path in
+        ``datasets`` >= 4.4, also ``hf_dataset[key][indices]``) fetches and
+        decodes entire rows. On image datasets that decodes every embedded
+        camera image of every queried row just to read a low-dimensional column
+        like ``action`` (#2895). The view keeps the ``hf_transform_to_torch``
+        transform, which is column-wise, so outputs are identical to a plain
+        row query.
+        """
+        if self._column_views_source is not self.hf_dataset:
+            # hf_dataset was (re)loaded: drop views built from the previous one
+            self._column_views = {}
+            self._column_views_source = self.hf_dataset
+        if key not in self._column_views:
+            self._column_views[key] = self.hf_dataset.select_columns(key)
+        return self._column_views[key]
 
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
         """Query dataset for indices across keys, skipping video keys."""
@@ -344,10 +367,7 @@ class DatasetReader(BaseDatasetReader):
                 if self._absolute_to_relative_idx is None
                 else [self._absolute_to_relative_idx[idx] for idx in q_idx]
             )
-            try:
-                result[key] = torch.stack(self.hf_dataset[key][relative_indices])
-            except (KeyError, TypeError, IndexError):
-                result[key] = torch.stack(self.hf_dataset[relative_indices][key])
+            result[key] = torch.stack(self._column_view(key)[relative_indices][key])
         return result
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
