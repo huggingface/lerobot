@@ -224,6 +224,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
+        self.meta.rescale_depth_stats(self._depth_output_unit)
 
         if episodes is not None and any(
             episode >= self.meta.total_episodes or episode < 0 for episode in episodes
@@ -351,6 +352,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.meta.fps
 
     @property
+    def depth_output_unit(self) -> str:
+        """Physical unit (``"m"`` or ``"mm"``) depth maps and statistics are returned in on read."""
+        return self._depth_output_unit
+
+    @property
     def num_frames(self) -> int:
         """Number of frames in selected episodes."""
         # Check directly instead of using _ensure_reader(): in write-only mode
@@ -472,18 +478,19 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """Return the number of frames in the selected episodes."""
         return self.num_frames
 
-    def __getitem__(self, idx) -> dict:
-        """Return a single frame by index, with all transforms applied.
+    def __getitem__(self, idx: int | slice) -> dict | list[dict]:
+        """Return one frame or a slice of frames, with all transforms applied.
 
         Loads the frame from the underlying HF dataset, expands delta-timestamp
         windows, decodes video frames, and applies image transforms. Delegates
-        the core logic to :meth:`DatasetReader.get_item`.
+        the core logic to :class:`DatasetReader`.
 
         Args:
-            idx: Index into the (possibly episode-filtered) dataset.
+            idx: Integer index or slice into the possibly episode-filtered dataset.
 
         Returns:
-            Dict mapping feature names to their tensor values for this frame.
+            A frame dictionary for an integer index, or a list of frame
+            dictionaries for a slice.
 
         Raises:
             RuntimeError: If the dataset is currently being recorded and
@@ -493,6 +500,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             raise RuntimeError(
                 "Cannot read from a dataset that is being recorded. Call finalize() first, then access items."
             )
+        if isinstance(idx, slice):
+            return [self[item_idx] for item_idx in range(*idx.indices(len(self)))]
+
         reader = self._ensure_reader()
         if reader.hf_dataset is None:
             # One-shot load after finalize()

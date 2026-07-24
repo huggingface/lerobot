@@ -194,12 +194,13 @@ def make_vlm_client(config: VlmConfig) -> VlmClient:
     """Build the shared VLM client.
 
     Only the ``openai`` backend is supported for now. The shipped workflow
-    is Hugging Face Jobs (``examples/annotations/run_hf_job.py``): it boots
-    a vLLM server inside the ``vllm/vllm-openai`` image and the pipeline
-    talks to it over the OpenAI-compatible API (``--vlm.backend=openai``,
-    optionally auto-spawning the server via ``auto_serve`` /
-    ``serve_command``). The former in-process ``vllm`` / ``transformers``
-    backends were removed to keep the support surface to the HF Jobs path.
+    is Hugging Face Jobs (``lerobot-annotate --job.target=<flavor>``): it
+    boots a vLLM server inside the ``vllm/vllm-openai`` image and the
+    pipeline talks to it over the OpenAI-compatible API
+    (``--vlm.backend=openai``, optionally auto-spawning the server via
+    ``auto_serve`` / ``serve_command``). The former in-process ``vllm`` /
+    ``transformers`` backends were removed to keep the support surface to
+    the HF Jobs path.
 
     For ``stub``, construct :class:`StubVlmClient` directly with a responder
     callable; it is rejected here to make accidental misuse obvious.
@@ -213,8 +214,8 @@ def make_vlm_client(config: VlmConfig) -> VlmClient:
     if config.backend in {"vllm", "transformers"}:
         raise ValueError(
             f"backend={config.backend!r} (in-process local model) is not supported for now — "
-            "only backend='openai' (the Hugging Face Jobs flow) is. Run the pipeline via "
-            "examples/annotations/run_hf_job.py, which serves the model with vLLM in the "
+            "only backend='openai' (the Hugging Face Jobs flow) is. Run the pipeline with "
+            "`lerobot-annotate --job.target=<flavor>`, which serves the model with vLLM in the "
             "vllm/vllm-openai image and talks to it over the OpenAI-compatible API."
         )
     raise ValueError(f"Unknown VLM backend: {config.backend!r}")
@@ -285,6 +286,8 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
             "max_tokens": max_tok,
             "temperature": temp,
         }
+        if config.reasoning_effort:
+            kwargs["reasoning_effort"] = config.reasoning_effort
         extra_body: dict[str, Any] = {}
         if send_mm_kwargs and mm_kwargs:
             extra_body["mm_processor_kwargs"] = {**mm_kwargs, "do_sample_frames": True}
@@ -296,7 +299,13 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
             chosen = clients[rr_counter["i"] % len(clients)]
             rr_counter["i"] += 1
         response = chosen.chat.completions.create(**kwargs)
-        return response.choices[0].message.content or ""
+        # Some OpenAI-compatible servers can return a choice with no message
+        # (safety filter, or a "thinking" model that spends the whole budget
+        # before emitting content). Treat that as an empty reply so the
+        # JSON-retry path handles it instead of crashing the run.
+        choice = response.choices[0] if response.choices else None
+        message = choice.message if choice is not None else None
+        return (message.content if message is not None else None) or ""
 
     def _gen(batch: Sequence[Sequence[dict[str, Any]]], max_tok: int, temp: float) -> list[str]:
         if len(batch) <= 1 or config.client_concurrency <= 1:

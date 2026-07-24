@@ -51,19 +51,7 @@ from lerobot.teleoperators import (  # noqa: F401
     rebot_102_leader,
     so_leader,
 )
-
-COMPATIBLE_DEVICES = [
-    "koch_follower",
-    "koch_leader",
-    "omx_follower",
-    "omx_leader",
-    "openarm_mini",
-    "so100_follower",
-    "so100_leader",
-    "so101_follower",
-    "so101_leader",
-    "lekiwi",
-]
+from lerobot.utils.import_utils import register_third_party_plugins
 
 
 @dataclass
@@ -80,18 +68,19 @@ class SetupConfig:
 
 @draccus.wrap()
 def setup_motors(cfg: SetupConfig):
-    if cfg.device.type not in COMPATIBLE_DEVICES:
-        raise NotImplementedError
-
     if isinstance(cfg.device, RobotConfig):
         device = make_robot_from_config(cfg.device)
     else:
         device = make_teleoperator_from_config(cfg.device)
 
-    device.setup_motors()
+    setup = getattr(device, "setup_motors", None)
+    if not callable(setup):
+        raise NotImplementedError(f"Device type '{cfg.device.type}' does not support motor setup.")
+    setup()
 
 
 def main():
+    register_third_party_plugins()
     setup_motors()
 
 
