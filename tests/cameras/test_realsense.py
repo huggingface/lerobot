@@ -20,7 +20,7 @@
 # ```
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -29,6 +29,8 @@ from lerobot.cameras.configs import Cv2Rotation
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 pytest.importorskip("pyrealsense2")
+
+import pyrealsense2 as rs
 
 from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
 
@@ -61,6 +63,17 @@ def test_abc_implementation():
     _ = RealSenseCamera(config)
 
 
+@pytest.mark.parametrize("option", ["exposure", "gain", "white_balance"])
+def test_manual_color_option_requires_rgb(option):
+    with pytest.raises(ValueError, match="use_rgb=True"):
+        RealSenseCameraConfig(
+            serial_number_or_name="042",
+            use_rgb=False,
+            use_depth=True,
+            **{option: 100},
+        )
+
+
 def test_connect():
     config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
 
@@ -81,6 +94,27 @@ def test_connect_invalid_camera_path(patch_realsense):
 
     with pytest.raises(ConnectionError):
         camera.connect(warmup=False)
+
+
+def test_connect_cleans_up_when_sensor_configuration_fails():
+    config = RealSenseCameraConfig(serial_number_or_name="042", exposure=120)
+    camera = RealSenseCamera(config)
+    pipeline = MagicMock()
+    pipeline.start.return_value = MagicMock()
+
+    with (
+        patch("lerobot.cameras.realsense.camera_realsense.rs.pipeline", return_value=pipeline),
+        patch.object(camera, "_configure_rs_pipeline_config"),
+        patch.object(camera, "_configure_capture_settings"),
+        patch.object(camera, "_configure_sensor_options", side_effect=ValueError("invalid exposure")),
+        pytest.raises(ValueError, match="invalid exposure"),
+    ):
+        camera.connect(warmup=False)
+
+    pipeline.stop.assert_called_once_with()
+    assert camera.rs_pipeline is None
+    assert camera.rs_profile is None
+    assert not camera.is_connected
 
 
 def test_invalid_width_connect():
@@ -200,6 +234,203 @@ def test_read_latest_too_old():
 
         with pytest.raises(TimeoutError):
             _ = camera.read_latest(max_age_ms=0)  # immediately too old
+
+
+def _make_mock_sensor(name: str, supported_options: set | None = None) -> MagicMock:
+    """Build a fake rs.sensor that reports a name and a configurable supported-options set."""
+    supported = supported_options if supported_options is not None else set()
+    sensor = MagicMock()
+    sensor.get_info.return_value = name
+    sensor.supports.side_effect = lambda opt: opt in supported
+    return sensor
+
+
+def _attach_mock_color_sensor(camera: RealSenseCamera, sensor: MagicMock) -> None:
+    """Wire camera.rs_profile so _get_color_sensor finds the given sensor."""
+    profile = MagicMock()
+    device = MagicMock()
+    device.query_sensors.return_value = [sensor]
+    profile.get_device.return_value = device
+    camera.rs_profile = profile
+
+
+def test_get_color_sensor_prefers_rgb_camera():
+    config = RealSenseCameraConfig(serial_number_or_name="042")
+    camera = RealSenseCamera(config)
+
+    rgb = _make_mock_sensor("RGB Camera")
+    stereo = _make_mock_sensor("Stereo Module")
+    profile = MagicMock()
+    device = MagicMock()
+    device.query_sensors.return_value = [stereo, rgb]
+    profile.get_device.return_value = device
+    camera.rs_profile = profile
+
+    assert camera._get_color_sensor() is rgb
+
+
+def test_get_color_sensor_falls_back_to_stereo_module():
+    """D405 has no separate RGB module; color comes from Stereo Module."""
+    config = RealSenseCameraConfig(serial_number_or_name="042")
+    camera = RealSenseCamera(config)
+
+    stereo = _make_mock_sensor("Stereo Module")
+    _attach_mock_color_sensor(camera, stereo)
+
+    assert camera._get_color_sensor() is stereo
+
+
+def test_get_color_sensor_raises_with_available_sensors():
+    config = RealSenseCameraConfig(serial_number_or_name="042")
+    camera = RealSenseCamera(config)
+
+    other = _make_mock_sensor("Motion Module")
+    _attach_mock_color_sensor(camera, other)
+
+    with pytest.raises(RuntimeError, match="Motion Module"):
+        camera._get_color_sensor()
+
+
+def test_configure_sensor_options_skipped_when_none():
+    config = RealSenseCameraConfig(serial_number_or_name="042")
+    camera = RealSenseCamera(config)
+
+    with patch.object(RealSenseCamera, "_get_color_sensor") as mock_get:
+        camera._configure_sensor_options()
+        mock_get.assert_not_called()
+
+
+def test_configure_sensor_options_applies_all_values():
+    config = RealSenseCameraConfig(serial_number_or_name="042", exposure=120, gain=64, white_balance=4600)
+    camera = RealSenseCamera(config)
+
+    sensor = _make_mock_sensor(
+        "RGB Camera",
+        supported_options={
+            rs.option.enable_auto_exposure,
+            rs.option.exposure,
+            rs.option.gain,
+            rs.option.enable_auto_white_balance,
+            rs.option.white_balance,
+        },
+    )
+    _attach_mock_color_sensor(camera, sensor)
+
+    camera._configure_sensor_options()
+
+    sensor.set_option.assert_any_call(rs.option.enable_auto_exposure, 0)
+    sensor.set_option.assert_any_call(rs.option.exposure, 120)
+    sensor.set_option.assert_any_call(rs.option.gain, 64)
+    sensor.set_option.assert_any_call(rs.option.enable_auto_white_balance, 0)
+    sensor.set_option.assert_any_call(rs.option.white_balance, 4600)
+
+
+@pytest.mark.parametrize(
+    ("config_field", "option", "label"),
+    [
+        ("exposure", rs.option.exposure, "exposure"),
+        ("gain", rs.option.gain, "gain"),
+        ("white_balance", rs.option.white_balance, "white balance"),
+    ],
+)
+def test_configure_sensor_options_raises_when_requested_option_is_unsupported(config_field, option, label):
+    config = RealSenseCameraConfig(serial_number_or_name="042", **{config_field: 100})
+    camera = RealSenseCamera(config)
+
+    sensor = _make_mock_sensor("RGB Camera", supported_options=set())
+    _attach_mock_color_sensor(camera, sensor)
+
+    with pytest.raises(ValueError, match=label):
+        camera._configure_sensor_options()
+
+    sensor.supports.assert_any_call(option)
+    sensor.set_option.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("config_field", "option", "value"),
+    [
+        ("exposure", rs.option.exposure, 120),
+        ("gain", rs.option.gain, 64),
+    ],
+)
+def test_configure_sensor_options_exposure_or_gain_disables_auto_exposure(config_field, option, value):
+    """white_balance=None should not touch auto white balance."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", **{config_field: value})
+    camera = RealSenseCamera(config)
+
+    sensor = _make_mock_sensor(
+        "RGB Camera",
+        supported_options={rs.option.enable_auto_exposure, option},
+    )
+    _attach_mock_color_sensor(camera, sensor)
+
+    camera._configure_sensor_options()
+
+    calls = [call.args for call in sensor.set_option.call_args_list]
+    assert (rs.option.enable_auto_exposure, 0) in calls
+    assert (option, value) in calls
+    for opt, _ in calls:
+        assert opt != rs.option.enable_auto_white_balance
+        assert opt != rs.option.white_balance
+
+
+def test_configure_sensor_options_warns_when_auto_exposure_control_is_unsupported(caplog):
+    config = RealSenseCameraConfig(serial_number_or_name="042", exposure=120)
+    camera = RealSenseCamera(config)
+
+    sensor = _make_mock_sensor("RGB Camera", supported_options={rs.option.exposure})
+    _attach_mock_color_sensor(camera, sensor)
+
+    with caplog.at_level("WARNING"):
+        camera._configure_sensor_options()
+
+    sensor.set_option.assert_called_once_with(rs.option.exposure, 120)
+    assert "does not support disabling auto-exposure" in caplog.text
+
+
+def test_configure_sensor_options_warns_when_auto_white_balance_control_is_unsupported(caplog):
+    config = RealSenseCameraConfig(serial_number_or_name="042", white_balance=4600)
+    camera = RealSenseCamera(config)
+
+    sensor = _make_mock_sensor("RGB Camera", supported_options={rs.option.white_balance})
+    _attach_mock_color_sensor(camera, sensor)
+
+    with caplog.at_level("WARNING"):
+        camera._configure_sensor_options()
+
+    sensor.set_option.assert_called_once_with(rs.option.white_balance, 4600)
+    assert "does not support disabling auto white balance" in caplog.text
+
+
+def test_configure_sensor_options_out_of_range_raises_value_error():
+    """set_option errors should be re-raised as ValueError with range diagnostics."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", exposure=999999)
+    camera = RealSenseCamera(config)
+
+    sensor = _make_mock_sensor(
+        "RGB Camera",
+        supported_options={rs.option.enable_auto_exposure, rs.option.exposure},
+    )
+
+    def fake_set_option(option, value):
+        if option == rs.option.exposure:
+            raise RuntimeError("value out of range")
+
+    sensor.set_option.side_effect = fake_set_option
+
+    option_range = MagicMock(min=1, max=10000, step=1, default=156)
+    sensor.get_option_range.return_value = option_range
+
+    _attach_mock_color_sensor(camera, sensor)
+
+    with pytest.raises(ValueError, match="exposure") as exc_info:
+        camera._configure_sensor_options()
+
+    msg = str(exc_info.value)
+    assert "999999" in msg
+    assert "min=1" in msg
+    assert "max=10000" in msg
 
 
 @pytest.mark.parametrize(
