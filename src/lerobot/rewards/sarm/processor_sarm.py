@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import logging
 import random
 from typing import TYPE_CHECKING, Any
 
@@ -69,6 +70,8 @@ from .sarm_utils import (
     pad_state_to_max_dim,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class SARMEncodingProcessorStep(ProcessorStep):
     """ProcessorStep that encodes images and text with CLIP and generates stage and progress labels for SARM."""
@@ -119,6 +122,65 @@ class SARMEncodingProcessorStep(ProcessorStep):
 
         self.verbs = ["move", "grasp", "rotate", "push", "pull", "slide", "lift", "place"]
         self.fake = Faker()
+
+        self._validate_annotation_columns()
+
+    def _validate_annotation_columns(self) -> None:
+        """Warn early if a multi-stage head is configured but the episodes metadata has no
+        usable subtask annotations.
+
+        Without this check, ``_load_episode_annotations`` returns ``None`` for such episodes
+        and ``find_stage_and_tau`` then yields stage 0 / tau 0 for every frame, so the target
+        silently becomes 0 everywhere (predict-all-zero). The head never learns and no error
+        is raised. This complements #2880, which restored loading of ``episodes_df``: here the
+        DataFrame is loaded but the ``*_subtask_names`` column is missing or NaN (e.g. the
+        annotations were never materialized into the episodes metadata).
+        """
+        if self.dataset_meta is None:
+            return
+        try:
+            episodes_df = self.dataset_meta.episodes.to_pandas()
+        except Exception:
+            return
+        num_episodes = len(episodes_df)
+        if num_episodes == 0:
+            return
+
+        modes = []
+        if self.dense_subtask_names and len(self.dense_subtask_names) > 1:
+            modes.append(("dense", self.dense_subtask_names))
+        if self.sparse_subtask_names and len(self.sparse_subtask_names) > 1:
+            modes.append(("sparse", self.sparse_subtask_names))
+
+        for annotation_type, names in modes:
+            prefixed = f"{annotation_type}_subtask_names"
+            col = prefixed if prefixed in episodes_df.columns else "subtask_names"
+            num_missing = (
+                num_episodes if col not in episodes_df.columns else int(episodes_df[col].isna().sum())
+            )
+            if num_missing == num_episodes:
+                logger.warning(
+                    "SARM %s head is configured with %d stages, but NONE of the %d episodes have "
+                    "usable '%s' annotations in meta/episodes/*.parquet. Every %s target will be 0 "
+                    "(predict-all-zero) and the %s head will not learn. Make sure annotations are "
+                    "materialized into the episodes metadata (e.g. via subtask_annotation.py).",
+                    annotation_type,
+                    len(names),
+                    num_episodes,
+                    col,
+                    annotation_type,
+                    annotation_type,
+                )
+            elif num_missing:
+                logger.warning(
+                    "SARM %s head: %d/%d episodes have no '%s' annotation; their targets will be 0 "
+                    "and only annotated episodes will train the %s head.",
+                    annotation_type,
+                    num_missing,
+                    num_episodes,
+                    col,
+                    annotation_type,
+                )
 
     def _find_episode_for_frame(self, frame_idx: int) -> int:
         """Find the episode index for a given frame index."""
