@@ -97,6 +97,23 @@ _OPEN_READAHEAD = 256 * 1024
 _RANGE_SLACK = 64 * 1024
 
 
+def _merge_spans(spans: list[tuple[int, int]], gap: int = _RANGE_SLACK) -> list[tuple[int, int]]:
+    """Coalesce overlapping or nearby byte ranges into fewer, larger requests.
+
+    Fewer requests means fewer round trips everywhere and, on rate-limited
+    gateways (HF Buckets: 3,000 API requests / 5 min), materially fewer
+    quota units per batch. Merging across gaps up to ``gap`` trades a few
+    wasted KB for a saved request.
+    """
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1] + gap:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 def _find_moov(read_at, file_size: int) -> tuple[int, int]:
     """Locate the mp4 ``moov`` box by walking top-level box headers."""
     offset = 0
@@ -845,7 +862,8 @@ class LanceDBDataset(torch.utils.data.Dataset):
             if len(meta["kf_positions"]):
                 first_packet = int(meta["kf_positions"][0])
                 spans.append((first_packet, min(first_packet + _OPEN_READAHEAD, meta["file_size"])))
-            for start, end in spans:
+            # Faststart files (moov at the head) collapse to a single request.
+            for start, end in _merge_spans(spans):
                 range_requests.append((self._video_row_ids[key], start, end - start))
                 range_targets.append((key, start))
 
@@ -889,13 +907,16 @@ class LanceDBDataset(torch.utils.data.Dataset):
         for key, file_requests in requests.items():
             meta = self._file_meta[key]
             source = sources[key]
+            spans = []
             for _, shifted_ts in file_requests:
                 first = round(shifted_ts[0] * fps)
                 last = round(shifted_ts[-1] * fps)
                 start, end = self._window_byte_range(meta, min(first, last), max(first, last))
                 if not source.covers(start, end):
-                    range_requests.append((self._video_row_ids[key], start, end - start))
-                    range_targets.append((key, start))
+                    spans.append((start, end))
+            for start, end in _merge_spans(spans):
+                range_requests.append((self._video_row_ids[key], start, end - start))
+                range_targets.append((key, start))
 
         if range_requests:
             payloads = self._videos_table.fetch_blob_ranges(VIDEO_BLOB_COLUMN, range_requests)
