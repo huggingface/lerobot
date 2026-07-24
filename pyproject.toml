@@ -213,6 +213,7 @@ wallx = [
     "lerobot[qwen-vl-utils-dep]",
 ]
 pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
+dm05 = ["lerobot[transformers-dep]"]
 molmoact2 = ["lerobot[transformers-dep]", "lerobot[peft-dep]", "lerobot[scipy-dep]"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "lerobot[accelerate-dep]"]
 multi_task_dit = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
@@ -313,6 +314,7 @@ all = [
     "lerobot[multi_task_dit]",
     "lerobot[wallx]",
     "lerobot[pi]",
+    "lerobot[dm05]",
     "lerobot[molmoact2]",
     "lerobot[smolvla]",
     "lerobot[fastwam]",
