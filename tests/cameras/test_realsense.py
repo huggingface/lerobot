@@ -20,7 +20,7 @@
 # ```
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -226,3 +226,154 @@ def test_rotation(rotation):
             assert camera.width == 640
             assert camera.height == 480
             assert img.shape[:2] == (480, 640)
+
+
+# --- D405 color_format tests ---
+
+
+def test_color_format_default_is_rgb8():
+    config = RealSenseCameraConfig(serial_number_or_name="test123")
+    assert config.color_format == "rgb8"
+
+
+def test_color_format_bgr8_accepted():
+    config = RealSenseCameraConfig(serial_number_or_name="test123", color_format="bgr8")
+    assert config.color_format == "bgr8"
+
+
+def test_color_format_invalid_rejected():
+    import pytest
+
+    with pytest.raises(ValueError, match="color_format"):
+        RealSenseCameraConfig(serial_number_or_name="test123", color_format="yuv422")
+
+
+# --- connect() retry/state-machine tests ---
+
+
+def test_connect_open_failure_never_retries(patch_realsense):
+    """An outright pipeline-open failure must not trigger a hardware reset/retry."""
+    patch_realsense.side_effect = mock_rs_config_enable_device_bad_file
+    config = RealSenseCameraConfig(serial_number_or_name="042")
+    camera = RealSenseCamera(config)
+
+    with patch.object(camera, "_hardware_reset") as mock_reset:
+        with pytest.raises(ConnectionError):
+            camera.connect(warmup=False)
+        mock_reset.assert_not_called()
+
+
+def test_connect_retries_after_warmup_timeout(patch_realsense):
+    """A warmup timeout on the first attempt triggers one hardware-reset retry, which then succeeds."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    camera = RealSenseCamera(config)
+
+    with (
+        patch.object(camera, "_run_warmup", side_effect=[TimeoutError("No frames during warmup."), None]),
+        patch.object(camera, "_hardware_reset") as mock_reset,
+    ):
+        camera.connect(warmup=False)
+
+    mock_reset.assert_called_once()
+    assert camera.is_connected
+    camera.disconnect()
+
+
+def test_connect_post_reset_open_failure_is_not_retried_again(patch_realsense):
+    """If the pipeline still fails to open after the one hardware-reset retry, it fails
+    immediately with no third attempt."""
+    call_count = {"n": 0}
+
+    def flaky_enable_device(rs_config_instance, sn):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return mock_rs_config_enable_device_from_file(rs_config_instance, sn)
+        return mock_rs_config_enable_device_bad_file(rs_config_instance, sn)
+
+    patch_realsense.side_effect = flaky_enable_device
+
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    camera = RealSenseCamera(config)
+
+    with (
+        patch.object(camera, "_run_warmup", side_effect=TimeoutError("No frames during warmup.")),
+        patch.object(camera, "_hardware_reset") as mock_reset,
+        pytest.raises(ConnectionError, match="after hardware reset"),
+    ):
+        camera.connect(warmup=False)
+
+    mock_reset.assert_called_once()
+    assert not camera.is_connected
+
+
+def test_connect_final_warmup_failure_leaves_camera_disconnected(patch_realsense):
+    """If warmup fails on both attempts, connect() raises and leaves the camera fully torn down."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    camera = RealSenseCamera(config)
+
+    with (
+        patch.object(camera, "_run_warmup", side_effect=TimeoutError("No frames during warmup.")),
+        patch.object(camera, "_hardware_reset"),
+        pytest.raises(ConnectionError, match="even after hardware reset"),
+    ):
+        camera.connect(warmup=False)
+
+    assert not camera.is_connected
+    assert camera.thread is None
+    assert camera.rs_pipeline is None
+
+
+def test_connect_setup_failure_after_start_tears_down_and_is_not_retried(patch_realsense):
+    """A failure in _configure_capture_settings/_start_read_thread after a successful pipeline
+    start must tear down and propagate unchanged, not be retried."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    camera = RealSenseCamera(config)
+
+    with (
+        patch.object(camera, "_configure_capture_settings", side_effect=RuntimeError("boom")),
+        patch.object(camera, "_hardware_reset") as mock_reset,
+        pytest.raises(RuntimeError, match="boom"),
+    ):
+        camera.connect(warmup=False)
+
+    mock_reset.assert_not_called()
+    assert not camera.is_connected
+    assert camera.rs_pipeline is None
+
+
+def test_connect_unexpected_warmup_exception_tears_down_and_propagates(patch_realsense):
+    """An unexpected (non-Timeout/Connection) exception from warmup tears down and propagates
+    unchanged, not treated as retry-worthy."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    camera = RealSenseCamera(config)
+
+    with (
+        patch.object(camera, "_run_warmup", side_effect=ValueError("unexpected")),
+        patch.object(camera, "_hardware_reset") as mock_reset,
+        pytest.raises(ValueError, match="unexpected"),
+    ):
+        camera.connect(warmup=False)
+
+    mock_reset.assert_not_called()
+    assert not camera.is_connected
+
+
+def test_teardown_pipeline_wraps_stop_failure():
+    """If rs_pipeline.stop() itself fails during teardown, it surfaces as an informative
+    ConnectionError rather than a raw SDK error, and state is still left consistent.
+
+    Uses a MagicMock stand-in for rs_pipeline rather than a real pyrealsense2 pipeline:
+    pyrealsense2's pipeline is a C-extension type whose bound methods are read-only and
+    can't be patched on a live instance.
+    """
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    camera = RealSenseCamera(config)
+    camera.rs_pipeline = MagicMock()
+    camera.rs_pipeline.stop.side_effect = RuntimeError("sdk stop failed")
+    camera.rs_profile = MagicMock()
+
+    with pytest.raises(ConnectionError, match="Failed to stop"):
+        camera._teardown_pipeline()
+
+    assert camera.rs_pipeline is None
+    assert camera.rs_profile is None
