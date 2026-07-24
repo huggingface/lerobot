@@ -566,7 +566,18 @@ class LanceDBDataset(torch.utils.data.Dataset):
             # table (measured on S3). Respect an explicit user override.
             os.environ.setdefault("LANCE_IO_THREADS", "256")
             self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
-        connect_kwargs = {"storage_options": self._storage_options} if self._storage_options else {}
+        storage_options = dict(self._storage_options or {})
+        if self._db_uri.startswith("hf://") and "token" not in storage_options:
+            # lance does not attach credentials to public hf:// reads on its
+            # own, and anonymous requests get the strictest gateway rate
+            # limits (429s under training-rate traffic). Authenticate
+            # whenever a token is available (env or CLI login).
+            from huggingface_hub import get_token
+
+            token = get_token()
+            if token:
+                storage_options["token"] = token
+        connect_kwargs = {"storage_options": storage_options} if storage_options else {}
         db = lancedb.connect(self._db_uri, **connect_kwargs)
         table = db.open_table(FRAMES_TABLE)
         self._frames_perm = (
