@@ -46,6 +46,9 @@ uv pip install "isaacteleop[cloudxr,retargeters-lite]~=1.3.131" "scipy>=1.14"
 
 # Optional, x86_64 only: the full retargeter stack.
 uv pip install "isaacteleop[retargeters]~=1.3.131"
+
+# Optional SO-101 MuJoCo output (no serial follower required).
+uv pip install "mujoco>=3.3,<4"
 ```
 
 One-time CloudXR EULA (the auto-launch prompts on stdin and would hang on a headless machine):
@@ -83,6 +86,38 @@ python -m examples.isaac_teleop_to_so101.override_reset_pose --port /dev/ttyACM0
 
 which writes it to `HF_LEROBOT_HOME/reset_poses/<robot.name>/<robot.id>.json`; runs with the same
 `--robot.id` use it automatically.
+
+### Teleoperate — XR controller to MuJoCo
+
+The MuJoCo path reuses the same XR controller and safety/IK processor classes as the physical
+follower path, with an equivalent local clutch/IK continuity mapping. Only the final output is
+replaced by six SO-101 MuJoCo position actuators; it never creates a serial follower or accesses
+a motor bus.
+
+First run the hardware-free fixed-target and synthetic 20-cycle re-clutch checks:
+
+```bash
+python -m examples.isaac_teleop_to_so101.mujoco_smoke_test
+python -m examples.isaac_teleop_to_so101.mujoco_reclutch_test
+```
+
+Then start CloudXR, the XR input session, and the desktop MuJoCo viewer together:
+
+```bash
+python -m examples.isaac_teleop_to_so101.teleoperate_mujoco
+```
+
+The default control rate is 60 Hz while MuJoCo physics runs at its model timestep (500 Hz).
+Use `--control-hz=30` to match the physical follower loop, `--no-viewer` for a headless run,
+or `--duration=600` for a bounded ten-minute stability check. Runtime metrics report XR and
+control rates, IK mean/max latency, real-time factor, maximum loop pause, and maximum re-clutch
+Cartesian/joint jumps.
+
+The two small MJCF files come from TheRobotStudio/SO-ARM100. Their referenced STL files are
+byte-identical to the assets already downloaded by this example's SO-101 URDF cache, so they
+are reused from `HF_LEROBOT_HOME/robot-urdfs/so101/assets` instead of duplicated in git. The
+visually verified jaw mapping is LeRobot 0 (closed) to -0.17453 rad and LeRobot 100 (open) to
+1.74533 rad.
 
 ### Teleoperate — SO-101 leader arm
 
