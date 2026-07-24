@@ -33,6 +33,7 @@ def test_factory_wires_production_streaming_settings(monkeypatch):
     dataset_config = DatasetConfig(
         repo_id="owner/dataset",
         streaming=True,
+        video_backend="pyav",
         streaming_data_root="memory://payload",
         streaming_episode_pool_size=7,
         streaming_prefetch_episodes=3,
@@ -54,5 +55,6 @@ def test_factory_wires_production_streaming_settings(monkeypatch):
     assert captured["kwargs"]["prefetch_episodes"] == 3
     assert captured["kwargs"]["byte_budget_gb"] == 2.5
     assert captured["kwargs"]["max_num_shards"] == 1
+    assert captured["kwargs"]["video_backend"] == "pyav"
     assert captured["kwargs"]["return_uint8"] is True
     assert captured["kwargs"]["repeat"] is True

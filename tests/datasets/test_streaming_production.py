@@ -61,19 +61,26 @@ def test_streaming_matches_map_style_with_exact_coverage(tmp_path: Path, lerobot
         _assert_item_equal(sample, map_dataset[int(sample["index"])])
 
 
-def test_streaming_rgb_video_matches_map_style(tmp_path: Path, lerobot_dataset_factory) -> None:
+@pytest.mark.parametrize("video_backend", ["torchcodec", "pyav"])
+def test_streaming_rgb_video_matches_map_style(
+    tmp_path: Path,
+    lerobot_dataset_factory,
+    video_backend: str,
+) -> None:
     root = tmp_path / "dataset"
     map_dataset = lerobot_dataset_factory(
         root=root,
         repo_id=DUMMY_REPO_ID,
         total_episodes=2,
         total_frames=20,
+        video_backend=video_backend,
     )
     streaming = StreamingLeRobotDataset(
         DUMMY_REPO_ID,
         root=root,
         shuffle=False,
         buffer_size=2,
+        video_backend=video_backend,
     )
 
     for sample in streaming:

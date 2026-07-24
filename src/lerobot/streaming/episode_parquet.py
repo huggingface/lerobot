@@ -6,7 +6,7 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 
-"""Episode-scoped Parquet reads for training-time dataset streaming."""
+"""Pure episode-scoped Parquet reads for training-time dataset streaming."""
 
 from __future__ import annotations
 

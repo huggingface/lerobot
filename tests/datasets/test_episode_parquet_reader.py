@@ -20,7 +20,7 @@ pytest.importorskip("pyarrow", reason="pyarrow is required (install lerobot[data
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from lerobot.datasets.episode_parquet import EpisodeParquetReader
+from lerobot.streaming.episode_parquet import EpisodeParquetReader
 
 
 def _table(episodes: list[int]) -> pa.Table:

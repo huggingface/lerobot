@@ -25,13 +25,14 @@ import torch
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT, DEPTH_METER_UNIT, DepthEncoderConfig
 from lerobot.streaming.episode_cache import EpisodeByteCache
+from lerobot.streaming.episode_parquet import EpisodeParquetReader
 from lerobot.streaming.episode_pool import ExactCoveragePool
 from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.import_utils import get_safe_default_video_backend
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .depth_utils import MM_PER_METRE, dequantize_depth
-from .episode_parquet import EpisodeParquetReader
 from .feature_utils import check_delta_timestamps, get_delta_indices, get_hf_features_from_features
 from .io_utils import hf_transform_to_torch
 from .streaming_sidecar import (
@@ -113,6 +114,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         shuffle: bool = True,
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
+        video_backend: str | None = None,
         data_root: str | Path | None = None,
         episode_pool_size: int | None = None,
         prefetch_episodes: int = 8,
@@ -140,6 +142,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             shuffle (bool, optional): Whether to shuffle the dataset across exhaustions. Defaults to True.
             depth_output_unit (str, optional): Physical unit depth maps are dequantized to ("m" or "mm").
                 Defaults to "mm".
+            video_backend (str | None, optional): Decoder backend for synthesized episode videos.
+                Defaults to the same platform-safe backend as map-style loading. If TorchCodec
+                rejects a synthesized MP4, the byte cache falls back to its bounded PyAV decoder.
             data_root (str | Path | None, optional): Dataset payload root. Supports local paths, ``hf://``,
                 and fsspec URLs.
             episode_pool_size (int | None, optional): Number of complete episodes in the sampling pool.
@@ -168,6 +173,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.max_num_shards = max_num_shards
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
+        self._video_backend = video_backend if video_backend is not None else get_safe_default_video_backend()
+        if self._video_backend == "video_reader":
+            self._video_backend = "pyav"
+        if self._video_backend not in {"torchcodec", "pyav"}:
+            raise ValueError(f"Unsupported video backend: {self._video_backend}")
         if buffer_size <= 0:
             raise ValueError("buffer_size must be positive")
         if max_num_shards <= 0:
@@ -463,6 +473,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             workers=workers,
             range_backend=range_backend,
             max_open_decoders=decoder_limit,
+            video_backend=self._video_backend,
+            tolerance_s=self.tolerance_s,
         )
 
     def _make_episode_item(

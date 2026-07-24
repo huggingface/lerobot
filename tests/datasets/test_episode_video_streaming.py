@@ -103,7 +103,14 @@ def test_parser_accepts_co64_chunk_offsets():
     np.testing.assert_array_equal(mp4.sample_offsets, np.array([10_000, 10_050, 10_025]))
 
 
-def _fake_cache(monkeypatch, tmp_path, *, byte_budget=8, max_open_decoders=1):
+def _fake_cache(
+    monkeypatch,
+    tmp_path,
+    *,
+    byte_budget=8,
+    max_open_decoders=1,
+    video_backend="torchcodec",
+):
     manifest = EpisodeVideoManifest(video_keys=["camera"], files=[], spans={})
     cache = EpisodeByteCache(
         manifest,
@@ -112,6 +119,7 @@ def _fake_cache(monkeypatch, tmp_path, *, byte_budget=8, max_open_decoders=1):
         workers=1,
         open_decoders=False,
         max_open_decoders=max_open_decoders,
+        video_backend=video_backend,
     )
     monkeypatch.setattr(
         cache,
@@ -159,6 +167,54 @@ def test_decoder_count_has_independent_limit(monkeypatch, tmp_path):
 
         assert first is not second
         assert cache.open_decoder_count == 1
+
+
+def test_decoder_eviction_and_cache_shutdown_close_backend_resources(monkeypatch, tmp_path):
+    opened = []
+
+    class FakeDecoder:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    def open_decoder(_data):
+        decoder = FakeDecoder()
+        opened.append(decoder)
+        return decoder
+
+    monkeypatch.setattr("lerobot.streaming.episode_cache.open_video_decoder", open_decoder)
+    with _fake_cache(monkeypatch, tmp_path, byte_budget=20, max_open_decoders=1) as cache:
+        cache.get_decoder(0, "camera")
+        cache.get_decoder(1, "camera")
+
+        assert opened[0].closed
+        assert not opened[1].closed
+
+    assert opened[1].closed
+
+
+def test_decoder_falls_back_to_pyav_when_torchcodec_rejects_mini_mp4(monkeypatch, tmp_path):
+    opened_backends = []
+
+    class FakeDecoder:
+        pass
+
+    def open_decoder(_data, frame_mappings=None, *, backend="torchcodec"):
+        assert frame_mappings is None
+        opened_backends.append(backend)
+        if backend == "torchcodec":
+            raise ValueError("No valid stream found")
+        return FakeDecoder()
+
+    monkeypatch.setattr("lerobot.streaming.episode_cache.open_video_decoder", open_decoder)
+    with _fake_cache(monkeypatch, tmp_path, video_backend="torchcodec") as cache:
+        decoder = cache.get_decoder(0, "camera")
+
+        assert isinstance(decoder, FakeDecoder)
+        assert opened_backends == ["torchcodec", "pyav"]
+        assert cache.decoder_fallback_count == 1
 
 
 def test_releasing_episode_allows_immediate_eviction(monkeypatch, tmp_path):
