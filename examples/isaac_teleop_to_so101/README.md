@@ -1,13 +1,17 @@
 # Isaac Teleop → SO-101
 
 Teleoperate an SO-101/SO-100 follower arm — and record LeRobot datasets — with NVIDIA
-[Isaac Teleop](https://github.com/NVIDIA/IsaacTeleop). Two input devices ship today:
+[Isaac Teleop](https://github.com/NVIDIA/IsaacTeleop). Three input devices ship today:
 
 - **XR (VR) controller** (`--teleop.type=xr_controller`) — the controller's grip pose drives the
   end-effector through a squeeze-to-engage clutch and LeRobot's Cartesian IK pipeline; the analog
   trigger drives the gripper.
 - **SO-101 leader arm** (`--teleop.type=so101_leader`) — a back-drivable leader arm mirrored 1:1
   onto the follower via Isaac Teleop's native `so101_leader` plugin (no clutch, no IK).
+- **reBot DevArm leader arm** (`--teleop.type=rebot_devarm_leader`) — the same 1:1 joint mirror
+  for a back-drivable Seeed Studio reBot DevArm (seven CAN motors: Damiao on the B601-DM build,
+  RobStride on the B601-RS build) onto LeRobot's `rebot_b601_follower` (identical hardware,
+  gripper included, no normalization), via the native `rebot_devarm_leader` plugin.
 
 The full narrative guide (how the clutch works, CloudXR setup, headset pairing, tuning, and
 troubleshooting) is in the [LeRobot docs](https://huggingface.co/docs/lerobot/isaac_teleop)
@@ -96,6 +100,24 @@ python -m examples.isaac_teleop_to_so101.teleoperate \
 The follower is first slewed to the leader's pose over `--align_duration` seconds
 (`--align=false` to skip), then mirrors it 1:1. The plugin reuses the serial leader's calibration
 (`HF_LEROBOT_CALIBRATION/teleoperators/so_leader/<teleop.id>.json`).
+
+### Teleoperate — reBot DevArm leader arm
+
+```bash
+python -m examples.isaac_teleop_to_so101.teleoperate \
+    --robot.type=rebot_b601_follower --robot.port=/dev/ttyACM0 --robot.id=rebot_b601_follower_arm \
+    --teleop.type=rebot_devarm_leader --teleop.port=/dev/ttyACM1 \
+    --launch_plugin=/path/to/IsaacTeleop/install/plugins/rebot_devarm_leader/rebot_devarm_leader_plugin
+```
+
+Same flow as the SO-101 leader (align slew, then 1:1 mirror), driving LeRobot's
+`rebot_b601_follower`. The plugin selects its motor backend from the `--teleop.port` shape: a
+serial path (`/dev/ttyACM1`) drives the Damiao build, a bare SocketCAN interface name
+(`--teleop.port=can0`, after `sudo ip link set can0 up type can bitrate 1000000`) drives the
+RobStride build, and an empty port runs the hardware-free synthetic trajectory. The plugin has
+its own plain-text calibration format (see its README next to the binary); run its `probe`
+subcommand first to verify wiring — exit code 3 means the gripper's multi-turn encoder wrapped
+after a power cycle and must be re-homed before teleoperating.
 
 ### Record a dataset
 
