@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import numpy as np
+import pytest
 
 from lerobot.policies.pi052.fit_fast_tokenizer import (
     _apply_relative_actions,
@@ -22,6 +23,7 @@ from lerobot.policies.pi052.fit_fast_tokenizer import (
     _is_global_leader,
     _normalize_actions,
     _select_episode_indices,
+    _validate_fast_reconstruction,
 )
 
 
@@ -90,3 +92,31 @@ def test_fast_tokenizer_relative_actions_match_training_transform():
     relative = _apply_relative_actions(actions, states, [True, False])
 
     np.testing.assert_allclose(relative, [[[1.0, 10.0], [2.0, 11.0]]])
+
+
+class _RoundTripTokenizer:
+    def __init__(self, offset: float = 0.0):
+        self.offset = offset
+
+    def __call__(self, actions):
+        return actions
+
+    def decode(self, tokens):
+        return tokens + self.offset
+
+
+def test_fast_tokenizer_reconstruction_validation_reports_error():
+    actions = np.arange(24, dtype=np.float32).reshape(2, 3, 4) / 24
+
+    report, decoded = _validate_fast_reconstruction(_RoundTripTokenizer(0.05), actions, 0.1, 0.1)
+
+    np.testing.assert_allclose(decoded, actions + 0.05)
+    assert report["reconstruction_rmse"] == pytest.approx(0.05)
+    assert report["max_dim_rmse"] == pytest.approx(0.05)
+
+
+def test_fast_tokenizer_reconstruction_validation_rejects_large_error():
+    actions = np.arange(24, dtype=np.float32).reshape(2, 3, 4) / 24
+
+    with pytest.raises(RuntimeError, match="exceeds the configured limit"):
+        _validate_fast_reconstruction(_RoundTripTokenizer(0.25), actions, 0.1, 0.2)

@@ -103,6 +103,15 @@ class PI052Config(PI05Config):
     fast_tokenizer_fit_samples: int = 1024
     """Number of action chunks sampled when fitting FAST."""
 
+    fast_tokenizer_validation_samples: int = 256
+    """Held-out action chunks used to validate tokenizer reconstruction."""
+
+    fast_tokenizer_max_reconstruction_rmse: float = 0.10
+    """Maximum normalized RMSE allowed across held-out action chunks."""
+
+    fast_tokenizer_max_dim_rmse: float = 0.20
+    """Maximum normalized RMSE allowed for any nonconstant action dimension."""
+
     # Knowledge insulation detaches VLM K/V from action-loss gradients (paper §III.B).
     knowledge_insulation: bool = True
     """Block action-loss gradients through VLM keys and values."""
@@ -168,6 +177,10 @@ class PI052Config(PI05Config):
             self.train_expert_only = False
         if self.flow_num_repeats < 1:
             raise ValueError(f"flow_num_repeats must be >= 1, got {self.flow_num_repeats}")
+        if self.fast_tokenizer_validation_samples < 1:
+            raise ValueError("fast_tokenizer_validation_samples must be >= 1")
+        if self.fast_tokenizer_max_reconstruction_rmse <= 0 or self.fast_tokenizer_max_dim_rmse <= 0:
+            raise ValueError("FAST tokenizer reconstruction thresholds must be positive")
         if self.manual_attention_scope not in {"all", "action"}:
             raise ValueError(
                 f"manual_attention_scope must be 'all' or 'action', got {self.manual_attention_scope!r}"

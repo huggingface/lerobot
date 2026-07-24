@@ -315,31 +315,10 @@ def make_pre_post_processors(
         NotImplementedError: If a processor factory is not implemented for the given
             policy configuration type.
     """
-    if (
-        pretrained_path
-        and getattr(policy_cfg, "type", None) in {"pi0_fast", "pi052"}
-        and getattr(policy_cfg, "auto_fit_fast_tokenizer", False)
-        and kwargs.get("dataset_repo_id") is not None
-    ):
-        from .pi052.fit_fast_tokenizer import resolve_fast_tokenizer
-
-        overrides = dict(kwargs.get("preprocessor_overrides") or {})
-        action_tokenizer_override = {
-            **overrides.get("action_tokenizer_processor", {}),
-            "action_tokenizer_name": resolve_fast_tokenizer(
-                policy_cfg,
-                kwargs.get("dataset_repo_id"),
-                kwargs.get("dataset_root"),
-                kwargs.get("dataset_stats"),
-                kwargs.get("dataset_revision"),
-                kwargs.get("dataset_episodes"),
-                kwargs.get("dataset_exclude_episodes"),
-            ),
-        }
-        overrides["action_tokenizer_processor"] = action_tokenizer_override
-        kwargs["preprocessor_overrides"] = overrides
-
     if pretrained_path:
+        if policy_cfg.type == "pi052":
+            from .pi052 import processor_pi052 as _processor_pi052  # noqa: F401
+
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
 

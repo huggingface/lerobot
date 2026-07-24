@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -581,6 +582,14 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             config["action_tokenizer_name"] = self.action_tokenizer_name
 
         return config
+
+    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        artifact_path = Path("action_tokenizer")
+        save_pretrained = getattr(self.action_tokenizer, "save_pretrained", None)
+        if save_pretrained is None:
+            raise TypeError("Action tokenizer must implement save_pretrained() to save a portable pipeline.")
+        save_pretrained(save_directory / artifact_path)
+        return {"action_tokenizer_name": artifact_path.as_posix()}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]

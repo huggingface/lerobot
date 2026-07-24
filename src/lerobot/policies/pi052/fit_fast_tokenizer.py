@@ -64,6 +64,9 @@ def _dataset_signature(
     action_stats: dict | None = None,
     use_relative_actions: bool = False,
     relative_action_mask: list[bool] | None = None,
+    validation_samples: int = 256,
+    max_reconstruction_rmse: float = 0.10,
+    max_dim_rmse: float = 0.20,
 ) -> str:
     """Hash every input that changes the fitted action distribution."""
     payload = {
@@ -78,6 +81,9 @@ def _dataset_signature(
         "action_stats": action_stats,
         "use_relative_actions": use_relative_actions,
         "relative_action_mask": relative_action_mask,
+        "validation_samples": validation_samples,
+        "max_reconstruction_rmse": max_reconstruction_rmse,
+        "max_dim_rmse": max_dim_rmse,
     }
     encoded = json.dumps(_jsonable(payload), sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()[:16]
@@ -148,6 +154,64 @@ def _normalize_actions(
     return (2.0 * (actions - low) / np.where(high == low, 1e-8, high - low) - 1.0).astype(np.float32)
 
 
+def _validate_fast_reconstruction(
+    tokenizer: Any,
+    actions: np.ndarray,
+    max_reconstruction_rmse: float,
+    max_dim_rmse: float,
+) -> tuple[dict[str, Any], np.ndarray]:
+    """Decode held-out chunks and reject tokenizers with excessive quantization error."""
+    decoded = np.asarray(tokenizer.decode(tokenizer(actions)), dtype=np.float32)
+    if decoded.shape != actions.shape:
+        raise RuntimeError(
+            f"FAST tokenizer reconstruction shape mismatch: expected {actions.shape}, got {decoded.shape}."
+        )
+    if not np.isfinite(decoded).all():
+        raise RuntimeError("FAST tokenizer reconstruction contains non-finite values.")
+
+    squared_error = np.square(decoded - actions)
+    rmse = float(np.sqrt(squared_error.mean()))
+    dim_rmse = np.sqrt(squared_error.mean(axis=(0, 1)))
+    nonconstant_dims = np.ptp(actions, axis=(0, 1)) > 1e-8
+    max_observed_dim_rmse = float(dim_rmse[nonconstant_dims].max(initial=0.0))
+    report = {
+        "num_validation_chunks": int(actions.shape[0]),
+        "reconstruction_rmse": rmse,
+        "max_dim_rmse": max_observed_dim_rmse,
+        "dim_rmse": dim_rmse.tolist(),
+        "max_reconstruction_rmse": max_reconstruction_rmse,
+        "max_allowed_dim_rmse": max_dim_rmse,
+    }
+    if rmse > max_reconstruction_rmse or max_observed_dim_rmse > max_dim_rmse:
+        raise RuntimeError(
+            "FAST tokenizer reconstruction error exceeds the configured limit: "
+            f"rmse={rmse:.4f} (max {max_reconstruction_rmse:.4f}), "
+            f"max_dim_rmse={max_observed_dim_rmse:.4f} (max {max_dim_rmse:.4f})."
+        )
+    return report, decoded
+
+
+def _load_fast_fitter(base_tokenizer_name: str) -> Any:
+    """Load FAST's fitting implementation without requiring its universal BPE weights."""
+    from transformers import AutoProcessor  # noqa: PLC0415
+
+    try:
+        return AutoProcessor.from_pretrained(base_tokenizer_name, trust_remote_code=True)
+    except ValueError as error:
+        if base_tokenizer_name != "physical-intelligence/fast":
+            raise
+        logger.warning(
+            "Could not load the universal FAST tokenizer backend; loading its fitting class directly: %s",
+            error,
+        )
+        from transformers.dynamic_module_utils import get_class_from_dynamic_module  # noqa: PLC0415
+
+        return get_class_from_dynamic_module(
+            "processing_action_tokenizer.UniversalActionProcessor",
+            base_tokenizer_name,
+        )
+
+
 def fit_fast_tokenizer(
     *,
     dataset_repo_id: str,
@@ -164,6 +228,9 @@ def fit_fast_tokenizer(
     action_stats: dict | None = None,
     use_relative_actions: bool = False,
     relative_action_mask: list[bool] | None = None,
+    validation_samples: int = 256,
+    max_reconstruction_rmse: float = 0.10,
+    max_dim_rmse: float = 0.20,
 ) -> str:
     """Fit a FAST tokenizer on a LeRobot dataset's action distribution.
 
@@ -208,6 +275,9 @@ def fit_fast_tokenizer(
         action_stats,
         use_relative_actions,
         relative_action_mask,
+        validation_samples,
+        max_reconstruction_rmse,
+        max_dim_rmse,
     )
     out_dir = cache_dir / sig
 
@@ -245,8 +315,6 @@ def fit_fast_tokenizer(
         chunk_size,
         out_dir,
     )
-
-    from transformers import AutoProcessor  # noqa: PLC0415
 
     # Read action columns directly to avoid video decoding and bound memory to sampled episodes.
     rng = np.random.default_rng(seed)
@@ -313,13 +381,14 @@ def fit_fast_tokenizer(
     ep_indices = _select_episode_indices(list(ep_to_slice), episodes, exclude_episodes)
     if not ep_indices:
         raise RuntimeError("FAST fit: episode selection is empty after applying exclusions.")
-    samples_per_episode = max(1, n_samples // len(ep_indices))
+    total_samples = n_samples + validation_samples
+    samples_per_episode = max(1, (total_samples + len(ep_indices) - 1) // len(ep_indices))
     collected = 0
     eps_visited = 0
     short_episodes = 0
     states_buf: list[np.ndarray] = []
     for ep_idx in rng.permutation(ep_indices):
-        if collected >= n_samples:
+        if collected >= total_samples:
             break
         start, stop = ep_to_slice[int(ep_idx)]
         ep_actions = acts[start:stop]
@@ -332,7 +401,7 @@ def fit_fast_tokenizer(
             if states is not None:
                 states_buf.append(states[start + int(s)])
             collected += 1
-            if collected >= n_samples:
+            if collected >= total_samples:
                 break
         eps_visited += 1
 
@@ -357,7 +426,7 @@ def fit_fast_tokenizer(
 
     actions = _normalize_actions(actions, normalization_mode, action_stats)
 
-    base = AutoProcessor.from_pretrained(base_tokenizer_name, trust_remote_code=True)
+    base = _load_fast_fitter(base_tokenizer_name)
     if not hasattr(base, "fit"):
         raise ImportError(
             f"Base FAST tokenizer {base_tokenizer_name!r} has no ``.fit()`` "
@@ -365,11 +434,32 @@ def fit_fast_tokenizer(
             "to the current ``physical-intelligence/fast`` revision."
         )
 
-    fitted = base.fit(actions)
+    if actions.shape[0] < total_samples:
+        raise RuntimeError(
+            f"FAST fit collected {actions.shape[0]} chunks, but {total_samples} are required "
+            f"for {n_samples} fit and {validation_samples} validation chunks."
+        )
+    fit_actions = actions[:n_samples]
+    validation_actions = actions[n_samples:total_samples]
+    fitted = base.fit(fit_actions)
+    validation_report, decoded_actions = _validate_fast_reconstruction(
+        fitted,
+        validation_actions,
+        max_reconstruction_rmse,
+        max_dim_rmse,
+    )
     cache_dir.mkdir(parents=True, exist_ok=True)
     staging_dir = cache_dir / f".{sig}.tmp-{os.getpid()}"
     shutil.rmtree(staging_dir, ignore_errors=True)
     fitted.save_pretrained(str(staging_dir))
+    (staging_dir / "reconstruction_validation.json").write_text(
+        json.dumps(validation_report, indent=2) + "\n"
+    )
+    np.savez_compressed(
+        staging_dir / "reconstruction_examples.npz",
+        original=validation_actions[:8],
+        decoded=decoded_actions[:8],
+    )
     if out_dir.exists():
         shutil.rmtree(out_dir)
     staging_dir.replace(out_dir)
@@ -416,4 +506,7 @@ def resolve_fast_tokenizer(
         action_stats=(dataset_stats or {}).get("action"),
         use_relative_actions=getattr(config, "use_relative_actions", False),
         relative_action_mask=relative_action_mask,
+        validation_samples=config.fast_tokenizer_validation_samples,
+        max_reconstruction_rmse=config.fast_tokenizer_max_reconstruction_rmse,
+        max_dim_rmse=config.fast_tokenizer_max_dim_rmse,
     )
