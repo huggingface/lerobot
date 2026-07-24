@@ -1080,8 +1080,6 @@ class PI052Policy(PI05Policy):
                 "nothing to train."
             )
 
-        # Keep metrics detached on-device until logging to avoid extra CUDA synchronization.
-        loss_dict["loss"] = total.detach().mean()
         return total, loss_dict
 
     def _compute_all_losses_fused(
