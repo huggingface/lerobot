@@ -301,18 +301,41 @@ def _mirror_remote_meta(db_uri: str, local_root: Path) -> None:
     meta_dir = local_root / "meta"
     if meta_dir.exists():
         return
-    from pyarrow import fs as pa_fs
 
     tmp_dir = local_root / f"meta.tmp-{os.getpid()}"
-    filesystem, base = pa_fs.FileSystem.from_uri(f"{db_uri}/meta")
     try:
-        for info in filesystem.get_file_info(pa_fs.FileSelector(base, recursive=True)):
-            if info.type != pa_fs.FileType.File:
-                continue
-            dst = tmp_dir / info.path[len(base) :].lstrip("/")
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            with filesystem.open_input_stream(info.path) as src, open(dst, "wb") as out:
-                shutil.copyfileobj(src, out)
+        if db_uri.startswith("hf://buckets/"):
+            # HF Storage Buckets: pyarrow has no hf:// filesystem, but the
+            # Hub API downloads bucket files directly.
+            from huggingface_hub import HfApi
+
+            namespace, bucket, *prefix = db_uri.removeprefix("hf://buckets/").split("/")
+            base = "/".join([*prefix, "meta"])
+            api = HfApi()
+            entries = [
+                entry
+                for entry in api.list_bucket_tree(f"{namespace}/{bucket}", prefix=base + "/", recursive=True)
+                if hasattr(entry, "size")  # files only
+            ]
+            api.download_bucket_files(
+                f"{namespace}/{bucket}",
+                [(entry, tmp_dir / entry.path.removeprefix(base).lstrip("/")) for entry in entries],
+            )
+        else:
+            # meta/ is loose files, which lancedb cannot fetch; pyarrow.fs
+            # covers s3/gs/az with env credentials and no extra dependency.
+            # Imported lazily (repo convention) — it initializes filesystem
+            # SDKs and only this rarely-taken path needs it.
+            from pyarrow import fs as pa_fs
+
+            filesystem, base = pa_fs.FileSystem.from_uri(f"{db_uri}/meta")
+            for info in filesystem.get_file_info(pa_fs.FileSelector(base, recursive=True)):
+                if info.type != pa_fs.FileType.File:
+                    continue
+                dst = tmp_dir / info.path[len(base) :].lstrip("/")
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                with filesystem.open_input_stream(info.path) as src, open(dst, "wb") as out:
+                    shutil.copyfileobj(src, out)
         try:
             tmp_dir.rename(meta_dir)
         except OSError:
