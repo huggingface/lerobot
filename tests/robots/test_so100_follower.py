@@ -109,3 +109,22 @@ def test_send_action(follower):
 
     goal_pos = {m: (i + 1) * 10 for i, m in enumerate(follower.bus.motors)}
     follower.bus.sync_write.assert_called_once_with("Goal_Position", goal_pos)
+
+
+def test_configure_writes_position_pid_coefficients():
+    bus_mock = _make_bus_mock()
+    bus_mock.motors = ["shoulder_pan"]
+    robot = MagicMock()
+    robot.bus = bus_mock
+    robot.config = SO100FollowerConfig(
+        port="/dev/null",
+        position_p_coefficient=32,
+        position_i_coefficient=1,
+        position_d_coefficient=16,
+    )
+
+    SO100Follower.configure(robot)
+
+    bus_mock.write.assert_any_call("P_Coefficient", "shoulder_pan", 32)
+    bus_mock.write.assert_any_call("I_Coefficient", "shoulder_pan", 1)
+    bus_mock.write.assert_any_call("D_Coefficient", "shoulder_pan", 16)
