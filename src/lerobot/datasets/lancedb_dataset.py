@@ -48,12 +48,17 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 
 from lerobot.utils.constants import HF_LEROBOT_HOME
-from lerobot.utils.import_utils import require_package
+from lerobot.utils.import_utils import _lancedb_available, require_package
+
+if TYPE_CHECKING or _lancedb_available:
+    import lancedb
+    from lancedb.permutation import Permutation
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .feature_utils import check_delta_timestamps, get_delta_indices
@@ -495,6 +500,19 @@ class LanceDBDataset(torch.utils.data.Dataset):
 
         if self.meta.depth_keys:
             raise NotImplementedError("Depth features are not supported by LanceDBDataset yet.")
+        # The remote video path fetches keyframe-aligned byte ranges in one
+        # batched call; without it every read is a serialized round trip.
+        if (
+            not self._is_local
+            and self.meta.video_keys
+            and not hasattr(lancedb.table.LanceTable, "fetch_blob_ranges")
+        ):
+            raise ImportError(
+                "Streaming video from a remote Lance dataset requires "
+                "lancedb with Table.fetch_blob_ranges (lancedb PR #3703, "
+                f"not in the installed version {lancedb.__version__}). "
+                "Upgrade lancedb, or download the dataset and use a local root."
+            )
         if image_transforms is not None and not callable(image_transforms):
             raise TypeError("image_transforms must be callable or None.")
         self.image_transforms = image_transforms
@@ -581,9 +599,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
         """
         if self._frames_perm is not None:
             return
-        import lancedb
-        from lancedb.permutation import Permutation
-
         if not self._is_local:
             # A remote batch issues hundreds of parallel range reads; lance's
             # default of 64 concurrent IOPS leaves ~40% throughput on the
