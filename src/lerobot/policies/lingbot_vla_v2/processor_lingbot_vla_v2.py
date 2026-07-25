@@ -229,6 +229,11 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
             "canonical_norm_type": self.canonical_norm_type,
             "cameras": self.cameras,
             "resize_imgs_with_padding": list(self.resize_imgs_with_padding),
+            # Must round-trip: these cap the Qwen3-VL vision-token budget and change
+            # the effective input resolution. Omitting them silently reset the reload
+            # to defaults and mismatched the checkpoint's training resolution.
+            "image_max_pixels": self.image_max_pixels,
+            "image_min_pixels": self.image_min_pixels,
         }
 
     def transform_features(
@@ -271,6 +276,8 @@ def make_lingbot_vla_v2_pre_post_processors(
         canonical_norm_type=config.canonical_norm_type,
         cameras=config.canonical_cameras,
         resize_imgs_with_padding=tuple(config.resize_imgs_with_padding),
+        image_max_pixels=config.image_max_pixels,
+        image_min_pixels=config.image_min_pixels,
     )
 
     input_steps: list[ProcessorStep] = [

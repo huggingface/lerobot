@@ -68,6 +68,10 @@ class LingbotVLAV2Config(PreTrainedConfig):
     # Image resize target (width, height). Qwen3-VL consumes native-resolution tokens,
     # so this is the pre-patchify resize applied by the image processor.
     resize_imgs_with_padding: tuple[int, int] = (224, 224)
+    # Qwen3-VL dynamic-resolution bounds forwarded to AutoProcessor. These cap the
+    # vision-token budget and are serialized by the LingBot feature-transform step.
+    image_max_pixels: int = 262144
+    image_min_pixels: int = 131072
 
     # Number of flow-matching denoising steps at inference.
     num_steps: int = 10
@@ -136,16 +140,42 @@ class LingbotVLAV2Config(PreTrainedConfig):
     action_fp32: bool = False
 
     # ==================== Sparse MoE action expert ====================
-    use_moe: bool = False
+    # Defaults track the released v2 checkpoint recipe (upstream
+    # configs/vla/{robotwin,real_robot}.yaml): MoE on every expert layer,
+    # 32 experts, top-4 routing.
+    use_moe: bool = True
+    # None -> MoE is installed on ALL expert layers (see _install_moe_blocks).
+    # Pass an explicit list to restrict it to a subset.
     token_moe_layers: list | None = None
     token_num_experts: int = 32
-    token_top_k: int = 1
+    token_top_k: int = 4
     token_moe_intermediate_size: int = 256
     token_shared_intermediate_size: int = 256
-    bias_update_speed: float = 0.001
-    sequence_wise_loss_coeff: float = 0.001
+    # ----- MoE load balancing -----
+    # The released v2 checkpoints balance experts with the auxiliary-LOSS terms
+    # below (sequence-wise + router-z); the loss-free bias hook is left disabled
+    # (bias_update_speed=0) there. Both mechanisms are wired here so either can
+    # be used, matching upstream train_lingbotvla.py.
+    #
+    # Auxiliary-loss-FREE bias correction (opt-in). ``bias_update_speed`` (>0) is
+    # the step size for the optimizer pre-hook in ``moe_load_balance.py`` that
+    # nudges each block's ``e_score_correction_bias`` by -coeff*sign(load-mean)
+    # before every optimizer.step(). Registered by ``register_optim_hooks`` only
+    # when use_moe AND bias_update_speed > 0. Released recipe leaves it at 0.
+    bias_update_speed: float = 0.0
+    # Center the correction bias each update (subtract per-layer mean) to pin
+    # sum(bias)=0 and prevent cumulative drift. Routing-invariant hygiene.
+    bias_centering: bool = False
+    # Apply the bias update once every N optimizer steps, accumulating
+    # tokens_per_expert in between (>1 stabilizes sign(load-mean) for small
+    # global batches). Matches upstream ``bias_update_interval``.
+    bias_update_interval: int = 1
+    # Auxiliary-LOSS balancing (DeepSeek-V3 sequence-wise) — the PRIMARY balancer
+    # in the released recipe. Added as a differentiable penalty to the loss.
+    sequence_wise_loss_coeff: float = 1e-3
     sequence_wise_mode: str = "per_sequence"
-    router_z_loss_coeff: float = 0.0
+    # Router z-loss on raw router logits (released recipe: 1e-4).
+    router_z_loss_coeff: float = 1e-4
     router_activation: str = "softmax"
     routed_scaling_factor: float = 1.0
     use_shared_expert_gate: bool = True

@@ -20,9 +20,6 @@ from .data_transform import (
     expert_visual_transform,
 )
 from .ee_pose_transform import *
-from typing import Dict, List, Optional
-import ast
-import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 
@@ -356,6 +353,26 @@ class FeatureTransform:
                 concat_list.append(origin_data)
             if convert_success:
                 out_item[target_key] = torch.cat(concat_list, dim=-1)
+            else:
+                # A configured canonical slot could not be built because a source
+                # key is missing from the item. Warn once per slot instead of
+                # silently dropping it (silent drops -> wrong padding/normalization
+                # downstream with no error). See PR #3967 reviewer note.
+                missing = [
+                    k.split("*")[0]
+                    for k in convert_info["origin_keys"]
+                    if k.split("*")[0] not in item
+                ]
+                warned = self.__dict__.setdefault("_warned_missing_slots", set())
+                if target_key not in warned:
+                    warned.add(target_key)
+                    logger.warning(
+                        "FeatureTransform: canonical slot %r left unfilled — source key(s) %s "
+                        "absent from the item. Check the robot-config mapping against the "
+                        "dataset features; downstream state/action for this slot will be wrong.",
+                        target_key,
+                        missing,
+                    )
             del concat_list
 
         for feature in self.feature_to_keep:
