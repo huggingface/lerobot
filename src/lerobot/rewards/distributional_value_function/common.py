@@ -40,6 +40,7 @@ class DistributionalValueMixin:
         return (cdf[:, 1:] - cdf[:, :-1]) / normalization
 
     def dirac_delta_target(self, target_value: Tensor) -> Tensor:
+        """Two-hot scalar projection (legacy configuration name: ``dirac_delta``)."""
         target_value = target_value.reshape(-1).clamp(
             self.config.value_support_min, self.config.value_support_max
         )
@@ -73,6 +74,9 @@ class DistributionalValueMixin:
             raise ValueError(f"Unknown target method: {self.config.target_method}")
         if not self.config.use_one_hot_terminal:
             return base
+        is_terminal = is_terminal.reshape(-1)
+        if is_terminal.numel() != base.shape[0]:
+            raise ValueError(f"Expected {base.shape[0]} terminal flags, got {is_terminal.numel()}")
         nearest = torch.argmin(
             torch.abs(
                 self.value_head.bin_centers[None]
@@ -81,7 +85,7 @@ class DistributionalValueMixin:
             dim=-1,
         )
         terminal = F.one_hot(nearest, num_classes=self.config.num_value_bins).to(base.dtype)
-        return torch.where(is_terminal.reshape(-1, 1).bool(), terminal, base)
+        return torch.where(is_terminal[:, None].bool(), terminal, base)
 
     def _distributional_forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any]]:
         readout = self._get_value_readout(batch)

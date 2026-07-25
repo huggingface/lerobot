@@ -325,9 +325,9 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         Returns:
             [batch_size, num_value_bins] target probability distribution.
         """
-        if target_value.ndim == 2:
-            target_value = target_value.squeeze(-1)
-
+        target_value = target_value.reshape(-1).clamp(
+            self.config.value_support_min, self.config.value_support_max
+        )
         target_value = target_value.to(dtype=self.value_head.bin_centers.dtype)
 
         # Bin edges: half a bin-width outside the first/last center
@@ -360,11 +360,11 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         return bin_probabilities
 
     def dirac_delta_target(self, target_value: Tensor) -> Tensor:
-        """Dirac delta (C51) projection: split probability between two nearest bins.
+        """Two-hot scalar projection between adjacent bins.
 
-        Standard distributional RL projection from Bellemare et al. 2017.
-        "A Distributional Perspective on Reinforcement Learning"
-        arXiv:1707.06887
+        ``dirac_delta`` is retained as the public configuration name for
+        checkpoint compatibility. This is the scalar two-hot projection, not
+        the full distributional Bellman projection used by C51.
 
         Args:
             target_value: [batch_size] or [batch_size, 1] target values.
@@ -372,10 +372,9 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         Returns:
             [batch_size, num_value_bins] target probability distribution.
         """
-        if target_value.ndim == 2:
-            target_value = target_value.squeeze(-1)
-
-        target_value = target_value.clamp(self.config.value_support_min, self.config.value_support_max)
+        target_value = target_value.reshape(-1).clamp(
+            self.config.value_support_min, self.config.value_support_max
+        )
         target_value = target_value.to(dtype=self.value_head.bin_centers.dtype)
 
         bin_width = self.value_head.bin_centers[1] - self.value_head.bin_centers[0]
@@ -391,7 +390,12 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         weight_lower = torch.where(same_bin, torch.ones_like(weight_lower), weight_lower)
 
         batch_size = target_value.shape[0]
-        target_distribution = torch.zeros(batch_size, self.config.num_value_bins, device=target_value.device)
+        target_distribution = torch.zeros(
+            batch_size,
+            self.config.num_value_bins,
+            device=target_value.device,
+            dtype=target_value.dtype,
+        )
         batch_indices = torch.arange(batch_size, device=target_value.device)
         target_distribution[batch_indices, lower_bin_idx] += weight_lower
         target_distribution[batch_indices, upper_bin_idx] += weight_upper
@@ -399,7 +403,7 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         return target_distribution
 
     def one_hot_target(self, target_value: Tensor) -> Tensor:
-        """One-hot target for terminal states (exact return, no smoothing).
+        """One-hot target at the nearest support bin for terminal states.
 
         Args:
             target_value: [batch_size] or [batch_size, 1] target values.
@@ -407,8 +411,9 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         Returns:
             [batch_size, num_value_bins] one-hot distribution at the nearest bin.
         """
-        if target_value.ndim == 2:
-            target_value = target_value.squeeze(-1)
+        target_value = target_value.reshape(-1).clamp(
+            self.config.value_support_min, self.config.value_support_max
+        )
         target_value = target_value.to(dtype=self.value_head.bin_centers.dtype)
         nearest_bin_idx = torch.argmin(
             torch.abs(self.value_head.bin_centers.unsqueeze(0) - target_value.unsqueeze(-1)), dim=-1
@@ -446,6 +451,11 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
         if not use_one_hot_terminal:
             return base_distribution
 
+        is_terminal = is_terminal.reshape(-1)
+        if is_terminal.numel() != base_distribution.shape[0]:
+            raise ValueError(
+                f"Expected {base_distribution.shape[0]} terminal flags, got {is_terminal.numel()}"
+            )
         terminal_distribution = self.one_hot_target(target_value)
         return torch.where(is_terminal[:, None].bool(), terminal_distribution, base_distribution)
 

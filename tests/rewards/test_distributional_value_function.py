@@ -120,6 +120,7 @@ def test_config_defaults_match_pi06_gemma3_layout():
     assert config.image_resolution == (448, 448)
     assert config.num_image_tokens == 256
     assert config.target_method == "dirac_delta"
+    assert config.hl_gauss_sigma_ratio == 0.75
 
 
 # ------------------------------------------------------------------
@@ -168,6 +169,15 @@ def test_hl_gauss_handles_2d_input():
 
     assert dist.shape == (2, NUM_BINS)
     torch.testing.assert_close(dist.sum(dim=-1), torch.ones(2), atol=1e-5, rtol=0)
+
+
+@skip_if_package_missing("transformers")
+def test_hl_gauss_clamps_values_outside_support():
+    model = _make_model()
+    outside = model.hl_gauss_target(torch.tensor([-1.5, 0.5]))
+    boundaries = model.hl_gauss_target(torch.tensor([-1.0, 0.0]))
+
+    torch.testing.assert_close(outside, boundaries)
 
 
 @skip_if_package_missing("transformers")
@@ -256,6 +266,34 @@ def test_terminal_gets_one_hot():
     assert (dist[3] > 0).sum() == 1
     assert (dist[0] > 0).sum() > 2
     assert (dist[2] > 0).sum() > 2
+
+
+@skip_if_package_missing("transformers")
+def test_terminal_column_vector_preserves_batch_shape():
+    model = _make_model()
+    targets = torch.tensor([[-0.5], [-0.3]])
+    is_terminal = torch.tensor([[False], [True]])
+
+    dist = model.compute_target_distribution(
+        targets, is_terminal, method="hl_gauss", use_one_hot_terminal=True
+    )
+
+    assert dist.shape == (2, NUM_BINS)
+    assert (dist[0] > 0).sum() > 2
+    assert (dist[1] > 0).sum() == 1
+
+
+@skip_if_package_missing("transformers")
+def test_terminal_count_must_match_batch_size():
+    model = _make_model()
+
+    with pytest.raises(ValueError, match="Expected 2 terminal flags, got 1"):
+        model.compute_target_distribution(
+            torch.tensor([-0.5, -0.3]),
+            torch.tensor([True]),
+            method="hl_gauss",
+            use_one_hot_terminal=True,
+        )
 
 
 @skip_if_package_missing("transformers")

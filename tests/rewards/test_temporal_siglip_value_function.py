@@ -133,3 +133,9 @@ def test_temporal_model_forward(monkeypatch):
         eval_loss, eval_metrics = model(batch)
     assert torch.isfinite(eval_loss)
     assert -1.0 <= eval_metrics["predicted_value_mean"] <= 0.0
+
+    targets = model.compute_target_distribution(
+        torch.tensor([[-0.5], [-0.3]]),
+        torch.tensor([[False], [True]]),
+    )
+    assert targets.shape == (2, model.config.num_value_bins)

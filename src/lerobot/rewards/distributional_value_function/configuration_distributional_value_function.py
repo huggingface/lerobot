@@ -67,7 +67,9 @@ class DistributionalVFConfig(RewardModelConfig):
     num_value_bins: int = 201
     value_support_min: float = -1.0
     value_support_max: float = 0.0
-    hl_gauss_sigma_ratio: float = 5.0
+    # Stop Regressing (Farebrother et al., 2024) default: spreads most
+    # probability mass across approximately six neighboring bins.
+    hl_gauss_sigma_ratio: float = 0.75
 
     # Target distribution method: "dirac_delta" (paper-faithful C51) or "hl_gauss" (soft)
     target_method: str = "dirac_delta"
