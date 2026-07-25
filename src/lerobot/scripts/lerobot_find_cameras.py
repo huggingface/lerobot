@@ -30,6 +30,7 @@ lerobot-find-cameras
 import argparse
 import concurrent.futures
 import logging
+import platform
 import time
 from pathlib import Path
 from typing import Any
@@ -284,11 +285,10 @@ def save_images_from_all_cameras(
             print(f"Image capture finished. Images saved to {output_dir}")
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Unified camera utility script for listing cameras and capturing images."
     )
-
     parser.add_argument(
         "camera_type",
         type=str,
@@ -298,19 +298,56 @@ def main():
         help="Specify camera type to capture from (e.g., 'realsense', 'opencv'). Captures from all if omitted.",
     )
     parser.add_argument(
+        "--save-images",
+        action="store_true",
+        help="Open detected cameras and save sample images. By default this command only lists cameras.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
-        default="outputs/captured_images",
+        default=None,
         help="Directory to save images. Default: outputs/captured_images",
     )
     parser.add_argument(
         "--record-time-s",
         type=float,
-        default=6.0,
+        default=None,
         help="Time duration to attempt capturing frames. Default: 6 seconds.",
     )
-    args = parser.parse_args()
-    save_images_from_all_cameras(**vars(args))
+    return parser
+
+
+def _should_warn_about_opencv_capture(camera_type: str | None) -> bool:
+    return platform.system() == "Linux" and (camera_type is None or camera_type.lower() == "opencv")
+
+
+def run(args: argparse.Namespace) -> list[dict[str, Any]] | None:
+    if not args.save_images:
+        if args.output_dir is not None:
+            logger.warning("Ignoring --output-dir because --save-images was not set.")
+        if args.record_time_s is not None:
+            logger.warning("Ignoring --record-time-s because --save-images was not set.")
+        return find_and_print_cameras(camera_type_filter=args.camera_type)
+
+    if _should_warn_about_opencv_capture(args.camera_type):
+        logger.warning(
+            "Opening OpenCV cameras on Linux may alter active camera settings on some OpenCV/V4L2 "
+            "backend combinations. The default listing mode avoids opening cameras."
+        )
+    output_dir = args.output_dir if args.output_dir is not None else Path("outputs/captured_images")
+    record_time_s = args.record_time_s if args.record_time_s is not None else 6.0
+    save_images_from_all_cameras(
+        output_dir=output_dir,
+        record_time_s=record_time_s,
+        camera_type=args.camera_type,
+    )
+    return None
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    run(args)
 
 
 if __name__ == "__main__":
