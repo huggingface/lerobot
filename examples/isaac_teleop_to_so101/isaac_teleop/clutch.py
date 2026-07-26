@@ -32,7 +32,8 @@ class Clutch:
     """Engage-relative clutch for both position AND orientation.
 
     Latch an origin on engage, then track the base-frame delta from it, applied
-    independently to position and orientation. State:
+    independently to position and orientation. The position delta is scaled by
+    ``position_scale``; the orientation delta is always 1:1 (see :meth:`rebase`). State:
 
     - ``_last_commanded_pos`` / ``_last_commanded_rot``: last commanded EE pose; held
       while disengaged so the arm freezes where it was left.
@@ -45,12 +46,12 @@ class Clutch:
 
     Each engaged frame :meth:`rebase` returns::
 
-        pos = home_pos + (grip_pos - origin_pos)  # 1:1 controller -> EE translation
-        rot = (R_ctrl @ R_origin ^ -1) @ R_home  # base-frame delta, left-composed
+        pos = home_pos + position_scale * (grip_pos - origin_pos)  # scaled translation
+        rot = (R_ctrl @ R_origin ^ -1) @ R_home  # base-frame delta, left-composed (1:1)
 
-    On the engage edge the output is exactly the home pose (no teleport). The orientation
-    delta is left-composed (base frame), so hand rotation about base Z maps to EE rotation
-    about base Z. A re-clutch latches a fresh home/origin.
+    On the engage edge the delta is zero, so the output is exactly the home pose whatever the
+    scale (no teleport). The orientation delta is left-composed (base frame), so hand rotation
+    about base Z maps to EE rotation about base Z. A re-clutch latches a fresh home/origin.
 
     NOTE: ``_home_rot`` is the last *commanded* orientation even when the measured pose is
     supplied: the 5-DOF SO-101 tracks orientation only softly, so its measured wrist
@@ -59,7 +60,24 @@ class Clutch:
     tracking gap, and there latching the measurement is what prevents the snap-back.
     """
 
-    def __init__(self, home_base_T_ee: np.ndarray):  # noqa: N803
+    def __init__(self, home_base_T_ee: np.ndarray, position_scale: float = 1.0):  # noqa: N803
+        """Build a clutch homed at ``home_base_T_ee`` (4x4 base->EE transform).
+
+        Args:
+            home_base_T_ee: The arm's measured startup EE pose, seeding the held pose.
+            position_scale: Dimensionless controller-to-EE translation gain applied to the
+                engage-relative delta. ``1.0`` is 1:1 motion; a value ``< 1`` shrinks robot
+                travel relative to hand travel, which is what lets a comfortable operator arm
+                sweep (~0.7 m) stay inside the SO-101's ~0.35 m reach. Translation only — the
+                orientation delta is always 1:1, since a scaled rotation is disorienting and
+                the 5-DOF wrist tracks orientation softly anyway. Must be positive and finite:
+                ``0`` freezes the EE, a negative value inverts the hand->EE mapping, and the
+                finite check closes the ``inf * 0 = nan`` path before it reaches the IK.
+        """
+        position_scale = float(position_scale)
+        if not np.isfinite(position_scale) or position_scale <= 0.0:
+            raise ValueError(f"position_scale must be positive and finite, got: {position_scale!r}")
+        self._position_scale = position_scale
         # Seed the held pose from the arm's measured startup EE pose so the first
         # engage latches home there (no jump on the first squeeze).
         home = np.asarray(home_base_T_ee, dtype=float)
@@ -94,7 +112,7 @@ class Clutch:
 
     def rebase(self, grip_pos: np.ndarray, grip_quat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Return the absolute base-frame EE target ``(pos [m], quat [xyzw])`` for this frame."""
-        pos = self._home_pos + (np.asarray(grip_pos, dtype=float) - self._origin_pos)
+        pos = self._home_pos + self._position_scale * (np.asarray(grip_pos, dtype=float) - self._origin_pos)
         rot_ctrl = Rotation.from_quat(np.asarray(grip_quat, dtype=float))
         rot = (rot_ctrl * self._origin_rot.inv()) * self._home_rot
         self._last_commanded_pos = pos.copy()

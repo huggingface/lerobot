@@ -133,7 +133,8 @@ device can stay a thin reader:
 
 - It latches its engage origin on the squeeze **engage edge** (the frame the squeeze first crosses
   `clutch_threshold`) and rebases both position and orientation around it, so engaging does not
-  teleport the arm. `Clutch.rebase` returns the absolute base-frame target as a `(pos, quat)`
+  teleport the arm. The position delta is scaled by `clutch_position_scale` (orientation stays
+  1:1). `Clutch.rebase` returns the absolute base-frame target as a `(pos, quat)`
   pair, which the loop concatenates into the 7D `ee_pose` fed to the processor.
 - The analog trigger becomes a gripper `closedness` in `[0, 1]` (0 = open, 1 = closed),
   proportional to the trigger pull, which `MapXRControllerActionToRobotAction` maps to a jaw target.
@@ -181,6 +182,18 @@ home _orientation_ keeps the last commanded rotation: the 5‑DOF arm tracks ori
 softly, so latching the measured wrist orientation would inject its tracking offset into the
 command on every re‑clutch.
 
+The engage‑relative _translation_ is scaled by `clutch_position_scale` (default `0.5`) before it
+is applied to the home: `pos = home + scale * (grip - origin)`. A comfortable operator arm sweep
+is ~0.7 m, roughly twice the SO‑101's ~0.35 m reach, so 1:1 motion walks the commanded target
+outside the reachable envelope inside a single engaged segment; halving it maps a full sweep into
+reach (0.4 m of hand motion → 0.2 m of EE motion). The scale applies to **translation only** — the
+orientation delta stays 1:1, since a scaled rotation is disorienting and the 5‑DOF wrist tracks
+orientation softly anyway. Raise it toward `1.0` if your play space is cramped and you would
+rather trade reach headroom for less hand travel; values above `1.0` amplify tracking jitter
+along with the motion. See
+[IsaacTeleop#733](https://github.com/NVIDIA/IsaacTeleop/issues/733) for the field data behind the
+default.
+
 ## Controls
 
 - **Squeeze / grip** — the **clutch** (deadman). Hold it past `clutch_threshold` to engage
@@ -203,8 +216,9 @@ command on every re‑clutch.
 from examples.isaac_teleop_to_so101.isaac_teleop import XRController, XRControllerConfig
 
 teleop_config = XRControllerConfig(
-    hand_side="right",      # "left" or "right" controller
-    clutch_threshold=0.5,   # squeeze value above which the clutch engages
+    hand_side="right",           # "left" or "right" controller
+    clutch_threshold=0.5,        # squeeze value above which the clutch engages
+    clutch_position_scale=0.5,   # controller -> EE translation gain (1.0 = 1:1 motion)
 )
 teleop_device = XRController(teleop_config)
 ```
@@ -373,6 +387,11 @@ adapting the pipeline to other robots.
   skip the auto-launch).
 - **Arm does not move** — the clutch is a deadman: you must hold the squeeze/grip past
   `clutch_threshold`. Lower the threshold if your controller's squeeze is reported softly.
+- **Arm runs out of reach mid‑motion** — your hand is out‑travelling the arm. Lower
+  `clutch_position_scale` (default `0.5`) so the same sweep commands less EE travel, or release and
+  re‑engage the clutch to re‑center.
+- **Arm feels sluggish relative to your hand** — the opposite trade: raise `clutch_position_scale`
+  toward `1.0` for more EE travel per unit of hand motion, at the cost of reach headroom.
 - **Motion feels misaligned** — confirm the headset/play space orientation. The controller stream
   is rebased into the robot base frame by the `base_T_anchor` transform on `XRControllerConfig`
   (default: standard OpenXR → robot axis convention); adjust it if your anchor frame differs.

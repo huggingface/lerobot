@@ -84,6 +84,15 @@ class XRControllerConfig(IsaacTeleopConfig):
     """Squeeze value above which the owning loop's clutch engages (held-to-enable). The
     device reports only the raw squeeze; the threshold is applied by the loop."""
 
+    clutch_position_scale: float = 0.5
+    """Controller-to-EE translation gain the loop's clutch applies to the engage-relative
+    delta -- dimensionless, and unrelated to ``clutch_threshold`` above despite the shared
+    default value. ``1.0`` is 1:1 motion. A comfortable operator arm sweep is ~0.7 m, roughly
+    2x the SO-101's ~0.35 m reach, so 1:1 motion drives the commanded EE target outside the
+    reachable envelope within a single engaged segment; the ``0.5`` default maps a full sweep
+    inside reach (0.4 m of controller motion -> 0.2 m of EE motion). Translation only --
+    orientation stays 1:1. See https://github.com/NVIDIA/IsaacTeleop/issues/733."""
+
     base_T_anchor: list[list[float]] = field(  # noqa: N815  (frameA_T_frameB transform-matrix convention)
         # Fresh copy per instance: returning the module-level list itself would alias one
         # mutable matrix across every config.

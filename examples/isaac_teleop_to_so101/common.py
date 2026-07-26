@@ -364,7 +364,7 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
         obs0 = robot.get_observation()
         q_measured_deg = np.array([float(obs0[f"{name}.pos"]) for name in motor_names], dtype=float)
         home_base_T_ee = kinematics_solver.forward_kinematics(q_measured_deg)  # noqa: N806
-        clutch = Clutch(home_base_T_ee)
+        clutch = Clutch(home_base_T_ee, position_scale=teleop_config.clutch_position_scale)
 
         print("Starting teleop loop. Squeeze and move the controller to teleoperate the robot...")
 
