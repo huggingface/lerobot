@@ -1,0 +1,188 @@
+# RoboCasa365
+
+[RoboCasa365](https://robocasa.ai) is a large-scale simulation framework for training and benchmarking **generalist robots** in everyday kitchen tasks. It ships 365 diverse manipulation tasks across 2,500 kitchen environments, 3,200+ object assets and 600+ hours of human demonstration data, on a PandaOmron 12-DOF mobile manipulator (Franka arm on a holonomic base).
+
+- Paper: [RoboCasa: Large-Scale Simulation of Everyday Tasks for Generalist Robots](https://arxiv.org/abs/2406.02523)
+- GitHub: [robocasa/robocasa](https://github.com/robocasa/robocasa)
+- Project website: [robocasa.ai](https://robocasa.ai)
+- Pretrained policy: [`lerobot/smolvla_robocasa`](https://huggingface.co/lerobot/smolvla_robocasa)
+- Single-task dataset (CloseFridge): [`pepijn223/robocasa_CloseFridge`](https://huggingface.co/datasets/pepijn223/robocasa_CloseFridge)
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/robocasa-banner.webp"
+  alt="RoboCasa365 benchmark overview"
+  width="85%"
+/>
+
+## Available tasks
+
+RoboCasa365 organizes its 365 tasks into two families and three upstream benchmark groups that LeRobot exposes as first-class `--env.task` shortcuts:
+
+| Family    | Tasks | Description                                                                     |
+| --------- | ----- | ------------------------------------------------------------------------------- |
+| Atomic    | ~65   | Single-skill tasks: pick-and-place, door/drawer manipulation, appliance control |
+| Composite | ~300  | Multi-step tasks across 60+ categories: cooking, cleaning, organizing, etc.     |
+
+**Atomic task examples:** `CloseFridge`, `OpenDrawer`, `OpenCabinet`, `TurnOnMicrowave`, `TurnOffStove`, `NavigateKitchen`, `PickPlaceCounterToStove`.
+
+**Composite task categories:** baking, boiling, brewing, chopping, clearing table, defrosting food, loading dishwasher, making tea, microwaving food, washing dishes, and more.
+
+`--env.task` accepts three forms:
+
+- a single task name (`CloseFridge`)
+- a comma-separated list (`CloseFridge,OpenBlenderLid,PickPlaceCoffee`)
+- a benchmark-group shortcut — `atomic_seen`, `composite_seen`, `composite_unseen`, `pretrain50`, `pretrain100`, `pretrain200`, `pretrain300` — which auto-expands to the upstream task list and auto-sets the dataset `split` (`target` or `pretrain`).
+
+## Installation
+
+RoboCasa and its dependency `robosuite` are not published on PyPI, and RoboCasa's own `setup.py` hardcodes `lerobot==0.3.3`, which conflicts with this repo's `lerobot`. LeRobot therefore does **not** expose a `robocasa` extra — install the two packages manually as editable clones (using `--no-deps` on `robocasa` to skip its shadowed `lerobot` pin):
+
+```bash
+# After following the standard LeRobot installation instructions.
+
+git clone https://github.com/robocasa/robocasa.git ~/robocasa
+git clone https://github.com/ARISE-Initiative/robosuite.git ~/robosuite
+pip install -e ~/robocasa --no-deps
+pip install -e ~/robosuite
+
+# Robocasa's runtime deps (the ones its setup.py would have pulled, minus
+# the bad lerobot pin).
+pip install numpy numba scipy mujoco pygame Pillow opencv-python \
+            pyyaml pynput tqdm termcolor imageio h5py lxml hidapi \
+            tianshou gymnasium
+
+python -m robocasa.scripts.setup_macros
+# Lightweight assets (lightwheel object meshes + textures). Enough for
+# the default env out of the box.
+python -m robocasa.scripts.download_kitchen_assets \
+  --type tex tex_generative fixtures_lw objs_lw
+# Optional: full objaverse/aigen registries (~30GB) for richer object
+# variety. Enable at eval time via --env.obj_registries (see below).
+# python -m robocasa.scripts.download_kitchen_assets --type objs_objaverse
+```
+
+<Tip>
+RoboCasa requires MuJoCo. Set the rendering backend before training or evaluation:
+
+```bash
+export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
+```
+
+</Tip>
+
+### Object registries
+
+By default the env samples objects only from the `lightwheel` registry (what `--type objs_lw` ships), which avoids a `Probabilities contain NaN` crash when the objaverse / aigen packs aren't on disk. If you've downloaded the full asset set, enable the full registry at runtime:
+
+```bash
+--env.obj_registries='[objaverse,lightwheel]'
+```
+
+## Evaluation
+
+All eval snippets below mirror the CI command (see `.github/workflows/benchmark_tests.yml`). The `--rename_map` argument maps RoboCasa's native camera keys (`robot0_agentview_left` / `robot0_eye_in_hand` / `robot0_agentview_right`) onto the three-camera (`camera1` / `camera2` / `camera3`) input layout the released `smolvla_robocasa` policy was trained on.
+
+### Single-task evaluation (recommended for quick iteration)
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/smolvla_robocasa \
+  --env.type=robocasa \
+  --env.task=CloseFridge \
+  --eval.batch_size=1 \
+  --eval.n_episodes=20 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--rename_map={"observation.images.robot0_agentview_left": "observation.images.camera1", "observation.images.robot0_eye_in_hand": "observation.images.camera2", "observation.images.robot0_agentview_right": "observation.images.camera3"}'
+```
+
+### Multi-task evaluation
+
+Pass a comma-separated list of tasks:
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/smolvla_robocasa \
+  --env.type=robocasa \
+  --env.task=CloseFridge,OpenCabinet,OpenDrawer,TurnOnMicrowave,TurnOffStove \
+  --eval.batch_size=1 \
+  --eval.n_episodes=20 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--rename_map={"observation.images.robot0_agentview_left": "observation.images.camera1", "observation.images.robot0_eye_in_hand": "observation.images.camera2", "observation.images.robot0_agentview_right": "observation.images.camera3"}'
+```
+
+### Benchmark-group evaluation
+
+Run an entire upstream group (e.g. all 18 `atomic_seen` tasks with `split=target`):
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/smolvla_robocasa \
+  --env.type=robocasa \
+  --env.task=atomic_seen \
+  --eval.batch_size=1 \
+  --eval.n_episodes=20 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--rename_map={"observation.images.robot0_agentview_left": "observation.images.camera1", "observation.images.robot0_eye_in_hand": "observation.images.camera2", "observation.images.robot0_agentview_right": "observation.images.camera3"}'
+```
+
+### Recommended evaluation episodes
+
+**20 episodes per task** for reproducible benchmarking. Matches the protocol used in published results.
+
+## Policy inputs and outputs
+
+**Observations** (raw RoboCasa camera names are preserved verbatim):
+
+- `observation.state` — 16-dim proprioceptive state (base position, base quaternion, relative end-effector position, relative end-effector quaternion, gripper qpos)
+- `observation.images.robot0_agentview_left` — left agent view, 256×256 HWC uint8
+- `observation.images.robot0_eye_in_hand` — wrist camera view, 256×256 HWC uint8
+- `observation.images.robot0_agentview_right` — right agent view, 256×256 HWC uint8
+
+**Actions:**
+
+- Continuous control in `Box(-1, 1, shape=(12,))` — base motion (4D) + control mode (1D) + end-effector position (3D) + end-effector rotation (3D) + gripper (1D).
+
+## Training
+
+### Single-task example
+
+A ready-to-use single-task dataset is on the Hub:
+[`pepijn223/robocasa_CloseFridge`](https://huggingface.co/datasets/pepijn223/robocasa_CloseFridge).
+
+Fine-tune a SmolVLA base on `CloseFridge`:
+
+```bash
+lerobot-train \
+  --policy.type=smolvla \
+  --policy.repo_id=${HF_USER}/smolvla_robocasa_CloseFridge \
+  --policy.load_vlm_weights=true \
+  --policy.push_to_hub=true \
+  --dataset.repo_id=pepijn223/robocasa_CloseFridge \
+  --env.type=robocasa \
+  --env.task=CloseFridge \
+  --output_dir=./outputs/smolvla_robocasa_CloseFridge \
+  --steps=100000 \
+  --batch_size=4 \
+  --eval_freq=5000 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=5 \
+  --save_freq=10000
+```
+
+Evaluate the resulting checkpoint:
+
+```bash
+lerobot-eval \
+  --policy.path=${HF_USER}/smolvla_robocasa_CloseFridge \
+  --env.type=robocasa \
+  --env.task=CloseFridge \
+  --eval.batch_size=1 \
+  --eval.n_episodes=20
+```
+
+## Reproducing published results
+
+The released checkpoint [`lerobot/smolvla_robocasa`](https://huggingface.co/lerobot/smolvla_robocasa) is evaluated with the commands in the [Evaluation](#evaluation) section. CI runs a 10-atomic-task smoke eval (one episode each) on every PR touching the benchmark, picking fixture-centric tasks that don't require the objaverse asset pack.

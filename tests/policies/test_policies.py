@@ -196,6 +196,8 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
 
     for key in batch:
         if isinstance(batch[key], torch.Tensor):
+            if batch[key].dtype == torch.uint8:
+                batch[key] = batch[key].to(dtype=torch.float32) / 255.0
             batch[key] = batch[key].to(DEVICE, non_blocking=True)
 
     # Test updating the policy (and test that it does not mutate the batch)

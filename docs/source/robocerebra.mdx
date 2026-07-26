@@ -1,0 +1,99 @@
+# RoboCerebra
+
+[RoboCerebra](https://robocerebra-project.github.io/) is a long-horizon manipulation benchmark that evaluates **high-level reasoning, planning, and memory** in VLAs. Episodes chain multiple sub-goals with language-grounded intermediate instructions, built on top of LIBERO's simulator stack (MuJoCo + robosuite, Franka Panda 7-DOF).
+
+- Paper: [RoboCerebra: A Large-scale Benchmark for Long-horizon Robotic Manipulation Evaluation](https://arxiv.org/abs/2506.06677)
+- Project website: [robocerebra-project.github.io](https://robocerebra-project.github.io/)
+- Dataset: [`lerobot/robocerebra_unified`](https://huggingface.co/datasets/lerobot/robocerebra_unified) — LeRobot v3.0, 6,660 episodes / 571,116 frames at 20 fps, 1,728 language-grounded sub-tasks.
+- Pretrained policy: [`lerobot/smolvla_robocerebra`](https://huggingface.co/lerobot/smolvla_robocerebra)
+
+## Available tasks
+
+RoboCerebra reuses LIBERO's simulator, so evaluation runs against the LIBERO `libero_10` long-horizon suite:
+
+| Suite     | CLI name    | Tasks | Description                                                   |
+| --------- | ----------- | ----- | ------------------------------------------------------------- |
+| LIBERO-10 | `libero_10` | 10    | Long-horizon kitchen/living room tasks chaining 3–6 sub-goals |
+
+Each RoboCerebra episode in the dataset is segmented into multiple sub-tasks with natural-language instructions, which the unified dataset exposes as independent supervision signals.
+
+## Installation
+
+RoboCerebra piggybacks on LIBERO, so the `libero` extra is all you need:
+
+```bash
+pip install -e ".[libero]"
+```
+
+<Tip>
+RoboCerebra requires Linux (MuJoCo / robosuite). Set the rendering backend before training or evaluation:
+
+```bash
+export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
+```
+
+</Tip>
+
+## Evaluation
+
+RoboCerebra eval runs against LIBERO's `libero_10` suite with RoboCerebra's camera naming (`image` + `wrist_image`) and an extra empty-camera slot so a three-view-trained policy receives the expected input layout:
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/smolvla_robocerebra \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --env.fps=20 \
+  --env.obs_type=pixels_agent_pos \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
+  '--env.camera_name_mapping={"agentview_image": "image", "robot0_eye_in_hand_image": "wrist_image"}' \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--rename_map={"observation.images.image": "observation.images.camera1", "observation.images.wrist_image": "observation.images.camera2"}' \
+  --policy.empty_cameras=1
+```
+
+### Recommended evaluation episodes
+
+**10 episodes per task** across the `libero_10` suite (100 total) for reproducible benchmarking. Matches the protocol used in the RoboCerebra paper.
+
+## Policy inputs and outputs
+
+**Observations:**
+
+- `observation.state` — 8-dim proprioceptive state (7 joint positions + gripper)
+- `observation.images.image` — third-person view, 256×256 HWC uint8
+- `observation.images.wrist_image` — wrist-mounted camera view, 256×256 HWC uint8
+
+**Actions:**
+
+- Continuous control in `Box(-1, 1, shape=(7,))` — end-effector delta (6D) + gripper (1D)
+
+## Training
+
+The unified dataset at [`lerobot/robocerebra_unified`](https://huggingface.co/datasets/lerobot/robocerebra_unified) exposes two RGB streams and language-grounded sub-task annotations:
+
+| Feature                          | Shape         | Description          |
+| -------------------------------- | ------------- | -------------------- |
+| `observation.images.image`       | (256, 256, 3) | Third-person view    |
+| `observation.images.wrist_image` | (256, 256, 3) | Wrist-mounted camera |
+| `observation.state`              | (8,)          | Joint pos + gripper  |
+| `action`                         | (7,)          | EEF delta + gripper  |
+
+Fine-tune a SmolVLA base on it:
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/smolvla_base \
+  --dataset.repo_id=lerobot/robocerebra_unified \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --output_dir=outputs/smolvla_robocerebra
+```
+
+## Reproducing published results
+
+The released checkpoint [`lerobot/smolvla_robocerebra`](https://huggingface.co/lerobot/smolvla_robocerebra) was trained on `lerobot/robocerebra_unified` and evaluated with the command in the [Evaluation](#evaluation) section. CI runs the same command with `--eval.n_episodes=1` as a smoke test on every PR touching the benchmark.

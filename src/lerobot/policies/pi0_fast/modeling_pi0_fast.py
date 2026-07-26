@@ -227,6 +227,7 @@ class PI0FastPaliGemma(nn.Module):
         # forward(..., adarms_cond=...) is supported (same as pi0/pi05).
         if use_adarms[0]:
             text_config = self.paligemma.config.text_config
+            del self.paligemma.model.language_model
             self.paligemma.model.language_model = PiGemmaModel(text_config)
 
         self.to_bfloat16_for_selected_params(precision)

@@ -34,6 +34,25 @@ from lerobot.utils.utils import get_channel_first_image_shape
 from .configs import EnvConfig
 
 
+def parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
+    """Normalize ``camera_name`` into a non-empty list of strings.
+
+    Accepts a comma-separated string (``"cam_a,cam_b"``) or a sequence of
+    strings (tuples/lists). Whitespace is stripped; empty entries are
+    dropped. Raises ``TypeError`` for unsupported input types and
+    ``ValueError`` when the normalized list is empty.
+    """
+    if isinstance(camera_name, str):
+        cams = [c.strip() for c in camera_name.split(",") if c.strip()]
+    elif isinstance(camera_name, (list | tuple)):
+        cams = [str(c).strip() for c in camera_name if str(c).strip()]
+    else:
+        raise TypeError(f"camera_name must be str or sequence[str], got {type(camera_name).__name__}")
+    if not cams:
+        raise ValueError("camera_name resolved to an empty list.")
+    return cams
+
+
 def _convert_nested_dict(d):
     result = {}
     for k, v in d.items():
@@ -153,17 +172,20 @@ class _LazyAsyncVectorEnv:
         env_fns: list[Callable],
         observation_space=None,
         action_space=None,
+        metadata=None,
     ):
         self._env_fns = env_fns
         self._env: gym.vector.AsyncVectorEnv | None = None
         self.num_envs = len(env_fns)
-        if observation_space is not None and action_space is not None:
+        if observation_space is not None and action_space is not None and metadata is not None:
             self.observation_space = observation_space
             self.action_space = action_space
+            self.metadata = metadata
         else:
             tmp = env_fns[0]()
             self.observation_space = tmp.observation_space
             self.action_space = tmp.action_space
+            self.metadata = tmp.metadata
             tmp.close()
         self.single_observation_space = self.observation_space
         self.single_action_space = self.action_space
@@ -171,6 +193,10 @@ class _LazyAsyncVectorEnv:
     def _ensure(self) -> None:
         if self._env is None:
             self._env = gym.vector.AsyncVectorEnv(self._env_fns, context="forkserver", shared_memory=True)
+
+    @property
+    def unwrapped(self):
+        return self
 
     def reset(self, **kwargs):
         self._ensure()

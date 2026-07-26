@@ -311,6 +311,7 @@ def create_metaworld_envs(
     is_async = env_cls is gym.vector.AsyncVectorEnv
     cached_obs_space = None
     cached_act_space = None
+    cached_metadata = None
     out: dict[str, dict[int, Any]] = defaultdict(dict)
 
     for group in task_groups:
@@ -324,10 +325,11 @@ def create_metaworld_envs(
             fns = [(lambda tn=task_name: MetaworldEnv(task=tn, **gym_kwargs)) for _ in range(n_envs)]
 
             if is_async:
-                lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space)
+                lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space, cached_metadata)
                 if cached_obs_space is None:
                     cached_obs_space = lazy.observation_space
                     cached_act_space = lazy.action_space
+                    cached_metadata = lazy.metadata
                 out[group][tid] = lazy
             else:
                 out[group][tid] = env_cls(fns)

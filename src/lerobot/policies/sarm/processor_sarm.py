@@ -455,7 +455,13 @@ class SARMEncodingProcessorStep(ProcessorStep):
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
             # Get image embeddings
-            embeddings = self.clip_model.get_image_features(**inputs).detach().cpu()
+            # transformers 5.x returns BaseModelOutputWithPooling instead of a plain tensor
+            output = self.clip_model.get_image_features(**inputs)
+            if not isinstance(output, torch.Tensor):
+                output = output.pooler_output
+                if output is None:
+                    raise ValueError("pooler_output should not be None for CLIP models.")
+            embeddings = output.detach().cpu()
 
             # Handle single frame case
             if embeddings.dim() == 1:
@@ -482,7 +488,13 @@ class SARMEncodingProcessorStep(ProcessorStep):
         inputs = self.clip_processor.tokenizer([text], return_tensors="pt", padding=True, truncation=True)
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-        text_embedding = self.clip_model.get_text_features(**inputs).detach().cpu()
+        # transformers 5.x returns BaseModelOutputWithPooling instead of a plain tensor
+        output = self.clip_model.get_text_features(**inputs)
+        if not isinstance(output, torch.Tensor):
+            output = output.pooler_output
+            if output is None:
+                raise ValueError("pooler_output should not be None for CLIP models.")
+        text_embedding = output.detach().cpu()
         text_embedding = text_embedding.expand(batch_size, -1)
 
         return text_embedding
