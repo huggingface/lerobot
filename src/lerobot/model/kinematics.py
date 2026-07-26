@@ -122,6 +122,10 @@ class RobotKinematics:
         for i, joint_name in enumerate(self.joint_names):
             self.robot.set_joint(joint_name, current_joint_rad[i])
 
+        # Refresh frames and Jacobians so the solver linearizes around the initial guess,
+        # not around whatever configuration a previous forward_kinematics call left behind.
+        self.robot.update_kinematics()
+
         # Update the target pose for the frame task
         self.tip_frame.T_world_frame = desired_ee_pose
 
