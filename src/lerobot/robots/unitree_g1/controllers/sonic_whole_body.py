@@ -18,12 +18,12 @@
 
 from __future__ import annotations
 
-import logging
 from collections import deque
+import logging
 from typing import TYPE_CHECKING
 
-import numpy as np
 from huggingface_hub import hf_hub_download
+import numpy as np
 
 from lerobot.utils.import_utils import _onnxruntime_available, require_package
 
@@ -38,11 +38,32 @@ from .sonic_pipeline import (
     CONTROL_DT,
     DEFAULT_ANGLES,
     ENCODER_UPDATE_EVERY,
+    TOKEN_DIM,
     PlannerController,
     compute_kp_kd,
     make_ort_session_options,
     ort_providers,
 )
+
+# Action-feature prefix for the latent-token interface (see _extract_token_from_action).
+TOKEN_ACTION_PREFIX = "motion_token"
+# Proprio-state prefix for the token interface: the robot echoes the last commanded
+# token here so ``lerobot-rollout`` aggregates it into a 64-D ``observation.state``.
+TOKEN_STATE_PREFIX = "motion_token_state"
+
+
+def token_action_key(i: int) -> str:
+    """Action-dict key for the i-th component of the 64-D SONIC latent token.
+
+    The ``.pos`` suffix is required so the value flows through ``lerobot-rollout``,
+    which only routes ``.pos`` scalar features onto the policy action vector.
+    """
+    return f"{TOKEN_ACTION_PREFIX}.{i}.pos"
+
+
+def token_state_key(i: int) -> str:
+    """Observation key for the i-th component of the 64-D SONIC latent token state."""
+    return f"{TOKEN_STATE_PREFIX}.{i}.pos"
 
 if TYPE_CHECKING or _onnxruntime_available:
     import onnxruntime as ort
@@ -76,6 +97,26 @@ def _extract_wb34_from_action(action: dict | None) -> np.ndarray | None:
         (float(action[key]) for key in keys),
         dtype=np.float32,
         count=WB_ACTION_DIM,
+    )
+
+
+def _extract_token_from_action(action: dict | None) -> np.ndarray | None:
+    """Reassemble a dense (64,) latent token from ``motion_token.{i}`` keys, or None.
+
+    This is the token-only replay interface: instead of a joint reference driving the
+    encoder, the caller supplies the 64-D encoder latent directly (e.g. a recorded
+    ``action.motion_token`` column), which the decoder consumes with the encoder
+    bypassed. Requires the full dense token; a partial one is ignored (returns None).
+    """
+    if not action:
+        return None
+    keys = [token_action_key(i) for i in range(TOKEN_DIM)]
+    if any(key not in action for key in keys):
+        return None
+    return np.fromiter(
+        (float(action[key]) for key in keys),
+        dtype=np.float32,
+        count=TOKEN_DIM,
     )
 
 
@@ -121,11 +162,22 @@ class SonicRuntime:
         decoder_path = hf_hub_download(repo_id="nvidia/GEAR-SONIC", filename="model_decoder.onnx")
 
         providers = ort_providers(force_cpu=force_cpu)
-        self.use_gpu = providers[0] == "CUDAExecutionProvider"
         so = make_ort_session_options()
 
         encoder_sess = ort.InferenceSession(encoder_path, sess_options=so, providers=providers)
         decoder_sess = ort.InferenceSession(decoder_path, sess_options=so, providers=providers)
+
+        # Report the provider actually bound, not the one requested: ORT silently falls
+        # back to CPU if CUDA can't load (e.g. libcudnn not on LD_LIBRARY_PATH), and a
+        # CPU decoder drifts the closed-loop heading. Warn loudly so it can't hide.
+        self.use_gpu = decoder_sess.get_providers()[0] == "CUDAExecutionProvider"
+        if not force_cpu and not self.use_gpu:
+            print(
+                "[SONIC] WARNING: decoder bound to CPUExecutionProvider (CUDA unavailable). "
+                "Closed-loop replay/control will drift. Ensure libcudnn is on LD_LIBRARY_PATH "
+                "(site-packages/nvidia/*/lib).",
+                flush=True,
+            )
 
         self.kp, self.kd = compute_kp_kd()
         self.controller = PlannerController(encoder_sess, decoder_sess)
@@ -244,6 +296,20 @@ class SonicWholeBodyController:
         self._wb_step += 1
         return out
 
+    def _run_token(self, obs: dict, token: np.ndarray) -> dict:
+        """Decode a supplied 64-D latent token directly (encoder bypassed).
+
+        Token-only replay: set the pipeline's cached token to the supplied one and run
+        a decode-only step (``update_encoder=False``). The decoder still closes the loop
+        on live proprioception (history is refreshed inside ``step`` from ``obs``); only
+        the encoder — which would recompute the token from a motion reference — is
+        skipped. Returns the ``<joint>.q`` target dict.
+        """
+        c = self.controller
+        c.token = np.asarray(token, np.float32)
+        self._wb_step += 1
+        return c.step(obs, update_encoder=False, debug=False)
+
     def _startup_blend(self, obs: dict, out: dict) -> dict:
         """Ease into policy control at startup: for the first ``INIT_RAMP_S`` seconds,
         interpolate between the robot's pose captured on the first tick and the policy's
@@ -274,6 +340,13 @@ class SonicWholeBodyController:
         if lowstate is None:
             return {}
         obs = lowstate_to_obs(lowstate)
+
+        # Token-only interface (latent replay / token-output VLA): a dense 64-D
+        # ``motion_token.{i}`` command is decoded directly, bypassing the encoder.
+        # Checked before the joint path so a token action takes precedence.
+        token = _extract_token_from_action(action)
+        if token is not None:
+            return self._startup_blend(obs, self._run_token(obs, token))
 
         # Dense 34-D whole-body command (OpenHLM / pi0.5 joint interface): a single
         # vector per tick drives the mode-0 encoder reference directly. Until the
