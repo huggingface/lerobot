@@ -22,7 +22,7 @@ and :class:`DatasetContext` — assembled into :class:`RolloutContext`.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from threading import Event
 
 import torch
@@ -58,6 +58,31 @@ from .inference import (
 from .robot_wrapper import ThreadSafeRobot
 
 logger = logging.getLogger(__name__)
+
+
+def _compile_predict_action_chunk(
+    policy: PreTrainedPolicy,
+    *,
+    backend: str,
+    mode: str,
+) -> bool:
+    """Compile a policy action function and report whether compilation was applied."""
+    if not hasattr(torch, "compile"):
+        logger.warning("torch.compile is not available in this PyTorch build")
+        return False
+
+    try:
+        policy.predict_action_chunk = torch.compile(
+            policy.predict_action_chunk,
+            backend=backend,
+            mode=mode,
+        )
+    except Exception as exc:
+        logger.warning("Failed to apply torch.compile: %s", exc)
+        return False
+
+    logger.info("torch.compile applied to predict_action_chunk")
+    return True
 
 
 def _resolve_action_key_order(
@@ -208,18 +233,16 @@ def build_rollout_context(
     policy.eval()
     logger.info("Policy loaded: type=%s, device=%s", policy_config.type, cfg.device)
 
+    torch_compile_active = cfg.use_torch_compile
     if cfg.use_torch_compile and policy.type not in ("pi0", "pi05"):
-        try:
-            if hasattr(torch, "compile"):
-                compile_kwargs = {
-                    "backend": cfg.torch_compile_backend,
-                    "mode": cfg.torch_compile_mode,
-                    "options": {"triton.cudagraphs": False},
-                }
-                policy.predict_action_chunk = torch.compile(policy.predict_action_chunk, **compile_kwargs)
-                logger.info("torch.compile applied to predict_action_chunk")
-        except Exception as e:
-            logger.warning("Failed to apply torch.compile: %s", e)
+        torch_compile_active = _compile_predict_action_chunk(
+            policy,
+            backend=cfg.torch_compile_backend,
+            mode=cfg.torch_compile_mode,
+        )
+
+    if cfg.use_torch_compile and not torch_compile_active:
+        cfg = replace(cfg, use_torch_compile=False)
 
     # --- 2. Robot-side processors (user-supplied or defaults) --------
     if (
@@ -426,7 +449,7 @@ def build_rollout_context(
         task=task_str,
         fps=cfg.fps,
         device=cfg.device,
-        use_torch_compile=cfg.use_torch_compile,
+        use_torch_compile=torch_compile_active,
         compile_warmup_inferences=cfg.compile_warmup_inferences,
         shutdown_event=shutdown_event,
     )
