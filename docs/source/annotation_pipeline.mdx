@@ -89,8 +89,8 @@ subtask.
 
 The resulting spans are then stitched into a gap-free, full-episode
 cover, so **every frame has exactly one active subtask**. See
-[`run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotations/run_hf_job.py)
-for the production settings (single camera, timestamped contact sheets,
+[Running on Hugging Face Jobs](#running-on-hugging-face-jobs) for the
+production settings (single camera, timestamped contact sheets,
 auto-windowed subtask generation).
 
 ### Tools
@@ -110,28 +110,67 @@ not-yet-implemented.
 
 ## Running on Hugging Face Jobs
 
-Annotation runs on [Hugging Face Jobs](https://huggingface.co/docs/hub/en/jobs).
-The repo ships a launcher script you copy and tweak for your dataset:
+Annotating a real dataset needs a GPU big enough to serve the VLM, so
+`lerobot-annotate` can dispatch itself to
+[Hugging Face Jobs](https://huggingface.co/docs/hub/en/jobs) — same as
+`lerobot-train`. Add `--job.target=<flavor>` to the exact command you'd
+run locally and it runs on that hardware instead:
 
 ```bash
-HF_TOKEN=hf_... uv run python examples/annotations/run_hf_job.py
+hf auth login   # once
+
+uv run lerobot-annotate \
+    --repo_id=user/my_dataset \
+    --new_repo_id=user/my_dataset_annotated \
+    --push_to_hub=true \
+    --vlm.model_id=Qwen/Qwen3.6-27B \
+    --vlm.num_gpus=1 \
+    --vlm.serve_command="vllm serve Qwen/Qwen3.6-27B --tensor-parallel-size 1 \
+        --max-model-len 32768 --gpu-memory-utilization 0.8 \
+        --uvicorn-log-level warning --port {port}" \
+    --vlm.serve_ready_timeout_s=1800 \
+    --vlm.chat_template_kwargs='{"enable_thinking": false}' \
+    --job.target=h200
 ```
 
-[`run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotations/run_hf_job.py)
-starts a single-GPU `h200` job (bump it to `h200x4` for big datasets)
-that:
+That submits a single-GPU `h200` job that:
 
-1. installs `lerobot` (from `main`) plus the annotation extras,
-2. boots one vLLM server per GPU (using the `vllm/vllm-openai` image) and
-   drives it over the OpenAI-compatible API,
-3. runs the `plan` / `interjections` / `vqa` modules across the dataset
-   with `lerobot-annotate`,
+1. starts from the `vllm/vllm-openai` image and installs `lerobot` on top,
+2. boots one vLLM server per GPU and drives it over the OpenAI-compatible API,
+3. runs the `plan` / `interjections` / `vqa` modules across the dataset,
 4. with `--push_to_hub=true`, uploads the result to `--new_repo_id` (or
    back to `--repo_id` in place if you leave that unset).
 
-To use a different dataset, model, or hub repo, edit the `CMD` block in
-the script. Every flag there maps directly to a `lerobot-annotate` flag
-(run `lerobot-annotate --help` for the full list).
+The command streams the job's logs; `Ctrl-C` detaches without cancelling
+it. List the available flavors and their pricing with `hf jobs hardware`.
+
+<Tip warning={true}>
+
+Qwen3.6 ships with thinking enabled, which eats the token budget the
+annotator needs for its JSON answer — `--vlm.chat_template_kwargs='{"enable_thinking": false}'`
+turns it off. Without `--push_to_hub=true` the annotated dataset is
+discarded when the pod exits.
+
+</Tip>
+
+### Job options
+
+| Flag                | Default                   | What it does                                                                    |
+| ------------------- | ------------------------- | ------------------------------------------------------------------------------- |
+| `--job.target`      | `local`                   | HF Jobs flavor to run on (e.g. `h200`, `h200x4`). Omitted/`local` runs here.    |
+| `--job.image`       | `vllm/vllm-openai:latest` | Runtime image for the pod.                                                      |
+| `--job.timeout`     | `2h`                      | Wall-clock cap. Raise it for large datasets.                                    |
+| `--job.detach`      | `false`                   | Submit and exit instead of streaming logs.                                      |
+| `--job.lerobot_ref` | `main`                    | Git ref of lerobot installed on the pod — point it at a branch to test changes. |
+| `--job.tags`        | `[]`                      | Extra tags on the job and on any dataset it pushes (`lerobot` is always added). |
+
+For a bigger dataset, scale to `h200x4` and raise
+`--vlm.parallel_servers` / `--vlm.num_gpus` to match, and give the job
+more headroom with e.g. `--job.timeout=8h`.
+
+Remote runs need `--repo_id` (the pod pulls the dataset from the Hub;
+`--root` names a directory only your machine has). A dataset that exists
+only in your local cache is pushed to a **private** repo first.
 
 ## Key options
 

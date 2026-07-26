@@ -74,6 +74,8 @@ class LeRobotDatasetMetadata:
         force_cache_sync: bool = False,
         metadata_buffer_size: int = 10,
         repo_type: str = "dataset",
+        *,
+        token: str | bool | None = None,
     ):
         """Load or download metadata for an existing LeRobot dataset.
 
@@ -97,6 +99,10 @@ class LeRobotDatasetMetadata:
                 in memory before flushing to parquet.
             repo_type: Repository type: "dataset" (default) or "bucket" for an
                 HF Storage Bucket streamed over hf://buckets/.
+            token: Authentication token used for Hub requests. Pass a string
+                token, ``True`` to require the locally stored token, ``False``
+                to disable authentication, or ``None`` to use the Hugging Face
+                Hub default.
         """
         self.repo_id = repo_id
         self.repo_type = repo_type
@@ -117,9 +123,12 @@ class LeRobotDatasetMetadata:
             self._load_metadata()
         except (FileNotFoundError, NotADirectoryError):
             if self.repo_type != "bucket" and is_valid_version(self.revision):
-                self.revision = get_safe_version(self.repo_id, self.revision)
+                if token is None:
+                    self.revision = get_safe_version(self.repo_id, self.revision)
+                else:
+                    self.revision = get_safe_version(self.repo_id, self.revision, token=token)
 
-            self._pull_from_repo(allow_patterns="meta/")
+            self._pull_from_repo(allow_patterns="meta/", token=token)
             self._load_metadata()
 
     def _flush_metadata_buffer(self) -> None:
@@ -224,6 +233,8 @@ class LeRobotDatasetMetadata:
         self,
         allow_patterns: list[str] | str | None = None,
         ignore_patterns: list[str] | str | None = None,
+        *,
+        token: str | bool | None = None,
     ) -> None:
         if getattr(self, "repo_type", "dataset") == "bucket":
             from huggingface_hub import HfFileSystem
@@ -241,6 +252,7 @@ class LeRobotDatasetMetadata:
             fs.get(f"hf://buckets/{self.repo_id}/meta", str(dest), recursive=True)
             self.root = dest
             return
+        token_kwargs = {} if token is None else {"token": token}
         if self._requested_root is None:
             self.root = Path(
                 snapshot_download(
@@ -250,6 +262,7 @@ class LeRobotDatasetMetadata:
                     cache_dir=HF_LEROBOT_HUB_CACHE,
                     allow_patterns=allow_patterns,
                     ignore_patterns=ignore_patterns,
+                    **token_kwargs,
                 )
             )
             return
@@ -262,6 +275,7 @@ class LeRobotDatasetMetadata:
             local_dir=self._requested_root,
             allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
+            **token_kwargs,
         )
         self.root = self._requested_root
 

@@ -257,6 +257,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         shuffle: bool = True,
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
+        *,
+        token: str | bool | None = None,
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -281,6 +283,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             shuffle (bool, optional): Whether to shuffle the dataset across exhaustions. Defaults to True.
             depth_output_unit (str, optional): Physical unit depth maps are dequantized to ("m" or "mm").
                 Defaults to "mm".
+            token: Authentication token used while streaming this dataset from
+                the Hub. Pass a string token, ``True`` to require the locally
+                stored token, ``False`` to disable authentication, or ``None``
+                to use the Hugging Face Hub default. The token is not retained
+                on the dataset instance after initialization.
         """
         super().__init__()
         self.repo_id = repo_id
@@ -315,6 +322,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self.revision,
             force_cache_sync=force_cache_sync,
             repo_type=self.repo_type,
+            token=token,
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
@@ -350,12 +358,14 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 streaming=self.streaming,
             )
         else:
+            token_kwargs = {} if token is None or self.streaming_from_local else {"token": token}
             self.hf_dataset: datasets.IterableDataset = load_dataset(
                 self.repo_id if not self.streaming_from_local else str(self.root),
                 split="train",
                 streaming=self.streaming,
                 data_files="data/*/*.parquet",
                 revision=self.revision,
+                **token_kwargs,
             )
 
         self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
