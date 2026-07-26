@@ -25,8 +25,10 @@ Paper reference: pi*0.6, Section IV-B and Appendix F.
 
 from __future__ import annotations
 
+import csv
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -58,6 +60,7 @@ class AdvantageModule:
     _preprocessor: Any = field(default=None, init=False, repr=False)
     _threshold: float | None = field(default=None, init=False, repr=False)
     _cache: dict = field(default_factory=dict, init=False, repr=False)
+    _prediction_lookup: dict[tuple[int, int], float] | None = field(default=None, init=False, repr=False)
 
     @property
     def enabled(self) -> bool:
@@ -94,7 +97,10 @@ class AdvantageModule:
             (advantages, intervention_mask) both shape [num_frames].
             advantages[t] = A_t, intervention_mask[t] = True if frame is intervention.
         """
-        self._ensure_model_loaded()
+        if self.config.predictions_path:
+            self._ensure_predictions_loaded()
+        else:
+            self._ensure_model_loaded()
 
         df = record.frames_df()
         num_frames = len(df)
@@ -135,6 +141,27 @@ class AdvantageModule:
             skip_mask: Optional boolean mask [num_frames]. Frames where True are
                 skipped (left as 0.0) to avoid unnecessary inference.
         """
+        if self.config.predictions_path:
+            self._ensure_predictions_loaded()
+            assert self._prediction_lookup is not None
+            missing = [
+                frame_index
+                for frame_index in record.frame_indices
+                if (record.episode_index, frame_index) not in self._prediction_lookup
+            ]
+            if missing:
+                raise KeyError(
+                    f"Predictions CSV is missing {len(missing)} frame(s) from episode "
+                    f"{record.episode_index}; first missing frame_index={missing[0]}"
+                )
+            return np.asarray(
+                [
+                    self._prediction_lookup[(record.episode_index, frame_index)]
+                    for frame_index in record.frame_indices
+                ],
+                dtype=np.float32,
+            )
+
         df = record.frames_df()
         num_frames = len(df)
         values = np.zeros(num_frames, dtype=np.float32)
@@ -193,6 +220,27 @@ class AdvantageModule:
             values[batch_indices] = v_values.cpu().numpy()
 
         return values
+
+    def _ensure_predictions_loaded(self) -> None:
+        if self._prediction_lookup is not None:
+            return
+        path = Path(self.config.predictions_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"Advantage predictions CSV not found: {path}")
+        lookup: dict[tuple[int, int], float] = {}
+        with path.open(newline="") as handle:
+            reader = csv.DictReader(handle)
+            required = {"episode_index", "frame_index", "predicted_value"}
+            missing_columns = required.difference(reader.fieldnames or ())
+            if missing_columns:
+                raise ValueError(f"Predictions CSV is missing required columns: {sorted(missing_columns)}")
+            for row in reader:
+                key = (int(row["episode_index"]), int(row["frame_index"]))
+                if key in lookup:
+                    raise ValueError(f"Duplicate prediction for episode/frame {key}")
+                lookup[key] = float(row["predicted_value"])
+        self._prediction_lookup = lookup
+        logger.info("Loaded %d per-frame value predictions from %s", len(lookup), path)
 
     def _decode_video_frames(
         self, record: EpisodeRecord, infer_indices: np.ndarray
@@ -261,7 +309,7 @@ class AdvantageModule:
         if self.config.constant_value:
             return
 
-        if not self.config.value_function_path:
+        if not self.config.value_function_path and not self.config.predictions_path:
             return
 
         logger.info("Computing global advantage threshold (two-pass mode)...")
@@ -294,8 +342,11 @@ class AdvantageModule:
             self._run_constant_mode(record, staging)
             return
 
-        if not self.config.value_function_path:
-            logger.warning("No value_function_path or constant_value configured; skipping advantage scoring.")
+        if not self.config.value_function_path and not self.config.predictions_path:
+            logger.warning(
+                "No value_function_path, predictions_path, or constant_value configured; "
+                "skipping advantage scoring."
+            )
             return
 
         if record.episode_index in self._cache:

@@ -358,6 +358,7 @@ lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 lerobot-annotate="lerobot.scripts.lerobot_annotate:main"
 lerobot-rollout="lerobot.scripts.lerobot_rollout:main"
 lerobot-compute-returns="lerobot.scripts.lerobot_compute_returns:main"
+lerobot-eval-reward-model="lerobot.scripts.lerobot_eval_reward_model:main"
 
 # ---------------- Tool Configurations ----------------
 

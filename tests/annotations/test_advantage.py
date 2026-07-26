@@ -89,6 +89,7 @@ def test_advantage_module_enabled_by_default():
     cfg = AdvantageConfig()
     module = AdvantageModule(config=cfg)
     assert module.enabled
+    assert cfg.threshold_percentile == 0.6
 
 
 def test_run_episode_skips_without_value_function_path(staging: EpisodeStaging):
@@ -101,6 +102,38 @@ def test_run_episode_skips_without_value_function_path(staging: EpisodeStaging):
 
     rows = staging.read("advantage")
     assert rows == []
+
+
+def test_run_episode_uses_precomputed_predictions(staging: EpisodeStaging, tmp_path: Path):
+    predictions_path = tmp_path / "predictions.csv"
+    predictions_path.write_text(
+        "episode_index,frame_index,predicted_value\n0,0,-0.4\n0,1,-0.4\n0,2,-0.4\n0,3,-0.4\n"
+    )
+    record = _make_record(
+        num_frames=4,
+        mc_returns=np.array([-0.7, -0.4, -0.2, -0.1], dtype=np.float32),
+    )
+    module = AdvantageModule(
+        config=AdvantageConfig(
+            predictions_path=str(predictions_path),
+            threshold_percentile=0.5,
+        )
+    )
+
+    module.run_episode(record, staging)
+
+    rows = staging.read("advantage")
+    assert [row["content"] for row in rows] == ["negative", "negative", "positive", "positive"]
+    assert module._model is None
+
+
+def test_predictions_csv_requires_every_frame(staging: EpisodeStaging, tmp_path: Path):
+    predictions_path = tmp_path / "predictions.csv"
+    predictions_path.write_text("episode_index,frame_index,predicted_value\n0,0,-0.4\n")
+    module = AdvantageModule(config=AdvantageConfig(predictions_path=str(predictions_path)))
+
+    with pytest.raises(KeyError, match="missing 1 frame"):
+        module.run_episode(_make_record(num_frames=2), staging)
 
 
 def test_binarization_with_mock_values(staging: EpisodeStaging):

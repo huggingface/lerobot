@@ -183,6 +183,11 @@ class AdvantageConfig:
     # Ignored when constant_value is set.
     value_function_path: str = ""
 
+    # Optional CSV from ``lerobot-eval-reward-model``. When set, annotation
+    # consumes its per-frame predictions instead of rerunning VF inference.
+    # This is the recommended path for temporal and multi-camera value models.
+    predictions_path: str = ""
+
     # Device to run the value function on.
     device: str = "cuda"
 
@@ -191,9 +196,11 @@ class AdvantageConfig:
     # 50 = fine-tuning mode: A_t = Σ r_{t:t+N} + V(s_{t+N}) - V(s_t).
     n_step: int | None = None
 
-    # Per-task percentile for binarization threshold ε_ℓ.
-    # Actions with advantage > ε_ℓ get I_t = True (positive).
-    threshold_percentile: float = 0.3
+    # Percentile for binarization threshold ε_ℓ. Appendix F uses a threshold
+    # yielding about 40% positive rollout actions during post-training, i.e.
+    # the 60th percentile. Pre-training uses 0.7 (~30% positive), while the
+    # slow-but-successful laundry setting uses 0.9 (~10% positive).
+    threshold_percentile: float = 0.6
 
     # When True, compute a single global threshold across all episodes (paper behavior).
     # When False, compute threshold per-episode (faster but less accurate).
