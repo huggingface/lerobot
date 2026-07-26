@@ -28,9 +28,11 @@ import argparse
 import base64
 import contextlib
 import json
+import re
 import threading
 import time
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 import zmq
 from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
@@ -41,6 +43,9 @@ from unitree_sdk2py.utils.crc import CRC
 
 from lerobot.cameras.zmq.image_server import ImageServer
 
+if TYPE_CHECKING:
+    from lerobot.motors.damiao.damiao import DamiaoMotorsBus
+
 # DDS topic names follow Unitree SDK naming conventions
 # ruff: noqa: N816
 kTopicLowCommand_Debug = "rt/lowcmd"  # action to robot
@@ -49,6 +54,105 @@ kTopicLowState = "rt/lowstate"  # observation from robot
 LOWCMD_PORT = 6000
 LOWSTATE_PORT = 6001
 NUM_MOTORS = 35
+
+
+@dataclass
+class Gripper:
+    """A single Damiao gripper that only writes to CAN when the open/close state changes."""
+
+    name: str
+    bus: "DamiaoMotorsBus"
+    open_deg: float
+    close_deg: float
+    _last_cmd: str | None = None  # "open" | "close"
+
+    def apply(self, want_close: bool) -> None:
+        want = "close" if want_close else "open"
+        if want == self._last_cmd:
+            return
+        target = self.close_deg if want_close else self.open_deg
+        self.bus.write("Goal_Position", "gripper", target)
+        self._last_cmd = want
+        print(f"[gripper] {self.name} -> {want.upper()} ({target:.1f} deg)")
+
+
+def build_gripper(
+    name: str,
+    port: str,
+    send_id: int,
+    recv_id: int,
+    motor_type: str,
+    use_can_fd: bool,
+    open_deg: float,
+    close_deg: float,
+    kp: float,
+    kd: float,
+) -> Gripper:
+    from lerobot.motors.damiao.damiao import DamiaoMotorsBus
+    from lerobot.motors.motors_bus import Motor, MotorNormMode
+
+    motors = {
+        "gripper": Motor(
+            id=send_id,
+            model=motor_type,
+            norm_mode=MotorNormMode.DEGREES,
+            motor_type_str=motor_type,
+            recv_id=recv_id,
+        )
+    }
+    bus = DamiaoMotorsBus(port=port, motors=motors, use_can_fd=use_can_fd)
+    print(f"Connecting {name} gripper on {port} (fd={use_can_fd})...")
+    bus.connect(handshake=True)
+    bus.write("Kp", "gripper", kp)
+    bus.write("Kd", "gripper", kd)
+    bus.write("Goal_Position", "gripper", open_deg)  # start open
+    print(f"  {name}: connected, torque enabled, opened.")
+    return Gripper(name, bus, open_deg, close_deg, _last_cmd="open")
+
+
+def parse_camera_specs(spec: str, default_width: int, default_height: int) -> dict[str, dict]:
+    """Parse a multi-camera spec string into an ImageServer ``cameras`` dict.
+
+    Format: comma-separated ``name:device[:WxH[:FOURCC]]`` entries, e.g.
+    ``head_camera:6,left_wrist:0``. ``device`` may be an integer index or an explicit
+    device path (e.g. ``/dev/video6``), including stable ``by-path`` names like
+    ``/dev/v4l/by-path/platform-...:2.1:1.3-video-index0`` which survive USB
+    re-enumeration (unlike bare ``/dev/videoN`` indices). Because a by-path name
+    itself contains colons, the optional ``WxH`` and ``FOURCC`` are parsed from the
+    *right* so the device-path colons are preserved.
+    """
+    wh_re = re.compile(r"\d+x\d+", re.IGNORECASE)
+    fourcc_re = re.compile(r"[A-Za-z0-9]{4}")
+
+    cameras: dict[str, dict] = {}
+    for entry in spec.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if ":" not in entry:
+            raise ValueError(f"Invalid camera spec '{entry}', expected 'name:device[:WxH[:FOURCC]]'")
+        name, rest = entry.split(":", 1)
+        name = name.strip()
+        tokens = [t.strip() for t in rest.split(":")]
+
+        fourcc = None
+        if len(tokens) >= 3 and wh_re.fullmatch(tokens[-2]) and fourcc_re.fullmatch(tokens[-1]):
+            fourcc = tokens.pop().upper()
+        width, height = default_width, default_height
+        if len(tokens) >= 2 and wh_re.fullmatch(tokens[-1]):
+            w, h = tokens.pop().lower().split("x")
+            width, height = int(w), int(h)
+
+        raw_id = ":".join(tokens).strip()
+        if not raw_id:
+            raise ValueError(f"Invalid camera spec '{entry}', missing device")
+        device_id: int | str = int(raw_id) if raw_id.lstrip("-").isdigit() else raw_id
+        if name in cameras:
+            raise ValueError(f"Duplicate camera name '{name}' in --cameras")
+        cameras[name] = {"device_id": device_id, "shape": [height, width], "fourcc": fourcc}
+    if not cameras:
+        raise ValueError("No cameras parsed from --cameras spec")
+    return cameras
 
 
 def lowstate_to_dict(msg: hg_LowState) -> dict[str, Any]:
@@ -155,7 +259,11 @@ def main() -> None:
     """Main entry point for the robot server bridge."""
     parser = argparse.ArgumentParser(description="DDS-to-ZMQ bridge server for Unitree G1")
     parser.add_argument("--camera", action="store_true", help="Also launch camera server")
-    parser.add_argument("--camera-device", type=int, default=4, help="Camera device ID (default: 4)")
+    parser.add_argument("--camera-device", default="4",
+                        help="Camera device: index or /dev/video path or by-path name (default: 4)")
+    parser.add_argument("--cameras", default=None,
+                        help="Multi-camera spec 'name:device[:WxH[:FOURCC]]', comma-separated. Overrides "
+                             "--camera-device; device may be a by-path name to survive USB re-enumeration.")
     parser.add_argument("--camera-fps", type=int, default=30, help="Camera FPS (default: 30)")
     parser.add_argument("--camera-width", type=int, default=640, help="Camera width (default: 640)")
     parser.add_argument("--camera-height", type=int, default=480, help="Camera height (default: 480)")
@@ -164,20 +272,20 @@ def main() -> None:
 
     # Optionally start camera server in background thread
     camera_thread = None
-    if args.camera:
-        camera_config = {
-            "fps": args.camera_fps,
-            "cameras": {
-                "head_camera": {
-                    "device_id": args.camera_device,
-                    "shape": [args.camera_height, args.camera_width],
-                }
-            },
-        }
+    if args.camera or args.cameras:
+        if args.cameras:
+            cameras = parse_camera_specs(args.cameras, args.camera_width, args.camera_height)
+        else:
+            # Single camera; accept an int index or a device/by-path string.
+            dev = args.camera_device
+            dev = int(dev) if str(dev).lstrip("-").isdigit() else dev
+            cameras = {"head_camera": {"device_id": dev, "shape": [args.camera_height, args.camera_width]}}
+        camera_config = {"fps": args.camera_fps, "cameras": cameras}
         camera_server = ImageServer(camera_config, port=args.camera_port)
         camera_thread = threading.Thread(target=camera_server.run, daemon=True)
         camera_thread.start()
-        print(f"Camera server started on port {args.camera_port} (device {args.camera_device})")
+        cam_summary = ", ".join(f"{n}(dev {c['device_id']})" for n, c in cameras.items())
+        print(f"Camera server started on port {args.camera_port}: {cam_summary}")
 
     # initialize DDS
     ChannelFactoryInitialize(0)

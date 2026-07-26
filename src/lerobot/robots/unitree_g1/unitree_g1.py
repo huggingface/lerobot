@@ -87,6 +87,14 @@ class LocomotionController(Protocol):
 kTopicLowCommand_Debug = "rt/lowcmd"
 kTopicLowState = "rt/lowstate"
 
+# Wireless-remote button byte layout, mapped to the positional button indices the
+# locomotion controllers expect. Used in onboard mode to read the physical Unitree
+# remote from lowstate (mirrors the exo teleoperator's RemoteController).
+_REMOTE_BUTTON_MAP: list[str] = [
+    "RB", "LB", "start", "back", "RT", "LT", "", "",
+    "A", "B", "X", "Y", "up", "right", "down", "left",
+]
+
 
 @dataclass
 class MotorState:
@@ -130,8 +138,10 @@ class UnitreeG1(Robot):
         # Initialize cameras config (ZMQ-based) - actual connection in connect()
         self._cameras = make_cameras_from_configs(config.cameras)
 
-        # Import channel classes based on mode
-        if config.is_simulation:
+        # Import channel classes based on mode. Simulation and onboard both talk to a
+        # real (local) DDS via the Unitree SDK; only the laptop-side bridge client uses
+        # the ZMQ socket shim.
+        if config.is_simulation or config.onboard:
             self._ChannelFactoryInitialize = _SDKChannelFactoryInitialize
             self._ChannelPublisher = _SDKChannelPublisher
             self._ChannelSubscriber = _SDKChannelSubscriber
@@ -167,6 +177,10 @@ class UnitreeG1(Robot):
         self._controller_action_lock = threading.Lock()
         self.controller_input = default_remote_input()
         self.controller_output = {}
+
+        # Onboard-only: parser for the physical Unitree wireless remote (read straight
+        # from local lowstate so joystick locomotion works without a laptop round-trip).
+        self._joystick = None
 
         # Replay-camera state: keep the encoded (raw) cells per camera and decode
         # frames lazily as the play cursor advances, with a small frame cache, so we
@@ -421,6 +435,13 @@ class UnitreeG1(Robot):
                 with self._controller_action_lock:
                     controller_input = dict(self.controller_input)
 
+                # Onboard: the physical Unitree remote (in local lowstate) takes
+                # priority for locomotion when active; otherwise laptop/ZMQ axes stand.
+                if self.config.onboard:
+                    wl = self._wireless_remote_input(lowstate)
+                    if wl is not None:
+                        controller_input.update(wl)
+
                 # Run controller step
                 controller_action = self.controller.run_step(controller_input, lowstate)
 
@@ -442,6 +463,58 @@ class UnitreeG1(Robot):
 
     def configure(self) -> None:
         pass
+
+    def _wireless_remote_input(self, lowstate) -> dict | None:
+        """Parse the physical Unitree remote from lowstate into controller inputs.
+
+        Onboard only. Returns None when the remote is idle so the laptop-provided
+        (ZMQ) axes keep control; otherwise the physical remote takes priority.
+        """
+        js = self._joystick
+        if js is None:
+            return None
+        wr = getattr(lowstate, "wireless_remote", None)
+        if not wr or len(wr) < 24:
+            return None
+        try:
+            js.extract(wr)
+        except Exception:  # noqa: BLE001
+            return None
+
+        axes = {
+            "remote.lx": float(js.lx.data),
+            "remote.ly": float(js.ly.data),
+            "remote.rx": float(js.rx.data),
+            "remote.ry": float(js.ry.data),
+        }
+        active = any(abs(v) > 1e-2 for v in axes.values())
+        out = dict(axes)
+        for i, name in enumerate(_REMOTE_BUTTON_MAP):
+            if name:
+                val = float(getattr(js, name).data)
+                out[f"remote.button.{i}"] = val
+                if val:
+                    active = True
+        return out if active else None
+
+    def _release_motion_control(self) -> None:
+        """Release the robot's built-in motion services so we can send raw lowcmd.
+
+        Onboard-only. Mirrors run_g1_server.py: on the real robot the factory
+        locomotion/hand services must relinquish control before our controller can
+        write to ``rt/lowcmd``, otherwise commands are ignored or fought.
+        """
+        from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
+
+        msc = MotionSwitcherClient()
+        msc.SetTimeout(5.0)
+        msc.Init()
+        _, result = msc.CheckMode()
+        while result is not None and "name" in result and result["name"]:
+            logger.info("[UnitreeG1] Releasing built-in mode '%s'...", result["name"])
+            msc.ReleaseMode()
+            _, result = msc.CheckMode()
+            time.sleep(1.0)
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
         # Initialize DDS channel and simulation environment
@@ -468,6 +541,28 @@ class UnitreeG1(Robot):
             self._env_wrapper = _normalize_hub_result(raw)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
+        elif self.config.onboard:
+            # Real robot, controller running onboard against local DDS. Initialize the
+            # real SDK channel factory on the robot's DDS interface and take low-level
+            # control from the built-in services before we start writing lowcmd.
+            if self.config.dds_interface:
+                self._ChannelFactoryInitialize(0, self.config.dds_interface)
+            else:
+                self._ChannelFactoryInitialize(0)
+            # Real robot: hand low-level control over from the built-in services.
+            # A DDS sim has no MotionSwitcher, so this is skipped there.
+            if self.config.release_motion_control:
+                self._release_motion_control()
+            # Real robot: read the physical wireless remote from lowstate for
+            # locomotion. A sim has no physical remote, so leave _joystick=None and
+            # let send_action (ZMQ) drive the locomotion axes instead.
+            if self.config.physical_remote:
+                from unitree_sdk2py.utils.joystick import Joystick
+
+                self._joystick = Joystick()
+                for axis in (self._joystick.lx, self._joystick.ly, self._joystick.rx, self._joystick.ry):
+                    axis.smooth = 1.0
+                    axis.deadzone = 0.0
         else:
             self._ChannelFactoryInitialize(0, config=self.config)
 
