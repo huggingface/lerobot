@@ -277,10 +277,21 @@ def ort_providers(force_cpu: bool = False) -> list[str]:
     return ["CPUExecutionProvider"]
 
 
-def make_ort_session_options():
-    """Build ONNX Runtime SessionOptions (quiet logging, default threading)."""
+def make_ort_session_options(intra_op_num_threads: int | None = None,
+                             inter_op_num_threads: int | None = None):
+    """Build ONNX Runtime SessionOptions (quiet logging).
+
+    Pass thread counts to cap ORT's CPU pool. These tiny MLP policies are latency-
+    bound, not throughput-bound, so letting ORT grab every core just starves the
+    real-time control loop / torch policy / IK solver and causes stutter. 1 intra +
+    1 inter thread is plenty and lowest-latency for a per-step MLP inference.
+    """
     so = ort.SessionOptions()
     so.log_severity_level = 3
+    if intra_op_num_threads is not None:
+        so.intra_op_num_threads = intra_op_num_threads
+    if inter_op_num_threads is not None:
+        so.inter_op_num_threads = inter_op_num_threads
     return so
 
 

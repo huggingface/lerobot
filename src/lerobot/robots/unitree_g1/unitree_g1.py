@@ -179,6 +179,16 @@ class UnitreeG1(Robot):
         if config.replay_camera_parquet and config.replay_camera_map:
             self._load_replay_frames()
 
+        # Token-mode state: last 64-D SONIC latent token commanded by the policy,
+        # echoed back as ``observation.state`` so a token-output VLA closes the loop
+        # on its own previous token (see ``sonic_token_action``). Seeded to zeros;
+        # the controller's startup blend eases joints in regardless.
+        self._last_token: np.ndarray | None = None
+        if config.sonic_token_action:
+            from .controllers.sonic_whole_body import TOKEN_DIM
+
+            self._last_token = np.zeros(TOKEN_DIM, dtype=np.float32)
+
     def _load_replay_frames(self) -> None:
         """Load only the mapped parquet columns (encoded frames); decode on demand."""
         import pyarrow.parquet as pq
@@ -223,7 +233,17 @@ class UnitreeG1(Robot):
 
             # Step simulation if in simulation mode
             if self.config.is_simulation and self.sim_env is not None:
-                self.sim_env.step()
+                try:
+                    self.sim_env.step()
+                except ValueError as e:
+                    # Startup race: the sim thread can step once before reset() has
+                    # written a valid base pose, giving a zero-norm pelvis quaternion
+                    # (scipy>=1.11 raises instead of normalizing). Skip and retry so
+                    # the thread survives instead of dying and freezing the sim.
+                    if "zero norm" not in str(e).lower():
+                        raise
+                    time.sleep(self.control_dt)
+                    continue
 
             msg = self.lowstate_subscriber.Read()
             if msg is not None:
@@ -299,11 +319,26 @@ class UnitreeG1(Robot):
         (OpenHLM / pi0.5). These ``.pos`` scalars are aggregated by the rollout
         pipeline into a single 34-D ``observation.state`` for the policy.
         """
+        if self.config.sonic_token_action:
+            return {}
         if not getattr(self.controller, "wb_action", False):
             return {}
         from .g1_utils import WB_ACTION_DIM
 
         return {f"wb_state.{i}.pos": float for i in range(WB_ACTION_DIM)}
+
+    @property
+    def _token_state_ft(self) -> dict[str, type]:
+        """64-D SONIC latent-token proprio state (``motion_token_state.{i}.pos``).
+
+        Exposed only in ``sonic_token_action`` mode; aggregated by the rollout into a
+        64-D ``observation.state`` (the last token the policy commanded).
+        """
+        if not self.config.sonic_token_action:
+            return {}
+        from .controllers.sonic_whole_body import TOKEN_DIM, token_state_key
+
+        return {token_state_key(i): float for i in range(TOKEN_DIM)}
 
     @property
     def _empty_cameras_ft(self) -> dict[str, tuple]:
@@ -323,6 +358,7 @@ class UnitreeG1(Robot):
         return {
             **self._motors_ft,
             **self._wb_state_ft,
+            **self._token_state_ft,
             **self._empty_cameras_ft,
             **self._replay_cameras_ft,
             **self._cameras_ft,
@@ -332,6 +368,14 @@ class UnitreeG1(Robot):
     def action_features(self) -> dict[str, type]:
         if self.controller is None:
             return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
+
+        # Token-output VLA (SONIC decoder): advertise a 64-D latent-token action space
+        # (``motion_token.{i}.pos``) so ``lerobot-rollout`` maps a 64-D policy output
+        # straight onto the decoder, bypassing the encoder.
+        if self.config.sonic_token_action:
+            from .controllers.sonic_whole_body import TOKEN_DIM, token_action_key
+
+            return {token_action_key(i): float for i in range(TOKEN_DIM)}
 
         # Dense whole-body controllers (SONIC / OpenHLM, pi0.5) consume a single
         # 34-D command per tick. Expose it as ``wb.{i}.pos`` joint-position features
@@ -402,10 +446,26 @@ class UnitreeG1(Robot):
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
-            from lerobot.envs import make_env
+            from lerobot.envs.utils import (
+                _download_hub_file,
+                _import_hub_module,
+                _normalize_hub_result,
+            )
 
             self._ChannelFactoryInitialize(0, "lo")
-            self._env_wrapper = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
+            # Call the hub env's make_env directly so we can disable the offscreen
+            # head_camera renderer. We drive image-conditioned policies from recorded
+            # frames (see replay_camera_parquet / external obs), never the sim's own
+            # camera, so building a MuJoCo offscreen GL context is pure liability: it
+            # crashes with "Failed to make the EGL context current" when GLFW/SDL
+            # already own a context, killing the sim thread and hanging on
+            # "Waiting for robot state...". publish_images=False -> no renderer.
+            repo_id, _, local_file, _ = _download_hub_file(
+                "lerobot/unitree-g1-mujoco", True, None
+            )
+            hub_mod = _import_hub_module(local_file, repo_id)
+            raw = hub_mod.make_env(n_envs=1, use_async_envs=False, publish_images=False, cameras=[])
+            self._env_wrapper = _normalize_hub_result(raw)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
         else:
@@ -470,12 +530,16 @@ class UnitreeG1(Robot):
             self.msg.motor_cmd[joint].kd = self.kd[joint.value]
             self.msg.motor_cmd[joint].q = lowstate.motor_state[joint.value].q
 
-        # Start controller thread if enabled
-        if self.controller is not None:
+        # Start controller thread if enabled. Skipped when run_controller_thread is
+        # False so a caller can step the controller synchronously (faithful replay).
+        if self.controller is not None and self.config.run_controller_thread:
             self._controller_thread = threading.Thread(target=self._controller_loop, daemon=True)
             self._controller_thread.start()
             fps = int(1.0 / self.controller.control_dt)
             logger.info(f"Controller thread started ({fps}Hz)")
+        elif self.controller is not None:
+            logger.info("Controller thread disabled (run_controller_thread=False); "
+                        "caller must drive controller.run_step synchronously.")
 
     def _send_zero_torque(self) -> None:
         """Send a zero-gain command to make joints passive before shutting down."""
@@ -588,7 +652,15 @@ class UnitreeG1(Robot):
         # Dense whole-body controllers (OpenHLM / pi0.5): expose the 34-D proprio
         # state as ``wb_state.{i}.pos`` so the rollout aggregates it into
         # ``observation.state`` for the policy.
-        if getattr(self.controller, "wb_action", False):
+        if self.config.sonic_token_action:
+            # Token mode: echo the last commanded latent token as observation.state
+            # so a token-output VLA closes the loop on its own previous token.
+            from .controllers.sonic_whole_body import token_state_key
+
+            token = self._last_token if self._last_token is not None else []
+            for i, v in enumerate(token):
+                obs[token_state_key(i)] = float(v)
+        elif getattr(self.controller, "wb_action", False):
             wb_state = obs_to_wb34_state(obs)
             for i, v in enumerate(wb_state):
                 obs[f"wb_state.{i}.pos"] = float(v)
@@ -622,6 +694,12 @@ class UnitreeG1(Robot):
     def send_action(self, action: RobotAction) -> RobotAction:
         action_to_publish = action
         if self.controller is not None:
+            if self.config.sonic_token_action:
+                from .controllers.sonic_whole_body import _extract_token_from_action
+
+                token = _extract_token_from_action(action)
+                if token is not None:
+                    self._last_token = token
             self._update_controller_action(action)
             if self.config.publish_hands and getattr(self.controller, "wb_action", False):
                 self._publish_hand_cmds(action)
