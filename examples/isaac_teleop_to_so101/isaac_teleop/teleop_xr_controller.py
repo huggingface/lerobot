@@ -18,7 +18,7 @@
 
 A clutched device: the controller grip pose is rebased into the robot base frame by
 ``ControllerTransform`` and then driven through an in-pipeline
-``SO101EngageRelativeClutchRetargeter``, so :meth:`XRController.get_action` returns an absolute
+``SO101ClutchRetargeter``, so :meth:`XRController.get_action` returns an absolute
 base-frame EE pose rather than a raw controller pose. Unlike the other devices here this one
 **holds state across frames** — the clutch's latched home and origin live in the retargeter — so
 it must be stepped every frame with real ``ExecutionEvents``. The analog trigger is still passed
@@ -66,52 +66,65 @@ else:
     TransformMatrix = None
     ControllerInputIndex = None
 
-# The clutch retargeter landed in isaacteleop 1.4; the rest of this example works against older
-# releases. Resolve it tolerantly here and fail with an actionable message from XRController's
-# constructor (see _require_clutch_retargeter) -- a hard import error here would also break the
-# SO-101 leader-arm device, which never touches XR.
-SO101EngageRelativeClutchRetargeter = None
+# The engage-relative clutch retargeter landed in isaacteleop 1.5; the rest of this example works
+# against older releases. Resolve it tolerantly here and fail with an actionable message from
+# XRController's constructor (see _require_clutch_retargeter) -- a hard import error here would
+# also break the SO-101 leader-arm device, which never touches XR.
+SO101ClutchRetargeter = None
 _CLUTCH_IMPORT_ERROR: Exception | None = None
 if _isaacteleop_available:
     try:
         import isaacteleop.retargeters as _isaacteleop_retargeters
 
-        SO101EngageRelativeClutchRetargeter = _isaacteleop_retargeters.SO101EngageRelativeClutchRetargeter
+        SO101ClutchRetargeter = _isaacteleop_retargeters.SO101ClutchRetargeter
     except (ImportError, AttributeError) as exc:
-        # Retained and chained below so a genuinely broken 1.4 install is not misreported as
-        # "upgrade to 1.4.0".
+        # Retained and chained below so a genuinely broken install is not misreported as
+        # "upgrade isaacteleop".
         _CLUTCH_IMPORT_ERROR = exc
 
-# Source-node names for the external inputs fed via ``TeleopSession.step(external_inputs=...)``
-# each frame: a static base_T_anchor rebase, and the arm's measured EE pose for the clutch home.
-# The measured key is deliberately the same string as the retargeter's
-# ``MEASURED_BASE_T_EE_INPUT``, so grepping it returns the whole wiring path.
+# Source-node name for the static base_T_anchor rebase fed via
+# ``TeleopSession.step(external_inputs=...)`` each frame.
+#
+# There is deliberately no companion constant for the measured-EE key: the producer side reads
+# ``SO101ClutchRetargeter.MEASURED_BASE_T_EE_INPUT`` directly, so the producer key here and the
+# consumer key there cannot drift apart. Re-declaring the literal would defeat that.
 _BASE_T_ANCHOR_INPUT = "base_T_anchor"
-# The measured-pose key is the retargeter's own constant, not a copy of the literal, so the
-# producer key here and the consumer key there cannot drift apart.
-_MEASURED_BASE_T_EE_INPUT = "measured_base_T_ee"
 
 _MIN_ISAACTELEOP_VERSION = "1.4.0"
 
 
 def _require_clutch_retargeter() -> None:
-    """Fail when the installed isaacteleop predates (or cannot supply) the clutch retargeter.
+    """Fail when the installed isaacteleop cannot supply the engage-relative clutch retargeter.
 
     Called from :meth:`XRController.__init__` rather than ``_build_pipeline``: the latter runs
     inside ``connect()``, *after* ``_ensure_cloudxr_runtime()``, so a purely static version
     mismatch would otherwise cost a ~30 s runtime launch and possibly an interactive EULA prompt
     before being reported.
+
+    The probe is a CAPABILITY check, not a name check, and that distinction is load-bearing:
+    ``SO101ClutchRetargeter`` also exists in isaacteleop 1.4, as a *different* retargeter (clutches
+    position only, applies a fixed orientation offset, ``home_base_T_ee`` optional). Probing the
+    name alone would therefore pass against 1.4 and then drive the arm wrongly, with no error.
+    ``MEASURED_BASE_T_EE_INPUT`` exists only on the engage-relative implementation this device
+    needs, so it is the signal that actually discriminates.
+
+    ``_MIN_ISAACTELEOP_VERSION`` is deliberately still ``1.4.0``: the engage-relative clutch has
+    not shipped in a published wheel yet, so naming a version PyPI cannot resolve would be worse
+    advice than the capability probe above. Bump it -- and the install pins in ``README.md`` and
+    ``docs/source/isaac_teleop.mdx`` -- when that wheel ships.
     """
-    if SO101EngageRelativeClutchRetargeter is not None:
+    if SO101ClutchRetargeter is not None and hasattr(SO101ClutchRetargeter, "MEASURED_BASE_T_EE_INPUT"):
         return
     try:
         installed = importlib.metadata.version("isaacteleop")
     except importlib.metadata.PackageNotFoundError:
         installed = "an unknown version"
     raise ImportError(
-        f"XRController requires isaacteleop >= {_MIN_ISAACTELEOP_VERSION} for "
-        f"SO101EngageRelativeClutchRetargeter, but {installed} is installed. Upgrade with:\n"
-        f'  uv pip install "isaacteleop[cloudxr,retargeters-lite]~={_MIN_ISAACTELEOP_VERSION}"'
+        "XRController requires an isaacteleop whose SO101ClutchRetargeter is the engage-relative "
+        f"full-pose clutch (it must expose MEASURED_BASE_T_EE_INPUT), but {installed} is "
+        f"installed (>= {_MIN_ISAACTELEOP_VERSION} is necessary but not sufficient). Upgrade "
+        "with:\n"
+        '  uv pip install -U "isaacteleop[cloudxr,retargeters-lite]"'
     ) from _CLUTCH_IMPORT_ERROR
 
 
@@ -127,7 +140,7 @@ class XRController(IsaacTeleopTeleoperator):
     """Clutched XR controller teleoperator emitting an absolute base-frame EE pose.
 
     Reads the grip pose + squeeze + trigger off a ``ControllersSource`` rebased into the robot
-    base frame, and drives them through an in-pipeline ``SO101EngageRelativeClutchRetargeter``.
+    base frame, and drives them through an in-pipeline ``SO101ClutchRetargeter``.
     :meth:`get_action` returns the clutch-rebased absolute EE pose, the raw analog trigger, and
     whether the clutch is engaged; the owning loop owns the gripper mapping and the safety gate.
 
@@ -163,7 +176,7 @@ class XRController(IsaacTeleopTeleoperator):
         self._is_tracking = False
         # The in-pipeline clutch, built in _build_pipeline() and retained so get_action() can read
         # its engagement state back after each step.
-        self._retargeter: SO101EngageRelativeClutchRetargeter | None = None
+        self._retargeter: SO101ClutchRetargeter | None = None
         # Readiness interlock: STOPPED until start() is called. Never None on the wire — passing
         # None makes TeleopSession.step auto-fire RUNNING, which would defeat the interlock.
         # Safe to name the enum here: the base __init__ above calls _require_isaacteleop(), which
@@ -203,12 +216,12 @@ class XRController(IsaacTeleopTeleoperator):
         # key carry an absent group, degrading to the retargeter's last-commanded home fallback
         # instead of failing the graph.
         measured = ValueInput(
-            SO101EngageRelativeClutchRetargeter.MEASURED_BASE_T_EE_INPUT,
+            SO101ClutchRetargeter.MEASURED_BASE_T_EE_INPUT,
             OptionalType(TransformMatrix()),
         )
 
-        self._retargeter = SO101EngageRelativeClutchRetargeter(
-            "so101_engage_relative_clutch",
+        self._retargeter = SO101ClutchRetargeter(
+            "so101_clutch",
             _PLACEHOLDER_HOME_BASE_T_EE,
             input_device=controller_key,
             position_scale=self.config.clutch_position_scale,
@@ -217,7 +230,7 @@ class XRController(IsaacTeleopTeleoperator):
         clutched = self._retargeter.connect(
             {
                 controller_key: ctrl,
-                SO101EngageRelativeClutchRetargeter.MEASURED_BASE_T_EE_INPUT: measured.output("value"),
+                SO101ClutchRetargeter.MEASURED_BASE_T_EE_INPUT: measured.output("value"),
             }
         )
 
@@ -421,9 +434,7 @@ class XRController(IsaacTeleopTeleoperator):
             # absent OptionalTensorGroup satisfies the check and reaches the retargeter as
             # is_none, landing on its documented last-commanded home fallback.
             measured_group = OptionalTensorGroup(TransformMatrix())
-        external_inputs[SO101EngageRelativeClutchRetargeter.MEASURED_BASE_T_EE_INPUT] = {
-            "value": measured_group
-        }
+        external_inputs[SO101ClutchRetargeter.MEASURED_BASE_T_EE_INPUT] = {"value": measured_group}
 
         result = self._step(
             execution_events=ExecutionEvents(execution_state=self._execution_state, reset=False),

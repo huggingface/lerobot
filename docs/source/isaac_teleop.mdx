@@ -114,7 +114,7 @@ for supported OS / GPU / CloudXR versions and headsets.
 
 The XR controller is one Isaac Teleop **input** device. `XRController` drives the controller grip
 pose — already statically rebased into the robot base frame — through an in-pipeline
-`SO101EngageRelativeClutchRetargeter`, so it emits an absolute base-frame **EE pose** rather than a
+`SO101ClutchRetargeter`, so it emits an absolute base-frame **EE pose** rather than a
 raw controller pose, alongside the raw trigger and an `engaged` flag. The clutch (engage latch +
 delta rebasing onto the EE) therefore runs **inside the device's retargeting pipeline**; the
 gripper mapping stays in the example loop, which then feeds LeRobot's existing closed‑loop
@@ -130,7 +130,7 @@ retargeter, and publishes two outputs: the rebased `ee_pose` and the transformed
 (from which `get_action()` takes the raw trigger and the tracking flag). The session is stepped
 `STOPPED` until `startup()` completes, then `RUNNING`.
 
-Isaac Teleop's `SO101EngageRelativeClutchRetargeter` runs inside `XRController`'s retargeting
+Isaac Teleop's `SO101ClutchRetargeter` runs inside `XRController`'s retargeting
 pipeline (see `_build_pipeline`), so the device emits an absolute EE pose directly:
 
 - It latches its engage origin on the squeeze **engage edge** (the frame the squeeze first crosses
@@ -160,7 +160,7 @@ for how source nodes and retargeters compose.
         ▼
   XRController.get_action()          ── absolute base-frame ee_pose (7) + trigger + engaged
         │  (in-pipeline clutch:            (TeleopSession stepped STOPPED until startup() completes)
-        │   SO101EngageRelativeClutchRetargeter — engage-relative delta on the EE home, pos+orient)
+        │   SO101ClutchRetargeter — engage-relative delta on the EE home, pos+orient)
         │  ee_pose (7) / closedness       → closedness = trigger
         ▼
   MapXRControllerActionToRobotAction ── absolute ee.x/y/z; ee.w* = orientation rotvec target;
