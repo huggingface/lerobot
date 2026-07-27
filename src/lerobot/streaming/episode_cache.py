@@ -75,6 +75,7 @@ class EpisodeByteCache:
         self._pool = ThreadPoolExecutor(max_workers=workers)
         self._cache: OrderedDict[tuple[int, str], dict[str, Any]] = OrderedDict()
         self._decoders: OrderedDict[tuple[int, str], Any] = OrderedDict()
+        self._decoder_locks: dict[tuple[int, str], threading.Lock] = {}
         self._futures: dict[tuple[int, str], Future[dict[str, Any]]] = {}
         self._retained_episodes: dict[int, int] = {}
         self._decoder_fallback_count = 0
@@ -96,6 +97,7 @@ class EpisodeByteCache:
             decoders = list(self._decoders.values())
             self._cache.clear()
             self._decoders.clear()
+            self._decoder_locks.clear()
             self._futures.clear()
             self._retained_episodes.clear()
             self._fallback_decoders.clear()
@@ -186,6 +188,7 @@ class EpisodeByteCache:
             self._decoders[key] = decoder
             while len(self._decoders) > self.max_open_decoders:
                 evicted_key, evicted_decoder = self._decoders.popitem(last=False)
+                self._decoder_locks.pop(evicted_key, None)
                 self._fallback_decoders.discard(evicted_key)
                 _close_decoder(evicted_decoder)
         return decoder
@@ -227,15 +230,23 @@ class EpisodeByteCache:
         decoder, release = self._decoder_for_frames(episode_index, camera_key)
         with self._lock:
             uses_pyav_timestamps = self.video_backend == "pyav" and key not in self._fallback_decoders
+            decode_lock = self._decoder_locks.setdefault(key, threading.Lock())
         try:
-            if uses_pyav_timestamps:
-                return decoder.get_frames_played_at(local_ts, tolerance_s=self.tolerance_s).data
-            metadata = decoder.metadata
-            fps = getattr(metadata, "average_fps", None)
-            if fps is None:
-                duration = max(getattr(metadata, "end_stream_seconds", 0.0), 1e-9)
-                fps = metadata.num_frames / duration
-            return decoder.get_frames_at(indices=[round(ts * fps) for ts in local_ts]).data
+            with decode_lock:
+                if uses_pyav_timestamps:
+                    return decoder.get_frames_played_at(local_ts, tolerance_s=self.tolerance_s).data
+                metadata = decoder.metadata
+                fps = getattr(metadata, "average_fps", None)
+                if fps is None:
+                    duration = max(getattr(metadata, "end_stream_seconds", 0.0), 1e-9)
+                    fps = metadata.num_frames / duration
+                num_frames = getattr(metadata, "num_frames", None)
+                if num_frames is None:
+                    duration = max(getattr(metadata, "end_stream_seconds", 0.0), 1e-9)
+                    num_frames = round(duration * fps)
+                last_index = max(0, int(num_frames) - 1)
+                indices = [min(max(round(ts * fps), 0), last_index) for ts in local_ts]
+                return decoder.get_frames_at(indices=indices).data
         finally:
             if release is not None:
                 release()
@@ -257,6 +268,7 @@ class EpisodeByteCache:
                 with self._lock:
                     if self._decoders.get(key) is decoder:
                         self._decoders.pop(key)
+                        self._decoder_locks.pop(key, None)
                         self._fallback_decoders.discard(key)
                 continue
             return decoder, decoder.release
@@ -330,6 +342,7 @@ class EpisodeByteCache:
             entry = self._cache.pop(key)
             self._bytes -= len(entry["bytes"])
             decoder = self._decoders.pop(key, None)
+            self._decoder_locks.pop(key, None)
             self._fallback_decoders.discard(key)
             if decoder is not None:
                 _close_decoder(decoder)

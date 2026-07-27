@@ -58,12 +58,17 @@ Subset sidecars cannot be published.
 
 The production defaults are:
 
-| Option                        | Default | Meaning                                             |
-| ----------------------------- | ------: | --------------------------------------------------- |
-| `streaming_episode_pool_size` |      32 | Maximum complete episodes mixed by each rank        |
-| `streaming_prefetch_episodes` |       8 | Episodes fetched ahead of the active pool           |
-| `streaming_byte_budget_gb`    |       8 | Maximum synthesized MP4 bytes per rank              |
-| `streaming_data_root`         |   unset | Optional local, Hub, bucket, or fsspec payload root |
+| Option                              | Default | Meaning                                             |
+| ----------------------------------- | ------: | --------------------------------------------------- |
+| `streaming_episode_pool_size`       |      32 | Maximum complete episodes mixed by each rank        |
+| `streaming_prefetch_episodes`       |       8 | Episodes fetched ahead of the active pool           |
+| `streaming_byte_budget_gb`          |       8 | Maximum synthesized MP4 bytes per rank              |
+| `streaming_decode_threads`          |       2 | Parallel sample assembly and video decode workers   |
+| `streaming_decoded_queue_size`      |       8 | Decoded samples buffered ahead, in planner order    |
+| `streaming_max_open_decoders`       |      64 | Independent open-decoder LRU cap per rank           |
+| `streaming_native_http_connections` |   unset | Native HTTP connection cap per rank                 |
+| `streaming_native_http_subranges`   |       1 | Concurrent subranges per native HTTP range read     |
+| `streaming_data_root`               |   unset | Optional local, Hub, bucket, or fsspec payload root |
 
 The active episode set is capped by both episode count and the exact synthesized mini-MP4 sizes
 computed from the sidecar. An episode larger than the complete rank budget fails before training
@@ -77,6 +82,9 @@ lerobot-train \
   --dataset.streaming_episode_pool_size=16 \
   --dataset.streaming_prefetch_episodes=4 \
   --dataset.streaming_byte_budget_gb=4 \
+  --dataset.streaming_decode_threads=2 \
+  --dataset.streaming_decoded_queue_size=8 \
+  --dataset.streaming_max_open_decoders=64 \
   --num_workers=4 \
   --policy.type=act \
   --output_dir=outputs/train/act_streaming
@@ -109,6 +117,8 @@ uv run python scripts/bench_streaming_dataset.py \
   --batch-size=16 \
   --num-workers=1 \
   --fetch-workers=4 \
+  --decode-threads=2 \
+  --decoded-queue-size=8 \
   --summary-json=streaming-benchmark.json
 ```
 

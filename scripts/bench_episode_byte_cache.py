@@ -70,7 +70,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=8,
         help="Concurrent camera-fetch jobs. Total connections ~= workers x range-subranges; "
-        "the HF bucket path saturates around 64 connections per host, so keep the product near 64.",
+        "measure the host-specific saturation point before increasing this value.",
     )
     parser.add_argument(
         "--range-subranges",
@@ -443,6 +443,7 @@ def run_exact_coverage_stream(
             decode_pool.shutdown(wait=True)
 
     elapsed = time.perf_counter() - start
+    replacements = max(0, pool.admitted_count - min(pool_size, len(order)))
     result = {
         "target_samples_s": target_samples_s,
         "actual_samples_s": samples_done / elapsed if elapsed > 0 else float("inf"),
@@ -453,6 +454,10 @@ def run_exact_coverage_stream(
         "shard_total_frames": float(total_frames),
         "epoch_complete": 1.0 if epoch_complete else 0.0,
         "prefetch_ahead": float(prefetch_ahead),
+        "prefetch_episodes": float(prefetch_ahead),
+        "replacements": float(replacements),
+        "replacement_episodes_s": replacements / elapsed if elapsed > 0 else float("inf"),
+        "samples_per_episode": samples_done / replacements if replacements else float(samples_done),
         "batch_size": float(batch_size),
         "decode_workers": float(decode_workers),
         "kept_up": 1.0

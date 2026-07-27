@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from itertools import islice
 from pathlib import Path
 
@@ -59,6 +61,61 @@ def test_streaming_matches_map_style_with_exact_coverage(tmp_path: Path, lerobot
     assert sorted(int(sample["index"]) for sample in samples) == list(range(len(map_dataset)))
     for sample in samples:
         _assert_item_equal(sample, map_dataset[int(sample["index"])])
+
+
+def test_parallel_decode_queue_preserves_planner_order(
+    tmp_path: Path,
+    lerobot_dataset_factory,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "dataset"
+    lerobot_dataset_factory(
+        root=root,
+        repo_id=DUMMY_REPO_ID,
+        total_episodes=4,
+        total_frames=40,
+        use_videos=False,
+    )
+    expected = _indices(
+        StreamingLeRobotDataset(
+            DUMMY_REPO_ID,
+            root=root,
+            seed=17,
+            buffer_size=3,
+            decode_threads=1,
+            decoded_queue_size=1,
+        )
+    )
+    parallel = StreamingLeRobotDataset(
+        DUMMY_REPO_ID,
+        root=root,
+        seed=17,
+        buffer_size=3,
+        decode_threads=3,
+        decoded_queue_size=5,
+    )
+    original_make_item = parallel._make_episode_item
+    state_lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def delayed_make_item(*args, **kwargs):
+        nonlocal active, max_active
+        with state_lock:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            frame_index = int(args[2])
+            time.sleep(0.005 if frame_index % 3 == 0 else 0.001)
+            return original_make_item(*args, **kwargs)
+        finally:
+            with state_lock:
+                active -= 1
+
+    monkeypatch.setattr(parallel, "_make_episode_item", delayed_make_item)
+
+    assert _indices(parallel) == expected
+    assert 1 < max_active <= parallel.decode_threads
 
 
 @pytest.mark.parametrize("video_backend", ["torchcodec", "pyav"])

@@ -38,6 +38,11 @@ def test_factory_wires_production_streaming_settings(monkeypatch):
         streaming_episode_pool_size=7,
         streaming_prefetch_episodes=3,
         streaming_byte_budget_gb=2.5,
+        streaming_decode_threads=2,
+        streaming_decoded_queue_size=5,
+        streaming_max_open_decoders=17,
+        streaming_native_http_connections=9,
+        streaming_native_http_subranges=3,
     )
     cfg = SimpleNamespace(
         dataset=dataset_config,
@@ -54,6 +59,11 @@ def test_factory_wires_production_streaming_settings(monkeypatch):
     assert captured["kwargs"]["episode_pool_size"] == 7
     assert captured["kwargs"]["prefetch_episodes"] == 3
     assert captured["kwargs"]["byte_budget_gb"] == 2.5
+    assert captured["kwargs"]["decode_threads"] == 2
+    assert captured["kwargs"]["decoded_queue_size"] == 5
+    assert captured["kwargs"]["max_open_decoders"] == 17
+    assert captured["kwargs"]["native_http_connections"] == 9
+    assert captured["kwargs"]["native_http_subranges"] == 3
     assert captured["kwargs"]["max_num_shards"] == 1
     assert captured["kwargs"]["video_backend"] == "pyav"
     assert captured["kwargs"]["return_uint8"] is True

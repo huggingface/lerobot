@@ -15,6 +15,7 @@
 # limitations under the License.
 import io
 import os
+from collections import deque
 from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
@@ -122,6 +123,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         repeat: bool = False,
         *,
         token: str | bool | None = None,
+        decode_threads: int = 2,
+        decoded_queue_size: int = 8,
+        max_open_decoders: int = 64,
+        native_http_connections: int | None = None,
+        native_http_subranges: int = 1,
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -152,6 +158,13 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             episode_pool_size (int | None, optional): Number of complete episodes in the sampling pool.
             prefetch_episodes (int, optional): Episodes prefetched beyond the active pool.
             byte_budget_gb (float, optional): Per-rank upper bound for synthesized episode video bytes.
+            decode_threads (int, optional): Parallel sample assembly and video decode workers.
+            decoded_queue_size (int, optional): Maximum number of decoded samples produced ahead
+                of the consumer. Results are yielded in exact planner order.
+            max_open_decoders (int, optional): Maximum number of open video decoders per rank.
+            native_http_connections (int | None, optional): Native HTTP connection limit per rank.
+                ``None`` preserves the fetcher's worker-derived default.
+            native_http_subranges (int, optional): Concurrent HTTP subranges per video range read.
             repeat (bool, optional): Repeat rank-local exact-coverage epochs without yielding a
                 short final training batch. The training factory enables this; direct iteration is
                 finite by default.
@@ -196,9 +209,24 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             raise ValueError("prefetch_episodes must be non-negative")
         if byte_budget_gb <= 0:
             raise ValueError("byte_budget_gb must be positive")
+        if decode_threads <= 0:
+            raise ValueError("decode_threads must be positive")
+        if decoded_queue_size <= 0:
+            raise ValueError("decoded_queue_size must be positive")
+        if max_open_decoders <= 0:
+            raise ValueError("max_open_decoders must be positive")
+        if native_http_connections is not None and native_http_connections <= 0:
+            raise ValueError("native_http_connections must be positive")
+        if native_http_subranges <= 0:
+            raise ValueError("native_http_subranges must be positive")
         self.episode_pool_size = episode_pool_size or min(buffer_size, 32)
         self.prefetch_episodes = prefetch_episodes
         self.byte_budget = int(byte_budget_gb * 1024**3)
+        self.decode_threads = decode_threads
+        self.decoded_queue_size = decoded_queue_size
+        self.max_open_decoders = max_open_decoders
+        self.native_http_connections = native_http_connections
+        self.native_http_subranges = native_http_subranges
         self.repeat = repeat
         self._next_epoch = 0
         self._active_epoch = 0
@@ -356,8 +384,13 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             columns=self._projected_columns,
             token=self._streaming_io_token,
         )
-        executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="lerobot-parquet")
+        parquet_executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="lerobot-parquet")
+        decode_executor = ThreadPoolExecutor(
+            max_workers=self.decode_threads,
+            thread_name_prefix="lerobot-decode",
+        )
         episode_futures: dict[int, Future[datasets.Dataset]] = {}
+        decoded_futures: deque[Future[dict]] = deque()
         scheduled_episodes: set[int] = set()
         retained_video_episodes: set[int] = set()
         if video_cache is not None:
@@ -368,7 +401,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         def submit(episode_index: int) -> Future[datasets.Dataset]:
             future = episode_futures.get(episode_index)
             if future is None:
-                future = executor.submit(self._load_episode_dataset, parquet_reader, episode_index)
+                future = parquet_executor.submit(self._load_episode_dataset, parquet_reader, episode_index)
                 episode_futures[episode_index] = future
             return future
 
@@ -382,44 +415,83 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                     video_cache.submit_prefetch(episode_index)
                 scheduled_episodes.add(episode_index)
 
-        schedule_frontier()
+        def decode_item(
+            episode_future: Future[datasets.Dataset],
+            episode_index: int,
+            frame_index: int,
+        ) -> dict:
+            return self._make_episode_item(
+                episode_future.result(),
+                episode_index,
+                frame_index,
+                video_cache=video_cache,
+                apply_image_transforms=False,
+            )
+
+        def update_frontier() -> None:
+            for evicted_episode in planner.evicted:
+                episode_futures.pop(evicted_episode, None)
+                if video_cache is not None and evicted_episode in retained_video_episodes:
+                    video_cache.release_episode(evicted_episode)
+                    retained_video_episodes.remove(evicted_episode)
+            if video_cache is not None:
+                for admitted_episode in planner.newly_admitted:
+                    if admitted_episode not in retained_video_episodes:
+                        video_cache.retain_episode(admitted_episode)
+                        retained_video_episodes.add(admitted_episode)
+            planner.evicted.clear()
+            planner.newly_admitted.clear()
+            schedule_frontier()
+
         try:
-            while True:
-                try:
-                    episode_index, frame_index = next(planner)
-                except StopIteration:
-                    self._active_epoch = epoch + 1 if self.shuffle else 0
-                    self._state_offset = 0
-                    break
+            schedule_frontier()
+            planner_exhausted = False
+            while decoded_futures or not planner_exhausted:
+                while not planner_exhausted and len(decoded_futures) < self.decoded_queue_size:
+                    try:
+                        episode_index, frame_index = next(planner)
+                    except StopIteration:
+                        planner_exhausted = True
+                        break
 
-                episode_dataset = submit(episode_index).result()
-                item = self._make_episode_item(
-                    episode_dataset,
-                    episode_index,
-                    frame_index,
-                    video_cache=video_cache,
-                )
+                    episode_future = submit(episode_index)
+                    if video_cache is not None:
+                        video_cache.retain_episode(episode_index)
+                    try:
+                        decoded_future = decode_executor.submit(
+                            decode_item,
+                            episode_future,
+                            episode_index,
+                            frame_index,
+                        )
+                    except Exception:
+                        if video_cache is not None:
+                            video_cache.release_episode(episode_index)
+                        raise
+                    if video_cache is not None:
+                        decoded_future.add_done_callback(
+                            lambda _future, retained_episode=episode_index, retained_cache=video_cache: (
+                                retained_cache.release_episode(retained_episode)
+                            )
+                        )
+                    decoded_futures.append(decoded_future)
+                    update_frontier()
 
-                for evicted_episode in planner.evicted:
-                    episode_futures.pop(evicted_episode, None)
-                    if video_cache is not None and evicted_episode in retained_video_episodes:
-                        video_cache.release_episode(evicted_episode)
-                        retained_video_episodes.remove(evicted_episode)
-                if video_cache is not None:
-                    for admitted_episode in planner.newly_admitted:
-                        if admitted_episode not in retained_video_episodes:
-                            video_cache.retain_episode(admitted_episode)
-                            retained_video_episodes.add(admitted_episode)
-                planner.evicted.clear()
-                planner.newly_admitted.clear()
-                schedule_frontier()
-
+                if not decoded_futures:
+                    continue
+                item = decoded_futures.popleft().result()
+                self._apply_image_transforms(item)
                 self._state_offset += 1
                 yield item
+            self._active_epoch = epoch + 1 if self.shuffle else 0
+            self._state_offset = 0
         finally:
+            for future in decoded_futures:
+                future.cancel()
+            decode_executor.shutdown(wait=True, cancel_futures=True)
             for future in episode_futures.values():
                 future.cancel()
-            executor.shutdown(wait=True, cancel_futures=True)
+            parquet_executor.shutdown(wait=True, cancel_futures=True)
             if video_cache is not None:
                 video_cache.close()
 
@@ -483,14 +555,15 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             sidecar_path=self._sidecar_path,
             token=self._streaming_io_token,
         )
-        decoder_limit = max(1, min(64, self.episode_pool_size * max(1, len(self.meta.video_keys))))
         return EpisodeByteCache(
             manifest,
             self._data_root,
             byte_budget=self.byte_budget,
             workers=workers,
             range_backend=range_backend,
-            max_open_decoders=decoder_limit,
+            native_http_connections=self.native_http_connections,
+            native_http_subranges=self.native_http_subranges,
+            max_open_decoders=self.max_open_decoders,
             video_backend=self._video_backend,
             tolerance_s=self.tolerance_s,
             token=self._streaming_io_token,
@@ -503,6 +576,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         frame_index: int,
         *,
         video_cache: EpisodeByteCache | None,
+        apply_image_transforms: bool = True,
     ) -> dict:
         item = episode_dataset[frame_index]
         episode = self.meta.episodes[episode_index]
@@ -563,11 +637,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                         frames = frames.to(torch.float32) / 255.0
                 item[video_key] = frames.squeeze(0)
 
-        if self.image_transforms is not None:
-            for camera_key in self.meta.camera_keys:
-                if camera_key in self.meta.depth_keys:
-                    continue
-                item[camera_key] = self.image_transforms(item[camera_key])
+        if apply_image_transforms:
+            self._apply_image_transforms(item)
 
         for key, stored_unit in self._image_depth_units.items():
             if key in item and stored_unit is not None and stored_unit != self._depth_output_unit:
@@ -584,6 +655,14 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 f"Episode {episode_index} frame {frame_index} has unexpected absolute index {item['index']}"
             )
         return item
+
+    def _apply_image_transforms(self, item: dict) -> None:
+        if self.image_transforms is None:
+            return
+        for camera_key in self.meta.camera_keys:
+            if camera_key in self.meta.depth_keys:
+                continue
+            item[camera_key] = self.image_transforms(item[camera_key])
 
     def state_dict(self) -> dict[str, int]:
         return {

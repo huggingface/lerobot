@@ -50,6 +50,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--episode-pool-size", type=int, default=32)
     parser.add_argument("--prefetch-episodes", type=int, default=8)
     parser.add_argument("--byte-budget-gb", type=float, default=8.0)
+    parser.add_argument("--decode-threads", type=int, default=2)
+    parser.add_argument("--decoded-queue-size", type=int, default=8)
+    parser.add_argument("--max-open-decoders", type=int, default=64)
+    parser.add_argument("--native-http-connections", type=int, default=None)
+    parser.add_argument("--native-http-subranges", type=int, default=1)
     parser.add_argument("--warmup-batches", type=int, default=8)
     parser.add_argument("--measure-batches", type=int, default=128)
     parser.add_argument("--summary-json", type=Path, default=None)
@@ -105,6 +110,11 @@ def main() -> None:
         episode_pool_size=args.episode_pool_size,
         prefetch_episodes=args.prefetch_episodes,
         byte_budget_gb=args.byte_budget_gb,
+        decode_threads=args.decode_threads,
+        decoded_queue_size=args.decoded_queue_size,
+        max_open_decoders=args.max_open_decoders,
+        native_http_connections=args.native_http_connections,
+        native_http_subranges=args.native_http_subranges,
         max_num_shards=max(1, args.fetch_workers),
         return_uint8=True,
     )
@@ -184,6 +194,11 @@ def main() -> None:
             "episode_pool_size": args.episode_pool_size,
             "prefetch_episodes": args.prefetch_episodes,
             "byte_budget_gb": args.byte_budget_gb,
+            "decode_threads": args.decode_threads,
+            "decoded_queue_size": args.decoded_queue_size,
+            "max_open_decoders": args.max_open_decoders,
+            "native_http_connections": args.native_http_connections,
+            "native_http_subranges": args.native_http_subranges,
             "warmup_batches": args.warmup_batches,
             "measure_batches": args.measure_batches,
         },

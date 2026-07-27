@@ -52,6 +52,14 @@ class DatasetConfig:
     streaming_prefetch_episodes: int = 8
     # Hard per-rank cap for synthesized episode-video bytes.
     streaming_byte_budget_gb: float = 8.0
+    # Parallel sample assembly/decode workers and their bounded in-order result queue.
+    streaming_decode_threads: int = 2
+    streaming_decoded_queue_size: int = 8
+    # Independent decoder-state cap.
+    streaming_max_open_decoders: int = 64
+    # Per-rank native HTTP limits. None preserves the fetcher's worker-derived default.
+    streaming_native_http_connections: int | None = None
+    streaming_native_http_subranges: int = 1
     # Fraction of episodes held out per task for offline evaluation (0.0 = disabled).
     eval_split: float = 0.0
 
@@ -68,6 +76,16 @@ class DatasetConfig:
             raise ValueError("streaming_prefetch_episodes must be non-negative")
         if self.streaming_byte_budget_gb <= 0:
             raise ValueError("streaming_byte_budget_gb must be positive")
+        if self.streaming_decode_threads <= 0:
+            raise ValueError("streaming_decode_threads must be positive")
+        if self.streaming_decoded_queue_size <= 0:
+            raise ValueError("streaming_decoded_queue_size must be positive")
+        if self.streaming_max_open_decoders <= 0:
+            raise ValueError("streaming_max_open_decoders must be positive")
+        if self.streaming_native_http_connections is not None and self.streaming_native_http_connections <= 0:
+            raise ValueError("streaming_native_http_connections must be positive")
+        if self.streaming_native_http_subranges <= 0:
+            raise ValueError("streaming_native_http_subranges must be positive")
         if self.episodes is not None:
             if any(ep < 0 for ep in self.episodes):
                 raise ValueError(

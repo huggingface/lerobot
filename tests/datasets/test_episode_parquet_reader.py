@@ -122,3 +122,33 @@ def test_reader_forwards_explicit_token_to_hf_filesystem(monkeypatch) -> None:
     )
 
     url_to_fs.assert_called_once_with("hf://datasets/private@revision", token="hf_test_token")
+
+
+def test_reader_retries_transient_remote_file_not_found(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "episode.parquet"
+    pq.write_table(_table([0, 0]), path)
+    filesystem = Mock()
+    attempts = 0
+
+    def open_remote(*_args, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise FileNotFoundError("partial HfFileSystem dircache")
+        return path.open("rb")
+
+    filesystem.open.side_effect = open_remote
+    filesystem.invalidate_cache = Mock()
+    monkeypatch.setattr(fsspec.core, "url_to_fs", Mock(return_value=(filesystem, "root")))
+    reader = EpisodeParquetReader(
+        "hf://datasets/private@revision",
+        columns=("episode_index", "frame_index"),
+        max_retries=1,
+        retry_backoff_s=0,
+    )
+
+    table = reader.read_episode("data/file.parquet", episode_index=0, expected_rows=2)
+
+    assert len(table) == 2
+    assert attempts == 2
+    filesystem.invalidate_cache.assert_called_once()

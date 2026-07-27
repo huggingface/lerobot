@@ -119,6 +119,11 @@ def make_dataset(
                 episode_pool_size=cfg.dataset.streaming_episode_pool_size,
                 prefetch_episodes=cfg.dataset.streaming_prefetch_episodes,
                 byte_budget_gb=cfg.dataset.streaming_byte_budget_gb,
+                decode_threads=cfg.dataset.streaming_decode_threads,
+                decoded_queue_size=cfg.dataset.streaming_decoded_queue_size,
+                max_open_decoders=cfg.dataset.streaming_max_open_decoders,
+                native_http_connections=cfg.dataset.streaming_native_http_connections,
+                native_http_subranges=cfg.dataset.streaming_native_http_subranges,
                 repeat=True,
             )
     else:
@@ -210,6 +215,11 @@ def make_train_eval_datasets(
             episode_pool_size=cfg.dataset.streaming_episode_pool_size,
             prefetch_episodes=cfg.dataset.streaming_prefetch_episodes,
             byte_budget_gb=cfg.dataset.streaming_byte_budget_gb,
+            decode_threads=cfg.dataset.streaming_decode_threads,
+            decoded_queue_size=cfg.dataset.streaming_decoded_queue_size,
+            max_open_decoders=cfg.dataset.streaming_max_open_decoders,
+            native_http_connections=cfg.dataset.streaming_native_http_connections,
+            native_http_subranges=cfg.dataset.streaming_native_http_subranges,
             repeat=True,
         )
     else:

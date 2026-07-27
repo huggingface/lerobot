@@ -178,7 +178,9 @@ To capture comparable data-pipeline results on a training host:
 uv run python scripts/bench_streaming_dataset.py \
   --repo-id=yaak-ai/L2D-v3 \
   --batch-size=16 \
-  --num-workers=4 \
+  --num-workers=1 \
+  --fetch-workers=4 \
+  --decode-threads=2 \
   --summary-json=streaming-benchmark.json
 ```
 

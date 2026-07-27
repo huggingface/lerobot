@@ -11,6 +11,7 @@
 import json
 import struct
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -215,6 +216,66 @@ def test_decoder_falls_back_to_pyav_when_torchcodec_rejects_mini_mp4(monkeypatch
         assert isinstance(decoder, FakeDecoder)
         assert opened_backends == ["torchcodec", "pyav"]
         assert cache.decoder_fallback_count == 1
+
+
+def test_torchcodec_frame_indices_are_clamped_to_decoder_bounds(monkeypatch, tmp_path):
+    requested_indices = []
+
+    class FakeDecoder:
+        metadata = type("Metadata", (), {"average_fps": 30.0, "num_frames": 10})()
+
+        def get_frames_at(self, *, indices):
+            requested_indices.extend(indices)
+            return type("Frames", (), {"data": indices})()
+
+    with _fake_cache(monkeypatch, tmp_path) as cache:
+        monkeypatch.setattr(
+            cache.manifest,
+            "lookup",
+            lambda *_args: type("Span", (), {"source_start_pts": 0.0})(),
+        )
+        monkeypatch.setattr(cache, "_decoder_for_frames", lambda *_args: (FakeDecoder(), None))
+
+        cache.get_frames(0, "camera", [-0.1, 1.0])
+
+    assert requested_indices == [0, 9]
+
+
+def test_frame_reads_serialize_access_to_each_decoder(monkeypatch, tmp_path):
+    state_lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    class FakeDecoder:
+        metadata = type("Metadata", (), {"average_fps": 30.0, "num_frames": 10})()
+
+        def get_frames_at(self, *, indices):
+            nonlocal active, max_active
+            with state_lock:
+                active += 1
+                max_active = max(max_active, active)
+            try:
+                time.sleep(0.01)
+                return type("Frames", (), {"data": indices})()
+            finally:
+                with state_lock:
+                    active -= 1
+
+    with _fake_cache(monkeypatch, tmp_path) as cache:
+        monkeypatch.setattr(
+            cache.manifest,
+            "lookup",
+            lambda *_args: type("Span", (), {"source_start_pts": 0.0})(),
+        )
+        decoder = FakeDecoder()
+        monkeypatch.setattr(cache, "_decoder_for_frames", lambda *_args: (decoder, None))
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(cache.get_frames, 0, "camera", [0.1]) for _ in range(2)]
+            for future in futures:
+                future.result()
+
+    assert max_active == 1
 
 
 def test_releasing_episode_allows_immediate_eviction(monkeypatch, tmp_path):
