@@ -453,11 +453,8 @@ def eval_policy(
             raise exc from None
 
     start = time.time()
-    # Record the policy's mode so we can restore it on the way out. Without this
-    # the caller (notably the training loop in lerobot_train.py) sees the policy
-    # stuck in eval mode for every subsequent step — silently disabling Dropout
-    # and freezing BatchNorm running stats. Under DDP only is_main_process runs
-    # this, leaving ranks in inconsistent modes and corrupting all-reduced grads.
+    # Preserve the mode for direct callers. eval_policy_all scopes the mode
+    # around all tasks so parallel evaluations cannot race with each other.
     was_training = policy.training
     policy.eval()
 
@@ -680,15 +677,7 @@ def eval_policy(
     if save_predicted_video:
         info["predicted_video_paths"] = predicted_video_paths
 
-    # Restore training mode if we were in it on entry. Without this, every caller
-    # (including lerobot_train.py's training loop) sees the policy stuck in eval
-    # mode for all subsequent steps. See
-    # tests/scripts/test_eval.py::test_missing_mode_restoration_hurts_generalisation
-    # for a deterministic demonstration of the generalisation impact.
-    # NOTE: only restores on normal return; exception paths leave the policy in
-    # eval mode. Wrap in try/finally if defending against eval-time crashes too.
-    if was_training:
-        policy.train()
+    policy.train(was_training)
 
     return info
 
@@ -1026,40 +1015,48 @@ def eval_policy_all(
         recording_private=recording_private,
     )
 
-    if max_parallel_tasks <= 1:
-        prefetch_thread: threading.Thread | None = None
-        for i, (task_group, task_id, env) in enumerate(tasks):
-            if prefetch_thread is not None:
-                prefetch_thread.join()
-                prefetch_thread = None
+    # Set the shared policy's mode before launching any workers. Restoring it
+    # inside individual tasks would let one task enable training mode while
+    # another task is still evaluating.
+    was_training = policy.training
+    policy.eval()
+    try:
+        if max_parallel_tasks <= 1:
+            prefetch_thread: threading.Thread | None = None
+            for i, (task_group, task_id, env) in enumerate(tasks):
+                if prefetch_thread is not None:
+                    prefetch_thread.join()
+                    prefetch_thread = None
 
-            try:
-                tg, tid, metrics = task_runner(task_group, task_id, env)
-                _accumulate_to(tg, metrics)
-                per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
-            finally:
-                env.close()
-                # Prefetch next task's workers *after* closing current env to prevent
-                # GPU memory overlap between consecutive tasks.
-                if i + 1 < len(tasks):
-                    next_env = tasks[i + 1][2]
-                    if hasattr(next_env, "_ensure"):
-                        prefetch_thread = threading.Thread(target=next_env._ensure, daemon=True)
-                        prefetch_thread.start()
-    else:
-        with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
-            fut2meta = {}
-            for task_group, task_id, env in tasks:
-                fut = executor.submit(task_runner, task_group, task_id, env)
-                fut2meta[fut] = (task_group, task_id, env)
-            for fut in cf.as_completed(fut2meta):
-                tg, tid, env = fut2meta[fut]
                 try:
-                    tg, tid, metrics = fut.result()
+                    tg, tid, metrics = task_runner(task_group, task_id, env)
                     _accumulate_to(tg, metrics)
                     per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
                 finally:
                     env.close()
+                    # Prefetch next task's workers *after* closing current env to prevent
+                    # GPU memory overlap between consecutive tasks.
+                    if i + 1 < len(tasks):
+                        next_env = tasks[i + 1][2]
+                        if hasattr(next_env, "_ensure"):
+                            prefetch_thread = threading.Thread(target=next_env._ensure, daemon=True)
+                            prefetch_thread.start()
+        else:
+            with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
+                fut2meta = {}
+                for task_group, task_id, env in tasks:
+                    fut = executor.submit(task_runner, task_group, task_id, env)
+                    fut2meta[fut] = (task_group, task_id, env)
+                for fut in cf.as_completed(fut2meta):
+                    tg, tid, env = fut2meta[fut]
+                    try:
+                        tg, tid, metrics = fut.result()
+                        _accumulate_to(tg, metrics)
+                        per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                    finally:
+                        env.close()
+    finally:
+        policy.train(was_training)
 
     # compute aggregated metrics helper (robust to lists/scalars)
     def _agg_from_list(xs):
