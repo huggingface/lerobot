@@ -55,8 +55,8 @@ class DatasetConfig:
     # Parallel sample assembly/decode workers and their bounded in-order result queue.
     streaming_decode_threads: int = 2
     streaming_decoded_queue_size: int = 8
-    # Independent decoder-state cap.
-    streaming_max_open_decoders: int = 64
+    # Independent decoder-state cap. None covers every camera in the configured episode pool.
+    streaming_max_open_decoders: int | None = None
     # Per-rank native HTTP limits. None preserves the fetcher's worker-derived default.
     streaming_native_http_connections: int | None = None
     streaming_native_http_subranges: int = 1
@@ -80,7 +80,7 @@ class DatasetConfig:
             raise ValueError("streaming_decode_threads must be positive")
         if self.streaming_decoded_queue_size <= 0:
             raise ValueError("streaming_decoded_queue_size must be positive")
-        if self.streaming_max_open_decoders <= 0:
+        if self.streaming_max_open_decoders is not None and self.streaming_max_open_decoders <= 0:
             raise ValueError("streaming_max_open_decoders must be positive")
         if self.streaming_native_http_connections is not None and self.streaming_native_http_connections <= 0:
             raise ValueError("streaming_native_http_connections must be positive")

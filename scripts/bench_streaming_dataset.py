@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--byte-budget-gb", type=float, default=8.0)
     parser.add_argument("--decode-threads", type=int, default=2)
     parser.add_argument("--decoded-queue-size", type=int, default=8)
-    parser.add_argument("--max-open-decoders", type=int, default=64)
+    parser.add_argument("--max-open-decoders", type=int, default=None)
     parser.add_argument("--native-http-connections", type=int, default=None)
     parser.add_argument("--native-http-subranges", type=int, default=1)
     parser.add_argument("--warmup-batches", type=int, default=8)
@@ -196,7 +196,8 @@ def main() -> None:
             "byte_budget_gb": args.byte_budget_gb,
             "decode_threads": args.decode_threads,
             "decoded_queue_size": args.decoded_queue_size,
-            "max_open_decoders": args.max_open_decoders,
+            "max_open_decoders": dataset.max_open_decoders,
+            "requested_max_open_decoders": args.max_open_decoders,
             "native_http_connections": args.native_http_connections,
             "native_http_subranges": args.native_http_subranges,
             "warmup_batches": args.warmup_batches,

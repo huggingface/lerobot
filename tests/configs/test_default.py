@@ -38,6 +38,10 @@ def test_dataset_config_empty_episodes_ok():
     DatasetConfig(repo_id="user/repo", episodes=[])
 
 
+def test_dataset_config_derives_streaming_decoder_limit_by_default():
+    assert DatasetConfig(repo_id="user/repo").streaming_max_open_decoders is None
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [

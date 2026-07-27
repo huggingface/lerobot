@@ -125,7 +125,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         token: str | bool | None = None,
         decode_threads: int = 2,
         decoded_queue_size: int = 8,
-        max_open_decoders: int = 64,
+        max_open_decoders: int | None = None,
         native_http_connections: int | None = None,
         native_http_subranges: int = 1,
     ):
@@ -161,7 +161,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             decode_threads (int, optional): Parallel sample assembly and video decode workers.
             decoded_queue_size (int, optional): Maximum number of decoded samples produced ahead
                 of the consumer. Results are yielded in exact planner order.
-            max_open_decoders (int, optional): Maximum number of open video decoders per rank.
+            max_open_decoders (int | None, optional): Maximum number of open video decoders per
+                rank. By default every camera in the configured episode pool can remain open.
             native_http_connections (int | None, optional): Native HTTP connection limit per rank.
                 ``None`` preserves the fetcher's worker-derived default.
             native_http_subranges (int, optional): Concurrent HTTP subranges per video range read.
@@ -213,7 +214,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             raise ValueError("decode_threads must be positive")
         if decoded_queue_size <= 0:
             raise ValueError("decoded_queue_size must be positive")
-        if max_open_decoders <= 0:
+        if max_open_decoders is not None and max_open_decoders <= 0:
             raise ValueError("max_open_decoders must be positive")
         if native_http_connections is not None and native_http_connections <= 0:
             raise ValueError("native_http_connections must be positive")
@@ -224,7 +225,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.byte_budget = int(byte_budget_gb * 1024**3)
         self.decode_threads = decode_threads
         self.decoded_queue_size = decoded_queue_size
-        self.max_open_decoders = max_open_decoders
         self.native_http_connections = native_http_connections
         self.native_http_subranges = native_http_subranges
         self.repeat = repeat
@@ -250,6 +250,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.meta.rescale_depth_stats(self._depth_output_unit)
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
+        self.max_open_decoders = (
+            max_open_decoders
+            if max_open_decoders is not None
+            else max(1, self.episode_pool_size * len(self.meta.video_keys))
+        )
 
         self._depth_encoder_configs: dict[str, DepthEncoderConfig] = {
             vid_key: DepthEncoderConfig.from_video_info(self.meta.features[vid_key].get("info"))

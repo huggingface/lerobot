@@ -118,6 +118,35 @@ def test_parallel_decode_queue_preserves_planner_order(
     assert 1 < max_active <= parallel.decode_threads
 
 
+def test_default_decoder_limit_covers_the_configured_episode_pool(
+    tmp_path: Path,
+    lerobot_dataset_factory,
+) -> None:
+    root = tmp_path / "dataset"
+    lerobot_dataset_factory(
+        root=root,
+        repo_id=DUMMY_REPO_ID,
+        total_episodes=2,
+        total_frames=20,
+    )
+
+    streaming = StreamingLeRobotDataset(
+        DUMMY_REPO_ID,
+        root=root,
+        episode_pool_size=7,
+    )
+
+    assert streaming.max_open_decoders == 7 * len(streaming.meta.video_keys)
+
+    overridden = StreamingLeRobotDataset(
+        DUMMY_REPO_ID,
+        root=root,
+        episode_pool_size=7,
+        max_open_decoders=5,
+    )
+    assert overridden.max_open_decoders == 5
+
+
 @pytest.mark.parametrize("video_backend", ["torchcodec", "pyav"])
 def test_streaming_rgb_video_matches_map_style(
     tmp_path: Path,
