@@ -142,9 +142,12 @@ Usage examples
         --robot.port=/dev/ttyACM0 \\
         --task="pick up cube" --duration=60 \\
         --display_data=true \\
-        --dataset.camera_encoder.vcodec=h264 \\
-        --dataset.camera_encoder.preset=fast \\
-        --dataset.camera_encoder.extra_options={"tune": "film", "profile:v": "high", "bf": 2}
+        --dataset.rgb_encoder.vcodec=h264 \\
+        --dataset.rgb_encoder.preset=fast \\
+        --dataset.rgb_encoder.extra_options={"tune": "film", "profile:v": "high", "bf": 2}
+
+    # Stream to Foxglove instead of Rerun:
+    # add --display_mode=foxglove, then connect the Foxglove app to ws://127.0.0.1:8765.
 """
 
 import logging
@@ -190,7 +193,7 @@ from lerobot.teleoperators import (  # noqa: F401
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.utils import init_logging
-from lerobot.utils.visualization_utils import init_rerun
+from lerobot.utils.visualization_utils import init_visualization, shutdown_visualization
 
 logger = logging.getLogger(__name__)
 
@@ -201,8 +204,13 @@ def rollout(cfg: RolloutConfig):
     init_logging()
 
     if cfg.display_data:
-        logger.info("Initializing Rerun visualization (ip=%s, port=%s)", cfg.display_ip, cfg.display_port)
-        init_rerun(session_name="rollout", ip=cfg.display_ip, port=cfg.display_port)
+        logger.info(
+            "Initializing %s visualization (ip=%s, port=%s)",
+            cfg.display_mode,
+            cfg.display_ip,
+            cfg.display_port,
+        )
+        init_visualization(cfg.display_mode, session_name="rollout", ip=cfg.display_ip, port=cfg.display_port)
 
     signal_handler = ProcessSignalHandler(use_threads=True, display_pid=False)
     shutdown_event = signal_handler.shutdown_event
@@ -227,6 +235,8 @@ def rollout(cfg: RolloutConfig):
         logger.info("Interrupted by user")
     finally:
         strategy.teardown(ctx)
+        if cfg.display_data:
+            shutdown_visualization(cfg.display_mode)
 
     logger.info("Rollout finished")
 

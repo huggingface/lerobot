@@ -37,6 +37,7 @@ ACTION_TOKEN_MASK = ACTION + ".token_mask"
 REWARD = "next.reward"
 TRUNCATED = "next.truncated"
 DONE = "next.done"
+SUCCESS = "next.success"
 INFO = "info"
 
 ROBOTS = "robots"
