@@ -26,7 +26,7 @@ from lerobot.utils.action_interpolator import ActionInterpolator
 from lerobot.utils.constants import OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.robot_utils import precise_sleep
-from lerobot.utils.visualization_utils import log_rerun_data
+from lerobot.utils.visualization_utils import log_visualization_data
 
 from ..inference import InferenceEngine
 
@@ -162,11 +162,12 @@ class RolloutStrategy(abc.ABC):
         action_dict: dict | None,
         runtime_ctx: RuntimeContext,
     ) -> None:
-        """Log observation/action telemetry to Rerun if display_data is enabled."""
+        """Log observation/action telemetry to the visualization backend if display_data is enabled."""
         cfg = runtime_ctx.cfg
         if not cfg.display_data:
             return
-        log_rerun_data(
+        log_visualization_data(
+            cfg.display_mode,
             observation=obs_processed,
             action=action_dict,
             compress_images=cfg.display_compressed_images,
