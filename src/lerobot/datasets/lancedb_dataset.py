@@ -72,37 +72,27 @@ VIDEOS_TABLE = "videos"
 META_TABLE = "meta"
 VIDEO_BLOB_COLUMN = "video_bytes"
 # Byte-index columns on the videos table, written at conversion time by
-# ``build_video_byte_index``. They let the remote reader translate a frame
-# window into the exact byte ranges its decode needs, fetched for the whole
-# batch in one parallel ``fetch_blob_ranges`` call.
-#
-# Scope of validity:
-# - ``kf_indices``/``kf_positions`` (frame index and byte offset of each
-#   keyframe) are container/codec agnostic: any video a demuxer can walk has
-#   them. Mapping timestamps to frame indices assumes constant frame rate,
-#   the same assumption the upstream torchcodec reader makes.
-# - ``moov_offset``/``moov_size`` are mp4-specific (the sample-table box a
-#   decoder must read before anything else; LeRobot videos are always mp4).
-#   For a container without them a converter can store 0/0.
-#
-# None of this affects correctness: these columns and the constants below
-# only decide what gets PREFETCHED. Any byte the decoder needs that was not
-# prefetched is served by a fallback ``read_range`` on the blob handle —
-# slower (one round trip), never wrong. A dataset with missing or stale
-# index data decodes correctly at reduced speed.
+# ``build_video_byte_index`` (defined below; converters import it as the
+# schema contract). They map a frame window to the byte ranges its decode
+# needs, so a whole batch's video bytes travel in one ``fetch_blob_ranges``
+# call. The keyframe columns work for any container/codec and assume
+# constant frame rate (upstream's reader assumes the same); the moov columns
+# are mp4-specific (store 0/0 for other containers).
 VIDEO_INDEX_COLUMNS = ("file_size", "moov_offset", "moov_size", "kf_indices", "kf_positions")
-# Prefetch paddings for ffmpeg's I/O pattern. These are not tunables and not
-# derivable at runtime (ffmpeg does not expose its read plan); they bound two
-# stable, documented behaviors, with the fallback read as the safety net:
-# - on open, ffmpeg probes the container head (avio buffer reads over the
-#   first ~128 KB on mp4; we prefetch 2x that),
-# - after parsing the moov it primes the demuxer by reading the first media
-#   packets (measured: one 64 KiB read at the first packet's offset; we
-#   prefetch 4x that from the first keyframe position),
-# - after the last requested packet it reads ahead by up to one avio buffer
-#   (32 KiB default; we pad each range by 2x that).
-# If an ffmpeg upgrade ever reads differently, decodes stay correct and the
-# per-source ``fallback_bytes`` counter makes the added round trips visible.
+# Why padding exists: ffmpeg reads more bytes than the frames requested.
+# At open it probes the container head; after parsing the moov it reads the
+# first media packets; past the last requested packet it reads ahead one
+# avio buffer. Any of those bytes missing from the prefetched ranges is
+# served by a fallback ``read_range`` on the blob handle — always correct,
+# but each miss is a blocking round trip on object storage (one 16-byte
+# miss per file once cost a third of droid's whole batch time). So each
+# prefetched range is padded to cover ffmpeg's known reads, at 2-4x the
+# measured sizes since they are stable behaviors, not tunables:
+#   _HEAD_BYTES      open-time head probe (~128 KB seen; keep 2x)
+#   _OPEN_READAHEAD  first-packet priming read (~64 KB seen; keep 4x)
+#   _RANGE_SLACK     per-range readahead (one 32 KB avio buffer; keep 2x)
+# If an ffmpeg upgrade reads differently, decodes stay correct and the
+# per-source ``fallback_bytes`` counter makes the extra round trips visible.
 _HEAD_BYTES = 256 * 1024
 _OPEN_READAHEAD = 256 * 1024
 _RANGE_SLACK = 64 * 1024
