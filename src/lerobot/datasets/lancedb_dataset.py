@@ -864,8 +864,14 @@ class LanceDBDataset(torch.utils.data.Dataset):
         if not new_files:
             return prepared
 
-        range_requests: list[tuple[int, int, int]] = []
-        range_targets: list[tuple[tuple, int]] = []
+        handles = self._videos_table.fetch_blob_files(
+            VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in new_files]
+        )
+        sources = {
+            key: _SparseBlobSource(self._file_meta[key]["file_size"], handle)
+            for key, handle in zip(new_files, handles, strict=True)
+        }
+        spans_by_key: dict[tuple, list[tuple[int, int]]] = {}
         for key in new_files:
             meta = self._file_meta[key]
             spans = [
@@ -881,26 +887,8 @@ class LanceDBDataset(torch.utils.data.Dataset):
             if len(meta["kf_positions"]):
                 first_packet = int(meta["kf_positions"][0])
                 spans.append((first_packet, min(first_packet + _OPEN_READAHEAD, meta["file_size"])))
-            # Faststart files (moov at the head) collapse to a single request.
-            for start, end in _merge_spans(spans):
-                range_requests.append((self._video_row_ids[key], start, end - start))
-                range_targets.append((key, start))
-
-        payloads = self._videos_table.fetch_blob_ranges(VIDEO_BLOB_COLUMN, range_requests)
-        handles = dict(
-            zip(
-                new_files,
-                self._videos_table.fetch_blob_files(
-                    VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in new_files]
-                ),
-                strict=True,
-            )
-        )
-        sources: dict[tuple, _SparseBlobSource] = {}
-        for (key, offset), payload in zip(range_targets, payloads, strict=True):
-            if key not in sources:
-                sources[key] = _SparseBlobSource(self._file_meta[key]["file_size"], handles[key])
-            sources[key].add(offset, payload.as_py())
+            spans_by_key[key] = spans
+        self._fetch_spans(spans_by_key, sources)
 
         # Decoder creation parses the moov sample tables (~ms per file):
         # parallelize across the batch's new files.
@@ -920,8 +908,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         decoders = {key: decoder for key, (decoder, _) in prepared.items()}
         sources = {key: source for key, (_, source) in prepared.items()}
 
-        range_requests: list[tuple[int, int, int]] = []
-        range_targets: list[tuple[tuple, int]] = []
+        spans_by_key: dict[tuple, list[tuple[int, int]]] = {}
         fps = float(self.meta.fps)
         for key, file_requests in requests.items():
             meta = self._file_meta[key]
@@ -933,14 +920,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 start, end = self._window_byte_range(meta, min(first, last), max(first, last))
                 if not source.covers(start, end):
                     spans.append((start, end))
-            for start, end in _merge_spans(spans):
-                range_requests.append((self._video_row_ids[key], start, end - start))
-                range_targets.append((key, start))
+            spans_by_key[key] = spans
+        self._fetch_spans(spans_by_key, sources)
 
-        if range_requests:
-            payloads = self._videos_table.fetch_blob_ranges(VIDEO_BLOB_COLUMN, range_requests)
-            for (key, offset), payload in zip(range_targets, payloads, strict=True):
-                sources[key].add(offset, payload.as_py())
         for key in requests:
             source = sources[key]
             # A cached entry costs its buffered bytes plus the decoder's
@@ -953,6 +935,27 @@ class LanceDBDataset(torch.utils.data.Dataset):
             context_cost = (8 << 20) + 8 * height * width
             self._decoder_cache.put(key, (decoders[key], source), nbytes=source.buffered + context_cost)
         return decoders
+
+    def _fetch_spans(
+        self, spans_by_key: dict[tuple, list[tuple[int, int]]], sources: dict[tuple, _SparseBlobSource]
+    ) -> None:
+        """Fetch byte spans for many files in one parallel wave and buffer them.
+
+        Spans are coalesced per file (faststart header trios and adjacent
+        windows collapse to single requests) and all files' ranges go out in
+        a single ``fetch_blob_ranges`` call.
+        """
+        range_requests: list[tuple[int, int, int]] = []
+        range_targets: list[tuple[tuple, int]] = []
+        for key, spans in spans_by_key.items():
+            for start, end in _merge_spans(spans):
+                range_requests.append((self._video_row_ids[key], start, end - start))
+                range_targets.append((key, start))
+        if not range_requests:
+            return
+        payloads = self._videos_table.fetch_blob_ranges(VIDEO_BLOB_COLUMN, range_requests)
+        for (key, offset), payload in zip(range_targets, payloads, strict=True):
+            sources[key].add(offset, payload.as_py())
 
     def _load_file_meta(self, missing: list[tuple]) -> None:
         """Fetch byte-index columns for files not yet in the per-worker cache."""
