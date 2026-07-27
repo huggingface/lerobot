@@ -20,6 +20,7 @@ from lerobot.optim.optimizers import (
     MultiAdamConfig,
     SGDConfig,
     load_optimizer_state,
+    load_optimizer_state_dict,
     save_optimizer_state,
 )
 from lerobot.utils.constants import (
@@ -63,6 +64,44 @@ def test_save_and_load_optimizer_state(model_params, optimizer, tmp_path):
     loaded_optimizer = load_optimizer_state(loaded_optimizer, tmp_path)
 
     torch.testing.assert_close(optimizer.state_dict(), loaded_optimizer.state_dict())
+
+
+def test_save_and_load_fsdp_optimizer_state_dict_roundtrip(tmp_path):
+    """The FSDP full optimizer state dict is keyed by parameter FQNs (dotted strings), not the
+    integer indices of the single-GPU path. Verify it survives the safetensors save -> read
+    round-trip used by the FSDP save/resume path (save_optimizer_state(optim_state_dict=...) then
+    load_optimizer_state_dict), which the flatten/unflatten "/" separator must not corrupt."""
+    full_osd = {
+        "state": {
+            "model.layers.0.weight": {
+                "step": torch.tensor(3.0),
+                "exp_avg": torch.randn(4, 4),
+                "exp_avg_sq": torch.randn(4, 4),
+            },
+            "model.layers.0.bias": {
+                "step": torch.tensor(3.0),
+                "exp_avg": torch.randn(4),
+                "exp_avg_sq": torch.randn(4),
+            },
+        },
+        "param_groups": [
+            {"lr": 1e-4, "betas": [0.9, 0.999], "eps": 1e-8, "weight_decay": 0.0, "params": [0, 1]}
+        ],
+    }
+
+    save_optimizer_state(
+        torch.optim.Adam([torch.nn.Parameter(torch.randn(1))]), tmp_path, optim_state_dict=full_osd
+    )
+    assert (tmp_path / OPTIMIZER_STATE).is_file()
+    assert (tmp_path / OPTIMIZER_PARAM_GROUPS).is_file()
+
+    loaded = load_optimizer_state_dict(tmp_path)
+    # FQN keys must be preserved verbatim (not int-cast, not split on their dots).
+    assert set(loaded["state"].keys()) == set(full_osd["state"].keys())
+    for fqn, sub in full_osd["state"].items():
+        for k, v in sub.items():
+            torch.testing.assert_close(loaded["state"][fqn][k], v)
+    assert loaded["param_groups"] == full_osd["param_groups"]
 
 
 @pytest.fixture

@@ -35,7 +35,11 @@ from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
 
 
 def mock_load_image_as_numpy(path, dtype, channel_first):
-    return np.ones((3, 32, 32), dtype=dtype) if channel_first else np.ones((32, 32, 3), dtype=dtype)
+    is_depth = "depth" in str(path)
+    channels = 1 if is_depth else 3
+    out_dtype = np.uint16 if is_depth else dtype
+    arr = np.arange(channels * 32 * 32, dtype=out_dtype).reshape(channels, 32, 32)
+    return arr if channel_first else arr.transpose(1, 2, 0)
 
 
 @pytest.fixture
@@ -81,6 +85,29 @@ def test_get_feature_stats_images():
     assert "min" in stats and "max" in stats and "mean" in stats and "std" in stats and "count" in stats
     np.testing.assert_equal(stats["count"], np.array([100]))
     assert stats["min"].shape == stats["max"].shape == stats["mean"].shape == stats["std"].shape
+
+
+def test_get_feature_stats_uint8_images_preserves_std():
+    data = np.array(
+        [
+            [
+                [[0, 64], [128, 255]],
+                [[255, 128], [64, 0]],
+                [[32, 96], [160, 224]],
+            ],
+            [
+                [[16, 80], [144, 240]],
+                [[240, 144], [80, 16]],
+                [[48, 112], [176, 208]],
+            ],
+        ],
+        dtype=np.uint8,
+    )
+
+    stats = get_feature_stats(data, axis=(0, 2, 3), keepdims=True)
+
+    expected_std = data.transpose(0, 2, 3, 1).reshape(-1, 3).std(axis=0).reshape(1, 3, 1, 1)
+    np.testing.assert_allclose(stats["std"], expected_std)
 
 
 def test_get_feature_stats_axis_0_keepdims(sample_array):
@@ -145,22 +172,33 @@ def test_get_feature_stats_single_value():
 
 
 def test_compute_episode_stats():
+    depth_key = "observation.images.depth"
     episode_data = {
         OBS_IMAGE: [f"image_{i}.jpg" for i in range(100)],
+        depth_key: [f"depth_{i}.tiff" for i in range(100)],
         OBS_STATE: np.random.rand(100, 10),
     }
     features = {
         OBS_IMAGE: {"dtype": "image"},
+        depth_key: {"dtype": "image", "info": {"is_depth_map": True}},
         OBS_STATE: {"dtype": "numeric"},
     }
 
     with patch("lerobot.datasets.compute_stats.load_image_as_numpy", side_effect=mock_load_image_as_numpy):
         stats = compute_episode_stats(episode_data, features)
 
-    assert OBS_IMAGE in stats and OBS_STATE in stats
+    assert OBS_IMAGE in stats and depth_key in stats and OBS_STATE in stats
     assert stats[OBS_IMAGE]["count"].item() == 100
+    assert stats[depth_key]["count"].item() == 100
     assert stats[OBS_STATE]["count"].item() == 100
     assert stats[OBS_IMAGE]["mean"].shape == (3, 1, 1)
+    assert stats[depth_key]["mean"].shape == (1, 1, 1)
+    # Depth keeps raw values: max far exceeds 255, proving no /255 and no uint8 downcast.
+    assert stats[depth_key]["min"].item() == 0.0
+    assert stats[depth_key]["max"].item() == 1023.0
+    # RGB is normalized to [0, 1].
+    np.testing.assert_allclose(stats[OBS_IMAGE]["min"], 0.0)
+    np.testing.assert_allclose(stats[OBS_IMAGE]["max"], 1.0)
 
 
 def test_assert_type_and_shape_valid():
@@ -595,25 +633,31 @@ def test_compute_episode_stats_with_custom_quantiles():
 def test_compute_episode_stats_with_image_data():
     """Test quantile computation with image features."""
     image_paths = [f"image_{i}.jpg" for i in range(50)]
+    depth_paths = [f"depth_{i}.tiff" for i in range(50)]
     episode_data = {
         "observation.image": image_paths,
+        "observation.images.depth": depth_paths,
         "action": np.random.normal(0, 1, (50, 5)),
     }
     features = {
         "observation.image": {"dtype": "image"},
+        "observation.images.depth": {"dtype": "image", "info": {"is_depth_map": True}},
         "action": {"dtype": "float32", "shape": (5,)},
     }
 
     with patch("lerobot.datasets.compute_stats.load_image_as_numpy", side_effect=mock_load_image_as_numpy):
         stats = compute_episode_stats(episode_data, features)
 
-    # Image quantiles should be normalized and have correct shape
-    assert "q01" in stats["observation.image"]
-    assert "q50" in stats["observation.image"]
-    assert "q99" in stats["observation.image"]
-    assert stats["observation.image"]["q01"].shape == (3, 1, 1)
-    assert stats["observation.image"]["q50"].shape == (3, 1, 1)
-    assert stats["observation.image"]["q99"].shape == (3, 1, 1)
+    # RGB image quantiles should be normalized and per-channel.
+    for q in ("q01", "q50", "q99"):
+        assert stats["observation.image"][q].shape == (3, 1, 1)
+
+    # Depth quantiles are single-channel and kept in raw (un-normalized) units.
+    for q in ("q01", "q50", "q99"):
+        assert stats["observation.images.depth"][q].shape == (1, 1, 1)
+    # Depth max stays in raw units (not /255, not uint8-capped); RGB is normalized.
+    assert stats["observation.images.depth"]["max"].item() == 1023.0
+    np.testing.assert_allclose(stats["observation.image"]["max"], 1.0)
 
     # Action quantiles should have correct shape
     assert stats["action"]["q01"].shape == (5,)

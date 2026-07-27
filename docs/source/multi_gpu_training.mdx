@@ -95,7 +95,7 @@ If you want to scale your hyperparameters when using multiple GPUs, you should d
 accelerate launch --num_processes=2 $(which lerobot-train) \
   --optimizer.lr=2e-4 \
   --dataset.repo_id=lerobot/pusht \
-  --policy=act
+  --policy.type=act
 ```
 
 **Training Steps Scaling:**
@@ -110,8 +110,63 @@ accelerate launch --num_processes=2 $(which lerobot-train) \
   --batch_size=8 \
   --steps=50000 \
   --dataset.repo_id=lerobot/pusht \
-  --policy=act
+  --policy.type=act
 ```
+
+## Training Large Models with FSDP
+
+DDP replicates the full model on every GPU, so a model that doesn't fit on one GPU won't fit under
+DDP either. For large models, use **FSDP** (Fully Sharded Data Parallel), which shards parameters,
+gradients, and optimizer state across GPUs. See the [accelerate FSDP guide](https://huggingface.co/docs/accelerate/usage_guides/fsdp) for background.
+
+An example on how to launch LeRobot training with FSDP across 4 GPUs (1 machine):
+
+```bash
+accelerate launch --config_file fsdp.yaml --num_processes=4 $(which lerobot-train) \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --policy.type=<your_policy> \
+  --output_dir=outputs/train/my_policy_fsdp
+```
+
+A minimal `fsdp.yaml` (FSDP1; shards params/grads/optimizer — ZeRO-3-equivalent):
+
+```yaml
+compute_environment: LOCAL_MACHINE
+distributed_type: FSDP
+mixed_precision: bf16
+num_machines: 1
+num_processes: 4
+fsdp_config:
+  fsdp_version: 1
+  fsdp_sharding_strategy: FULL_SHARD # params + grads + optimizer (ZeRO-3)
+  fsdp_auto_wrap_policy: TRANSFORMER_BASED_WRAP
+  fsdp_transformer_layer_cls_to_wrap: <YourTransformerBlock> # repeated block class to shard
+  fsdp_use_orig_params: true # required: optimizer is built pre-prepare
+  fsdp_state_dict_type: FULL_STATE_DICT
+```
+
+Set `fsdp_transformer_layer_cls_to_wrap` to your model's repeated transformer-block class so each
+block is sharded as its own unit. `fsdp_use_orig_params: true` is required because LeRobot builds the
+optimizer before `accelerator.prepare()`.
+
+### FSDP checkpoints
+
+LeRobot gathers the full state dict across all ranks and the main process writes it as a single
+`model.safetensors`, loadable as usual with `Policy.from_pretrained(...)`. Two things to look out for:
+
+- **Checkpoints store fp32 weights.** Under mixed precision (`bf16`/`fp16`) FSDP keeps an fp32 master
+  copy, and the checkpoint saves it (~2× the bf16 size on disk) so training can resume consistently
+  with the fp32 optimizer state; `from_pretrained` casts back to the policy dtype on load. FSDP-specific
+  caveat: an fp32 checkpoint is materialized in full precision on the target device _before_ casting,
+  so loading it for inference on a tight GPU can OOM even when the bf16 model would fit — load on CPU
+  first, or cast `model.safetensors` to the deployment dtype offline.
+- The sharded optimizer state is gathered into a full (world-size-independent) state dict and saved
+  alongside the model in the same `optimizer_state.safetensors` / `optimizer_param_groups.json`
+  format as single-GPU training, so **resume-from-checkpoint is supported** with `--resume=true`.
+  Resume reshards both the model and the optimizer state to the _current_ FSDP topology, so you can
+  resume an FSDP checkpoint on a different number of GPUs. Note that the data sampler is only
+  sample-exact when the world size and batch size match the original run (a warning is logged
+  otherwise); the optimizer/model state itself is unaffected.
 
 ## Notes
 

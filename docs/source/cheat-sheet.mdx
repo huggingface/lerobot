@@ -89,6 +89,36 @@ Control the data recording flow using keyboard shortcuts:
 - Press **Left Arrow (`←`)**: Delete current episode and retry.
 - Press **Escape (`ESC`)**: Stop, encode videos, and upload.
 
+### Recording depth
+
+Intel RealSense cameras (`type: intelrealsense`) record a depth stream when you set `use_depth: true`. Depth is quantized to 12-bit codes and stored as its own video.
+
+```bash
+lerobot-record \
+    ... \
+    --robot.cameras="{ head: {type: intelrealsense, serial_number_or_name: \"0123456789\", width: 640, height: 480, fps: 30, use_depth: true} }" \
+    --dataset.repo_id=${HF_USER}/so101_depth_test \
+    --dataset.single_task="put the red brick in a bowl" \
+    --dataset.depth_encoder.depth_min=0.01 \
+    --dataset.depth_encoder.depth_max=10.0 \
+    --dataset.depth_encoder.shift=0.0 \
+    --dataset.depth_encoder.use_log=true
+```
+
+### Video encoding parameters
+
+RGB and depth streams are encoded independently via the `--dataset.rgb_encoder.*` and `--dataset.depth_encoder.*` keys.
+
+```bash
+lerobot-record \
+    ... \
+    --dataset.rgb_encoder.vcodec=h264 \
+    --dataset.rgb_encoder.pix_fmt=yuv420p \
+    --dataset.rgb_encoder.crf=23 \
+    --dataset.depth_encoder.vcodec=hevc \
+    --dataset.depth_encoder.extra_options='{"x265-params": "lossless=1"}'
+```
+
 ### Training
 
 Depending on your hardware training the policy might take a few hours. That's how you train simple `ACT` policy:
@@ -118,6 +148,14 @@ lerobot-train \
     --policy.repo_id=${HF_USER}/policy_test \
     --output_dir=outputs/train/act_so101_test \
     --steps=20000
+```
+
+No local GPU? Add `--job.target=<flavor>` (e.g. `a10g-small`) to either command and `lerobot-train` runs it on [Hugging Face Jobs](https://huggingface.co/docs/hub/jobs) instead — it uploads a local-only dataset for you and pushes the trained model. List flavors with `hf jobs hardware`.
+
+To resume, point `--config_path` at a checkpoint and add `--resume=true`. It accepts a local path or a Hub repo id (the latest checkpoint is fetched), and works locally or on a job by adding `--job.target=<flavor>`:
+
+```bash
+lerobot-train --config_path=${HF_USER}/policy_test --resume=true --job.target=a10g-small
 ```
 
 ### Inference
