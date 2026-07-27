@@ -15,12 +15,14 @@
 # limitations under the License.
 from pathlib import Path
 
+from huggingface_hub import HfApi, snapshot_download
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.optim import (
     load_optimizer_state,
+    load_optimizer_state_dict,
     load_scheduler_state,
     save_optimizer_state,
     save_scheduler_state,
@@ -34,6 +36,7 @@ from lerobot.utils.constants import (
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
+from lerobot.utils.hub import find_latest_hub_checkpoint
 from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.random_utils import load_rng_state, save_rng_state
 
@@ -49,13 +52,34 @@ def get_step_checkpoint_dir(output_dir: Path, total_steps: int, step: int) -> Pa
     return output_dir / CHECKPOINTS_DIR / step_identifier
 
 
-def save_training_step(step: int, save_dir: Path) -> None:
-    write_json({"step": step}, save_dir / TRAINING_STEP)
+def save_training_step(
+    step: int, save_dir: Path, num_processes: int | None = None, batch_size: int | None = None
+) -> None:
+    state: dict = {"step": step}
+    # num_processes and batch_size are recorded so a resumed run can detect a changed world size or
+    # batch size: the sampler's resume offset is computed from the (num_processes, batch_size) that
+    # produced `step`, since both scale how many sampler positions a step consumes (see
+    # compute_sampler_state).
+    if num_processes is not None:
+        state["num_processes"] = num_processes
+    if batch_size is not None:
+        state["batch_size"] = batch_size
+    write_json(state, save_dir / TRAINING_STEP)
 
 
 def load_training_step(save_dir: Path) -> int:
     training_step = load_json(save_dir / TRAINING_STEP)
     return training_step["step"]
+
+
+def load_training_num_processes(checkpoint_dir: Path) -> int | None:
+    """World size recorded at checkpoint time, or None for checkpoints written before it was stored."""
+    return load_json(checkpoint_dir / TRAINING_STATE_DIR / TRAINING_STEP).get("num_processes")
+
+
+def load_training_batch_size(checkpoint_dir: Path) -> int | None:
+    """Per-process batch size recorded at checkpoint time, or None for older checkpoints."""
+    return load_json(checkpoint_dir / TRAINING_STATE_DIR / TRAINING_STEP).get("batch_size")
 
 
 def update_last_checkpoint(checkpoint_dir: Path) -> Path:
@@ -75,6 +99,10 @@ def save_checkpoint(
     scheduler: LRScheduler | None = None,
     preprocessor: PolicyProcessorPipeline | None = None,
     postprocessor: PolicyProcessorPipeline | None = None,
+    num_processes: int | None = None,
+    batch_size: int | None = None,
+    model_state_dict: dict | None = None,
+    optim_state_dict: dict | None = None,
 ) -> None:
     """This function creates the following directory structure:
 
@@ -100,9 +128,22 @@ def save_checkpoint(
         scheduler (LRScheduler | None, optional): The scheduler to save the state from. Defaults to None.
         preprocessor: The preprocessor/pipeline to save. Defaults to None.
         postprocessor: The postprocessor/pipeline to save. Defaults to None.
+        num_processes (int | None, optional): Distributed world size to record for sample-exact
+            resume. Defaults to None (not recorded).
+        batch_size (int | None, optional): Per-process batch size to record for sample-exact
+            resume. Defaults to None (not recorded).
+        model_state_dict: Pre-gathered full (unsharded) model state dict. Required under FSDP,
+            where `policy.state_dict()` would return sharded tensors; the caller gathers it via a
+            cross-rank collective and passes it here so rank 0 can write it directly. It holds
+            FSDP's fp32 master weights and is saved as-is (the loader casts to the policy dtype on
+            read). When None (DDP / single-GPU), the model is saved the normal way. Defaults to None.
+        optim_state_dict: Pre-gathered full (unsharded) optimizer state dict. Required under FSDP
+            (gathered alongside `model_state_dict` via `gather_fsdp_state_dicts`); saved in the same
+            safetensors format as the single-GPU path. When None, `optimizer.state_dict()` is used.
+            Defaults to None.
     """
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
-    policy.save_pretrained(pretrained_dir)
+    policy.save_pretrained(pretrained_dir, state_dict=model_state_dict)
     cfg.save_pretrained(pretrained_dir)
     if cfg.peft is not None:
         # When using PEFT, policy.save_pretrained will only write the adapter weights + config, not the
@@ -112,7 +153,15 @@ def save_checkpoint(
         preprocessor.save_pretrained(pretrained_dir)
     if postprocessor is not None:
         postprocessor.save_pretrained(pretrained_dir)
-    save_training_state(checkpoint_dir, step, optimizer, scheduler)
+    save_training_state(
+        checkpoint_dir,
+        step,
+        optimizer,
+        scheduler,
+        num_processes=num_processes,
+        batch_size=batch_size,
+        optim_state_dict=optim_state_dict,
+    )
 
 
 def save_training_state(
@@ -120,6 +169,9 @@ def save_training_state(
     train_step: int,
     optimizer: Optimizer | None = None,
     scheduler: LRScheduler | None = None,
+    num_processes: int | None = None,
+    batch_size: int | None = None,
+    optim_state_dict: dict | None = None,
 ) -> None:
     """
     Saves the training step, optimizer state, scheduler state, and rng state.
@@ -131,19 +183,23 @@ def save_training_state(
             Defaults to None.
         scheduler (LRScheduler | None, optional): The scheduler from which to save the state_dict.
             Defaults to None.
+        num_processes (int | None, optional): Distributed world size to record. Defaults to None.
+        batch_size (int | None, optional): Per-process batch size to record. Defaults to None.
+        optim_state_dict: Pre-gathered full optimizer state dict (for FSDP). Saved instead of
+            `optimizer.state_dict()` when provided. Defaults to None.
     """
     save_dir = checkpoint_dir / TRAINING_STATE_DIR
     save_dir.mkdir(parents=True, exist_ok=True)
-    save_training_step(train_step, save_dir)
+    save_training_step(train_step, save_dir, num_processes=num_processes, batch_size=batch_size)
     save_rng_state(save_dir)
     if optimizer is not None:
-        save_optimizer_state(optimizer, save_dir)
+        save_optimizer_state(optimizer, save_dir, optim_state_dict=optim_state_dict)
     if scheduler is not None:
         save_scheduler_state(scheduler, save_dir)
 
 
 def load_training_state(
-    checkpoint_dir: Path, optimizer: Optimizer, scheduler: LRScheduler | None
+    checkpoint_dir: Path, optimizer: Optimizer, scheduler: LRScheduler | None, load_optimizer: bool = True
 ) -> tuple[int, Optimizer, LRScheduler | None]:
     """
     Loads the training step, optimizer state, scheduler state, and rng state.
@@ -153,6 +209,10 @@ def load_training_state(
         checkpoint_dir (Path): The checkpoint directory. Should contain a 'training_state' dir.
         optimizer (Optimizer): The optimizer to load the state_dict to.
         scheduler (LRScheduler | None): The scheduler to load the state_dict to (can be None).
+        load_optimizer (bool, optional): Whether to load the optimizer state from disk. Defaults to
+            True. Set to False under FSDP, where the sharded optimizer state must be loaded after
+            `accelerator.prepare()` via `load_fsdp_optimizer_state` (the optimizer is returned
+            untouched here).
 
     Raises:
         NotADirectoryError: If 'checkpoint_dir' doesn't contain a 'training_state' dir
@@ -167,8 +227,119 @@ def load_training_state(
 
     load_rng_state(training_state_dir)
     step = load_training_step(training_state_dir)
-    optimizer = load_optimizer_state(optimizer, training_state_dir)
+    if load_optimizer:
+        optimizer = load_optimizer_state(optimizer, training_state_dir)
     if scheduler is not None:
         scheduler = load_scheduler_state(scheduler, training_state_dir)
 
     return step, optimizer, scheduler
+
+
+def gather_fsdp_state_dicts(model, optimizer) -> tuple[dict, dict]:
+    """Gather the full (unsharded) model and optimizer state dicts under FSDP.
+
+    `model.state_dict()` and `FSDP.optim_state_dict(...)` are cross-rank collectives, so this must be
+    called on *every* rank with the prepared (FSDP-wrapped) `model` and `optimizer`. With
+    `rank0_only=True` and `offload_to_cpu=True`, every rank runs the all-gather but only rank 0
+    materializes the full dicts (the others get empty dicts) and they are kept on CPU to bound GPU
+    memory. The returned optimizer state dict is keyed by parameter FQNs and is world-size
+    independent; `load_fsdp_optimizer_state` reshards it on resume.
+
+    Returns:
+        (model_state_dict, optim_state_dict): full dicts on rank 0, empty dicts on other ranks.
+    """
+    from torch.distributed.fsdp import (
+        FullOptimStateDictConfig,
+        FullStateDictConfig,
+        FullyShardedDataParallel as FSDP,  # noqa F401
+        StateDictType,
+    )
+
+    state_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+    optim_cfg = FullOptimStateDictConfig(offload_to_cpu=True, rank0_only=True)
+    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, state_cfg, optim_cfg):
+        model_state_dict = model.state_dict()
+        optim_state_dict = FSDP.optim_state_dict(model, optimizer)
+    return model_state_dict, optim_state_dict
+
+
+def load_fsdp_optimizer_state(model, optimizer, checkpoint_dir: Path) -> None:
+    """Load the FSDP optimizer state (saved as safetensors) and reshard it into the optimizer.
+
+    This is a cross-rank collective and must be called on every rank *after* `accelerator.prepare()`
+    with the prepared (FSDP-wrapped) `model` and `optimizer`. The saved state is the full,
+    world-size-independent optimizer state (keyed by parameter FQNs); `FSDP.optim_state_dict_to_load`
+    reshards it to the current FSDP topology, so resume on a different number of GPUs works.
+    """
+    from torch.distributed.fsdp import (
+        FullOptimStateDictConfig,
+        FullStateDictConfig,
+        FullyShardedDataParallel as FSDP,  # noqa F401
+        StateDictType,
+    )
+
+    # Every rank reads the same full state from the (shared) checkpoint dir, so rank0_only=False.
+    full_osd = load_optimizer_state_dict(checkpoint_dir / TRAINING_STATE_DIR)
+    state_cfg = FullStateDictConfig(rank0_only=False)
+    optim_cfg = FullOptimStateDictConfig(rank0_only=False)
+    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, state_cfg, optim_cfg):
+        sharded_osd = FSDP.optim_state_dict_to_load(model=model, optim=optimizer, optim_state_dict=full_osd)
+    optimizer.load_state_dict(sharded_osd)
+
+
+def push_checkpoint_to_hub(
+    checkpoint_dir: Path,
+    repo_id: str,
+    *,
+    private: bool | None = None,
+) -> None:
+    """Upload a saved checkpoint directory to the Hub under checkpoints/<name>/.
+
+    Called once per save step when save_checkpoint_to_hub is enabled, so a
+    timed-out or crashed run still leaves recoverable checkpoints on the Hub.
+    The model repo is created idempotently, and the commit is tagged with the
+    checkpoint step so a checkpoint can be recovered with
+    --policy.pretrained_revision=<step> instead of a commit sha.
+    """
+    api = HfApi()
+    api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
+    commit = api.upload_folder(
+        folder_path=str(checkpoint_dir),
+        repo_id=repo_id,
+        repo_type="model",
+        path_in_repo=f"checkpoints/{checkpoint_dir.name}",
+        commit_message=f"checkpoint {checkpoint_dir.name}",
+    )
+    api.create_tag(
+        repo_id=repo_id,
+        tag=checkpoint_dir.name,
+        revision=commit.oid,
+        repo_type="model",
+        exist_ok=True,
+    )
+
+
+def resolve_resume_checkpoint(repo_id: str, output_dir: Path) -> Path:
+    """Download the latest checkpoint of a Hub training repo into a local run dir.
+
+    The symmetric counterpart to `push_checkpoint_to_hub`: given a model repo holding
+    `checkpoints/<step>/{pretrained_model,training_state}` subtrees, download the highest-numbered step
+    into `output_dir/checkpoints/<step>/`, recreate the local `last` symlink, and return that local
+    checkpoint dir. Used to resume training from the Hub on a machine (or HF Jobs pod) that does not
+    have the original local run dir.
+    """
+    latest = find_latest_hub_checkpoint(repo_id)
+    if latest is None:
+        raise FileNotFoundError(
+            f"No checkpoint found in '{repo_id}' under '{CHECKPOINTS_DIR}/'. "
+            "Was the run trained with --save_checkpoint_to_hub?"
+        )
+    snapshot_download(
+        repo_id=repo_id,
+        repo_type="model",
+        allow_patterns=f"{latest}/*",
+        local_dir=str(output_dir),
+    )
+    checkpoint_dir = output_dir / latest
+    update_last_checkpoint(checkpoint_dir)
+    return checkpoint_dir
