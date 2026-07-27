@@ -13,14 +13,51 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import lerobot.datasets.streaming_dataset as streaming_dataset_module
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.utils.constants import ACTION
 from tests.fixtures.constants import DUMMY_REPO_ID
+
+
+@pytest.mark.parametrize("token", ["hf_test_token", True, False])
+@pytest.mark.parametrize("from_local", [False, True])
+def test_streaming_dataset_forwards_token_to_metadata_without_retaining_it(
+    tmp_path, monkeypatch, token, from_local
+):
+    requested_root = tmp_path / "local" if from_local else None
+    metadata = SimpleNamespace(
+        repo_id=DUMMY_REPO_ID,
+        root=requested_root or tmp_path / "snapshot",
+        revision=streaming_dataset_module.CODEBASE_VERSION,
+        _version=streaming_dataset_module.CODEBASE_VERSION,
+        features={},
+        total_episodes=0,
+        video_keys=[],
+        depth_keys=[],
+        image_keys=[],
+        rescale_depth_stats=Mock(),
+    )
+    metadata_cls = Mock(return_value=metadata)
+    monkeypatch.setattr(streaming_dataset_module, "LeRobotDatasetMetadata", metadata_cls)
+
+    dataset = StreamingLeRobotDataset(DUMMY_REPO_ID, root=requested_root, token=token)
+
+    metadata_cls.assert_called_once_with(
+        DUMMY_REPO_ID,
+        requested_root,
+        streaming_dataset_module.CODEBASE_VERSION,
+        force_cache_sync=False,
+        token=token,
+    )
+    assert not hasattr(dataset, "_token")
 
 
 def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):

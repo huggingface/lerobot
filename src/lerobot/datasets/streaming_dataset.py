@@ -120,6 +120,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         prefetch_episodes: int = 8,
         byte_budget_gb: float = 8.0,
         repeat: bool = False,
+        *,
+        token: str | bool | None = None,
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -153,6 +155,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             repeat (bool, optional): Repeat rank-local exact-coverage epochs without yielding a
                 short final training batch. The training factory enables this; direct iteration is
                 finite by default.
+            token: Authentication token used while streaming this dataset from
+                the Hub. Pass a string token, ``True`` to require the locally
+                stored token, ``False`` to disable authentication, or ``None``
+                to use the Hugging Face Hub default. The token is not retained
+                on the dataset instance after initialization.
         """
         super().__init__()
         self.repo_id = repo_id
@@ -203,7 +210,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         # Load metadata
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self._requested_root, self.revision, force_cache_sync=force_cache_sync
+            self.repo_id,
+            self._requested_root,
+            self.revision,
+            force_cache_sync=force_cache_sync,
+            token=token,
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
