@@ -20,7 +20,7 @@ import pytest
 
 from lerobot.configs import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.scripts.lerobot_train import _validate_accelerator_configuration
+from lerobot.scripts.lerobot_train import _compute_samples_per_s, _validate_accelerator_configuration
 
 
 class MockAccelerator:
@@ -54,6 +54,18 @@ def test_accelerator_configuration_rejects_dataloader_sync():
 
     with pytest.raises(ValueError, match="sync_with_dataloader=False"):
         _validate_accelerator_configuration(accelerator, configured_steps=4)
+
+
+def test_samples_per_s_is_unaffected_by_accumulation():
+    # Throughput is a property of the hardware, not of how many micro-batches are folded into one
+    # optimizer step: accumulating 4 x 32 samples at the same per-micro-batch time processes exactly
+    # as many samples per second as a single 32-sample step does.
+    baseline = _compute_samples_per_s(32, micro_batch_time_s=0.5, gradient_accumulation_steps=1)
+
+    assert baseline == pytest.approx(64.0)
+    assert _compute_samples_per_s(
+        32 * 4, micro_batch_time_s=0.5, gradient_accumulation_steps=4
+    ) == pytest.approx(baseline)
 
 
 @pytest.mark.parametrize("gradient_accumulation_steps", [0, -1])

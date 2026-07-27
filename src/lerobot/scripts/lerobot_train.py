@@ -204,6 +204,18 @@ def _validate_accelerator_configuration(accelerator: "Accelerator", configured_s
     return gradient_accumulation_steps
 
 
+def _compute_samples_per_s(
+    effective_batch_size: int, micro_batch_time_s: float, gradient_accumulation_steps: int
+) -> float:
+    """Cluster-wide throughput, in samples per second.
+
+    `effective_batch_size` spans a whole optimizer step, whereas the timing meters are updated once
+    per forward/backward pass, so their average covers a single micro-batch and an optimizer step
+    spans `gradient_accumulation_steps` of them.
+    """
+    return effective_batch_size / (micro_batch_time_s * gradient_accumulation_steps)
+
+
 def _make_policy_for_training(
     policy_cfg: PreTrainedConfig,
     ds_meta: Any,
@@ -502,15 +514,17 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             absolute_to_relative_idx=dataset.absolute_to_relative_idx,
         )
         if cfg.resume and step > 0:
-            # The resume offset depends on the (num_processes, batch_size) that produced `step`, so
-            # use the values recorded in the checkpoint (falling back to the current ones for older
-            # ckpts that did not store them).
+            # The resume offset depends on the (num_processes, batch_size, gradient_accumulation_steps)
+            # that produced `step`, so use the values recorded in the checkpoint. Older checkpoints
+            # recorded neither num_processes nor batch_size, so those fall back to the current run;
+            # a missing accumulation factor instead means the checkpoint predates accumulation
+            # support altogether, i.e. it consumed exactly one batch per optimizer step.
             saved_num_processes = load_training_num_processes(cfg.checkpoint_path)
             saved_batch_size = load_training_batch_size(cfg.checkpoint_path)
             saved_grad_accum = load_training_gradient_accumulation_steps(cfg.checkpoint_path)
             ckpt_num_processes = saved_num_processes or accelerator.num_processes
             ckpt_batch_size = saved_batch_size or cfg.batch_size
-            ckpt_grad_accum = saved_grad_accum or gradient_accumulation_steps
+            ckpt_grad_accum = 1 if saved_grad_accum is None else saved_grad_accum
             if is_main_process and saved_num_processes not in (None, accelerator.num_processes):
                 logging.warning(
                     f"Resuming with num_processes={accelerator.num_processes} but the checkpoint was "
@@ -523,12 +537,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     f"batch_size={saved_batch_size}. The data order resumes at the right epoch/offset, "
                     "but per-rank sample-exactness requires the same batch size."
                 )
-            if is_main_process and saved_grad_accum not in (None, gradient_accumulation_steps):
+            if is_main_process and ckpt_grad_accum != gradient_accumulation_steps:
                 logging.warning(
                     f"Resuming with gradient_accumulation_steps={gradient_accumulation_steps} but the "
-                    f"checkpoint was written with gradient_accumulation_steps={saved_grad_accum}. The "
-                    "data order resumes at the right epoch/offset, but per-rank sample-exactness "
-                    "requires the same accumulation factor."
+                    f"checkpoint ran with gradient_accumulation_steps={ckpt_grad_accum}. The data order "
+                    "resumes at the right epoch/offset, but the logged sample/epoch counts extrapolate "
+                    "the current factor over the steps already taken."
                 )
             sampler_state = compute_sampler_state(
                 step,
@@ -692,11 +706,13 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             # Collective reduce must run on every rank, before the main-process gate below.
             train_tracker.reduce_across_ranks()
             if is_main_process:
-                # Cluster-wide throughput, derived from the already-reduced (max) step time so it
-                # reflects the slowest rank — which is what actually gates the next iteration.
-                step_time = train_tracker.update_s.avg + train_tracker.dataloading_s.avg
-                if step_time > 0:
-                    train_tracker.samples_per_s = effective_batch_size / step_time
+                # Cluster-wide throughput, derived from the already-reduced (max) micro-batch time
+                # so it reflects the slowest rank — which is what actually gates the next iteration.
+                micro_batch_time = train_tracker.update_s.avg + train_tracker.dataloading_s.avg
+                if micro_batch_time > 0:
+                    train_tracker.samples_per_s = _compute_samples_per_s(
+                        effective_batch_size, micro_batch_time, gradient_accumulation_steps
+                    )
                 logging.info(train_tracker)
                 if wandb_logger:
                     # Policy sub-losses (latent_loss, action_loss, ...) are aggregated into the
