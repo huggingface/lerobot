@@ -26,8 +26,17 @@ import tempfile
 from pathlib import Path
 
 import pytest
+import torch
+from safetensors.torch import save_file
 
-from lerobot.processor.pipeline import DataProcessorPipeline, ProcessorMigrationError
+from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.processor.pipeline import (
+    DataProcessorPipeline,
+    ProcessorMigrationError,
+    ProcessorStep,
+    ProcessorStepRegistry,
+)
+from lerobot.types import EnvTransition
 
 # Simplified Config Loading Tests
 
@@ -96,6 +105,140 @@ def test_load_config_nonexistent_path_tries_hub():
     # This path doesn't exist locally, should try Hub
     with pytest.raises(FileNotFoundError, match="on the HuggingFace Hub"):
         DataProcessorPipeline._load_config("nonexistent/path", "processor.json", {})
+
+
+def test_from_pretrained_local_directory_missing_state_does_not_call_hub(monkeypatch):
+    """Local processor dirs must fail locally when a state file is missing."""
+
+    @ProcessorStepRegistry.register("local_missing_state_step")
+    class LocalMissingStateStep(ProcessorStep):
+        def __call__(self, transition: EnvTransition) -> EnvTransition:
+            return transition
+
+        def transform_features(
+            self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+        ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+            return features
+
+        def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+            pass
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config = {
+                "name": "LocalMissingStatePipeline",
+                "steps": [{"registry_name": "local_missing_state_step", "state_file": "missing.safetensors"}],
+            }
+            (tmp_path / "processor.json").write_text(json.dumps(config))
+
+            def fail_hub_download(*args, **kwargs):
+                pytest.fail("local missing processor state should not call hf_hub_download")
+
+            monkeypatch.setattr("lerobot.processor.pipeline.hf_hub_download", fail_hub_download)
+
+            with pytest.raises(FileNotFoundError, match="missing.safetensors.*local processor pipeline"):
+                DataProcessorPipeline.from_pretrained(tmp_path, config_filename="processor.json")
+    finally:
+        ProcessorStepRegistry.unregister("local_missing_state_step")
+
+
+def test_from_pretrained_local_config_file_missing_state_does_not_call_hub(monkeypatch):
+    """Local single-file processor configs must also keep missing state resolution local."""
+
+    @ProcessorStepRegistry.register("local_file_missing_state_step")
+    class LocalFileMissingStateStep(ProcessorStep):
+        def __call__(self, transition: EnvTransition) -> EnvTransition:
+            return transition
+
+        def transform_features(
+            self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+        ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+            return features
+
+        def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+            pass
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config_path = tmp_path / "processor.json"
+            config = {
+                "name": "LocalFileMissingStatePipeline",
+                "steps": [
+                    {"registry_name": "local_file_missing_state_step", "state_file": "missing.safetensors"}
+                ],
+            }
+            config_path.write_text(json.dumps(config))
+
+            def fail_hub_download(*args, **kwargs):
+                pytest.fail("local missing processor state should not call hf_hub_download")
+
+            monkeypatch.setattr("lerobot.processor.pipeline.hf_hub_download", fail_hub_download)
+
+            with pytest.raises(FileNotFoundError, match="missing.safetensors.*local processor pipeline"):
+                DataProcessorPipeline.from_pretrained(config_path, config_filename="ignored.json")
+    finally:
+        ProcessorStepRegistry.unregister("local_file_missing_state_step")
+
+
+def test_from_pretrained_hub_source_missing_local_state_still_calls_hub(monkeypatch, tmp_path):
+    """Hub sources still fall back to hf_hub_download for state files."""
+
+    @ProcessorStepRegistry.register("hub_state_step")
+    class HubStateStep(ProcessorStep):
+        def __init__(self):
+            self.value = torch.tensor(0)
+
+        def __call__(self, transition: EnvTransition) -> EnvTransition:
+            return transition
+
+        def transform_features(
+            self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+        ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+            return features
+
+        def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+            self.value = state["value"]
+
+    try:
+        state_path = tmp_path / "downloaded.safetensors"
+        save_file({"value": torch.tensor(7)}, state_path)
+        loaded_config = {
+            "name": "HubStatePipeline",
+            "steps": [{"registry_name": "hub_state_step", "state_file": "hub_state.safetensors"}],
+        }
+        calls = []
+
+        def fake_load_config(cls, model_id, config_filename, hub_download_kwargs):
+            return loaded_config, tmp_path / "hub_cache"
+
+        def fake_hub_download(**kwargs):
+            calls.append(kwargs)
+            return str(state_path)
+
+        monkeypatch.setattr(DataProcessorPipeline, "_load_config", classmethod(fake_load_config))
+        monkeypatch.setattr("lerobot.processor.pipeline.hf_hub_download", fake_hub_download)
+
+        pipeline = DataProcessorPipeline.from_pretrained("user/repo", config_filename="processor.json")
+
+        assert calls == [
+            {
+                "repo_id": "user/repo",
+                "filename": "hub_state.safetensors",
+                "repo_type": "model",
+                "force_download": False,
+                "resume_download": None,
+                "proxies": None,
+                "token": None,
+                "cache_dir": None,
+                "local_files_only": False,
+                "revision": None,
+            }
+        ]
+        assert pipeline.steps[0].value.item() == 7
+    finally:
+        ProcessorStepRegistry.unregister("hub_state_step")
 
 
 # Config Validation Tests
