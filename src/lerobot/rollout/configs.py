@@ -121,6 +121,35 @@ class DAggerPedalConfig:
     upload: str = "KEY_C"
 
 
+@RolloutStrategyConfig.register_subclass("episodic")
+@dataclass
+class EpisodicStrategyConfig(RolloutStrategyConfig):
+    """Episode-oriented recording that mirrors the behavior of ``lerobot-record``.
+
+    Records ``dataset.num_episodes`` episodes of maximum ``dataset.episode_time_s`` each.
+    After each episode, runs ``dataset.reset_time_s`` seconds of reset time.
+
+    Keyboard controls:
+        Right arrow  — end current episode or reset phase early
+        Left arrow   — discard current episode and re-record
+        Escape       — stop recording session
+
+    In between episodes:
+    - if there is no teleop leader, the robot is held at its initial joint positions captured at startup.
+    - else, the robot is moved smoothly to the position of the teleop leader.
+    """
+
+    # This only applies if there are no teleop leaders specified.
+    # When True (default), moves the robot back to the joint positions captured at startup.
+    # Otherwise, leave the robot in its current position.
+    reset_to_initial_position: bool = True
+
+    # Whether to turn on or off the leader -> follower smooth handover behavior.
+    # When False, fallback to follower -> leader handover.
+    # Note that leader -> follower handover is only supported when the leader has `send_feedback` capability.
+    smooth_leader_to_follower_handover: bool = True
+
+
 @RolloutStrategyConfig.register_subclass("dagger")
 @dataclass
 class DAggerStrategyConfig(RolloutStrategyConfig):
@@ -197,11 +226,14 @@ class RolloutConfig:
     device: str | None = None
     task: str = ""
     display_data: bool = False
-    # Display data on a remote Rerun server
+    # Visualization backend used when display_data is True: "rerun" or "foxglove".
+    display_mode: str = "rerun"
+    # For "rerun": IP of a remote server to send to. For "foxglove": interface to bind the WebSocket
+    # server to (127.0.0.1 for local only, 0.0.0.0 for all interfaces).
     display_ip: str | None = None
-    # Port of the remote Rerun server
+    # For "rerun": port of the remote server. For "foxglove": port to bind the WebSocket server to.
     display_port: int | None = None
-    # Whether to display compressed images in Rerun
+    # Whether to display compressed (JPEG) images instead of raw frames
     display_compressed_images: bool = False
     # Use vocal synthesis to read events
     play_sounds: bool = True
@@ -229,7 +261,13 @@ class RolloutConfig:
 
         # TODO(Steven): DAgger shouldn't require a dataset (user may want to just rollout+intervene without recording), but for now we require it to simplify the implementation.
         needs_dataset = isinstance(
-            self.strategy, (SentryStrategyConfig, HighlightStrategyConfig, DAggerStrategyConfig)
+            self.strategy,
+            (
+                SentryStrategyConfig,
+                HighlightStrategyConfig,
+                DAggerStrategyConfig,
+                EpisodicStrategyConfig,
+            ),
         )
         if needs_dataset and (self.dataset is None or not self.dataset.repo_id):
             raise ValueError(f"{self.strategy.type} strategy requires --dataset.repo_id to be set")

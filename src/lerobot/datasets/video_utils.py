@@ -39,10 +39,16 @@ from datasets.features.features import register_feature
 from PIL import Image
 
 from lerobot.configs import (
+    DepthEncoderConfig,
+    RGBEncoderConfig,
     VideoEncoderConfig,
-    camera_encoder_defaults,
+    depth_encoder_defaults,
+    rgb_encoder_defaults,
 )
 from lerobot.utils.import_utils import get_safe_default_video_backend
+
+from .depth_utils import quantize_depth
+from .pyav_utils import get_pix_fmt_channels
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +59,7 @@ def decode_video_frames(
     tolerance_s: float,
     backend: str | None = None,
     return_uint8: bool = False,
+    is_depth: bool = False,
 ) -> torch.Tensor:
     """
     Decodes video frames using the specified backend.
@@ -64,23 +71,35 @@ def decode_video_frames(
         backend (str, optional): Backend to use for decoding. Defaults to "torchcodec" when available
             in the platform; otherwise, defaults to "pyav". The legacy value "video_reader" is
             accepted for one release as an alias for "pyav" and will be removed in a future version.
-        return_uint8 (bool): If True, return raw uint8 frames without float32 normalization.
+        return_uint8 (bool): For RGB videos, if True return raw uint8 frames without float32 normalization.
             This reduces memory for DataLoader IPC; normalization can be done on GPU afterward.
+        is_depth (bool): Set to True if the video is a depth map (1 channel, uint12).
 
     Returns:
-        torch.Tensor: Decoded frames (float32 in [0,1] by default, or uint8 if return_uint8=True).
+        torch.Tensor: Decoded frames (RGB: float32 in [0,1] by default, or uint8 if return_uint8=True, Depth: uint12).
 
     Currently supports torchcodec on cpu and pyav.
     """
+    if backend != "pyav" and is_depth:
+        logger.debug("Decoding depth maps is only supported with the 'pyav' backend, falling back to pyav.")
+        # We do not actually return uint8 here, but we avoid the 255 normalization step.
+        return decode_video_frames_pyav(
+            video_path, timestamps, tolerance_s, return_uint8=False, is_depth=True
+        )
+
     if backend is None:
         backend = get_safe_default_video_backend()
     if backend == "torchcodec":
         return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s, return_uint8=return_uint8)
     elif backend == "pyav":
-        return decode_video_frames_pyav(video_path, timestamps, tolerance_s, return_uint8=return_uint8)
+        return decode_video_frames_pyav(
+            video_path, timestamps, tolerance_s, return_uint8=return_uint8, is_depth=is_depth
+        )
     elif backend == "video_reader":
         logger.warning("backend='video_reader' is deprecated and now aliases to 'pyav'.")
-        return decode_video_frames_pyav(video_path, timestamps, tolerance_s, return_uint8=return_uint8)
+        return decode_video_frames_pyav(
+            video_path, timestamps, tolerance_s, return_uint8=return_uint8, is_depth=is_depth
+        )
     else:
         raise ValueError(f"Unsupported video backend: {backend}")
 
@@ -91,6 +110,7 @@ def decode_video_frames_pyav(
     tolerance_s: float,
     log_loaded_timestamps: bool = False,
     return_uint8: bool = False,
+    is_depth: bool = False,
 ) -> torch.Tensor:
     """Loads frames associated to the requested timestamps of a video using PyAV.
 
@@ -109,8 +129,9 @@ def decode_video_frames_pyav(
         tolerance_s: Allowed deviation in seconds between a queried timestamp and the closest
             decoded frame.
         log_loaded_timestamps: When True, log every decoded frame's timestamp at INFO level.
-        return_uint8: When True, return raw uint8 frames (C, H, W). Otherwise, return float32 in
-            [0, 1] range.
+        return_uint8: For RGB videos, if True return raw uint8 frames (C, H, W).
+            Otherwise, return float32 in [0, 1] range.
+        is_depth: Set to True if the video is a depth map (1 channel, uint12).
 
     Returns:
         torch.Tensor of shape (len(timestamps), C, H, W).
@@ -132,7 +153,13 @@ def decode_video_frames_pyav(
     # https://pyav.basswood-io.com/docs/stable/api/container.html#av.container.InputContainer.seek
     with av.open(video_path) as container:
         stream = container.streams.video[0]
-        container.seek(int(first_ts * av.time_base), backward=True)
+        # Seek to the nearest keyframe at or before `first_ts` with a 1 frame margin
+        container.seek(
+            round(first_ts / stream.time_base) - 1,
+            backward=True,
+            any_frame=False,
+            stream=stream,
+        )
 
         for frame in container.decode(stream):
             if frame.pts is None:
@@ -140,9 +167,13 @@ def decode_video_frames_pyav(
             current_ts = float(frame.pts * stream.time_base)
             if log_loaded_timestamps:
                 logger.info(f"frame loaded at timestamp={current_ts:.4f}")
-            # Convert to CHW uint8 to match torchcodec's output layout.
-            arr = frame.to_ndarray(format="rgb24")  # H, W, 3
-            loaded_frames.append(torch.from_numpy(arr).permute(2, 0, 1).contiguous())
+            if is_depth:
+                arr = frame.to_ndarray(format="gray12le")  # (H, W) uint12
+                loaded_frames.append(torch.from_numpy(arr).unsqueeze(0).contiguous())
+            else:
+                arr = frame.to_ndarray(format="rgb24")  # (H, W, 3)
+                # Convert to CHW uint8 to match torchcodec's output layout.
+                loaded_frames.append(torch.from_numpy(arr).permute(2, 0, 1).contiguous())
             loaded_ts.append(current_ts)
             if current_ts >= last_ts:
                 break
@@ -185,7 +216,7 @@ def decode_video_frames_pyav(
             f"number of queried timestamps ({len(timestamps)})"
         )
 
-    if return_uint8:
+    if return_uint8 or is_depth:
         return closest_frames
 
     # convert to the pytorch format which is float32 in [0,1] range (and channel first)
@@ -406,17 +437,38 @@ def encode_video_frames(
     imgs_dir: Path | str,
     video_path: Path | str,
     fps: int,
-    camera_encoder: VideoEncoderConfig | None = None,
+    video_encoder: VideoEncoderConfig | None = None,
     encoder_threads: int | None = None,
     *,
     log_level: int | None = av.logging.WARNING,
     overwrite: bool = False,
 ) -> None:
-    """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
-    if camera_encoder is None:
-        camera_encoder = camera_encoder_defaults()
-    vcodec = camera_encoder.vcodec
-    pix_fmt = camera_encoder.pix_fmt
+    """Encode a directory of image frames into an MP4 video.
+
+    When ``video_encoder`` is a :class:`~lerobot.configs.video.DepthEncoderConfig`,
+    frames are read from ``.tiff`` files and quantized to 12-bit depth codes using the
+    encoder's ``depth_min`` / ``depth_max`` / ``shift`` / ``use_log``; otherwise ``.png``
+    RGB frames are encoded directly.
+
+    Args:
+        imgs_dir: Directory containing the frames to encode, named ``frame-000000``
+            onwards (``.png`` for RGB, ``.tiff`` for depth).
+        video_path: Output path for the encoded ``.mp4`` file.
+        fps: Frame rate of the output video.
+        video_encoder: Encoder settings (codec, pixel format, quality, ...). When
+            ``None``, :func:`rgb_encoder_defaults` is used. Pass a
+            :class:`~lerobot.configs.video.DepthEncoderConfig` to encode depth frames.
+        encoder_threads: Per-encoder thread count forwarded to the codec. ``None``
+            lets the codec decide.
+        log_level: libav log level to set while encoding, or ``None`` to leave the
+            current logging configuration unchanged.
+        overwrite: When ``False`` and ``video_path`` already exists, skip encoding and
+            log a warning. When ``True``, re-encode and replace the existing file.
+    """
+    if video_encoder is None:
+        video_encoder = rgb_encoder_defaults()
+    vcodec = video_encoder.vcodec
+    pix_fmt = video_encoder.pix_fmt
 
     video_path = Path(video_path)
     imgs_dir = Path(imgs_dir)
@@ -428,17 +480,19 @@ def encode_video_frames(
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Get input frames
-    template = "frame-" + ("[0-9]" * 6) + ".png"
+    is_depth = isinstance(video_encoder, DepthEncoderConfig)
+    suffix = ".png" if not is_depth else ".tiff"
+    template = "frame-" + ("[0-9]" * 6) + suffix
     input_list = sorted(
         glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("-")[-1].split(".")[0])
     )
 
     if len(input_list) == 0:
-        raise FileNotFoundError(f"No images found in {imgs_dir}.")
+        raise FileNotFoundError(f"No images with suffix {suffix} found in {imgs_dir}.")
     with Image.open(input_list[0]) as dummy_image:
         width, height = dummy_image.size
 
-    video_options = camera_encoder.get_codec_options(encoder_threads, as_strings=True)
+    video_options = video_encoder.get_codec_options(encoder_threads, as_strings=True)
 
     # Set logging level
     if log_level is not None:
@@ -455,8 +509,19 @@ def encode_video_frames(
         # Loop through input frames and encode them
         for input_data in input_list:
             with Image.open(input_data) as input_image:
-                input_image = input_image.convert("RGB")
-                input_frame = av.VideoFrame.from_image(input_image)
+                if is_depth:
+                    input_frame = quantize_depth(
+                        np.array(input_image),
+                        depth_min=video_encoder.depth_min,
+                        depth_max=video_encoder.depth_max,
+                        shift=video_encoder.shift,
+                        use_log=video_encoder.use_log,
+                        pix_fmt=video_encoder.pix_fmt,
+                        video_backend="pyav",
+                    )
+                else:
+                    input_image = input_image.convert("RGB")
+                    input_frame = av.VideoFrame.from_image(input_image)
                 packet = output_stream.encode(input_frame)
                 if packet:
                     output.mux(packet)
@@ -477,23 +542,32 @@ def encode_video_frames(
 def reencode_video(
     input_video_path: Path | str,
     output_video_path: Path | str,
-    camera_encoder: VideoEncoderConfig | None = None,
+    video_encoder: VideoEncoderConfig | None = None,
     encoder_threads: int | None = None,
     log_level: int | None = av.logging.WARNING,
     overwrite: bool = False,
+    start_time_s: float | None = None,
+    end_time_s: float | None = None,
 ) -> None:
-    """Re-encode a video file using the given encoder configuration.
+    """Re-encode a video file, optionally trimming it to ``[start_time_s, end_time_s)``.
 
     Args:
         input_video_path: Existing video file to read.
         output_video_path: Path for the re-encoded file.
-        camera_encoder: Encoder configuration. Defaults to :func:`camera_encoder_defaults`.
+        video_encoder: Encoder configuration. Defaults to :func:`rgb_encoder_defaults`.
         encoder_threads: Optional thread count forwarded to :meth:`VideoEncoderConfig.get_codec_options`.
         log_level: libav log level while encoding, or ``None`` to leave logging unchanged. Defaults to WARNING.
         overwrite: When ``False`` and ``output_video_path`` already exists, skip and log a warning.
+        start_time_s: When set, trim the output to start at this timestamp (seconds).
+        end_time_s: When set, trim the output to end at this timestamp (seconds, exclusive).
     """
 
-    camera_encoder = camera_encoder or camera_encoder_defaults()
+    video_encoder = video_encoder or rgb_encoder_defaults()
+
+    if (start_time_s is not None and start_time_s < 0) or (end_time_s is not None and end_time_s < 0):
+        raise ValueError(f"Trim times must be non-negative, got start={start_time_s}, end={end_time_s}.")
+    if start_time_s is not None and end_time_s is not None and end_time_s <= start_time_s:
+        raise ValueError(f"end_time_s ({end_time_s}) must be greater than start_time_s ({start_time_s}).")
 
     output_video_path = Path(output_video_path)
 
@@ -503,9 +577,9 @@ def reencode_video(
 
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
 
-    video_options = camera_encoder.get_codec_options(encoder_threads, as_strings=True)
-    vcodec = camera_encoder.vcodec
-    pix_fmt = camera_encoder.pix_fmt
+    video_options = video_encoder.get_codec_options(encoder_threads, as_strings=True)
+    vcodec = video_encoder.vcodec
+    pix_fmt = video_encoder.pix_fmt
 
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_named_file:
         tmp_output_video_path = tmp_named_file.name
@@ -526,6 +600,10 @@ def reencode_video(
             width = int(in_stream.width)
             height = int(in_stream.height)
 
+            # Seek to the keyframe at or before start_time_s to avoid reading from the start.
+            if start_time_s is not None:
+                src.seek(int(start_time_s * av.time_base), backward=True)
+
             with av.open(
                 tmp_output_video_path,
                 mode="w",
@@ -539,7 +617,14 @@ def reencode_video(
                 out_stream.height = height
 
                 for frame in src.decode(in_stream):
+                    frame_time_s = frame.time
+                    if start_time_s is not None and frame_time_s < start_time_s:
+                        continue
+                    if end_time_s is not None and frame_time_s >= end_time_s:
+                        break
                     frame = frame.reformat(width=width, height=height, format=pix_fmt)
+                    if start_time_s is not None:
+                        frame.pts = None  # reset timestamps so the trimmed output starts at t=0
                     packet = out_stream.encode(frame)
                     if packet:
                         dst.mux(packet)
@@ -676,22 +761,21 @@ class _CameraEncoderThread(threading.Thread):
         self,
         video_path: Path,
         fps: int,
-        vcodec: str,
-        pix_fmt: str,
-        codec_options: dict[str, str],
+        video_encoder: VideoEncoderConfig,
         frame_queue: queue.Queue,
         result_queue: queue.Queue,
         stop_event: threading.Event,
+        encoder_threads: int | None = None,
     ):
         super().__init__(daemon=True)
         self.video_path = video_path
         self.fps = fps
-        self.vcodec = vcodec
-        self.pix_fmt = pix_fmt
-        self.codec_options = codec_options
+        self.video_encoder = video_encoder
+        self.is_depth = isinstance(video_encoder, DepthEncoderConfig)
         self.frame_queue = frame_queue
         self.result_queue = result_queue
         self.stop_event = stop_event
+        self.encoder_threads = encoder_threads
 
     def run(self) -> None:
         from .compute_stats import RunningQuantileStats, auto_downsample_height_width
@@ -716,12 +800,12 @@ class _CameraEncoderThread(threading.Thread):
                     # Sentinel: flush and close
                     break
 
-                # Ensure HWC uint8 numpy array
+                # Ensure HWC (RGB or depth) uint8 (RGB only) numpy array
                 if isinstance(frame_data, np.ndarray):
-                    if frame_data.ndim == 3 and frame_data.shape[0] == 3:
+                    if frame_data.ndim == 3 and frame_data.shape[0] in (1, 3):
                         # CHW -> HWC
                         frame_data = frame_data.transpose(1, 2, 0)
-                    if frame_data.dtype != np.uint8:
+                    if not self.is_depth and frame_data.dtype != np.uint8:
                         frame_data = (frame_data * 255).astype(np.uint8)
 
                 # Open container on first frame (to get width/height)
@@ -729,15 +813,29 @@ class _CameraEncoderThread(threading.Thread):
                     height, width = frame_data.shape[:2]
                     Path(self.video_path).parent.mkdir(parents=True, exist_ok=True)
                     container = av.open(str(self.video_path), "w")
-                    output_stream = container.add_stream(self.vcodec, self.fps, options=self.codec_options)
-                    output_stream.pix_fmt = self.pix_fmt
+                    output_stream = container.add_stream(
+                        self.video_encoder.vcodec,
+                        self.fps,
+                        options=self.video_encoder.get_codec_options(self.encoder_threads, as_strings=True),
+                    )
+                    output_stream.pix_fmt = self.video_encoder.pix_fmt
                     output_stream.width = width
                     output_stream.height = height
                     output_stream.time_base = Fraction(1, self.fps)
 
                 # Encode frame with explicit timestamps
-                pil_img = Image.fromarray(frame_data)
-                video_frame = av.VideoFrame.from_image(pil_img)
+                if not self.is_depth:
+                    pil_img = Image.fromarray(frame_data)
+                    video_frame = av.VideoFrame.from_image(pil_img)
+                else:
+                    video_frame = quantize_depth(
+                        frame_data,
+                        depth_min=self.video_encoder.depth_min,
+                        depth_max=self.video_encoder.depth_max,
+                        shift=self.video_encoder.shift,
+                        use_log=self.video_encoder.use_log,
+                        video_backend=self.video_encoder.video_backend,
+                    )
                 video_frame.pts = frame_count
                 video_frame.time_base = Fraction(1, self.fps)
                 packet = output_stream.encode(video_frame)
@@ -795,22 +893,27 @@ class StreamingVideoEncoder:
     def __init__(
         self,
         fps: int,
-        camera_encoder: VideoEncoderConfig | None = None,
+        rgb_encoder: RGBEncoderConfig | None = None,
+        depth_encoder: DepthEncoderConfig | None = None,
         queue_maxsize: int = 30,
         encoder_threads: int | None = None,
     ):
         """
         Args:
             fps: Frames per second for the output videos.
-            camera_encoder: Video encoder settings applied to all cameras.
-                When ``None``, :func:`camera_encoder_defaults` is used.
-            encoder_threads: Number of encoder threads (global setting).
-                ``None`` lets the codec decide.
+            rgb_encoder: Video encoder settings applied to all RGB cameras.
+                When ``None``, :func:`rgb_encoder_defaults` is used.
+            depth_encoder: Video encoder settings applied to all depth cameras,
+                including the depth quantization parameters. When ``None``,
+                :func:`depth_encoder_defaults` is used.
             queue_maxsize: Max frames to buffer per camera before
                 back-pressure drops frames.
+            encoder_threads: Number of encoder threads (global setting).
+                ``None`` lets the codec decide.
         """
         self.fps = fps
-        self._camera_encoder = camera_encoder or camera_encoder_defaults()
+        self._rgb_encoder = rgb_encoder or rgb_encoder_defaults()
+        self._depth_encoder = depth_encoder or depth_encoder_defaults()
         self._encoder_threads = encoder_threads
         self.queue_maxsize = queue_maxsize
 
@@ -823,17 +926,24 @@ class StreamingVideoEncoder:
         self._episode_active = False
         self._closed = False
 
-    def start_episode(self, video_keys: list[str], temp_dir: Path) -> None:
+    def start_episode(
+        self, video_keys: list[str], temp_dir: Path, depth_video_keys: list[str] | None = None
+    ) -> None:
         """Start encoder threads for a new episode.
 
         Args:
             video_keys: List of video feature keys (e.g. ["observation.images.laptop"])
             temp_dir: Base directory for temporary MP4 files
+            depth_video_keys: List of video or image feature keys that carry depth maps (e.g.
+                ["observation.images.laptop_depth"]).  Defaults to ``[]`` (no depth keys).
         """
         if self._episode_active:
             self.cancel_episode()
 
         self._dropped_frames.clear()
+
+        if depth_video_keys is None:
+            depth_video_keys = []
 
         for video_key in video_keys:
             frame_queue: queue.Queue = queue.Queue(maxsize=self.queue_maxsize)
@@ -843,17 +953,15 @@ class StreamingVideoEncoder:
             temp_video_dir = Path(tempfile.mkdtemp(dir=temp_dir))
             video_path = temp_video_dir / f"{video_key.replace('/', '_')}_streaming.mp4"
 
-            vcodec = self._camera_encoder.vcodec
-            codec_options = self._camera_encoder.get_codec_options(self._encoder_threads, as_strings=True)
+            encoder = self._depth_encoder if video_key in depth_video_keys else self._rgb_encoder
             encoder_thread = _CameraEncoderThread(
                 video_path=video_path,
                 fps=self.fps,
-                vcodec=vcodec,
-                pix_fmt=self._camera_encoder.pix_fmt,
-                codec_options=codec_options,
+                video_encoder=encoder,
                 frame_queue=frame_queue,
                 result_queue=result_queue,
                 stop_event=stop_event,
+                encoder_threads=self._encoder_threads,
             )
             encoder_thread.start()
 
@@ -1060,15 +1168,23 @@ def get_audio_info(video_path: Path | str) -> dict:
 
 def get_video_info(
     video_path: Path | str,
-    camera_encoder: VideoEncoderConfig | None = None,
+    video_encoder: VideoEncoderConfig | None = None,
 ) -> dict:
     """Build the ``video.*`` / ``audio.*`` info dict persisted in ``info.json``.
 
     Args:
         video_path: Path to the encoded video file to probe.
-        camera_encoder: If provided, record the exact encoder settings used to encode this
+        video_encoder: If provided, record the exact encoder settings used to encode this
             video. Stream-derived values take precedence — encoder fields are only written for keys
-            not already populated from the video file itself.
+            not already populated from the video file itself. When a
+            :class:`~lerobot.configs.video.DepthEncoderConfig` is passed, the depth
+            quantization parameters (``depth_min`` / ``depth_max`` / ``shift`` /
+            ``use_log``) are recorded so frames can be dequantized on read.
+
+    Returns:
+        The ``video.*`` / ``audio.*`` info dict, including ``is_depth_map`` which is
+        ``True`` only when ``video_encoder`` is a
+        :class:`~lerobot.configs.video.DepthEncoderConfig`.
     """
     logging.getLogger("libav").setLevel(av.logging.WARNING)
 
@@ -1086,13 +1202,10 @@ def get_video_info(
         video_info["video.width"] = video_stream.width
         video_info["video.codec"] = video_stream.codec.canonical_name
         video_info["video.pix_fmt"] = video_stream.pix_fmt
-        video_info["video.is_depth_map"] = False
 
         # Calculate fps from r_frame_rate
         video_info["video.fps"] = int(video_stream.base_rate)
-
-        pixel_channels = get_video_pixel_channels(video_stream.pix_fmt)
-        video_info["video.channels"] = pixel_channels
+        video_info["video.channels"] = get_pix_fmt_channels(video_stream.pix_fmt)
 
     # Reset logging level
     av.logging.restore_default_callback()
@@ -1101,25 +1214,16 @@ def get_video_info(
     video_info.update(**get_audio_info(video_path))
 
     # Add additional encoder configuration if provided
-    if camera_encoder is not None:
-        for field_name, field_value in asdict(camera_encoder).items():
+    if video_encoder is not None:
+        for field_name, field_value in asdict(video_encoder).items():
             # vcodec is already populated from the video stream
             if field_name == "vcodec":
                 continue
             video_info.setdefault(f"video.{field_name}", field_value)
 
+    video_info["is_depth_map"] = isinstance(video_encoder, DepthEncoderConfig)
+
     return video_info
-
-
-def get_video_pixel_channels(pix_fmt: str) -> int:
-    if "gray" in pix_fmt or "depth" in pix_fmt or "monochrome" in pix_fmt:
-        return 1
-    elif "rgba" in pix_fmt or "yuva" in pix_fmt:
-        return 4
-    elif "rgb" in pix_fmt or "yuv" in pix_fmt:
-        return 3
-    else:
-        raise ValueError("Unknown format")
 
 
 def get_video_duration_in_s(video_path: Path | str) -> float:
@@ -1182,10 +1286,13 @@ class VideoEncodingManager:
         img_dir = self.dataset.root / "images"
         if img_dir.exists():
             png_files = list(img_dir.rglob("*.png"))
-            if len(png_files) == 0:
+            tiff_files = list(img_dir.rglob("*.tiff"))
+            if len(png_files) == 0 and len(tiff_files) == 0:
                 shutil.rmtree(img_dir)
                 logger.debug("Cleaned up empty images directory")
             else:
-                logger.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
+                logger.debug(
+                    f"Images directory is not empty, containing {len(png_files)} PNG and {len(tiff_files)} TIFF files"
+                )
 
         return False  # Don't suppress the original exception

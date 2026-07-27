@@ -44,7 +44,7 @@ lerobot-record \
   --dataset.num_episodes=5 \
   --dataset.single_task="Grab the black cube" \
   --dataset.streaming_encoding=true \
-  # --dataset.camera_encoder.vcodec=auto \
+  # --dataset.rgb_encoder.vcodec=auto \
   --dataset.encoder_threads=2
 ```
 
@@ -275,7 +275,7 @@ A converter aggregates per‑episode files into larger shards and writes episode
 pip install "https://github.com/huggingface/lerobot/archive/33cad37054c2b594ceba57463e8f11ee374fa93c.zip"
 
 # Convert an existing v2.1 dataset hosted on the Hub:
-python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=<HF_USER/DATASET_ID>
+python -m lerobot.scripts.convert_dataset_v21_to_v30 --repo-id=<HF_USER/DATASET_ID>
 ```
 
 **What it does**

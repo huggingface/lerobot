@@ -21,18 +21,19 @@ from __future__ import annotations
 import builtins
 import logging
 import os
+import re
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import torch
-import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 
+from ..common.vla_utils import pad_vector, resize_with_pad
 from ..pretrained import PreTrainedPolicy, T
 from ..utils import populate_queues
 from .action_hub import build_action_space
@@ -41,11 +42,10 @@ from .soft_transformer import SoftPromptedTransformer
 
 # Florence2 config and modeling depend on transformers
 if TYPE_CHECKING or _transformers_available:
-    from .configuration_florence2 import Florence2Config
-    from .modeling_florence2 import Florence2ForConditionalGeneration
+    from transformers import Florence2Config, Florence2Model
 else:
     Florence2Config = None
-    Florence2ForConditionalGeneration = None
+    Florence2Model = None
 
 
 class XVLAModel(nn.Module):
@@ -83,15 +83,11 @@ class XVLAModel(nn.Module):
         self.dim_action = self.action_space.dim_action
         self.dim_proprio = proprio_dim
 
-        self.vlm = Florence2ForConditionalGeneration(florence_config)
-        if hasattr(self.vlm, "language_model"):
-            lm = self.vlm.language_model
-            if hasattr(lm, "model") and hasattr(lm.model, "decoder"):
-                del lm.model.decoder
-            if hasattr(lm, "lm_head"):
-                del lm.lm_head
+        self.vlm = Florence2Model(florence_config)
+        # XVLA only uses the encoder-side path of Florence-2; drop the text decoder entirely.
+        del self.vlm.language_model.decoder
 
-        projection_dim = getattr(self.vlm.config, "projection_dim", None)
+        projection_dim = getattr(florence_config.vision_config, "projection_dim", None)
         if projection_dim is None:
             raise ValueError("Florence2 config must provide `projection_dim` for multimodal fusion.")
 
@@ -143,12 +139,12 @@ class XVLAModel(nn.Module):
         if self.config.freeze_language_encoder and hasattr(self.vlm, "language_model"):
             lm = self.vlm.language_model
             # Freeze encoder
-            if hasattr(lm, "model") and hasattr(lm.model, "encoder"):
-                for param in lm.model.encoder.parameters():
+            if hasattr(lm, "encoder"):
+                for param in lm.encoder.parameters():
                     param.requires_grad = False
             # Freeze shared embeddings
-            if hasattr(lm, "model") and hasattr(lm.model, "shared"):
-                for param in lm.model.shared.parameters():
+            if hasattr(lm, "shared"):
+                for param in lm.shared.parameters():
                     param.requires_grad = False
 
         # Freeze or unfreeze policy transformer
@@ -179,19 +175,19 @@ class XVLAModel(nn.Module):
             raise ValueError("At least one image view must be valid per batch.")
 
         valid_images = flat_images[flat_mask]
-        valid_feats = self.vlm._encode_image(valid_images)
+        valid_feats = self.vlm.get_image_features(valid_images).pooler_output
         tokens_per_view, hidden_dim = valid_feats.shape[1:]
 
         image_features = valid_feats.new_zeros((batch_size * num_views, tokens_per_view, hidden_dim))
         image_features[flat_mask] = valid_feats
         image_features = image_features.view(batch_size, num_views, tokens_per_view, hidden_dim)
         inputs_embeds = self.vlm.get_input_embeddings()(input_ids)
-        merged_embeds, attention_mask = self.vlm._merge_input_ids_with_image_features(
-            image_features[:, 0],
-            inputs_embeds,
-        )
 
-        enc_out = self.vlm.language_model.model.encoder(
+        # XVLA prepends the primary view's image tokens to the text embeddings and attends to everything.
+        merged_embeds = torch.cat([image_features[:, 0], inputs_embeds], dim=1)
+        attention_mask = torch.ones(merged_embeds.shape[:2], dtype=torch.long, device=merged_embeds.device)
+
+        enc_out = self.vlm.language_model.encoder(
             attention_mask=attention_mask,
             inputs_embeds=merged_embeds,
         )[0]
@@ -310,7 +306,7 @@ class XVLAPolicy(PreTrainedPolicy):
         state = batch[OBS_STATE]
         if state.ndim > 2:
             state = state[:, -1, :]
-        return pad_vector(state, self.model.dim_proprio)
+        return pad_vector(state, self.model.dim_proprio, truncate=True)
 
     def _prepare_images(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
         present_img_keys = [key for key in self.config.image_features if key in batch]
@@ -325,7 +321,7 @@ class XVLAPolicy(PreTrainedPolicy):
         for key in present_img_keys:
             img = batch[key][:, -1] if batch[key].ndim == 5 else batch[key]
             if self.config.resize_imgs_with_padding is not None:
-                img = resize_with_pad(img, *self.config.resize_imgs_with_padding)
+                img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0.0)
             images.append(img)
             masks.append(torch.ones(img.size(0), dtype=torch.bool, device=img.device))
 
@@ -375,7 +371,7 @@ class XVLAPolicy(PreTrainedPolicy):
             actions = actions.unsqueeze(1)
         actions = pad_tensor_along_dim(actions, self.config.chunk_size, dim=1)
         if actions.shape[-1] != self.model.dim_action:
-            actions = pad_vector(actions, self.model.dim_action)
+            actions = pad_vector(actions, self.model.dim_action, truncate=True)
         return actions
 
     def _build_model_inputs(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
@@ -488,13 +484,24 @@ class XVLAPolicy(PreTrainedPolicy):
                 raise FileNotFoundError(f"model.safetensors not found on the Hub at {model_id}") from e
 
         logging.info(f"Loading checkpoint from {model_file}")
-        # step 3: load state dict
+        # step 3: load state dict, remapping checkpoints saved with the old vendored
+        # Florence-2 module layout to the native transformers layout
+        # (see openpi model.py `_fix_pytorch_state_dict_keys` / pi0 for the same pattern)
         state_dict = safetensors.torch.load_file(model_file)
-        encoder_key = "model.vlm.language_model.model.encoder.embed_tokens.weight"
-        shared_key = "model.vlm.language_model.model.shared.weight"
-        if encoder_key in state_dict:
-            state_dict[shared_key] = state_dict[encoder_key]
-            # or deepcopy
+        if _is_vendored_florence_state_dict(state_dict):
+            logging.info(
+                "Detected XVLA checkpoint with the old vendored Florence-2 layout; "
+                "remapping keys to the native transformers layout."
+            )
+            state_dict = _remap_vendored_florence_state_dict(state_dict)
+        # safetensors deduplicates tied tensors on save: restore whichever alias of the
+        # shared/encoder token embedding is missing
+        shared_key = "model.vlm.language_model.shared.weight"
+        embed_key = "model.vlm.language_model.encoder.embed_tokens.weight"
+        if shared_key in state_dict and embed_key not in state_dict:
+            state_dict[embed_key] = state_dict[shared_key]
+        elif embed_key in state_dict and shared_key not in state_dict:
+            state_dict[shared_key] = state_dict[embed_key]
         # step 4: load into instance
         instance.load_state_dict(state_dict, strict=True)
         logging.info("Loaded XVLA checkpoint")
@@ -506,41 +513,69 @@ class XVLAPolicy(PreTrainedPolicy):
         return instance
 
 
-def resize_with_pad(img: torch.Tensor, height: int, width: int, pad_value: float = 0.0) -> torch.Tensor:
-    if img.ndim != 4:
-        raise ValueError(f"(b,c,h,w) expected, but got {img.shape}")
-
-    current_height, current_width = img.shape[2:]
-    if current_height == height and current_width == width:
-        return img
-
-    ratio = max(current_width / width, current_height / height)
-    resized_height = int(current_height / ratio)
-    resized_width = int(current_width / ratio)
-    resized_img = F.interpolate(
-        img, size=(resized_height, resized_width), mode="bilinear", align_corners=False
+def _is_vendored_florence_state_dict(state_dict: dict[str, Tensor], prefix: str = "model.vlm.") -> bool:
+    """Detect XVLA checkpoints saved with the old vendored (Microsoft remote-code) Florence-2
+    module layout by their signature keys."""
+    return f"{prefix}image_projection" in state_dict or any(
+        key.startswith(f"{prefix}language_model.model.") for key in state_dict
     )
 
-    pad_height = max(0, height - resized_height)
-    pad_width = max(0, width - resized_width)
-    padded_img = F.pad(resized_img, (pad_width, 0, pad_height, 0), value=pad_value)
-    return padded_img
 
+def _remap_vendored_florence_state_dict(
+    state_dict: dict[str, Tensor], prefix: str = "model.vlm."
+) -> dict[str, Tensor]:
+    """Remap a state dict from the vendored (Microsoft remote-code) Florence-2 layout to the
+    native ``transformers.models.florence2`` layout.
 
-def pad_vector(vector: Tensor, new_dim: int) -> Tensor:
-    if vector.shape[-1] == new_dim:
-        return vector
-    if new_dim == 0:
-        shape = list(vector.shape)
-        shape[-1] = 0
-        return vector.new_zeros(*shape)
-    shape = list(vector.shape)
-    current_dim = shape[-1]
-    shape[-1] = new_dim
-    new_vector = vector.new_zeros(*shape)
-    length = min(current_dim, new_dim)
-    new_vector[..., :length] = vector[..., :length]
-    return new_vector
+    Only keys under ``prefix`` are rewritten; everything else passes through unchanged.
+    """
+    vision = re.escape(prefix) + r"vision_tower\."
+    block = vision + r"blocks\.(\d+)\.(\d+)\.(spatial_block|channel_block)\."
+    new_block = prefix + r"vision_tower.blocks.\1.\2.\3."
+    rules: list[tuple[str, str]] = [
+        # DaViT stem: ConvEmbed.proj -> Florence2VisionConvEmbed.conv
+        (vision + r"convs\.(\d+)\.proj\.", prefix + r"vision_tower.convs.\1.conv."),
+        # DaViT blocks: the PreNorm/Mlp wrappers are flattened in the native implementation
+        (block + r"conv1\.fn\.dw\.", new_block + r"conv1."),
+        (block + r"conv2\.fn\.dw\.", new_block + r"conv2."),
+        (block + r"(window_attn|channel_attn)\.norm\.", new_block + r"norm1."),
+        (block + r"(window_attn|channel_attn)\.fn\.", new_block + r"\4."),
+        (block + r"ffn\.norm\.", new_block + r"norm2."),
+        (block + r"ffn\.fn\.net\.", new_block + r"ffn."),
+        # multimodal projection layers moved into a dedicated projector module
+        (re.escape(prefix) + r"image_proj_norm\.", prefix + r"multi_modal_projector.image_proj_norm."),
+        (
+            re.escape(prefix) + r"image_pos_embed\.",
+            prefix + r"multi_modal_projector.image_position_embed.",
+        ),
+        (
+            re.escape(prefix) + r"visual_temporal_embed\.",
+            prefix + r"multi_modal_projector.visual_temporal_embed.",
+        ),
+        # language model: Florence2LanguageForConditionalGeneration.model -> BartModel
+        (re.escape(prefix) + r"language_model\.model\.", prefix + r"language_model."),
+    ]
+
+    remapped: dict[str, Tensor] = {}
+    for key, value in state_dict.items():
+        if key == f"{prefix}language_model.final_logits_bias":
+            # generation-only buffer of the vendored language model; the native BartModel has none
+            continue
+        if key == f"{prefix}image_projection":
+            # vendored: nn.Parameter of shape (embed_dim, projection_dim), used as `x @ p`;
+            # native: nn.Linear(embed_dim, projection_dim, bias=False) whose weight is the transpose
+            remapped[f"{prefix}multi_modal_projector.image_projection.weight"] = value.transpose(
+                0, 1
+            ).contiguous()
+            continue
+        new_key = key
+        for pattern, replacement in rules:
+            new_key, count = re.subn(pattern, replacement, new_key, count=1)
+            if count:
+                break
+        remapped[new_key] = value
+
+    return remapped
 
 
 def pad_tensor_along_dim(tensor: Tensor, target_len: int, dim: int = 1) -> Tensor:

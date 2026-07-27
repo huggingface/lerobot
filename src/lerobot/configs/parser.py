@@ -255,8 +255,7 @@ def extract_path_fields_from_config(config_path: str, path_fields: list[str]) ->
             remaining = config_data[field]
             if remaining:
                 _config_yaml_overrides[field] = _flatten_to_cli_args(remaining)
-            else:
-                del config_data[field]
+            del config_data[field]
             modified = True
 
     if not modified:
@@ -311,7 +310,13 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                     cli_args = filter_arg("config_path", cli_args)
                     cfg = argtype.from_pretrained(config_path_cli, cli_args=cli_args)
                 else:
-                    cfg = draccus.parse(config_class=argtype, config_path=config_path, args=cli_args)
+                    if config_path_cli:
+                        cli_args = filter_arg("config_path", cli_args)
+                    cfg = draccus.parse(
+                        config_class=argtype,
+                        config_path=config_path_cli or config_path,
+                        args=cli_args,
+                    )
             response = fn(cfg, *args, **kwargs)
             return response
 
