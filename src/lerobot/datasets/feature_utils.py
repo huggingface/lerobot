@@ -336,7 +336,7 @@ def validate_feature_image_or_video(
 
     Args:
         name (str): The name of the feature.
-        expected_shape (list[str]): The expected shape (C, H, W).
+        expected_shape (list[str]): The expected shape, e.g. (C, H, W) or (H, W, C).
         value: The image data to validate.
 
     Returns:

@@ -91,16 +91,33 @@ def test_get_observation_converts_to_degrees(follower):
 
 
 def test_send_action_clips_to_joint_limits(follower):
-    # shoulder_pan limit is (-145, 145); request beyond the upper bound.
+    # shoulder_pan limit is (-150, 150); request beyond the upper bound.
     returned = follower.send_action({"shoulder_pan.pos": 999.0})
-    assert returned["shoulder_pan.pos"] == 145.0
-    follower.motors["shoulder_pan"].send_pos_vel.assert_called_once()
+    assert returned["shoulder_pan.pos"] == 150.0
+    # Default control_mode is "mit", so arm joints are driven via send_mit.
+    follower.motors["shoulder_pan"].send_mit.assert_called_once()
 
 
 def test_send_action_routes_gripper_to_force_pos(follower):
     follower.send_action({"gripper.pos": -10.0})
     follower.motors["gripper"].send_force_pos.assert_called_once()
     follower.motors["gripper"].send_pos_vel.assert_not_called()
+
+
+def test_gripper_mit_mode_routes_to_send_mit():
+    bus_mock = _make_bus_mock()
+    with (
+        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
+        patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
+        patch(f"{_MODULE}.MotorBridgeMode", MagicMock()),
+    ):
+        controller_cls.from_dm_serial.return_value = bus_mock
+        cfg = RebotB601FollowerRobotConfig(port="/dev/null", gripper_control_mode="mit")
+        robot = RebotB601Follower(cfg)
+        robot.connect(calibrate=False)
+        robot.send_action({"gripper.pos": -10.0})
+        robot.motors["gripper"].send_mit.assert_called_once()
+        robot.motors["gripper"].send_force_pos.assert_not_called()
 
 
 def test_bimanual_prefixes_features():
