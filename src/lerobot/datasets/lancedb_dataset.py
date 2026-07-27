@@ -19,11 +19,11 @@ Layout of a Lance-backed dataset (video layout):
 
 ```
 <root>/
-  meta/         # standard LeRobot v3.0 metadata (info.json, stats.json, tasks, episodes)
+  meta/             # standard LeRobot v3.0 metadata (info.json, stats.json, tasks, episodes)
   frames.lance      # one row per frame: tabular features, no pixels
   videos.lance      # one row per source video file: encoded bytes in a blob v2
                     # column + byte-index columns (see VIDEO_INDEX_COLUMNS)
-  meta_files.lance  # one row per meta/ file (path, bytes): the transport for
+  meta.lance        # one row per meta/ file (path, bytes): the transport for
                     # object-store roots, materialized to a local meta/ cache
 ```
 
@@ -69,7 +69,7 @@ from .video_utils import FrameTimestampError
 
 FRAMES_TABLE = "frames"
 VIDEOS_TABLE = "videos"
-META_TABLE = "meta_files"
+META_TABLE = "meta"
 VIDEO_BLOB_COLUMN = "video_bytes"
 # Byte-index columns on the videos table, written at conversion time by
 # ``build_video_byte_index``. They let the remote reader translate a frame
