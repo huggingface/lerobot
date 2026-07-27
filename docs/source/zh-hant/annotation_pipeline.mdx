@@ -91,7 +91,7 @@ contact sheets）重新檢視該區間，並以第一次的標籤（first label�
 覆蓋範圍，因此**每個影格恰好有一個作用中的子任務（every frame has exactly one active subtask）**。
 生產環境的設定（production settings，單一攝影機、帶時間戳的拼貼表 timestamped contact sheets、
 自動視窗化的子任務產生 auto-windowed subtask generation）請參閱
-[`run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotations/run_hf_job.py)。
+[在 Hugging Face Jobs 上執行](#%E5%9C%A8-hugging-face-jobs-%E4%B8%8A%E5%9F%B7%E8%A1%8Crunning-on-hugging-face-jobs)。
 
 ### 工具（tools）
 
@@ -110,28 +110,67 @@ contact sheets）重新檢視該區間，並以第一次的標籤（first label�
 
 ## 在 Hugging Face Jobs 上執行（running on Hugging Face Jobs）
 
-標註（annotation）在 [Hugging Face Jobs](https://huggingface.co/docs/hub/en/jobs) 上執行。
-此 repo 提供一個啟動器腳本（launcher script），你可複製並微調（tweak）您的資料集（dataset）：
+標註一個真實資料集（dataset）需要一顆大到足以提供 VLM 服務的 GPU，因此
+`lerobot-annotate` 可以把自己派送（dispatch）到
+[Hugging Face Jobs](https://huggingface.co/docs/hub/en/jobs) — 與
+`lerobot-train` 相同。在你原本會於本機執行的確切指令上加上
+`--job.target=<flavor>`，它就會改在該硬體上執行：
 
 ```bash
-HF_TOKEN=hf_... uv run python examples/annotations/run_hf_job.py
+hf auth login   # 執行一次
+
+uv run lerobot-annotate \
+    --repo_id=user/my_dataset \
+    --new_repo_id=user/my_dataset_annotated \
+    --push_to_hub=true \
+    --vlm.model_id=Qwen/Qwen3.6-27B \
+    --vlm.num_gpus=1 \
+    --vlm.serve_command="vllm serve Qwen/Qwen3.6-27B --tensor-parallel-size 1 \
+        --max-model-len 32768 --gpu-memory-utilization 0.8 \
+        --uvicorn-log-level warning --port {port}" \
+    --vlm.serve_ready_timeout_s=1800 \
+    --vlm.chat_template_kwargs='{"enable_thinking": false}' \
+    --job.target=h200
 ```
 
-[`run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotations/run_hf_job.py)
-會啟動一個單 GPU 的 `h200` 工作（大型資料集 dataset 可提升為 `h200x4`），
-它會：
+這會提交一個單 GPU 的 `h200` 工作（job），它會：
 
-1. 安裝 `lerobot`（來自 `main`）以及標註的額外套件（annotation extras），
-2. 每個 GPU 啟動一個 vLLM 伺服器（使用 `vllm/vllm-openai` 映像 image），並
-   透過 OpenAI 相容 API （OpenAI-compatible API）驅動它，
-3. 使用 `lerobot-annotate` 在整個資料集（dataset）上執行
-   `plan` / `interjections` / `vqa` 模組（modules），
+1. 從 `vllm/vllm-openai` 映像（image）開始，並在其上安裝 `lerobot`，
+2. 每個 GPU 啟動一個 vLLM 伺服器，並透過 OpenAI 相容 API（OpenAI-compatible API）驅動它，
+3. 在整個資料集（dataset）上執行 `plan` / `interjections` / `vqa` 模組（modules），
 4. 若設定 `--push_to_hub=true`，會將結果上傳到 `--new_repo_id`（若未設定，
    則原地寫回 `--repo_id`）。
 
-若要使用不同的資料集（dataset）、模型（model）或 hub repo，請編輯腳本（script）中的 `CMD`
-區塊。那裡的每個旗標（flag）都直接對映到一個 `lerobot-annotate` 旗標
-（執行 `lerobot-annotate --help` 取得完整清單）。
+此指令會串流（streams）該工作的日誌（logs）；按 `Ctrl-C` 會脫離（detaches）而不會取消它。
+以 `hf jobs hardware` 列出可用的 flavor 及其定價（pricing）。
+
+<Tip warning={true}>
+
+Qwen3.6 出廠即啟用思考（thinking），這會吃掉標註器（annotator）為其 JSON 答案所需的
+token 預算 — `--vlm.chat_template_kwargs='{"enable_thinking": false}'`
+會將它關閉。若未設定 `--push_to_hub=true`，標註後的資料集（dataset）會在
+pod 結束時被丟棄。
+
+</Tip>
+
+### 工作選項（job options）
+
+| 旗標（flag）        | 預設                      | 作用（what it does）                                                          |
+| ------------------- | ------------------------- | ----------------------------------------------------------------------------- |
+| `--job.target`      | `local`                   | 要執行的 HF Jobs flavor（例如 `h200`、`h200x4`）。省略/`local` 會在本機執行。 |
+| `--job.image`       | `vllm/vllm-openai:latest` | pod 的執行期映像（runtime image）。                                           |
+| `--job.timeout`     | `2h`                      | 實際時間上限（wall-clock cap）。大型資料集請調高。                            |
+| `--job.detach`      | `false`                   | 提交後即結束，而非串流日誌（streaming logs）。                                |
+| `--job.lerobot_ref` | `main`                    | 安裝到 pod 上的 lerobot 之 Git ref — 指向某分支以測試變更。                   |
+| `--job.tags`        | `[]`                      | 加在工作與其推送的任何資料集上的額外標籤（tags，`lerobot` 一律會加上）。      |
+
+若要處理更大的資料集（dataset），請擴充到 `h200x4`，並相應提高
+`--vlm.parallel_servers` / `--vlm.num_gpus`，同時以例如 `--job.timeout=8h`
+給工作更多餘裕（headroom）。
+
+遠端執行（remote runs）需要 `--repo_id`（pod 會從 Hub 拉取資料集；
+`--root` 指的是只有你機器上才有的目錄）。只存在於你本機快取（local cache）中的
+資料集（dataset）會先被推送到一個**私有（private）** repo。
 
 ## 主要選項（key options）
 

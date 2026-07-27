@@ -165,6 +165,8 @@ class MyPolicy(PreTrainedPolicy):
 
 LeRobot 使用 `PolicyProcessorPipeline` 在您的策略（policy）前後對輸入（inputs）進行正規化（normalize）、對輸出（outputs）進行反正規化（de-normalize）。如需具體參考，請查看 [`processor_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/processor_act.py) 或 [`processor_diffusion.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/diffusion/processor_diffusion.py)。
 
+這裡請特別留意：processor 是最常見的可重現性（reproducibility）痛點。正規化模式（normalization mode：`IDENTITY` vs `MEAN_STD` vs `MIN_MAX` vs `QUANTILES`/`QUANTILE10`）或哪些特徵（features）該被正規化若對不上，訓練與評估都不會報錯，卻會悄悄毀掉結果。請確認這些模式與檢查點（checkpoint）當初訓練時的設定一致、所需的統計量存在（例如 `QUANTILES` 需要 `q01`/`q99`），並讓前處理器（pre-processor）與後處理器（post-processor）維持一致。
+
 ```python
 # processor_my_policy.py
 from typing import Any
@@ -304,7 +306,9 @@ src/lerobot/policies/my_policy/
 
 ### 大型／可選相依套件（heavy / optional dependencies）
 
-大多數策略都需要一個大型骨幹（heavy backbone）網路（transformers、diffusers，或特定的 VLM SDK）。慣例是**兩段式把關（two-step gating）**：在模組頂端用 `TYPE_CHECKING` 保護的匯入，以及在建構子（constructor）中用 `require_package` 做執行期檢查。[`modeling_diffusion.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/diffusion/modeling_diffusion.py) 是標準參考：
+大多數策略都需要一個大型骨幹（heavy backbone）網路（transformers、diffusers，或特定的 VLM SDK）。只要既有實作存在，請優先從例如 `transformers` 或 `diffusers` 載入它，而非在專案內（in-tree）重新實作該架構。
+
+慣例是**兩段式把關（two-step gating）**：在模組頂端用 `TYPE_CHECKING` 保護的匯入，以及在建構子（constructor）中用 `require_package` 做執行期檢查。[`modeling_diffusion.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/diffusion/modeling_diffusion.py) 是標準參考：
 
 ```python
 from typing import TYPE_CHECKING
@@ -374,6 +378,7 @@ Reproduce: `lerobot-eval --policy.path=lerobot/<policy>_libero --env.type=libero
 - [ ] 選用相依套件放在 `[project.optional-dependencies]` 的額外相依項（extra）與 `TYPE_CHECKING + require_package` 把關（guard）之後。
 - [ ] 已更新 `tests/policies/`；已提交向後相容性產物（backward-compat artifact）與策略專屬測試（policy-specific tests）。
 - [ ] `src/lerobot/policies/<name>/README.md` 以符號連結指向（symlinked into） `docs/source/policy_<name>_README.md`；已撰寫面向使用者的 `docs/source/<name>.mdx` 並加入 `_toctree.yml`。
+- [ ] `lerobot-train --policy.type my_policy ...` 能端到端（end-to-end）至少跑上幾步，並存下一個可由 `lerobot-eval` 或 `lerobot-rollout` 載入並執行的檢查點（checkpoint）。
 - [ ] `templates/lerobot_modelcard_template.md` 已有您策略的描述項目（description entry）與 `policy_docs` 連結。
 - [ ] 根目錄 `README.md` 的模型表格（models table）已在正確分類下列出您的策略（your policy），並連結到您的文件頁面。
 - [ ] 策略 MDX 中至少有一個可重現的基準測試評估（reproducible benchmark eval），並附上已發布的檢查點（published checkpoint: 模擬基準測試 sim benchmark，或實體機器人資料集＋檢查點）。

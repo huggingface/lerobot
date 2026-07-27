@@ -252,6 +252,10 @@ lerobot-dataset-viz \
     --episode-index 0
 ```
 
+若是私有或受管制（private or gated）的資料集，請先以 `hf auth login` 進行認證，或設定
+`HF_TOKEN` 環境變數。Hub 用戶端（client）便會自動探索該憑證（credential），
+不需要傳入 token 引數。
+
 **從本機資料夾：**
 加上 `--root` 選項並設定 `--mode local`。例如，要在 `./my_local_data_dir/lerobot/pusht` 中搜尋：
 
