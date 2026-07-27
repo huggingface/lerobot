@@ -90,6 +90,16 @@ def test_rotation_6d_roundtrip(rotvec):
     torch.testing.assert_close(recovered, source, atol=2e-6, rtol=2e-6)
 
 
+def test_rotation_6d_uses_umi_first_two_rows():
+    source = torch.tensor([[0.0, 0.0, math.pi / 2]], dtype=torch.float64)
+
+    encoded = rotvec_to_rotation_6d(source)
+
+    expected = torch.tensor([[0.0, -1.0, 0.0, 1.0, 0.0, 0.0]], dtype=torch.float64)
+    torch.testing.assert_close(encoded, expected, atol=1e-7, rtol=1e-7)
+    torch.testing.assert_close(rotation_6d_to_rotvec(expected), source, atol=1e-7, rtol=1e-7)
+
+
 def test_se3_6d_pose_roundtrip_for_batched_chunks():
     torch.manual_seed(1)
     reference = torch.randn(4, 6)

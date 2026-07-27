@@ -57,7 +57,7 @@ class PI05Config(PreTrainedConfig):
     action_feature_names: list[str] | None = None
     # ``se3`` uses inv(T_current) @ T_target for each xyz+rotation-vector pose group.
     # ``se3_6d`` uses the same composition and expands each relative rotation
-    # vector to the continuous two-column 6-D rotation representation.
+    # vector to the continuous first-two-row 6-D rotation representation.
     # ``componentwise`` preserves the legacy action - state behavior.
     relative_pose_representation: str = "componentwise"
     relative_se3_pose_groups: list[list[int]] = field(default_factory=lambda: [list(range(6))])

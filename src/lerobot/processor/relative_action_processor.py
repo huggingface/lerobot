@@ -158,9 +158,9 @@ def _matrix_to_quaternion(matrix: Tensor) -> Tensor:
 
 
 def rotvec_to_rotation_6d(rotvec: Tensor) -> Tensor:
-    """Encode an axis-angle rotation as two rotation-matrix columns."""
+    """Encode an axis-angle rotation as the first two rotation-matrix rows."""
     matrix = _quaternion_to_matrix(_rotvec_to_quaternion(rotvec))
-    return torch.cat((matrix[..., :, 0], matrix[..., :, 1]), dim=-1)
+    return matrix[..., :2, :].reshape(matrix.shape[:-2] + (6,))
 
 
 def rotation_6d_to_rotvec(rotation_6d: Tensor) -> Tensor:
@@ -182,7 +182,7 @@ def rotation_6d_to_rotvec(rotation_6d: Tensor) -> Tensor:
         raise ValueError("Cannot decode a degenerate 6-D rotation prediction")
     second_unit = second_orthogonal / second_norm
     third_unit = torch.linalg.cross(first_unit, second_unit, dim=-1)
-    matrix = torch.stack((first_unit, second_unit, third_unit), dim=-1)
+    matrix = torch.stack((first_unit, second_unit, third_unit), dim=-2)
     return _quaternion_to_rotvec(_matrix_to_quaternion(matrix))
 
 
