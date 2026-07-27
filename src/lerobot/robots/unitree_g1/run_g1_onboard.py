@@ -139,6 +139,9 @@ def main() -> None:
     robot = UnitreeG1(cfg)
     logger.info("Connecting onboard robot (controller=%s, token=%s)...", args.controller, args.sonic_token_action)
     robot.connect()
+    # Note: with --sonic-token-action the SonicWholeBodyController holds a neutral
+    # (all-zero) token until the first laptop token arrives, then holds the last token
+    # between ticks -- see SonicWholeBodyController.token_mode (set from config).
 
     grippers: dict[str, Gripper] = {}
     if args.grippers:
