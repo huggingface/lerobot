@@ -229,6 +229,17 @@ class SonicWholeBodyController:
         # forwarded to the pipeline as ``delta_heading`` so turn commands take effect.
         self._heading = 0.0
 
+        # Token-interface state. ``token_mode`` is set True by the robot when the deploy
+        # is token-driven (``UnitreeG1Config.sonic_token_action``): the controller then
+        # holds a stable *neutral* (all-zero) token until the first real token arrives,
+        # and afterwards holds the *last* token received between ticks (the async
+        # controller runs ~50 Hz while a token VLA streams ~30 Hz). This lives here (not
+        # in the entry-point script) so it applies uniformly to run_g1_onboard,
+        # lerobot-rollout and the sim replays. ``token_mode`` stays False for the dense
+        # 34-D whole-body / OpenHLM path, which keeps its own "hold last target" idle.
+        self.token_mode = False
+        self._last_token: np.ndarray | None = None
+
         logger.info("SONIC ready (encoder/decoder, 34-D whole-body command path)")
 
     def _run_wholebody34(self, obs: dict, wb: np.ndarray) -> dict:
@@ -346,7 +357,15 @@ class SonicWholeBodyController:
         # Checked before the joint path so a token action takes precedence.
         token = _extract_token_from_action(action)
         if token is not None:
-            return self._startup_blend(obs, self._run_token(obs, token))
+            self._last_token = token
+        elif self._last_token is None and self.token_mode:
+            # Token-driven deploy, but no token has arrived yet: hold the neutral
+            # (all-zero) token, which the decoder maps to a stable neutral stance.
+            self._last_token = np.zeros(TOKEN_DIM, dtype=np.float32)
+        if self._last_token is not None:
+            # Either a fresh token this tick or the last one received (held between the
+            # ~30 Hz token stream and the ~50 Hz control loop).
+            return self._startup_blend(obs, self._run_token(obs, self._last_token))
 
         # Dense 34-D whole-body command (OpenHLM / pi0.5 joint interface): a single
         # vector per tick drives the mode-0 encoder reference directly. Until the
@@ -372,6 +391,8 @@ class SonicWholeBodyController:
         self._wb_traj.clear()
         self._wb_quat_traj.clear()
         self._heading = 0.0
+        # Drop the held token so token_mode re-seeds the neutral token after a reset.
+        self._last_token = None
 
     def shutdown(self):
         self._runtime.shutdown()
