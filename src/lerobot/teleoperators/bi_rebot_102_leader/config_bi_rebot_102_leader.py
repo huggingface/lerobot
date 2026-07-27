@@ -22,7 +22,7 @@ from ..rebot_102_leader import RebotArm102LeaderConfig
 
 @TeleoperatorConfig.register_subclass("bi_rebot_102_leader")
 @dataclass
-class BiRebotArm102LeaderConfig(TeleoperatorConfig):
+class BiRebot102LeaderConfig(TeleoperatorConfig):
     """Configuration class for the bimanual reBot Arm 102 leader teleoperator."""
 
     left_arm_config: RebotArm102LeaderConfig

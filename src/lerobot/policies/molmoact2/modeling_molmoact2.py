@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The Allen Institute for Artificial Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,9 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""MolmoAct2 policy for LeRobot.
+
+MolmoAct2 is a VLM-based robotics policy from Allen AI that combines a
+Molmo vision-language backbone with a per-layer flow-matching action expert
+for continuous action generation, plus an optional discrete action token
+head. This module wraps the vendored HF model implementation
+(``molmoact2_hf_model/``) into the LeRobot ``PreTrainedPolicy`` interface.
+
+Paper:  https://allenai.org/blog/molmoact2
+Code:   https://github.com/allenai/molmoact2
+"""
+
 from __future__ import annotations
 
 import json
+import logging
 import os
 import types
 from collections import deque
@@ -35,13 +46,58 @@ from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
 
 from ..rtc.modeling_rtc import RTCProcessor
-from .configuration_molmoact2 import MolmoAct2Config, _hf_token, _resolve_checkpoint_location
+from .configuration_molmoact2 import MolmoAct2Config
+
+logger = logging.getLogger(__name__)
+
+
+def _hf_token() -> str | None:
+    return os.environ.get("HF_TOKEN") or os.environ.get("HF_ACCESS_TOKEN")
+
+
+def _resolve_checkpoint_location(
+    checkpoint_path: str,
+    *,
+    revision: str | None = None,
+    force_download: bool = False,
+) -> str:
+    """Resolve a checkpoint path to a local directory, downloading from Hub if needed."""
+    checkpoint_path = str(checkpoint_path or "").strip()
+    if not checkpoint_path:
+        raise ValueError("MolmoAct2 policy requires `checkpoint_path`.")
+    from pathlib import Path
+
+    local_path = Path(checkpoint_path).expanduser()
+    if local_path.exists():
+        return str(local_path)
+    from huggingface_hub import snapshot_download
+
+    return snapshot_download(
+        repo_id=checkpoint_path,
+        repo_type="model",
+        revision=revision,
+        force_download=force_download,
+        ignore_patterns=["*.py", "*.pyc", "__pycache__/*"],
+        token=_hf_token(),
+    )
+
+
+def _torch_dtype(dtype: str) -> torch.dtype:
+    """Convert a dtype name string to a torch.dtype."""
+    if dtype == "float32":
+        return torch.float32
+    if dtype == "bfloat16":
+        return torch.bfloat16
+    if dtype == "float16":
+        return torch.float16
+    raise ValueError(f"Unsupported dtype: {dtype}")
+
 
 if TYPE_CHECKING or _transformers_available:
     from transformers.utils import SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME
 
-    from .hf_model.configuration_molmoact2 import MolmoAct2Config as HFMolmoAct2Config
-    from .hf_model.modeling_molmoact2 import MolmoAct2ForConditionalGeneration
+    from .molmoact2_hf_model.configuration_molmoact2 import MolmoAct2Config as HFMolmoAct2Config
+    from .molmoact2_hf_model.modeling_molmoact2 import MolmoAct2ForConditionalGeneration
 else:
     SAFE_WEIGHTS_INDEX_NAME = "model.safetensors.index.json"
     SAFE_WEIGHTS_NAME = "model.safetensors"
@@ -49,7 +105,7 @@ else:
     MolmoAct2ForConditionalGeneration = None
 
 if TYPE_CHECKING or (_transformers_available and _scipy_available):
-    from .hf_model.action_tokenizer import UniversalActionProcessor
+    from .molmoact2_hf_model.action_tokenizer import UniversalActionProcessor
 else:
     UniversalActionProcessor = None
 
@@ -68,6 +124,156 @@ _MODEL_INPUT_KEYS = {
     "token_type_ids",
     "inputs_embeds",
 }
+
+
+def _load_hf_norm_metadata_for_tag(
+    checkpoint_path: str,
+    *,
+    revision: str | None,
+    force_download: bool,
+    norm_tag: str | None,
+) -> dict[str, Any]:
+    """Read per-tag metadata from the checkpoint's ``norm_stats.json``."""
+    norm_tag = str(norm_tag or "").strip()
+    if not norm_tag:
+        return {}
+    from contextlib import suppress
+    from pathlib import Path
+
+    checkpoint_location = Path(
+        _resolve_checkpoint_location(
+            checkpoint_path,
+            revision=revision,
+            force_download=force_download,
+        )
+    )
+    norm_stats_filename = "norm_stats.json"
+    config_path = checkpoint_location / "config.json"
+    if config_path.exists():
+        with suppress(OSError, json.JSONDecodeError):
+            norm_stats_filename = str(
+                json.loads(config_path.read_text()).get("norm_stats_filename") or norm_stats_filename
+            )
+    stats_path = checkpoint_location / norm_stats_filename
+    if not stats_path.exists():
+        raise FileNotFoundError(
+            f"MolmoAct2 HF checkpoint is missing {norm_stats_filename!r}; cannot resolve norm_tag={norm_tag!r}."
+        )
+    payload = json.loads(stats_path.read_text())
+    metadata_by_tag = payload.get("metadata_by_tag")
+    if not isinstance(metadata_by_tag, dict):
+        raise ValueError(f"MolmoAct2 norm stats file {stats_path} has no metadata_by_tag mapping.")
+    metadata = metadata_by_tag.get(norm_tag)
+    if not isinstance(metadata, dict):
+        available = sorted(str(tag) for tag in metadata_by_tag)
+        raise ValueError(f"Unknown MolmoAct2 norm_tag={norm_tag!r}. Available tags: {available}.")
+    return metadata
+
+
+def _apply_norm_tag_metadata(config: MolmoAct2Config) -> None:
+    """Populate config fields from the checkpoint's norm-tag metadata."""
+    if not str(config.norm_tag or "").strip():
+        return
+    metadata = _load_hf_norm_metadata_for_tag(
+        config.checkpoint_path,
+        revision=config.checkpoint_revision,
+        force_download=bool(config.checkpoint_force_download),
+        norm_tag=config.norm_tag,
+    )
+    if metadata.get("action_horizon") is not None:
+        config.chunk_size = int(metadata["action_horizon"])
+    if metadata.get("n_action_steps") is not None:
+        config.n_action_steps = int(metadata["n_action_steps"])
+    if not config.setup_type and metadata.get("setup_type") is not None:
+        config.setup_type = str(metadata["setup_type"])
+    if not config.control_mode and metadata.get("control_mode") is not None:
+        config.control_mode = str(metadata["control_mode"])
+
+
+def _saved_policy_action_mode(config: MolmoAct2Config) -> str | None:
+    """Read the action mode from a LeRobot-saved checkpoint's ``config.json``."""
+    from pathlib import Path
+
+    pretrained_path = getattr(config, "pretrained_path", None)
+    if pretrained_path is None:
+        return None
+    config_path = Path(pretrained_path) / "config.json"
+    if not config_path.exists():
+        return None
+    try:
+        mode = json.loads(config_path.read_text()).get("action_mode")
+    except (OSError, json.JSONDecodeError):
+        return None
+    if mode in {"continuous", "discrete", "both"}:
+        return str(mode)
+    return None
+
+
+def _training_action_mode(config: MolmoAct2Config, saved_policy_action_mode: str | None = None) -> str:
+    return saved_policy_action_mode or config.action_mode
+
+
+def _validate_inference_action_mode(
+    config: MolmoAct2Config, saved_policy_action_mode: str | None = None
+) -> None:
+    """Check that the requested inference mode is compatible with the training mode."""
+    requested_mode = config.inference_action_mode
+    if requested_mode is None:
+        return
+    training_mode = _training_action_mode(config, saved_policy_action_mode)
+    if requested_mode == "continuous" and training_mode == "discrete":
+        raise ValueError(
+            "MolmoAct2 checkpoint was trained with action_mode='discrete' and cannot run "
+            "continuous inference."
+        )
+    if requested_mode == "discrete" and training_mode == "continuous":
+        raise ValueError(
+            "MolmoAct2 checkpoint was trained with action_mode='continuous' and cannot run "
+            "discrete inference. Train with action_mode='both' or action_mode='discrete' first."
+        )
+
+
+def _validate_checkpoint_action_mode(
+    config: MolmoAct2Config,
+    checkpoint_action_mode: str,
+    *,
+    has_action_expert: bool,
+) -> None:
+    """Check that the checkpoint's action mode is compatible with the config."""
+    if config.action_mode == "both" and checkpoint_action_mode != "both":
+        raise ValueError(
+            f"action_mode='both' requires checkpoint action_mode='both', got {checkpoint_action_mode!r}."
+        )
+    if config.action_mode == "discrete" and checkpoint_action_mode not in {"discrete", "both"}:
+        raise ValueError(
+            f"action_mode='discrete' requires checkpoint action_mode in {{'discrete', 'both'}}, "
+            f"got {checkpoint_action_mode!r}."
+        )
+    if config.action_mode in {"continuous", "both"} and not has_action_expert:
+        raise ValueError("Continuous MolmoAct2 training requires an action expert checkpoint.")
+
+
+def _resolve_inference_action_mode(
+    config: MolmoAct2Config,
+    requested_mode: str | None,
+    saved_policy_action_mode: str | None = None,
+) -> str:
+    """Resolve the final inference action mode, validating compatibility."""
+    training_mode = _training_action_mode(config, saved_policy_action_mode)
+    if requested_mode is None:
+        requested_mode = config.inference_action_mode
+    if requested_mode is None:
+        raise ValueError(
+            "MolmoAct2 inference requires `inference_action_mode` to be set explicitly "
+            "to either 'continuous' or 'discrete'."
+        )
+    if requested_mode not in {"continuous", "discrete"}:
+        raise ValueError("MolmoAct2 inference_action_mode must be either 'continuous' or 'discrete'.")
+    if requested_mode == "continuous" and training_mode == "discrete":
+        raise ValueError("MolmoAct2 action_mode='discrete' checkpoint cannot run continuous inference.")
+    if requested_mode == "discrete" and training_mode == "continuous":
+        raise ValueError("MolmoAct2 action_mode='continuous' checkpoint cannot run discrete inference.")
+    return requested_mode
 
 
 def _strict_load_safetensors_weights(model: torch.nn.Module, checkpoint_location: str) -> None:
@@ -103,16 +309,6 @@ def _strict_load_safetensors_weights(model: torch.nn.Module, checkpoint_location
     )
 
 
-def _torch_dtype(dtype: str) -> torch.dtype:
-    if dtype == "float32":
-        return torch.float32
-    if dtype == "bfloat16":
-        return torch.bfloat16
-    if dtype == "float16":
-        return torch.float16
-    raise ValueError(f"Unsupported dtype: {dtype}")
-
-
 def _sample_beta_timesteps(
     *,
     batch_size: int,
@@ -136,7 +332,180 @@ def _sample_beta_timesteps(
     return time_offset + scale * samples
 
 
+def _mask_discrete_action_spans(
+    *,
+    input_ids: Tensor,
+    mask: Tensor,
+    start_token_id: int | None,
+    end_token_id: int | None,
+) -> Tensor:
+    if start_token_id is None or end_token_id is None:
+        return mask
+    mask = mask.clone()
+    for batch_idx in range(input_ids.shape[0]):
+        row = input_ids[batch_idx]
+        starts = (row == int(start_token_id)).nonzero(as_tuple=False).flatten().tolist()
+        ends = (row == int(end_token_id)).nonzero(as_tuple=False).flatten().tolist()
+        end_ptr = 0
+        for start in starts:
+            while end_ptr < len(ends) and ends[end_ptr] < start:
+                end_ptr += 1
+            if end_ptr >= len(ends):
+                mask[batch_idx, start:] = False
+                break
+            end = int(ends[end_ptr])
+            mask[batch_idx, start : end + 1] = False
+            end_ptr += 1
+    return mask
+
+
+def _drop_trivial_attention_mask(model_inputs: dict[str, Tensor]) -> dict[str, Tensor]:
+    attention_mask = model_inputs.get("attention_mask")
+    if torch.is_tensor(attention_mask) and bool(attention_mask.to(dtype=torch.bool).all().item()):
+        model_inputs = dict(model_inputs)
+        model_inputs.pop("attention_mask", None)
+    return model_inputs
+
+
+def _expand_mask(mask: Tensor | None, num_flow_timesteps: int) -> Tensor | None:
+    if mask is None:
+        return None
+    return (
+        mask.unsqueeze(1)
+        .expand(-1, num_flow_timesteps, *([-1] * (mask.ndim - 1)))
+        .reshape(mask.shape[0] * num_flow_timesteps, *mask.shape[1:])
+    )
+
+
+def _action_dim_valid_mask(target: Tensor, action_dim_is_pad: Tensor | None) -> Tensor | None:
+    if action_dim_is_pad is None:
+        return None
+    mask = ~action_dim_is_pad.to(device=target.device, dtype=torch.bool)
+    if mask.ndim == 1:
+        mask = mask.unsqueeze(0)
+    if mask.shape[-1] != target.shape[-1]:
+        raise ValueError(
+            f"action_dim_is_pad width {mask.shape[-1]} does not match target width {target.shape[-1]}."
+        )
+    if mask.shape[0] == 1 and target.shape[0] != 1:
+        mask = mask.expand(target.shape[0], -1)
+    if mask.shape[0] != target.shape[0]:
+        raise ValueError(
+            f"action_dim_is_pad batch {mask.shape[0]} does not match target batch {target.shape[0]}."
+        )
+    while mask.ndim < target.ndim:
+        mask = mask.unsqueeze(1)
+    return mask
+
+
+def _mask_action_dim_tensor(tensor: Tensor, action_dim_is_pad: Tensor | None) -> Tensor:
+    if action_dim_is_pad is None:
+        return tensor
+    valid_mask = _action_dim_valid_mask(tensor, action_dim_is_pad)
+    if valid_mask is None:
+        return tensor
+    return tensor.masked_fill(~valid_mask, 0)
+
+
+def _apply_action_dim_padding_mask(loss: Tensor, action_dim_is_pad: Tensor | None) -> Tensor:
+    valid_mask = _action_dim_valid_mask(loss, action_dim_is_pad)
+    if valid_mask is None:
+        return loss
+    valid = valid_mask.to(dtype=loss.dtype)
+    denom = valid.sum(dim=-1).clamp_min(1.0)
+    return (loss * valid).sum(dim=-1) / denom
+
+
+def _apply_action_chunk_padding_mask(loss: Tensor, action_horizon_is_pad: Tensor | None) -> Tensor:
+    if action_horizon_is_pad is None:
+        return loss
+    valid_action = (
+        (~action_horizon_is_pad.to(device=loss.device, dtype=torch.bool)).unsqueeze(1).unsqueeze(-1)
+    )
+    return loss * valid_action
+
+
+def _combine_rollout_seeds(first_seed: int, batch_size: int) -> int:
+    seed = 0
+    for idx in range(batch_size):
+        seed = (seed + (idx + 1) * (first_seed + idx)) % (2**63 - 1)
+    return seed
+
+
+def _rollout_task_signature(batch: dict[str, Any]) -> tuple[Any, ...] | None:
+    task = batch.get("task")
+    if task is None:
+        task = batch.get("observation.language")
+    if task is None:
+        return None
+    if isinstance(task, str):
+        return (task,)
+    if isinstance(task, (list, tuple)):
+        return tuple(str(item) for item in task)
+    return (str(task),)
+
+
+def _extract_discrete_token_bins(
+    generated_ids: list[int],
+    start_token_id: int,
+    end_token_id: int,
+    token_id_to_bin: dict[int, int],
+) -> list[int]:
+    start_idx = None
+    end_idx = None
+    for idx, token_id in enumerate(generated_ids):
+        if token_id == start_token_id:
+            start_idx = idx
+            break
+    if start_idx is not None:
+        for idx in range(start_idx + 1, len(generated_ids)):
+            if generated_ids[idx] == end_token_id:
+                end_idx = idx
+                break
+    span_start = 0 if start_idx is None else start_idx + 1
+    span_end = len(generated_ids) if end_idx is None else end_idx
+    return [
+        int(token_id_to_bin[token_id])
+        for token_id in generated_ids[span_start:span_end]
+        if token_id in token_id_to_bin
+    ]
+
+
+def _weighted_mean(values: Tensor, weights: Tensor | None) -> Tensor:
+    if weights is None:
+        return values.mean()
+    weights = weights.to(device=values.device, dtype=values.dtype)
+    return torch.dot(values, weights) / weights.sum().clamp_min(1.0)
+
+
+def _weighted_per_example(
+    values: Tensor,
+    weights: Tensor | None,
+    example_indices: Tensor,
+    batch_size: int,
+) -> Tensor:
+    values = values.float()
+    if weights is None:
+        weights = torch.ones_like(values)
+    else:
+        weights = weights.to(device=values.device, dtype=values.dtype)
+    loss_sum = torch.zeros(batch_size, device=values.device, dtype=torch.float32)
+    weight_sum = torch.zeros(batch_size, device=values.device, dtype=torch.float32)
+    loss_sum.scatter_add_(0, example_indices, values * weights)
+    weight_sum.scatter_add_(0, example_indices, weights)
+    global_weight_sum = weight_sum.sum().clamp_min(1.0)
+    return loss_sum * float(batch_size) / global_weight_sum
+
+
 class MolmoAct2Policy(PreTrainedPolicy):
+    """MolmoAct2 policy wrapping the vendored HF model for LeRobot.
+
+    Supports three training modes via ``config.action_mode``:
+    ``"continuous"`` (flow-matching only), ``"discrete"`` (autoregressive
+    token prediction only), or ``"both"`` (joint loss). At inference,
+    ``config.inference_action_mode`` selects which head generates actions.
+    """
+
     config_class = MolmoAct2Config
     name = "molmoact2"
 
@@ -149,10 +518,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
         **kwargs,
     ):
         super().__init__(config, *inputs, **kwargs)
-        self.config.apply_norm_tag_metadata()
+        _apply_norm_tag_metadata(self.config)
         self.config.validate_features()
         del inputs, kwargs, dataset_stats, dataset_meta
-        self._checkpoint_action_mode = self.config.saved_policy_action_mode()
+        self._checkpoint_action_mode = _saved_policy_action_mode(self.config)
         self._action_queue: deque[Tensor] = deque(maxlen=self.config.n_action_steps)
         self._rollout_action_generator: torch.Generator | None = None
         self._rollout_task_key: tuple[Any, ...] | None = None
@@ -160,7 +529,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self.rtc_processor: RTCProcessor | None = None
         self.action_tokenizer: Any | None = None
         self._load_hf_model()
-        self.config.validate_inference_action_mode(self._checkpoint_action_mode)
+        _validate_inference_action_mode(self.config, self._checkpoint_action_mode)
         if self.config.enable_lora_vlm:
             self._apply_lora_adapters()
         self.init_rtc_processor()
@@ -212,7 +581,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 "`policy.checkpoint_force_download=true` after the updated files are pushed."
             )
         checkpoint_action_mode = str(self.model.config.action_mode)
-        self.config.validate_checkpoint_action_mode(
+        _validate_checkpoint_action_mode(
+            self.config,
             checkpoint_action_mode,
             has_action_expert=bool(getattr(self.model.config, "add_action_expert", False)),
         )
@@ -226,6 +596,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self.train(self.training)
 
     def reset(self) -> None:
+        """Clear the action queue and rollout generator between episodes."""
         self._action_queue = deque(maxlen=self.config.n_action_steps)
         self._rollout_action_generator = None
 
@@ -334,6 +705,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             param.requires_grad = False
 
     def get_optim_params(self) -> list[dict[str, Any]]:
+        """Return optimizer param groups with per-component learning rates."""
         vit_params: list[Tensor] = []
         connector_params: list[Tensor] = []
         action_expert_params: list[Tensor] = []
@@ -419,33 +791,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 return int(value)
         raise RuntimeError("MolmoAct2 could not resolve an action generation horizon.")
 
-    @staticmethod
-    def _mask_discrete_action_spans(
-        *,
-        input_ids: Tensor,
-        mask: Tensor,
-        start_token_id: int | None,
-        end_token_id: int | None,
-    ) -> Tensor:
-        if start_token_id is None or end_token_id is None:
-            return mask
-        mask = mask.clone()
-        for batch_idx in range(input_ids.shape[0]):
-            row = input_ids[batch_idx]
-            starts = (row == int(start_token_id)).nonzero(as_tuple=False).flatten().tolist()
-            ends = (row == int(end_token_id)).nonzero(as_tuple=False).flatten().tolist()
-            end_ptr = 0
-            for start in starts:
-                while end_ptr < len(ends) and ends[end_ptr] < start:
-                    end_ptr += 1
-                if end_ptr >= len(ends):
-                    mask[batch_idx, start:] = False
-                    break
-                end = int(ends[end_ptr])
-                mask[batch_idx, start : end + 1] = False
-                end_ptr += 1
-        return mask
-
     def _encoder_attention_mask_for_action_expert(
         self,
         *,
@@ -470,20 +815,12 @@ class MolmoAct2Policy(PreTrainedPolicy):
         eos_token_id = getattr(self.model.config, "eos_token_id", None)
         if eos_token_id is not None:
             mask &= input_ids != int(eos_token_id)
-        return self._mask_discrete_action_spans(
+        return _mask_discrete_action_spans(
             input_ids=input_ids,
             mask=mask,
             start_token_id=getattr(self.model.config, "action_start_token_id", None),
             end_token_id=getattr(self.model.config, "action_end_token_id", None),
         )
-
-    @staticmethod
-    def _drop_trivial_attention_mask(model_inputs: dict[str, Tensor]) -> dict[str, Tensor]:
-        attention_mask = model_inputs.get("attention_mask")
-        if torch.is_tensor(attention_mask) and bool(attention_mask.to(dtype=torch.bool).all().item()):
-            model_inputs = dict(model_inputs)
-            model_inputs.pop("attention_mask", None)
-        return model_inputs
 
     def _load_discrete_action_tokenizer(self) -> Any:
         if self.action_tokenizer is None:
@@ -498,27 +835,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         return self.action_tokenizer
 
     def _resolve_inference_action_mode(self, requested_mode: str | None) -> str:
-        return self.config.resolve_inference_action_mode(requested_mode, self._checkpoint_action_mode)
-
-    @staticmethod
-    def _combine_rollout_seeds(first_seed: int, batch_size: int) -> int:
-        seed = 0
-        for idx in range(batch_size):
-            seed = (seed + (idx + 1) * (first_seed + idx)) % (2**63 - 1)
-        return seed
-
-    @staticmethod
-    def _rollout_task_signature(batch: dict[str, Any]) -> tuple[Any, ...] | None:
-        task = batch.get("task")
-        if task is None:
-            task = batch.get("observation.language")
-        if task is None:
-            return None
-        if isinstance(task, str):
-            return (task,)
-        if isinstance(task, (list, tuple)):
-            return tuple(str(item) for item in task)
-        return (str(task),)
+        return _resolve_inference_action_mode(self.config, requested_mode, self._checkpoint_action_mode)
 
     def _rollout_generator_for_inputs(
         self,
@@ -532,7 +849,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if self._rollout_action_generator is not None:
             return self._rollout_action_generator
 
-        task_signature = self._rollout_task_signature(batch)
+        task_signature = _rollout_task_signature(batch)
         if task_signature != self._rollout_task_key:
             self._rollout_task_key = task_signature
             self._rollout_index_for_task = 0
@@ -545,71 +862,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
             device if device.type == "cuda" and torch.cuda.is_available() else torch.device("cpu")
         )
         generator = torch.Generator(device=generator_device)
-        generator.manual_seed(self._combine_rollout_seeds(first_seed, batch_size))
+        generator.manual_seed(_combine_rollout_seeds(first_seed, batch_size))
         self._rollout_action_generator = generator
         return generator
-
-    @staticmethod
-    def _expand_mask(mask: Tensor | None, num_flow_timesteps: int) -> Tensor | None:
-        if mask is None:
-            return None
-        return (
-            mask.unsqueeze(1)
-            .expand(-1, num_flow_timesteps, *([-1] * (mask.ndim - 1)))
-            .reshape(mask.shape[0] * num_flow_timesteps, *mask.shape[1:])
-        )
-
-    @staticmethod
-    def _action_dim_valid_mask(target: Tensor, action_dim_is_pad: Tensor | None) -> Tensor | None:
-        if action_dim_is_pad is None:
-            return None
-        mask = ~action_dim_is_pad.to(device=target.device, dtype=torch.bool)
-        if mask.ndim == 1:
-            mask = mask.unsqueeze(0)
-        if mask.shape[-1] != target.shape[-1]:
-            raise ValueError(
-                f"action_dim_is_pad width {mask.shape[-1]} does not match target width {target.shape[-1]}."
-            )
-        if mask.shape[0] == 1 and target.shape[0] != 1:
-            mask = mask.expand(target.shape[0], -1)
-        if mask.shape[0] != target.shape[0]:
-            raise ValueError(
-                f"action_dim_is_pad batch {mask.shape[0]} does not match target batch {target.shape[0]}."
-            )
-        while mask.ndim < target.ndim:
-            mask = mask.unsqueeze(1)
-        return mask
-
-    @classmethod
-    def _mask_action_dim_tensor(cls, tensor: Tensor, action_dim_is_pad: Tensor | None) -> Tensor:
-        if not cls._mask_enabled_static(action_dim_is_pad):
-            return tensor
-        valid_mask = cls._action_dim_valid_mask(tensor, action_dim_is_pad)
-        if valid_mask is None:
-            return tensor
-        return tensor.masked_fill(~valid_mask, 0)
-
-    @staticmethod
-    def _mask_enabled_static(action_dim_is_pad: Tensor | None) -> bool:
-        return action_dim_is_pad is not None
-
-    @classmethod
-    def _apply_action_dim_padding_mask(cls, loss: Tensor, action_dim_is_pad: Tensor | None) -> Tensor:
-        valid_mask = cls._action_dim_valid_mask(loss, action_dim_is_pad)
-        if valid_mask is None:
-            return loss
-        valid = valid_mask.to(dtype=loss.dtype)
-        denom = valid.sum(dim=-1).clamp_min(1.0)
-        return (loss * valid).sum(dim=-1) / denom
-
-    @staticmethod
-    def _apply_action_chunk_padding_mask(loss: Tensor, action_horizon_is_pad: Tensor | None) -> Tensor:
-        if action_horizon_is_pad is None:
-            return loss
-        valid_action = (
-            (~action_horizon_is_pad.to(device=loss.device, dtype=torch.bool)).unsqueeze(1).unsqueeze(-1)
-        )
-        return loss * valid_action
 
     def _prepare_flow_matching_tensors(
         self,
@@ -649,7 +904,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 )
 
         if self.config.mask_action_dim_padding:
-            actions = self._mask_action_dim_tensor(actions, action_dim_is_pad)
+            actions = _mask_action_dim_tensor(actions, action_dim_is_pad)
 
         expected_noise_shape = (batch_size, num_flow_timesteps, actions.shape[1], actions.shape[2])
         if noise is None:
@@ -661,7 +916,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     f"flow noise must have shape {expected_noise_shape}, got {tuple(noise.shape)}."
                 )
         if self.config.mask_action_dim_padding:
-            noise = self._mask_action_dim_tensor(noise, action_dim_is_pad)
+            noise = _mask_action_dim_tensor(noise, action_dim_is_pad)
 
         t_broadcast = timesteps.view(batch_size, num_flow_timesteps, 1, 1)
         actions_expanded = actions.unsqueeze(1).expand(-1, num_flow_timesteps, -1, -1)
@@ -789,7 +1044,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         valid_action = None
         if action_attention_mask is not None:
             valid_action = action_attention_mask.to(device=device, dtype=actions.dtype).unsqueeze(-1)
-            valid_action = self._expand_mask(valid_action, num_flow_timesteps)
+            valid_action = _expand_mask(valid_action, num_flow_timesteps)
 
         rope_cache = None
         if len(action_expert.blocks) > 0 and action_expert.blocks[0].self_attn.rope is not None:
@@ -804,14 +1059,14 @@ class MolmoAct2Policy(PreTrainedPolicy):
             batch_size,
             actions.dtype,
         )
-        cross_mask = self._expand_mask(cross_mask, num_flow_timesteps)
+        cross_mask = _expand_mask(cross_mask, num_flow_timesteps)
         self_mask = action_expert._build_self_attention_mask(
             action_attention_mask,
             actions.shape[1],
             device,
             actions.dtype,
         )
-        self_mask = self._expand_mask(self_mask, num_flow_timesteps)
+        self_mask = _expand_mask(self_mask, num_flow_timesteps)
 
         conditioning = self._action_time_conditioning(action_expert, timesteps_flat)
         action_hidden = action_expert.action_embed(xt_flat)
@@ -871,8 +1126,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
             if k_norm is not None:
                 k_ctx = k_norm(k_ctx.transpose(1, 2)).transpose(1, 2)
             if num_flow_timesteps != 1:
-                k_ctx = self._expand_mask(k_ctx, num_flow_timesteps)
-                v_ctx = self._expand_mask(v_ctx, num_flow_timesteps)
+                k_ctx = _expand_mask(k_ctx, num_flow_timesteps)
+                v_ctx = _expand_mask(v_ctx, num_flow_timesteps)
 
             next_action_hidden = action_block(
                 layer_action_hidden,
@@ -912,9 +1167,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
         )
 
         loss = F.mse_loss(pred_velocity, target_velocity, reduction="none")
-        loss = self._apply_action_chunk_padding_mask(loss, batch.get("action_horizon_is_pad"))
+        loss = _apply_action_chunk_padding_mask(loss, batch.get("action_horizon_is_pad"))
         if self.config.mask_action_dim_padding:
-            loss = self._apply_action_dim_padding_mask(loss, batch.get("action_dim_is_pad"))
+            loss = _apply_action_dim_padding_mask(loss, batch.get("action_dim_is_pad"))
         loss = loss.reshape(batch_size, -1).mean(dim=1)
         if reduction == "mean":
             loss = loss.mean()
@@ -932,32 +1187,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
         nonempty = token_counts > 0
         example_weights[nonempty] = 2.0 / torch.sqrt(token_counts[nonempty])
         return example_weights[:, None].expand_as(valid_positions)[valid_positions].to(dtype=torch.float32)
-
-    @staticmethod
-    def _weighted_mean(values: Tensor, weights: Tensor | None) -> Tensor:
-        if weights is None:
-            return values.mean()
-        weights = weights.to(device=values.device, dtype=values.dtype)
-        return torch.dot(values, weights) / weights.sum().clamp_min(1.0)
-
-    @staticmethod
-    def _weighted_per_example(
-        values: Tensor,
-        weights: Tensor | None,
-        example_indices: Tensor,
-        batch_size: int,
-    ) -> Tensor:
-        values = values.float()
-        if weights is None:
-            weights = torch.ones_like(values)
-        else:
-            weights = weights.to(device=values.device, dtype=values.dtype)
-        loss_sum = torch.zeros(batch_size, device=values.device, dtype=torch.float32)
-        weight_sum = torch.zeros(batch_size, device=values.device, dtype=torch.float32)
-        loss_sum.scatter_add_(0, example_indices, values * weights)
-        weight_sum.scatter_add_(0, example_indices, weights)
-        global_weight_sum = weight_sum.sum().clamp_min(1.0)
-        return loss_sum * float(batch_size) / global_weight_sum
 
     def _discrete_loss_from_backbone_outputs(
         self,
@@ -992,55 +1221,27 @@ class MolmoAct2Policy(PreTrainedPolicy):
         token_weights = self._discrete_token_weights(valid_positions)
         if reduction == "none":
             example_indices = valid_positions.nonzero(as_tuple=False)[:, 0].to(device=hidden_states.device)
-            ce_loss = self._weighted_per_example(
+            ce_loss = _weighted_per_example(
                 token_ce_loss,
                 token_weights,
                 example_indices,
                 int(labels.shape[0]),
             )
         else:
-            ce_loss = self._weighted_mean(token_ce_loss, token_weights)
+            ce_loss = _weighted_mean(token_ce_loss, token_weights)
         if not self.config.softmax_auxiliary_loss:
             return ce_loss, None
 
         if reduction == "none":
-            z_loss = self.config.softmax_auxiliary_loss_scale * self._weighted_per_example(
+            z_loss = self.config.softmax_auxiliary_loss_scale * _weighted_per_example(
                 log_z.pow(2),
                 token_weights,
                 example_indices,
                 int(labels.shape[0]),
             )
         else:
-            z_loss = self.config.softmax_auxiliary_loss_scale * self._weighted_mean(
-                log_z.pow(2), token_weights
-            )
+            z_loss = self.config.softmax_auxiliary_loss_scale * _weighted_mean(log_z.pow(2), token_weights)
         return ce_loss, z_loss
-
-    @staticmethod
-    def _extract_discrete_token_bins(
-        generated_ids: list[int],
-        start_token_id: int,
-        end_token_id: int,
-        token_id_to_bin: dict[int, int],
-    ) -> list[int]:
-        start_idx = None
-        end_idx = None
-        for idx, token_id in enumerate(generated_ids):
-            if token_id == start_token_id:
-                start_idx = idx
-                break
-        if start_idx is not None:
-            for idx in range(start_idx + 1, len(generated_ids)):
-                if generated_ids[idx] == end_token_id:
-                    end_idx = idx
-                    break
-        span_start = 0 if start_idx is None else start_idx + 1
-        span_end = len(generated_ids) if end_idx is None else end_idx
-        return [
-            int(token_id_to_bin[token_id])
-            for token_id in generated_ids[span_start:span_end]
-            if token_id in token_id_to_bin
-        ]
 
     def _action_token_id_to_bin(self) -> dict[int, int]:
         method = getattr(self.model, "_action_token_id_to_bin", None)
@@ -1179,7 +1380,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         chunks: list[Tensor] = []
         for token_row in generated_token_ids:
             generated_ids = [int(token_id) for token_id in token_row.detach().cpu().tolist()]
-            discrete_token_ids = self._extract_discrete_token_bins(
+            discrete_token_ids = _extract_discrete_token_bins(
                 generated_ids,
                 int(self.model.config.action_start_token_id),
                 int(self.model.config.action_end_token_id),
@@ -1218,7 +1419,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         model_inputs: dict[str, Tensor],
         action_dim: int,
     ) -> Tensor:
-        model_inputs = self._drop_trivial_attention_mask(model_inputs)
+        model_inputs = _drop_trivial_attention_mask(model_inputs)
         max_steps = self._discrete_generation_max_steps()
         static_cache, attention_bias = self._make_discrete_ar_graph_decode_inputs(
             model_inputs,
@@ -1294,7 +1495,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             generator=generator,
         )
         if self.config.mask_action_dim_padding:
-            trajectory = self._mask_action_dim_tensor(trajectory, action_dim_is_pad)
+            trajectory = _mask_action_dim_tensor(trajectory, action_dim_is_pad)
 
         action_context = action_expert.prepare_context(
             encoder_kv_states=encoder_kv_states,
@@ -1327,7 +1528,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     modulation=step_modulation,
                 )
                 if mask_enabled:
-                    velocity = self._mask_action_dim_tensor(velocity, action_dim_is_pad)
+                    velocity = _mask_action_dim_tensor(velocity, action_dim_is_pad)
                 return velocity
 
             if self._rtc_enabled():
@@ -1352,7 +1553,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
             trajectory = trajectory + dt * velocity
             if mask_enabled:
-                trajectory = self._mask_action_dim_tensor(trajectory, action_dim_is_pad)
+                trajectory = _mask_action_dim_tensor(trajectory, action_dim_is_pad)
             if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
                 self.rtc_processor.track(time=float(flow_timestep[0].item()), x_t=trajectory, v_t=velocity)
 
@@ -1363,6 +1564,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         batch: dict[str, Tensor],
         reduction: str = "mean",
     ) -> tuple[Tensor, dict[str, Any]]:
+        """Compute training loss (flow-matching and/or discrete token loss)."""
         if reduction not in {"mean", "none"}:
             raise ValueError(f"Unsupported reduction={reduction!r}. Expected 'mean' or 'none'.")
         model_inputs = self._model_inputs(batch)
@@ -1422,6 +1624,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+        """Generate an action chunk via continuous flow matching or discrete AR decoding."""
         if "action_mode" in kwargs:
             raise TypeError(
                 "MolmoAct2 predict_action_chunk got unexpected keyword argument 'action_mode'; "
@@ -1476,6 +1679,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+        """Pop one action step from the queue, regenerating the chunk when empty."""
         if self._rtc_enabled():
             raise AssertionError("RTC is not supported for select_action, use it with predict_action_chunk")
         self.eval()

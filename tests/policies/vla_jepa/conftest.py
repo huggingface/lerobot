@@ -8,7 +8,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
-from PIL import Image
 from torch import Tensor, nn
 
 from lerobot.configs.types import FeatureType, PolicyFeature
@@ -191,7 +190,7 @@ class _FakeQwenInterface(nn.Module):
 
     def build_inputs(
         self,
-        images: list[list[Image.Image]],
+        images: list[list[Tensor]],
         instructions: list[str],
         action_prompt: str,
         embodied_prompt: str,
@@ -214,12 +213,13 @@ class _FakeQwenInterface(nn.Module):
         }
 
     @staticmethod
-    def tensor_to_pil(image_tensor: Tensor) -> Image.Image:
-        image = image_tensor.detach().cpu()
-        if image.ndim == 3 and image.shape[0] in (1, 3):
-            image = image.permute(1, 2, 0)
-        image = (image.float().clamp(0, 1) * 255).to(torch.uint8).numpy()
-        return Image.fromarray(image)
+    def to_pixel_values(image_tensor: Tensor) -> Tensor:
+        image = image_tensor.detach().float()
+        if image.shape[-3] == 1:
+            repeats = [1] * image.ndim
+            repeats[-3] = 3
+            image = image.repeat(*repeats)
+        return image
 
 
 class _FakeVideoEncoder(nn.Module):
@@ -242,12 +242,14 @@ class _FakeVideoEncoder(nn.Module):
 
 
 class _FakeVideoProcessor:
-    def __call__(self, videos, return_tensors: str) -> dict[str, Tensor]:
+    def __call__(self, videos, return_tensors: str, device=None, **kwargs) -> dict[str, Tensor]:
         assert return_tensors == "pt"
         if isinstance(videos, list):
             pixel_values = torch.stack([torch.as_tensor(v) for v in videos])
         else:
             pixel_values = torch.as_tensor(videos).unsqueeze(0)
+        if device is not None:
+            pixel_values = pixel_values.to(device)
         return {"pixel_values_videos": pixel_values}
 
 
