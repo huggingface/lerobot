@@ -56,7 +56,11 @@ from lerobot.cameras.zmq import ZMQCamera, ZMQCameraConfig
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.utils import prepare_observation_for_inference
-from lerobot.robots.unitree_g1.controllers.sonic_whole_body import TOKEN_DIM, token_action_key
+from lerobot.robots.unitree_g1.controllers.sonic_whole_body import (
+    NEUTRAL_TOKEN,
+    TOKEN_DIM,
+    token_action_key,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", force=True)
 logger = logging.getLogger("sonic_sender")
@@ -130,8 +134,9 @@ def main() -> None:
     signal.signal(signal.SIGTERM, lambda *_: stop.__setitem__("flag", True))
 
     # observation.state = the token currently executing on the robot (last one we sent);
-    # start at zeros, matching the decoder's zero-seeded initial state.
-    prev_token = np.zeros(TOKEN_DIM, dtype=np.float32)
+    # start at the neutral token the decoder holds before the first send, so the very
+    # first inference sees the true executing token (not zeros).
+    prev_token = NEUTRAL_TOKEN.copy()
     period = 1.0 / args.fps
     n = 0
     t_infer_total = 0.0

@@ -77,6 +77,22 @@ logger = logging.getLogger(__name__)
 # eases in without a snap on the first command.
 INIT_RAMP_S = 3.0
 
+# Neutral ("zero pose") SONIC token, held by token_mode until the first real token
+# arrives. Captured from the encoder's own output while the robot stood idle in sim
+# (capture_neutral_token.py): the encoder is an FSQ bottleneck (~5 bit/dim, 15.5 half-
+# width, Div(16)), so its tokens live on the 1/16 grid. We store the integer FSQ codes
+# and rescale by the same 1/16 step, giving an exact on-grid token -- unlike the literal
+# all-zero token, which is off the encoder's learned manifold and decodes to a slightly
+# goofy stance. This one decodes to a stable, natural standing pose.
+_NEUTRAL_TOKEN_CODES = np.array(
+    [-1, 3, 1, -1, 1, -3, 6, 1, 1, 1, -2, -4, -2, 0, -3, -1,
+     2, -1, -3, -5, 3, 1, 1, -4, -1, -1, 1, -7, 0, 1, 2, -2,
+     5, -2, -2, -4, 0, -1, 3, -1, 0, -5, -1, 0, -4, 0, 0, -1,
+     -1, 2, -2, 1, 3, 3, 1, 0, 0, 6, 0, -7, 3, 0, 2, -2],
+    dtype=np.float32,
+)
+NEUTRAL_TOKEN = _NEUTRAL_TOKEN_CODES / 16.0  # FSQ Div(16): integer codes -> on-grid token
+
 
 def _extract_wb34_from_action(action: dict | None) -> np.ndarray | None:
     """Reassemble a dense (34,) whole-body command from ``wb.{i}.pos`` keys, or None.
@@ -359,9 +375,10 @@ class SonicWholeBodyController:
         if token is not None:
             self._last_token = token
         elif self._last_token is None and self.token_mode:
-            # Token-driven deploy, but no token has arrived yet: hold the neutral
-            # (all-zero) token, which the decoder maps to a stable neutral stance.
-            self._last_token = np.zeros(TOKEN_DIM, dtype=np.float32)
+            # Token-driven deploy, but no token has arrived yet: hold the captured
+            # neutral token (NEUTRAL_TOKEN), which the decoder maps to a stable, natural
+            # standing pose (the encoder's own idle output; see NEUTRAL_TOKEN).
+            self._last_token = NEUTRAL_TOKEN.copy()
         if self._last_token is not None:
             # Either a fresh token this tick or the last one received (held between the
             # ~30 Hz token stream and the ~50 Hz control loop).
