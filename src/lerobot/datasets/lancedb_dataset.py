@@ -20,9 +20,11 @@ Layout of a Lance-backed dataset (video layout):
 ```
 <root>/
   meta/         # standard LeRobot v3.0 metadata (info.json, stats.json, tasks, episodes)
-  frames.lance  # one row per frame: tabular features, no pixels
-  videos.lance  # one row per source video file: encoded bytes in a blob v2
-                # column + byte-index columns (see VIDEO_INDEX_COLUMNS)
+  frames.lance      # one row per frame: tabular features, no pixels
+  videos.lance      # one row per source video file: encoded bytes in a blob v2
+                    # column + byte-index columns (see VIDEO_INDEX_COLUMNS)
+  meta_files.lance  # one row per meta/ file (path, bytes): the transport for
+                    # object-store roots, materialized to a local meta/ cache
 ```
 
 Feature keys contain dots (``observation.state``) which Lance column names do not
@@ -67,6 +69,7 @@ from .video_utils import FrameTimestampError
 
 FRAMES_TABLE = "frames"
 VIDEOS_TABLE = "videos"
+META_TABLE = "meta_files"
 VIDEO_BLOB_COLUMN = "video_bytes"
 # Byte-index columns on the videos table, written at conversion time by
 # ``build_video_byte_index``. They let the remote reader translate a frame
@@ -301,50 +304,61 @@ def _is_remote_uri(path) -> bool:
     return "://" in str(path)
 
 
-def _mirror_remote_meta(db_uri: str, local_root: Path) -> None:
-    """Copy ``meta/`` from an object-store dataset root to a local cache, once.
+def _connect(db_uri: str, storage_options: dict | None):
+    """Connect to a dataset root with remote I/O defaults and hf:// auth.
 
-    Downloads into a temp directory and renames it into place so an
-    interrupted mirror can never be mistaken for a complete one.
+    Remote reads issue hundreds of parallel range requests per batch; lance's
+    default of 64 concurrent IOPS leaves ~40% throughput on the table
+    (measured on S3), so raise it unless the user set their own value. lance
+    does not attach credentials to public hf:// reads on its own, and
+    anonymous requests get the strictest gateway rate limits (429s under
+    training-rate traffic), so authenticate whenever a token is available
+    (env or CLI login).
+    """
+    options = dict(storage_options or {})
+    if _is_remote_uri(db_uri):
+        os.environ.setdefault("LANCE_IO_THREADS", "256")
+    if db_uri.startswith("hf://") and "token" not in options:
+        from huggingface_hub import get_token
+
+        token = get_token()
+        if token:
+            options["token"] = token
+    return lancedb.connect(db_uri, **({"storage_options": options} if options else {}))
+
+
+def _materialize_meta(db, local_root: Path) -> None:
+    """Write ``meta/`` from the dataset's meta table to a local cache, once.
+
+    The meta table is the transport, not the source of truth for consumers:
+    files are materialized byte-identical so ``LeRobotDatasetMetadata`` (and
+    any other tool expecting the standard layout) reads them unchanged.
+    Writes into a temp directory and renames it into place so an interrupted
+    materialization can never be mistaken for a complete one.
     """
     meta_dir = local_root / "meta"
     if meta_dir.exists():
         return
+    try:
+        table = db.open_table(META_TABLE)
+    except Exception as error:
+        raise FileNotFoundError(
+            f"Dataset has no '{META_TABLE}' table. Re-convert it with a converter that "
+            "ingests meta/, or create the table in place from an existing meta/ copy."
+        ) from error
 
     tmp_dir = local_root / f"meta.tmp-{os.getpid()}"
     try:
-        if db_uri.startswith("hf://buckets/"):
-            # HF Storage Buckets: pyarrow has no hf:// filesystem, but the
-            # Hub API downloads bucket files directly.
-            from huggingface_hub import HfApi
-
-            namespace, bucket, *prefix = db_uri.removeprefix("hf://buckets/").split("/")
-            base = "/".join([*prefix, "meta"])
-            api = HfApi()
-            entries = [
-                entry
-                for entry in api.list_bucket_tree(f"{namespace}/{bucket}", prefix=base + "/", recursive=True)
-                if hasattr(entry, "size")  # files only
-            ]
-            api.download_bucket_files(
-                f"{namespace}/{bucket}",
-                [(entry, tmp_dir / entry.path.removeprefix(base).lstrip("/")) for entry in entries],
-            )
-        else:
-            # meta/ is loose files, which lancedb cannot fetch; pyarrow.fs
-            # covers s3/gs/az with env credentials and no extra dependency.
-            # Imported lazily (repo convention) — it initializes filesystem
-            # SDKs and only this rarely-taken path needs it.
-            from pyarrow import fs as pa_fs
-
-            filesystem, base = pa_fs.FileSystem.from_uri(f"{db_uri}/meta")
-            for info in filesystem.get_file_info(pa_fs.FileSelector(base, recursive=True)):
-                if info.type != pa_fs.FileType.File:
-                    continue
-                dst = tmp_dir / info.path[len(base) :].lstrip("/")
+        query = table.search().select(["path", "data"])
+        # Stream row groups: meta/ is usually small, but per-episode stats
+        # reach hundreds of MB at droid scale (76k episodes = 566 MB).
+        batches = query.to_batches() if hasattr(query, "to_batches") else query.to_arrow().to_batches()
+        for batch in batches:
+            paths = batch.column("path").to_pylist()
+            for i, rel_path in enumerate(paths):
+                dst = tmp_dir / rel_path
                 dst.parent.mkdir(parents=True, exist_ok=True)
-                with filesystem.open_input_stream(info.path) as src, open(dst, "wb") as out:
-                    shutil.copyfileobj(src, out)
+                dst.write_bytes(batch.column("data")[i].as_py())
         try:
             tmp_dir.rename(meta_dir)
         except OSError:
@@ -467,7 +481,8 @@ class LanceDBDataset(torch.utils.data.Dataset):
             # meta/ is mirrored to a local cache directory once.
             self._db_uri = str(root).rstrip("/")
             self.root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", self._db_uri)
-            _mirror_remote_meta(self._db_uri, self.root)
+            if not (self.root / "meta").exists():
+                _materialize_meta(_connect(self._db_uri, self._storage_options), self.root)
         else:
             self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
             if (self.root / f"{FRAMES_TABLE}.lance").exists():
@@ -585,24 +600,8 @@ class LanceDBDataset(torch.utils.data.Dataset):
         if self._frames_perm is not None:
             return
         if not self._is_local:
-            # A remote batch issues hundreds of parallel range reads; lance's
-            # default of 64 concurrent IOPS leaves ~40% throughput on the
-            # table (measured on S3). Respect an explicit user override.
-            os.environ.setdefault("LANCE_IO_THREADS", "256")
             self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
-        storage_options = dict(self._storage_options or {})
-        if self._db_uri.startswith("hf://") and "token" not in storage_options:
-            # lance does not attach credentials to public hf:// reads on its
-            # own, and anonymous requests get the strictest gateway rate
-            # limits (429s under training-rate traffic). Authenticate
-            # whenever a token is available (env or CLI login).
-            from huggingface_hub import get_token
-
-            token = get_token()
-            if token:
-                storage_options["token"] = token
-        connect_kwargs = {"storage_options": storage_options} if storage_options else {}
-        db = lancedb.connect(self._db_uri, **connect_kwargs)
+        db = _connect(self._db_uri, self._storage_options)
         table = db.open_table(FRAMES_TABLE)
         self._frames_perm = (
             Permutation.identity(table).select_columns(self._fetch_columns).with_format("arrow")

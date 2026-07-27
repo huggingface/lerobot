@@ -29,6 +29,7 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lancedb_dataset import (
     FRAMES_TABLE,
+    META_TABLE,
     VIDEO_BLOB_COLUMN,
     VIDEOS_TABLE,
     LanceDBDataset,
@@ -70,6 +71,18 @@ def _storage_type(dtype: pa.DataType) -> pa.DataType:
 def convert_frames_to_lance(src_root: Path, dst_root: Path) -> None:
     """Test-only converter: copy ``meta/`` and build the frames table from parquet data."""
     shutil.copytree(src_root / "meta", dst_root / "meta")
+    meta_db = lancedb.connect(str(dst_root))
+    meta_db.create_table(
+        META_TABLE,
+        pa.Table.from_pylist(
+            [
+                {"path": str(f.relative_to(src_root / "meta")), "data": f.read_bytes()}
+                for f in sorted((src_root / "meta").rglob("*"))
+                if f.is_file()
+            ],
+            schema=pa.schema([pa.field("path", pa.string()), pa.field("data", pa.large_binary())]),
+        ),
+    )
     files = sorted((src_root / "data").rglob("*.parquet"))
     table = pa.concat_tables([pq.read_table(f) for f in files]).sort_by("index")
     fields, arrays = [], []
@@ -83,7 +96,7 @@ def convert_frames_to_lance(src_root: Path, dst_root: Path) -> None:
             column = pa.FixedSizeListArray.from_arrays(column.flatten(), len(column[0]))
         arrays.append(column)
         fields.append(pa.field(to_lance_column(field.name), column.type))
-    db = lancedb.connect(str(dst_root))
+    db = meta_db
     db.create_table(FRAMES_TABLE, pa.Table.from_arrays(arrays, schema=pa.schema(fields)))
 
     video_files = sorted((src_root / "videos").rglob("*.mp4"))
