@@ -44,6 +44,7 @@ class EpisodeByteCache:
         max_open_decoders: int = 64,
         video_backend: str = "torchcodec",
         tolerance_s: float = 1e-4,
+        token: str | bool | None = None,
     ):
         if byte_budget <= 0:
             raise ValueError("byte_budget must be positive")
@@ -64,6 +65,7 @@ class EpisodeByteCache:
             native_http_timeout=native_http_timeout,
             native_http_retries=native_http_retries,
             native_http_subranges=native_http_subranges,
+            token=token,
         )
         self.byte_budget = byte_budget
         self.open_decoders = open_decoders

@@ -46,7 +46,9 @@ def test_streaming_dataset_forwards_token_to_metadata_without_retaining_it(
         rescale_depth_stats=Mock(),
     )
     metadata_cls = Mock(return_value=metadata)
+    ensure_sidecar = Mock(return_value=None)
     monkeypatch.setattr(streaming_dataset_module, "LeRobotDatasetMetadata", metadata_cls)
+    monkeypatch.setattr(streaming_dataset_module, "ensure_dataset_mp4_sidecar", ensure_sidecar)
 
     dataset = StreamingLeRobotDataset(DUMMY_REPO_ID, root=requested_root, token=token)
 
@@ -57,6 +59,7 @@ def test_streaming_dataset_forwards_token_to_metadata_without_retaining_it(
         force_cache_sync=False,
         token=token,
     )
+    assert ensure_sidecar.call_args.kwargs["token"] is (None if from_local else token)
     assert not hasattr(dataset, "_token")
 
 

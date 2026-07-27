@@ -82,6 +82,7 @@ class EpisodeVideoManifest:
         keyframe_pad_s: float = 0.1,
         keyframe_pad_fraction: float = 0.05,
         sidecar_path: str | Path | None = None,
+        token: str | bool | None = None,
     ) -> EpisodeVideoManifest:
         meta.ensure_readable()
         video_keys = list(meta.video_keys)
@@ -99,6 +100,7 @@ class EpisodeVideoManifest:
                 workers=workers,
                 header_probe_bytes=header_probe_bytes,
                 max_probe_bytes=max_probe_bytes,
+                token=token,
             )
         else:
             records = cls.load_file_sidecar(sidecar_path)
@@ -159,8 +161,14 @@ class EpisodeVideoManifest:
         workers: int,
         header_probe_bytes: int,
         max_probe_bytes: int,
+        token: str | bool | None,
     ) -> list[VideoFileRecord]:
-        fetcher = make_range_fetcher(data_root, range_backend=range_backend, workers=workers)
+        fetcher = make_range_fetcher(
+            data_root,
+            range_backend=range_backend,
+            workers=workers,
+            token=token,
+        )
 
         def build_file(path: str) -> VideoFileRecord:
             file_size = fetcher.info_size(path)
@@ -198,6 +206,7 @@ class EpisodeVideoManifest:
         workers: int = 8,
         header_probe_bytes: int = 4 * 1024 * 1024,
         max_probe_bytes: int = 64 * 1024 * 1024,
+        token: str | bool | None = None,
     ) -> None:
         records = cls._build_file_records(
             sorted(set(rel_paths)),
@@ -206,6 +215,7 @@ class EpisodeVideoManifest:
             workers=workers,
             header_probe_bytes=header_probe_bytes,
             max_probe_bytes=max_probe_bytes,
+            token=token,
         )
         cls.save_file_sidecar(sidecar_path, records, spec=spec)
 

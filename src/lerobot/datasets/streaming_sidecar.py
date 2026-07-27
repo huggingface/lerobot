@@ -71,6 +71,7 @@ def build_mp4_sidecar(
     workers: int = 8,
     range_backend: str = "native-http",
     max_probe_bytes: int = 64 * 1024 * 1024,
+    token: str | bool | None = None,
 ) -> None:
     EpisodeVideoManifest.write_file_sidecar(
         destination,
@@ -80,6 +81,7 @@ def build_mp4_sidecar(
         range_backend=range_backend,
         workers=workers,
         max_probe_bytes=max_probe_bytes,
+        token=token,
     )
 
 
@@ -93,10 +95,13 @@ def download_published_sidecar(
     spec: SidecarSpec,
     *,
     cache_root: str | Path = DEFAULT_SIDECAR_CACHE,
+    token: str | bool | None = None,
 ) -> bool:
     if Path(spec.data_root).expanduser().is_dir():
         return False
-    filesystem, source = fsspec.core.url_to_fs(published_sidecar_url(spec, cache_root))
+    source_url = published_sidecar_url(spec, cache_root)
+    storage_options = {"token": token} if token is not None and source_url.startswith("hf://") else {}
+    filesystem, source = fsspec.core.url_to_fs(source_url, **storage_options)
     if not filesystem.exists(source):
         return False
     with filesystem.open(source, "rb") as remote, destination.open("wb") as local:
@@ -112,6 +117,7 @@ def ensure_dataset_mp4_sidecar(
     workers: int = 8,
     range_backend: str = "native-http",
     lock_timeout_s: float = 30 * 60,
+    token: str | bool | None = None,
 ) -> Path | None:
     if not meta.video_keys:
         return None
@@ -131,11 +137,13 @@ def ensure_dataset_mp4_sidecar(
             target_spec,
             workers=workers,
             range_backend=range_backend,
+            token=token,
         ),
         download=lambda path, target_spec: download_published_sidecar(
             path,
             target_spec,
             cache_root=cache_root,
+            token=token,
         ),
         lock_timeout_s=lock_timeout_s,
     )

@@ -106,9 +106,17 @@ def _log_http_failure(
 class ThreadLocalRangeFetcher:
     """Range reader that gives each worker thread independent file handles."""
 
-    def __init__(self, data_root: str | Path, *, block_size: int = 2**20, cache_type: str = "none"):
+    def __init__(
+        self,
+        data_root: str | Path,
+        *,
+        block_size: int = 2**20,
+        cache_type: str = "none",
+        token: str | bool | None = None,
+    ):
         self.data_root = str(data_root).rstrip("/")
-        self.fs, self._root_path = fsspec.core.url_to_fs(self.data_root)
+        storage_options = {"token": token} if token is not None and self.data_root.startswith("hf://") else {}
+        self.fs, self._root_path = fsspec.core.url_to_fs(self.data_root, **storage_options)
         self._is_local = self.fs.protocol in ("file", "local") or (
             isinstance(self.fs.protocol, tuple) and "file" in self.fs.protocol
         )
@@ -350,6 +358,7 @@ class NativeHTTPRangeFetcher:
         max_retries: int = 4,
         subrange_parts: int = 1,
         subrange_min_bytes: int = 8 * 1024 * 1024,
+        token: str | bool | None = None,
     ):
         self.data_root = str(data_root).rstrip("/")
         if not self.data_root.startswith("hf://"):
@@ -366,7 +375,7 @@ class NativeHTTPRangeFetcher:
             if self.subrange_parts > 1
             else None
         )
-        self.api = HfApi()
+        self.api = HfApi(token=token)
         self.fs: HfFileSystem | None = None
         self._bucket_id: str | None = None
         self._bucket_prefix = ""
@@ -378,7 +387,7 @@ class NativeHTTPRangeFetcher:
             self._bucket_id = f"{parts[0]}/{parts[1]}"
             self._bucket_prefix = parts[2].strip("/") if len(parts) == 3 else ""
         else:
-            self.fs = HfFileSystem()
+            self.fs = HfFileSystem(token=token)
         self.client = httpx.Client(
             timeout=timeout,
             limits=httpx.Limits(max_connections=max_connections, max_keepalive_connections=max_connections),
@@ -717,9 +726,10 @@ def make_range_fetcher(
     native_http_timeout: float = 60.0,
     native_http_retries: int = 4,
     native_http_subranges: int = 1,
+    token: str | bool | None = None,
 ):
     if range_backend == "fsspec":
-        return ThreadLocalRangeFetcher(data_root)
+        return ThreadLocalRangeFetcher(data_root, token=token)
     if range_backend == "native-http":
         max_connections = native_http_connections or max(8, workers)
         return NativeHTTPRangeFetcher(
@@ -728,5 +738,6 @@ def make_range_fetcher(
             timeout=native_http_timeout,
             max_retries=native_http_retries,
             subrange_parts=native_http_subranges,
+            token=token,
         )
     raise ValueError(f"Unknown range backend: {range_backend}")

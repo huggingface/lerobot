@@ -23,14 +23,22 @@ import pyarrow.parquet as pq
 class EpisodeParquetReader:
     """Read complete episodes with column projection from local or fsspec roots."""
 
-    def __init__(self, data_root: str | Path, *, columns: Sequence[str]):
+    def __init__(
+        self,
+        data_root: str | Path,
+        *,
+        columns: Sequence[str],
+        token: str | bool | None = None,
+    ):
         if not columns:
             raise ValueError("EpisodeParquetReader requires at least one projected column")
         self.columns = tuple(dict.fromkeys(columns))
         self._read_columns = (
             self.columns if "episode_index" in self.columns else (*self.columns, "episode_index")
         )
-        self._filesystem, self._root_path = fsspec.core.url_to_fs(str(data_root))
+        data_root_str = str(data_root)
+        storage_options = {"token": token} if token is not None and data_root_str.startswith("hf://") else {}
+        self._filesystem, self._root_path = fsspec.core.url_to_fs(data_root_str, **storage_options)
 
     def read_episode(
         self,

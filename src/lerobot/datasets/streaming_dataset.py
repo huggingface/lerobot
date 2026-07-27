@@ -180,6 +180,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.max_num_shards = max_num_shards
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
+        self._streaming_io_token = None if self.streaming_from_local else token
         self._video_backend = video_backend if video_backend is not None else get_safe_default_video_backend()
         if self._video_backend == "video_reader":
             self._video_backend = "pyav"
@@ -266,6 +267,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self._data_root,
             workers=max_num_shards,
             range_backend=sidecar_backend,
+            token=self._streaming_io_token,
         )
         self._hf_features = get_hf_features_from_features(self.meta.features)
         self._projected_columns = tuple(self._hf_features)
@@ -349,7 +351,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         planner.newly_admitted.clear()
         planner.evicted.clear()
 
-        parquet_reader = EpisodeParquetReader(self._data_root, columns=self._projected_columns)
+        parquet_reader = EpisodeParquetReader(
+            self._data_root,
+            columns=self._projected_columns,
+            token=self._streaming_io_token,
+        )
         executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="lerobot-parquet")
         episode_futures: dict[int, Future[datasets.Dataset]] = {}
         scheduled_episodes: set[int] = set()
@@ -475,6 +481,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             range_backend=range_backend,
             workers=workers,
             sidecar_path=self._sidecar_path,
+            token=self._streaming_io_token,
         )
         decoder_limit = max(1, min(64, self.episode_pool_size * max(1, len(self.meta.video_keys))))
         return EpisodeByteCache(
@@ -486,6 +493,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             max_open_decoders=decoder_limit,
             video_backend=self._video_backend,
             tolerance_s=self.tolerance_s,
+            token=self._streaming_io_token,
         )
 
     def _make_episode_item(

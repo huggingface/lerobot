@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import Mock
 
 import fsspec
 import pytest
@@ -108,3 +109,16 @@ def test_reader_supports_fsspec_remote_root() -> None:
     table = reader.read_episode("data/chunk-000/file-000.parquet", episode_index=0, expected_rows=3)
 
     assert table.column("value").to_pylist() == [0, 1, 2]
+
+
+def test_reader_forwards_explicit_token_to_hf_filesystem(monkeypatch) -> None:
+    url_to_fs = Mock(return_value=(fsspec.filesystem("memory"), "datasets/private@revision"))
+    monkeypatch.setattr(fsspec.core, "url_to_fs", url_to_fs)
+
+    EpisodeParquetReader(
+        "hf://datasets/private@revision",
+        columns=("episode_index",),
+        token="hf_test_token",
+    )
+
+    url_to_fs.assert_called_once_with("hf://datasets/private@revision", token="hf_test_token")
