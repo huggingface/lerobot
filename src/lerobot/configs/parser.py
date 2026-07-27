@@ -45,12 +45,16 @@ _config_yaml_overrides: dict[str, list[str]] = {}
 
 
 def _decode_literal(literal_type: Any, raw_value: Any, path: Sequence[str] = ()) -> Any:
+    # Assumes string-valued choices; CLI values are always strings, so a non-string Literal
+    # (e.g. Literal[1, 2]) would need coercion here to work.
     choices = get_args(literal_type)
     if raw_value not in choices:
         raise DecodingError(path, f"Invalid choice: {raw_value!r}. Must be one of {choices}.")
     return raw_value
 
 
+# include_subclasses=True makes draccus pass the resolved type (e.g. Literal["train", "eval"]) as
+# the first arg to _decode_literal, instead of just (raw_value, path).
 draccus.decode.register(Literal, func=_decode_literal, include_subclasses=True)
 
 

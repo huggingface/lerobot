@@ -21,6 +21,7 @@ are intentionally NOT re-exported here to avoid circular dependencies
 Import them directly: ``from lerobot.configs.train import TrainPipelineConfig``
 """
 
+from . import parser  # noqa: F401  # registers draccus decoders (e.g. for Literal fields) on package import
 from .dataset import DatasetRecordConfig
 from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, WandBConfig
 from .policies import PreTrainedConfig

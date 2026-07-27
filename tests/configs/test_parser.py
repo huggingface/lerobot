@@ -38,3 +38,15 @@ def test_literal_field_rejects_invalid_value():
 
     with pytest.raises(DecodingError, match="bogus"):
         draccus.parse(Config, args=["--mode=bogus"])
+
+
+def test_optional_literal_field_accepts_valid_value_and_none():
+    @dataclass
+    class Config:
+        mode: Literal["train", "eval", "record"] | None = None
+
+    cfg = draccus.parse(Config, args=["--mode=eval"])
+    assert cfg.mode == "eval"
+
+    cfg = draccus.parse(Config, args=[])
+    assert cfg.mode is None
