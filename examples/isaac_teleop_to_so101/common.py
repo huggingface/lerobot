@@ -21,8 +21,8 @@ Consumed by ``teleoperate.py`` and ``record.py``, which both build a per-device
 sleep. A :class:`Device` bundles three closures: ``compute(obs) -> RobotAction | None``
 (``None`` = hold at the measured pose while idle), ``startup``, and ``cleanup``. The devices:
 
-* ``xr_controller`` — a thin :class:`XRController` whose raw grip pose an in-loop
-  :class:`Clutch` turns into an EE target for LeRobot's Cartesian IK pipeline.
+* ``xr_controller`` — an :class:`XRController` whose in-pipeline clutch retargeter emits an
+  absolute base-frame EE target for LeRobot's Cartesian IK pipeline.
 * ``so101_leader`` — a back-drivable leader arm mirrored 1:1 into the follower.
 
 Requires the ``isaacteleop`` package and an OpenXR runtime (install instructions in this
@@ -61,7 +61,6 @@ from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, HF_LEROBOT_HOME, TEL
 from lerobot.utils.robot_utils import precise_sleep
 
 from .isaac_teleop import (
-    Clutch,
     IsaacTeleopConfig,
     MapXRControllerActionToRobotAction,
     SO101LeaderArm,
@@ -323,12 +322,10 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
                 max_ee_step_m=MAX_EE_STEP_M,
                 raise_on_jump=False,
             ),
-            # initial_guess_current_joints=False: warm-start from the previous IK solution so
-            # the joint trajectory stays continuous frame-to-frame.
             InverseKinematicsEEToJoints(
                 kinematics=kinematics_solver,
                 motor_names=motor_names,
-                initial_guess_current_joints=False,
+                initial_guess_current_joints=True,
                 orientation_weight=IK_ORIENTATION_WEIGHT,
             ),
         ],
@@ -336,15 +333,21 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
         to_output=transition_to_robot_action,
     )
 
-    # The clutch is built in startup() (after the optional reset slew, seeded from the
-    # post-slew MEASURED pose) and shared with compute() via nonlocal.
-    clutch: Clutch | None = None
-    prev_enabled = False
+    # The clutch lives inside the device's retargeting pipeline. The loop tracks the previous
+    # engagement so it can spot the engage edge; it does NOT re-derive engagement itself, so the
+    # squeeze threshold is compared in exactly one place (the retargeter).
+    prev_engaged = False
+
+    def _measured_base_T_ee(obs: RobotObservation) -> np.ndarray:  # noqa: N802
+        """FK the measured joints to the arm's current base_T_ee."""
+        q_measured = np.array([float(obs[f"{name}.pos"]) for name in motor_names], dtype=float)
+        return kinematics_solver.forward_kinematics(q_measured)
 
     def startup() -> None:
-        nonlocal clutch
         # Connect and wait for the operator to don the headset BEFORE moving the arm, so the
-        # reset slew happens while they are watching in VR.
+        # reset slew happens while they are watching in VR. The session holds STOPPED throughout
+        # connect, the wait and the slew, so a squeeze during any of it cannot latch the clutch
+        # against a home the arm has not reached yet.
         teleop_device.connect()
         if not teleop_device.is_connected:
             raise ValueError("Teleop is not connected!")
@@ -360,49 +363,59 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
             print("Reset complete.")
 
         # Seed the clutch home from the arm's measured pose (FK of the current joints) so the
-        # first engage is jump-free, whether or not a reset slew ran.
-        obs0 = robot.get_observation()
-        q_measured_deg = np.array([float(obs0[f"{name}.pos"]) for name in motor_names], dtype=float)
-        home_base_T_ee = kinematics_solver.forward_kinematics(q_measured_deg)  # noqa: N806
-        clutch = Clutch(home_base_T_ee, position_scale=teleop_config.clutch_position_scale)
+        # first engage is jump-free, whether or not a reset slew ran, THEN release the interlock.
+        teleop_device.set_home_base_T_ee(_measured_base_T_ee(robot.get_observation()))
+        # Releases the readiness interlock; raises if the home was not seeded first.
+        teleop_device.start()
 
         print("Starting teleop loop. Squeeze and move the controller to teleoperate the robot...")
 
     def compute(robot_obs: RobotObservation | None) -> RobotAction | None:
-        nonlocal prev_enabled
-        if clutch is None:  # set in startup(), which runs before compute()
-            raise RuntimeError("compute() called before startup(); the clutch is not initialized")
+        nonlocal prev_engaged
+        # Supply the arm's measured EE pose EVERY frame, from the observation the loop already
+        # holds (never re-read the robot here — that would widen the skew and add a bus
+        # transaction). The clutch consumes it only on the engage frame, but the loop cannot know
+        # in advance which frame that is, and FK is ~0.005 ms.
+        #
+        # With no observation this frame there is no FK to send, so the clutch falls back to its
+        # last commanded home. The same condition also gates the pipeline call below.
+        if robot_obs is not None:
+            teleop_device.set_measured_base_T_ee(_measured_base_T_ee(robot_obs))
+
+        # The device MUST be stepped every frame, including while disengaged: the clutch observes
+        # the release through this call, and skipping it would mean it never sees a falling edge,
+        # so no re-clutch would ever fire again.
         xr_action = teleop_device.get_action()
-        grip_pos = np.asarray(xr_action["grip_pos"], dtype=float)
-        grip_quat = np.asarray(xr_action["grip_quat"], dtype=float)
-        squeeze = float(xr_action["squeeze"])
+        engaged = bool(xr_action["engaged"])
         trigger = float(xr_action["trigger"])
-        enabled = squeeze > teleop_config.clutch_threshold
 
-        # On the engage edge, latch the clutch home at the arm's MEASURED EE pose (FK of
-        # the live joints) and the controller origin so the per-frame delta starts at zero.
-        # Latching the last commanded pose instead would snap the arm back to it at full
-        # servo speed if the arm moved while disengaged (gravity sag, external contact).
-        is_engage_frame = enabled and not prev_enabled
-        if is_engage_frame:
-            q_measured = np.array([float(robot_obs[f"{name}.pos"]) for name in motor_names], dtype=float)
-            measured_base_T_ee = kinematics_solver.forward_kinematics(q_measured)  # noqa: N806
-            clutch.engage(grip_pos, grip_quat, measured_base_T_ee=measured_base_T_ee)
-            # Re-anchor the pipeline state at the measured pose as well: EEBoundsAndSafety's
-            # rate limiter and the IK warm start otherwise still reference the stale
-            # pre-disengage command and would fight the fresh home for several frames.
+        # On the engage edge the clutch has just re-latched its home at the arm's measured EE
+        # pose. Re-anchor the pipeline to match: EEBoundsAndSafety's rate limiter otherwise still
+        # references the stale pre-disengage command and would clamp the first frames against it.
+        # The edge is taken from the retargeter's own engagement, not re-derived from squeeze —
+        # the latch can be deferred by a dropped or untrusted frame that the loop cannot observe.
+        if engaged and not prev_engaged:
             xr_to_robot_joints_processor.reset()
-        prev_enabled = enabled
+        prev_engaged = engaged
 
-        # SAFETY GATE: command the robot ONLY while the clutch is engaged; otherwise return
-        # None so the loop holds the measured joints (releasing the clutch freezes the arm).
-        if not enabled:
+        # SAFETY GATE: command the robot ONLY on a frame that is both engaged AND tracked;
+        # otherwise return None so the loop holds the measured joints (releasing the clutch
+        # freezes the arm).
+        #
+        # ``is_tracking`` is a SEPARATE condition from ``engaged`` on purpose. The device reads
+        # the trigger outside the retargeting graph, so a partially-populated frame yields
+        # trigger = 0.0 -- jaw fully OPEN -- while the clutch, which reads squeeze *inside* the
+        # graph, stays engaged. Acting on that frame would drop a live grasp. Deleted code got
+        # this for free because the loop thresholded the squeeze itself and the same failure
+        # zeroed it; that coupling is gone. It is NOT folded into ``engaged`` above, because
+        # ``engaged`` must stay the pure retargeter signal for the edge below to remain exactly
+        # the clutch's latch frame.
+        if not (engaged and teleop_device.is_tracking) or robot_obs is None:
             return None
 
-        # Rebase the raw grip pose onto the EE, then run the pipeline. closedness = trigger.
-        ee_pos, ee_quat = clutch.rebase(grip_pos, grip_quat)
+        # The pose is already the clutch-rebased absolute EE target. closedness = trigger.
         ee_action = {
-            "ee_pose": np.concatenate([ee_pos, ee_quat]).astype(np.float32),
+            "ee_pose": np.asarray(xr_action["ee_pose"], dtype=np.float32),
             "closedness": trigger,
         }
         return xr_to_robot_joints_processor((ee_action, robot_obs))

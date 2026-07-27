@@ -32,7 +32,7 @@ in short:
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 uv pip install -e ".[feetech,kinematics,dataset]" "huggingface_hub>=1.5"
-uv pip install "isaacteleop[cloudxr,retargeters-lite]~=1.3.131" "scipy>=1.14"
+uv pip install "isaacteleop[cloudxr,retargeters-lite]~=1.4.0" "scipy>=1.14"
 ```
 
 `isaacteleop` is published on public PyPI (Linux only). The `cloudxr` extra brings the CloudXR
@@ -42,7 +42,7 @@ because of its `dex-retargeting`/`nlopt` pins, which is why it is not the defaul
 x86_64 you can additionally install the full retargeter stack:
 
 ```bash
-uv pip install "isaacteleop[retargeters]~=1.3.131"
+uv pip install "isaacteleop[retargeters]~=1.4.0"
 ```
 
 ### Set up CloudXR and connect a headset
@@ -112,30 +112,40 @@ for supported OS / GPU / CloudXR versions and headsets.
 
 ## How it works
 
-The XR controller is one Isaac Teleop **input** device. `XRController` is a deliberately thin
-reader: it exposes the **raw** controller grip pose — already statically rebased into the robot
-base frame — plus the squeeze and trigger analog values. It has **no** retargeters and **no**
-clutch logic of its own. The clutch (engage latch + delta rebasing onto the EE) and the gripper
-mapping live downstream in the example loop, which then feeds LeRobot's existing closed‑loop
+The XR controller is one Isaac Teleop **input** device. `XRController` drives the controller grip
+pose — already statically rebased into the robot base frame — through an in-pipeline
+`SO101EngageRelativeClutchRetargeter`, so it emits an absolute base-frame **EE pose** rather than a
+raw controller pose, alongside the raw trigger and an `engaged` flag. The clutch (engage latch +
+delta rebasing onto the EE) therefore runs **inside the device's retargeting pipeline**; the
+gripper mapping stays in the example loop, which then feeds LeRobot's existing closed‑loop
 Cartesian IK pipeline — the same one the phone teleoperator uses. The device‑specific pieces are
-`XRController`, the loop's `Clutch`, and `MapXRControllerActionToRobotAction`; everything downstream
+`XRController` (with its in-pipeline clutch) and `MapXRControllerActionToRobotAction`; everything
+downstream
 (`EEBoundsAndSafety`, `InverseKinematicsEEToJoints`) is shared, and a future device (e.g. Manus
 gloves) would swap in its own `teleop_<device>.py` + processor while reusing the rest.
 
 `XRController._build_pipeline` wires Isaac Teleop's `ControllersSource` — statically rebased into
-the robot base frame by the native `ControllerTransform` (`base_T_anchor`) — and exposes the
-transformed controller stream verbatim. `get_action()` reads the grip pose, squeeze, and trigger
-straight off it; the session is always stepped `RUNNING` (there is no clutch retargeter to gate).
+the robot base frame by the native `ControllerTransform` (`base_T_anchor`) — into the clutch
+retargeter, and publishes two outputs: the rebased `ee_pose` and the transformed controller stream
+(from which `get_action()` takes the raw trigger and the tracking flag). The session is stepped
+`STOPPED` until `startup()` completes, then `RUNNING`.
 
-The `Clutch` class (in `examples/isaac_teleop_to_so101/isaac_teleop/clutch.py`, driven by the
-loop in `common.py`) mirrors Isaac Teleop's `SO101ClutchRetargeter`, but lives in-loop so the
-device can stay a thin reader:
+Isaac Teleop's `SO101EngageRelativeClutchRetargeter` runs inside `XRController`'s retargeting
+pipeline (see `_build_pipeline`), so the device emits an absolute EE pose directly:
 
 - It latches its engage origin on the squeeze **engage edge** (the frame the squeeze first crosses
-  `clutch_threshold`) and rebases both position and orientation around it, so engaging does not
-  teleport the arm. The position delta is scaled by `clutch_position_scale` (orientation stays
-  1:1). `Clutch.rebase` returns the absolute base-frame target as a `(pos, quat)`
-  pair, which the loop concatenates into the 7D `ee_pose` fed to the processor.
+  `clutch_threshold`, gated by the session being `RUNNING`) and rebases both position and
+  orientation around it, so engaging does not teleport the arm. The position delta is scaled by
+  `clutch_position_scale` (orientation stays 1:1). The device publishes the absolute base-frame
+  target as the 7D `ee_pose` fed to the processor, alongside `engaged` and `is_tracking`. The
+  squeeze threshold is compared in exactly one place, inside the retargeter. The loop's safety
+  gate is the **conjunction** of the two flags: `engaged` means only that the clutch is latched,
+  and on a partially-populated frame it stays true while `trigger` floors to `0.0`, so gating on
+  `engaged` alone would fling the gripper open on a live grasp.
+- The loop supplies the arm's measured EE pose every frame, so the engage latch homes on where the
+  arm physically **is** rather than on a stale command if it sagged while disengaged.
+- The session is held `STOPPED` through connect, the headset wait and the reset slew, so a squeeze
+  while donning the headset cannot latch a home the arm has not reached yet.
 - The analog trigger becomes a gripper `closedness` in `[0, 1]` (0 = open, 1 = closed),
   proportional to the trigger pull, which `MapXRControllerActionToRobotAction` maps to a jaw target.
 
@@ -148,11 +158,10 @@ for how source nodes and retargeters compose.
   VR controller (OpenXR)
         │
         ▼
-  XRController.get_action()          ── raw base-frame grip_pos / grip_quat + squeeze + trigger
-        │                                (TeleopSession always stepped RUNNING; clutch lives downstream)
-        ▼
-  Clutch.rebase(grip_pos, grip_quat) ── engage-relative delta applied to the EE home (pos + orient)
-        │  ee_pose (7) / closedness       → absolute ee_pose; closedness = trigger
+  XRController.get_action()          ── absolute base-frame ee_pose (7) + trigger + engaged
+        │  (in-pipeline clutch:            (TeleopSession stepped STOPPED until startup() completes)
+        │   SO101EngageRelativeClutchRetargeter — engage-relative delta on the EE home, pos+orient)
+        │  ee_pose (7) / closedness       → closedness = trigger
         ▼
   MapXRControllerActionToRobotAction ── absolute ee.x/y/z; ee.w* = orientation rotvec target;
         │  ee.x/y/z / ee.w* / ee.gripper_pos   ee.gripper_pos = (1 - closedness) * 100
@@ -166,16 +175,19 @@ for how source nodes and retargeters compose.
   SO-101 follower joint targets
 ```
 
-### The clutch: owned by the example loop
+### The clutch: owned by the device's pipeline
 
 Unlike the phone pipeline (which splits the clutch across `MapPhoneActionToRobotAction` and
-`EEReferenceAndDelta`), the XR clutch lives entirely in the example loop's `Clutch` class. It emits
+`EEReferenceAndDelta`), the XR clutch lives entirely in the device's retargeting pipeline. It emits
 an **absolute** EE pose, so there is no `EEReferenceAndDelta` stage and no delta accumulation in the
 processor — `MapXRControllerActionToRobotAction` is a pure, stateless per‑frame mapping.
 
-The clutch latches its engage origin on the squeeze **engage edge** (the moment the squeeze crosses
-`clutch_threshold`) and drives the EE from the motion _relative_ to that origin, so the arm does not
-teleport on engage. On **every** engage — startup and mid‑task re‑clutch alike — the home
+The clutch latches its engage origin on the **engage edge** — the moment the squeeze crosses
+`clutch_threshold` _while the session is_ `RUNNING` — and drives the EE from the motion _relative_
+to that origin, so the arm does not teleport on engage. The `RUNNING` conjunct is a readiness
+interlock: the graph is stepped throughout the headset wait and the reset slew, so without it a
+squeeze while donning the headset would latch a home the arm has not reached yet.
+On **every** engage — startup and mid‑task re‑clutch alike — the home
 _position_ is latched from forward kinematics on the arm's **measured joints**, so the home equals
 where the arm physically is even if it moved while disengaged, and the engage is jump‑free. The
 home _orientation_ keeps the last commanded rotation: the 5‑DOF arm tracks orientation only
@@ -223,11 +235,12 @@ teleop_config = XRControllerConfig(
 teleop_device = XRController(teleop_config)
 ```
 
-`XRController.get_action()` returns the **raw** base‑frame controller pose, not a clutch‑rebased
-target: `grip_pos` (3,) `[x, y, z]` [m] and `grip_quat` (4,) `[qx, qy, qz, qw]` in the robot base
-frame, plus scalar `squeeze` and `trigger` analog values in `[0, 1]`. The example loop's `Clutch`
-turns these into the absolute `ee_pose`, and the squeeze is thresholded by the loop against
-`clutch_threshold` to engage.
+`XRController.get_action()` returns the **clutch‑rebased** absolute target: `ee_pose` (7,)
+`[x, y, z, qx, qy, qz, qw]` in the robot base frame, the raw `trigger` analog value in `[0, 1]`,
+`engaged` — whether the in-pipeline clutch is latched — and `is_tracking`, whether this frame
+carried a live controller. The squeeze is thresholded against `clutch_threshold` inside the
+retargeter, and the loop reads the flags back rather than re-deriving them. Command the robot only
+when **both** are true: `engaged` is a latch signal, not a go-signal.
 
 ### Step 2: Connect
 
@@ -352,15 +365,13 @@ The clutch already produces an absolute base‑frame pose, so the processor side
   )
   ```
 
-- `InverseKinematicsEEToJoints(initial_guess_current_joints=False, orientation_weight=0.01)` solves
-  closed‑loop Placo IK. SO‑101 is a 5‑DOF arm, so the IK is position‑dominant; the small
-  `orientation_weight` lets it softly track the orientation target carried in `ee.w*` so the wrist
-  follows the hand, while the under‑determined roll stays partial by design. There is **no**
-  `GripperVelocityToJoint`: the absolute `ee.gripper_pos` is passed straight to `gripper.pos`.
-  `initial_guess_current_joints=False` warm‑starts each solve from the **previous IK solution**
-  rather than re‑seeding from the measured joints, so the joint trajectory stays continuous
-  frame‑to‑frame. Tune `orientation_weight` on hardware — too high fights position tracking, too
-  low ignores the orientation command.
+- `InverseKinematicsEEToJoints(initial_guess_current_joints=True, orientation_weight=0.01)` solves
+  closed‑loop Placo IK, seeding each solve from the measured joints. SO‑101 is a 5‑DOF arm, so the
+  IK is position‑dominant; the small `orientation_weight` lets it softly track the orientation
+  target carried in `ee.w*` so the wrist follows the hand, while the under‑determined roll stays
+  partial by design. There is **no** `GripperVelocityToJoint`: the absolute `ee.gripper_pos` is
+  passed straight to `gripper.pos`. Tune `orientation_weight` on hardware — too high fights
+  position tracking, too low ignores the orientation command.
 
 The example also gates safety at the loop level: after the startup reset slew (on by default —
 pass `--reset_to_origin=false` to keep the arm where it is), it commands the robot **only while
@@ -374,7 +385,7 @@ adapting the pipeline to other robots.
 
 - **`ModuleNotFoundError: isaacteleop`** — the `isaacteleop` package is not installed in the
   active environment. Re-run the install command at the top of this guide:
-  `uv pip install "isaacteleop[cloudxr,retargeters-lite]~=1.3.131"`.
+  `uv pip install "isaacteleop[cloudxr,retargeters-lite]~=1.4.0"`.
 - **No controllers found** — make sure the CloudXR runtime is running, the firewall ports are
   whitelisted, and the headset is connected (see
   [Set up CloudXR and connect a headset](#set-up-cloudxr-and-connect-a-headset) and the Isaac
