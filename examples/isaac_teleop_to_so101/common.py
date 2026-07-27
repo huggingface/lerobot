@@ -192,11 +192,11 @@ RESET_POSE_FILE = str(HF_LEROBOT_HOME / "reset_poses" / "{robot_name}" / "{robot
 # 100 = open). An empirically comfortable pose (elbow/wrist bent) avoiding the singularity of
 # a fully-extended arm; assumes standard calibration. Override per-arm via override_reset_pose.py.
 RESET_ORIGIN_DEG: dict[str, float] = {
-    "shoulder_pan": -4.0,
-    "shoulder_lift": -103.0,
-    "elbow_flex": 97.0,
-    "wrist_flex": 78.0,
-    "wrist_roll": -65.0,
+    "shoulder_pan": 0.0,
+    "shoulder_lift": -90.0,
+    "elbow_flex": 90.0,
+    "wrist_flex": 45.0,
+    "wrist_roll": 0.0,
     "gripper": 0.0,
 }
 
