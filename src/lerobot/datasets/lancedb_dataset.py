@@ -558,6 +558,10 @@ class LanceDBDataset(torch.utils.data.Dataset):
             self._rel_to_abs = None
             self._absolute_to_relative_idx = None
 
+        # Task strings by task_index position, plain python: the per-item
+        # pandas .iloc lookup showed up at ~4% of batch CPU in profiles.
+        self._task_names = list(self.meta.tasks.index)
+
         # Tabular features live in the frames table; pixels do not.
         self._tabular_keys = [
             key
@@ -1049,7 +1053,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
             else:
                 item[key] = torch.tensor(data[base])
         item.update(plan["padding"])
-        item["task"] = self.meta.tasks.iloc[int(item["task_index"].item())].name
+        item["task"] = self._task_names[int(item["task_index"].item())]
         return item
 
     def __repr__(self) -> str:
