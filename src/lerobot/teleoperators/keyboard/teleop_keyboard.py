@@ -15,8 +15,6 @@
 # limitations under the License.
 
 import logging
-import os
-import sys
 import time
 from queue import Queue
 from typing import Any
@@ -24,6 +22,7 @@ from typing import Any
 from lerobot.types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.import_utils import _pynput_available, require_package
+from lerobot.utils.keyboard_input import pynput_can_capture
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
@@ -37,14 +36,10 @@ PYNPUT_AVAILABLE = _pynput_available
 keyboard = None
 if PYNPUT_AVAILABLE:
     try:
-        if ("DISPLAY" not in os.environ) and ("linux" in sys.platform):
-            logging.info("No DISPLAY set. Skipping pynput import.")
-            PYNPUT_AVAILABLE = False
-        else:
-            from pynput import keyboard
+        from pynput import keyboard
     except Exception as e:
         PYNPUT_AVAILABLE = False
-        logging.info(f"Could not import pynput: {e}")
+        logging.info("Could not import pynput keyboard backend: %s", e)
 
 
 class KeyboardTeleop(Teleoperator):
@@ -88,7 +83,7 @@ class KeyboardTeleop(Teleoperator):
 
     @check_if_already_connected
     def connect(self) -> None:
-        if PYNPUT_AVAILABLE:
+        if PYNPUT_AVAILABLE and pynput_can_capture():
             logging.info("pynput is available - enabling local keyboard listener.")
             self.listener = keyboard.Listener(
                 on_press=self._on_press,
@@ -96,7 +91,13 @@ class KeyboardTeleop(Teleoperator):
             )
             self.listener.start()
         else:
-            logging.info("pynput not available - skipping local keyboard listener.")
+            logging.warning(
+                "Keyboard teleoperation is unavailable in this environment. pynput can only "
+                "capture key events on an X11 session (Linux), a Windows desktop, or macOS with "
+                "Accessibility / Input Monitoring granted - not on Wayland or headless machines. "
+                "This keyboard teleoperator will produce no actions; use an X11 session, a "
+                "gamepad, or a leader-arm teleoperator instead."
+            )
             self.listener = None
 
     def calibrate(self) -> None:

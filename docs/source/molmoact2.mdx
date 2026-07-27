@@ -17,7 +17,7 @@ the paper, see [allenai/molmoact2](https://github.com/allenai/molmoact2).
 Install LeRobot with the MolmoAct2 optional dependencies:
 
 ```bash
-pip install -e ".[molmoact2]"
+uv sync --locked --extra molmoact2
 ```
 
 To run the models in this repository, you need an NVIDIA GPU. The measurements
@@ -46,8 +46,8 @@ The repo has been tested with Ubuntu 22.04.
 
 To use MolmoAct2 in a LeRobot training config, set:
 
-```python
-policy.type=molmoact2
+```bash
+--policy.type=molmoact2
 ```
 
 ## Training
@@ -103,7 +103,7 @@ accelerate launch \
   --batch_size=32 \
   --num_workers=4 \
   --log_freq=20 \
-  --eval_freq=-1 \
+  --env_eval_freq=-1 \
   --save_checkpoint=true \
   --save_freq=2000
 ```
@@ -142,7 +142,7 @@ accelerate launch \
   --batch_size=32 \
   --num_workers=4 \
   --log_freq=20 \
-  --eval_freq=-1 \
+  --env_eval_freq=-1 \
   --save_checkpoint=true \
   --save_freq=2000
 ```
@@ -238,7 +238,7 @@ your dataset has not been converted with quantile statistics, you can add them
 with:
 
 ```bash
-python src/lerobot/datasets/v30/augment_dataset_quantile_stats.py \
+python src/lerobot/scripts/augment_dataset_quantile_stats.py \
   --repo-id=your_dataset
 ```
 
@@ -385,6 +385,68 @@ and was trained on
 These results demonstrate MolmoAct2's strong performance across diverse robotic
 manipulation tasks. To reproduce them, follow the instructions in the LIBERO
 evaluation section.
+
+## Hardware Deployment (lerobot-rollout)
+
+LeRobot-format checkpoints are available on the Hub for direct use with
+`lerobot-rollout`. Each checkpoint uses specific camera names that must
+match your robot's camera configuration.
+
+### Camera naming convention
+
+Each checkpoint expects specific `observation.images.*` keys.
+If your robot cameras have different names, use `--rename_map` to map them:
+
+| Checkpoint                    | Camera keys            | Description              |
+| ----------------------------- | ---------------------- | ------------------------ |
+| MolmoAct2-LIBERO-LeRobot      | `image`, `wrist_image` | LIBERO sim cameras       |
+| MolmoAct2-BimanualYAM-LeRobot | `top`, `left`, `right` | YAM 3-camera setup       |
+| MolmoAct2-DROID-LeRobot       | `cam0`, `cam1`         | External + wrist         |
+| MolmoAct2-SO100_101-LeRobot   | `cam0`, `cam1`         | Primary + secondary view |
+
+Example with an SO-100 robot using top and side cameras:
+
+```bash
+lerobot-rollout \
+  --policy.path=lerobot/MolmoAct2-SO100_101-LeRobot \
+  --rename_map='{"observation.images.top": "observation.images.cam0", "observation.images.side": "observation.images.cam1"}' \
+  --robot.type=so100_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.cameras='{
+      top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30},
+      side: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}
+  }' \
+  --task="pick up the red cube" --duration=30
+```
+
+To use a wrist camera instead, just change the rename mapping:
+
+```bash
+--rename_map='{"observation.images.top": "observation.images.cam0", "observation.images.wrist": "observation.images.cam1"}'
+```
+
+### Joint frame transform (SO-100/101 zero-shot)
+
+<Tip warning={true}>
+The MolmoAct2-SO100_101 checkpoint was trained on data that uses a different
+joint calibration convention than LeRobot >= 0.5.0. Without a frame
+correction, the arm may move in the wrong direction.
+
+This affects both **zero-shot deployment** and **fine-tuning** from the
+original checkpoint. The pretrained weights expect the old convention, so
+all joint data (observations and actions) must be transformed to match.
+
+The converted LeRobot checkpoint (`lerobot/MolmoAct2-SO100_101-LeRobot`)
+already includes this correction in its processor pipeline. If you convert
+or fine-tune the checkpoint yourself, set the following in the policy config (`configuration_molmoact2.py`):
+
+- `joint_signs`: `[1, -1, 1, 1, 1, 1]` (flips shoulder_lift direction)
+- `joint_offsets`: `[0, 90, 90, 0, 0, 0]` (shifts shoulder_lift and elbow_flex by 90°)
+
+See the [backward compatibility guide](./backwardcomp) for details on the
+calibration change.
+
+</Tip>
 
 ## Differences From the Original Implementation
 
