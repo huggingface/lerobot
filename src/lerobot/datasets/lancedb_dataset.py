@@ -686,23 +686,28 @@ class LanceDBDataset(torch.utils.data.Dataset):
         rows = sorted({row for plan in plans for row in plan["rows"]})
         row_pos = {row: pos for pos, row in enumerate(rows)}
 
-        # Video prep (byte-index metadata, header ranges, decoder creation)
-        # needs only the batch's file set, so it overlaps with the
-        # frames-table fetch.
+        # Video prep (byte-index metadata, header ranges, decoder creation,
+        # frame-window byte ranges) needs only the batch's file set and frame
+        # indices, so it overlaps with the frames-table fetch. Frame positions
+        # inside a file follow from episode boundaries under the constant
+        # frame rate the byte index already assumes; the timestamp-based
+        # coverage check in _ensure_decoders remains the safety net, so any
+        # drift costs at most a re-fetch, never a wrong frame.
         prepared_future = None
         if self.meta.video_keys:
-            file_keys = sorted(
-                {
-                    (
-                        key,
-                        int(self._video_locator[key][0][plan["ep_idx"]]),
-                        int(self._video_locator[key][1][plan["ep_idx"]]),
-                    )
-                    for plan in plans
-                    for key in self.meta.video_keys
-                }
-            )
-            prepared_future = self._prefetch_pool.submit(self._prepare_files, file_keys)
+            fps = float(self.meta.fps)
+            windows: dict[tuple, list[tuple[int, int]]] = {}
+            for plan in plans:
+                ep_idx = plan["ep_idx"]
+                ep_start = int(self._ep_from[ep_idx])
+                for key in self.meta.video_keys:
+                    chunk_arr, file_arr, from_ts_arr = self._video_locator[key]
+                    window = plan["windows"].get(key, [plan["abs_idx"]])
+                    base = round(float(from_ts_arr[ep_idx]) * fps) - ep_start
+                    windows.setdefault(
+                        (key, int(chunk_arr[ep_idx]), int(file_arr[ep_idx])), []
+                    ).append((base + min(window), base + max(window)))
+            prepared_future = self._prefetch_pool.submit(self._prepare_files, sorted(windows), windows)
 
         columns = self._fetch_rows(rows)
         items = [self._build_item(plan, columns, row_pos) for plan in plans]
@@ -797,7 +802,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 )
 
         if prepared is None:
-            prepared = self._prepare_files(list(requests))
+            prepared = self._prepare_files(list(requests))  # no window hints: safety net fetches below
         decoders = self._ensure_decoders(requests, prepared)
 
         results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
@@ -833,13 +838,17 @@ class LanceDBDataset(torch.utils.data.Dataset):
             future.result()
         return results
 
-    def _prepare_files(self, file_keys: list[tuple]) -> dict[tuple, tuple]:
+    def _prepare_files(
+        self, file_keys: list[tuple], windows: dict[tuple, list[tuple[int, int]]] | None = None
+    ) -> dict[tuple, tuple]:
         """Stage 1 of video decoding: everything that doesn't need timestamps.
 
         Loads byte-index metadata, fetches container head/moov/first-packet
-        ranges for uncached files in one parallel call, and creates their
-        decoders. Timestamp-independent, so ``__getitems__`` runs it in a
-        background thread concurrently with the frames-table fetch.
+        ranges for uncached files in one parallel call, creates their
+        decoders, and prefetches the batch's frame-window byte ranges
+        (``windows`` maps file key to (first, last) frame pairs).
+        Timestamp-independent, so ``__getitems__`` runs it in a background
+        thread concurrently with the frames-table fetch.
         """
         from torchcodec.decoders import VideoDecoder
 
@@ -852,42 +861,56 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 prepared[key] = self._decoder_cache.get(key)
             else:
                 new_files.append(key)
-        if not new_files:
-            return prepared
 
-        handles = self._videos_table.fetch_blob_files(
-            VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in new_files]
-        )
-        sources = {
-            key: _SparseBlobSource(self._file_meta[key]["file_size"], handle)
-            for key, handle in zip(new_files, handles, strict=True)
-        }
-        spans_by_key: dict[tuple, list[tuple[int, int]]] = {}
-        for key in new_files:
-            meta = self._file_meta[key]
-            spans = [
-                (0, min(_HEAD_BYTES, meta["file_size"])),
-                # Slack past the moov covers the next box header (e.g. mdat)
-                # that ffmpeg reads while walking the container — without it,
-                # every decoder open pays one ~16-byte round trip.
-                (
-                    meta["moov_offset"],
-                    min(meta["moov_offset"] + meta["moov_size"] + _RANGE_SLACK, meta["file_size"]),
-                ),
-            ]
-            if len(meta["kf_positions"]):
-                first_packet = int(meta["kf_positions"][0])
-                spans.append((first_packet, min(first_packet + _OPEN_READAHEAD, meta["file_size"])))
-            spans_by_key[key] = spans
-        self._fetch_spans(spans_by_key, sources)
+        if new_files:
+            handles = self._videos_table.fetch_blob_files(
+                VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in new_files]
+            )
+            sources = {
+                key: _SparseBlobSource(self._file_meta[key]["file_size"], handle)
+                for key, handle in zip(new_files, handles, strict=True)
+            }
+            spans_by_key: dict[tuple, list[tuple[int, int]]] = {}
+            for key in new_files:
+                meta = self._file_meta[key]
+                spans = [
+                    (0, min(_HEAD_BYTES, meta["file_size"])),
+                    # Slack past the moov covers the next box header (e.g. mdat)
+                    # that ffmpeg reads while walking the container — without it,
+                    # every decoder open pays one ~16-byte round trip.
+                    (
+                        meta["moov_offset"],
+                        min(meta["moov_offset"] + meta["moov_size"] + _RANGE_SLACK, meta["file_size"]),
+                    ),
+                ]
+                if len(meta["kf_positions"]):
+                    first_packet = int(meta["kf_positions"][0])
+                    spans.append((first_packet, min(first_packet + _OPEN_READAHEAD, meta["file_size"])))
+                spans_by_key[key] = spans
+            self._fetch_spans(spans_by_key, sources)
 
-        # Decoder creation parses the moov sample tables (~ms per file):
-        # parallelize across the batch's new files.
-        created = self._decode_pool.map(
-            lambda key: VideoDecoder(sources[key], seek_mode="approximate"), new_files
-        )
-        for key, decoder in zip(new_files, created, strict=True):
-            prepared[key] = (decoder, sources[key])
+            # Decoder creation parses the moov sample tables (~ms per file):
+            # parallelize across the batch's new files.
+            created = self._decode_pool.map(
+                lambda key: VideoDecoder(sources[key], seek_mode="approximate"), new_files
+            )
+            for key, decoder in zip(new_files, created, strict=True):
+                prepared[key] = (decoder, sources[key])
+
+        if windows:
+            window_spans: dict[tuple, list[tuple[int, int]]] = {}
+            for key, frame_windows in windows.items():
+                meta = self._file_meta[key]
+                source = prepared[key][1]
+                spans = [
+                    span
+                    for first, last in frame_windows
+                    for span in [self._window_byte_range(meta, first, last)]
+                    if not source.covers(*span)
+                ]
+                if spans:
+                    window_spans[key] = spans
+            self._fetch_spans(window_spans, {key: prepared[key][1] for key in window_spans})
         return prepared
 
     def _ensure_decoders(self, requests: dict, prepared: dict[tuple, tuple]) -> dict:
