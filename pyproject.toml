@@ -428,7 +428,8 @@ known-first-party = ["lerobot"]
 convention = "google"
 
 [tool.ruff.lint.extend-per-file-ignores]
-"src/lerobot/policies/lingbot_vla_v2/{configuration_lingbot_vla_v2_internal,data_transform,ee_pose_transform,feature_transform,flex_attention,modeling_lingbot_vla_v2_base,modeling_lingbot_vla_v2,moe_load_balance,moe_loss,qwen2_action_expert,qwen3vl_in_vla,utils}.py" = ["N801", "N802", "N803", "N806", "N812", "N816", "SIM101", "SIM102", "SIM105", "SIM108", "SIM114", "SIM118", "SIM210", "SIM211", "SIM910", "B006", "B007", "B015", "B905", "C405", "F401", "F403", "F405", "F811", "F841", "E402", "E701", "E722", "I001", "UP006", "UP007", "UP015", "UP035", "UP045"] # Vendored from Qwen3-VL / LingBot-VLA 2.0 upstream code, kept close to source (hand-written configuration_lingbot_vla_v2.py / processor_lingbot_vla_v2.py / __init__.py are linted normally)
+"src/lerobot/policies/lingbot_vla_v2/{configuration_lingbot_vla_v2_internal,data_transform,ee_pose_transform,feature_transform,flex_attention,modeling_lingbot_vla_v2_base,modeling_lingbot_vla_v2,moe_load_balance,moe_loss,qwen2_action_expert,qwen3vl_in_vla,triton_moe,utils}.py" = ["N801", "N802", "N803", "N806", "N812", "N816", "SIM101", "SIM102", "SIM105", "SIM108", "SIM114", "SIM118", "SIM210", "SIM211", "SIM910", "B006", "B007", "B015", "B905", "C405", "F401", "F403", "F405", "F811", "F841", "E402", "E701", "E722", "I001", "UP006", "UP007", "UP015", "UP035", "UP045"] # Vendored from Qwen3-VL / LingBot-VLA 2.0 upstream code, kept close to source (hand-written configuration_lingbot_vla_v2.py / processor_lingbot_vla_v2.py / __init__.py are linted normally)
+"tests/policies/lingbot_vla_v2/{test_moe_eager,test_triton_moe}.py" = ["N806", "N812"]
 
 [tool.ruff.format]
 quote-style = "double"

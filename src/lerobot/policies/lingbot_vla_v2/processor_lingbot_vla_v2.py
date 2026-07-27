@@ -155,6 +155,7 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
         # Batch size from the state feature.
         batch_size = observation[OBS_STATE].shape[0]
         image_keys = [k for k in observation if k.startswith("observation.images.")]
+
         # The FeatureTransform runs on CPU (numpy stats + the Qwen image processor),
         # but Accelerate hands us batches already on the training device. Move each
         # per-item tensor to CPU here; the trailing DeviceProcessorStep re-uploads the
@@ -186,8 +187,10 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
         complementary = self._current_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
         task = complementary.get("task", DEFAULT_TASK)
 
-        applied = [self._feature_transform.apply(item, policy_eval=policy_eval)
-                   for item, policy_eval in self._iter_items(observation, action, task)]
+        applied = [
+            self._feature_transform.apply(item, policy_eval=policy_eval)
+            for item, policy_eval in self._iter_items(observation, action, task)
+        ]
 
         collated: dict[str, Any] = {}
         for key in applied[0]:

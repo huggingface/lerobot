@@ -359,9 +359,7 @@ class FeatureTransform:
                 # silently dropping it (silent drops -> wrong padding/normalization
                 # downstream with no error). See PR #3967 reviewer note.
                 missing = [
-                    k.split("*")[0]
-                    for k in convert_info["origin_keys"]
-                    if k.split("*")[0] not in item
+                    k.split("*")[0] for k in convert_info["origin_keys"] if k.split("*")[0] not in item
                 ]
                 warned = self.__dict__.setdefault("_warned_missing_slots", set())
                 if target_key not in warned:

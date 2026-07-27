@@ -100,8 +100,15 @@ if _HAS_TRITON:
         BLOCK_M, BLOCK_N, BLOCK_K = 64, 64, 32
         grid = (E, triton.cdiv(max_m, BLOCK_M), triton.cdiv(N, BLOCK_N))
         _grouped_gemm_kernel[grid](
-            x, weight, out, cumsum, N, K,
-            BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K,
+            x,
+            weight,
+            out,
+            cumsum,
+            N,
+            K,
+            BLOCK_M=BLOCK_M,
+            BLOCK_N=BLOCK_N,
+            BLOCK_K=BLOCK_K,
         )
         return out
 
