@@ -89,10 +89,15 @@ from .policy_robot_bridge import (
 from .relative_action_processor import (
     AbsoluteActionsProcessorStep,
     RelativeActionsProcessorStep,
+    relative_action_output_dim,
+    rotation_6d_to_rotvec,
+    rotvec_to_rotation_6d,
     to_absolute_actions,
     to_absolute_se3_pose,
+    to_absolute_se3_pose_6d,
     to_relative_actions,
     to_relative_se3_pose,
+    to_relative_se3_pose_6d,
 )
 from .rename_processor import RenameObservationsProcessorStep, rename_stats
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
@@ -137,10 +142,15 @@ __all__ = [
     "make_default_robot_observation_processor",
     "AbsoluteActionsProcessorStep",
     "RelativeActionsProcessorStep",
+    "relative_action_output_dim",
+    "rotation_6d_to_rotvec",
+    "rotvec_to_rotation_6d",
     "to_absolute_actions",
     "to_absolute_se3_pose",
+    "to_absolute_se3_pose_6d",
     "to_relative_actions",
     "to_relative_se3_pose",
+    "to_relative_se3_pose_6d",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
     "NewLineTaskProcessorStep",

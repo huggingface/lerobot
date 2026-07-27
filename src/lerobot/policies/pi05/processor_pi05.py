@@ -36,6 +36,7 @@ from lerobot.processor import (
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
     policy_action_to_transition,
+    relative_action_output_dim,
     to_relative_actions,
     transition_to_policy_action,
 )
@@ -143,12 +144,6 @@ class Pi05FlattenStateHistoryProcessorStep(ProcessorStep):
                 f"Expected state history with shape (B, {self.history_steps}, D), got {state.shape}"
             )
 
-        flattened_dim = state.shape[1] * state.shape[2]
-        if flattened_dim > self.max_state_dim:
-            raise ValueError(
-                f"Flattened state history has {flattened_dim} dimensions, above max_state_dim={self.max_state_dim}"
-            )
-
         processed_state = state.clone()
         if self.relative:
             mask_step = RelativeActionsProcessorStep(
@@ -162,6 +157,12 @@ class Pi05FlattenStateHistoryProcessorStep(ProcessorStep):
                 mask_step._build_mask(state.shape[-1]),
                 pose_representation=self.pose_representation,
                 se3_pose_groups=self.se3_pose_groups,
+            )
+
+        flattened_dim = processed_state.shape[1] * processed_state.shape[2]
+        if flattened_dim > self.max_state_dim:
+            raise ValueError(
+                f"Flattened state history has {flattened_dim} dimensions, above max_state_dim={self.max_state_dim}"
             )
 
         new_transition = transition.copy()
@@ -187,8 +188,22 @@ class Pi05FlattenStateHistoryProcessorStep(ProcessorStep):
         transformed = deepcopy(features)
         for feature_group in transformed.values():
             state_feature = feature_group.get(OBS_STATE)
-            if state_feature is not None and self.history_steps > 1:
-                state_dim = state_feature.shape[-1] * self.history_steps
+            if state_feature is not None:
+                state_dim = state_feature.shape[-1]
+                if self.relative:
+                    source_dim = len(self.state_names) if self.state_names is not None else state_dim
+                    model_dim = relative_action_output_dim(
+                        source_dim,
+                        self.pose_representation,
+                        self.se3_pose_groups,
+                    )
+                    if state_dim == source_dim:
+                        state_dim = model_dim
+                    elif state_dim != model_dim:
+                        raise ValueError(
+                            f"Expected source/model state width {source_dim}/{model_dim}, got {state_dim}"
+                        )
+                state_dim *= self.history_steps
                 feature_group[OBS_STATE] = PolicyFeature(type=state_feature.type, shape=(state_dim,))
         return transformed
 
