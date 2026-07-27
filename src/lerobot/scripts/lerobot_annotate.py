@@ -24,7 +24,14 @@ Example:
       --root=/path/to/dataset \\
       --vlm.model_id=Qwen/Qwen2.5-VL-7B-Instruct
 
-For distributed runs, see ``examples/annotations/run_hf_job.py``.
+Pass ``--job.target=<flavor>`` to run the same command on a Hugging Face
+Jobs GPU instead of this machine (see ``lerobot.jobs.annotate``):
+
+  uv run lerobot-annotate \\
+      --repo_id=user/dataset \\
+      --new_repo_id=user/dataset_annotated \\
+      --push_to_hub=true \\
+      --job.target=h200
 """
 
 import logging
@@ -69,6 +76,14 @@ def _resolve_root(cfg: AnnotationPipelineConfig) -> Path:
 def annotate(cfg: AnnotationPipelineConfig) -> None:
     """Run the steerable annotation pipeline against a dataset."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    if cfg.job.is_remote:
+        # Imported lazily: the submitter pulls in LeRobotDataset (the `dataset`
+        # extra), which a local annotation run over --root doesn't need.
+        from lerobot.jobs.annotate import submit_annotate_to_hf
+
+        return submit_annotate_to_hf(cfg)
+
     root = _resolve_root(cfg)
     logger.info("annotate: root=%s", root)
 
