@@ -53,17 +53,23 @@ def get_step_checkpoint_dir(output_dir: Path, total_steps: int, step: int) -> Pa
 
 
 def save_training_step(
-    step: int, save_dir: Path, num_processes: int | None = None, batch_size: int | None = None
+    step: int,
+    save_dir: Path,
+    num_processes: int | None = None,
+    batch_size: int | None = None,
+    gradient_accumulation_steps: int | None = None,
 ) -> None:
     state: dict = {"step": step}
-    # num_processes and batch_size are recorded so a resumed run can detect a changed world size or
-    # batch size: the sampler's resume offset is computed from the (num_processes, batch_size) that
-    # produced `step`, since both scale how many sampler positions a step consumes (see
-    # compute_sampler_state).
+    # num_processes, batch_size, and gradient_accumulation_steps are recorded so a resumed run can
+    # detect a changed world size, batch size, or accumulation factor: the sampler's resume offset
+    # is computed from the values that produced `step`, since all three scale how many sampler
+    # positions a step consumes (see compute_sampler_state).
     if num_processes is not None:
         state["num_processes"] = num_processes
     if batch_size is not None:
         state["batch_size"] = batch_size
+    if gradient_accumulation_steps is not None:
+        state["gradient_accumulation_steps"] = gradient_accumulation_steps
     write_json(state, save_dir / TRAINING_STEP)
 
 
@@ -80,6 +86,11 @@ def load_training_num_processes(checkpoint_dir: Path) -> int | None:
 def load_training_batch_size(checkpoint_dir: Path) -> int | None:
     """Per-process batch size recorded at checkpoint time, or None for older checkpoints."""
     return load_json(checkpoint_dir / TRAINING_STATE_DIR / TRAINING_STEP).get("batch_size")
+
+
+def load_training_gradient_accumulation_steps(checkpoint_dir: Path) -> int | None:
+    """Gradient accumulation steps recorded at checkpoint time, or None for older checkpoints."""
+    return load_json(checkpoint_dir / TRAINING_STATE_DIR / TRAINING_STEP).get("gradient_accumulation_steps")
 
 
 def update_last_checkpoint(checkpoint_dir: Path) -> Path:
@@ -101,6 +112,7 @@ def save_checkpoint(
     postprocessor: PolicyProcessorPipeline | None = None,
     num_processes: int | None = None,
     batch_size: int | None = None,
+    gradient_accumulation_steps: int | None = None,
     model_state_dict: dict | None = None,
     optim_state_dict: dict | None = None,
 ) -> None:
@@ -132,6 +144,8 @@ def save_checkpoint(
             resume. Defaults to None (not recorded).
         batch_size (int | None, optional): Per-process batch size to record for sample-exact
             resume. Defaults to None (not recorded).
+        gradient_accumulation_steps (int | None, optional): Gradient accumulation steps to record
+            for sample-exact resume. Defaults to None (not recorded).
         model_state_dict: Pre-gathered full (unsharded) model state dict. Required under FSDP,
             where `policy.state_dict()` would return sharded tensors; the caller gathers it via a
             cross-rank collective and passes it here so rank 0 can write it directly. It holds
@@ -160,6 +174,7 @@ def save_checkpoint(
         scheduler,
         num_processes=num_processes,
         batch_size=batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
         optim_state_dict=optim_state_dict,
     )
 
@@ -171,6 +186,7 @@ def save_training_state(
     scheduler: LRScheduler | None = None,
     num_processes: int | None = None,
     batch_size: int | None = None,
+    gradient_accumulation_steps: int | None = None,
     optim_state_dict: dict | None = None,
 ) -> None:
     """
@@ -185,12 +201,20 @@ def save_training_state(
             Defaults to None.
         num_processes (int | None, optional): Distributed world size to record. Defaults to None.
         batch_size (int | None, optional): Per-process batch size to record. Defaults to None.
+        gradient_accumulation_steps (int | None, optional): Gradient accumulation steps to record.
+            Defaults to None.
         optim_state_dict: Pre-gathered full optimizer state dict (for FSDP). Saved instead of
             `optimizer.state_dict()` when provided. Defaults to None.
     """
     save_dir = checkpoint_dir / TRAINING_STATE_DIR
     save_dir.mkdir(parents=True, exist_ok=True)
-    save_training_step(train_step, save_dir, num_processes=num_processes, batch_size=batch_size)
+    save_training_step(
+        train_step,
+        save_dir,
+        num_processes=num_processes,
+        batch_size=batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+    )
     save_rng_state(save_dir)
     if optimizer is not None:
         save_optimizer_state(optimizer, save_dir, optim_state_dict=optim_state_dict)

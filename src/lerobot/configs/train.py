@@ -133,6 +133,12 @@ class TrainPipelineConfig(HubMixin):
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
     checkpoint_path: Path | None = field(init=False, default=None)
+    # Number of batches to accumulate gradients over before performing an optimizer step.
+    # The effective batch size will be: batch_size * num_processes * gradient_accumulation_steps.
+    # When using gradient accumulation, the `steps` parameter refers to optimizer steps, not batches.
+    # Note that when using RA-BC with gradient accumulation, the sample weights
+    # are normalized per micro-batch rather than across the full effective batch.
+    gradient_accumulation_steps: int = 1
 
     @property
     def is_reward_model_training(self) -> bool:
@@ -212,6 +218,9 @@ class TrainPipelineConfig(HubMixin):
             self.reward_model.pretrained_path = str(policy_dir)
 
     def validate(self) -> None:
+        if self.gradient_accumulation_steps < 1:
+            raise ValueError("gradient_accumulation_steps must be greater than or equal to 1.")
+
         self._resolve_pretrained_from_cli()
 
         if self.policy is None and self.reward_model is None:

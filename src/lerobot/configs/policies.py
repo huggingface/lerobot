@@ -19,7 +19,7 @@ import tempfile
 from dataclasses import dataclass, field
 from logging import getLogger
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 import draccus
 from huggingface_hub import hf_hub_download
@@ -52,6 +52,15 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
         normalization_mapping: A dictionary that maps from a str value of FeatureType (e.g., "STATE", "VISUAL") to
             a corresponding NormalizationMode (e.g., NormalizationMode.MIN_MAX)
     """
+
+    # torch.compile mode resolution. Subclasses that support `torch.compile` override these
+    # ClassVars to declare their preferred compile mode and a CUDAGraphs-free fallback used
+    # when gradient accumulation is enabled. CUDAGraphs ("max-autotune", "reduce-overhead")
+    # is incompatible with gradient_accumulation_steps > 1 because multiple forward passes
+    # before backward overwrite tensors captured in the graph.
+    DEFAULT_COMPILE_MODE: ClassVar[str] = "default"
+    SAFE_COMPILE_MODE: ClassVar[str] = "default"
+    _CUDAGRAPHS_COMPILE_MODES: ClassVar[frozenset[str]] = frozenset({"max-autotune", "reduce-overhead"})
 
     n_obs_steps: int = 1
 
@@ -94,6 +103,26 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
                 f"Automatic Mixed Precision (amp) is not available on device '{self.device}'. Deactivating AMP."
             )
             self.use_amp = False
+
+    def resolve_compile_mode(self, gradient_accumulation_steps: int) -> str:
+        """Return the torch.compile mode to use, accounting for gradient accumulation.
+
+        - If `compile_mode` is set explicitly and uses CUDAGraphs while accumulating, raise.
+        - If `compile_mode` is None and accumulating, return this policy's `SAFE_COMPILE_MODE`.
+        - Otherwise, return the explicit user value, or this policy's `DEFAULT_COMPILE_MODE`.
+        """
+        explicit = getattr(self, "compile_mode", None)
+        if explicit is not None:
+            if gradient_accumulation_steps > 1 and explicit in self._CUDAGRAPHS_COMPILE_MODES:
+                raise ValueError(
+                    f"compile_mode='{explicit}' uses CUDAGraphs which is incompatible with "
+                    f"gradient_accumulation_steps>1. Use a CUDAGraphs-free mode instead "
+                    f"(e.g. {self.SAFE_COMPILE_MODE!r})."
+                )
+            return explicit
+        if gradient_accumulation_steps > 1:
+            return self.SAFE_COMPILE_MODE
+        return self.DEFAULT_COMPILE_MODE
 
     @property
     def type(self) -> str:

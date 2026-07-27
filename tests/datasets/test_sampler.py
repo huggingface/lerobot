@@ -234,3 +234,22 @@ def test_compute_sampler_state():
         "epoch": 1,
         "start_index": 100,
     }
+
+
+def test_compute_sampler_state_with_gradient_accumulation():
+    # One optimizer step consumes `gradient_accumulation_steps` batches: step 7 with accumulation 2
+    # lands where step 14 would without it -> epoch 2, 4 per-rank batches in = 4 * 10 * 2 = 80.
+    assert compute_sampler_state(
+        step=7, num_frames=100, batch_size=10, num_processes=2, gradient_accumulation_steps=2
+    ) == {
+        "epoch": 2,
+        "start_index": 80,
+    }
+    # Accumulation windows can straddle an epoch boundary (sync_with_dataloader=False): step 2 with
+    # accumulation 4 has consumed 8 batches -> epoch 1, 3 in = 60 samples.
+    assert compute_sampler_state(
+        step=2, num_frames=100, batch_size=10, num_processes=2, gradient_accumulation_steps=4
+    ) == {
+        "epoch": 1,
+        "start_index": 60,
+    }
