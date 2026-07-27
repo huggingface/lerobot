@@ -446,12 +446,11 @@ class LanceDBDataset(torch.utils.data.Dataset):
             of normalized float32.
         storage_options: Extra options forwarded to ``lancedb.connect`` (e.g.
             object-store credentials).
-        video_decoder_cache_size: Max torchcodec decoders kept per worker.
-            Defaults to 512 for local tables (decoders hold cheap blob
-            handles) and 16 for remote tables (each holds prefetched byte
-            ranges and an ffmpeg context, additionally bounded by a 2 GiB
-            per-worker byte budget). An evicted remote entry re-prefetches
-            its container header ranges (~1 MB) on the next touch.
+        video_decoder_cache_size: Max torchcodec decoders kept per worker
+            (default 16; each holds prefetched byte ranges and an ffmpeg
+            context, additionally bounded by a 2 GiB per-worker byte budget).
+            An evicted entry re-prefetches its container header ranges
+            (~1 MB) on the next touch.
     """
 
     def __init__(
@@ -491,7 +490,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 self._db_uri = f"hf://datasets/{repo_id}"
             else:
                 raise FileNotFoundError(f"No '{FRAMES_TABLE}.lance' table under {self.root}.")
-        self._is_local = not _is_remote_uri(self._db_uri)
 
         self.meta = LeRobotDatasetMetadata(
             repo_id if repo_id is not None else str(self.root), root=self.root, revision=revision
@@ -499,18 +497,14 @@ class LanceDBDataset(torch.utils.data.Dataset):
 
         if self.meta.depth_keys:
             raise NotImplementedError("Depth features are not supported by LanceDBDataset yet.")
-        # The remote video path fetches keyframe-aligned byte ranges in one
-        # batched call; without it every read is a serialized round trip.
-        if (
-            not self._is_local
-            and self.meta.video_keys
-            and not hasattr(lancedb.table.LanceTable, "fetch_blob_ranges")
-        ):
+        # The video path fetches keyframe-aligned byte ranges in one batched
+        # call per batch (local and remote share the flow; measured at parity
+        # locally, and it is what makes remote training possible at all).
+        if self.meta.video_keys and not hasattr(lancedb.table.LanceTable, "fetch_blob_ranges"):
             raise ImportError(
-                "Streaming video from a remote Lance dataset requires "
-                "lancedb with Table.fetch_blob_ranges (lancedb PR #3703, "
-                f"not in the installed version {lancedb.__version__}). "
-                "Upgrade lancedb, or download the dataset and use a local root."
+                "Video datasets require lancedb with Table.fetch_blob_ranges "
+                f"(lancedb PR #3703, not in the installed version {lancedb.__version__}). "
+                "Upgrade lancedb."
             )
         if image_transforms is not None and not callable(image_transforms):
             raise TypeError("image_transforms must be callable or None.")
@@ -581,11 +575,10 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self._file_meta: OrderedDict[tuple, dict] = OrderedDict()
         self._prefetch_pool: ThreadPoolExecutor | None = None
         if video_decoder_cache_size is None:
-            video_decoder_cache_size = 512 if self._is_local else 16
-        # Remote decoders hold materialized video bytes: cap them at 2 GiB per
-        # worker so large-file datasets can't multiply into an OOM.
-        byte_budget = None if self._is_local else 2 << 30
-        self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size, byte_budget=byte_budget)
+            video_decoder_cache_size = 16
+        # Decoders hold buffered video bytes: cap them at 2 GiB per worker so
+        # large-file datasets can't multiply into an OOM.
+        self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size, byte_budget=2 << 30)
 
     # ── connection management ──────────────────────────────────────────────
 
@@ -599,7 +592,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         """
         if self._frames_perm is not None:
             return
-        if not self._is_local:
+        if self.meta.video_keys:
             self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
         db = _connect(self._db_uri, self._storage_options)
         table = db.open_table(FRAMES_TABLE)
@@ -666,11 +659,11 @@ class LanceDBDataset(torch.utils.data.Dataset):
         rows = sorted({row for plan in plans for row in plan["rows"]})
         row_pos = {row: pos for pos, row in enumerate(rows)}
 
-        # Remote video prep (byte-index metadata, header ranges, decoder
-        # creation) needs only the batch's file set, so it overlaps with the
+        # Video prep (byte-index metadata, header ranges, decoder creation)
+        # needs only the batch's file set, so it overlaps with the
         # frames-table fetch.
         prepared_future = None
-        if self.meta.video_keys and not self._is_local:
+        if self.meta.video_keys:
             file_keys = sorted(
                 {
                     (
@@ -682,7 +675,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
                     for key in self.meta.video_keys
                 }
             )
-            prepared_future = self._prefetch_pool.submit(self._prepare_remote_files, file_keys)
+            prepared_future = self._prefetch_pool.submit(self._prepare_files, file_keys)
 
         columns = self._fetch_rows(rows)
         items = [self._build_item(plan, columns, row_pos) for plan in plans]
@@ -776,12 +769,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
                     (sample_idx, shifted_ts)
                 )
 
-        if self._is_local:
-            decoders = self._ensure_decoders_local(requests)
-        else:
-            if prepared is None:
-                prepared = self._prepare_remote_files(list(requests))
-            decoders = self._ensure_decoders_remote(requests, prepared)
+        if prepared is None:
+            prepared = self._prepare_files(list(requests))
+        decoders = self._ensure_decoders(requests, prepared)
 
         results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
 
@@ -821,29 +811,8 @@ class LanceDBDataset(torch.utils.data.Dataset):
                     future.result()
         return results
 
-    def _ensure_decoders_local(self, requests: dict) -> dict:
-        """Local tables: decoders read straight off seekable blob handles."""
-        from torchcodec.decoders import VideoDecoder
-
-        decoders = {}
-        for key in requests:
-            if key in self._decoder_cache:
-                decoders[key], _ = self._decoder_cache.get(key)
-        missing = [key for key in requests if key not in decoders]
-        if missing:
-            blob_files = self._videos_table.fetch_blob_files(
-                VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in missing]
-            )
-            for key, blob_file in zip(missing, blob_files, strict=True):
-                # approximate seek mode skips the full-file scan that exact
-                # mode performs on decoder creation.
-                decoder = VideoDecoder(blob_file, seek_mode="approximate")
-                decoders[key] = decoder
-                self._decoder_cache.put(key, (decoder, None))
-        return decoders
-
-    def _prepare_remote_files(self, file_keys: list[tuple]) -> dict[tuple, tuple]:
-        """Stage 1 of remote decoding: everything that doesn't need timestamps.
+    def _prepare_files(self, file_keys: list[tuple]) -> dict[tuple, tuple]:
+        """Stage 1 of video decoding: everything that doesn't need timestamps.
 
         Loads byte-index metadata, fetches container head/moov/first-packet
         ranges for uncached files in one parallel call, and creates their
@@ -898,8 +867,8 @@ class LanceDBDataset(torch.utils.data.Dataset):
             prepared[key] = (decoder, sources[key])
         return prepared
 
-    def _ensure_decoders_remote(self, requests: dict, prepared: dict[tuple, tuple]) -> dict:
-        """Stage 2 of remote decoding: fetch this batch's frame windows.
+    def _ensure_decoders(self, requests: dict, prepared: dict[tuple, tuple]) -> dict:
+        """Stage 2 of video decoding: fetch this batch's frame windows.
 
         Translates each window into a keyframe-aligned byte range via the
         byte-index columns and fetches all of them in one parallel
