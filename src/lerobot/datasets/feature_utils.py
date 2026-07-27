@@ -64,6 +64,11 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
             continue
         elif ft["dtype"] == "image":
             hf_features[key] = datasets.Image()
+        elif len(ft["shape"]) > 1 and any(dim == 0 for dim in ft["shape"]):
+            raise ValueError(
+                f"Multidimensional features with a zero-width dimension are not supported: "
+                f"'{key}' has shape {ft['shape']}. Only the one-dimensional shape (0,) is supported."
+            )
         elif ft["shape"] == (1,):
             hf_features[key] = datasets.Value(dtype=ft["dtype"])
         elif len(ft["shape"]) == 1:
