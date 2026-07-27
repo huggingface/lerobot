@@ -568,6 +568,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self._video_row_ids: dict[tuple, int] | None = None
         self._file_meta: OrderedDict[tuple, dict] = OrderedDict()
         self._prefetch_pool: ThreadPoolExecutor | None = None
+        self._decode_pool: ThreadPoolExecutor | None = None
         if video_decoder_cache_size is None:
             video_decoder_cache_size = 16
         # Decoders hold buffered video bytes: cap them at 2 GiB per worker so
@@ -588,6 +589,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
             return
         if self.meta.video_keys:
             self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
+            # One persistent pool per worker for decoder creation and frame
+            # decoding; 16 matches the old per-batch decoder-creation cap.
+            self._decode_pool = ThreadPoolExecutor(max_workers=16)
         db = _connect(self._db_uri, self._storage_options)
         table = db.open_table(FRAMES_TABLE)
         self._frames_perm = (
@@ -613,6 +617,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         state["_video_row_ids"] = None
         state["_file_meta"] = OrderedDict()
         state["_prefetch_pool"] = None
+        state["_decode_pool"] = None
         state["_decoder_cache"] = _VideoDecoderLRU(
             self._decoder_cache.capacity, byte_budget=self._decoder_cache.byte_budget
         )
@@ -795,14 +800,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
 
         # Decode files in parallel (decoding releases the GIL), mirroring the
         # per-camera thread pool in DatasetReader._query_videos.
-        if len(requests) <= 1:
-            for file_key, file_requests in requests.items():
-                _decode_file(file_key, file_requests)
-        else:
-            with ThreadPoolExecutor(max_workers=len(requests)) as pool:
-                futures = [pool.submit(_decode_file, k, r) for k, r in requests.items()]
-                for future in futures:
-                    future.result()
+        futures = [self._decode_pool.submit(_decode_file, k, r) for k, r in requests.items()]
+        for future in futures:
+            future.result()
         return results
 
     def _prepare_files(self, file_keys: list[tuple]) -> dict[tuple, tuple]:
@@ -855,8 +855,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
 
         # Decoder creation parses the moov sample tables (~ms per file):
         # parallelize across the batch's new files.
-        with ThreadPoolExecutor(max_workers=min(len(new_files), 16)) as pool:
-            created = pool.map(lambda key: VideoDecoder(sources[key], seek_mode="approximate"), new_files)
+        created = self._decode_pool.map(
+            lambda key: VideoDecoder(sources[key], seek_mode="approximate"), new_files
+        )
         for key, decoder in zip(new_files, created, strict=True):
             prepared[key] = (decoder, sources[key])
         return prepared
