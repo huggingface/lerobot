@@ -200,10 +200,38 @@ class _SparseBlobSource(io.RawIOBase):
         self.fallback_bytes = 0
 
     def add(self, offset: int, data: bytes) -> None:
-        index = bisect.bisect_left(self._starts, offset)
-        self._starts.insert(index, offset)
-        self._chunks.insert(index, data)
-        self.buffered += len(data)
+        """Buffer a fetched range, merging any chunks it overlaps or touches.
+
+        Ranges from different fetch waves overlap routinely (a later wave's
+        merged span can straddle an earlier chunk). Keeping chunks disjoint
+        is what lets ``covers`` and ``readinto`` check only the single chunk
+        preceding a position; with overlapping chunks that lookup lands on
+        the shorter chunk and misreports covered bytes as missing, costing a
+        spurious fallback round trip per touch.
+        """
+        end = offset + len(data)
+        lo = bisect.bisect_left(self._starts, offset)
+        if lo > 0 and self._starts[lo - 1] + len(self._chunks[lo - 1]) >= offset:
+            lo -= 1
+        hi = bisect.bisect_right(self._starts, end)
+        if lo == hi:
+            self._starts.insert(lo, offset)
+            self._chunks.insert(lo, data)
+        else:
+            merged_start = min(offset, self._starts[lo])
+            merged_end = max(
+                end, max(self._starts[i] + len(self._chunks[i]) for i in range(lo, hi))
+            )
+            merged = bytearray(merged_end - merged_start)
+            for i in range(lo, hi):
+                at = self._starts[i] - merged_start
+                merged[at : at + len(self._chunks[i])] = self._chunks[i]
+            merged[offset - merged_start : offset - merged_start + len(data)] = data
+            del self._starts[lo:hi]
+            del self._chunks[lo:hi]
+            self._starts.insert(lo, merged_start)
+            self._chunks.insert(lo, bytes(merged))
+        self.buffered = sum(len(chunk) for chunk in self._chunks)
 
     def covers(self, start: int, end: int) -> bool:
         index = bisect.bisect_right(self._starts, start) - 1
