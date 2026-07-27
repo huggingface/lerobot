@@ -38,6 +38,7 @@ is downloaded locally). Set ``HF_TOKEN`` in the environment for private repos.
 
 from __future__ import annotations
 
+import bisect
 import io
 import json
 import os
@@ -202,16 +203,12 @@ class _SparseBlobSource(io.RawIOBase):
         self.fallback_bytes = 0
 
     def add(self, offset: int, data: bytes) -> None:
-        import bisect
-
         index = bisect.bisect_left(self._starts, offset)
         self._starts.insert(index, offset)
         self._chunks.insert(index, data)
         self.buffered += len(data)
 
     def covers(self, start: int, end: int) -> bool:
-        import bisect
-
         index = bisect.bisect_right(self._starts, start) - 1
         return index >= 0 and self._starts[index] + len(self._chunks[index]) >= end
 
@@ -234,8 +231,6 @@ class _SparseBlobSource(io.RawIOBase):
         return self._pos
 
     def readinto(self, buffer) -> int:
-        import bisect
-
         if self._pos >= self._size:
             return 0
         want = min(len(buffer), self._size - self._pos)
@@ -263,9 +258,9 @@ class _SparseBlobSource(io.RawIOBase):
 class _VideoDecoderLRU:
     """Per-worker LRU of torchcodec decoders keyed by (video_key, chunk, file).
 
-    Local decoders hold cheap seekable ``BlobFile`` handles (``nbytes=0``).
-    Remote decoders hold sparse buffers of prefetched byte ranges plus an
-    ffmpeg context, so eviction is also bounded by ``byte_budget`` — a pure
+    Local decoders hold cheap seekable ``BlobFile`` handles and cost ~nothing
+    (``nbytes=0``). Remote decoders hold prefetched byte ranges plus an ffmpeg
+    context, so eviction is also bounded by ``byte_budget`` — a pure
     entry-count cap would let per-worker RAM scale with resolution and
     window accumulation.
     """
@@ -283,27 +278,16 @@ class _VideoDecoderLRU:
         self._items.move_to_end(key)
         return self._items[key][0]
 
-    # Sparse (handle-backed) decoders hold a parsed frame index, not file
-    # bytes; they are cheap enough to keep in the hundreds. Only materialized
-    # entries (nbytes > 0) count against `capacity` and `byte_budget`.
-    SPARSE_CAPACITY = 512
-
     def put(self, key: tuple, decoder, nbytes: int = 0) -> None:
         if key in self._items:
             self._total_bytes -= self._items[key][1]
         self._items[key] = (decoder, nbytes)
         self._items.move_to_end(key)
         self._total_bytes += nbytes
-
-        def _over_limit() -> bool:
-            materialized = sum(1 for _, entry_bytes in self._items.values() if entry_bytes > 0)
-            return (
-                materialized > self.capacity
-                or (self.byte_budget is not None and self._total_bytes > self.byte_budget)
-                or len(self._items) > max(self.capacity, self.SPARSE_CAPACITY)
-            )
-
-        while len(self._items) > 1 and _over_limit():
+        while len(self._items) > 1 and (
+            len(self._items) > self.capacity
+            or (self.byte_budget is not None and self._total_bytes > self.byte_budget)
+        ):
             _, (_, evicted_bytes) = self._items.popitem(last=False)
             self._total_bytes -= evicted_bytes
 
@@ -449,11 +433,11 @@ class LanceDBDataset(torch.utils.data.Dataset):
         storage_options: Extra options forwarded to ``lancedb.connect`` (e.g.
             object-store credentials).
         video_decoder_cache_size: Max torchcodec decoders kept per worker.
-            Defaults to 100 for local tables (decoders hold cheap blob
-            handles, matching the upstream decoder cache) and 16 for remote
-            tables (each decoder holds a sparse buffer of prefetched byte
-            ranges). An evicted remote entry re-prefetches its container
-            header ranges (~1 MB) on the next touch.
+            Defaults to 512 for local tables (decoders hold cheap blob
+            handles) and 16 for remote tables (each holds prefetched byte
+            ranges and an ffmpeg context, additionally bounded by a 2 GiB
+            per-worker byte budget). An evicted remote entry re-prefetches
+            its container header ranges (~1 MB) on the next touch.
     """
 
     def __init__(
@@ -582,7 +566,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self._file_meta: OrderedDict[tuple, dict] = OrderedDict()
         self._prefetch_pool: ThreadPoolExecutor | None = None
         if video_decoder_cache_size is None:
-            video_decoder_cache_size = 100 if self._is_local else 16
+            video_decoder_cache_size = 512 if self._is_local else 16
         # Remote decoders hold materialized video bytes: cap them at 2 GiB per
         # worker so large-file datasets can't multiply into an OOM.
         byte_budget = None if self._is_local else 2 << 30
@@ -595,7 +579,8 @@ class LanceDBDataset(torch.utils.data.Dataset):
 
         Handles are opened lazily and dropped on pickling so that each
         DataLoader worker builds its own. Lance's runtime is not fork-safe:
-        use ``multiprocessing_context='spawn'`` with ``num_workers > 0``.
+        pass ``multiprocessing_context=lance_mp_context()`` (forkserver, or
+        spawn where unavailable) to the DataLoader when ``num_workers > 0``.
         """
         if self._frames_perm is not None:
             return

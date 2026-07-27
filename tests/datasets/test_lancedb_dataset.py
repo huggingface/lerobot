@@ -432,3 +432,16 @@ def test_remote_video_requires_ranged_reads(video_dataset_roots, monkeypatch, tm
     monkeypatch.delattr(lancedb.table.Table, "fetch_blob_ranges", raising=False)
     with pytest.raises(ImportError, match="fetch_blob_ranges"):
         LanceDBDataset(root=f"file://{lance_root}")
+
+
+def test_video_single_element_window_parity(video_dataset_roots):
+    """A one-element delta window must match upstream's shape (squeeze semantics)."""
+    src_root, lance_root = video_dataset_roots
+    video_key = LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta.video_keys[0]
+    delta_timestamps = {video_key: [0.0]}
+    upstream = LeRobotDataset(
+        DUMMY_REPO_ID, root=src_root, delta_timestamps=delta_timestamps, video_backend="torchcodec"
+    )
+    lance_ds = LanceDBDataset(root=lance_root, delta_timestamps=delta_timestamps)
+    for idx in [0, len(upstream) - 1]:
+        assert_items_equal(lance_ds[idx], upstream[idx])
