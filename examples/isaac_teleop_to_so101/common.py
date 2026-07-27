@@ -154,9 +154,10 @@ def slew(
 # XR controller device
 # ============================================================================
 
-# Per-frame EE rate limit [m]. With raise_on_jump=False, EEBoundsAndSafety clamps an
-# over-limit step instead of raising, absorbing a tracking glitch as one slow frame. At
-# FPS=30, 0.1 m/frame caps EE speed at ~3 m/s. (end_effector_bounds clips the absolute target.)
+# Per-frame EE rate limit [m]: an over-limit step raises out of the loop (EEBoundsAndSafety's
+# default raise_on_jump). At FPS=30, 0.1 m/frame caps EE speed at ~3 m/s -- well above the ~0.05 m
+# a fast hand produces at clutch_position_scale=0.5, so it only trips on a real tracking glitch.
+# Position only; orientation is neither bounded nor rate-limited.
 MAX_EE_STEP_M = 0.1
 
 # Soft-orientation IK weight: small but nonzero so the wrist follows the hand while position
@@ -314,13 +315,12 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
     xr_to_robot_joints_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
         steps=[
             MapXRControllerActionToRobotAction(),
-            # raise_on_jump=False: an over-limit step (e.g. a tracking glitch) is clamped +
-            # warned instead of raised, since a crash mid-loop would leave the arm uncontrolled.
-            # z floor 0.0 keeps a stray target above the table; x/y stay at a loose [-1,1]m box.
+            # Backstop sized to the arm's reachable envelope (calculated from a URDF FK sweep over
+            # all joint limits; max reach 0.545 m). The z floor is the tabletop: base_link's
+            # collision geometry bottoms out at z=-0.0024, so 0.0 is the table plus ~2 mm.
             EEBoundsAndSafety(
-                end_effector_bounds={"min": [-1.0, -1.0, 0.0], "max": [1.0, 1.0, 1.0]},
+                end_effector_bounds={"min": [-0.35, -0.45, 0.0], "max": [0.50, 0.45, 0.55]},
                 max_ee_step_m=MAX_EE_STEP_M,
-                raise_on_jump=False,
             ),
             InverseKinematicsEEToJoints(
                 kinematics=kinematics_solver,
