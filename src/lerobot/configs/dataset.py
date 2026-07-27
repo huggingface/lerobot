@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from .video import VideoEncoderConfig, camera_encoder_defaults
+from .video import DepthEncoderConfig, RGBEncoderConfig, depth_encoder_defaults, rgb_encoder_defaults
 
 
 @dataclass
@@ -41,8 +41,8 @@ class DatasetRecordConfig:
     video: bool = True
     # Upload dataset to Hugging Face hub.
     push_to_hub: bool = True
-    # Upload on private repository on the Hugging Face hub.
-    private: bool = False
+    # If True, upload as private; if None, defer to the org default on the Hub (only affects orgs).
+    private: bool | None = None
     # Add tags to your dataset on the hub.
     tags: list[str] | None = None
     # Number of subprocesses handling the saving of frames as PNG. Set to 0 to use threads only;
@@ -58,8 +58,10 @@ class DatasetRecordConfig:
     # Set to 1 for immediate encoding (default behavior), or higher for batched encoding
     video_encoding_batch_size: int = 1
     # Video encoder settings for camera MP4s (codec, quality, GOP, etc.). Tuned via CLI nested keys,
-    # e.g. ``--dataset.camera_encoder.vcodec=h264`` (see ``VideoEncoderConfig``).
-    camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
+    # e.g. ``--dataset.rgb_encoder.vcodec=h264`` (see ``RGBEncoderConfig``).
+    rgb_encoder: RGBEncoderConfig = field(default_factory=rgb_encoder_defaults)
+    # Video encoder settings for depth-map MP4s (codec, quality, GOP, etc.). Tuned via CLI nested keys.
+    depth_encoder: DepthEncoderConfig = field(default_factory=depth_encoder_defaults)
     # Enable streaming video encoding: encode frames in real-time during capture instead
     # of writing PNG images first. Makes save_episode() near-instant. More info in the documentation: https://huggingface.co/docs/lerobot/streaming_video_encoding
     streaming_encoding: bool = False

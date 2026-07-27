@@ -167,9 +167,9 @@ jobs:
 
       # ── LIBERO TRAIN+EVAL SMOKE ──────────────────────────────────────────────
       # Train SmolVLA for 1 step (batch_size=1, dataset episode 0 only) then
-      # immediately runs eval inside the training loop (eval_freq=1, 1 episode).
+      # immediately runs eval inside the training loop (env_eval_freq=1, 1 episode).
       # Tests the full train→eval-within-training pipeline end-to-end.
-      - name: Run Libero train+eval smoke (1 step, eval_freq=1)
+      - name: Run Libero train+eval smoke (1 step, env_eval_freq=1)
         if: env.HF_USER_TOKEN != ''
         run: |
           docker run --name libero-train-smoke --gpus all \
@@ -196,7 +196,7 @@ jobs:
                 --output_dir=/tmp/train-smoke \
                 --steps=1 \
                 --batch_size=1 \
-                --eval_freq=1 \
+                --env_eval_freq=1 \
                 --eval.n_episodes=1 \
                 --eval.batch_size=1 \
                 --eval.use_async_envs=false \

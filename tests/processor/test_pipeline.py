@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 import torch
 import torch.nn as nn
+from safetensors.torch import load_file
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
@@ -172,6 +173,53 @@ class MockStepWithTensorState(ProcessorStep):
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         # We do not test features here
         return features
+
+
+class MockLazyTensorStateStep(ProcessorStep):
+    """Mock step whose tensor state is not present in constructor config."""
+
+    def __init__(
+        self, name: str = "lazy_tensor_step", scale: float = 1.0, initial_value: float | None = None
+    ):
+        self.name = name
+        self.scale = scale
+        self.tensor_state: torch.Tensor | None = None
+
+        if initial_value is not None:
+            self.tensor_state = torch.tensor([initial_value], dtype=torch.float32)
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Return the transition unchanged."""
+        return transition
+
+    def get_config(self) -> dict[str, Any]:
+        """Return constructor config while intentionally omitting tensor state."""
+        return {
+            "name": self.name,
+            "scale": self.scale,
+        }
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        """Return tensor state only after it has been initialized or loaded."""
+        if self.tensor_state is None:
+            return {}
+
+        return {"tensor_state": self.tensor_state}
+
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        """Load tensor state."""
+        self.tensor_state = state["tensor_state"].clone()
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Return features unchanged."""
+        return features
+
+
+@ProcessorStepRegistry.register("registered_lazy_tensor_state_step")
+class RegisteredLazyTensorStateStep(MockLazyTensorStateStep):
+    """Registered lazy tensor state step for registry-based serialization tests."""
 
 
 def test_empty_pipeline():
@@ -618,6 +666,178 @@ def test_mixed_json_and_tensor_state():
         # Check tensor state was restored
         assert loaded_step.running_count.item() == 10
         assert torch.allclose(loaded_step.running_mean, step.running_mean)
+
+
+def test_get_config_matches_saved_json():
+    """Test that in-memory config matches the config written by save_pretrained."""
+    stateless_step = MockStep(name="stateless")
+    stateful_step = MockLazyTensorStateStep(name="stateful", initial_value=4.0)
+    pipeline = DataProcessorPipeline([stateless_step, stateful_step], name="Memory Pipeline")
+
+    in_memory_config = pipeline.get_config()
+
+    assert pipeline.get_config() == in_memory_config
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        pipeline.save_pretrained(tmp_dir)
+
+        config_path = Path(tmp_dir) / "memory_pipeline.json"
+        with open(config_path) as file_pointer:
+            saved_config = json.load(file_pointer)
+
+    assert in_memory_config == saved_config
+    assert "state_file" not in in_memory_config["steps"][0]
+    assert in_memory_config["steps"][1]["state_file"] == "memory_pipeline_step_1.safetensors"
+
+
+def test_state_dict_matches_saved_safetensors():
+    """Test that in-memory state matches the safetensors written by save_pretrained."""
+    stateful_step = MockLazyTensorStateStep(initial_value=7.0)
+    pipeline = DataProcessorPipeline([stateful_step], name="Stateful Pipeline")
+
+    in_memory_state_dict = pipeline.state_dict()
+    state_filename = "stateful_pipeline_step_0.safetensors"
+    state_key = "stateful_pipeline_step_0"
+
+    assert set(in_memory_state_dict) == {state_key}
+    assert set(in_memory_state_dict[state_key]) == {"tensor_state"}
+
+    in_memory_state_dict[state_key]["tensor_state"].add_(1)
+    assert stateful_step.tensor_state is not None
+    assert torch.equal(stateful_step.tensor_state, torch.tensor([7.0]))
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        pipeline.save_pretrained(tmp_dir)
+        saved_state_dict = load_file(Path(tmp_dir) / state_filename)
+
+    torch.testing.assert_close(saved_state_dict["tensor_state"], torch.tensor([7.0]))
+
+
+def test_save_pretrained_still_writes_expected_serialization_files():
+    """Test that save_pretrained keeps the existing config and state filenames."""
+    stateful_step = MockLazyTensorStateStep(initial_value=3.0)
+    pipeline = DataProcessorPipeline([stateful_step], name="Policy Preprocessor")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        pipeline.save_pretrained(tmp_dir)
+
+        save_path = Path(tmp_dir)
+        assert (save_path / "policy_preprocessor.json").exists()
+        assert (save_path / "policy_preprocessor_step_0.safetensors").exists()
+
+
+def test_from_config_round_trips_stateful_pipeline():
+    """Test that from_config rebuilds a stateful pipeline from in-memory artifacts."""
+    stateful_step = MockLazyTensorStateStep(name="roundtrip", initial_value=11.0)
+    pipeline = DataProcessorPipeline([stateful_step], name="Roundtrip Pipeline")
+    config = pipeline.get_config()
+    pipeline_state_dict = pipeline.state_dict()
+
+    loaded_pipeline = DataProcessorPipeline.from_config(config, state_dict=pipeline_state_dict)
+    loaded_step = loaded_pipeline.steps[0]
+
+    assert len(loaded_pipeline) == 1
+    assert isinstance(loaded_step, MockLazyTensorStateStep)
+    torch.testing.assert_close(loaded_step.tensor_state, torch.tensor([11.0]))
+
+
+def test_from_config_round_trips_registered_stateful_pipeline():
+    """Test that from_config resolves registry steps and loads their named tensor state."""
+    stateful_step = RegisteredLazyTensorStateStep(name="registered", initial_value=29.0)
+    pipeline = DataProcessorPipeline([stateful_step], name="Registry Pipeline")
+    config = pipeline.get_config()
+    pipeline_state_dict = pipeline.state_dict()
+    state_filename = "registry_pipeline_step_0_registered_lazy_tensor_state_step.safetensors"
+    state_key = "registry_pipeline_step_0_registered_lazy_tensor_state_step"
+
+    assert config["steps"][0]["registry_name"] == "registered_lazy_tensor_state_step"
+    assert config["steps"][0]["state_file"] == state_filename
+    assert set(pipeline_state_dict) == {state_key}
+
+    loaded_pipeline = DataProcessorPipeline.from_config(config, state_dict=pipeline_state_dict)
+    loaded_step = loaded_pipeline.steps[0]
+
+    assert isinstance(loaded_step, RegisteredLazyTensorStateStep)
+    assert loaded_step.tensor_state is not None
+    torch.testing.assert_close(loaded_step.tensor_state, torch.tensor([29.0]))
+
+
+def test_from_config_preserves_state_metadata_for_empty_initial_state():
+    """Test in-memory loading when rebuilt steps start without tensor state."""
+    stateful_step = MockLazyTensorStateStep(name="lazy", initial_value=13.0)
+    pipeline = DataProcessorPipeline([stateful_step], name="Lazy Pipeline")
+    config = pipeline.get_config()
+    pipeline_state_dict = pipeline.state_dict()
+
+    loaded_pipeline = DataProcessorPipeline.from_config(config)
+    loaded_step = loaded_pipeline.steps[0]
+
+    assert isinstance(loaded_step, MockLazyTensorStateStep)
+    assert loaded_step.state_dict() == {}
+    assert "state_file" not in loaded_pipeline.get_config()["steps"][0]
+
+    loaded_pipeline.load_state_dict(pipeline_state_dict)
+
+    torch.testing.assert_close(loaded_step.tensor_state, torch.tensor([13.0]))
+
+
+def test_from_config_applies_overrides_before_state_loading():
+    """Test that constructor overrides and tensor state loading are separate operations."""
+    stateful_step = MockLazyTensorStateStep(name="override", scale=1.0, initial_value=17.0)
+    pipeline = DataProcessorPipeline([stateful_step], name="Override Pipeline")
+    config = pipeline.get_config()
+    pipeline_state_dict = pipeline.state_dict()
+
+    loaded_pipeline = DataProcessorPipeline.from_config(
+        config,
+        state_dict=pipeline_state_dict,
+        overrides={"MockLazyTensorStateStep": {"scale": 5.0}},
+    )
+    loaded_step = loaded_pipeline.steps[0]
+
+    assert isinstance(loaded_step, MockLazyTensorStateStep)
+    assert loaded_step.scale == 5.0
+    torch.testing.assert_close(loaded_step.tensor_state, torch.tensor([17.0]))
+
+
+def test_load_state_dict_raises_on_missing_expected_state():
+    """Test loading raises when serialized config expects missing state."""
+    stateful_step = MockLazyTensorStateStep(initial_value=19.0)
+    pipeline = DataProcessorPipeline([stateful_step], name="Missing Pipeline")
+    loaded_pipeline = DataProcessorPipeline.from_config(pipeline.get_config())
+
+    with pytest.raises(KeyError, match="missing_pipeline_step_0"):
+        loaded_pipeline.load_state_dict({})
+
+
+def test_load_state_dict_raises_on_unexpected_extra_state():
+    """Test loading raises on unexpected top-level state keys."""
+    pipeline = DataProcessorPipeline([MockStep(name="stateless")], name="Unexpected Pipeline")
+
+    with pytest.raises(KeyError, match="extra"):
+        pipeline.load_state_dict({"extra": {"tensor_state": torch.tensor([1.0])}})
+
+
+def test_stateless_pipeline_in_memory_serialization_returns_empty_state():
+    """Test stateless in-memory serialization and loading."""
+    pipeline = DataProcessorPipeline([MockStep(name="stateless")], name="Stateless Pipeline")
+    config = pipeline.get_config()
+    config_without_name = {"steps": config["steps"]}
+
+    assert pipeline.state_dict() == {}
+    assert all("state_file" not in step_entry for step_entry in config["steps"])
+
+    loaded_pipeline = DataProcessorPipeline.from_config(config_without_name, state_dict={})
+
+    assert loaded_pipeline.name == "DataProcessorPipeline"
+    assert loaded_pipeline.state_dict() == {}
+
+
+@pytest.mark.parametrize("invalid_config", [None, [], "not config"])
+def test_from_config_rejects_non_dict_config(invalid_config):
+    """Test from_config reports invalid top-level config values cleanly."""
+    with pytest.raises(ValueError, match="not a valid processor configuration"):
+        DataProcessorPipeline.from_config(invalid_config)  # type: ignore[arg-type]
 
 
 class MockModuleStep(ProcessorStep, nn.Module):
@@ -2150,14 +2370,32 @@ def test_aggregate_images_when_use_videos_false():
     out = aggregate_pipeline_dataset_features(
         pipeline=rp,
         initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: initial},
-        use_videos=False,  # expect "image" dtype
+        use_videos=False,  # images kept, stored as "image" dtype
         patterns=None,
     )
 
     key = f"{OBS_IMAGES}.back"
     key_front = f"{OBS_IMAGES}.front"
-    assert key not in out
-    assert key_front not in out
+    assert key in out
+    assert key_front in out
+    assert out[key]["dtype"] == "image"
+    assert out[key_front]["dtype"] == "image"
+    assert out[key]["shape"] == initial["back"]
+
+
+def test_aggregate_images_excluded():
+    rp = DataProcessorPipeline([AddObservationStateFeatures(add_front_image=True)])
+    initial = {"back": (480, 640, 3)}
+
+    out = aggregate_pipeline_dataset_features(
+        pipeline=rp,
+        initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: initial},
+        exclude_images=True,
+        patterns=None,
+    )
+
+    assert f"{OBS_IMAGES}.back" not in out
+    assert f"{OBS_IMAGES}.front" not in out
 
 
 def test_aggregate_images_when_use_videos_true():
