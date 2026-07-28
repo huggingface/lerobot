@@ -109,7 +109,10 @@ class RealSenseCamera(Camera):
         ```
     """
 
-    _MAX_CONNECT_ATTEMPTS = 2
+    # Maximum number of warmup attempts made by connect(). A failed attempt is first
+    # retried with a plain pipeline stop/start, which is usually enough to recover the
+    # stream; a USB hardware reset is performed before the final attempt as a last resort.
+    _MAX_CONNECT_ATTEMPTS = 3
 
     def __init__(self, config: RealSenseCameraConfig):
         """
@@ -130,7 +133,6 @@ class RealSenseCamera(Camera):
 
         self.fps = config.fps
         self.color_mode = config.color_mode
-        self.color_format = config.color_format
         self.use_rgb = config.use_rgb
         self.use_depth = config.use_depth
         self.warmup_s = config.warmup_s
@@ -175,32 +177,21 @@ class RealSenseCamera(Camera):
     def _teardown_pipeline(self) -> None:
         """Stops the read thread and the RealSense pipeline.
 
-        Shared by :meth:`disconnect` and :meth:`connect`'s retry-after-reset path.
+        Shared by :meth:`disconnect` and :meth:`connect`'s retry loop.
         """
-        try:
-            if self.thread is not None:
-                self._stop_read_thread()
-        finally:
-            if self.rs_pipeline is not None:
-                try:
-                    self.rs_pipeline.stop()
-                except Exception as e:
-                    raise ConnectionError(f"Failed to stop {self} during connection cleanup.") from e
-                finally:
-                    self.rs_pipeline = None
-                    self.rs_profile = None
-            else:
-                self.rs_profile = None
+        if self.thread is not None:
+            self._stop_read_thread()
 
-    def _open_pipeline(self, attempt: int) -> None:
+        if self.rs_pipeline is not None:
+            self.rs_pipeline.stop()
+            self.rs_pipeline = None
+            self.rs_profile = None
+
+    def _open_pipeline(self) -> None:
         """Initializes the RealSense pipeline, starts it, and starts the background read thread.
 
-        Args:
-            attempt: 1-based attempt number, used only to pick the right error message.
-
         Raises:
-            ConnectionError: If the pipeline fails to start. Never retried by :meth:`connect`,
-                since a hardware reset cannot help a device that couldn't be opened at all.
+            ConnectionError: If the pipeline fails to start.
         """
         rs_pipeline = rs.pipeline()
         rs_config = rs.config()
@@ -209,8 +200,6 @@ class RealSenseCamera(Camera):
         try:
             rs_profile = rs_pipeline.start(rs_config)
         except RuntimeError as e:
-            if attempt > 1:
-                raise ConnectionError(f"Failed to open {self} after hardware reset.") from e
             raise ConnectionError(
                 f"Failed to open {self}.Run `lerobot-find-cameras realsense` to find available cameras."
             ) from e
@@ -218,19 +207,20 @@ class RealSenseCamera(Camera):
         self.rs_pipeline = rs_pipeline
         self.rs_profile = rs_profile
 
+        opened = False
         try:
             self._configure_capture_settings()
             self._start_read_thread()
-        except BaseException:
-            self._teardown_pipeline()
-            raise
+            opened = True
+        finally:
+            if not opened:
+                self._teardown_pipeline()
 
     def _run_warmup(self) -> None:
         """Blocks until at least one valid frame has been captured by the background thread.
 
         Raises:
-            TimeoutError: If no frame arrives before ``warmup_s`` elapses. This is the failure
-                class :meth:`connect`'s retry loop treats as reset-and-retry-worthy.
+            ConnectionError: If no frame arrives before ``warmup_s`` elapses.
         """
         # NOTE(Steven/Caroline): Enforcing at least one second of warmup as RS cameras need a bit of time before the first read. If we don't wait, the first read from the warmup will raise.
         self.warmup_s = max(self.warmup_s, 1)
@@ -244,7 +234,7 @@ class RealSenseCamera(Camera):
             if (self.use_rgb and self.latest_color_frame is None) or (
                 self.use_depth and self.latest_depth_frame is None
             ):
-                raise TimeoutError("No frames during warmup.")
+                raise ConnectionError(f"{self} failed to capture frames during warmup.")
 
     @check_if_already_connected
     def connect(self, warmup: bool = True) -> None:
@@ -253,8 +243,10 @@ class RealSenseCamera(Camera):
 
         Initializes the RealSense pipeline, configures the required streams (color
         and optionally depth), starts the pipeline, and validates the actual stream settings.
-        If the pipeline starts but no frames arrive during warmup, performs a USB hardware
-        reset and retries once (common recovery path for a stuck D405).
+
+        If the pipeline starts but no frames arrive during warmup, retries up to
+        ``_MAX_CONNECT_ATTEMPTS`` times, performing a USB hardware reset before the
+        final attempt.
 
         Args:
             warmup (bool): If True, waits at connect() time until at least one valid frame
@@ -267,25 +259,33 @@ class RealSenseCamera(Camera):
             RuntimeError: If the pipeline starts but fails to apply requested settings.
         """
 
-        for attempt in range(1, self._MAX_CONNECT_ATTEMPTS + 1):
-            self._open_pipeline(attempt)
+        last_error: Exception | None = None
 
+        for attempt in range(1, self._MAX_CONNECT_ATTEMPTS + 1):
+            if attempt == self._MAX_CONNECT_ATTEMPTS:
+                self._hardware_reset()
+
+            self._open_pipeline()
+
+            connected = False
             try:
                 self._run_warmup()
+                connected = True
             except (TimeoutError, ConnectionError) as e:
-                self._teardown_pipeline()
-                if attempt == self._MAX_CONNECT_ATTEMPTS:
-                    raise ConnectionError(
-                        f"{self} failed to capture frames even after hardware reset."
-                    ) from e
-                logger.warning(f"{self} warmup failed, attempting hardware reset and retry.")
-                self._hardware_reset()
-            except BaseException:
-                self._teardown_pipeline()
-                raise
-            else:
+                last_error = e
+            finally:
+                if not connected:
+                    self._teardown_pipeline()
+
+            if connected:
                 logger.info(f"{self} connected.")
                 return
+
+            logger.warning(f"{self} warmup failed (attempt {attempt}/{self._MAX_CONNECT_ATTEMPTS}).")
+
+        raise ConnectionError(
+            f"{self} failed to capture frames after {self._MAX_CONNECT_ATTEMPTS} attempts."
+        ) from last_error
 
     @staticmethod
     def find_cameras() -> list[dict[str, Any]]:
@@ -366,11 +366,7 @@ class RealSenseCamera(Camera):
         if self.width and self.height and self.fps:
             if self.use_rgb:
                 rs_config.enable_stream(
-                    rs.stream.color,
-                    self.capture_width,
-                    self.capture_height,
-                    rs.format.bgr8 if self.color_format == "bgr8" else rs.format.rgb8,
-                    self.fps,
+                    rs.stream.color, self.capture_width, self.capture_height, rs.format.rgb8, self.fps
                 )
             if self.use_depth:
                 rs_config.enable_stream(
@@ -535,12 +531,8 @@ class RealSenseCamera(Camera):
             )
 
         processed_image = image
-        if self.color_format == "bgr8":
-            if self.color_mode == ColorMode.RGB:
-                processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        else:
-            if self.color_mode == ColorMode.BGR:
-                processed_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        if self.color_mode == ColorMode.BGR:
+            processed_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
             processed_image = cv2.rotate(processed_image, self.rotation)
@@ -582,6 +574,13 @@ class RealSenseCamera(Camera):
                 capture_time = time.perf_counter()
 
                 with self.frame_lock:
+                    # A stop may have been requested while this read was in flight, in which
+                    # case _stop_read_thread() has already cleared the buffer and moved on.
+                    # Publishing now would resurrect it with a frame from a pipeline that is
+                    # being torn down. Checking under the lock makes this atomic against that
+                    # clear.
+                    if stop_event.is_set():
+                        break
                     if self.use_rgb:
                         self.latest_color_frame = processed_color_frame
                     if self.use_depth:
