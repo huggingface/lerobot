@@ -1,0 +1,97 @@
+from dataclasses import dataclass, field
+
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
+from lerobot.utils.constants import ACTION
+
+ROBOCASA_CAMERA_KEYS = [
+    "observation.images.robot0_agentview_left",
+    "observation.images.robot0_agentview_right",
+    "observation.images.robot0_eye_in_hand",
+]
+
+
+@PreTrainedConfig.register_subclass("being_h05")
+@dataclass
+class BeingH05Config(PreTrainedConfig):
+    """LeRobot configuration for BeingBeyond Being-H0.5.
+
+    ``author_config`` is the untouched Hugging Face ``config.json`` payload. Keeping it
+    nested prevents LeRobot defaults from silently changing the checkpoint architecture.
+    """
+
+    author_model_id: str = "BeingBeyond/Being-H05-2B"
+    author_revision: str = "bb31ffcf7d67a8d5ec82d715d5e1678581ef6374"
+    author_source_revision: str = "ab1204954cb5e68f0bc52a376982e962c763bbbe"
+    author_config: dict = field(default_factory=dict)
+    tokenizer_name: str = "BeingBeyond/Being-H05-2B"
+    tokenizer_revision: str | None = None
+    embodiment: str = "robocasa_human"
+    embodiment_id: int = 31
+    image_keys: list[str] = field(default_factory=lambda: list(ROBOCASA_CAMERA_KEYS))
+    image_size: int = 224
+    unified_state_dim: int = 200
+    unified_action_dim: int = 200
+    chunk_size: int = 16
+    n_action_steps: int = 8
+    num_inference_steps: int = 4
+    prompt_template: str = (
+        "According to the instruction '{task_description}', what's the micro-step actions "
+        "in the next {k} steps?"
+    )
+    metadata: dict = field(default_factory=dict)
+    atomic_4_adapter: bool = False
+    optimizer_lr: float = 2e-5
+    optimizer_weight_decay: float = 0.0
+    scheduler_warmup_steps: int = 1000
+    scheduler_decay_steps: int = 100000
+    normalization_mapping: dict[str, NormalizationMode] = field(
+        default_factory=lambda: {
+            "VISUAL": NormalizationMode.IDENTITY,
+            "STATE": NormalizationMode.IDENTITY,
+            "ACTION": NormalizationMode.IDENTITY,
+        }
+    )
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.unified_state_dim != 200 or self.unified_action_dim != 200:
+            raise ValueError("Being-H0.5 checkpoints require the semantic 200D state/action spaces.")
+        if self.chunk_size < self.n_action_steps:
+            raise ValueError("n_action_steps cannot exceed chunk_size")
+        author_chunk_size = self.author_config.get("action_chunk_length")
+        if author_chunk_size is not None and self.chunk_size != author_chunk_size:
+            raise ValueError(
+                f"chunk_size={self.chunk_size} does not match checkpoint action_chunk_length={author_chunk_size}."
+            )
+        if self.image_size != 224:
+            raise ValueError("Released Being-H0.5 checkpoints require 224px images.")
+
+    def validate_features(self) -> None:
+        visual = [key for key, value in self.input_features.items() if value.type == FeatureType.VISUAL]
+        missing = [key for key in self.image_keys if key not in visual]
+        if missing:
+            raise ValueError(f"Being-H0.5 is missing configured camera features: {missing}")
+        if ACTION not in self.output_features:
+            self.output_features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(12,))
+
+    def get_optimizer_preset(self) -> AdamWConfig:
+        return AdamWConfig(lr=self.optimizer_lr, weight_decay=self.optimizer_weight_decay)
+
+    def get_scheduler_preset(self):
+        return CosineDecayWithWarmupSchedulerConfig(
+            num_warmup_steps=self.scheduler_warmup_steps,
+            num_decay_steps=self.scheduler_decay_steps,
+        )
+
+    @property
+    def observation_delta_indices(self) -> None:
+        return None
+
+    @property
+    def action_delta_indices(self) -> list[int]:
+        return list(range(self.chunk_size))
+
+    @property
+    def reward_delta_indices(self) -> None:
+        return None

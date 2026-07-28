@@ -1,0 +1,212 @@
+# Being-H0.5
+
+Being-H0.5 is a **vision-language-action policy for cross-embodiment robot
+learning** from [BeingBeyond](https://github.com/BeingBeyond/Being-H). The
+LeRobot integration provides standard policy, processor, training, checkpoint,
+and action-selection interfaces for the released base and RoboCasa models.
+
+## Model overview
+
+Being-H0.5 combines visual observations, robot state, and a natural-language
+task to predict a chunk of robot actions with flow matching.
+
+| Component         | Implementation                                   | Role                                       |
+| ----------------- | ------------------------------------------------ | ------------------------------------------ |
+| Vision encoder    | Transformers `InternVLVisionModel`               | Encodes 224 × 224 multi-camera images      |
+| Language backbone | Qwen3-1.7B family with Being-H0.5 MoT layers     | Fuses vision, language, and robot context  |
+| Action expert     | Being-H0.5 mixture-of-transformers action stream | Conditions action generation on context    |
+| Action head       | Flow-matching encoder and decoder                | Predicts 16-step action chunks             |
+| Processors        | LeRobot preprocessor and postprocessor pipelines | Maps robot data to and from semantic slots |
+
+The Qwen configuration, tokenizer, and vision tower come from Transformers.
+The MoT action expert, packed NaViT language path, multimodal connector, and
+flow-action modules use the pinned Being-H0.5 implementation.
+
+### What the LeRobot integration supports
+
+- Loading the released base and RoboCasa checkpoints from the Hub.
+- Training and fine-tuning through `lerobot-train`.
+- Inference through `predict_action_chunk` and `select_action`.
+- Three ordered camera inputs and natural-language task instructions.
+- Fixed semantic 200D state and action representations with validity masks.
+- The released four-step flow-matching sampler.
+- RoboCasa's 16D observation-state and 12D environment-action convention.
+
+## Installation
+
+1. Install LeRobot by following the [installation guide](./installation).
+2. Install the Being-H0.5 dependencies:
+
+   ```bash
+   pip install -e ".[being_h05]"
+   ```
+
+3. Clone the pinned author implementation and add it to `PYTHONPATH`:
+
+   ```bash
+   git clone https://github.com/BeingBeyond/Being-H.git
+   git -C Being-H checkout ab1204954cb5e68f0bc52a376982e962c763bbbe
+   export PYTHONPATH="$PWD/Being-H/Being-H05:$PYTHONPATH"
+   ```
+
+FlashAttention is optional. If it is unavailable, the policy automatically
+uses the eager-attention path.
+
+## Checkpoints
+
+| Variant  | LeRobot checkpoint                                                                | Intended use                        |
+| -------- | --------------------------------------------------------------------------------- | ----------------------------------- |
+| Base     | [`lerobot/being_h05_base`](https://huggingface.co/lerobot/being_h05_base)         | Cross-embodiment fine-tuning        |
+| RoboCasa | [`lerobot/being_h05_robocasa`](https://huggingface.co/lerobot/being_h05_robocasa) | RoboCasa evaluation and fine-tuning |
+
+The checkpoints include the policy configuration, tokenizer, serialized
+preprocessor and postprocessor, and model weights.
+
+## Fine-tuning
+
+`BeingH05Policy.forward` implements the released mixture-of-flow objective.
+During training, the preprocessor:
+
+1. resizes and normalizes each configured camera;
+2. formats the natural-language task prompt;
+3. maps robot state and actions into their semantic 200D slots;
+4. builds state/action validity masks; and
+5. packs the vision, language, state, and action tokens for the model.
+
+Fine-tune the RoboCasa checkpoint on the matching
+[`pepijn223/atomic_4_annotated`](https://huggingface.co/datasets/pepijn223/atomic_4_annotated)
+dataset with:
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/being_h05_robocasa \
+  --dataset.repo_id=pepijn223/atomic_4_annotated \
+  --batch_size=1 \
+  --steps=3000 \
+  --output_dir=outputs/train/being_h05_robocasa \
+  --job_name=being_h05_robocasa \
+  --policy.device=cuda \
+  --wandb.enable=true
+```
+
+The default optimizer is AdamW with learning rate `2e-5`, followed by a cosine
+decay schedule with 1,000 warmup steps. These values can be overridden with
+`--policy.optimizer_lr`, `--policy.optimizer_weight_decay`,
+`--policy.scheduler_warmup_steps`, and `--policy.scheduler_decay_steps`.
+
+<Tip>
+
+Full AdamW fine-tuning of the complete model requires more than 32 GB of GPU
+memory. Use optimizer sharding/offload or freeze the vision and language
+backbones in a custom training setup when training on a smaller GPU. A
+decoder-only training smoke test fits on an RTX 5090.
+
+</Tip>
+
+### Dataset requirements
+
+A training dataset must provide:
+
+- the camera features listed in `policy.image_keys`;
+- a natural-language task string for each sample;
+- state and action chunks matching the selected checkpoint's convention; and
+- at least `policy.chunk_size` action steps per training sample.
+
+The RoboCasa checkpoint sets `atomic_4_adapter=true`. Its expected inputs are:
+
+| Feature |             Shape | Layout                                                            |
+| ------- | ----------------: | ----------------------------------------------------------------- |
+| State   |                16 | EEF position and quaternion, base pose, two gripper joints        |
+| Action  |                12 | EEF translation and rotation, gripper, base command, control mode |
+| Images  | 3 × 3 × 224 × 224 | Left agent view, right agent view, wrist view                     |
+
+For another embodiment, map each named state and action field into the semantic
+slots used by the checkpoint. Missing modalities remain masked instead of
+being treated as meaningful zero-valued inputs.
+
+## Inference
+
+Load a checkpoint through the standard LeRobot policy interface:
+
+```python
+from lerobot.policies.being_h05.modeling_being_h05 import BeingH05Policy
+
+policy = BeingH05Policy.from_pretrained("lerobot/being_h05_robocasa")
+policy.to("cuda").eval()
+```
+
+The policy predicts 16 actions at a time and executes the first
+`n_action_steps` actions before sampling another chunk. The released
+checkpoints use four flow-matching inference steps.
+
+### Key configuration options
+
+| Option                | Default | Description                                   |
+| --------------------- | ------: | --------------------------------------------- |
+| `chunk_size`          |      16 | Number of actions generated per chunk         |
+| `n_action_steps`      |       8 | Actions executed before replanning            |
+| `num_inference_steps` |       4 | Flow-matching sampling steps                  |
+| `image_size`          |     224 | Required input image size                     |
+| `atomic_4_adapter`    | `false` | Enables the released RoboCasa 16D/12D mapping |
+
+## RoboCasa data convention
+
+Being-H0.5 uses named locations inside its fixed 200D state and action spaces:
+
+| Signal                             | Semantic slots    |
+| ---------------------------------- | ----------------- |
+| State EEF position / rotation      | `0:3` / `3:6`     |
+| State gripper joints               | `44:46`           |
+| State base position / rotation     | `70:73` / `73:76` |
+| Action EEF translation / rotation  | `0:3` / `3:6`     |
+| Action gripper                     | `18:19`           |
+| Action base command / control mode | `70:74` / `74:75` |
+
+Only gripper and control mode are binarized by the released RoboCasa
+processor. EEF and mobile-base actions retain their original values.
+
+RoboCasa 1.0 renamed two checkpoint-era task identifiers:
+
+- `CoffeePressButton` became `StartCoffeeMachine`.
+- `PnPCounterToSink` became `PickPlaceCounterToSink`.
+
+Resolve these aliases before constructing the environment while keeping the
+environment's task instruction unchanged.
+
+## Validation results
+
+The LeRobot checkpoints were compared with the pinned author implementation in
+BF16 on an NVIDIA RTX 5090.
+
+| Checkpoint | Batch | Author loss | LeRobot loss | Flow max abs | Sample max abs |
+| ---------- | ----: | ----------: | -----------: | -----------: | -------------: |
+| Base       |     1 |    2.555654 |     2.555654 |            0 |              0 |
+| Base       |     2 |    5.126004 |     5.126004 |            0 |              0 |
+| RoboCasa   |     1 |    1.503128 |     1.503128 |            0 |              0 |
+| RoboCasa   |     2 |    5.692251 |     5.692251 |            0 |              0 |
+
+Preprocessing, missing-camera masks, prompt tokens, normalization, semantic
+slots, the flow sampler, and final environment actions all had maximum and p99
+absolute error zero.
+
+In a lockstep 50-episode RoboCasa comparison, both the author and LeRobot
+policies achieved **12/50 successes (24.0%)**, for a source-to-LeRobot delta of
+zero percentage points. Across 3,892 policy requests, no action-parity failures
+were observed.
+
+## Reproducibility
+
+| Artifact            | Revision                                   |
+| ------------------- | ------------------------------------------ |
+| Being-H source      | `ab1204954cb5e68f0bc52a376982e962c763bbbe` |
+| Base checkpoint     | `bb31ffcf7d67a8d5ec82d715d5e1678581ef6374` |
+| RoboCasa checkpoint | `75989b121eab7d0a8e421d846acf268c2938883d` |
+| RoboCasa            | `be22d659b02db8f6d7f3a3c3edc742934fdcbaae` |
+| RoboSuite           | `aaa8b9b214ce8e77e82926d677b4d61d55e577ab` |
+| MuJoCo              | `3.3.1`                                    |
+
+## License
+
+Being-H0.5 and this integration are released under the Apache-2.0 license. See
+the [upstream Being-H repository](https://github.com/BeingBeyond/Being-H) for
+the original implementation.
