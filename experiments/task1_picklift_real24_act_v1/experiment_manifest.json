@@ -1,0 +1,70 @@
+{
+    "experiment_id": "task1_picklift_real24_act_v1",
+    "purpose": "Task 1 PickLift real-only ACT engineering baseline",
+    "research_status": "engineering_baseline_only_not_a_paper_result",
+    "policy_family": "ACT",
+    "checkpoint_selection_rule": {
+        "rule": "fixed_step",
+        "selected_step": 100000,
+        "no_validation_selection": true,
+        "reason": "Freeze the evaluation object before real-robot evaluation and avoid selecting on evaluation outcomes."
+    },
+    "dataset": {
+        "repo_id": "local/task1_picklift_formal24_s03_20260728",
+        "root": "/home/ubuntu24/Teleop/artifacts/task1_picklift_formal24_s03_20260728",
+        "freeze_id": "task1_picklift_formal24_s03_freeze_v1",
+        "raw_tree_sha256": "251cbdc079b304425ccdfbd7a08f15d34858ea0dd8c19345544b8da9f3adb9f2",
+        "subset_id": "task1_picklift_formal24_s03_accepted_v1",
+        "subset_sha256": "a0449033d3f2b447cf6b0774ac5d363c8073ab10667799bf3920b61805373e1d",
+        "episodes": 24,
+        "frames": 3790,
+        "fps": 20,
+        "source_backend": "real_robot",
+        "sampling_weight": 1.0,
+        "features": {
+            "inputs": [
+                "observation.state",
+                "observation.images.front"
+            ],
+            "outputs": [
+                "action"
+            ],
+            "forbidden_or_absent": [
+                "observation.images.wrist",
+                "observation.images.handeye"
+            ]
+        }
+    },
+    "runtime": {
+        "repository": "/home/ubuntu24/Teleop/lerobot",
+        "lerobot_version": "0.6.1",
+        "python": "3.12.3",
+        "torch": "2.11.0+cu128",
+        "device": "NVIDIA GeForce RTX 4080",
+        "seed": 1000
+    },
+    "recipe": {
+        "reference_only": "G:/PhysicalAI/Lerobot202607/10000pretrainedModel/train_config.json",
+        "loads_old_checkpoint": false,
+        "camera_contract": "front_only_640x480",
+        "normalization": "MEAN_STD",
+        "vision_backbone": "resnet18",
+        "vision_backbone_initialization": "ImageNet1K_V1",
+        "chunk_size_steps": 67,
+        "n_action_steps": 67,
+        "time_horizon_seconds": 3.35,
+        "time_horizon_conversion": "round(100 steps * 20 FPS / 30 FPS) = 67 steps; preserves the old approximately 3.33 second horizon at the new 20 FPS dataset rate",
+        "batch_size": 8,
+        "steps": 100000,
+        "save_freq": 20000,
+        "learning_rate": 0.00001,
+        "weight_decay": 0.0001
+    },
+    "known_training_caveats": [
+        "529 joint-frame software-sent action labels across 22/24 episodes exceed the Follower calibrated position bounds, mainly shoulder_lift.",
+        "Raw data and labels are immutable; no label clipping is performed during training.",
+        "Deployment must clamp every policy action fail-closed to the exact current Follower calibrated bounds and log clamp events.",
+        "The batch includes repeated adjacent camera frames and uncalibrated camera intrinsics/extrinsics as recorded in qa_v1."
+    ],
+    "hardware_boundary": "Training, checkpoint validation, and deployment preparation are offline only. Do not access serial ports, enable the Follower, send robot actions, or request 12 V before explicit user handoff."
+}
