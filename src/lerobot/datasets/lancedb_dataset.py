@@ -685,8 +685,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         """Batched fetch: one deduplicated frames-table read and one blob fetch per batch."""
         self._ensure_open()
         plans = self._plan_batch(indices)
-        rows = sorted({row for plan in plans for row in plan["rows"]})
-        row_pos = {row: pos for pos, row in enumerate(rows)}
+        rows, row_pos = self._batch_rows(plans)
 
         # Video prep (byte-index metadata, header ranges, decoder creation,
         # frame-window byte ranges) needs only the batch's file set and frame
@@ -732,24 +731,18 @@ class LanceDBDataset(torch.utils.data.Dataset):
         windows: dict[tuple, list[tuple[int, int]]] = {}
         for plan in plans:
             ep_idx = plan["ep_idx"]
-            ep_start = int(self._ep_from[ep_idx])
             for key in self.meta.video_keys:
-                chunk_arr, file_arr, from_ts_arr = self._video_locator[key]
-                window = plan["windows"].get(key, [plan["abs_idx"]])
-                base = round(float(from_ts_arr[ep_idx]) * fps) - ep_start
-                first = base + min(window) - (1 if key in self.meta.depth_keys else 0)
-                windows.setdefault((key, int(chunk_arr[ep_idx]), int(file_arr[ep_idx])), []).append(
-                    (first, base + max(window))
-                )
+                file_key, span = self._planned_file_window(key, ep_idx, plan, fps)
+                windows.setdefault(file_key, []).append(span)
         return windows
 
     def _plan_batch(self, indices: list[int]) -> list[dict]:
         """Resolve each sample to the absolute rows it needs and its padding masks."""
         plans = []
         for idx in indices:
-            abs_idx = int(self._rel_to_abs[idx]) if self._rel_to_abs is not None else int(idx)
-            ep_idx = int(np.searchsorted(self._ep_from, abs_idx, side="right") - 1)
-            start, end = int(self._ep_from[ep_idx]), int(self._ep_to[ep_idx])
+            abs_idx = self._resolve_abs_idx(idx)
+            ep_idx = self._episode_index_for_abs_idx(abs_idx)
+            start, end = self._episode_bounds(ep_idx)
             plan = {"abs_idx": abs_idx, "ep_idx": ep_idx, "rows": {abs_idx}, "windows": {}, "padding": {}}
             if self.delta_indices is not None:
                 for key, deltas in self.delta_indices.items():
@@ -761,6 +754,29 @@ class LanceDBDataset(torch.utils.data.Dataset):
                     )
             plans.append(plan)
         return plans
+
+    def _resolve_abs_idx(self, idx: int) -> int:
+        return int(self._rel_to_abs[idx]) if self._rel_to_abs is not None else int(idx)
+
+    def _episode_index_for_abs_idx(self, abs_idx: int) -> int:
+        return int(np.searchsorted(self._ep_from, abs_idx, side="right") - 1)
+
+    def _episode_bounds(self, ep_idx: int) -> tuple[int, int]:
+        return int(self._ep_from[ep_idx]), int(self._ep_to[ep_idx])
+
+    def _batch_rows(self, plans: list[dict]) -> tuple[list[int], dict[int, int]]:
+        rows = sorted({row for plan in plans for row in plan["rows"]})
+        return rows, {row: pos for pos, row in enumerate(rows)}
+
+    def _planned_file_window(
+        self, key: str, ep_idx: int, plan: dict, fps: float
+    ) -> tuple[tuple[str, int, int], tuple[int, int]]:
+        ep_start, _ = self._episode_bounds(ep_idx)
+        _, _, from_ts_arr = self._video_locator[key]
+        window = plan["windows"].get(key, [plan["abs_idx"]])
+        base = round(float(from_ts_arr[ep_idx]) * fps) - ep_start
+        first = base + min(window) - (1 if key in self.meta.depth_keys else 0)
+        return self._video_file_key(key, ep_idx), (first, base + max(window))
 
     def _fetch_rows(self, rows: list[int]) -> dict[str, np.ndarray]:
         """Fetch rows from the frames table and decode columns to numpy.
@@ -807,18 +823,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         ``fetch_blob_files`` call, and each decoder serves every frame the batch
         needs from its file in one ``get_frames_at`` call.
         """
-        timestamps = columns["timestamp"]
-        requests: dict[tuple, list[tuple[int, list[float]]]] = defaultdict(list)
-        for sample_idx, plan in enumerate(plans):
-            ep_idx = plan["ep_idx"]
-            for key in self.meta.video_keys:
-                window = plan["windows"].get(key, [plan["abs_idx"]])
-                chunk_arr, file_arr, from_ts_arr = self._video_locator[key]
-                shifted_ts = [float(from_ts_arr[ep_idx]) + float(timestamps[row_pos[row]]) for row in window]
-                requests[(key, int(chunk_arr[ep_idx]), int(file_arr[ep_idx]))].append(
-                    (sample_idx, shifted_ts)
-                )
-
+        requests = self._build_video_requests(plans, columns["timestamp"], row_pos)
         entries = self._ensure_decoders(requests, prepared)
 
         results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
@@ -857,6 +862,22 @@ class LanceDBDataset(torch.utils.data.Dataset):
         for future in futures:
             future.result()
         return results
+
+    def _build_video_requests(
+        self,
+        plans: list[dict],
+        timestamps: np.ndarray,
+        row_pos: dict[int, int],
+    ) -> dict[tuple, list[tuple[int, list[float]]]]:
+        requests: dict[tuple, list[tuple[int, list[float]]]] = defaultdict(list)
+        for sample_idx, plan in enumerate(plans):
+            ep_idx = plan["ep_idx"]
+            for key in self.meta.video_keys:
+                window = plan["windows"].get(key, [plan["abs_idx"]])
+                requests[self._video_file_key(key, ep_idx)].append(
+                    (sample_idx, self._shifted_video_timestamps(key, ep_idx, window, timestamps, row_pos))
+                )
+        return requests
 
     def _prepare_files(
         self, file_keys: list[tuple], windows: dict[tuple, list[tuple[int, int]]] | None = None
@@ -938,6 +959,22 @@ class LanceDBDataset(torch.utils.data.Dataset):
                     window_spans[key] = spans
             self._fetch_spans(window_spans, {key: prepared[key][1] for key in window_spans})
         return prepared
+
+    def _video_file_key(self, key: str, ep_idx: int) -> tuple[str, int, int]:
+        chunk_arr, file_arr, _ = self._video_locator[key]
+        return key, int(chunk_arr[ep_idx]), int(file_arr[ep_idx])
+
+    def _shifted_video_timestamps(
+        self,
+        key: str,
+        ep_idx: int,
+        window: list[int],
+        timestamps: np.ndarray,
+        row_pos: dict[int, int],
+    ) -> list[float]:
+        _, _, from_ts_arr = self._video_locator[key]
+        base = float(from_ts_arr[ep_idx])
+        return [base + float(timestamps[row_pos[row]]) for row in window]
 
     def _ensure_decoders(self, requests: dict, prepared: dict[tuple, tuple]) -> dict:
         """Stage 2 of video decoding: fetch this batch's frame windows.
