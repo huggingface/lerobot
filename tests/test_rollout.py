@@ -185,18 +185,25 @@ def test_load_pretrained_peft_policy_keeps_adapter_and_base_revisions_separate(m
     peft_config_from_pretrained = MagicMock(return_value=peft_config)
     adapted_policy = MagicMock()
     peft_model_from_pretrained = MagicMock(return_value=adapted_policy)
-    monkeypatch.setitem(
-        sys.modules,
-        "peft",
-        SimpleNamespace(
-            PeftConfig=SimpleNamespace(from_pretrained=peft_config_from_pretrained),
-            PeftModel=SimpleNamespace(from_pretrained=peft_model_from_pretrained),
-        ),
+    require_package = MagicMock()
+    monkeypatch.setattr(rollout_context, "require_package", require_package)
+    monkeypatch.setattr(
+        rollout_context,
+        "PeftConfig",
+        SimpleNamespace(from_pretrained=peft_config_from_pretrained),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        rollout_context,
+        "PeftModel",
+        SimpleNamespace(from_pretrained=peft_model_from_pretrained),
+        raising=False,
     )
 
     policy = rollout_context._load_pretrained_policy(policy_config)
 
     assert policy is adapted_policy
+    require_package.assert_called_once_with("peft", extra="peft")
     peft_config_from_pretrained.assert_called_once_with("user/adapter", revision="adapter-sha")
     policy_class.from_pretrained.assert_called_once_with(
         pretrained_name_or_path="user/base-policy",
