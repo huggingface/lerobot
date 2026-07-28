@@ -68,7 +68,7 @@ if TYPE_CHECKING or _lancedb_available:
 from .dataset_metadata import LeRobotDatasetMetadata
 from .depth_utils import dequantize_depth
 from .feature_utils import check_delta_timestamps, get_delta_indices
-from .video_utils import FrameTimestampError
+from .video_utils import FrameTimestampError, decode_video_frames_pyav
 
 FRAMES_TABLE = "frames"
 VIDEOS_TABLE = "videos"
@@ -721,11 +721,8 @@ class LanceDBDataset(torch.utils.data.Dataset):
 
         Positions come from episode metadata alone (file-local frame =
         absolute frame - episode start + round(from_timestamp * fps)), no
-        timestamps needed — which is what lets stage-1 prefetch these ranges
-        concurrently with the frames-table read (+22% on fetch-bound S3).
-        These are hints: stage 2 re-derives ranges from real timestamps and
-        fetches anything missed, so a wrong hint costs a round trip, never a
-        wrong frame. Depth spans reach one frame back for pyav's seek margin.
+        timestamps needed. stage 2 re-derives ranges from real timestamps and
+        fetches anything missed.
         """
         fps = float(self.meta.fps)
         windows: dict[tuple, list[tuple[int, int]]] = {}
@@ -1022,47 +1019,17 @@ class LanceDBDataset(torch.utils.data.Dataset):
         return prepared
 
     def _decode_depth_window(self, source, shifted_ts: list[float], file_key: tuple) -> torch.Tensor:
-        """Decode one depth window via pyav and dequantize to the output unit.
+        """Decode one depth window: upstream's pyav decoder over our sparse source.
 
-        Depth videos store 16-bit planes (``gray12le``) that torchcodec's RGB
-        output cannot represent, so depth follows upstream's pyav path: seek
-        to the keyframe at or before the window, decode forward, pick the
-        closest frame per queried timestamp within ``tolerance_s``. Reads come
-        from the same prefetched sparse source as RGB video.
+        Depth videos hold 16-bit planes torchcodec cannot emit. Since
+        video_utils.decode_video_frames_pyav accepts file-like objects, the
+        SAME upstream function serves both loaders here; we add only the
+        source seek and the dequantize to metric units.
         """
-        import av
-
-        first_ts, last_ts = min(shifted_ts), max(shifted_ts)
-        loaded_frames: list[torch.Tensor] = []
-        loaded_ts: list[float] = []
         source.seek(0)
-        with av.open(source) as container:
-            stream = container.streams.video[0]
-            container.seek(
-                round(first_ts / stream.time_base) - 1, backward=True, any_frame=False, stream=stream
-            )
-            for frame in container.decode(stream):
-                if frame.pts is None:
-                    continue
-                current_ts = float(frame.pts * stream.time_base)
-                loaded_frames.append(
-                    torch.from_numpy(frame.to_ndarray(format="gray12le")).unsqueeze(0).contiguous()
-                )
-                loaded_ts.append(current_ts)
-                if current_ts >= last_ts:
-                    break
-        distance = (
-            torch.tensor(shifted_ts, dtype=torch.float64)[:, None]
-            - torch.tensor(loaded_ts, dtype=torch.float64)[None, :]
-        ).abs()
-        min_distance, argmin = distance.min(1)
-        if (min_distance >= self.tolerance_s).any():
-            raise FrameTimestampError(
-                f"Query timestamps violate tolerance_s={self.tolerance_s} for depth video "
-                f"'{file_key[0]}' (chunk {file_key[1]}, file {file_key[2]}): queried {shifted_ts}, "
-                f"decoded range {loaded_ts[:1]}..{loaded_ts[-1:]}."
-            )
-        frames = torch.stack([loaded_frames[i] for i in argmin])
+        frames = decode_video_frames_pyav(
+            source, shifted_ts, self.tolerance_s, return_uint8=False, is_depth=True
+        )
         config = self._depth_encoder_configs[file_key[0]]
         return dequantize_depth(
             frames,
