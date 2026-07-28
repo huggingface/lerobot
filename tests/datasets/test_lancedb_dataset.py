@@ -458,3 +458,56 @@ def test_video_single_element_window_parity(video_dataset_roots):
     lance_ds = LanceDBDataset(root=lance_root, delta_timestamps=delta_timestamps)
     for idx in [0, len(upstream) - 1]:
         assert_items_equal(lance_ds[idx], upstream[idx])
+
+
+@pytest.fixture
+def depth_dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
+    from tests.fixtures.constants import DUMMY_CAMERA_FEATURES_WITH_DEPTH
+
+    src_root = tmp_path / "src_depth"
+    lerobot_dataset_factory(
+        root=src_root,
+        total_episodes=2,
+        total_frames=50,
+        use_videos=True,
+        camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
+    )
+    lance_root = tmp_path / "lance_depth"
+    convert_frames_to_lance(src_root, lance_root)
+    return src_root, lance_root
+
+
+def test_depth_item_parity(depth_dataset_roots):
+    src_root, lance_root = depth_dataset_roots
+    upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
+    lance_ds = LanceDBDataset(root=lance_root)
+    assert upstream.meta.depth_keys
+    for idx in [0, len(upstream) // 2, len(upstream) - 1]:
+        assert_items_equal(lance_ds[idx], upstream[idx])
+
+
+def test_depth_delta_window_parity(depth_dataset_roots):
+    src_root, lance_root = depth_dataset_roots
+    meta = LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta
+    fps, depth_key = meta.fps, meta.depth_keys[0]
+    delta_timestamps = {depth_key: [-1 / fps, 0.0, 1 / fps], "action": [0.0, 1 / fps]}
+    upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, delta_timestamps=delta_timestamps)
+    lance_ds = LanceDBDataset(root=lance_root, delta_timestamps=delta_timestamps)
+    for idx in [0, 7, len(upstream) - 1]:
+        assert_items_equal(lance_ds[idx], upstream[idx])
+
+
+@pytest.mark.skipif(
+    not hasattr(lancedb.table.LanceTable, "fetch_blob_ranges"),
+    reason="lancedb without fetch_blob_ranges",
+)
+def test_depth_remote_ranged_parity(depth_dataset_roots, monkeypatch, tmp_path):
+    import lerobot.datasets.lancedb_dataset as module
+
+    monkeypatch.setattr(module, "HF_LEROBOT_HOME", tmp_path / "cache")
+    src_root, lance_root = depth_dataset_roots
+    upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
+    remote_ds = LanceDBDataset(root=f"file://{lance_root}")
+    indices = [0, len(upstream) - 1]
+    for item, idx in zip(remote_ds.__getitems__(indices), indices, strict=True):
+        assert_items_equal(item, upstream[idx])

@@ -56,6 +56,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 
+from lerobot.configs.video import DEFAULT_DEPTH_UNIT, DepthEncoderConfig
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.import_utils import _lancedb_available, require_package
 
@@ -64,6 +65,7 @@ if TYPE_CHECKING or _lancedb_available:
     from lancedb.permutation import Permutation
 
 from .dataset_metadata import LeRobotDatasetMetadata
+from .depth_utils import dequantize_depth
 from .feature_utils import check_delta_timestamps, get_delta_indices
 from .video_utils import FrameTimestampError
 
@@ -219,9 +221,7 @@ class _SparseBlobSource(io.RawIOBase):
             self._chunks.insert(lo, data)
         else:
             merged_start = min(offset, self._starts[lo])
-            merged_end = max(
-                end, max(self._starts[i] + len(self._chunks[i]) for i in range(lo, hi))
-            )
+            merged_end = max(end, max(self._starts[i] + len(self._chunks[i]) for i in range(lo, hi)))
             merged = bytearray(merged_end - merged_start)
             for i in range(lo, hi):
                 at = self._starts[i] - merged_start
@@ -473,6 +473,10 @@ class LanceDBDataset(torch.utils.data.Dataset):
             context, additionally bounded by a 2 GiB per-worker byte budget).
             An evicted entry re-prefetches its container header ranges
             (~1 MB) on the next touch.
+        depth_output_unit: Physical unit depth features are dequantized to
+            (``'mm'`` or ``'m'``), as in :class:`LeRobotDataset`. Depth videos
+            decode through pyav (their 16-bit planes are not representable in
+            torchcodec's RGB output) over the same prefetched byte ranges.
     """
 
     def __init__(
@@ -487,6 +491,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         return_uint8: bool = False,
         storage_options: dict | None = None,
         video_decoder_cache_size: int | None = None,
+        depth_output_unit: str = DEFAULT_DEPTH_UNIT,
     ):
         super().__init__()
         require_package("lancedb", extra="lance")
@@ -517,8 +522,18 @@ class LanceDBDataset(torch.utils.data.Dataset):
             repo_id if repo_id is not None else str(self.root), root=self.root, revision=revision
         )
 
-        if self.meta.depth_keys:
-            raise NotImplementedError("Depth features are not supported by LanceDBDataset yet.")
+        if set(self.meta.depth_keys) & set(self.meta.image_keys):
+            raise NotImplementedError(
+                "Depth stored as raw images is not supported by LanceDBDataset; "
+                "re-encode depth as video (the standard v3.0 recording path)."
+            )
+        # Depth videos carry 16-bit planes torchcodec cannot emit, so depth
+        # keys decode through pyav over the same prefetched sources.
+        self._depth_output_unit = depth_output_unit
+        self._depth_encoder_configs = {
+            key: DepthEncoderConfig.from_video_info(self.meta.features[key].get("info"))
+            for key in self.meta.depth_keys
+        }
         # The video path fetches keyframe-aligned byte ranges in one batched
         # call per batch (local and remote share the flow; measured at parity
         # locally, and it is what makes remote training possible at all).
@@ -708,9 +723,15 @@ class LanceDBDataset(torch.utils.data.Dataset):
                     chunk_arr, file_arr, from_ts_arr = self._video_locator[key]
                     window = plan["windows"].get(key, [plan["abs_idx"]])
                     base = round(float(from_ts_arr[ep_idx]) * fps) - ep_start
-                    windows.setdefault(
-                        (key, int(chunk_arr[ep_idx]), int(file_arr[ep_idx])), []
-                    ).append((base + min(window), base + max(window)))
+                    first = base + min(window)
+                    if key in self.meta.depth_keys:
+                        # pyav seeks with a 1-tick margin and may land on the
+                        # previous keyframe; reach one frame back so its bytes
+                        # are prefetched too.
+                        first -= 1
+                    windows.setdefault((key, int(chunk_arr[ep_idx]), int(file_arr[ep_idx])), []).append(
+                        (first, base + max(window))
+                    )
             prepared_future = self._prefetch_pool.submit(self._prepare_files, sorted(windows), windows)
 
         columns = self._fetch_rows(rows)
@@ -724,6 +745,8 @@ class LanceDBDataset(torch.utils.data.Dataset):
         if self.image_transforms is not None:
             for item in items:
                 for cam_key in self.meta.camera_keys:
+                    if cam_key in self.meta.depth_keys:
+                        continue
                     item[cam_key] = self.image_transforms(item[cam_key])
         return items
 
@@ -807,13 +830,17 @@ class LanceDBDataset(torch.utils.data.Dataset):
 
         if prepared is None:
             prepared = self._prepare_files(list(requests))  # no window hints: safety net fetches below
-        decoders = self._ensure_decoders(requests, prepared)
+        entries = self._ensure_decoders(requests, prepared)
 
         results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
 
         def _decode_file(file_key: tuple, file_requests: list[tuple[int, list[float]]]) -> None:
             key, chunk_idx, file_idx = file_key
-            decoder = decoders[file_key]
+            decoder, source = entries[file_key]
+            if key in self.meta.depth_keys:
+                for sample_idx, shifted_ts in file_requests:
+                    results[sample_idx][key] = self._decode_depth_window(source, shifted_ts, file_key)
+                return
             fps = decoder.metadata.average_fps
             # One decode call per sample window: window frames are consecutive,
             # so each call is a single seek plus a sequential decode. This
@@ -894,12 +921,18 @@ class LanceDBDataset(torch.utils.data.Dataset):
             self._fetch_spans(spans_by_key, sources)
 
             # Decoder creation parses the moov sample tables (~ms per file):
-            # parallelize across the batch's new files.
+            # parallelize across the batch's new files. Depth files get no
+            # torchcodec decoder (their 16-bit planes decode through pyav);
+            # their entry holds only the prefetched source.
+            rgb_files = [key for key in new_files if key[0] not in self.meta.depth_keys]
             created = self._decode_pool.map(
-                lambda key: VideoDecoder(sources[key], seek_mode="approximate"), new_files
+                lambda key: VideoDecoder(sources[key], seek_mode="approximate"), rgb_files
             )
-            for key, decoder in zip(new_files, created, strict=True):
+            for key, decoder in zip(rgb_files, created, strict=True):
                 prepared[key] = (decoder, sources[key])
+            for key in new_files:
+                if key[0] in self.meta.depth_keys:
+                    prepared[key] = (None, sources[key])
 
         if windows:
             window_spans: dict[tuple, list[tuple[int, int]]] = {}
@@ -933,10 +966,11 @@ class LanceDBDataset(torch.utils.data.Dataset):
             meta = self._file_meta[key]
             source = sources[key]
             spans = []
+            reach_back = 1 if key[0] in self.meta.depth_keys else 0
             for _, shifted_ts in file_requests:
                 first = round(shifted_ts[0] * fps)
                 last = round(shifted_ts[-1] * fps)
-                start, end = self._window_byte_range(meta, min(first, last), max(first, last))
+                start, end = self._window_byte_range(meta, min(first, last) - reach_back, max(first, last))
                 if not source.covers(start, end):
                     spans.append((start, end))
             spans_by_key[key] = spans
@@ -949,11 +983,67 @@ class LanceDBDataset(torch.utils.data.Dataset):
             # batch as sources grow, so the cache's byte budget alone bounds
             # memory: an oversized entry is simply evicted and rebuilt from
             # two extra prefetch ranges on its next touch.
-            height = decoders[key].metadata.height or 0
-            width = decoders[key].metadata.width or 0
+            decoder = decoders[key]
+            if decoder is not None:
+                height = decoder.metadata.height or 0
+                width = decoder.metadata.width or 0
+            else:  # depth: no torchcodec decoder; size from the feature shape
+                height, width = (tuple(self.meta.features[key[0]].get("shape") or (0, 0)) + (0, 0))[:2]
             context_cost = (8 << 20) + 8 * height * width
-            self._decoder_cache.put(key, (decoders[key], source), nbytes=source.buffered + context_cost)
-        return decoders
+            self._decoder_cache.put(key, (decoder, source), nbytes=source.buffered + context_cost)
+        return prepared
+
+    def _decode_depth_window(self, source, shifted_ts: list[float], file_key: tuple) -> torch.Tensor:
+        """Decode one depth window via pyav and dequantize to the output unit.
+
+        Depth videos store 16-bit planes (``gray12le``) that torchcodec's RGB
+        output cannot represent, so depth follows upstream's pyav path: seek
+        to the keyframe at or before the window, decode forward, pick the
+        closest frame per queried timestamp within ``tolerance_s``. Reads come
+        from the same prefetched sparse source as RGB video.
+        """
+        import av
+
+        first_ts, last_ts = min(shifted_ts), max(shifted_ts)
+        loaded_frames: list[torch.Tensor] = []
+        loaded_ts: list[float] = []
+        source.seek(0)
+        with av.open(source) as container:
+            stream = container.streams.video[0]
+            container.seek(
+                round(first_ts / stream.time_base) - 1, backward=True, any_frame=False, stream=stream
+            )
+            for frame in container.decode(stream):
+                if frame.pts is None:
+                    continue
+                current_ts = float(frame.pts * stream.time_base)
+                loaded_frames.append(
+                    torch.from_numpy(frame.to_ndarray(format="gray12le")).unsqueeze(0).contiguous()
+                )
+                loaded_ts.append(current_ts)
+                if current_ts >= last_ts:
+                    break
+        distance = (
+            torch.tensor(shifted_ts, dtype=torch.float64)[:, None]
+            - torch.tensor(loaded_ts, dtype=torch.float64)[None, :]
+        ).abs()
+        min_distance, argmin = distance.min(1)
+        if (min_distance >= self.tolerance_s).any():
+            raise FrameTimestampError(
+                f"Query timestamps violate tolerance_s={self.tolerance_s} for depth video "
+                f"'{file_key[0]}' (chunk {file_key[1]}, file {file_key[2]}): queried {shifted_ts}, "
+                f"decoded range {loaded_ts[:1]}..{loaded_ts[-1:]}."
+            )
+        frames = torch.stack([loaded_frames[i] for i in argmin])
+        config = self._depth_encoder_configs[file_key[0]]
+        return dequantize_depth(
+            frames,
+            depth_min=config.depth_min,
+            depth_max=config.depth_max,
+            shift=config.shift,
+            use_log=config.use_log,
+            output_unit=self._depth_output_unit,
+        ).squeeze(0)
 
     def _fetch_spans(
         self, spans_by_key: dict[tuple, list[tuple[int, int]]], sources: dict[tuple, _SparseBlobSource]

@@ -80,6 +80,7 @@ def _make_map_dataset(
     standard ``meta/`` directory) load through :class:`LanceDBDataset`;
     everything else through :class:`LeRobotDataset`.
     """
+    kwargs = {"depth_output_unit": depth_output_unit} if depth_output_unit is not None else {}
     if is_lance_dataset(cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision):
         return LanceDBDataset(
             cfg.dataset.repo_id,
@@ -90,8 +91,8 @@ def _make_map_dataset(
             revision=cfg.dataset.revision,
             return_uint8=True,
             tolerance_s=cfg.tolerance_s,
+            **kwargs,
         )
-    kwargs = {"depth_output_unit": depth_output_unit} if depth_output_unit is not None else {}
     return LeRobotDataset(
         cfg.dataset.repo_id,
         root=cfg.dataset.root,
