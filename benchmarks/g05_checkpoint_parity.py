@@ -106,14 +106,14 @@ def _raw_sample(processor: Any, index: int, task: str) -> dict[str, Any]:
     }
 
 
-def _lerobot_input(raw: dict[str, Any], processor: Any) -> dict[str, Any]:
-    images_by_key = {meta["key"]: meta for meta in processor.shape_meta["images"]}
+def _lerobot_input(raw: dict[str, Any], processor: Any, config: G05Config) -> dict[str, Any]:
+    image_pairs = zip(processor.shape_meta["images"], config.camera_order, strict=True)
     return {
         OBS_STATE: torch.cat(
             [raw["state"][meta["key"]][-1] for meta in processor.shape_meta["state"]], dim=-1
         ),
         ACTION: torch.cat([raw["action"][meta["key"]] for meta in processor.shape_meta["action"]], dim=-1),
-        **{meta["lerobot_key"]: raw["images"][meta["key"]][-1] for meta in images_by_key.values()},
+        **{lerobot_key: raw["images"][meta["key"]][-1] for meta, lerobot_key in image_pairs},
         "action_is_pad": raw["action_is_pad"],
         "task": raw["task"],
     }
@@ -180,7 +180,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     raw_samples = [_raw_sample(author_processor, index, task) for index, task in enumerate(tasks)]
     author_samples = [author_processor.preprocess(copy.deepcopy(sample)) for sample in raw_samples]
     author_batch = collate_fn_pad_sequences(copy.deepcopy(author_samples))
-    lerobot_samples = [preprocessor(_lerobot_input(sample, author_processor)) for sample in raw_samples]
+    lerobot_samples = [
+        preprocessor(_lerobot_input(sample, author_processor, config)) for sample in raw_samples
+    ]
     lerobot_batch = _collate_lerobot(lerobot_samples, config)
 
     policy = G05Policy.from_pretrained(
