@@ -79,6 +79,7 @@ class SmolVLMWithExpertModel(nn.Module):
         train_expert_only: bool = True,
         freeze_vision_encoder: bool = False,
         attention_mode: str = "self_attn",
+        attention_backend: str = "eager",
         num_expert_layers: int = -1,
         num_vlm_layers: int = -1,
         self_attn_every_n_layers: int = -1,
@@ -143,6 +144,11 @@ class SmolVLMWithExpertModel(nn.Module):
         self.freeze_vision_encoder = freeze_vision_encoder
         self.train_expert_only = train_expert_only
         self.attention_mode = attention_mode
+        self.attention_backend = attention_backend
+        if attention_backend == "sdpa":
+            # Route masked SDPA calls to the efficient backend. (cuDNN: slow
+            # warmup + unsupported layouts; sdpa_kernel() ctx breaks compile.)
+            torch.backends.cuda.enable_cudnn_sdp(False)
         self.expert_hidden_size = lm_expert_config.hidden_size
         self.set_requires_grad()
 
@@ -345,20 +351,35 @@ class SmolVLMWithExpertModel(nn.Module):
             expert_hidden_states = expert_hidden_states.to(dtype=expert_layer.self_attn.q_proj.weight.dtype)
             expert_query_state = expert_layer.self_attn.q_proj(expert_hidden_states).view(expert_hidden_shape)
 
-            # reshape (not view): K/V read back from the cache are transposed, hence non-contiguous
-            _key_states = key_states.to(dtype=expert_layer.self_attn.k_proj.weight.dtype).reshape(
-                *key_states.shape[:2], -1
+            # Prefix K/V are fixed during the denoise loop: project once per chunk.
+            # Training passes no cache object, so it always recomputes. Compiled
+            # graphs also skip the cache — dynamo guards on the growing dict force
+            # per-step recompilation, and inductor fuses the recompute anyway.
+            cross_kv = (
+                None
+                if past_key_values is None or torch.compiler.is_compiling()
+                else past_key_values.__dict__.setdefault("_expert_cross_kv", {})
             )
-            expert_key_states = expert_layer.self_attn.k_proj(_key_states).view(
-                *_key_states.shape[:-1], -1, expert_layer.self_attn.head_dim
-            )  # k_proj should have same dim as kv
+            cached_cross = None if cross_kv is None else cross_kv.get(layer_idx)
+            if cached_cross is not None:
+                expert_key_states, expert_value_states = cached_cross
+            else:
+                # reshape (not view): K/V read back from the cache are transposed, hence non-contiguous
+                _key_states = key_states.to(dtype=expert_layer.self_attn.k_proj.weight.dtype).reshape(
+                    *key_states.shape[:2], -1
+                )
+                expert_key_states = expert_layer.self_attn.k_proj(_key_states).view(
+                    *_key_states.shape[:-1], -1, expert_layer.self_attn.head_dim
+                )  # k_proj should have same dim as kv
 
-            _value_states = value_states.to(dtype=expert_layer.self_attn.v_proj.weight.dtype).reshape(
-                *value_states.shape[:2], -1
-            )
-            expert_value_states = expert_layer.self_attn.v_proj(_value_states).view(
-                *_value_states.shape[:-1], -1, expert_layer.self_attn.head_dim
-            )
+                _value_states = value_states.to(dtype=expert_layer.self_attn.v_proj.weight.dtype).reshape(
+                    *value_states.shape[:2], -1
+                )
+                expert_value_states = expert_layer.self_attn.v_proj(_value_states).view(
+                    *_value_states.shape[:-1], -1, expert_layer.self_attn.head_dim
+                )
+                if cross_kv is not None:
+                    cross_kv[layer_idx] = (expert_key_states, expert_value_states)
 
             expert_position_id = (
                 expert_position_id - torch.min(expert_position_id, dim=1, keepdim=True).values
@@ -500,8 +521,54 @@ class SmolVLMWithExpertModel(nn.Module):
         return outputs_embeds, past_key_values
 
     def get_attention_interface(self):
-        attention_interface = self.eager_attention_forward
-        return attention_interface
+        if self.attention_backend == "sdpa":
+            return self.sdpa_attention_forward
+        return self.eager_attention_forward
+
+    def sdpa_attention_forward(
+        self, attention_mask, batch_size, head_dim, query_states, key_states, value_states
+    ):
+        """Fused attention via F.scaled_dot_product_attention (transformers
+        convention: repeat_kv, bf16, additive mask). Not bit-identical to
+        eager_attention_forward."""
+        num_att_heads = self.num_attention_heads
+        num_key_value_groups = num_att_heads // self.num_key_value_heads
+        output_dtype = value_states.dtype
+
+        # [B, L, H, D] -> [B, H, L, D]
+        query = query_states.transpose(1, 2)
+        key = key_states.transpose(1, 2)
+        value = value_states.transpose(1, 2)
+
+        if num_key_value_groups > 1:
+            batch, kv_heads, slen, hdim = key.shape
+            key = key[:, :, None, :, :].expand(batch, kv_heads, num_key_value_groups, slen, hdim)
+            key = key.reshape(batch, kv_heads * num_key_value_groups, slen, hdim)
+            value = value[:, :, None, :, :].expand(batch, kv_heads, num_key_value_groups, slen, hdim)
+            value = value.reshape(batch, kv_heads * num_key_value_groups, slen, hdim)
+
+        query = query.to(dtype=torch.bfloat16)
+        key = key.to(dtype=torch.bfloat16)
+        value = value.to(dtype=torch.bfloat16)
+
+        # Additive finfo.min mask, matching eager: masked positions get ~0
+        # probability; fully-masked padding rows stay finite (uniform).
+        bias = torch.zeros_like(attention_mask, dtype=query.dtype)
+        bias = bias.masked_fill(~attention_mask, torch.finfo(query.dtype).min)
+        bias = bias[:, None, :, :]
+
+        att_output = nn.functional.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=bias,
+            dropout_p=0.0,
+            scale=head_dim**-0.5,
+            is_causal=False,
+        )
+        att_output = att_output.transpose(1, 2).contiguous()
+        # we use -1 because sequence length can change
+        return att_output.reshape(batch_size, -1, num_att_heads * head_dim).to(output_dtype)
 
     def eager_attention_forward(
         self, attention_mask, batch_size, head_dim, query_states, key_states, value_states
