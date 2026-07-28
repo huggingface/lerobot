@@ -130,6 +130,12 @@ class LingBotVAConfig(PreTrainedConfig):
     # Cosine tightens the loss tail and often nudges final loss down; it does NOT reduce the
     # flow-matching estimator's step-to-step noise (that's metric variance, LR-independent).
     scheduler_type: str = "constant_with_warmup"
+    # Probability of corrupting the action stream's conditioning (clean/context) tokens with
+    # flow-matching noise during training, mirroring the video stream's noisy_cond_prob=0.5.
+    # Upstream train.py hardcodes 0.0 for actions (never corrupted) with no exposed knob; this is
+    # an experimental deviation to make the model more tolerant of imperfect action history
+    # (e.g. clamp-induced drift between predicted and executed actions during rollout).
+    action_noisy_cond_prob: float = 0.0
 
     def __post_init__(self):
         super().__post_init__()
