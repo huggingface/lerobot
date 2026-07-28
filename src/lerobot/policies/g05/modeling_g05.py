@@ -312,7 +312,13 @@ class G05Policy(PreTrainedPolicy):
     ) -> tuple[Tensor, dict[str, Any]]:
         prepared = self._prepare_author_batch(batch, task=task)
         predict = getattr(self.backend, "predict_action", None)
-        result = predict(prepared) if callable(predict) else self.backend(prepared)
+        device = next(self.backend.parameters()).device
+        with torch.autocast(
+            device_type=device.type,
+            dtype=torch.bfloat16,
+            enabled=self.config.model_weights_to_bf16 and device.type == "cuda",
+        ):
+            result = predict(prepared) if callable(predict) else self.backend(prepared)
         if isinstance(result, Tensor):
             result = {ACTION: result}
         if not isinstance(result, Mapping):
