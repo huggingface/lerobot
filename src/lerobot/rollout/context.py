@@ -309,9 +309,7 @@ def build_rollout_context(
     # x/y/theta.vel = 9-dim action). Pure-arm robots have no .vel keys, so this is
     # a no-op for them. Without the .vel keys the base velocities are silently
     # dropped from dataset_features[ACTION]/ordered_action_keys and the base never moves.
-    action_features_hw = {
-        k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))
-    }
+    action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
 
     # The action side is always needed: sync inference reads action names from
     # ``dataset_features[ACTION]`` to map policy tensors back to robot actions.
