@@ -7,7 +7,12 @@ from typing import Any
 import numpy as np
 import torch
 
-from deployment_safety import MAX_RELATIVE_TARGET, apply_action_safety, sha256_file
+from deployment_safety import (
+    MAX_RELATIVE_TARGET,
+    apply_action_safety,
+    project_sim_state_to_calibration,
+    sha256_file,
+)
 
 FIXED_CHECKPOINT = Path(
     "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_act_v1/"
@@ -27,6 +32,9 @@ class PolicyStep:
     sent_action: np.ndarray
     calibration_clip_mask: np.ndarray
     relative_clip_mask: np.ndarray
+    safety_reference_state: np.ndarray
+    sim_state_projection_mask: np.ndarray
+    sim_state_projection_delta: np.ndarray
 
     def to_jsonable(self) -> dict[str, Any]:
         return {
@@ -35,6 +43,10 @@ class PolicyStep:
             "sent_action": self.sent_action.tolist(),
             "calibration_clip_mask": self.calibration_clip_mask.tolist(),
             "relative_clip_mask": self.relative_clip_mask.tolist(),
+            "safety_reference_state": self.safety_reference_state.tolist(),
+            "sim_state_projection_mask": self.sim_state_projection_mask.tolist(),
+            "sim_state_projection_delta": self.sim_state_projection_delta.tolist(),
+            "sim_state_projected": bool(self.sim_state_projection_mask.any()),
             "raw_action_finite": bool(np.isfinite(self.raw_action).all()),
             "sent_action_finite": bool(np.isfinite(self.sent_action).all()),
             "calibration_clip_count": int(self.calibration_clip_mask.sum()),
@@ -122,10 +134,18 @@ class Task1ActSimInference:
         raw_action = raw_tensor.detach().cpu().numpy().reshape(-1)
         if raw_action.shape != ACTION_SHAPE:
             raise RuntimeError(f"ACT output must have shape {ACTION_SHAPE}, got {raw_action.shape}.")
+        sim_state = project_sim_state_to_calibration(state_array)
         stages = apply_action_safety(
             raw_action=raw_action,
-            current_state=state_array,
+            current_state=sim_state["state"],
             max_relative_target=self.max_relative_target,
+        )
+        stages.update(
+            {
+                "safety_reference_state": sim_state["state"],
+                "sim_state_projection_mask": sim_state["projection_mask"],
+                "sim_state_projection_delta": sim_state["projection_delta"],
+            }
         )
         self.step_index += 1
         return PolicyStep(**stages)

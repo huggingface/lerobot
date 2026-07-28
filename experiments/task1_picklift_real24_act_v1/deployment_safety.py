@@ -29,6 +29,7 @@ CALIBRATION_BOUNDS_DEG = np.asarray(
 
 EXPECTED_CALIBRATION_SHA256 = "c78e4f7e1383571c6aa496f62996f518b3e4122f78244d2bbc094658bc0cb8a0"
 MAX_RELATIVE_TARGET = 5.0
+SIM_STATE_CALIBRATION_TOLERANCE = 0.01
 
 
 def sha256_file(path: str | Path) -> str:
@@ -74,6 +75,49 @@ def clamp_action_fail_closed(action: np.ndarray) -> tuple[np.ndarray, np.ndarray
     if not np.isfinite(clipped).all():
         raise RuntimeError("Calibration clipping produced a non-finite action.")
     return clipped.astype(np.float32), clip_mask
+
+
+def project_sim_state_to_calibration(
+    state: np.ndarray,
+    tolerance: float = SIM_STATE_CALIBRATION_TOLERANCE,
+) -> dict[str, np.ndarray]:
+    """Project only negligible simulator boundary noise into real calibration.
+
+    Nexus intentionally perturbs reset qpos and settles the model. Its dataset
+    conversion can therefore report values a few thousandths below the gripper
+    lower bound. This function is only for the hardware-free simulator input
+    seam. The real deployment path remains strict and output calibration
+    clipping is unchanged.
+    """
+    values = np.asarray(state, dtype=np.float64)
+    if values.shape != (6,):
+        raise RuntimeError(
+            f"Simulator observation state must have shape (6,), got {values.shape}."
+        )
+    if not np.isfinite(values).all():
+        raise RuntimeError(
+            "Simulator observation state contains NaN or infinity."
+        )
+    if not np.isfinite(tolerance) or tolerance < 0:
+        raise RuntimeError(
+            "Simulator calibration tolerance must be a finite non-negative scalar."
+        )
+
+    lower = CALIBRATION_BOUNDS_DEG[:, 0]
+    upper = CALIBRATION_BOUNDS_DEG[:, 1]
+    below_by = np.maximum(lower - values, 0.0)
+    above_by = np.maximum(values - upper, 0.0)
+    if ((below_by > tolerance) | (above_by > tolerance)).any():
+        raise RuntimeError(
+            "Simulator observation state exceeds the bounded calibration "
+            "projection tolerance; possible state-coordinate contract mismatch."
+        )
+    projected = np.clip(values, lower, upper)
+    return {
+        "state": projected.astype(np.float32),
+        "projection_mask": projected != values,
+        "projection_delta": (projected - values).astype(np.float32),
+    }
 
 
 def apply_action_safety(

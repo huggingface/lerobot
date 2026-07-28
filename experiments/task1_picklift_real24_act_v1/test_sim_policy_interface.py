@@ -6,7 +6,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from deployment_safety import CALIBRATION_BOUNDS_DEG, apply_action_safety
+from deployment_safety import (
+    CALIBRATION_BOUNDS_DEG,
+    SIM_STATE_CALIBRATION_TOLERANCE,
+    apply_action_safety,
+    project_sim_state_to_calibration,
+)
 from sim_policy_inference import validate_observation
 from summarize_sim_results import load_jsonl, summarize
 
@@ -52,6 +57,29 @@ def test_action_safety_rejects_state_outside_calibration() -> None:
     state[0] = CALIBRATION_BOUNDS_DEG[0, 1] + 0.1
     with pytest.raises(RuntimeError, match="outside"):
         apply_action_safety(np.zeros(6), state)
+
+
+def test_sim_state_projection_accepts_only_tiny_boundary_noise() -> None:
+    state = np.zeros(6, dtype=np.float32)
+    state[-1] = -0.0017
+    projected = project_sim_state_to_calibration(state)
+    np.testing.assert_allclose(projected["state"], np.zeros(6))
+    assert projected["projection_mask"].tolist() == [
+        False,
+        False,
+        False,
+        False,
+        False,
+        True,
+    ]
+    assert projected["projection_delta"][-1] == pytest.approx(0.0017)
+
+
+def test_sim_state_projection_rejects_coordinate_mismatch() -> None:
+    state = np.zeros(6, dtype=np.float32)
+    state[-1] = -(SIM_STATE_CALIBRATION_TOLERANCE + 0.001)
+    with pytest.raises(RuntimeError, match="coordinate contract mismatch"):
+        project_sim_state_to_calibration(state)
 
 
 def test_summary_reports_overall_and_per_cell(tmp_path: Path) -> None:
