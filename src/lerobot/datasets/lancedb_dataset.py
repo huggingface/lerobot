@@ -43,6 +43,7 @@ from __future__ import annotations
 import bisect
 import io
 import json
+import multiprocessing
 import os
 import re
 import shutil
@@ -335,16 +336,6 @@ def _is_remote_uri(path) -> bool:
 
 
 def _connect(db_uri: str, storage_options: dict | None):
-    """Connect to a dataset root with remote I/O defaults and hf:// auth.
-
-    Remote reads issue hundreds of parallel range requests per batch; lance's
-    default of 64 concurrent IOPS leaves ~40% throughput on the table
-    (measured on S3), so raise it unless the user set their own value. lance
-    does not attach credentials to public hf:// reads on its own, and
-    anonymous requests get the strictest gateway rate limits (429s under
-    training-rate traffic), so authenticate whenever a token is available
-    (env or CLI login).
-    """
     options = dict(storage_options or {})
     if _is_remote_uri(db_uri):
         os.environ.setdefault("LANCE_IO_THREADS", "256")
@@ -379,11 +370,9 @@ def _materialize_meta(db, local_root: Path) -> None:
 
     tmp_dir = local_root / f"meta.tmp-{os.getpid()}"
     try:
-        query = table.search().select(["path", "data"])
         # Stream row groups: meta/ is usually small, but per-episode stats
         # reach hundreds of MB at droid scale (76k episodes = 566 MB).
-        batches = query.to_batches() if hasattr(query, "to_batches") else query.to_arrow().to_batches()
-        for batch in batches:
+        for batch in table.search().select(["path", "data"]).to_batches():
             paths = batch.column("path").to_pylist()
             for i, rel_path in enumerate(paths):
                 dst = tmp_dir / rel_path
@@ -400,15 +389,6 @@ def _materialize_meta(db, local_root: Path) -> None:
 
 
 def lance_mp_context() -> str:
-    """Start method for DataLoader workers reading a Lance-backed dataset.
-
-    ``fork`` is unsafe with Lance's async runtime. ``forkserver`` is preferred
-    (workers fork from a clean helper process that never touched the runtime,
-    and start faster than with ``spawn``); ``spawn`` is the fallback on
-    platforms without it.
-    """
-    import multiprocessing
-
     return "forkserver" if "forkserver" in multiprocessing.get_all_start_methods() else "spawn"
 
 
@@ -416,17 +396,9 @@ def lance_mp_context() -> str:
 def is_lance_dataset(
     repo_id: str | None = None, root: str | Path | None = None, revision: str | None = None
 ) -> bool:
-    """Detect whether a dataset is stored in the Lance layout.
-
-    Checks for a ``frames.lance`` table locally first (under ``root`` or the
-    default cache location), then on the Hub with a single targeted API call.
-    Does not require lancedb to be installed.
-    """
     if root is None and repo_id is None:
         return False
     if root is not None and _is_remote_uri(root):
-        # Object-store roots imply the Lance layout; the parquet loader
-        # cannot read them at all.
         return True
     local_root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
     if (local_root / f"{FRAMES_TABLE}.lance").exists():
