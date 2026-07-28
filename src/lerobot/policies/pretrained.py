@@ -338,6 +338,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             "smolvla": "lerobot/smolvla_base",
             "pi0": "lerobot/pi0_base",
             "pi05": "lerobot/pi05_base",
+            "pi052": "lerobot/pi052_base",
             "pi0_fast": "lerobot/pi0fast-base",
             "xvla": "lerobot/xvla-base",
         }

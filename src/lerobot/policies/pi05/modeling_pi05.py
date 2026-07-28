@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import builtins
-import json
 import logging
 from collections import deque
 from pathlib import Path
@@ -76,81 +75,6 @@ class ActionSelectKwargs(TypedDict, total=False):
 
 
 _SAFETENSORS_FILE = "model.safetensors"
-_SAFETENSORS_INDEX = "model.safetensors.index.json"
-
-
-def _resolve_weight_files(
-    pretrained_name_or_path: str | Path,
-    *,
-    force_download: bool,
-    resume_download: bool | None,
-    proxies: dict | None,
-    token: str | bool | None,
-    cache_dir: str | Path | None,
-    local_files_only: bool,
-    revision: str | None,
-) -> list[Path]:
-    model_id = str(pretrained_name_or_path)
-    local_dir = Path(model_id)
-    load_kwargs = {
-        "revision": revision,
-        "cache_dir": cache_dir,
-        "force_download": force_download,
-        "resume_download": resume_download,
-        "proxies": proxies,
-        "token": token,
-        "local_files_only": local_files_only,
-    }
-
-    if local_dir.is_dir():
-        index_path = local_dir / _SAFETENSORS_INDEX
-        single_path = local_dir / _SAFETENSORS_FILE
-    else:
-        resolved_index = cached_file(
-            model_id,
-            _SAFETENSORS_INDEX,
-            _raise_exceptions_for_missing_entries=False,
-            **load_kwargs,
-        )
-        index_path = Path(resolved_index) if resolved_index is not None else None
-        single_path = None
-        if index_path is None:
-            resolved_file = cached_file(model_id, _SAFETENSORS_FILE, **load_kwargs)
-            single_path = Path(resolved_file) if resolved_file is not None else None
-
-    if index_path is None or not index_path.is_file():
-        if single_path is None or not single_path.is_file():
-            raise FileNotFoundError(f"No {_SAFETENSORS_FILE} found in {model_id!r}.")
-        return [single_path]
-
-    index = json.loads(index_path.read_text())
-    shard_names = sorted(set(index.get("weight_map", {}).values()))
-    if not shard_names:
-        raise ValueError(f"Invalid safetensors index without a weight_map: {index_path}")
-    if local_dir.is_dir():
-        files = [local_dir / name for name in shard_names]
-    else:
-        files = []
-        for name in shard_names:
-            resolved_file = cached_file(model_id, name, **load_kwargs)
-            if resolved_file is None:
-                raise FileNotFoundError(f"Checkpoint shard {name!r} not found in {model_id!r}.")
-            files.append(Path(resolved_file))
-    missing = [str(path) for path in files if not path.is_file()]
-    if missing:
-        raise FileNotFoundError(f"Missing checkpoint shards: {missing}")
-    return files
-
-
-def _load_weight_files(files: list[Path]) -> dict[str, Tensor]:
-    state_dict: dict[str, Tensor] = {}
-    for path in files:
-        shard = load_file(path)
-        overlap = state_dict.keys() & shard.keys()
-        if overlap:
-            raise ValueError(f"Duplicate checkpoint keys in {path}: {sorted(overlap)[:5]}")
-        state_dict.update(shard)
-    return state_dict
 
 
 # Define the complete layer computation function for gradient checkpointing
@@ -862,6 +786,7 @@ class PI05Policy(PreTrainedPolicy):
     model_class = PI05Pytorch
     eval_after_pretrained_load = False
     show_openpi_disclaimer = True
+    use_native_pretrained_loader = False
 
     def __init__(
         self,
@@ -905,7 +830,22 @@ class PI05Policy(PreTrainedPolicy):
         strict: bool = True,
         **kwargs,
     ) -> T:
-        """Load PI05-compatible single-file or sharded safetensors checkpoints."""
+        """Load a native LeRobot checkpoint or convert the PI05 base checkpoint."""
+        if cls.use_native_pretrained_loader:
+            return super().from_pretrained(
+                pretrained_name_or_path,
+                config=config,
+                force_download=force_download,
+                resume_download=resume_download,
+                proxies=proxies,
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                revision=revision,
+                strict=strict,
+                **kwargs,
+            )
+
         if cls.show_openpi_disclaimer:
             print(
                 "The PI05 model is a direct port of the OpenPI implementation. \n"
@@ -929,8 +869,11 @@ class PI05Policy(PreTrainedPolicy):
             )
 
         model = cls(config, **kwargs)
-        files = _resolve_weight_files(
-            pretrained_name_or_path,
+        model_id = str(pretrained_name_or_path)
+        resolved_file = cached_file(
+            model_id,
+            _SAFETENSORS_FILE,
+            _raise_exceptions_for_missing_entries=False,
             force_download=force_download,
             resume_download=resume_download,
             proxies=proxies,
@@ -939,7 +882,10 @@ class PI05Policy(PreTrainedPolicy):
             local_files_only=local_files_only,
             revision=revision,
         )
-        fixed_state_dict = model._fix_pytorch_state_dict_keys(_load_weight_files(files), model.config)
+        if resolved_file is None:
+            raise FileNotFoundError(f"No {_SAFETENSORS_FILE} found in {model_id!r}.")
+
+        fixed_state_dict = model._fix_pytorch_state_dict_keys(load_file(resolved_file), model.config)
         remapped_state_dict = {
             key if key.startswith("model.") else f"model.{key}": value
             for key, value in fixed_state_dict.items()

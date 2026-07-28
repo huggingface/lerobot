@@ -92,14 +92,14 @@ recipe resolver.
 
 ## Train Pi052
 
-This example initializes Pi052 from the public Pi05 base checkpoint and trains
-the default subtask-and-memory recipe:
+This example initializes Pi052 from the native Pi052 initialization checkpoint
+and trains the default subtask-and-memory recipe:
 
 ```bash
 lerobot-train \
     --dataset.repo_id=${HF_USER}/my_language_annotated_dataset \
     --policy.type=pi052 \
-    --policy.pretrained_path=lerobot/pi05_base \
+    --policy.pretrained_path=lerobot/pi052_base \
     --policy.recipe_path=recipes/subtask_mem.yaml \
     --policy.dtype=bfloat16 \
     --policy.device=cuda \

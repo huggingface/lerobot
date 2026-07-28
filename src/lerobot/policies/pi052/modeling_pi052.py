@@ -878,6 +878,7 @@ class PI052Policy(PI05Policy):
     model_class = PI05Pytorch
     eval_after_pretrained_load = True
     show_openpi_disclaimer = False
+    use_native_pretrained_loader = True
 
     def __init__(self, config: PI052Config, **kwargs: Any) -> None:
         # Patch before constructing Gemma/SigLIP layers; the operation is optional and idempotent.
