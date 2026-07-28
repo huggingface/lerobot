@@ -13,6 +13,9 @@
 # limitations under the License.
 
 import numpy as np
+import pytest
+
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.scripts.augment_dataset_quantile_stats import (
     compute_quantile_stats_for_dataset,
