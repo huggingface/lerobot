@@ -126,3 +126,33 @@ This command still requires licensed checkpoint access and suitable CUDA hardwar
 A 50-episode LIBERO/RoboTwin success-rate comparison additionally requires the
 matching simulator, task assets, reset seeds, and author evaluator; no task-level
 benchmark number is claimed until that separate gate runs.
+
+Once the pinned LIBERO simulator and assets are installed, run the matching
+LeRobot rollout with the author camera names and relative control:
+
+```bash
+lerobot-eval \
+  --policy.path=outputs/g05-libero-lerobot \
+  --policy.device=cuda \
+  --env.type=libero \
+  --env.task=libero_goal \
+  --env.control_mode=relative \
+  --env.observation_height=512 \
+  --env.observation_width=512 \
+  '--env.camera_name_mapping={"agentview_image": "image", "robot0_eye_in_hand_image": "wrist_image"}' \
+  --eval.batch_size=1 \
+  --eval.n_episodes=50 \
+  --seed=0 \
+  --output_dir=outputs/g05-libero-lerobot-eval
+```
+
+The author-oracle command for the same 50-trial gate is:
+
+```bash
+LIBERO_CONFIG_PATH=$(pwd)/experiments/libero \
+bash scripts/run/eval_libero.sh checkpoints/g05-libero/model.pt \
+  --suites "libero_goal" \
+  --num_trials 50 \
+  --num_parallel 1 \
+  --output_dir outputs/g05-libero-author-eval
+```

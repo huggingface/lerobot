@@ -181,6 +181,24 @@ def test_inference_without_ground_truth_action_still_emits_action_dimension_mask
     assert processed["action_dim_is_pad"].sum() == 13
 
 
+def test_lerobot_libero_two_finger_state_matches_author_first_qpos_contract():
+    config = _config()
+    preprocessor, _ = make_pre_post_processors(config)
+    env_state = torch.arange(8, dtype=torch.float32)
+
+    processed = preprocessor(
+        {
+            OBS_STATE: env_state,
+            "observation.images.image": torch.zeros(3, 8, 8),
+            "observation.images.wrist_image": torch.zeros(3, 8, 8),
+            "task": "libero env",
+        }
+    )
+
+    checkpoint_slots = G05_EMBODIMENT_MAPPINGS["libero"]["state"]
+    assert torch.equal(processed[OBS_STATE][0, list(checkpoint_slots)], env_state[:7])
+
+
 def test_atomic4_projection_has_mobile_base_control_mode_and_exact_inverse():
     config = G05Config(
         checkpoint_profile="custom",

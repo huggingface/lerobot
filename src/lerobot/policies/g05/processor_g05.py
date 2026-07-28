@@ -153,6 +153,10 @@ class G05EmbodimentProjectionStep(ProcessorStep):
             )
         if OBS_STATE in observation:
             raw_state = observation[OBS_STATE]
+            if self.embodiment == "libero" and raw_state.shape[-1] == 8:
+                # LeRobot's generic LIBERO env exposes both parallel-jaw qpos
+                # values. The author evaluator consumes only qpos[0].
+                raw_state = torch.cat((raw_state[..., :6], raw_state[..., 6:7]), dim=-1)
             observation[OBS_STATE] = self._project(raw_state, self.mapping["state"], self.policy_state_dim)
             state_mask = torch.ones(
                 *raw_state.shape[:-1],
