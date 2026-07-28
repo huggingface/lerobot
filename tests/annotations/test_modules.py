@@ -85,7 +85,7 @@ def _spy_responder(captured: list[list[dict[str, Any]]], reply: Any):
 def test_module1_plan_memory_subtask_smoke(fixture_dataset_root: Path, tmp_path: Path) -> None:
     vlm = make_canned_responder(
         {
-            "atomic subtasks": {
+            "COMPLETED manipulation events": {
                 "subtasks": [
                     {"text": "grasp the handle of the sponge", "start": 0.0, "end": 0.4},
                     {"text": "wipe the counter from left to right", "start": 0.4, "end": 0.8},
@@ -126,7 +126,7 @@ def test_module1_emit_memory_false_skips_memory_keeps_subtasks_and_plan(
     leaving subtask + plan generation intact — symmetric to ``emit_plan``."""
     vlm = make_canned_responder(
         {
-            "atomic subtasks": {
+            "COMPLETED manipulation events": {
                 "subtasks": [
                     {"text": "grasp the handle of the sponge", "start": 0.0, "end": 0.4},
                     {"text": "wipe the counter from left to right", "start": 0.4, "end": 0.8},
@@ -318,7 +318,7 @@ def test_module1_attaches_contact_sheets_to_subtask_prompt(
                     return block.get("text", "")
         return ""
 
-    subtask_calls = [m for m in captured if "atomic subtasks" in _prompt_text(m)]
+    subtask_calls = [m for m in captured if "COMPLETED manipulation events" in _prompt_text(m)]
     assert len(subtask_calls) == 1, "expected exactly one subtask-prompt VLM call"
     content = subtask_calls[0][0]["content"]
     video_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "video"]

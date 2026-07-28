@@ -44,6 +44,13 @@ class LeKiwiClient(Robot):
         self.id = config.id
         self.robot_type = config.type
 
+        depth_cameras = [name for name, cfg in config.cameras.items() if getattr(cfg, "use_depth", False)]
+        if depth_cameras:
+            raise NotImplementedError(
+                f"Depth cameras are not supported on LeKiwi (got depth-enabled cameras: {depth_cameras}). "
+                "The host/client transport only carries color frames."
+            )
+
         self.remote_ip = config.remote_ip
         self.port_zmq_cmd = config.port_zmq_cmd
         self.port_zmq_observations = config.port_zmq_observations
@@ -316,6 +323,10 @@ class LeKiwiClient(Robot):
             np.ndarray: the action sent to the motors, potentially clipped.
         """
 
+        # Action values may be torch tensors (e.g. replayed from a dataset) or numpy
+        # scalars; json.dumps only serializes Python primitives, so coerce each value to a
+        # plain float before sending.
+        action = {key: float(value) for key, value in action.items()}
         self.zmq_cmd_socket.send_string(json.dumps(action))  # action is in motor space
 
         # TODO(Steven): Remove the np conversion when it is possible to record a non-numpy array value

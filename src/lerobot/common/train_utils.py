@@ -15,6 +15,7 @@
 # limitations under the License.
 from pathlib import Path
 
+from huggingface_hub import HfApi, snapshot_download
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
@@ -35,6 +36,7 @@ from lerobot.utils.constants import (
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
+from lerobot.utils.hub import find_latest_hub_checkpoint
 from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.random_utils import load_rng_state, save_rng_state
 
@@ -283,3 +285,61 @@ def load_fsdp_optimizer_state(model, optimizer, checkpoint_dir: Path) -> None:
     with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, state_cfg, optim_cfg):
         sharded_osd = FSDP.optim_state_dict_to_load(model=model, optim=optimizer, optim_state_dict=full_osd)
     optimizer.load_state_dict(sharded_osd)
+
+
+def push_checkpoint_to_hub(
+    checkpoint_dir: Path,
+    repo_id: str,
+    *,
+    private: bool | None = None,
+) -> None:
+    """Upload a saved checkpoint directory to the Hub under checkpoints/<name>/.
+
+    Called once per save step when save_checkpoint_to_hub is enabled, so a
+    timed-out or crashed run still leaves recoverable checkpoints on the Hub.
+    The model repo is created idempotently, and the commit is tagged with the
+    checkpoint step so a checkpoint can be recovered with
+    --policy.pretrained_revision=<step> instead of a commit sha.
+    """
+    api = HfApi()
+    api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
+    commit = api.upload_folder(
+        folder_path=str(checkpoint_dir),
+        repo_id=repo_id,
+        repo_type="model",
+        path_in_repo=f"checkpoints/{checkpoint_dir.name}",
+        commit_message=f"checkpoint {checkpoint_dir.name}",
+    )
+    api.create_tag(
+        repo_id=repo_id,
+        tag=checkpoint_dir.name,
+        revision=commit.oid,
+        repo_type="model",
+        exist_ok=True,
+    )
+
+
+def resolve_resume_checkpoint(repo_id: str, output_dir: Path) -> Path:
+    """Download the latest checkpoint of a Hub training repo into a local run dir.
+
+    The symmetric counterpart to `push_checkpoint_to_hub`: given a model repo holding
+    `checkpoints/<step>/{pretrained_model,training_state}` subtrees, download the highest-numbered step
+    into `output_dir/checkpoints/<step>/`, recreate the local `last` symlink, and return that local
+    checkpoint dir. Used to resume training from the Hub on a machine (or HF Jobs pod) that does not
+    have the original local run dir.
+    """
+    latest = find_latest_hub_checkpoint(repo_id)
+    if latest is None:
+        raise FileNotFoundError(
+            f"No checkpoint found in '{repo_id}' under '{CHECKPOINTS_DIR}/'. "
+            "Was the run trained with --save_checkpoint_to_hub?"
+        )
+    snapshot_download(
+        repo_id=repo_id,
+        repo_type="model",
+        allow_patterns=f"{latest}/*",
+        local_dir=str(output_dir),
+    )
+    checkpoint_dir = output_dir / latest
+    update_last_checkpoint(checkpoint_dir)
+    return checkpoint_dir
