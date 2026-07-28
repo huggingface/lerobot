@@ -1,4 +1,4 @@
-"""Run the authorized hardware-free Task1 ACT Real-to-Sim gate12.
+"""Run the authorized hardware-free Task1 ACT aligned Real-to-Sim gate12.
 
 This runner is intentionally gate12-only. It imports the frozen ACT inference
 interface and the deployed Remote Nexus adapter, but starts no service, accesses
@@ -30,7 +30,7 @@ REMOTE_ROOT = Path("/home/ubuntu24/SO101QuestRemote")
 REMOTE_ADAPTER_DIR = REMOTE_ROOT / "robot-host"
 REMOTE_DEPLOYED_COMMIT_FILE = REMOTE_ROOT / ".deployed-commit"
 EXPECTED_REMOTE_DEPLOYED_COMMIT = (
-    "a5914b14261488193b007e004c81ceefb1eed254"
+    "1dfac5c108e830a55b114b1a75bd00bdb5d877b7"
 )
 EXPECTED_PLAN_SHA256 = (
     "c26bf3caa788708cf8ccb332e2f84771d271b05795634a9b1022ed97d06b8c86"
@@ -39,6 +39,14 @@ EXPECTED_MODEL_SHA256 = (
     "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb"
 )
 EXPECTED_GATE_EPISODES = 12
+EXPECTED_RESET_PROFILE_ID = "picklift_real24_aligned_reset_v2"
+EXPECTED_READY_POSE_PROFILE_ID = "task1_real24_ready_pose_reset_v1"
+EXPECTED_READY_POSE_STATE_SHA256 = (
+    "ecb871efad5692e192ac0f690bc0e959fef371bbb8338a31b23ca697741e3b56"
+)
+EXPECTED_READY_POSE_SOURCE_EPISODE_INDEX = 13
+EXPECTED_READY_POSE_SOURCE_FRAME_INDEX = 0
+EXPECTED_READY_POSE_TOLERANCE = 1.0e-5
 LEGAL_TERMINATION_REASONS = {
     "environment_terminated",
     "environment_truncated",
@@ -131,12 +139,40 @@ def validate_deployment() -> dict[str, Any]:
         raise RuntimeError("Remote 30-second policy-tick limit drifted.")
     if contract["clock"]["maximum_env_steps"] != 1500:
         raise RuntimeError("Remote 30-second environment-step limit drifted.")
+    from picklift_ready_pose import (
+        ACTIVE_PICKLIFT_RESET_PROFILE,
+        REAL24_READY_POSE,
+        READY_POSE_TOLERANCE_DATASET_UNITS,
+    )
+
+    reset_contract = ACTIVE_PICKLIFT_RESET_PROFILE.contract()
+    ready_contract = REAL24_READY_POSE.contract()
+    if reset_contract["profile_id"] != EXPECTED_RESET_PROFILE_ID:
+        raise RuntimeError("Remote active reset profile drifted.")
+    if reset_contract["ready_pose"] != ready_contract:
+        raise RuntimeError("Remote active reset/ready-pose binding drifted.")
+    if ready_contract["profile_id"] != EXPECTED_READY_POSE_PROFILE_ID:
+        raise RuntimeError("Remote ready-pose profile drifted.")
+    if ready_contract["state_sha256"] != EXPECTED_READY_POSE_STATE_SHA256:
+        raise RuntimeError("Remote ready-pose state SHA drifted.")
+    if (
+        ready_contract["source_episode_index"]
+        != EXPECTED_READY_POSE_SOURCE_EPISODE_INDEX
+        or ready_contract["source_frame_index"]
+        != EXPECTED_READY_POSE_SOURCE_FRAME_INDEX
+    ):
+        raise RuntimeError("Remote ready-pose source frame drifted.")
+    if READY_POSE_TOLERANCE_DATASET_UNITS != EXPECTED_READY_POSE_TOLERANCE:
+        raise RuntimeError("Remote ready-pose tolerance drifted.")
     return {
         "gate_phase_id": gate_phase_id,
         "gate_episode_count": len(trials),
         "plan_sha256": contract["plan"]["plan_sha256"],
         "remote_deployed_commit": deployed_commit,
         "model_sha256": contract["upstream_act_binding"]["model_sha256"],
+        "reset_profile": reset_contract,
+        "ready_pose": ready_contract,
+        "ready_pose_tolerance": READY_POSE_TOLERANCE_DATASET_UNITS,
         "clock": contract["clock"],
         "status": "pass",
     }
@@ -165,6 +201,101 @@ def validate_policy_inputs(inputs: dict[str, Any]) -> None:
         raise RuntimeError("Remote front image is not uint8[480,640,3] RGB.")
 
 
+def validate_ready_pose_evidence(
+    evidence: dict[str, Any] | None,
+    tick0_state: np.ndarray,
+    expected_contract: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(evidence, dict):
+        raise RuntimeError("Remote ready-pose reset evidence is unavailable.")
+    if evidence.get("contract") != expected_contract:
+        raise RuntimeError("Remote ready-pose evidence contract drifted.")
+    application = evidence.get("application")
+    if not isinstance(application, dict):
+        raise RuntimeError("Remote ready-pose application evidence is missing.")
+    requested = np.asarray(
+        application.get("requested_state_dataset_units"),
+        dtype=np.float64,
+    )
+    observed = np.asarray(
+        application.get("observed_tick0_state_dataset_units"),
+        dtype=np.float64,
+    )
+    delta = np.asarray(
+        application.get("per_joint_delta_dataset_units"),
+        dtype=np.float64,
+    )
+    state = np.asarray(tick0_state, dtype=np.float64)
+    if any(values.shape != (6,) for values in (requested, observed, delta, state)):
+        raise RuntimeError("Ready-pose evidence arrays must all have shape [6].")
+    if not all(
+        bool(np.isfinite(values).all())
+        for values in (requested, observed, delta, state)
+    ):
+        raise RuntimeError("Ready-pose evidence contains non-finite values.")
+    expected = np.asarray(
+        expected_contract["state_dataset_units"],
+        dtype=np.float64,
+    )
+    tolerance = float(application.get("absolute_tolerance_dataset_units"))
+    if tolerance != EXPECTED_READY_POSE_TOLERANCE:
+        raise RuntimeError("Ready-pose application tolerance drifted.")
+    if not np.array_equal(requested, expected):
+        raise RuntimeError("Ready-pose requested state drifted.")
+    if not np.allclose(delta, observed - requested, rtol=0.0, atol=1.0e-12):
+        raise RuntimeError("Ready-pose recorded delta is inconsistent.")
+    maximum_absolute_delta = float(np.max(np.abs(delta)))
+    if maximum_absolute_delta > tolerance:
+        raise RuntimeError("Ready-pose observed state exceeds tolerance.")
+    if not np.allclose(state, observed, rtol=0.0, atol=tolerance):
+        raise RuntimeError("Returned tick0 state differs from ready-pose evidence.")
+    required_flags = {
+        "within_tolerance": True,
+        "robot_qvel_zero": True,
+        "object_pose_unchanged": True,
+        "simulation_time_advanced": False,
+        "nexus_init_noise_overwritten": True,
+        "env_step_after_override": 0,
+        "last_step_result_cleared": True,
+    }
+    for field, expected_value in required_flags.items():
+        if application.get(field) != expected_value:
+            raise RuntimeError(
+                f"Ready-pose application flag drifted: {field}."
+            )
+    return {
+        "ready_pose_tick0_valid": True,
+        "maximum_absolute_tick0_delta": maximum_absolute_delta,
+        "requested_tick0_state": requested.tolist(),
+        "observed_tick0_state": observed.tolist(),
+        "per_joint_tick0_delta": delta.tolist(),
+        "absolute_tolerance": tolerance,
+    }
+
+
+def validate_object_spawn(
+    trial_manifest: dict[str, Any],
+    task_manifest: dict[str, Any],
+) -> dict[str, Any]:
+    planned = trial_manifest["spawn"]
+    observed = task_manifest["spawn"]
+    mismatches = {
+        key: {"planned": value, "observed": observed.get(key)}
+        for key, value in planned.items()
+        if observed.get(key) != value
+    }
+    if mismatches:
+        raise RuntimeError(
+            f"Remote object spawn differs from frozen plan: {mismatches}"
+        )
+    return {
+        "object_spawn_plan_valid": True,
+        "planned_spawn": planned,
+        "actual_initial_pose": observed["actual_initial_pose"],
+        "placement_method": observed["placement_method"],
+    }
+
+
 def episode_record(
     *,
     runtime_summary: dict[str, Any],
@@ -175,6 +306,8 @@ def episode_record(
     relative_clipped_joint_value_count: int,
     sent_action_count: int,
     valid_observation_count: int,
+    ready_pose_tick0_valid: bool,
+    object_spawn_plan_valid: bool,
     expected_policy_ticks: int,
     interface_error: str | None,
 ) -> dict[str, Any]:
@@ -194,6 +327,8 @@ def episode_record(
             ),
             "sent_action_count": sent_action_count,
             "valid_observation_count": valid_observation_count,
+            "ready_pose_tick0_valid": ready_pose_tick0_valid,
+            "object_spawn_plan_valid": object_spawn_plan_valid,
             "interface_error": interface_error,
         }
     )
@@ -216,6 +351,8 @@ def episode_record(
         )
         and int(record["env_steps"]) > 0
         and legal_end
+        and ready_pose_tick0_valid
+        and object_spawn_plan_valid
     )
     if interface_error is not None:
         record["failure_type"] = "interface_error"
@@ -233,6 +370,12 @@ def summarize_gate(episodes: list[dict[str, Any]]) -> dict[str, Any]:
             "episodes": len(group),
             "interface_valid_episodes": sum(
                 bool(item["interface_valid"]) for item in group
+            ),
+            "ready_pose_tick0_valid_episodes": sum(
+                bool(item["ready_pose_tick0_valid"]) for item in group
+            ),
+            "object_spawn_plan_valid_episodes": sum(
+                bool(item["object_spawn_plan_valid"]) for item in group
             ),
             "successes": successes,
             "success_rate": successes / len(group),
@@ -281,15 +424,24 @@ def summarize_gate(episodes: list[dict[str, Any]]) -> dict[str, Any]:
         and set(by_cell) == expected_cells
         and all(len(group) == 1 for group in by_cell.values())
         and overall["interface_valid_episodes"] == EXPECTED_GATE_EPISODES
+        and (
+            overall["ready_pose_tick0_valid_episodes"]
+            == EXPECTED_GATE_EPISODES
+        )
+        and (
+            overall["object_spawn_plan_valid_episodes"]
+            == EXPECTED_GATE_EPISODES
+        )
     )
     return {
         "schema_version": 1,
         "status": "diagnostic_only_not_a_real_robot_or_paper_result",
         "phase_id": "gate12",
         "gate_definition": (
-            "all 12 trials reset, produced exact state/RGB, completed finite "
-            "action stepping, and produced legal termination/timeout evidence; "
-            "task success is not required"
+            "all 12 aligned trials verified the frozen ready pose at tick0, "
+            "preserved the frozen object spawn plan, produced exact state/RGB, "
+            "completed finite action stepping, and produced legal "
+            "termination/timeout evidence; task success is not required"
         ),
         "interface_gate_pass": gate_pass,
         "overall": overall,
@@ -328,6 +480,7 @@ def run_gate(output_dir: Path) -> dict[str, Any]:
     from nexus_picklift_policy_adapter import (
         create_nexus_picklift_policy_adapter,
     )
+    from picklift_ready_pose import REAL24_READY_POSE
     from sim_policy_inference import Task1ActSimInference
 
     source_commit = git_head(EXPERIMENT_DIR.parents[1])
@@ -348,6 +501,10 @@ def run_gate(output_dir: Path) -> dict[str, Any]:
         "remote_adapter_sha256": sha256_file(
             REMOTE_ADAPTER_DIR / "nexus_picklift_policy_adapter.py"
         ),
+        "remote_reset_profile": validation["reset_profile"],
+        "ready_pose": validation["ready_pose"],
+        "ready_pose_tolerance": validation["ready_pose_tolerance"],
+        "ready_pose_explicitly_passed_to_every_reset": True,
         "plan_sha256": validation["plan_sha256"],
         "checkpoint_path": contract["upstream_act_binding"]["checkpoint_path"],
         "model_sha256": validation["model_sha256"],
@@ -357,7 +514,7 @@ def run_gate(output_dir: Path) -> dict[str, Any]:
         "hardware_accessed": False,
         "gateway_or_quest_started": False,
         "lerobot_dataset_written": False,
-        "phase_scope": "gate12_only_frozen120_not_authorized",
+        "phase_scope": "aligned_gate12_only_frozen120_not_authorized",
         "contract": contract,
     }
     write_json(output_dir / "run_manifest.json", run_manifest)
@@ -385,9 +542,28 @@ def run_gate(output_dir: Path) -> dict[str, Any]:
                 relative_clipped_joint_value_count = 0
                 sent_action_count = 0
                 valid_observation_count = 0
+                ready_pose_tick0_valid = False
+                object_spawn_plan_valid = False
+                ready_pose_validation: dict[str, Any] | None = None
+                object_spawn_validation: dict[str, Any] | None = None
                 interface_error: str | None = None
                 try:
-                    observation = adapter.reset(trial)
+                    observation = adapter.reset(
+                        trial,
+                        ready_pose=REAL24_READY_POSE,
+                    )
+                    reset_manifest = adapter.episode_manifest()
+                    ready_pose_validation = validate_ready_pose_evidence(
+                        reset_manifest["ready_pose_reset"],
+                        observation.policy_inputs()["observation.state"],
+                        validation["ready_pose"],
+                    )
+                    ready_pose_tick0_valid = True
+                    object_spawn_validation = validate_object_spawn(
+                        trial.manifest(),
+                        reset_manifest["task_manifest"],
+                    )
+                    object_spawn_plan_valid = True
                     while adapter.phase == "active":
                         inputs = observation.policy_inputs()
                         validate_policy_inputs(inputs)
@@ -448,6 +624,8 @@ def run_gate(output_dir: Path) -> dict[str, Any]:
                     ),
                     sent_action_count=sent_action_count,
                     valid_observation_count=valid_observation_count,
+                    ready_pose_tick0_valid=ready_pose_tick0_valid,
+                    object_spawn_plan_valid=object_spawn_plan_valid,
                     expected_policy_ticks=contract["clock"][
                         "maximum_policy_ticks"
                     ],
@@ -458,6 +636,14 @@ def run_gate(output_dir: Path) -> dict[str, Any]:
                         "phase_episode_index": trial.phase_episode_index,
                         "repeat_index": trial.repeat_index,
                         "trial_manifest": trial.manifest(),
+                        "object_spawn": manifest["task_manifest"]["spawn"],
+                        "object_spawn_validation": object_spawn_validation,
+                        "ready_pose_reset": manifest["ready_pose_reset"],
+                        "ready_pose_validation": ready_pose_validation,
+                        "reset_profile_id": EXPECTED_RESET_PROFILE_ID,
+                        "ready_pose_profile_id": (
+                            EXPECTED_READY_POSE_PROFILE_ID
+                        ),
                         "experiment_run_id": output_dir.name,
                         "source_commit": source_commit,
                         "remote_deployed_commit": validation[
@@ -474,6 +660,12 @@ def run_gate(output_dir: Path) -> dict[str, Any]:
                             "cell": record["cell"],
                             "episode": len(episodes),
                             "interface_valid": record["interface_valid"],
+                            "ready_pose_tick0_valid": record[
+                                "ready_pose_tick0_valid"
+                            ],
+                            "object_spawn_plan_valid": record[
+                                "object_spawn_plan_valid"
+                            ],
                             "success": record["success"],
                             "env_steps": record["env_steps"],
                             "termination_reason": record[
@@ -490,6 +682,10 @@ def run_gate(output_dir: Path) -> dict[str, Any]:
     summary["experiment_run_id"] = output_dir.name
     summary["plan_sha256"] = validation["plan_sha256"]
     summary["model_sha256"] = policy.model_hash
+    summary["remote_deployed_commit"] = validation["remote_deployed_commit"]
+    summary["reset_profile"] = validation["reset_profile"]
+    summary["ready_pose"] = validation["ready_pose"]
+    summary["ready_pose_tolerance"] = validation["ready_pose_tolerance"]
     summary["runtime_seconds"] = time.monotonic() - started_monotonic
     summary["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
     write_json(output_dir / "summary.json", summary)
