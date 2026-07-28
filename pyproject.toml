@@ -155,7 +155,7 @@ accelerate-dep = ["accelerate>=1.14.0,<2.0.0"]
 can-dep = ["python-can>=4.2.0,<5.0.0"]
 peft-dep = ["peft>=0.18.0,<1.0.0"]
 scipy-dep = ["scipy>=1.14.0,<2.0.0"]
-diffusers-dep = ["diffusers>=0.27.2,<0.36.0"]
+diffusers-dep = ["diffusers>=0.38.0,<0.40.0"]
 qwen-vl-utils-dep = ["qwen-vl-utils>=0.0.11,<0.1.0"]
 matplotlib-dep = ["matplotlib>=3.10.3,<4.0.0", "contourpy>=1.3.0,<2.0.0"] # NOTE: Explicitly listing contourpy helps the resolver converge faster.
 pyserial-dep = ["pyserial>=3.5,<4.0"]
