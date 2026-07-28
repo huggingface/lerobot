@@ -149,6 +149,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     device = torch.device(args.device)
     checkpoint = args.checkpoint.resolve()
+    if not OmegaConf.has_resolver("oc.load"):
+        OmegaConf.register_new_resolver(
+            "oc.load",
+            lambda path: OmegaConf.load(args.author_source / str(path)),
+        )
     author_cfg = OmegaConf.load(checkpoint / "author_config.yaml")
     author_processors = build_processors(author_cfg)
     author_processors.set_normalizer_from_stats(
