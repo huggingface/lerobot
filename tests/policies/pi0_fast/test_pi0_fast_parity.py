@@ -62,10 +62,11 @@ def test_pi0_fast_action_tokens_have_no_second_bos():
     step.action_tokenizer = lambda _: torch.tensor([4, 9])
     step._paligemma_tokenizer = _FakePaliGemmaTokenizer()
 
-    tokens, mask = step._tokenize_action(torch.zeros(1, 2, 1))
+    tokens, mask, code_mask = step._tokenize_action(torch.zeros(1, 2, 1))
 
     mapped = [1000 - 1 - 128 - token for token in (4, 9)]
     assert tokens[0, :6].tolist() == [10, 11, *mapped, 12, 1]
+    assert code_mask[0].tolist() == [False, False, True, True, False, False, False, False]
     assert _FakePaliGemmaTokenizer.bos_token_id not in tokens[0, mask[0]].tolist()
 
 
@@ -84,6 +85,7 @@ def test_action_tokenizer_serializes_bos_layout():
         "max_action_tokens": 8,
         "fast_skip_tokens": 128,
         "paligemma_tokenizer_name": "paligemma",
+        "allow_truncation": True,
         "prepend_bos": False,
         "action_tokenizer_name": "fast",
     }
