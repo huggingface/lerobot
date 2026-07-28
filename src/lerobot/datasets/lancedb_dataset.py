@@ -616,11 +616,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         )
         if self.meta.video_keys:
             self._videos_table = db.open_table(VIDEOS_TABLE)
-            # One tiny row per video FILE (~500 MB aggregates): droid = 813
-            # rows, ~20k rows per 10 TB. Plain (non-vector) scans have no
-            # default row limit (vector searches default to 10; verified in
-            # the query builder), and the projection excludes the blob and
-            # keyframe columns. Future improvement for datasets with millions
+            # Future improvement for datasets with millions
             # of files: resolve row ids lazily per batch instead of upfront.
             index = (
                 self._videos_table.search()
@@ -632,10 +628,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 (row["video_key"], row["chunk_index"], row["file_index"]): row["_rowid"]
                 for row in index.to_pylist()
             }
-            # Invariant: every file the episode metadata references must have
-            # a row. Catches truncated scans and metadata/table drift (droid's
-            # source repo shipped 44% orphan files; trust nothing) at init
-            # instead of as a KeyError mid-batch.
+            # fail fast in case of missing episodes
             referenced = {
                 (key, int(chunk), int(file))
                 for key, (chunks, files, _) in self._video_locator.items()
@@ -704,24 +697,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         # drift costs at most a re-fetch, never a wrong frame.
         prepared_future = None
         if self.meta.video_keys:
-            fps = float(self.meta.fps)
-            windows: dict[tuple, list[tuple[int, int]]] = {}
-            for plan in plans:
-                ep_idx = plan["ep_idx"]
-                ep_start = int(self._ep_from[ep_idx])
-                for key in self.meta.video_keys:
-                    chunk_arr, file_arr, from_ts_arr = self._video_locator[key]
-                    window = plan["windows"].get(key, [plan["abs_idx"]])
-                    base = round(float(from_ts_arr[ep_idx]) * fps) - ep_start
-                    first = base + min(window)
-                    if key in self.meta.depth_keys:
-                        # pyav seeks with a 1-tick margin and may land on the
-                        # previous keyframe; reach one frame back so its bytes
-                        # are prefetched too.
-                        first -= 1
-                    windows.setdefault((key, int(chunk_arr[ep_idx]), int(file_arr[ep_idx])), []).append(
-                        (first, base + max(window))
-                    )
+            windows = self._plan_file_windows(plans)
             prepared_future = self._prefetch_pool.submit(self._prepare_files, sorted(windows), windows)
 
         columns = self._fetch_rows(rows)
@@ -740,6 +716,32 @@ class LanceDBDataset(torch.utils.data.Dataset):
         return items
 
     # ── internals ──────────────────────────────────────────────────────────
+
+    def _plan_file_windows(self, plans: list[dict]) -> dict[tuple, list[tuple[int, int]]]:
+        """Map each batch sample's video windows to (file key -> frame spans).
+
+        Positions come from episode metadata alone (file-local frame =
+        absolute frame - episode start + round(from_timestamp * fps)), no
+        timestamps needed — which is what lets stage-1 prefetch these ranges
+        concurrently with the frames-table read (+22% on fetch-bound S3).
+        These are hints: stage 2 re-derives ranges from real timestamps and
+        fetches anything missed, so a wrong hint costs a round trip, never a
+        wrong frame. Depth spans reach one frame back for pyav's seek margin.
+        """
+        fps = float(self.meta.fps)
+        windows: dict[tuple, list[tuple[int, int]]] = {}
+        for plan in plans:
+            ep_idx = plan["ep_idx"]
+            ep_start = int(self._ep_from[ep_idx])
+            for key in self.meta.video_keys:
+                chunk_arr, file_arr, from_ts_arr = self._video_locator[key]
+                window = plan["windows"].get(key, [plan["abs_idx"]])
+                base = round(float(from_ts_arr[ep_idx]) * fps) - ep_start
+                first = base + min(window) - (1 if key in self.meta.depth_keys else 0)
+                windows.setdefault((key, int(chunk_arr[ep_idx]), int(file_arr[ep_idx])), []).append(
+                    (first, base + max(window))
+                )
+        return windows
 
     def _plan_batch(self, indices: list[int]) -> list[dict]:
         """Resolve each sample to the absolute rows it needs and its padding masks."""
