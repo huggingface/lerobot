@@ -389,7 +389,13 @@ class G05Policy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any] | None]:
         prepared = self._prepare_author_batch(batch)
-        result = self.backend(prepared)
+        device = next(self.backend.parameters()).device
+        with torch.autocast(
+            device_type=device.type,
+            dtype=torch.bfloat16,
+            enabled=self.config.model_weights_to_bf16 and device.type == "cuda",
+        ):
+            result = self.backend(prepared)
         if isinstance(result, tuple) and len(result) == 2:
             loss, loss_dict = result
         elif isinstance(result, Mapping) and "loss" in result:

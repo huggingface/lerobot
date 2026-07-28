@@ -576,6 +576,28 @@ def test_forward_backward_update_and_save_reload(tmp_path: Path):
     torch.testing.assert_close(actual, expected)
 
 
+def test_training_forward_uses_policy_autocast_context(monkeypatch):
+    policy = G05Policy(_config(), backend=TinyG05Backend())
+    autocast_calls = []
+
+    class AutocastContext:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+    def track_autocast(**kwargs):
+        autocast_calls.append(kwargs)
+        return AutocastContext()
+
+    monkeypatch.setattr(torch, "autocast", track_autocast)
+
+    policy(_policy_batch("train"))
+
+    assert autocast_calls == [{"device_type": "cpu", "dtype": torch.bfloat16, "enabled": False}]
+
+
 def test_save_pretrained_copies_required_gated_sidecars_portably(tmp_path: Path):
     source = tmp_path / "checkpoint"
     processor = source / "hf_processor"
