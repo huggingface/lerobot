@@ -91,6 +91,33 @@ def test_invalid_width_connect():
         camera.connect(warmup=False)
 
 
+def test_connect_cleans_up_after_warmup_failure_and_allows_retry():
+    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30)
+    camera = RealSenseCamera(config)
+    read_threads = []
+
+    def fail_warmup(*_args, **_kwargs):
+        read_threads.append(camera.thread)
+        raise TimeoutError("no frame")
+
+    with (
+        patch.object(camera, "async_read", side_effect=fail_warmup),
+        pytest.raises(TimeoutError, match="no frame"),
+    ):
+        camera.connect()
+
+    assert camera.rs_pipeline is None
+    assert camera.rs_profile is None
+    assert camera.thread is None
+    assert not camera.is_connected
+    assert read_threads[0] is not None
+    assert not read_threads[0].is_alive()
+
+    camera.connect(warmup=False)
+    assert camera.is_connected
+    camera.disconnect()
+
+
 def test_read():
     config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30, warmup_s=0)
     with RealSenseCamera(config) as camera:

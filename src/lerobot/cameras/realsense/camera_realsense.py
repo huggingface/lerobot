@@ -145,13 +145,22 @@ class RealSenseCamera(Camera):
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
 
-        if self.height and self.width:
-            self.capture_width, self.capture_height = self.width, self.height
-            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
-                self.capture_width, self.capture_height = self.height, self.width
+        self.capture_width: int | None = None
+        self.capture_height: int | None = None
+        self._reset_connection_settings()
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}({self.serial_number})"
+
+    def _reset_connection_settings(self) -> None:
+        """Restore settings that may have been auto-detected during a failed connection."""
+        self.fps = self.config.fps
+        self.width = self.config.width
+        self.height = self.config.height
+        self.warmup_s = self.config.warmup_s
+        self.capture_width, self.capture_height = self.width, self.height
+        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+            self.capture_width, self.capture_height = self.height, self.width
 
     @property
     def is_connected(self) -> bool:
@@ -190,22 +199,30 @@ class RealSenseCamera(Camera):
                 f"Failed to open {self}.Run `lerobot-find-cameras realsense` to find available cameras."
             ) from e
 
-        self._configure_capture_settings()
-        self._start_read_thread()
+        try:
+            self._configure_capture_settings()
+            self._start_read_thread()
 
-        # NOTE(Steven/Caroline): Enforcing at least one second of warmup as RS cameras need a bit of time before the first read. If we don't wait, the first read from the warmup will raise.
-        self.warmup_s = max(self.warmup_s, 1)
+            # NOTE(Steven/Caroline): Enforcing at least one second of warmup as RS cameras need a bit of time before the first read. If we don't wait, the first read from the warmup will raise.
+            self.warmup_s = max(self.warmup_s, 1)
 
-        warmup_read = self.async_read if self.use_rgb else self.async_read_depth
-        start_time = time.time()
-        while time.time() - start_time < self.warmup_s:
-            warmup_read(timeout_ms=self.warmup_s * 1000)
-            time.sleep(0.1)
-        with self.frame_lock:
-            if (self.use_rgb and self.latest_color_frame is None) or (
-                self.use_depth and self.latest_depth_frame is None
-            ):
-                raise ConnectionError(f"{self} failed to capture frames during warmup.")
+            warmup_read = self.async_read if self.use_rgb else self.async_read_depth
+            start_time = time.time()
+            while time.time() - start_time < self.warmup_s:
+                warmup_read(timeout_ms=self.warmup_s * 1000)
+                time.sleep(0.1)
+            with self.frame_lock:
+                if (self.use_rgb and self.latest_color_frame is None) or (
+                    self.use_depth and self.latest_depth_frame is None
+                ):
+                    raise ConnectionError(f"{self} failed to capture frames during warmup.")
+        except BaseException:
+            try:
+                self._cleanup_resources()
+            except Exception:
+                logger.exception(f"Failed to fully clean up {self} after connect() failed.")
+            self._reset_connection_settings()
+            raise
 
         logger.info(f"{self} connected.")
 
@@ -541,6 +558,27 @@ class RealSenseCamera(Camera):
             self.latest_timestamp = None
             self.new_frame_event.clear()
 
+    def _cleanup_resources(self) -> None:
+        """Stop background reads and stop the pipeline, including after partial setup."""
+        read_thread = self.thread
+        rs_pipeline = self.rs_pipeline
+
+        try:
+            self._stop_read_thread()
+        finally:
+            self.rs_pipeline = None
+            self.rs_profile = None
+            try:
+                if rs_pipeline is not None:
+                    rs_pipeline.stop()
+            finally:
+                # Stopping the pipeline may unblock a hardware read that outlived
+                # the first bounded join in _stop_read_thread().
+                if read_thread is not None and read_thread.is_alive():
+                    read_thread.join(timeout=2.0)
+                    if read_thread.is_alive():  # pragma: no cover
+                        logger.warning(f"{self} read thread remained alive after stopping the pipeline.")
+
     def _async_read(self, timeout_ms: float, read_depth: bool = False) -> NDArray[Any]:
         """Shared helper for :meth:`async_read`/:meth:`async_read_depth`: return the latest buffered frame."""
         if self.thread is None or not self.thread.is_alive():
@@ -684,18 +722,6 @@ class RealSenseCamera(Camera):
                 f"Attempted to disconnect {self}, but it appears already disconnected."
             )
 
-        if self.thread is not None:
-            self._stop_read_thread()
-
-        if self.rs_pipeline is not None:
-            self.rs_pipeline.stop()
-            self.rs_pipeline = None
-            self.rs_profile = None
-
-        with self.frame_lock:
-            self.latest_color_frame = None
-            self.latest_depth_frame = None
-            self.latest_timestamp = None
-            self.new_frame_event.clear()
+        self._cleanup_resources()
 
         logger.info(f"{self} disconnected.")
