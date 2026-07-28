@@ -270,7 +270,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         }
     )
     author_env_action = _flatten_author_action(author_post[ACTION], author_processor)
-    port_env_action = postprocessor(port_action)
+    # Isolate processor parity from small repeated BF16 sampling drift by feeding
+    # both postprocessors the same normalized author action chunk.
+    port_env_action = postprocessor(author_output[ACTION])
     report["environment_action"] = _tensor_error(author_env_action, port_env_action)
 
     if args.compare_training_loss:
