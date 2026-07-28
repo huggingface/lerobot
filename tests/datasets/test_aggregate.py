@@ -18,6 +18,8 @@ import json
 import logging
 from unittest.mock import patch
 
+import numpy as np
+import pandas as pd
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
@@ -27,6 +29,7 @@ import torch
 
 from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
 from lerobot.datasets.aggregate import aggregate_datasets
+from lerobot.datasets.compute_stats import RunningQuantileStats
 from lerobot.datasets.feature_utils import features_equal_for_merge
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from tests.fixtures.constants import (
@@ -342,6 +345,66 @@ def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
     assert_video_timestamps_within_bounds(aggr_ds)
     assert_depth_keys_preserved(aggr_ds, ds_0, ds_1)
     assert_dataset_iteration_works(aggr_ds)
+
+
+def test_aggregate_recomputes_task_index_stats_after_remap(
+    tmp_path, lerobot_dataset_factory, info_factory, stats_factory
+):
+    """task_index stats must reflect the remapped aggregated parquet data, not local source ids."""
+
+    def make_single_task_dataset(name: str, task: str, total_frames: int):
+        info = info_factory(
+            total_episodes=1,
+            total_frames=total_frames,
+            total_tasks=1,
+            camera_features={},
+            use_videos=False,
+        )
+        tasks = pd.DataFrame({"task_index": [0]}, index=pd.Index([task], name="task"))
+        stats = stats_factory(features=info.features)
+        stats["task_index"] = {
+            "min": [0],
+            "max": [0],
+            "mean": [0.0],
+            "std": [0.0],
+            "count": [total_frames],
+            "q01": [0.0],
+            "q10": [0.0],
+            "q50": [0.0],
+            "q90": [0.0],
+            "q99": [0.0],
+        }
+        return lerobot_dataset_factory(
+            root=tmp_path / name,
+            repo_id=f"{DUMMY_REPO_ID}_{name}",
+            info=info,
+            stats=stats,
+            tasks=tasks,
+        )
+
+    ds_0 = make_single_task_dataset("task_stats_0", "Task A", total_frames=5)
+    ds_1 = make_single_task_dataset("task_stats_1", "Task B", total_frames=7)
+    aggr_root = tmp_path / "task_stats_aggr"
+
+    aggregate_datasets(
+        repo_ids=[ds_0.repo_id, ds_1.repo_id],
+        roots=[ds_0.root, ds_1.root],
+        aggr_repo_id=f"{DUMMY_REPO_ID}_task_stats_aggr",
+        aggr_root=aggr_root,
+    )
+
+    data_task_indices = pd.concat(
+        pd.read_parquet(path, columns=["task_index"]) for path in (aggr_root / "data").rglob("*.parquet")
+    )["task_index"].to_numpy()
+    expected_running_stats = RunningQuantileStats()
+    expected_running_stats.update(data_task_indices.reshape(-1, 1))
+    expected_stats = expected_running_stats.get_statistics()
+    stats = json.loads((aggr_root / "meta" / "stats.json").read_text())["task_index"]
+
+    assert sorted(np.unique(data_task_indices).tolist()) == [0, 1]
+    assert stats.keys() >= {"min", "max", "mean", "std", "count", "q01", "q10", "q50", "q90", "q99"}
+    for key, expected_value in expected_stats.items():
+        assert stats[key] == [pytest.approx(expected_value.item())]
 
 
 def test_aggregate_datasets_without_concatenation(tmp_path, lerobot_dataset_factory):

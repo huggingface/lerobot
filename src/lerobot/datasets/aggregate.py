@@ -26,7 +26,7 @@ import tqdm
 
 from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
 
-from .compute_stats import aggregate_stats
+from .compute_stats import RunningQuantileStats, aggregate_stats
 from .dataset_metadata import LeRobotDatasetMetadata
 from .feature_utils import features_equal_for_merge, get_hf_features_from_features
 from .io_utils import (
@@ -698,6 +698,24 @@ def append_or_create_parquet_file(
     return idx, (dst_chunk, dst_file)
 
 
+def _compute_task_index_stats_from_data(aggr_meta):
+    running_stats = RunningQuantileStats()
+    has_task_indices = False
+
+    for path in sorted((aggr_meta.root / "data").rglob("*.parquet")):
+        df = pd.read_parquet(path, columns=["task_index"])
+        task_indices = df["task_index"].to_numpy().reshape(-1, 1)
+        if len(task_indices) == 0:
+            continue
+        running_stats.update(task_indices)
+        has_task_indices = True
+
+    if not has_task_indices:
+        return None
+
+    return running_stats.get_statistics()
+
+
 def finalize_aggregation(aggr_meta, all_metadata):
     """Finalizes the dataset aggregation by writing summary files and statistics.
 
@@ -720,4 +738,9 @@ def finalize_aggregation(aggr_meta, all_metadata):
 
     logging.info("write stats")
     aggr_meta.stats = aggregate_stats([m.stats for m in all_metadata])
+    if "task_index" in aggr_meta.features:
+        # Source task_index stats use local task ids, so recompute after remapping.
+        task_index_stats = _compute_task_index_stats_from_data(aggr_meta)
+        if task_index_stats is not None:
+            aggr_meta.stats["task_index"] = task_index_stats
     write_stats(aggr_meta.stats, aggr_meta.root)
