@@ -105,32 +105,6 @@ Streaming checkpoints created by the earlier multi-worker sampler record a diffe
 topology and are rejected for sample-exact resume. Start a new run from the saved policy weights
 rather than claiming that its dataset stream resumes exactly.
 
-## Benchmarking
-
-Measure the integrated path on the same hosts used for training:
-
-```bash
-uv run python scripts/bench_streaming_dataset.py \
-  --repo-id=OWNER/DATASET \
-  --revision=COMMIT_SHA \
-  --batch-size=16 \
-  --num-workers=1 \
-  --fetch-workers=4 \
-  --decode-threads=2 \
-  --decoded-queue-size=8 \
-  --summary-json=streaming-benchmark.json
-```
-
-The output records source revisions, startup and first-batch latency, steady-state throughput,
-batch-wait percentiles, duplicate indices, memory high-water marks, and the exact settings. Run a
-separate end-to-end training A/B to include policy compute, device transfer, and optimizer time.
-Do not compare results unless the code revision, dataset revision, hardware, and settings match.
-
-For lower-level byte-fetch, retry, decoder-open, and refill diagnostics, build the sidecar explicitly
-and run `scripts/bench_episode_byte_cache.py` with the same `--repo-id`, `--revision`,
-`--data-root`, and `--sidecar-path`. Treat this as a stage profiler; throughput claims should come
-from the integrated dataset benchmark and end-to-end training A/B.
-
 ## Troubleshooting
 
 - **The first batch takes a long time:** check logs for a sidecar build. Reuse a shared cache or
