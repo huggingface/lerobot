@@ -38,7 +38,7 @@ from lerobot.datasets import CODEBASE_VERSION, LeRobotDataset
 
 FPS = 20
 REAL_ACK = "I_HAVE_COMPLETED_THE_POWERED_SAFETY_CHECK"
-SPAWN_PROTOCOL_VERSION = "picklift_spawn_v4"
+SPAWN_PROTOCOL_VERSION = "picklift_spawn_v5"
 SPAWN_PROTOCOLS = {
     "picklift_spawn_v1": {
         "x": (20.0, 40.0),
@@ -65,6 +65,19 @@ SPAWN_PROTOCOLS = {
         "y_description": "task-grid +Y lateral",
     },
     "picklift_spawn_v4": {
+        "x": (20.0, 35.0),
+        "y": (-10.0, 10.0),
+        "row_axis": "x",
+        "column_axis": "y",
+        "x_description": "task-grid +X forward",
+        "y_description": "task-grid +Y lateral",
+        "cell_edges": {
+            "x": (20.0, 25.0, 30.0, 35.0),
+            "y": (-10.0, -5.0, 0.0, 5.0, 10.0),
+        },
+        "cell_size_cm": 5.0,
+    },
+    "picklift_spawn_v5": {
         "x": (20.0, 35.0),
         "y": (-10.0, 10.0),
         "row_axis": "x",
@@ -112,6 +125,31 @@ REQUIRED = (
     "termination_reason",
     "success",
 )
+V5_REQUIRED = (
+    "collection_protocol_version",
+    "task_spec_revision",
+    "yaw_annotation_mode",
+    "yaw_intended_range_deg",
+    "yaw_sampling_method",
+    "yaw_distribution_claim",
+    "yaw_randomization_confirmed",
+    "success_annotation_source",
+    "success_detection_mode",
+    "lift_height_m",
+    "is_grasped",
+)
+SUCCESS_CONTRACT = {
+    "criteria_version": "picklift_manual_success_v1",
+    "automatic_detection_available": False,
+    "minimum_visual_lift_height_m": 0.05,
+    "recommended_target_lift_range_m": [0.06, 0.08],
+    "requires_visible_bilateral_finger_grasp": True,
+    "minimum_stable_hold_s": 0.5,
+    "requires_success_pose_held_at_end": True,
+    "annotation_timing": "operator_selects_result_after_manual_end",
+    "failure_definition": "task_success_criteria_not_met",
+    "discard_definition": "recording_configuration_or_safety_anomaly",
+}
 
 
 class Backend(Protocol):
@@ -222,9 +260,17 @@ def spawn_region_for(
 
 def spawn_ui_summary(cfg: dict) -> str:
     cell_count = spawn_contract(cfg["spawn_protocol_version"]).get("grid_shape", {}).get("cells", 9)
+    if cfg["spawn_protocol_version"] == "picklift_spawn_v5":
+        return (
+            f"picklift_spawn_v5 | {cell_count} cells\n"
+            f"{cfg['spawn_id']} {cfg['spawn_region']} | "
+            f"X={cfg['spawn_x_cm']} Y={cfg['spawn_y_cm']}\n"
+            "Yaw arbitrary 0..90 | no measure"
+        )
     return (
         f"{cfg['spawn_protocol_version']} | {cfg['spawn_id']} | {cfg['spawn_region']}\n"
-        f"Xfwd={cfg['spawn_x_cm']}cm Ylat={cfg['spawn_y_cm']}cm yaw={cfg['spawn_yaw_deg']}\n"
+        f"Xfwd={cfg['spawn_x_cm']}cm Ylat={cfg['spawn_y_cm']}cm "
+        f"yaw={cfg['spawn_yaw_deg']}\n"
         f"{cell_count} cells | {cfg['alignment_reference_id']}"
     )
 
@@ -238,7 +284,18 @@ def validate_config(cfg: dict) -> None:
         # Compatibility for configs frozen before alignment references became a
         # separate provenance object. New protocols must always provide one.
         cfg["alignment_reference_id"] = ALIGNMENT_REFERENCE_V1_ID
-    missing = [key for key in REQUIRED if key not in cfg or cfg[key] in ("", None)]
+    protocol_version = cfg.get("spawn_protocol_version")
+    if protocol_version not in SPAWN_PROTOCOLS:
+        raise ValueError(f"unsupported spawn_protocol_version: {protocol_version}")
+    nullable = {"spawn_yaw_deg"} if protocol_version == "picklift_spawn_v5" else set()
+    missing = [key for key in REQUIRED if key not in cfg or (cfg[key] in ("", None) and key not in nullable)]
+    if protocol_version == "picklift_spawn_v5":
+        nullable_v5 = {"lift_height_m", "is_grasped"}
+        missing.extend(
+            key
+            for key in V5_REQUIRED
+            if key not in cfg or (cfg[key] in ("", None) and key not in nullable_v5)
+        )
     if missing:
         raise ValueError(f"missing explicit configuration values: {', '.join(missing)}")
     if cfg.get("record_fps") != FPS:
@@ -262,19 +319,41 @@ def validate_config(cfg: dict) -> None:
         raise ValueError("spawn_id must be a stable token")
     x_cm = float(cfg["spawn_x_cm"])
     y_cm = float(cfg["spawn_y_cm"])
-    yaw_deg = float(cfg["spawn_yaw_deg"])
     expected_region = spawn_region_for(x_cm, y_cm, cfg["spawn_protocol_version"])
     if cfg["spawn_region"] != expected_region:
         raise ValueError(f"spawn_region does not match actual coordinates: expected {expected_region}")
     if (
-        cfg["spawn_protocol_version"] == "picklift_spawn_v4"
+        cfg["spawn_protocol_version"] in {"picklift_spawn_v4", "picklift_spawn_v5"}
         and cfg["formal_data"]
         and x_cm == 25.0
         and y_cm == 0.0
     ):
         raise ValueError("(25, 0) is alignment-only and cannot be a formal randomized episode pose")
-    if not 0 <= yaw_deg <= 90:
-        raise ValueError("spawn_yaw_deg must be within 0..90 degrees")
+    if cfg["spawn_protocol_version"] == "picklift_spawn_v5":
+        if cfg["collection_protocol_version"] != "picklift_collection_v5":
+            raise ValueError("v5 requires collection_protocol_version=picklift_collection_v5")
+        if cfg["task_spec_revision"] != "picklift_taskspec_v2_unmeasured_yaw":
+            raise ValueError("v5 requires task_spec_revision=picklift_taskspec_v2_unmeasured_yaw")
+        if cfg["yaw_annotation_mode"] != "unmeasured_random" or cfg["spawn_yaw_deg"] is not None:
+            raise ValueError("v5 requires yaw_annotation_mode=unmeasured_random and spawn_yaw_deg=null")
+        if cfg["yaw_intended_range_deg"] != [0, 90]:
+            raise ValueError("v5 requires yaw_intended_range_deg=[0, 90]")
+        if cfg["yaw_sampling_method"] != "operator_unmeasured_arbitrary":
+            raise ValueError("v5 requires yaw_sampling_method=operator_unmeasured_arbitrary")
+        if cfg["yaw_distribution_claim"] != "unknown":
+            raise ValueError("v5 requires yaw_distribution_claim=unknown")
+        if not isinstance(cfg["yaw_randomization_confirmed"], bool):
+            raise ValueError("yaw_randomization_confirmed must be boolean")
+        if cfg["success_annotation_source"] != "operator_visual_v1":
+            raise ValueError("v5 requires success_annotation_source=operator_visual_v1")
+        if cfg["success_detection_mode"] != "manual_proxy_for_nexus_v1":
+            raise ValueError("v5 requires success_detection_mode=manual_proxy_for_nexus_v1")
+        if cfg["lift_height_m"] is not None or cfg["is_grasped"] is not None:
+            raise ValueError("v5 unavailable lift_height_m and is_grasped measurements must remain null")
+    else:
+        yaw_deg = float(cfg["spawn_yaw_deg"])
+        if not 0 <= yaw_deg <= 90:
+            raise ValueError("spawn_yaw_deg must be within 0..90 degrees")
     if cfg["result"] not in RESULTS:
         raise ValueError(f"result must be one of {sorted(RESULTS)}")
     if cfg["result"] == "pending" and not cfg.get("operator_ui", False):
@@ -425,9 +504,9 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
                     elapsed_s=((sample_index + 1) / FPS),
                     frames=sample_index + 1,
                     message=(
-                        f"{cfg['spawn_id']} | {cfg['spawn_region']}\n"
-                        f"Xfwd={cfg['spawn_x_cm']} Ylat={cfg['spawn_y_cm']} | 20 FPS\n"
-                        "Move Leader | END stops early"
+                        "SUCCESS: lift >=5cm (aim 6-8)\n"
+                        "Cube visibly between both fingers\n"
+                        "Hold 0.5-1s through END"
                     ),
                 )
                 if command == "stop":
@@ -459,6 +538,7 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
     end = utc_now()
     common = {
         **{k: cfg[k] for k in REQUIRED},
+        **{k: cfg[k] for k in V5_REQUIRED if k in cfg},
         "backend": "real" if cfg["mode"] == "real" else "synthetic",
         "control_mode": "leader_follower",
         "spawn_contract": spawn_contract(cfg["spawn_protocol_version"]),
@@ -487,6 +567,8 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
         "sync_anomalies": sync_anomalies,
         "formal_data": cfg["formal_data"],
     }
+    if cfg["spawn_protocol_version"] == "picklift_spawn_v5":
+        common["success_contract"] = SUCCESS_CONTRACT
     common["configured_termination_reason"] = cfg["termination_reason"]
     common["termination_reason"] = actual_termination_reason
     common["configured_result"] = cfg["result"]

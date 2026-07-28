@@ -19,7 +19,8 @@ The frozen physical placement protocol and per-episode procedure are in
 [`PICKLIFT_PROTOCOL.md`](./PICKLIFT_PROTOCOL.md) and
 [`OPERATOR_CHECKLIST.md`](./OPERATOR_CHECKLIST.md). Start a balanced schedule
 from [`spawn_plan.template.json`](./spawn_plan.template.json).
-New formal collection uses `picklift_spawn_v4`: `+X` forward is 20–35 cm,
+New formal collection uses `picklift_spawn_v5` and
+`picklift_collection_v5`: `+X` forward is 20–35 cm,
 `+Y` lateral remains ±10 cm, and the physical mat's 5 cm coarse lines define
 an exact 3×4/12-cell grid with X edges 20/25/30/35 cm and Y edges
 −10/−5/0/+5/+10 cm. Its
@@ -28,11 +29,22 @@ an exact 3×4/12-cell grid with X edges 20/25/30/35 cm and Y edges
 `picklift_red_cube_alignment_v2` proposes `(X=0.25 m, Y=0 m)` as the
 canonical-image center reference. That image placement remains pending until
 the operator places the physical cube at 25 cm and captures a new canonical
-frame. The alignment point is not an episode placement. The v3 3×3 contract,
-v2 10–25 cm contract, and v1 legacy contract remain immutable in
+frame. The alignment point is not an episode placement. v5 uses unmeasured
+arbitrary yaw in 0–90°: `spawn_yaw_deg=null`, no numeric estimate, and no
+uniform-distribution claim. The image remains the orientation evidence. The
+measured-yaw v4 contract and earlier contracts remain immutable in
+[`PICKLIFT_PROTOCOL_V4.md`](./PICKLIFT_PROTOCOL_V4.md),
 [`PICKLIFT_PROTOCOL_V3.md`](./PICKLIFT_PROTOCOL_V3.md),
 [`PICKLIFT_PROTOCOL_V2.md`](./PICKLIFT_PROTOCOL_V2.md) and
 [`PICKLIFT_PROTOCOL_V1.md`](./PICKLIFT_PROTOCOL_V1.md).
+
+Real collection has no automatic object-height or bilateral-contact success
+detection. The operator visually applies `picklift_manual_success_v1`: lift
+the cube at least about 5 cm (aim 6–8 cm), visibly hold it between both
+fingers without external support, keep that state for at least 0.5 seconds
+through manual END, and then confirm SUCCESS. The manifest records
+`operator_visual_v1` / `manual_proxy_for_nexus_v1`; unavailable
+`lift_height_m` and `is_grasped` remain null.
 
 The aligned front profile is
 `icspring_front_crop_1280x960_to_640x480_v1`: acquire native 1920×1080 RGB

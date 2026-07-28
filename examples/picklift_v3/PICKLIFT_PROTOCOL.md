@@ -1,10 +1,11 @@
-# PickLift physical placement protocol v4
+# PickLift physical placement protocol v5
 
-This current protocol is frozen as `picklift_spawn_v4`. It applies to new
-Ubuntu Leader-to-Follower formal collection. The former 20–35 cm 3×3 contract
-remains immutable as [`picklift_spawn_v3`](./PICKLIFT_PROTOCOL_V3.md);
-v2 and v1 also retain their historical identities. Historical configs,
-manifests, episodes, and datasets are not rewritten.
+This current protocol is frozen as `picklift_spawn_v5` and
+`picklift_collection_v5`. It applies to new Ubuntu Leader-to-Follower formal
+collection. The former measured-yaw 12-cell contract remains immutable as
+[`picklift_spawn_v4`](./PICKLIFT_PROTOCOL_V4.md); v3, v2, and v1 retain their
+historical identities. Historical configs, manifests, episodes, and datasets
+are not rewritten.
 
 ## Task frame and allowed area
 
@@ -24,8 +25,11 @@ manifests, episodes, and datasets are not rewritten.
   cube.
 - `spawn_x_cm` is task-grid forward `X`. Allowed range: **20–35 cm**.
 - `spawn_y_cm` is task-grid lateral `Y`. Allowed range: **−10–+10 cm**.
-- `spawn_yaw_deg` is the object's measured yaw. Allowed range: **0–90°**.
-- Record the actual measured values, not only the planned region center.
+- `spawn_yaw_deg` is always `null`; the operator does not measure, estimate,
+  or enter a numeric yaw.
+- Before START, place the cube at any arbitrary orientation intended to be
+  within **0–90°**, preferably unlike the immediately previous episode.
+- Record actual measured X/Y, but never invent nominal or estimated yaw.
 - Never infer either axis from camera-image horizontal/vertical or from table
   edges.
 - The alignment-only reference is
@@ -62,35 +66,61 @@ Every cell is exactly **5×5 cm**, using these physical coarse-grid edges:
 | `r3c4` | 30–35 | 5–10 |
 
 Sample all twelve cells evenly. Within each selected cell, place the cube
-clearly inside the physical coarse boundaries and randomize the actual
-position and yaw in 0–90°. Record the measured actual X/Y/yaw. The first
-coverage plan supplies a recommended interior point and balanced yaw for each
-cell; those are recommendations, not substitutes for actual measurements.
+clearly inside the physical coarse boundaries, vary its position, and give it
+an arbitrary orientation intended to be within 0–90°. No uniform yaw
+distribution is claimed. The first coverage plan supplies a recommended
+interior X/Y point only; actual X/Y must still be recorded.
 
 ## Spawn and retry state machine
 
 1. Select the next balanced region and create a stable `spawn_id`.
-2. Place the object, then record `spawn_region`, actual `spawn_x_cm`,
-   `spawn_y_cm`, and `spawn_yaw_deg`.
-3. Remove the operator's hands/body from the front image.
-4. Wait until the object, mat, camera, and robot are stable.
-5. Confirm the displayed spawn values, then start recording.
-6. End the episode and select exactly one result:
+2. Place the object, then record `spawn_region`, actual `spawn_x_cm`, and
+   `spawn_y_cm`. Change the orientation without measuring it.
+3. Set `yaw_randomization_confirmed=true` only after the arbitrary orientation
+   has been placed; this is not an angle annotation.
+4. Remove the operator's hands/body from the front image.
+5. Wait until the object, mat, camera, and robot are stable.
+6. Confirm the displayed spawn values, then start recording.
+7. End the episode and select exactly one result:
    `success`, `failure`, or `discard`.
-7. On `failure` or `discard`, keep the same `spawn_id` and the same actual
+8. On `failure` or `discard`, keep the same `spawn_id` and the same actual
    pose for the retry.
-8. Advance to a new `spawn_id`/pose only after a successful episode has been
+9. Advance to a new `spawn_id`/pose only after a successful episode has been
    saved.
 
 Failure episodes may remain as bounded evidence with `result=failure`.
 Discard episodes are marked `result=discard` and must be excluded from the
 deterministic training view.
 
+## Manual success contract
+
+The real Leader–Follower setup has no object-height sensor, bilateral contact
+sensor, or automatic success detector. The system cannot announce success at
+the moment of grasp. The operator manually ends the episode and annotates the
+result.
+
+Select **SUCCESS** only when all conditions are visually satisfied:
+
+1. The red cube is clearly lifted at least approximately 5 cm above its
+   initial tabletop height. Aim for 6–8 cm to avoid threshold ambiguity.
+2. The cube is visibly held between both gripper fingers, not supported or
+   hooked by the table, another robot part, or the environment.
+3. This state remains stable for at least 0.5 seconds.
+4. The cube has not dropped and is still in the successful pose at END.
+
+After reaching success, hold for 0.5–1 second, manually END, then confirm the
+SUCCESS summary. Use FAILURE when task criteria are not met. Use DISCARD only
+for recording, configuration, or safety anomalies. Never fabricate
+`lift_height_m` or `is_grasped`; both remain null because they are not
+measured.
+
 ## Required episode manifest fields
 
 Every episode provenance record includes:
 
-- `spawn_protocol_version=picklift_spawn_v4`
+- `spawn_protocol_version=picklift_spawn_v5`
+- `collection_protocol_version=picklift_collection_v5`
+- `task_spec_revision=picklift_taskspec_v2_unmeasured_yaw`
 - `task_frame_id=picklift_task_grid_v2`
 - `alignment_reference_id=picklift_red_cube_alignment_v2`
 - exact X/Y cell edges, 5 cm cell size, and `3×4=12` grid shape
@@ -98,7 +128,21 @@ Every episode provenance record includes:
   plus the separately versioned, pending `(0.25 m, 0 m)` alignment reference
 - `spawn_id`
 - `spawn_region`
-- `spawn_x_cm`, `spawn_y_cm`, `spawn_yaw_deg`
+- `spawn_x_cm`, `spawn_y_cm`, and `spawn_yaw_deg=null`
+- `yaw_annotation_mode=unmeasured_random`
+- `yaw_intended_range_deg=[0,90]`
+- `yaw_sampling_method=operator_unmeasured_arbitrary`
+- `yaw_distribution_claim=unknown`
+- boolean `yaw_randomization_confirmed`
+- `success_annotation_source=operator_visual_v1`
+- `success_detection_mode=manual_proxy_for_nexus_v1`
+- `lift_height_m=null` and `is_grasped=null`
+- expanded `success_contract=picklift_manual_success_v1`
 - `result` and the consistent boolean `success`
 - the existing task, setup, operator/session, robot, camera, timing,
   termination, dropped-frame, and synchronization provenance
+
+The canonical image is the raw evidence of actual object orientation. A later
+versioned derived view may estimate yaw/bin with its own method and
+confidence, without changing the raw episode. Review yaw coverage after the
+12/24-episode pilots; do not claim uniform coverage from this raw annotation.

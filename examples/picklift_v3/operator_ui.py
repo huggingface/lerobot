@@ -205,11 +205,32 @@ class OperatorUI:
             command = self.show(
                 frame_rgb,
                 status="REVIEW",
-                message="Choose result\n1 Success | 2 Failure | 3 Discard",
+                message=(
+                    "Choose result (manual visual)\n"
+                    "FAILURE = task criteria unmet\n"
+                    "DISCARD = record/config/safety issue"
+                ),
                 button_labels=("SUCCESS", "FAILURE", "DISCARD"),
             )
             if command == "start":
-                return "success"
+                while True:
+                    confirmation = self.show(
+                        frame_rgb,
+                        status="REVIEW",
+                        message=(
+                            "Confirm SUCCESS: lift >=5cm\n"
+                            "Between both fingers; no support\n"
+                            "Held >=0.5s and still held at END"
+                        ),
+                        button_labels=("CONFIRM", "BACK", "DISCARD"),
+                    )
+                    if confirmation == "start":
+                        return "success"
+                    if confirmation == "stop":
+                        break
+                    if confirmation == "quit":
+                        return "discard"
+                    time.sleep(0.01)
             if command == "stop":
                 return "failure"
             if command == "quit":
