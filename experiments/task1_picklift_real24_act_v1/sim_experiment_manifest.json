@@ -1,6 +1,6 @@
 {
     "experiment_id": "task1_picklift_real24_act_v1_real_to_remote_sim_v1",
-    "status": "aligned_gate12_authorized_frozen120_not_authorized",
+    "status": "aligned_gate12_passed_frozen120_authorized",
     "research_status": "diagnostic_only_not_real_robot_evaluation_not_a_paper_result",
     "policy": {
         "checkpoint_selection_rule": "fixed_step_100000_only",
@@ -13,7 +13,7 @@
     },
     "adapter_boundary": {
         "owner_thread_id": "019fa434-b4e1-7601-a84e-8569eeb8d4f5",
-        "contract_status": "deployed_and_frozen_for_aligned_gate12",
+        "contract_status": "deployed_and_frozen_for_aligned_gate12_and_frozen120",
         "remote_deployed_commit": "1dfac5c108e830a55b114b1a75bd00bdb5d877b7",
         "adapter_profile_id": "task1_real24_act100k_to_remote_picklift_ready_pose_v2",
         "active_reset_profile_id": "picklift_real24_aligned_reset_v2",
@@ -52,7 +52,7 @@
         }
     },
     "ready_pose_reset": {
-        "required_for_this_gate": true,
+        "required_for_aligned_gate12_and_frozen120": true,
         "adapter_call": "adapter.reset(trial, ready_pose=REAL24_READY_POSE)",
         "profile_id": "task1_real24_ready_pose_reset_v1",
         "source_dataset_tree_sha256": "251cbdc079b304425ccdfbd7a08f15d34858ea0dd8c19345544b8da9f3adb9f2",
@@ -132,7 +132,7 @@
     },
     "diagnostic_rollout": {
         "phase_id": "frozen120",
-        "authorization_status": "not_authorized",
+        "authorization_status": "authorized_by_research_control",
         "start_condition": "explicit_research_control_frozen120_go_after_aligned_gate12_pass",
         "episodes": 120,
         "maximum_episode_seconds": 30,
@@ -142,6 +142,11 @@
             "r3c1", "r3c2", "r3c3", "r3c4"
         ],
         "seeds_per_cell": [1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009],
+        "plan_order": "seed_major_then_row_major_cell",
+        "policy_ticks_per_episode": 600,
+        "environment_steps_per_episode": 1500,
+        "continue_after_success": true,
+        "retry_or_result_selection": false,
         "adaptive_stopping": false
     },
     "episode_evidence_required": [
