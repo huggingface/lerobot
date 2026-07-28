@@ -25,11 +25,55 @@ pytest.importorskip("transformers")
 pytest.importorskip("torchdiffeq")
 
 from lerobot.policies.factory import make_policy_config  # noqa: E402
-from lerobot.policies.wall_x import WallXConfig  # noqa: E402
+from lerobot.policies.wall_x import (
+    WallXConfig,  # noqa: E402
+)
 from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy  # noqa: E402
 from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors  # noqa: E402
+from lerobot.policies.wall_x.qwen_model import Qwen2_5_VLMoEModel, Qwen2_5_VLTextConfig  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
+
+
+def test_moe_model_captures_requested_hidden_states_and_attentions():
+    hidden_size = 16
+    expert_config = {
+        "hidden_size": hidden_size,
+        "intermediate_size": 32,
+        "hidden_act": "silu",
+    }
+    config = Qwen2_5_VLTextConfig(
+        vocab_size=32,
+        hidden_size=hidden_size,
+        intermediate_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=4,
+        max_position_embeddings=32,
+        layer_types=["full_attention", "full_attention"],
+        rope_parameters={
+            "rope_type": "default",
+            "rope_theta": 1_000_000.0,
+            "mrope_section": [1, 1, 0],
+        },
+        num_experts=2,
+        experts=[expert_config, expert_config],
+        dim_inputs=(hidden_size, hidden_size),
+        mlp_moe=True,
+    )
+    config._attn_implementation = "eager"
+    model = Qwen2_5_VLMoEModel(config)
+    input_ids = torch.tensor([[1, 2, 3]])
+
+    output = model(
+        input_ids=input_ids,
+        moe_token_types=torch.zeros_like(input_ids),
+        output_hidden_states=True,
+        output_attentions=True,
+    )
+
+    assert len(output.hidden_states) == config.num_hidden_layers + 1
+    assert len(output.attentions) == config.num_hidden_layers
 
 
 @require_cuda

@@ -233,3 +233,37 @@ def test_metrics_tracker_reduce_across_ranks_invokes_reduce():
     # accumulate against the cluster view rather than the stale per-rank sum.
     meter = tracker.update_s
     assert meter.sum / meter.count == pytest.approx(meter.avg)
+
+
+def test_metrics_tracker_update_metrics_registers_and_averages():
+    tracker = MetricsTracker(batch_size=32, num_frames=1000, num_episodes=50, metrics={})
+    tracker.update_metrics({"latent_loss": 0.2, "action_loss": 0.4})
+    tracker.update_metrics({"latent_loss": 0.4, "action_loss": 0.6})
+
+    # New keys are auto-registered as mean-reduced meters and averaged over the window.
+    assert tracker.metrics["latent_loss"].reduction == "mean"
+    assert tracker.metrics["latent_loss"].avg == pytest.approx(0.3)
+    assert tracker.metrics["action_loss"].avg == pytest.approx(0.5)
+    assert tracker.to_dict()["latent_loss"] == pytest.approx(0.3)
+
+
+def test_metrics_tracker_update_metrics_skips_non_numeric():
+    tracker = MetricsTracker(batch_size=32, num_frames=1000, num_episodes=50, metrics={})
+    tracker.update_metrics({"loss": 0.5, "head_mode": "sparse", "enabled": True})
+
+    # strings and bools ignored
+    assert "loss" in tracker.metrics
+    assert "head_mode" not in tracker.metrics
+    assert "enabled" not in tracker.metrics
+
+
+def test_metrics_tracker_update_metrics_does_not_override_caller_meter():
+    # A policy that echoes "loss" in its output dict must not overwrite the caller-owned,
+    # already-aggregated loss meter.
+    metrics = {"loss": AverageMeter("loss", ":.3f", reduction="mean")}
+    tracker = MetricsTracker(batch_size=32, num_frames=1000, num_episodes=50, metrics=metrics)
+    tracker.loss = 1.0  # caller-set optimized loss
+    tracker.update_metrics({"loss": 99.0, "latent_loss": 0.2})
+
+    assert tracker.metrics["loss"].avg == pytest.approx(1.0)  # snapshot ignored
+    assert tracker.metrics["latent_loss"].avg == pytest.approx(0.2)

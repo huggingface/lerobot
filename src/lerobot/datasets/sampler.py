@@ -53,6 +53,7 @@ class EpisodeAwareSampler:
         drop_n_last_frames: int = 0,
         shuffle: bool = False,
         seed: int = 0,
+        absolute_to_relative_idx: dict[int, int] | None = None,
     ):
         """
         Args:
@@ -107,6 +108,7 @@ class EpisodeAwareSampler:
         self.seed = seed
         self._epoch = 0
         self._start_index = 0
+        self._absolute_to_relative = absolute_to_relative_idx
 
     @property
     def indices(self) -> list[int]:
@@ -132,7 +134,10 @@ class EpisodeAwareSampler:
     def _frame_index(self, position: int) -> int:
         episode = int(np.searchsorted(self._cum_lengths, position, side="right"))
         position_in_episode = position - (int(self._cum_lengths[episode - 1]) if episode > 0 else 0)
-        return int(self._starts[episode]) + position_in_episode
+        absolute_idx = int(self._starts[episode]) + position_in_episode
+        if self._absolute_to_relative is not None:
+            return self._absolute_to_relative[absolute_idx]
+        return absolute_idx
 
     def __iter__(self) -> Iterator[int]:
         # Advance epoch state eagerly, not on first consumption of the generator.

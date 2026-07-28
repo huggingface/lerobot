@@ -20,6 +20,7 @@ from .optimizers import (
     SGDConfig as SGDConfig,
     XVLAAdamWConfig as XVLAAdamWConfig,
     load_optimizer_state,
+    load_optimizer_state_dict,
     save_optimizer_state,
 )
 from .schedulers import (
@@ -50,6 +51,7 @@ __all__ = [
     "VQBeTSchedulerConfig",
     # State management
     "load_optimizer_state",
+    "load_optimizer_state_dict",
     "load_scheduler_state",
     "save_optimizer_state",
     "save_scheduler_state",

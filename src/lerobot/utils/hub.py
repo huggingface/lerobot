@@ -20,7 +20,31 @@ from typing import Any, TypeVar
 from huggingface_hub import HfApi
 from huggingface_hub.utils import validate_hf_hub_args
 
+from .constants import CHECKPOINTS_DIR
+
 T = TypeVar("T", bound="HubMixin")
+
+
+def find_latest_hub_checkpoint(
+    repo_id: str,
+    *,
+    token: str | bool | None = None,
+    revision: str | None = None,
+) -> str | None:
+    """Repo-relative path of the most recent checkpoint in a training repo.
+
+    Training runs push checkpoints to ``checkpoints/<step>/`` (see
+    ``push_checkpoint_to_hub``). This lists those step dirs and returns
+    ``checkpoints/<highest-step>``, or ``None`` if the repo has no checkpoints.
+    """
+    files = HfApi().list_repo_files(repo_id=repo_id, repo_type="model", revision=revision, token=token)
+    prefix = f"{CHECKPOINTS_DIR}/"
+    steps = {
+        name for f in files if f.startswith(prefix) and (name := f[len(prefix) :].split("/", 1)[0]).isdigit()
+    }
+    if not steps:
+        return None
+    return f"{CHECKPOINTS_DIR}/{max(steps, key=int)}"
 
 
 class HubMixin:
