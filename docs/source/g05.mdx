@@ -6,6 +6,12 @@ and the optional native chain-of-thought phase as System 2. They are not separat
 models: the runtime obtains both from one inference call and the action stays
 conditioned on the same post-reasoning KV state.
 
+Transformers includes the native multimodal Qwen3.5 backbone, vision tower, and
+processor. G0.5 is not a stock `Qwen3_5ForConditionalGeneration` checkpoint,
+however: it adds the proprioception/action path, action expert, flow-matching
+head, ActionCodec, and unified CoT/action decode. The current integration
+therefore keeps the pinned G0.5 author package as the model backend.
+
 > [!WARNING]
 > G0.5 code and checkpoints use the
 > [G0.5 Community License](https://huggingface.co/OpenGalaxea/G05/blob/main/licenses/LICENSE-G0.5),
@@ -22,9 +28,9 @@ conditioned on the same post-reasoning KV state.
 | `g05-robotwin20` | Continuous flow                            | two arms 6+gripper → 20D grouped layout      | high, left wrist, right wrist         |        32 |        8 | stepwise q01/q99                |
 | `g05-so101`      | Flow or AR ActionCodec + native CoT        | right arm joints 6 → 20D grouped layout      | exterior, optional left + right wrist |        32 |       16 | stepwise q01/q99                |
 
-The converter stores the resolved Hydra model, processor, ActionCodec metadata,
-statistics, exact prompt template, source revision, and license with the converted
-checkpoint. Loading rejects a different head, horizon, processor mode, or
+Each packaged checkpoint stores the resolved model and processor configuration,
+ActionCodec metadata, statistics, exact prompt template, source revision, and
+license. Loading rejects a different head, horizon, processor mode, or
 normalization contract.
 
 The named `atomic_4` adapter is intentionally separate from LIBERO. Its raw state
@@ -52,67 +58,11 @@ git -C GalaxeaVLA checkout b34966f387dd2ae0f003143b81494afd9213e613
 export PYTHONPATH="/path/to/GalaxeaVLA/src:${PYTHONPATH}"
 ```
 
-## Convert a local checkpoint
-
-The command never contacts the Hub. Point it at a complete local bundle containing
-the checkpoint Hydra config, weights, `dataset_stats.json`,
-`action_tokenizer.pt`, and `hf_processor/`. For released bundles, the converter
-also discovers the tokenizer and `qwen3_5_2b_base_processor/` in the parent
-directory.
-
-```bash
-uv run python -m lerobot.policies.g05.convert_g05_checkpoint \
-  --source-dir /path/to/checkpoints/g05-libero \
-  --output-dir outputs/g05-libero-lerobot \
-  --profile g05-libero \
-  --license-file /path/to/GalaxeaVLA/LICENSE-G0.5
-```
-
-For the base checkpoint, select both its concrete embodiment and one of its
-enabled output heads:
-
-```bash
-uv run python -m lerobot.policies.g05.convert_g05_checkpoint \
-  --source-dir /path/to/checkpoints/g05-base \
-  --output-dir outputs/g05-base-r1lite-flow-lerobot \
-  --profile g05-base \
-  --embodiment galaxea_r1lite \
-  --action-head flow \
-  --license-file /path/to/GalaxeaVLA/LICENSE-G0.5
-```
-
-Use `--action-head actioncodec` for the autoregressive action path,
-`--embodiment galaxea_r1pro` for R1 Pro, or `--profile g05-robotwin20` for
-RoboTwin. The base model's 32-step head contains five history-alignment steps;
-postprocessing returns the 27 executable actions. `conversion_report.json`
-records every mapped, missing, unexpected, duplicate, and shape-mismatched
-tensor; conversion fails when strict required-state validation fails.
-
-The official RoboTwin config contains a pinned data include. Resolve and package
-it from the audited author checkout:
-
-```bash
-uv run python -m lerobot.policies.g05.convert_g05_checkpoint \
-  --source-dir /path/to/G05/g05-robotwin20 \
-  --output-dir outputs/g05-robotwin20-lerobot \
-  --profile g05-robotwin20 \
-  --author-source /path/to/GalaxeaVLA \
-  --license-file /path/to/GalaxeaVLA/LICENSE-G0.5
-```
-
+The LeRobot organization hosts the prepared LIBERO, RoboTwin, and SO-101
+checkpoints privately. Authenticate with `hf auth login` before loading them.
 SO-100 and SO-101 share the released `so100` embodiment token and six-joint
 right-arm contract. A missing left-wrist camera is zero-padded exactly as in the
-author deployment client:
-
-```bash
-uv run python -m lerobot.policies.g05.convert_g05_checkpoint \
-  --source-dir /path/to/G05/g05-so101 \
-  --output-dir outputs/g05-so101-lerobot \
-  --profile g05-so101 \
-  --action-head flow \
-  --author-source /path/to/GalaxeaVLA \
-  --license-file /path/to/GalaxeaVLA/LICENSE-G0.5
-```
+author deployment client.
 
 ## Interactive System 1 and System 2 runtime
 
@@ -120,13 +70,13 @@ System 1 executes the selected ActionCodec or flow chunk directly:
 
 ```bash
 lerobot-rollout \
-  --policy.path=outputs/g05-base-lerobot \
+  --policy.path=lerobot/g05_so101 \
   --language --direct_subtask \
   --task="pick up the cup" \
   --mode=action
 ```
 
-System 2 is available only when the converted checkpoint metadata has
+System 2 is available only when the packaged checkpoint metadata has
 `predict_cot=true`. The adapter forwards the operator task byte-for-byte and
 returns CoT telemetry and the matching action chunk atomically. It never samples
 `task_aug` text, launches a second planner, or feeds generated CoT back as a
@@ -134,7 +84,7 @@ replacement task.
 
 ```bash
 lerobot-rollout \
-  --policy.path=outputs/g05-system2-lerobot \
+  --policy.path=lerobot/g05_so101 \
   --language \
   --task="clear the table" \
   --mode=action
@@ -165,31 +115,14 @@ the checkpoint's native System 2 CoT telemetry.
 ## Validation status
 
 CPU unit tests cover factory loading, config incompatibilities, prompt pass-through,
-LIBERO and `atomic_4` mappings, padding masks, inverse action projection, strict
-conversion diagnostics, a finite forward/backward/update, and save/reload parity.
-The opt-in author-oracle gate compares the exact prompt tokens, every image/state/action
-tensor and mask, seeded flow loss and samples, and de-normalized environment actions
-for batch sizes one and two:
+LIBERO and `atomic_4` mappings, padding masks, inverse action projection, a finite
+forward/backward/update, and save/reload parity:
 
 ```bash
 uv run pytest tests/policies/g05 tests/runtime/test_g05_adapter.py -q
 uv run ruff check src/lerobot/policies/g05 tests/policies/g05
-
-PYTHONPATH=/path/to/GalaxeaVLA/src uv run python benchmarks/g05_checkpoint_parity.py \
-  --author-source /path/to/GalaxeaVLA \
-  --checkpoint outputs/g05-libero-lerobot \
-  --batch-size 1 \
-  --compare-training-loss \
-  --output outputs/g05-libero-parity-b1.json
-
-PYTHONPATH=/path/to/GalaxeaVLA/src uv run python benchmarks/g05_checkpoint_parity.py \
-  --author-source /path/to/GalaxeaVLA \
-  --checkpoint outputs/g05-libero-lerobot \
-  --batch-size 2 \
-  --output outputs/g05-libero-parity-b2.json
 ```
 
-This command still requires licensed checkpoint access and suitable CUDA hardware.
 A 50-episode LIBERO/RoboTwin success-rate comparison additionally requires the
 matching simulator, task assets, reset seeds, and author evaluator; no task-level
 benchmark number is claimed until that separate gate runs.
@@ -199,7 +132,7 @@ LeRobot rollout with the author camera names and relative control:
 
 ```bash
 lerobot-eval \
-  --policy.path=outputs/g05-libero-lerobot \
+  --policy.path=lerobot/g05_libero \
   --policy.device=cuda \
   --env.type=libero \
   --env.task=libero_goal \

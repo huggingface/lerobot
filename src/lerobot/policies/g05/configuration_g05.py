@@ -155,9 +155,9 @@ _PROFILE_DEFAULTS = {
 class G05Config(PreTrainedConfig):
     """LeRobot-side, checkpoint-auditable configuration for G0.5.
 
-    ``author_model_config`` is populated by the conversion script from the selected
-    checkpoint's Hydra config. It is intentionally checkpoint state rather than a
-    collection of guessed LeRobot defaults.
+    ``author_model_config`` comes from the packaged checkpoint's resolved Hydra
+    config. It is intentionally checkpoint state rather than a collection of
+    guessed LeRobot defaults.
     """
 
     checkpoint_profile: str = "g05-base"
@@ -250,7 +250,7 @@ class G05Config(PreTrainedConfig):
         if self.runtime_system not in {"system1", "system2"}:
             raise ValueError("runtime_system must be 'system1' or 'system2'.")
         if self.runtime_system == "system2" and not self.predict_cot:
-            raise ValueError("G0.5 System 2 requires predict_cot=True in the converted checkpoint.")
+            raise ValueError("G0.5 System 2 requires predict_cot=True in the packaged checkpoint.")
         if not 1 <= self.n_action_steps <= self.chunk_size:
             raise ValueError("n_action_steps must be between 1 and chunk_size.")
         if self.action_head == "actioncodec" and not self.discrete_action:

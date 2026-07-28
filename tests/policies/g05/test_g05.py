@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
@@ -14,14 +13,6 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.g05.configuration_g05 import G05_EMBODIMENT_MAPPINGS, G05Config
-from lerobot.policies.g05.convert_g05_checkpoint import (
-    _camera_sizes,
-    _profile_config,
-    convert_checkpoint,
-    convert_dataset_stats,
-    convert_state_dict,
-    save_converted_state_dict,
-)
 from lerobot.policies.g05.modeling_g05 import G05Policy
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import ACTION, OBS_STATE, POLICY_PREPROCESSOR_DEFAULT_NAME
@@ -109,175 +100,43 @@ def test_system2_fm_only_builder_uses_exact_cot_template_without_action_tokens()
     assert "<action_action" not in config.prompt_template
 
 
-def _base_r1lite_hydra():
-    state_action = [
-        {"key": "left_arm", "shape": 6},
-        {"key": "left_gripper", "shape": 1},
-        {"key": "right_arm", "shape": 6},
-        {"key": "right_gripper", "shape": 1},
-    ]
-    images = [
-        {
-            "key": "head_rgb",
-            "camera_type": "exterior",
-            "lerobot_key": "observation.images.head_rgb",
-            "shape": [3, 224, 224],
+def test_so101_runtime_pads_optional_left_wrist():
+    config = G05Config(
+        checkpoint_profile="g05-so101",
+        embodiment="so100",
+        action_head="flow",
+        runtime_system="system2",
+        predict_cot=True,
+        discrete_action=True,
+        continuous_action=True,
+        return_continuous_action=True,
+        policy_action_dim=20,
+        policy_state_dim=20,
+        raw_action_dim=6,
+        raw_state_dim=6,
+        chunk_size=32,
+        n_action_steps=16,
+        normalization_mode="identity",
+        camera_order=(
+            "observation.images.exterior",
+            "observation.images.wrist_left",
+            "observation.images.wrist_right",
+        ),
+        camera_sizes={
+            "observation.images.exterior": (8, 8),
+            "observation.images.wrist_left": (8, 8),
+            "observation.images.wrist_right": (8, 8),
         },
-        {
-            "key": "left_wrist_rgb",
-            "camera_type": "wrist_left",
-            "lerobot_key": "observation.images.left_wrist_rgb",
-            "shape": [3, 224, 224],
+        optional_camera_keys=("observation.images.wrist_left",),
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+            "observation.images.exterior": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 8, 8)),
+            "observation.images.wrist_right": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 8, 8)),
         },
-        {
-            "key": "right_wrist_rgb",
-            "camera_type": "wrist_right",
-            "lerobot_key": "observation.images.right_wrist_rgb",
-            "shape": [3, 224, 224],
-        },
-    ]
-    return {
-        "model": {
-            "model_arch": {
-                "action_dim": 27,
-                "proprio_dim": 27,
-                "num_input_images": 18,
-                "horizon_steps": 32,
-                "predict_cot": True,
-                "discrete_action": True,
-                "continuous_action": True,
-            },
-            "processor": {
-                "num_obs_steps": 6,
-                "use_stepwise_action_norm": True,
-                "camera_size_config": {
-                    "exterior": [256, 256],
-                    "wrist_left": [256, 256],
-                    "wrist_right": [256, 256],
-                },
-                "samples_builder": {
-                    "_target_": "g05.data_processor.processor.samples_builder.MixedSamplesBuilder"
-                },
-            },
-        },
-        "data": {
-            "action_size": 32,
-            "processors": {
-                "galaxea_r1lite": {
-                    "shape_meta": {
-                        "state": state_action,
-                        "action": state_action,
-                        "images": images,
-                    },
-                    "norm_default_mode": "z-score-tail",
-                    "norm_exception_mode": {
-                        "state": {"left_gripper": "q01/q99", "right_gripper": "q01/q99"},
-                        "action": {"left_gripper": "q01/q99", "right_gripper": "q01/q99"},
-                    },
-                    "action_filter": {
-                        "_target_": (
-                            "g05.data_processor.processor.galaxea_action_processor.R1LiteJointActionFilter"
-                        ),
-                        "joint_threshold": 0.002,
-                        "gripper_threshold": 0.01,
-                    },
-                }
-            },
-        },
-    }
-
-
-def _base_r1lite_stats():
-    result = {"state": {}, "action": {}}
-    for category in result:
-        for key, width in (
-            ("left_arm", 6),
-            ("left_gripper", 1),
-            ("right_arm", 6),
-            ("right_gripper", 1),
-        ):
-            if category == "action":
-                shape = (32, width)
-                prefix = "stepwise"
-            else:
-                shape = (width,)
-                prefix = "global"
-            result[category][key] = {
-                f"{prefix}_mean": torch.zeros(shape).tolist(),
-                f"{prefix}_std": torch.ones(shape).tolist(),
-                f"{prefix}_q01": torch.full(shape, -1.0).tolist(),
-                f"{prefix}_q99": torch.full(shape, 1.0).tolist(),
-            }
-    return {"galaxea_r1lite": result}
-
-
-def _so101_hydra():
-    arm = [{"key": "right_arm", "shape": 6}]
-    images = [
-        {
-            "key": name,
-            "camera_type": camera_type,
-            "lerobot_key": f"__so100_{name}__",
-            "shape": [3, 224, 224],
-        }
-        for name, camera_type in (
-            ("exterior", "exterior"),
-            ("wrist_left", "wrist_left"),
-            ("wrist_right", "wrist_right"),
-        )
-    ]
-    return {
-        "model": {
-            "model_arch": {
-                "action_dim": 20,
-                "proprio_dim": 20,
-                "num_input_images": 3,
-                "horizon_steps": 32,
-                "predict_cot": True,
-                "discrete_action": True,
-                "continuous_action": True,
-                "return_continuous_action": True,
-            },
-            "processor": {
-                "num_obs_steps": 1,
-                "use_stepwise_action_norm": True,
-                "norm_default_mode": "q01/q99",
-                "camera_size_config": {
-                    "exterior": [256, 256],
-                    "wrist_left": [256, 256],
-                    "wrist_right": [256, 256],
-                },
-                "samples_builder": {
-                    "_target_": "g05.data_processor.processor.samples_builder.MixedSamplesBuilder"
-                },
-            },
-        },
-        "data": {
-            "action_size": 32,
-            "processors": {
-                "so100": {
-                    "shape_meta": {"state": arm, "action": arm, "images": images},
-                    "norm_default_mode": "q01/q99",
-                    "use_stepwise_action_norm": True,
-                }
-            },
-        },
-    }
-
-
-def test_so101_profile_exposes_both_system2_heads_and_pads_left_wrist():
-    flow = _profile_config("g05-so101", _so101_hydra())
-    actioncodec = _profile_config("g05-so101", _so101_hydra(), action_head="actioncodec")
-    flow.camera_sizes = _camera_sizes(flow.processor_metadata, flow.camera_order)
-    flow.input_features = {
-        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
-        "observation.images.exterior": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 8, 8)),
-        "observation.images.wrist_right": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 8, 8)),
-    }
-    flow.output_features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,))}
-    flow.device = "cpu"
-    flow.camera_sizes = dict.fromkeys(flow.camera_order, (8, 8))
-    preprocessor, _ = make_pre_post_processors(flow)
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,))},
+        device="cpu",
+    )
+    preprocessor, _ = make_pre_post_processors(config)
 
     processed = preprocessor(
         {
@@ -288,83 +147,30 @@ def test_so101_profile_exposes_both_system2_heads_and_pads_left_wrist():
         }
     )
 
-    assert flow.embodiment == "so100"
-    assert flow.runtime_system == "system2" and flow.action_head == "flow"
-    assert actioncodec.runtime_system == "system2" and actioncodec.action_head == "actioncodec"
-    assert flow.optional_camera_keys == ("observation.images.wrist_left",)
     assert processed["observation.images.wrist_left"].shape == (1, 3, 8, 8)
     assert torch.all(processed["observation.images.wrist_left"] == -1)
     assert not processed["action_dim_is_pad"][0, 10:16].any()
 
 
-def test_robotwin_profile_resolves_official_data_include_and_uses_env_camera_names():
-    hydra = _so101_hydra()
-    hydra["data"] = "${oc.load:configs/data/_mixtures/robotwin.yaml}"
-    hydra["model"]["model_arch"].update(
-        {
-            "predict_cot": False,
-            "discrete_action": False,
-            "continuous_action": True,
-            "horizon_steps": "${data.action_size}",
-            "num_input_images": "${eval:'${model.model_arch.cond_steps} * 3'}",
-            "cond_steps": "${obs_image_steps:${data.obs_size}}",
-        }
+def test_libero_runtime_executes_ten_step_window_and_binarizes_gripper():
+    config = G05Config(
+        checkpoint_profile="custom",
+        embodiment="libero",
+        action_head="flow",
+        discrete_action=False,
+        continuous_action=True,
+        return_continuous_action=True,
+        chunk_size=32,
+        n_action_steps=10,
+        normalization_mode="identity",
+        libero_gripper_binarize=True,
     )
-    hydra["model"]["processor"]["num_obs_steps"] = 1
-    hydra["model"]["tokenizer"] = "${tokenizer}"
-    hydra["tokenizer"] = {"_target_": "g05.tokenizer.interface.vq_base.VQActionTokenizer"}
-    robotwin_data = {
-        "action_size": 32,
-        "obs_size": 1,
-        "processors": {
-            "robotwin": {
-                **_so101_hydra()["data"]["processors"]["so100"],
-                "shape_meta": {
-                    "state": [
-                        {"key": "left_arm", "shape": 6},
-                        {"key": "left_gripper", "shape": 1},
-                        {"key": "right_arm", "shape": 6},
-                        {"key": "right_gripper", "shape": 1},
-                    ],
-                    "action": [
-                        {"key": "left_arm", "shape": 6},
-                        {"key": "left_gripper", "shape": 1},
-                        {"key": "right_arm", "shape": 6},
-                        {"key": "right_gripper", "shape": 1},
-                    ],
-                    "images": _so101_hydra()["data"]["processors"]["so100"]["shape_meta"]["images"],
-                },
-            }
-        },
-    }
-
-    with pytest.raises(ValueError, match="unresolved data include"):
-        _profile_config("g05-robotwin20", hydra)
-    config = _profile_config("g05-robotwin20", hydra, data_override=robotwin_data)
-
-    assert config.chunk_size == 32
-    assert config.n_action_steps == 8
-    assert config.action_codec_metadata == hydra["tokenizer"]
-    assert config.num_input_images == 3
-    assert config.camera_order == (
-        "observation.images.head_camera",
-        "observation.images.left_camera",
-        "observation.images.right_camera",
-    )
-
-
-def test_libero_profile_executes_official_ten_step_open_loop_window():
-    hydra = _so101_hydra()
-    hydra["model"]["model_arch"]["num_input_images"] = 2
-    config = _profile_config("g05-libero", hydra)
-    assert config.chunk_size == 32
-    assert config.n_action_steps == 10
-    assert config.libero_gripper_binarize
-
     _, postprocessor = make_pre_post_processors(config)
     policy_action = torch.zeros(5, 20)
     policy_action[:, 19] = torch.tensor([0.0, 0.5, 1.0, -0.2, 1.2])
+
     env_action = postprocessor(policy_action)
+
     torch.testing.assert_close(env_action[:, -1], torch.tensor([1.0, 1.0, -1.0, 1.0, -1.0]))
 
 
@@ -385,54 +191,6 @@ def test_select_action_discards_tail_beyond_execution_window():
     assert policy.select_action(batch)[0, 0].item() == 1
     assert policy.select_action(batch)[0, 0].item() == 2
     assert calls == 2
-
-
-def test_base_system2_requires_named_embodiment_and_roundtrips_mixed_tail_stats(tmp_path):
-    hydra = _base_r1lite_hydra()
-    with pytest.raises(ValueError, match="concrete --embodiment"):
-        _profile_config("g05-base", hydra)
-
-    config = _profile_config("g05-base", hydra, embodiment="galaxea_r1lite")
-    actioncodec_config = _profile_config(
-        "g05-base", hydra, embodiment="galaxea_r1lite", action_head="actioncodec"
-    )
-    config.camera_sizes = _camera_sizes(config.processor_metadata, config.camera_order)
-    config.camera_sizes = dict.fromkeys(config.camera_order, (8, 8))
-    stats = convert_dataset_stats(_base_r1lite_stats(), config)
-    preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=stats)
-    raw_state = torch.linspace(-2, 2, 14).repeat(1, 6, 1)
-    raw_action = raw_state[:, -1] + torch.linspace(-0.2, 0.2, 14).repeat(1, 32, 1)
-
-    raw_batch = {
-        OBS_STATE: raw_state,
-        ACTION: raw_action,
-        **{camera: torch.zeros(1, 6, 3, 8, 8, dtype=torch.uint8) for camera in config.camera_order},
-        "task": ["native system 2"],
-    }
-    processed = preprocessor(raw_batch)
-    restored = postprocessor(processed[ACTION])
-
-    assert config.runtime_system == "system2"
-    assert config.predict_cot and config.discrete_action and config.continuous_action
-    assert config.action_head == "flow" and actioncodec_config.action_head == "actioncodec"
-    assert actioncodec_config.runtime_system == "system2"
-    assert not actioncodec_config.return_continuous_action
-    assert config.policy_action_dim == 27
-    assert config.num_input_images == 18
-    assert "<prompt_text_!>" in config.prompt_template
-    # G0.5-base's 32-step head includes n_obs_steps - 1 alignment steps.
-    assert processed["action_dim_is_pad"].shape == (1, 27)
-    assert not processed["action_op_mask"].any()
-    assert restored.shape == (1, 27, 14)
-    torch.testing.assert_close(restored, raw_action[:, 5:], atol=2e-5, rtol=2e-5)
-
-    preprocessor.save_pretrained(tmp_path)
-    postprocessor.save_pretrained(tmp_path)
-    loaded_preprocessor, loaded_postprocessor = make_pre_post_processors(config, pretrained_path=tmp_path)
-    reloaded = loaded_preprocessor(raw_batch)
-    reloaded_restored = loaded_postprocessor(reloaded[ACTION])
-    torch.testing.assert_close(reloaded[ACTION], processed[ACTION])
-    torch.testing.assert_close(reloaded_restored, restored)
 
 
 def test_libero_and_atomic4_are_distinct_validated_mappings():
@@ -763,13 +521,13 @@ def test_forward_backward_update_and_save_reload(tmp_path: Path):
 
 
 def test_save_pretrained_copies_required_gated_sidecars_portably(tmp_path: Path):
-    source = tmp_path / "converted"
+    source = tmp_path / "checkpoint"
     processor = source / "hf_processor"
     processor.mkdir(parents=True)
     (processor / "tokenizer.json").write_text("{}")
     tokenizer = source / "action_tokenizer.pt"
     torch.save({"codec": "ActionCodec"}, tokenizer)
-    for name in ("LICENSE-G0.5", "NOTICE", "conversion_report.json"):
+    for name in ("LICENSE-G0.5", "NOTICE"):
         (source / name).write_text("{}")
     config = _config(
         author_model_config={
@@ -802,125 +560,6 @@ def test_tiny_fixed_batch_overfit_reduces_loss():
         optimizer.step()
     final = policy(batch)[0].item()
     assert final < initial * 0.25
-
-
-def test_conversion_reports_mapping_duplicates_shapes_and_required_prefixes():
-    source = {
-        "model.embed_tokens.weight": torch.zeros(2, 3),
-        "model.vision_tower.block.weight": torch.ones(2, 2),
-        "model.action_expert.block.weight": torch.ones(2, 2),
-    }
-    converted, report = convert_state_dict(source)
-    assert "backend.model.vlm.input_proj.weight" in converted
-    assert report.missing == []
-
-    expected = {
-        "backend.model.vlm.input_proj.weight": torch.zeros(3, 3),
-        "backend.model.vision_tower.block.weight": torch.zeros(2, 2),
-        "backend.model.action_expert.block.weight": torch.ones(2, 2),
-    }
-    _, strict_report = convert_state_dict(source, expected)
-    assert strict_report.shape_mismatched["backend.model.vlm.input_proj.weight"]["source"] == [2, 3]
-
-
-def test_conversion_records_and_deduplicates_tied_weight_aliases(tmp_path: Path):
-    tied = torch.zeros(2, 3)
-    aliases = save_converted_state_dict(
-        {
-            "backend.model.vlm.input_proj.weight": tied,
-            "backend.model.vlm.output_proj.weight": tied,
-        },
-        tmp_path / "model.safetensors",
-    )
-
-    assert aliases == {"backend.model.vlm.output_proj.weight": "backend.model.vlm.input_proj.weight"}
-
-
-def test_libero_conversion_packages_model_processors_and_provenance(tmp_path: Path):
-    source = tmp_path / "author"
-    output = tmp_path / "lerobot"
-    (source / ".hydra").mkdir(parents=True)
-    (source / "hf_processor").mkdir()
-    (source / "hf_processor" / "tokenizer.json").write_text("{}")
-    (source / ".hydra" / "config.yaml").write_text(
-        """
-model:
-  model_arch:
-    num_input_images: 2
-    horizon_steps: 32
-    predict_cot: false
-    discrete_action: false
-    continuous_action: true
-  processor:
-    use_stepwise_action_norm: true
-    norm_default_mode: q01/q99
-    camera_size_config:
-      exterior: [256, 256]
-      wrist_right: [256, 256]
-data:
-  action_size: 32
-  processors:
-    libero:
-      shape_meta:
-        state:
-          - {key: right_ee_pose, shape: 6}
-          - {key: right_gripper, shape: 1}
-        action:
-          - {key: right_ee_pose, shape: 6}
-          - {key: right_gripper, shape: 1}
-        images:
-          - {key: image, camera_type: exterior, lerobot_key: observation.images.image, shape: [3, 224, 224]}
-          - {key: wrist_image, camera_type: wrist_right, lerobot_key: observation.images.wrist_image, shape: [3, 224, 224]}
-tokenizer:
-  vq_config: {block_wise_autoregressive: false}
-"""
-    )
-    action_stats = {
-        "right_ee_pose": {
-            "stepwise_q01": torch.zeros(32, 6).tolist(),
-            "stepwise_q99": torch.ones(32, 6).tolist(),
-        },
-        "right_gripper": {
-            "stepwise_q01": torch.zeros(32, 1).tolist(),
-            "stepwise_q99": torch.ones(32, 1).tolist(),
-        },
-    }
-    state_stats = {
-        "right_ee_pose": {"global_q01": [0.0] * 6, "global_q99": [1.0] * 6},
-        "right_gripper": {"global_q01": [0.0], "global_q99": [1.0]},
-    }
-    (source / "dataset_stats.json").write_text(
-        json.dumps({"libero": {"state": state_stats, "action": action_stats}})
-    )
-    torch.save(
-        {
-            "model.vlm.block.weight": torch.zeros(2, 2),
-            "model.vision_tower.block.weight": torch.zeros(2, 2),
-            "model.action_expert.block.weight": torch.zeros(2, 2),
-        },
-        source / "model.pt",
-    )
-    torch.save({"tokenizer_meta": {"codec": "ActionCodec"}}, source / "action_tokenizer.pt")
-    license_file = source / "LICENSE-G0.5"
-    license_file.write_text("test fixture license")
-
-    report = convert_checkpoint(source, output, "g05-libero", license_file=license_file)
-
-    assert len(report.mapped) == 3
-    assert (output / "model.safetensors").is_file()
-    assert (output / "policy_preprocessor.json").is_file()
-    assert (output / "policy_postprocessor.json").is_file()
-    assert (output / "conversion_report.json").is_file()
-    assert (output / "README.md").is_file()
-    assert "Modification notice" in (output / "NOTICE").read_text()
-    config = PreTrainedConfig.from_pretrained(output)
-    assert isinstance(config, G05Config)
-    assert config.source_checkpoint_revision
-    assert config.prompt_template.startswith("<chat_user_prefix><image0_image_!><image1_image_!>")
-    assert config.camera_sizes == {
-        "observation.images.image": (256, 256),
-        "observation.images.wrist_image": (256, 256),
-    }
 
 
 @pytest.mark.skipif(

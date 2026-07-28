@@ -31,7 +31,7 @@ from .configuration_g05 import G05_POLICY_PARTS, G05Config
 def _author_backend(config: G05Config) -> nn.Module:
     if not config.author_model_config:
         raise ValueError(
-            "G0.5 author_model_config is empty. Convert an official checkpoint first, or "
+            "G0.5 author_model_config is empty. Load a packaged checkpoint, or "
             "inject a backend explicitly for testing."
         )
     try:
@@ -137,7 +137,6 @@ class G05Policy(PreTrainedPolicy):
             "THIRD_PARTY_NOTICES.md",
             "NOTICE",
             "README.md",
-            "conversion_report.json",
         ):
             source = next((root / name for root in roots if (root / name).is_file()), None)
             if source is not None and source.resolve() != (save_directory / name).resolve():

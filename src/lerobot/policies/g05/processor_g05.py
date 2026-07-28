@@ -666,7 +666,7 @@ def make_g05_pre_post_processors(
 
     if config.normalization_mode == "checkpoint" and not config.processor_metadata:
         raise ValueError(
-            "normalization_mode='checkpoint' requires processor_metadata from the converted checkpoint."
+            "normalization_mode='checkpoint' requires processor_metadata from the packaged checkpoint."
         )
     mode = _normalization_mode(config)
     if mode is NormalizationMode.QUANTILES and dataset_stats:
