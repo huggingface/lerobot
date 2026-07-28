@@ -20,7 +20,7 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 
-if ! uv run --with 'opencv-python>=4.10' \
+if ! uv run --with 'opencv-python==4.10.0.84' \
   python -m examples.picklift_v3.practice --config "$CONFIG" >>"$LOG_FILE" 2>&1; then
   if command -v zenity >/dev/null 2>&1; then
     zenity --error --title="SO-101 练习启动失败" \
