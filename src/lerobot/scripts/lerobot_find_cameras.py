@@ -40,6 +40,7 @@ from PIL import Image
 from lerobot.cameras import ColorMode
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
+from lerobot.utils.utils import init_logging
 
 logger = logging.getLogger(__name__)
 
@@ -113,17 +114,17 @@ def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[s
         else:
             logger.warning("No cameras (OpenCV or RealSense) were detected.")
     else:
-        logger.info("\n--- Detected Cameras ---")
+        print("\n--- Detected Cameras ---")
         for i, cam_info in enumerate(all_cameras_info):
-            logger.info(f"Camera #{i}:")
+            print(f"Camera #{i}:")
             for key, value in cam_info.items():
                 if key == "default_stream_profile" and isinstance(value, dict):
-                    logger.info(f"  {key.replace('_', ' ').capitalize()}:")
+                    print(f"  {key.replace('_', ' ').capitalize()}:")
                     for sub_key, sub_value in value.items():
-                        logger.info(f"    {sub_key.capitalize()}: {sub_value}")
+                        print(f"    {sub_key.capitalize()}: {sub_value}")
                 else:
-                    logger.info(f"  {key.replace('_', ' ').capitalize()}: {value}")
-            logger.info("-" * 20)
+                    print(f"  {key.replace('_', ' ').capitalize()}: {value}")
+            print("-" * 20)
     return all_cameras_info
 
 
@@ -278,13 +279,15 @@ def save_images_from_all_cameras(
         except KeyboardInterrupt:
             logger.info("Capture interrupted by user.")
         finally:
-            logger.info("Finalizing image saving...")
+            print("\nFinalizing image saving...")
             executor.shutdown(wait=True)
             cleanup_cameras(cameras_to_use)
-            logger.info(f"Image capture finished. Images saved to {output_dir}")
+            print(f"Image capture finished. Images saved to {output_dir}")
 
 
 def main():
+    init_logging()
+
     parser = argparse.ArgumentParser(
         description="Unified camera utility script for listing cameras and capturing images."
     )

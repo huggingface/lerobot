@@ -130,8 +130,6 @@ from lerobot.utils.visualization_utils import (
     shutdown_visualization,
 )
 
-logger = logging.getLogger(__name__)
-
 
 @dataclass
 class TeleoperateConfig:
@@ -222,17 +220,17 @@ def teleop_loop(
                 compress_images=display_compressed_images,
             )
 
-            logger.info("\n" + "-" * (display_len + 10))
-            logger.info(f"{'NAME':<{display_len}} | {'NORM':>7}")
+            print("\n" + "-" * (display_len + 10))
+            print(f"{'NAME':<{display_len}} | {'NORM':>7}")
             # Display the final robot action that was sent
             for motor, value in robot_action_to_send.items():
-                logger.info(f"{motor:<{display_len}} | {value:>7.2f}")
+                print(f"{motor:<{display_len}} | {value:>7.2f}")
             move_cursor_up(len(robot_action_to_send) + 3)
 
         dt_s = time.perf_counter() - loop_start
         precise_sleep(max(1 / fps - dt_s, 0.0))
         loop_s = time.perf_counter() - loop_start
-        logger.info(f"Teleop loop time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+        print(f"Teleop loop time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
         move_cursor_up(1)
 
         if duration is not None and time.perf_counter() - start >= duration:

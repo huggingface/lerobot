@@ -64,6 +64,7 @@ else:
 from lerobot.configs import NormalizationMode, parser
 from lerobot.datasets import LeRobotDataset
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.utils import init_logging
 
 logger = logging.getLogger(__name__)
 
@@ -277,11 +278,8 @@ def process_episode(args):
 
         return action_chunks
 
-    except Exception as e:
-        logger.error(f"Error processing episode {ep_idx}: {e}")
-        import traceback
-
-        traceback.print_exc()
+    except Exception:
+        logger.exception("Error processing episode %s", ep_idx)
         return None
 
 
@@ -604,6 +602,7 @@ def train_tokenizer(cfg: TokenizerTrainingConfig):
 
 def main():
     """CLI entry point that parses arguments and runs the tokenizer training."""
+    init_logging()
     train_tokenizer()
 
 
