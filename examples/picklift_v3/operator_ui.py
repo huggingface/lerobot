@@ -385,6 +385,21 @@ class OperatorUI:
             )
             time.sleep(0.01)
 
+    def show_connection_error(self, frame_rgb: np.ndarray) -> None:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            self.show(
+                frame_rgb,
+                status="ERROR",
+                message=(
+                    "Connection failed; no data written\nCheck arm power/cable\nReturning to READY for retry"
+                ),
+                button_labels=("", "", ""),
+                buttons_enabled=(False, False, False),
+                acknowledge=False,
+            )
+            time.sleep(0.01)
+
     def close(self) -> None:
         import cv2
 

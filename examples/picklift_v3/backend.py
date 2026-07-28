@@ -100,6 +100,7 @@ class RealSO101Backend:
         self.alignment_mode = cfg["alignment_mode"]
         self.startup_hold_s = float(cfg["startup_hold_s"])
         self.camera_profile_id = cfg["camera_profile_id"]
+        self._torque_may_be_enabled = False
 
     def _set_follower_torque(self, enabled: bool) -> None:
         value = 1 if enabled else 0
@@ -112,9 +113,9 @@ class RealSO101Backend:
         # Robot.connect() configures hardware before this collector establishes a
         # no-jump goal. Open the buses explicitly, latch the present follower pose
         # as its goal, and only then enable torque.
-        self.robot.bus.connect(handshake=True)
-        self.leader.bus.connect(handshake=True)
         try:
+            self.robot.bus.connect(handshake=True)
+            self.leader.bus.connect(handshake=True)
             for camera in self.robot.cameras.values():
                 camera.connect()
             follower_raw = self.robot.bus.sync_read("Present_Position", normalize=False)
@@ -125,14 +126,17 @@ class RealSO101Backend:
                 initial_command = self.rebaser.initialize(leader, follower)
                 if not np.allclose(initial_command, follower, atol=1e-5):
                     raise RuntimeError("relative rebase failed zero-jump invariant")
+            self._torque_may_be_enabled = True
             self._set_follower_torque(True)
             time.sleep(self.startup_hold_s)
         except BaseException:
             if self.robot.bus.is_connected:
                 try:
-                    self._set_follower_torque(False)
+                    if self._torque_may_be_enabled:
+                        self._set_follower_torque(False)
                 finally:
                     self.robot.bus.disconnect(disable_torque=False)
+                    self._torque_may_be_enabled = False
             if self.leader.bus.is_connected:
                 self.leader.bus.disconnect(disable_torque=False)
             raise
@@ -169,9 +173,11 @@ class RealSO101Backend:
     def close(self) -> None:
         if self.robot.bus.is_connected:
             try:
-                self._set_follower_torque(False)
+                if self._torque_may_be_enabled:
+                    self._set_follower_torque(False)
             finally:
                 self.robot.bus.disconnect(disable_torque=False)
+                self._torque_may_be_enabled = False
         for camera in self.robot.cameras.values():
             if camera.is_connected:
                 camera.disconnect()

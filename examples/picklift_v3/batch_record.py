@@ -231,7 +231,11 @@ def record_batch(
             )
             backend = backend_factory(cfg)
             try:
-                backend.connect()
+                try:
+                    backend.connect()
+                except (ConnectionError, RuntimeError):
+                    ui.show_connection_error(last_frame)
+                    continue
                 try:
                     ui.wait_for_start(backend.preview_frame, message=spawn_ui_summary(cfg))
                 except KeyboardInterrupt:
