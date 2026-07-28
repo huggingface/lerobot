@@ -22,6 +22,7 @@ from huggingface_hub import snapshot_download
 from torch import Tensor, nn
 
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.optim.optimizers import OptimizerParams
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -190,11 +191,21 @@ class G05Policy(PreTrainedPolicy):
             move_tokenizer(device)
         return result
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> OptimizerParams:
+        get_param_groups = getattr(self.backend, "get_optim_param_groups", None)
+        if callable(get_param_groups):
+            return get_param_groups(
+                lr=self.config.optimizer_lr,
+                weight_decay=self.config.optimizer_weight_decay,
+                apply_decay_on_norm_and_bias=self.config.optimizer_apply_decay_on_norm_and_bias,
+                backbone_lr_multiplier=self.config.optimizer_backbone_lr_multiplier,
+                vision_lr_multiplier=self.config.optimizer_vision_lr_multiplier,
+            )
         get_params = getattr(self.backend, "get_optim_params", None)
         if callable(get_params):
-            return get_params()
-        return {"params": [parameter for parameter in self.parameters() if parameter.requires_grad]}
+            params = get_params()
+            return [params] if isinstance(params, dict) and "params" in params else params
+        return [parameter for parameter in self.parameters() if parameter.requires_grad]
 
     @staticmethod
     def _task_values(batch: Mapping[str, Any], task: str | None, batch_size: int) -> list[str]:
@@ -209,6 +220,14 @@ class G05Policy(PreTrainedPolicy):
             "G0.5 requires the already-selected LeRobot task string; no task augmentation "
             "or model-local sampling is performed."
         )
+
+    @staticmethod
+    def _batch_item(value: Any, index: int, batch_size: int) -> Any:
+        if isinstance(value, Tensor) and value.ndim > 0 and value.shape[0] == batch_size:
+            return value[index]
+        if isinstance(value, list | tuple) and len(value) == batch_size:
+            return value[index]
+        return value
 
     def _prepare_author_batch(self, batch: Mapping[str, Any], task: str | None = None) -> dict[str, Any]:
         prepare = getattr(self.backend, "prepare_lerobot_batch", None)
@@ -266,6 +285,12 @@ class G05Policy(PreTrainedPolicy):
                 sample["frequency"] = frequency
             if self.config.predict_cot:
                 sample["prompt"] = "predict subtask"
+                atomic_task = batch.get("atomic_task")
+                if atomic_task is not None:
+                    atomic_task = str(self._batch_item(atomic_task, index, batch_size))
+                    sample["atomic_task"] = (
+                        atomic_task if atomic_task.startswith("Subtask:") else f"Subtask: {atomic_task}"
+                    )
             for image_index in range(self.config.num_prompt_images):
                 camera = self.config.camera_order[image_index % len(self.config.camera_order)]
                 sample[f"image{image_index}"] = self.config.camera_sizes[camera]

@@ -112,11 +112,61 @@ The checkpoint is non-commercial and may be private; authenticate with
 `hf auth login` before loading it. Do not add `--direct_subtask` when inspecting
 the checkpoint's native System 2 CoT telemetry.
 
+## Fine-tune with `lerobot-train`
+
+G0.5 implements LeRobot's training surface: `forward` runs the author training
+backend, the policy exposes the author VLM/vision/action optimizer groups, and
+the checkpoint can be saved, resumed, and loaded by the normal LeRobot scripts.
+For example, fine-tune the private SO-101 checkpoint on a LeRobot dataset:
+
+```bash
+export HF_USER=your_hf_username
+
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/my_so101_dataset \
+  --policy.path=lerobot/g05_so101 \
+  --policy.device=cuda \
+  --policy.repo_id=${HF_USER}/g05_so101_finetuned \
+  --policy.private=true \
+  --output_dir=outputs/train/g05_so101 \
+  --job_name=g05_so101 \
+  --batch_size=16 \
+  --steps=10000 \
+  --save_freq=1000
+```
+
+The SO-101 recipe uses AdamW at `8e-5` with 1,000 warmup steps. The packaged
+LIBERO and RoboTwin configurations use their released `1e-5` recipe, with
+1,000 and 500 warmup steps respectively. All profiles preserve G0.5's six
+decay/no-decay parameter groups and the configured VLM and vision learning-rate
+multipliers. Override these only when deliberately changing the author recipe:
+
+```bash
+--policy.optimizer_lr=2e-5 \
+--policy.optimizer_backbone_lr_multiplier=0.5 \
+--policy.optimizer_vision_lr_multiplier=0.1
+```
+
+The dataset must expose the state, action, camera, and task features matching the
+selected checkpoint contract in the table above. For SO-101, use camera names
+`exterior` and `wrist_right`; the optional `wrist_left` input is zero-filled.
+Training System 2 language targets additionally requires the checkpoint's
+annotated CoT fields; a normal LeRobot recording supplies action supervision but
+does not synthesize CoT labels.
+
+Resume a saved run with the standard LeRobot checkpoint:
+
+```bash
+lerobot-train \
+  --config_path=outputs/train/g05_so101/checkpoints/last/pretrained_model/train_config.json \
+  --resume=true
+```
+
 ## Validation status
 
 CPU unit tests cover factory loading, config incompatibilities, prompt pass-through,
 LIBERO and `atomic_4` mappings, padding masks, inverse action projection, a finite
-forward/backward/update, and save/reload parity:
+forward/backward/update, author optimizer-group wiring, and save/reload parity:
 
 ```bash
 uv run pytest tests/policies/g05 tests/runtime/test_g05_adapter.py -q

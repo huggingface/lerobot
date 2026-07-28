@@ -43,6 +43,50 @@ class TinyG05Backend(nn.Module):
         return loss, {"fm_loss": loss.detach()}
 
 
+class GroupedTinyG05Backend(TinyG05Backend):
+    def __init__(self):
+        super().__init__()
+        self.action_scale = nn.Parameter(torch.ones(()))
+        self.vision_scale = nn.Parameter(torch.ones(()))
+        self.optim_kwargs = None
+
+    def get_optim_param_groups(
+        self,
+        lr,
+        weight_decay,
+        apply_decay_on_norm_and_bias=False,
+        backbone_lr_multiplier=1.0,
+        vision_lr_multiplier=1.0,
+    ):
+        self.optim_kwargs = {
+            "lr": lr,
+            "weight_decay": weight_decay,
+            "apply_decay_on_norm_and_bias": apply_decay_on_norm_and_bias,
+            "backbone_lr_multiplier": backbone_lr_multiplier,
+            "vision_lr_multiplier": vision_lr_multiplier,
+        }
+        return [
+            {
+                "params": [self.proj.weight, self.proj.bias],
+                "lr": lr * backbone_lr_multiplier,
+                "weight_decay": weight_decay,
+                "name": "backbone_decay",
+            },
+            {
+                "params": [self.action_scale],
+                "lr": lr,
+                "weight_decay": 0.0,
+                "name": "action_no_decay",
+            },
+            {
+                "params": [self.vision_scale],
+                "lr": lr * backbone_lr_multiplier * vision_lr_multiplier,
+                "weight_decay": 0.0,
+                "name": "vision_no_decay",
+            },
+        ]
+
+
 def _features():
     return {
         OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(7,)),
@@ -436,6 +480,18 @@ def test_author_action_payload_fills_required_tokenizer_metadata():
     }
 
 
+def test_system2_training_target_is_forwarded_without_replacing_operator_task():
+    config = _config(predict_cot=True, runtime_system="system2")
+    policy = G05Policy(config, backend=TinyG05Backend())
+    batch = _policy_batch("  operator task\n")
+    batch["atomic_task"] = ["grasp the cup"]
+
+    prepared = policy._prepare_author_batch(batch)
+
+    assert prepared["samples"][0]["command"] == "  operator task\n"
+    assert prepared["samples"][0]["atomic_task"] == "Subtask: grasp the cup"
+
+
 def test_author_inference_payload_synthesizes_required_dummy_action():
     policy = G05Policy(_config(), backend=TinyG05Backend())
     batch = _policy_batch()
@@ -500,7 +556,7 @@ def test_batch_two_preserves_each_raw_task_and_every_camera_slot():
 
 def test_forward_backward_update_and_save_reload(tmp_path: Path):
     policy = G05Policy(_config(), backend=TinyG05Backend())
-    optimizer = torch.optim.AdamW(policy.get_optim_params()["params"], lr=1e-3)
+    optimizer = torch.optim.AdamW(policy.get_optim_params(), lr=1e-3)
     loss, metrics = policy(_policy_batch("train"))
     loss.backward()
     grad_norm = torch.stack(
@@ -550,7 +606,7 @@ def test_save_pretrained_copies_required_gated_sidecars_portably(tmp_path: Path)
 
 def test_tiny_fixed_batch_overfit_reduces_loss():
     policy = G05Policy(_config(), backend=TinyG05Backend())
-    optimizer = torch.optim.AdamW(policy.get_optim_params()["params"], lr=5e-2)
+    optimizer = torch.optim.AdamW(policy.get_optim_params(), lr=5e-2)
     batch = _policy_batch("overfit")
     initial = policy(batch)[0].item()
     for _ in range(20):
@@ -560,6 +616,34 @@ def test_tiny_fixed_batch_overfit_reduces_loss():
         optimizer.step()
     final = policy(batch)[0].item()
     assert final < initial * 0.25
+
+
+def test_training_preset_uses_author_optimizer_parameter_groups():
+    config = _config(
+        optimizer_lr=2e-4,
+        optimizer_weight_decay=0.03,
+        optimizer_backbone_lr_multiplier=0.5,
+        optimizer_vision_lr_multiplier=0.2,
+        optimizer_apply_decay_on_norm_and_bias=True,
+    )
+    backend = GroupedTinyG05Backend()
+    policy = G05Policy(config, backend=backend)
+
+    optimizer = config.get_optimizer_preset().build(policy.get_optim_params())
+
+    assert backend.optim_kwargs == {
+        "lr": 2e-4,
+        "weight_decay": 0.03,
+        "apply_decay_on_norm_and_bias": True,
+        "backbone_lr_multiplier": 0.5,
+        "vision_lr_multiplier": 0.2,
+    }
+    assert [group["name"] for group in optimizer.param_groups] == [
+        "backbone_decay",
+        "action_no_decay",
+        "vision_no_decay",
+    ]
+    assert [group["lr"] for group in optimizer.param_groups] == pytest.approx([1e-4, 2e-4, 2e-5])
 
 
 @pytest.mark.skipif(

@@ -210,6 +210,9 @@ class G05Config(PreTrainedConfig):
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_weight_decay: float = 0.01
     optimizer_grad_clip_norm: float = 1.0
+    optimizer_backbone_lr_multiplier: float = 1.0
+    optimizer_vision_lr_multiplier: float = 1.0
+    optimizer_apply_decay_on_norm_and_bias: bool = False
     scheduler_warmup_steps: int = 500
 
     def __post_init__(self) -> None:
