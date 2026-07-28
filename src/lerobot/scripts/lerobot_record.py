@@ -364,6 +364,7 @@ def record(
     teleop_action_processor: RobotProcessorPipeline | None = None,
     robot_action_processor: RobotProcessorPipeline | None = None,
     robot_observation_processor: RobotProcessorPipeline | None = None,
+    events: dict | None = None,
 ) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
@@ -457,7 +458,12 @@ def record(
         if teleop is not None:
             teleop.connect()
 
-        listener, events = init_keyboard_listener()
+        # Fall back to the keyboard listener when the caller doesn't supply events.
+        # An injected events dict lets alternative controls (gamepad, foot pedal,
+        # GUI, another process) drive the same exit_early / rerecord_episode /
+        # stop_recording flags without reimplementing the recording loop.
+        if events is None:
+            listener, events = init_keyboard_listener()
 
         if not cfg.dataset.streaming_encoding:
             logging.info(

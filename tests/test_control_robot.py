@@ -89,6 +89,33 @@ def test_record_and_resume(tmp_path):
     assert dataset.meta.total_tasks == 1
 
 
+def test_record_with_injected_events(tmp_path):
+    robot_cfg = MockRobotConfig()
+    teleop_cfg = MockTeleopConfig()
+    dataset_cfg = DatasetRecordConfig(
+        repo_id=DUMMY_REPO_ID,
+        single_task="Dummy task",
+        root=tmp_path / "record",
+        num_episodes=1,
+        episode_time_s=0.1,
+        reset_time_s=0,
+        push_to_hub=False,
+    )
+    cfg = RecordConfig(
+        robot=robot_cfg,
+        dataset=dataset_cfg,
+        teleop=teleop_cfg,
+        play_sounds=False,
+    )
+
+    events = {"exit_early": False, "rerecord_episode": False, "stop_recording": False}
+    with patch("lerobot.scripts.lerobot_record.init_keyboard_listener") as mock_init_listener:
+        dataset = record(cfg, events=events)
+
+    mock_init_listener.assert_not_called()
+    assert dataset.meta.total_episodes == dataset.num_episodes == 1
+
+
 def test_record_and_replay(tmp_path):
     robot_cfg = MockRobotConfig()
     teleop_cfg = MockTeleopConfig()
