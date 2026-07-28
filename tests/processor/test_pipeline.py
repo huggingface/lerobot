@@ -2370,14 +2370,32 @@ def test_aggregate_images_when_use_videos_false():
     out = aggregate_pipeline_dataset_features(
         pipeline=rp,
         initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: initial},
-        use_videos=False,  # expect "image" dtype
+        use_videos=False,  # images kept, stored as "image" dtype
         patterns=None,
     )
 
     key = f"{OBS_IMAGES}.back"
     key_front = f"{OBS_IMAGES}.front"
-    assert key not in out
-    assert key_front not in out
+    assert key in out
+    assert key_front in out
+    assert out[key]["dtype"] == "image"
+    assert out[key_front]["dtype"] == "image"
+    assert out[key]["shape"] == initial["back"]
+
+
+def test_aggregate_images_excluded():
+    rp = DataProcessorPipeline([AddObservationStateFeatures(add_front_image=True)])
+    initial = {"back": (480, 640, 3)}
+
+    out = aggregate_pipeline_dataset_features(
+        pipeline=rp,
+        initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: initial},
+        exclude_images=True,
+        patterns=None,
+    )
+
+    assert f"{OBS_IMAGES}.back" not in out
+    assert f"{OBS_IMAGES}.front" not in out
 
 
 def test_aggregate_images_when_use_videos_true():

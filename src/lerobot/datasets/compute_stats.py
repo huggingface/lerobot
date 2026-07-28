@@ -242,12 +242,12 @@ def sample_images(image_paths: list[str]) -> np.ndarray:
     images = None
     for i, idx in enumerate(sampled_indices):
         path = image_paths[idx]
-        # we load as uint8 to reduce memory usage
+        # we load RGB images as uint8 to reduce memory usage; depth keeps its native dtype
         img = load_image_as_numpy(path, dtype=np.uint8, channel_first=True)
         img = auto_downsample_height_width(img)
 
         if images is None:
-            images = np.empty((len(sampled_indices), *img.shape), dtype=np.uint8)
+            images = np.empty((len(sampled_indices), *img.shape), dtype=img.dtype)
 
         images[i] = img
 
@@ -506,8 +506,10 @@ def compute_episode_stats(
         Each statistics dictionary contains min, max, mean, std, count, and quantiles.
 
     Note:
-        Image statistics are normalized to [0,1] range and have shape (3,1,1) for
-        per-channel values when dtype is 'image' or 'video'.
+        For 'image'/'video' features, stats are computed per channel and kept with a
+        leading channel axis (e.g. shape (3, 1, 1) for RGB). RGB stats are divided by
+        255 to land in [0, 1]; depth maps (features flagged with ``is_depth_map``) skip
+        this rescaling and remain in their stored units (stored in ``depth_unit``).
     """
     if quantile_list is None:
         quantile_list = DEFAULT_QUANTILES
@@ -531,8 +533,12 @@ def compute_episode_stats(
         )
 
         if features[key]["dtype"] in ["image", "video"]:
+            normalization_factor = (
+                255.0 if not (features[key].get("info") or {}).get("is_depth_map", False) else 1.0
+            )
             ep_stats[key] = {
-                k: v if k == "count" else np.squeeze(v / 255.0, axis=0) for k, v in ep_stats[key].items()
+                k: v if k == "count" else np.squeeze(v / normalization_factor, axis=0)
+                for k, v in ep_stats[key].items()
             }
 
     return ep_stats
@@ -552,8 +558,10 @@ def _validate_stat_value(value: np.ndarray, key: str, feature_key: str) -> None:
     if key == "count" and value.shape != (1,):
         raise ValueError(f"Shape of 'count' must be (1), but is {value.shape} instead.")
 
-    if "image" in feature_key and key != "count" and value.shape != (3, 1, 1):
-        raise ValueError(f"Shape of quantile '{key}' must be (3,1,1), but is {value.shape} instead.")
+    if "image" in feature_key and key != "count" and value.shape not in ((3, 1, 1), (1, 1, 1)):
+        raise ValueError(
+            f"Shape of quantile '{key}' must be (3,1,1) or (1,1,1) but is {value.shape} instead."
+        )
 
 
 def _assert_type_and_shape(stats_list: list[dict[str, dict]]):

@@ -40,6 +40,7 @@ from PIL import Image
 from lerobot.cameras import ColorMode
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
+from lerobot.utils.utils import init_logging
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +286,8 @@ def save_images_from_all_cameras(
 
 
 def main():
+    init_logging()
+
     parser = argparse.ArgumentParser(
         description="Unified camera utility script for listing cameras and capturing images."
     )

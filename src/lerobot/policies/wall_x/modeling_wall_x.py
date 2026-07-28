@@ -43,11 +43,14 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from PIL import Image
+import torch.nn.functional as functional
+from safetensors import SafetensorError
+from safetensors.torch import load_file
 from torch import Tensor
 from torch.distributions import Beta
 from torch.nn import CrossEntropyLoss
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms.v2 import functional as tv_functional
 
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import (
@@ -74,17 +77,17 @@ if TYPE_CHECKING or _wallx_deps_available:
     from qwen_vl_utils.vision_process import smart_resize
     from torchdiffeq import odeint
     from transformers import AutoProcessor, BatchFeature
-    from transformers.cache_utils import StaticCache
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+        Qwen2_5_VisionTransformerPretrainedModel,
         Qwen2_5_VLForConditionalGeneration,
     )
-    from transformers.utils import is_torchdynamo_compiling
+    from transformers.utils import cached_file, is_torchdynamo_compiling
 
-    from .qwen_model.configuration_qwen2_5_vl import Qwen2_5_VLConfig
-    from .qwen_model.qwen2_5_vl_moe import (
-        Qwen2_5_VisionTransformerPretrainedModel,
+    from .qwen_model import (
         Qwen2_5_VLACausalLMOutputWithPast,
+        Qwen2_5_VLConfig,
         Qwen2_5_VLMoEModel,
+        configure_wall_x_vision_attention,
     )
 else:
     LoraConfig = None
@@ -93,13 +96,14 @@ else:
     odeint = None
     AutoProcessor = None
     BatchFeature = None
-    StaticCache = None
     Qwen2_5_VLForConditionalGeneration = None
+    cached_file = None
     is_torchdynamo_compiling = None
     Qwen2_5_VLConfig = None
     Qwen2_5_VisionTransformerPretrainedModel = None
     Qwen2_5_VLACausalLMOutputWithPast = None
     Qwen2_5_VLMoEModel = None
+    configure_wall_x_vision_attention = None
 
 from .utils import (
     get_wallx_normal_text,
@@ -109,6 +113,75 @@ from .utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _wall_x_resize_dimensions(height: int, width: int) -> tuple[int, int, int, int]:
+    """Return the intermediate and final Wall-X resize dimensions as ``(H, W, H, W)``."""
+    if RESOLUTION == -1:
+        intermediate_height, intermediate_width = height, width
+    elif width > height:
+        intermediate_width = RESOLUTION
+        intermediate_height = int(RESOLUTION * height / width)
+    else:
+        intermediate_height = RESOLUTION
+        intermediate_width = int(RESOLUTION * width / height)
+
+    resized_height, resized_width = smart_resize(
+        intermediate_height,
+        intermediate_width,
+        factor=IMAGE_FACTOR,
+        min_pixels=MIN_PIXELS,
+        max_pixels=MAX_PIXELS,
+    )
+    return intermediate_height, intermediate_width, resized_height, resized_width
+
+
+def _resize_wall_x_image_batch(images: Tensor) -> tuple[Tensor, tuple[int, int, int, int]]:
+    """Quantize and resize a BCHW camera batch without leaving its current device."""
+    if images.ndim != 4:
+        raise ValueError(f"Wall-X images must be BCHW tensors, got shape {tuple(images.shape)}")
+
+    original_height, original_width = images.shape[-2:]
+    intermediate_height, intermediate_width, resized_height, resized_width = _wall_x_resize_dimensions(
+        original_height, original_width
+    )
+
+    if images.is_floating_point():
+        # Match the previous PIL path, which quantized via `(image * 255).to(torch.uint8)`.
+        images = (images * 255).to(torch.uint8)
+    elif images.dtype != torch.uint8:
+        raise TypeError(f"Wall-X images must be floating point or uint8, got {images.dtype}")
+
+    if images.shape[-2:] != (intermediate_height, intermediate_width):
+        images = tv_functional.resize(
+            images,
+            [intermediate_height, intermediate_width],
+            interpolation=InterpolationMode.BICUBIC,
+            antialias=True,
+        )
+    if images.shape[-2:] != (resized_height, resized_width):
+        images = tv_functional.resize(
+            images,
+            [resized_height, resized_width],
+            interpolation=InterpolationMode.BICUBIC,
+            antialias=True,
+        )
+
+    return images, (original_height, original_width, resized_height, resized_width)
+
+
+def _prepare_wall_x_image_inputs(
+    batch: dict[str, Any], img_keys: list[str]
+) -> tuple[list[list[Tensor]], dict[str, tuple[int, int, int, int]]]:
+    """Resize each camera as a batch, then restore sample-major/camera-minor ordering."""
+    resized_by_key: dict[str, Tensor] = {}
+    dimensions_by_key: dict[str, tuple[int, int, int, int]] = {}
+    for key in img_keys:
+        resized_by_key[key], dimensions_by_key[key] = _resize_wall_x_image_batch(batch[key])
+
+    batch_size = batch[img_keys[0]].shape[0]
+    image_inputs = [[resized_by_key[key][i] for key in img_keys] for i in range(batch_size)]
+    return image_inputs, dimensions_by_key
 
 
 class SinusoidalPosEmb(nn.Module):
@@ -246,7 +319,7 @@ class ActionHead(nn.Module):
         flow = flow.to(torch.float32)
 
         action_pred = self.action_proj_back(action_hidden_states)
-        loss = F.mse_loss(action_pred, flow, reduction="none")
+        loss = functional.mse_loss(action_pred, flow, reduction="none")
 
         if dof_mask is not None:
             dof_mask = dof_mask.reshape(-1, dof_mask.shape[-1]).to(torch.float32)
@@ -254,7 +327,7 @@ class ActionHead(nn.Module):
 
         return loss
 
-    def proprioception_proj(self, proprioception, dof_mask=None, use_history=False):
+    def proprioception_proj(self, proprioception, dof_mask=None):
         """Project proprioceptive data to hidden space."""
         # Ensure proper device and dtype alignment
         proprioception = proprioception.to(device=self.propri_proj.weight.device).to(
@@ -264,10 +337,7 @@ class ActionHead(nn.Module):
         if dof_mask is not None:
             # Concatenate proprioception with DOF mask
             # TODO: Use variable-based dimension checking for better flexibility
-            if use_history:
-                proprioception = torch.cat([proprioception, dof_mask], dim=-1)
-            else:
-                proprioception = torch.cat([proprioception, dof_mask], dim=-1)
+            proprioception = torch.cat([proprioception, dof_mask], dim=-1)
 
         proprioception = proprioception.to(device=self.propri_proj.weight.device).to(
             dtype=self.propri_proj.weight.dtype
@@ -281,7 +351,7 @@ class ActionHead(nn.Module):
 _Qwen2_5_VLForAction_Base = Qwen2_5_VLForConditionalGeneration if _wallx_deps_available else nn.Module
 
 
-class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
+class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
     """
     Qwen2.5 Vision-Language Mixture of Experts model for action processing.
 
@@ -305,6 +375,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
         config=None,
         action_tokenizer_path=None,
         attn_implementation: str = "eager",
+        vision_attn_implementation: str = "auto",
         cache_dir: str | PathLike | None = None,
         force_download: bool = False,
         local_files_only: bool = False,
@@ -321,11 +392,14 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             config_path (str, optional): Configuration file path, if None will look for qwen25_config.json in pretrained_model_path
             action_tokenizer_path (str, optional): Action tokenizer path, if None will load from default config
             attn_implementation (str, optional): Attention implementation, if None will load from default config
+            vision_attn_implementation (str, optional): Vision attention backend. ``auto`` uses packed
+                variable-length attention when supported and otherwise falls back to SDPA.
             **kwargs: Additional arguments
 
         Returns:
             Qwen2_5_VLMoEForAction: Loaded model instance
         """
+        Qwen2_5_VLMoEModel._require_eager_attention(attn_implementation)
         if config is None:
             config = cls.config_class.from_pretrained(
                 pretrained_name_or_path,
@@ -339,7 +413,15 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             )
         if attn_implementation is not None:
             config._attn_implementation = attn_implementation
-        processor = AutoProcessor.from_pretrained(pretrained_name_or_path, use_fast=True)
+        processor = AutoProcessor.from_pretrained(
+            pretrained_name_or_path,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            local_files_only=local_files_only,
+            token=token,
+            revision=revision,
+            use_fast=True,
+        )
         if action_tokenizer_path is not None:
             action_tokenizer = AutoProcessor.from_pretrained(action_tokenizer_path, trust_remote_code=True)
             processor.action_processor = action_tokenizer
@@ -351,41 +433,41 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
         config.text_config.pad_token_id = processor.tokenizer.pad_token_id
 
         # Initialize model with configuration and processor
-        model = cls(config, processor=processor, action_tokenizer=action_tokenizer, **kwargs)
+        model = cls(
+            config,
+            processor=processor,
+            action_tokenizer=action_tokenizer,
+            vision_attn_implementation=vision_attn_implementation,
+            **kwargs,
+        )
 
         # Resize token embeddings to match processor tokenizer vocabulary size
         model.resize_token_embeddings(len(processor.tokenizer))
 
-        # Try to load the model.safetensors file
-        print(f"Loading model from: {pretrained_name_or_path}")
+        logger.info("Loading Wall-X model from %s", pretrained_name_or_path)
         try:
-            from transformers.utils import cached_file
-
-            # Try safetensors first
             resolved_file = cached_file(
                 pretrained_name_or_path,
                 "model.safetensors",
-                cache_dir=kwargs.get("cache_dir"),
-                force_download=kwargs.get("force_download", False),
+                cache_dir=cache_dir,
+                force_download=force_download,
                 resume_download=kwargs.get("resume_download"),
                 proxies=kwargs.get("proxies"),
-                token=kwargs.get("token"),
-                revision=kwargs.get("revision"),
-                local_files_only=kwargs.get("local_files_only", False),
+                token=token,
+                revision=revision,
+                local_files_only=local_files_only,
             )
-            from safetensors.torch import load_file
-
             sd = load_file(resolved_file)
-            print("✓ Loaded state dict from model.safetensors")
-        except Exception as e:
-            print(f"Could not load state dict from remote files: {e}")
-            print("Returning model without loading pretrained weights")
-            return model
+        except (OSError, SafetensorError) as error:
+            raise OSError(
+                f"Failed to load pretrained Wall-X weights from {pretrained_name_or_path!r}"
+            ) from error
+        logger.info("Loaded Wall-X state dict from model.safetensors")
 
         state_dict = {}
         # filter normalizer statistic params
         del_keys = []
-        for key in sd.keys():
+        for key in sd:
             if "action_preprocessor.normalizer" in key:
                 del_keys.append(key)
         for key in del_keys:
@@ -404,6 +486,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
         action_tokenizer=None,
         action_mapper=None,
         flow_loss_weight=1.0,
+        vision_attn_implementation: str = "auto",
     ):
         """
         Initialize the Qwen2.5 VLMoE model for action processing.
@@ -416,10 +499,16 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             action_mapper: Action mapping utility
             flow_loss_weight (float): Weight for flow loss computation
         """
+        Qwen2_5_VLMoEModel._require_eager_attention(config._attn_implementation)
+        config._attn_implementation = "eager"
+        # Text needs eager attention for action-token islands. Vision has no such
+        # constraint, so keep its portable native fallback on SDPA.
+        config.vision_config._attn_implementation = "sdpa"
         super().__init__(config)
 
         # Initialize vision transformer and language model components
         self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(config.vision_config)
+        configure_wall_x_vision_attention(self.visual, vision_attn_implementation)
         self.model = Qwen2_5_VLMoEModel(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
@@ -457,7 +546,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
 
         params_to_keep_float32 = []
 
-        for name, param in self.named_parameters():
+        for name, _param in self.named_parameters():
             if "input_layernorm" in name or "post_attention_layernorm" in name or "model.norm" in name:
                 params_to_keep_float32.append(name)
             if "action_preprocessor" in name:
@@ -491,7 +580,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             "action_token_id": action_token_id,
         }
 
-    def add_lora(self, r=8, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.1):
+    def add_lora(self, r=8, lora_alpha=32, target_modules=None, lora_dropout=0.1):
         """
         Add LoRA (Low-Rank Adaptation) adapters to the model.
 
@@ -501,6 +590,9 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             target_modules (list): List of module names to apply LoRA to
             lora_dropout (float): Dropout probability for LoRA layers
         """
+        if target_modules is None:
+            target_modules = ["q_proj", "v_proj"]
+
         config = LoraConfig(
             r=r,
             lora_alpha=lora_alpha,
@@ -795,6 +887,9 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
+        if rope_deltas is not None:
+            self.rope_deltas = rope_deltas
+
         # Calculate RoPE position IDs if not provided
         # Note: Cannot calculate rope deltas with 4D attention mask. TODO: Fix this limitation
         if position_ids is None and (attention_mask is None or attention_mask.ndim == 2):
@@ -833,7 +928,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             # Process image embeddings
             if pixel_values is not None:
                 pixel_values = pixel_values.type(self.visual.dtype)
-                image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
+                image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw).pooler_output
                 mask = input_ids == self.config.image_token_id
                 mask_unsqueezed = mask.unsqueeze(-1)
                 mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
@@ -845,7 +940,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             # Process video embeddings
             if pixel_values_videos is not None:
                 pixel_values_videos = pixel_values_videos.type(self.visual.dtype)
-                video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
+                video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw).pooler_output
                 n_video_tokens = (input_ids == self.config.video_token_id).sum().item()
                 n_video_features = video_embeds.shape[0]
 
@@ -869,7 +964,6 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
                 proprioception = self.action_preprocessor.proprioception_proj(
                     proprioception,
                     agent_pos_mask,
-                    use_history=proprioception.shape[1] > 1,
                 )
                 mask = input_ids == self.action_token_id_set["propri_token_id"]
                 mask_unsqueezed = mask.unsqueeze(-1)
@@ -919,6 +1013,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            cache_position=cache_position,
         )
 
         hidden_states = outputs[0]
@@ -1107,7 +1202,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             # Process image embeddings
             if pixel_values is not None:
                 pixel_values = pixel_values.type(self.visual.dtype)
-                image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
+                image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw).pooler_output
                 n_image_tokens = (input_ids == self.config.image_token_id).sum().item()
                 n_image_features = image_embeds.shape[0]
 
@@ -1128,7 +1223,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
             # Process video embeddings
             if pixel_values_videos is not None:
                 pixel_values_videos = pixel_values_videos.type(self.visual.dtype)
-                video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
+                video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw).pooler_output
                 n_video_tokens = (input_ids == self.config.video_token_id).sum().item()
                 n_video_features = video_embeds.shape[0]
 
@@ -1153,7 +1248,6 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
                 proprio_embed = self.action_preprocessor.proprioception_proj(
                     proprioception,
                     agent_pos_mask,
-                    use_history=proprioception.shape[1] > 1,
                 )
                 proprioception_mask = input_ids == self.action_token_id_set["propri_token_id"]
                 proprio_embed = proprio_embed.to(torch.bfloat16)
@@ -1202,25 +1296,37 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
 
         # Split input sequence for text and fast modes (not needed for diffusion)
         if predict_mode == "text" or predict_mode == "fast":
-            # Look for generation prompt tokens: <|im_start|>assistant
+            generation_prompt = "<|im_start|>assistant\n"
             generation_prompt_ids = torch.tensor(
-                [151644, 77091], device=input_ids.device, dtype=input_ids.dtype
+                self.processor.tokenizer.encode(generation_prompt, add_special_tokens=False),
+                device=input_ids.device,
+                dtype=input_ids.dtype,
             )
-            matches = (input_ids[0, :-1] == generation_prompt_ids[0]) & (
-                input_ids[0, 1:] == generation_prompt_ids[1]
-            )
+            prompt_length = generation_prompt_ids.numel()
+            if prompt_length == 0:
+                raise ValueError(f"Tokenizer produced no tokens for generation prompt {generation_prompt!r}")
+            if input_ids.shape[1] < prompt_length:
+                matches = torch.empty(0, device=input_ids.device, dtype=torch.bool)
+            else:
+                matches = (
+                    input_ids[0]
+                    .unfold(dimension=0, size=prompt_length, step=1)
+                    .eq(generation_prompt_ids)
+                    .all(dim=-1)
+                )
 
             if matches.any():
                 split_pos = torch.nonzero(matches, as_tuple=True)[0][0].item()
+                prompt_end = split_pos + prompt_length
                 # Extract ground truth output tokens (including newline)
-                gt_output_ids = input_ids[:, split_pos + 3 :]
+                gt_output_ids = input_ids[:, prompt_end:]
                 # Remove output part from input, keeping prompt
-                input_ids = input_ids[:, : split_pos + 3]
-                inputs_embeds = inputs_embeds[:, : split_pos + 3, :]
+                input_ids = input_ids[:, :prompt_end]
+                inputs_embeds = inputs_embeds[:, :prompt_end, :]
                 if attention_mask is not None:
-                    attention_mask = attention_mask[:, : split_pos + 3]
+                    attention_mask = attention_mask[:, :prompt_end]
                 if labels is not None:
-                    labels = labels[:, split_pos + 3 :]
+                    labels = labels[:, prompt_end:]
             else:
                 raise ValueError(
                     "input_ids does not contain the generation prompt tokens <|im_start|>assistant"
@@ -1255,7 +1361,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
                 use_cache=True,
                 pad_token_id=self.processor.tokenizer.pad_token_id,
                 temperature=(1.0 if not re_generate else 0.7),  # Higher temperature for regeneration
-                do_sample=(False if not re_generate else True),  # Enable sampling for regeneration
+                do_sample=re_generate,  # Enable sampling for regeneration
             )
 
             # Decode generated and ground truth text
@@ -1524,27 +1630,6 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
         else:
             model_inputs = {"input_ids": input_ids, "inputs_embeds": None}
 
-        # Prepare 4D causal attention mask for static cache
-        if isinstance(past_key_values, StaticCache) and attention_mask.ndim == 2:
-            if model_inputs["inputs_embeds"] is not None:
-                batch_size, sequence_length, _ = inputs_embeds.shape
-                device = inputs_embeds.device
-            else:
-                batch_size, sequence_length = input_ids.shape
-                device = input_ids.device
-
-            attention_mask = self.model._prepare_4d_causal_attention_mask_with_cache_position(
-                attention_mask,
-                sequence_length=sequence_length,
-                target_length=past_key_values.get_max_cache_shape(),
-                dtype=self.lm_head.weight.dtype,
-                device=device,
-                cache_position=cache_position,
-                batch_size=batch_size,
-                config=self.config,
-                past_key_values=past_key_values,
-            )
-
         # Assemble all model inputs for generation
         model_inputs.update(
             {
@@ -1749,6 +1834,7 @@ class WallXPolicy(PreTrainedPolicy):
             pretrained_name_or_path=config.pretrained_name_or_path,
             action_tokenizer_path=config.action_tokenizer_path,
             attn_implementation=config.attn_implementation,
+            vision_attn_implementation=config.vision_attn_implementation,
         )
         self.model.to(config.device)
         self.model.to_bfloat16_for_selected_params()
@@ -1768,6 +1854,8 @@ class WallXPolicy(PreTrainedPolicy):
     def preprocess_inputs(
         self,
         batch: dict[str, Any],
+        *,
+        compute_position_ids: bool = False,
     ) -> BatchFeature:
         """
         Convert a batch of LeRobot dataset items to Wall-X model input format.
@@ -1789,50 +1877,21 @@ class WallXPolicy(PreTrainedPolicy):
         # Get batch size from state tensor
         batch_size = batch[OBS_STATE].shape[0]
 
-        # ==================== PROCESS ALL SAMPLES ====================
-        all_image_inputs = []
-        all_texts = []
-
         # Find image keys in batch
         img_keys = [key for key in self.config.image_features if key in batch]
+        if not img_keys:
+            raise ValueError("Wall-X requires at least one image feature in each batch")
+
+        # Resize one camera batch at a time on the tensors' current device. Reassembling
+        # sample-major keeps image_grid_thw aligned with each sample's image placeholders.
+        all_image_inputs, dimensions_by_key = _prepare_wall_x_image_inputs(batch, img_keys)
+        all_texts = []
+
+        # Preserve the existing grounding behavior for multi-camera inputs: the old camera
+        # loop left these values set to the final configured camera's dimensions.
+        orig_height, orig_width, resized_height, resized_width = dimensions_by_key[img_keys[-1]]
 
         for i in range(batch_size):
-            # Vision preprocessing per sample
-            processed_frames = []
-            orig_height, orig_width = None, None
-            resized_height, resized_width = None, None
-
-            for key in img_keys:
-                current_obs = batch[key][i].clone()  # (C, H, W)
-                if current_obs.dim() == 3:
-                    current_obs = current_obs.permute(1, 2, 0)  # (H, W, C)
-
-                img_pil = Image.fromarray((current_obs * 255).to(torch.uint8).cpu().numpy())
-                orig_width, orig_height = img_pil.size
-
-                target_size = RESOLUTION
-                if target_size != -1:
-                    if orig_width > orig_height:
-                        new_width = target_size
-                        new_height = int(target_size * orig_height / orig_width)
-                    else:
-                        new_height = target_size
-                        new_width = int(target_size * orig_width / orig_height)
-                    img_pil = img_pil.resize((new_width, new_height))
-
-                current_width, current_height = img_pil.size
-                resized_height, resized_width = smart_resize(
-                    current_height,
-                    current_width,
-                    factor=IMAGE_FACTOR,
-                    min_pixels=MIN_PIXELS,
-                    max_pixels=MAX_PIXELS,
-                )
-                resized_img = img_pil.resize((resized_width, resized_height))
-                processed_frames.append(resized_img)
-
-            all_image_inputs.append(processed_frames)
-
             # Text preprocessing
             task_text = batch["task"][i] if isinstance(batch["task"], list) else batch["task"]
             instruction_info = {"instruction": task_text}
@@ -1859,8 +1918,8 @@ class WallXPolicy(PreTrainedPolicy):
         agent_pos_mask = (~torch.isnan(agent_pos)).float()
         agent_pos = agent_pos.nan_to_num(nan=0.0)
 
-        if agent_pos.shape[-1] != 20:
-            pad_size = 20 - agent_pos.shape[-1]
+        if agent_pos.shape[-1] < self.config.max_state_dim:
+            pad_size = self.config.max_state_dim - agent_pos.shape[-1]
             agent_pos = torch.cat(
                 [
                     agent_pos,
@@ -1880,6 +1939,10 @@ class WallXPolicy(PreTrainedPolicy):
                 ],
                 dim=-1,
             )
+        elif agent_pos.shape[-1] > self.config.max_state_dim:
+            raise ValueError(
+                f"State dimension {agent_pos.shape[-1]} exceeds max_state_dim {self.config.max_state_dim}"
+            )
 
         # ==================== PROCESS ACTIONS ====================
         action = batch.get(ACTION)  # (batch_size, chunk_size, action_dim)
@@ -1889,8 +1952,8 @@ class WallXPolicy(PreTrainedPolicy):
             dof_mask = (~torch.isnan(action)).float()
             action = action.nan_to_num(nan=0.0)
 
-            if action.shape[-1] != 20:
-                pad_size = 20 - action.shape[-1]
+            if action.shape[-1] < self.config.max_action_dim:
+                pad_size = self.config.max_action_dim - action.shape[-1]
                 action = torch.cat(
                     [action, torch.zeros(action.shape[0], action.shape[1], pad_size, device=action.device)],
                     dim=-1,
@@ -1902,6 +1965,10 @@ class WallXPolicy(PreTrainedPolicy):
                     ],
                     dim=-1,
                 )
+            elif action.shape[-1] > self.config.max_action_dim:
+                raise ValueError(
+                    f"Action dimension {action.shape[-1]} exceeds max_action_dim {self.config.max_action_dim}"
+                )
         else:
             action_dim = self.config.output_features[ACTION].shape[0]
             dof_mask = torch.cat(
@@ -1910,7 +1977,10 @@ class WallXPolicy(PreTrainedPolicy):
                         batch_size, self.config.chunk_size, action_dim, device=batch[OBS_STATE].device
                     ),
                     torch.zeros(
-                        batch_size, self.config.chunk_size, 20 - action_dim, device=batch[OBS_STATE].device
+                        batch_size,
+                        self.config.chunk_size,
+                        self.config.max_action_dim - action_dim,
+                        device=batch[OBS_STATE].device,
                     ),
                 ],
                 dim=-1,
@@ -1930,11 +2000,25 @@ class WallXPolicy(PreTrainedPolicy):
             text=all_texts,
             images=all_image_inputs,
             videos=None,
+            device=batch[OBS_STATE].device,
             padding=True,
             truncation=True,
             return_tensors="pt",
             max_length=TOKENIZER_MAX_LENGTH,
         )
+
+        if compute_position_ids:
+            # Qwen's RoPE indexing uses Python list/scalar conversions. Run it while the
+            # tokenizer and grid metadata are still on CPU, then move the compact result.
+            position_ids, rope_deltas = self.model.get_rope_index(
+                inputs.input_ids,
+                inputs.get("image_grid_thw"),
+                inputs.get("video_grid_thw"),
+                inputs.get("second_per_grid_ts"),
+                inputs.attention_mask,
+            )
+            inputs["position_ids"] = position_ids
+            inputs["rope_deltas"] = rope_deltas
 
         # ==================== ADDITIONAL INPUTS ====================
         action_token_id = self.model.processor.tokenizer.convert_tokens_to_ids("<|action|>")
@@ -1952,7 +2036,7 @@ class WallXPolicy(PreTrainedPolicy):
         )
 
         # Move all tensors to the correct device
-        device = self.config.device
+        device = batch[OBS_STATE].device
         for key, value in inputs.items():
             if isinstance(value, torch.Tensor):
                 inputs[key] = value.to(device)
@@ -1972,9 +2056,7 @@ class WallXPolicy(PreTrainedPolicy):
         Returns:
             tuple: (loss, loss_dict)
         """
-        batch = self.preprocess_inputs(
-            batch,
-        )
+        batch = self.preprocess_inputs(batch, compute_position_ids=True)
 
         # Call the underlying model's forward with mode="train"
         outputs = self.model(**batch, mode="train")
@@ -1982,19 +2064,19 @@ class WallXPolicy(PreTrainedPolicy):
         # Extract losses from output
         loss = outputs.loss
         loss_dict = {
-            "loss": loss.item() if loss is not None else 0.0,
+            "loss": loss.detach() if loss is not None else 0.0,
         }
 
         if outputs.flow_loss is not None:
-            loss_dict["flow_loss"] = outputs.flow_loss.item()
+            loss_dict["flow_loss"] = outputs.flow_loss.detach()
         if outputs.cross_entropy_loss is not None:
-            loss_dict["cross_entropy_loss"] = outputs.cross_entropy_loss.item()
+            loss_dict["cross_entropy_loss"] = outputs.cross_entropy_loss.detach()
 
         # Add channel losses if available
         if outputs.channel_loss_dict is not None:
             for key, value in outputs.channel_loss_dict.items():
                 if isinstance(value, torch.Tensor):
-                    loss_dict[f"channel_{key}"] = value.item()
+                    loss_dict[f"channel_{key}"] = value.detach()
 
         return loss, loss_dict
 

@@ -226,11 +226,14 @@ class RolloutConfig:
     device: str | None = None
     task: str = ""
     display_data: bool = False
-    # Display data on a remote Rerun server
+    # Visualization backend used when display_data is True: "rerun" or "foxglove".
+    display_mode: str = "rerun"
+    # For "rerun": IP of a remote server to send to. For "foxglove": interface to bind the WebSocket
+    # server to (127.0.0.1 for local only, 0.0.0.0 for all interfaces).
     display_ip: str | None = None
-    # Port of the remote Rerun server
+    # For "rerun": port of the remote server. For "foxglove": port to bind the WebSocket server to.
     display_port: int | None = None
-    # Whether to display compressed images in Rerun
+    # Whether to display compressed (JPEG) images instead of raw frames
     display_compressed_images: bool = False
     # Use vocal synthesis to read events
     play_sounds: bool = True
@@ -323,8 +326,17 @@ class RolloutConfig:
 
         policy_path = parser.get_path_arg("policy")
         if policy_path:
-            cli_overrides = parser.get_cli_overrides("policy")
-            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            yaml_overrides = parser.get_yaml_overrides("policy")
+            cli_overrides = parser.get_cli_overrides("policy") or []
+            policy_overrides = yaml_overrides + cli_overrides
+            pretrained_revision = parser.parse_arg("pretrained_revision", cli_overrides)
+            if pretrained_revision is None:
+                pretrained_revision = parser.parse_arg("pretrained_revision", yaml_overrides)
+            self.policy = PreTrainedConfig.from_pretrained(
+                policy_path,
+                revision=pretrained_revision,
+                cli_overrides=policy_overrides,
+            )
             self.policy.pretrained_path = policy_path
         if self.policy is None:
             raise ValueError("--policy.path is required for rollout")
