@@ -41,6 +41,11 @@ class SOFollowerConfig:
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = True
 
+    # Position-mode PID gains written to Feetech STS3215 motors at connect time.
+    position_p_coefficient: int = 16
+    position_i_coefficient: int = 0
+    position_d_coefficient: int = 32
+
 
 @RobotConfig.register_subclass("so101_follower")
 @RobotConfig.register_subclass("so100_follower")

@@ -151,13 +151,22 @@ class RealSenseCamera(Camera):
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
 
-        if self.height and self.width:
-            self.capture_width, self.capture_height = self.width, self.height
-            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
-                self.capture_width, self.capture_height = self.height, self.width
+        self.capture_width: int | None = None
+        self.capture_height: int | None = None
+        self._reset_connection_settings()
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}({self.serial_number})"
+
+    def _reset_connection_settings(self) -> None:
+        """Restore settings that may have been auto-detected during a failed connection."""
+        self.fps = self.config.fps
+        self.width = self.config.width
+        self.height = self.config.height
+        self.warmup_s = self.config.warmup_s
+        self.capture_width, self.capture_height = self.width, self.height
+        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+            self.capture_width, self.capture_height = self.height, self.width
 
     @property
     def is_connected(self) -> bool:
@@ -215,11 +224,12 @@ class RealSenseCamera(Camera):
                     self.use_depth and self.latest_depth_frame is None
                 ):
                     raise ConnectionError(f"{self} failed to capture frames during warmup.")
-        except Exception:
+        except BaseException:
             try:
-                self._cleanup_connection()
+                self._cleanup_resources()
             except Exception:
-                logger.exception(f"Failed to clean up {self} after a connection error.")
+                logger.exception(f"Failed to fully clean up {self} after connect() failed.")
+            self._reset_connection_settings()
             raise
 
         logger.info(f"{self} connected.")
@@ -573,7 +583,7 @@ class RealSenseCamera(Camera):
             )
 
         processed_image = image
-        if self.color_mode == ColorMode.BGR:
+        if not depth_frame and self.color_mode == ColorMode.BGR:
             processed_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
@@ -660,6 +670,27 @@ class RealSenseCamera(Camera):
             self.latest_depth_frame = None
             self.latest_timestamp = None
             self.new_frame_event.clear()
+
+    def _cleanup_resources(self) -> None:
+        """Stop background reads and stop the pipeline, including after partial setup."""
+        read_thread = self.thread
+        rs_pipeline = self.rs_pipeline
+
+        try:
+            self._stop_read_thread()
+        finally:
+            self.rs_pipeline = None
+            self.rs_profile = None
+            try:
+                if rs_pipeline is not None:
+                    rs_pipeline.stop()
+            finally:
+                # Stopping the pipeline may unblock a hardware read that outlived
+                # the first bounded join in _stop_read_thread().
+                if read_thread is not None and read_thread.is_alive():
+                    read_thread.join(timeout=2.0)
+                    if read_thread.is_alive():  # pragma: no cover
+                        logger.warning(f"{self} read thread remained alive after stopping the pipeline.")
 
     def _async_read(self, timeout_ms: float, read_depth: bool = False) -> NDArray[Any]:
         """Shared helper for :meth:`async_read`/:meth:`async_read_depth`: return the latest buffered frame."""
@@ -804,23 +835,5 @@ class RealSenseCamera(Camera):
                 f"Attempted to disconnect {self}, but it appears already disconnected."
             )
 
-        self._cleanup_connection()
+        self._cleanup_resources()
         logger.info(f"{self} disconnected.")
-
-    def _cleanup_connection(self) -> None:
-        """Release connection resources and reset state after disconnect or failed connect."""
-        if self.thread is not None:
-            self._stop_read_thread()
-
-        pipeline = self.rs_pipeline
-        self.rs_pipeline = None
-        self.rs_profile = None
-
-        with self.frame_lock:
-            self.latest_color_frame = None
-            self.latest_depth_frame = None
-            self.latest_timestamp = None
-            self.new_frame_event.clear()
-
-        if pipeline is not None:
-            pipeline.stop()
