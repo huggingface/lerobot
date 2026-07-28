@@ -36,3 +36,25 @@ def test_dataset_config_none_episodes_ok():
 
 def test_dataset_config_empty_episodes_ok():
     DatasetConfig(repo_id="user/repo", episodes=[])
+
+
+def test_dataset_config_derives_streaming_decoder_limit_by_default():
+    assert DatasetConfig(repo_id="user/repo").streaming_max_open_decoders is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("streaming_episode_pool_size", 0, "episode_pool_size"),
+        ("streaming_prefetch_episodes", -1, "prefetch_episodes"),
+        ("streaming_byte_budget_gb", 0, "byte_budget_gb"),
+        ("streaming_decode_threads", 0, "decode_threads"),
+        ("streaming_decoded_queue_size", 0, "decoded_queue_size"),
+        ("streaming_max_open_decoders", 0, "max_open_decoders"),
+        ("streaming_native_http_connections", 0, "native_http_connections"),
+        ("streaming_native_http_subranges", 0, "native_http_subranges"),
+    ],
+)
+def test_dataset_config_rejects_invalid_streaming_resource_limits(field, value, message):
+    with pytest.raises(ValueError, match=message):
+        DatasetConfig(repo_id="user/repo", **{field: value})

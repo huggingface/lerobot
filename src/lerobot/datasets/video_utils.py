@@ -28,7 +28,7 @@ from dataclasses import asdict, dataclass, field
 from fractions import Fraction
 from pathlib import Path
 from threading import Lock
-from typing import Any, ClassVar
+from typing import Any, BinaryIO, ClassVar
 
 import av
 import fsspec
@@ -105,7 +105,7 @@ def decode_video_frames(
 
 
 def decode_video_frames_pyav(
-    video_path: Path | str,
+    video_path: Path | str | BinaryIO,
     timestamps: list[float],
     tolerance_s: float,
     log_loaded_timestamps: bool = False,
@@ -124,7 +124,7 @@ def decode_video_frames_pyav(
     video can be adjusted at encoding time to trade off decoding speed against file size.
 
     Args:
-        video_path: Path to the video file.
+        video_path: Path to the video file or a seekable binary file object.
         timestamps: List of timestamps (in seconds) to extract frames for.
         tolerance_s: Allowed deviation in seconds between a queried timestamp and the closest
             decoded frame.
@@ -137,7 +137,8 @@ def decode_video_frames_pyav(
         torch.Tensor of shape (len(timestamps), C, H, W).
     """
     # TODO(rcadene): also load audio stream at the same time
-    video_path = str(video_path)
+    video_source = str(video_path) if isinstance(video_path, (Path, str)) else video_path
+    video_label = str(video_path) if isinstance(video_path, (Path, str)) else "<in-memory video>"
 
     # set the first and last requested timestamps
     # Note: previous timestamps are usually loaded, since we need to access the previous key frame
@@ -151,7 +152,7 @@ def decode_video_frames_pyav(
     # av.time_base units (microseconds). `backward=True` lands us on the nearest keyframe at or
     # before `first_ts`, so we can then decode forward until we cover `last_ts`. See:
     # https://pyav.basswood-io.com/docs/stable/api/container.html#av.container.InputContainer.seek
-    with av.open(video_path) as container:
+    with av.open(video_source) as container:
         stream = container.streams.video[0]
         # Seek to the nearest keyframe at or before `first_ts` with a 1 frame margin
         container.seek(
@@ -180,7 +181,7 @@ def decode_video_frames_pyav(
 
     if not loaded_frames:
         raise FrameTimestampError(
-            f"No frames could be decoded from {video_path} in the timestamp range [{first_ts}, {last_ts}]."
+            f"No frames could be decoded from {video_label} in the timestamp range [{first_ts}, {last_ts}]."
         )
 
     query_ts = torch.tensor(timestamps)
@@ -199,7 +200,7 @@ def decode_video_frames_pyav(
             " To be safe, we advise to ignore this item during training."
             f"\nqueried timestamps: {query_ts}"
             f"\nloaded timestamps: {loaded_ts_t}"
-            f"\nvideo: {video_path}"
+            f"\nvideo: {video_label}"
             f"\nbackend: pyav"
         )
 
