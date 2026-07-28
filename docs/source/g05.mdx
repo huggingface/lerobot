@@ -173,6 +173,11 @@ uv run pytest tests/policies/g05 tests/runtime/test_g05_adapter.py -q
 uv run ruff check src/lerobot/policies/g05 tests/policies/g05
 ```
 
+An RTX 5090 smoke test loaded the real private `g05_libero` checkpoint and
+completed a batch-size-one BF16 forward, backward, gradient clip, and AdamW
+step. It produced finite loss `2.77356`, finite pre-clip gradient norm `54.38`,
+all six author optimizer groups, and 23.59 GiB peak allocated CUDA memory.
+
 A 50-episode LIBERO/RoboTwin success-rate comparison additionally requires the
 matching simulator, task assets, reset seeds, and author evaluator; no task-level
 benchmark number is claimed until that separate gate runs.
