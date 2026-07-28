@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from threading import Event
+from typing import TYPE_CHECKING
 
 import torch
 
@@ -47,6 +48,7 @@ from lerobot.processor.relative_action_processor import RelativeActionsProcessor
 from lerobot.robots import make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
+from lerobot.utils.import_utils import _peft_available, require_package
 
 from .configs import BaseStrategyConfig, DAggerStrategyConfig, RolloutConfig
 from .inference import (
@@ -56,6 +58,12 @@ from .inference import (
     create_inference_engine,
 )
 from .robot_wrapper import ThreadSafeRobot
+
+if TYPE_CHECKING or _peft_available:
+    from peft import PeftConfig, PeftModel
+else:
+    PeftConfig = None
+    PeftModel = None
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +179,7 @@ def _load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy
             revision=pretrained_revision,
         )
 
-    from peft import PeftConfig, PeftModel
+    require_package("peft", extra="peft")
 
     peft_path = policy_config.pretrained_path
     peft_config = PeftConfig.from_pretrained(peft_path, revision=pretrained_revision)

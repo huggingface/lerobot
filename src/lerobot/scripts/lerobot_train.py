@@ -57,7 +57,7 @@ from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
-from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -67,6 +67,11 @@ from lerobot.utils.utils import (
     init_logging,
     inside_slurm,
 )
+
+if TYPE_CHECKING or _peft_available:
+    from peft import PeftModel
+else:
+    PeftModel = None
 
 from .lerobot_eval import eval_policy_all
 
@@ -207,8 +212,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if cfg.job.is_remote:
         return submit_to_hf(cfg)
 
-    from lerobot.utils.import_utils import require_package
-
     require_package("accelerate", extra="training")
     from accelerate import Accelerator
     from accelerate.utils import DistributedDataParallelKwargs, DistributedType
@@ -312,7 +315,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if cfg.peft is not None:
         if cfg.is_reward_model_training:
             raise ValueError("PEFT is only supported for policy training. ")
-        from peft import PeftModel
+        require_package("peft", extra="peft")
 
         if isinstance(policy, PeftModel):
             logging.info("PEFT adapter already loaded from checkpoint, skipping wrap_with_peft.")
