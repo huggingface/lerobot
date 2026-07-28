@@ -137,6 +137,12 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     preprocessor_overrides: dict[str, Any] | None
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
+    # Dataset source used by policies that optionally fit processor artifacts.
+    dataset_repo_id: str | None
+    dataset_root: str | None
+    dataset_revision: str | None
+    dataset_episodes: list[int] | None
+    dataset_exclude_episodes: list[int] | None
     dataset_meta: Any | None
 
 
@@ -171,6 +177,10 @@ def make_pre_post_processors(
         ValueError: If no processor factory exists for the given policy configuration type.
     """
     if pretrained_path:
+        # Register the PI052-only stateful tokenizer step before deserializing its pipeline.
+        if policy_cfg.type == "pi052":
+            from .pi052 import processor_pi052 as _processor_pi052  # noqa: F401
+
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
 
@@ -190,12 +200,29 @@ def make_pre_post_processors(
                 ),
             )
 
+        preprocessor_overrides = dict(kwargs.get("preprocessor_overrides") or {})
+        if policy_cfg.type == "pi0_fast" and getattr(policy_cfg, "auto_fit_fast_tokenizer", False):
+            from .pi052.fit_fast_tokenizer import resolve_fast_tokenizer
+
+            fitted_tokenizer = resolve_fast_tokenizer(
+                policy_cfg,
+                kwargs.get("dataset_repo_id"),
+                kwargs.get("dataset_root"),
+                kwargs.get("dataset_stats"),
+                kwargs.get("dataset_revision"),
+                kwargs.get("dataset_episodes"),
+                kwargs.get("dataset_exclude_episodes"),
+            )
+            tokenizer_overrides = dict(preprocessor_overrides.get("action_tokenizer_processor") or {})
+            tokenizer_overrides["action_tokenizer_name"] = fitted_tokenizer
+            preprocessor_overrides["action_tokenizer_processor"] = tokenizer_overrides
+
         preprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
             config_filename=kwargs.get(
                 "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
             ),
-            overrides=kwargs.get("preprocessor_overrides", {}),
+            overrides=preprocessor_overrides,
             to_transition=batch_to_transition,
             to_output=transition_to_batch,
             revision=pretrained_revision,
@@ -227,6 +254,11 @@ def make_pre_post_processors(
         config=policy_cfg,
         dataset_stats=kwargs.get("dataset_stats"),
         dataset_meta=kwargs.get("dataset_meta"),
+        dataset_repo_id=kwargs.get("dataset_repo_id"),
+        dataset_root=kwargs.get("dataset_root"),
+        dataset_revision=kwargs.get("dataset_revision"),
+        episodes=kwargs.get("dataset_episodes"),
+        exclude_episodes=kwargs.get("dataset_exclude_episodes"),
     )
 
 
@@ -424,6 +456,7 @@ def _make_processors_from_policy_config(
     config: PreTrainedConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     dataset_meta: Any | None = None,
+    **optional_kwargs: Any,
 ) -> tuple[Any, Any]:
     """Create pre- and post-processors from a policy configuration using dynamic imports.
 
@@ -459,7 +492,9 @@ def _make_processors_from_policy_config(
     function = getattr(module, function_name, None)
     if function is None:
         raise ValueError(f"Processor for policy type '{policy_type}' is not implemented.")
+    parameters = inspect.signature(function).parameters
     call_kwargs: dict[str, Any] = {"dataset_stats": dataset_stats}
-    if "dataset_meta" in inspect.signature(function).parameters:
+    if "dataset_meta" in parameters:
         call_kwargs["dataset_meta"] = dataset_meta
+    call_kwargs.update({name: value for name, value in optional_kwargs.items() if name in parameters})
     return function(config, **call_kwargs)

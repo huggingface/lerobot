@@ -15,21 +15,26 @@
 # limitations under the License.
 
 import builtins
+import json
 import logging
+import math
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
 
 import torch
 import torch.nn.functional as F  # noqa: N812
+from safetensors.torch import load_file
 from torch import Tensor, nn
 
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
+    from transformers.cache_utils import DynamicCache
     from transformers.models.auto import CONFIG_MAPPING
     from transformers.models.gemma import modeling_gemma
+    from transformers.utils import cached_file
 
     from ..pi_gemma import (
         PaliGemmaForConditionalGenerationWithPiGemma,
@@ -39,27 +44,22 @@ if TYPE_CHECKING or _transformers_available:
     )
 else:
     CONFIG_MAPPING = None
+    DynamicCache = None
     modeling_gemma = None
     PiGemmaForCausalLM = None
     _gated_residual = None
     layernorm_forward = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
+    cached_file = None
 from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
+    OPENPI_ATTENTION_MASK_VALUE,
 )
 
-from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
-from ..common.vla_utils import (
-    clone_past_key_values,
-    create_sinusoidal_pos_embedding,
-    make_att_2d_masks,
-    pad_vector,
-    prepare_attention_masks_4d,
-    resize_with_pad_torch,
-)
+from ..common.flow_matching import sample_noise, sample_time_beta
 from ..pretrained import PreTrainedPolicy, T
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
@@ -69,6 +69,251 @@ class ActionSelectKwargs(TypedDict, total=False):
     inference_delay: int | None
     prev_chunk_left_over: Tensor | None
     execution_horizon: int | None
+
+
+_SAFETENSORS_FILE = "model.safetensors"
+_SAFETENSORS_INDEX = "model.safetensors.index.json"
+
+
+def _resolve_weight_files(
+    pretrained_name_or_path: str | Path,
+    *,
+    force_download: bool,
+    resume_download: bool | None,
+    proxies: dict | None,
+    token: str | bool | None,
+    cache_dir: str | Path | None,
+    local_files_only: bool,
+    revision: str | None,
+) -> list[Path]:
+    model_id = str(pretrained_name_or_path)
+    local_dir = Path(model_id)
+    load_kwargs = {
+        "revision": revision,
+        "cache_dir": cache_dir,
+        "force_download": force_download,
+        "resume_download": resume_download,
+        "proxies": proxies,
+        "token": token,
+        "local_files_only": local_files_only,
+    }
+
+    if local_dir.is_dir():
+        index_path = local_dir / _SAFETENSORS_INDEX
+        single_path = local_dir / _SAFETENSORS_FILE
+    else:
+        resolved_index = cached_file(
+            model_id,
+            _SAFETENSORS_INDEX,
+            _raise_exceptions_for_missing_entries=False,
+            **load_kwargs,
+        )
+        index_path = Path(resolved_index) if resolved_index is not None else None
+        single_path = None
+        if index_path is None:
+            resolved_file = cached_file(model_id, _SAFETENSORS_FILE, **load_kwargs)
+            single_path = Path(resolved_file) if resolved_file is not None else None
+
+    if index_path is None or not index_path.is_file():
+        if single_path is None or not single_path.is_file():
+            raise FileNotFoundError(f"No {_SAFETENSORS_FILE} found in {model_id!r}.")
+        return [single_path]
+
+    index = json.loads(index_path.read_text())
+    shard_names = sorted(set(index.get("weight_map", {}).values()))
+    if not shard_names:
+        raise ValueError(f"Invalid safetensors index without a weight_map: {index_path}")
+    if local_dir.is_dir():
+        files = [local_dir / name for name in shard_names]
+    else:
+        files = []
+        for name in shard_names:
+            resolved_file = cached_file(model_id, name, **load_kwargs)
+            if resolved_file is None:
+                raise FileNotFoundError(f"Checkpoint shard {name!r} not found in {model_id!r}.")
+            files.append(Path(resolved_file))
+    missing = [str(path) for path in files if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(f"Missing checkpoint shards: {missing}")
+    return files
+
+
+def _load_weight_files(files: list[Path]) -> dict[str, Tensor]:
+    state_dict: dict[str, Tensor] = {}
+    for path in files:
+        shard = load_file(path)
+        overlap = state_dict.keys() & shard.keys()
+        if overlap:
+            raise ValueError(f"Duplicate checkpoint keys in {path}: {sorted(overlap)[:5]}")
+        state_dict.update(shard)
+    return state_dict
+
+
+def get_safe_dtype(target_dtype, device_type):
+    """Get a safe dtype for the given device type."""
+    if device_type == "mps" and target_dtype == torch.float64:
+        return torch.float32
+    if device_type == "cpu":
+        # CPU doesn't support bfloat16, use float32 instead
+        if target_dtype == torch.bfloat16:
+            return torch.float32
+        if target_dtype == torch.float64:
+            return torch.float64
+    return target_dtype
+
+
+def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedding` (exact copy)
+    time: torch.Tensor, dimension: int, min_period: float, max_period: float, device="cpu"
+) -> Tensor:
+    """Computes sine-cosine positional embedding vectors for scalar positions."""
+    if dimension % 2 != 0:
+        raise ValueError(f"dimension ({dimension}) must be divisible by 2")
+
+    if time.ndim != 1:
+        raise ValueError("The time tensor is expected to be of shape `(batch_size, )`.")
+
+    dtype = get_safe_dtype(torch.float64, device.type)
+    fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=dtype, device=device)
+    period = min_period * (max_period / min_period) ** fraction
+
+    # Compute the outer product
+    scaling_factor = 1.0 / period * 2 * math.pi
+    sin_input = scaling_factor[None, :] * time[:, None]
+    return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
+
+
+def sample_beta(alpha, beta, bsize, device):  # see openpi `sample_beta` (exact copy)
+    # Beta sampling uses _sample_dirichlet which isn't implemented for MPS, so sample on CPU
+    alpha_t = torch.tensor(alpha, dtype=torch.float32)
+    beta_t = torch.tensor(beta, dtype=torch.float32)
+    dist = torch.distributions.Beta(alpha_t, beta_t)
+    return dist.sample((bsize,)).to(device)
+
+
+def make_att_2d_masks(pad_masks, att_masks):  # see openpi `make_att_2d_masks` (exact copy)
+    """Copied from big_vision.
+
+    Tokens can attend to valid inputs tokens which have a cumulative mask_ar
+    smaller or equal to theirs. This way `mask_ar` int[B, N] can be used to
+    setup several types of attention, for example:
+
+      [[1 1 1 1 1 1]]: pure causal attention.
+
+      [[0 0 0 1 1 1]]: prefix-lm attention. The first 3 tokens can attend between
+          themselves and the last 3 tokens have a causal attention. The first
+          entry could also be a 1 without changing behaviour.
+
+      [[1 0 1 0 1 0 0 1 0 0]]: causal attention between 4 blocks. Tokens of a
+          block can attend all previous blocks and all tokens on the same block.
+
+    Args:
+      input_mask: bool[B, N] true if its part of the input, false if padding.
+      mask_ar: int32[B, N] mask that's 1 where previous tokens cannot depend on
+        it and 0 where it shares the same attention mask as the previous token.
+    """
+    if att_masks.ndim != 2:
+        raise ValueError(att_masks.ndim)
+    if pad_masks.ndim != 2:
+        raise ValueError(pad_masks.ndim)
+
+    cumsum = torch.cumsum(att_masks, dim=1)
+    att_2d_masks = cumsum[:, None, :] <= cumsum[:, :, None]
+    pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
+    return att_2d_masks & pad_2d_masks
+
+
+def clone_past_key_values(past_key_values):
+    """Clone the DynamicCache returned by prefix prefill for compiled denoising."""
+    return DynamicCache(
+        tuple(
+            (keys.clone(), values.clone(), sliding_window) for keys, values, sliding_window in past_key_values
+        )
+    )
+
+
+def pad_vector(vector, new_dim):
+    """Pad the last dimension of a vector to new_dim with zeros.
+
+    Can be (batch_size x sequence_length x features_dimension)
+    or (batch_size x features_dimension)
+    """
+    if vector.shape[-1] >= new_dim:
+        return vector
+    return F.pad(vector, (0, new_dim - vector.shape[-1]))
+
+
+def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
+    images: torch.Tensor,
+    height: int,
+    width: int,
+    mode: str = "bilinear",
+) -> torch.Tensor:
+    """PyTorch version of resize_with_pad. Resizes an image to a target height and width without distortion
+    by padding with black. If the image is float32, it must be in the range [-1, 1].
+
+    Args:
+        images: Tensor of shape [*b, h, w, c] or [*b, c, h, w]
+        height: Target height
+        width: Target width
+        mode: Interpolation mode ('bilinear', 'nearest', etc.)
+
+    Returns:
+        Resized and padded tensor with same shape format as input
+    """
+    # Check if input is in channels-last format [*b, h, w, c] or channels-first [*b, c, h, w]
+    if images.shape[-1] <= 4:  # Assume channels-last format
+        channels_last = True
+        if images.dim() == 3:
+            images = images.unsqueeze(0)  # Add batch dimension
+        images = images.permute(0, 3, 1, 2)  # [b, h, w, c] -> [b, c, h, w]
+    else:
+        channels_last = False
+        if images.dim() == 3:
+            images = images.unsqueeze(0)  # Add batch dimension
+
+    batch_size, channels, cur_height, cur_width = images.shape
+
+    # Calculate resize ratio
+    ratio = max(cur_width / width, cur_height / height)
+    resized_height = int(cur_height / ratio)
+    resized_width = int(cur_width / ratio)
+
+    # Resize
+    resized_images = F.interpolate(
+        images,
+        size=(resized_height, resized_width),
+        mode=mode,
+        align_corners=False if mode == "bilinear" else None,
+    )
+
+    # Handle dtype-specific clipping
+    if images.dtype == torch.uint8:
+        resized_images = torch.round(resized_images).clamp(0, 255).to(torch.uint8)
+    elif images.dtype == torch.float32:
+        resized_images = resized_images.clamp(0.0, 1.0)
+    else:
+        raise ValueError(f"Unsupported image dtype: {images.dtype}")
+
+    # Calculate padding
+    pad_h0, remainder_h = divmod(height - resized_height, 2)
+    pad_h1 = pad_h0 + remainder_h
+    pad_w0, remainder_w = divmod(width - resized_width, 2)
+    pad_w1 = pad_w0 + remainder_w
+
+    # Pad
+    constant_value = 0 if images.dtype == torch.uint8 else 0.0
+    padded_images = F.pad(
+        resized_images,
+        (pad_w0, pad_w1, pad_h0, pad_h1),  # left, right, top, bottom
+        mode="constant",
+        value=constant_value,
+    )
+
+    # Convert back to original format if needed
+    if channels_last:
+        padded_images = padded_images.permute(0, 2, 3, 1)  # [b, c, h, w] -> [b, h, w, c]
+
+    return padded_images
 
 
 # Define the complete layer computation function for gradient checkpointing
@@ -401,6 +646,12 @@ class PaliGemmaWithExpertModel(
 class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     """Core PI05 PyTorch model."""
 
+    use_hf_vision_checkpointing_api = False
+    checkpoint_vision_embeddings = True
+    use_typed_attention_masks = False
+    use_on_device_suffix_mask = False
+    precompute_denoise_times = False
+
     def __init__(self, config: PI05Config, rtc_processor: RTCProcessor | None = None):
         super().__init__()
         self.config = config
@@ -444,7 +695,11 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         """Enable gradient checkpointing for memory optimization."""
         self.gradient_checkpointing_enabled = True
         self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing = True
-        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing = True
+        vision_tower = self.paligemma_with_expert.paligemma.model.vision_tower
+        if self.use_hf_vision_checkpointing_api:
+            vision_tower.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        else:
+            vision_tower.gradient_checkpointing = True
         self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = True
         logging.info("Enabled gradient checkpointing for PI05Pytorch model")
 
@@ -452,7 +707,11 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         """Disable gradient checkpointing."""
         self.gradient_checkpointing_enabled = False
         self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing = False
-        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing = False
+        vision_tower = self.paligemma_with_expert.paligemma.model.vision_tower
+        if self.use_hf_vision_checkpointing_api:
+            vision_tower.gradient_checkpointing_disable()
+        else:
+            vision_tower.gradient_checkpointing = False
         self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = False
         logging.info("Disabled gradient checkpointing for PI05Pytorch model")
 
@@ -466,6 +725,14 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 func, *args, use_reentrant=False, preserve_rng_state=False, **kwargs
             )
         return func(*args, **kwargs)
+
+    def _prepare_attention_masks_4d(self, att_2d_masks, dtype=None):
+        """Helper method to prepare 4D attention masks for transformer."""
+        att_2d_masks_4d = att_2d_masks[:, None, :, :]
+        result = torch.where(att_2d_masks_4d, 0.0, OPENPI_ATTENTION_MASK_VALUE)
+        if dtype is not None:
+            result = result.to(dtype=dtype)
+        return result
 
     def sample_noise(self, shape, device):
         return sample_noise(shape, device)
@@ -488,13 +755,16 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         pad_masks = []
         att_masks = []
 
-        # Process images
-        for img, img_mask in zip(images, img_masks, strict=True):
+        if self.checkpoint_vision_embeddings:
 
-            def image_embed_func(img):
-                return self.paligemma_with_expert.embed_image(img)
+            def embed_image(img):
+                return self._apply_checkpoint(self.paligemma_with_expert.embed_image, img)
 
-            img_emb = self._apply_checkpoint(image_embed_func, img)
+            img_embs = [embed_image(img) for img in images]
+        else:
+            img_embs = [self.paligemma_with_expert.embed_image(img) for img in images]
+
+        for img_emb, img_mask in zip(img_embs, img_masks, strict=True):
             bsize, num_img_embs = img_emb.shape[:2]
 
             embs.append(img_emb)
@@ -556,8 +826,15 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Set attention masks so that image, language and state inputs do not attend to action tokens
         att_masks += [1] + ([0] * (self.config.chunk_size - 1))
-        att_masks = torch.tensor(att_masks, dtype=action_emb.dtype, device=action_emb.device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+
+        if self.use_on_device_suffix_mask:
+            n = len(att_masks)
+            att_masks = torch.zeros(n, dtype=action_emb.dtype, device=action_emb.device)
+            att_masks[0] = 1
+            att_masks = att_masks[None, :].expand(bsize, n)
+        else:
+            att_masks = torch.tensor(att_masks, dtype=action_emb.dtype, device=action_emb.device)
+            att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
         return action_emb, pad_masks, att_masks, adarms_cond
 
@@ -583,7 +860,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
 
-        att_2d_masks_4d = prepare_attention_masks_4d(att_2d_masks)
+        att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
 
         def forward_func(prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond):
             (_, suffix_out), _ = self.paligemma_with_expert.forward(
@@ -641,7 +918,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
-        prefix_att_2d_masks_4d = prepare_attention_masks_4d(prefix_att_2d_masks)
+        mask_dtype = prefix_embs.dtype if self.use_typed_attention_masks else None
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks, dtype=mask_dtype)
         self.paligemma_with_expert.paligemma.model.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
         _, past_key_values = self.paligemma_with_expert.forward(
@@ -652,21 +930,52 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             use_cache=True,
         )
 
-        return euler_integrate(
-            lambda input_x_t, current_timestep: self.denoise_step(
-                prefix_pad_masks=prefix_pad_masks,
-                past_key_values=past_key_values,
-                x_t=input_x_t,
-                timestep=current_timestep,
-            ),
-            noise,
-            num_steps,
-            rtc_processor=self.rtc_processor,
-            rtc_enabled=self._rtc_enabled(),
-            inference_delay=kwargs.get("inference_delay"),
-            prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
-            execution_horizon=kwargs.get("execution_horizon"),
-        )
+        dt = -1.0 / num_steps
+
+        times = None
+        if self.precompute_denoise_times:
+            times = torch.tensor(
+                [1.0 + step * dt for step in range(num_steps)], dtype=torch.float32, device=device
+            )
+
+        x_t = noise
+        for step in range(num_steps):
+            time = 1.0 + step * dt
+            if times is None:
+                time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
+            else:
+                time_tensor = times[step].expand(bsize)
+
+            def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
+                return self.denoise_step(
+                    prefix_pad_masks=prefix_pad_masks,
+                    past_key_values=past_key_values,
+                    x_t=input_x_t,
+                    timestep=current_timestep,
+                )
+
+            if self._rtc_enabled():
+                inference_delay = kwargs.get("inference_delay")
+                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+                execution_horizon = kwargs.get("execution_horizon")
+
+                v_t = self.rtc_processor.denoise_step(
+                    x_t=x_t,
+                    prev_chunk_left_over=prev_chunk_left_over,
+                    inference_delay=inference_delay,
+                    time=time,
+                    original_denoise_step_partial=denoise_step_partial_call,
+                    execution_horizon=execution_horizon,
+                )
+            else:
+                v_t = denoise_step_partial_call(x_t)
+
+            x_t = x_t + dt * v_t
+
+            if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
+                self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
+
+        return x_t
 
     def denoise_step(
         self,
@@ -689,7 +998,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
-        full_att_2d_masks_4d = prepare_attention_masks_4d(full_att_2d_masks)
+        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
 
         past_key_values = clone_past_key_values(past_key_values)
@@ -713,6 +1022,9 @@ class PI05Policy(PreTrainedPolicy):
 
     config_class = PI05Config
     name = "pi05"
+    model_class = PI05Pytorch
+    eval_after_pretrained_load = False
+    show_openpi_disclaimer = True
 
     def __init__(
         self,
@@ -730,7 +1042,7 @@ class PI05Policy(PreTrainedPolicy):
 
         # Initialize the core PI05 model
         self.init_rtc_processor()
-        self.model = PI05Pytorch(config, rtc_processor=self.rtc_processor)
+        self.model = self.model_class(config, rtc_processor=self.rtc_processor)
 
         # Enable gradient checkpointing if requested
         if config.gradient_checkpointing:
@@ -756,16 +1068,16 @@ class PI05Policy(PreTrainedPolicy):
         strict: bool = True,
         **kwargs,
     ) -> T:
-        """Override the from_pretrained method to handle key remapping and display important disclaimer."""
-        print(
-            "The PI05 model is a direct port of the OpenPI implementation. \n"
-            "This implementation follows the original OpenPI structure for compatibility. \n"
-            "Original implementation: https://github.com/Physical-Intelligence/openpi"
-        )
+        """Load PI05-compatible single-file or sharded safetensors checkpoints."""
+        if cls.show_openpi_disclaimer:
+            print(
+                "The PI05 model is a direct port of the OpenPI implementation. \n"
+                "This implementation follows the original OpenPI structure for compatibility. \n"
+                "Original implementation: https://github.com/Physical-Intelligence/openpi"
+            )
         if pretrained_name_or_path is None:
             raise ValueError("pretrained_name_or_path is required")
 
-        # Use provided config if available, otherwise create default config
         if config is None:
             config = PreTrainedConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
@@ -779,84 +1091,34 @@ class PI05Policy(PreTrainedPolicy):
                 **kwargs,
             )
 
-        # Initialize model without loading weights
-        # Check if dataset_stats were provided in kwargs
         model = cls(config, **kwargs)
-
-        # Load state dict (expects keys with "model." prefix)
-        try:
-            print(f"Loading model from: {pretrained_name_or_path}")
-            try:
-                from transformers.utils import cached_file
-
-                resolved_file = cached_file(
-                    pretrained_name_or_path,
-                    "model.safetensors",
-                    cache_dir=kwargs.get("cache_dir"),
-                    force_download=kwargs.get("force_download", False),
-                    resume_download=kwargs.get("resume_download"),
-                    proxies=kwargs.get("proxies"),
-                    token=kwargs.get("token"),
-                    revision=kwargs.get("revision"),
-                    local_files_only=kwargs.get("local_files_only", False),
-                )
-                from safetensors.torch import load_file
-
-                original_state_dict = load_file(resolved_file)
-                print("✓ Loaded state dict from model.safetensors")
-            except Exception as e:
-                print(f"Could not load state dict from remote files: {e}")
-                print("Returning model without loading pretrained weights")
-                return model
-
-            # First, fix any key differences (see openpi model.py, _fix_pytorch_state_dict_keys)
-            fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
-
-            # Then add "model." prefix for all keys that don't already have it
-            remapped_state_dict = {}
-            remap_count = 0
-
-            for key, value in fixed_state_dict.items():
-                if not key.startswith("model."):
-                    new_key = f"model.{key}"
-                    remapped_state_dict[new_key] = value
-                    remap_count += 1
-                else:
-                    remapped_state_dict[key] = value
-
-            if remap_count > 0:
-                print(f"Remapped {remap_count} state dict keys")
-
-            # Load the remapped state dict into the model
-            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
-
-            if missing_keys:
-                print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
-                if len(missing_keys) <= 5:
-                    for key in missing_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in missing_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(missing_keys) - 5} more")
-
-            if unexpected_keys:
-                print(f"Unexpected keys when loading state dict: {len(unexpected_keys)} keys")
-                if len(unexpected_keys) <= 5:
-                    for key in unexpected_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in unexpected_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(unexpected_keys) - 5} more")
-
-            if not missing_keys and not unexpected_keys:
-                print("All keys loaded successfully!")
-
-        except Exception as e:
-            print(f"Warning: Could not load state dict: {e}")
-
+        files = _resolve_weight_files(
+            pretrained_name_or_path,
+            force_download=force_download,
+            resume_download=resume_download,
+            proxies=proxies,
+            token=token,
+            cache_dir=cache_dir,
+            local_files_only=local_files_only,
+            revision=revision,
+        )
+        fixed_state_dict = model._fix_pytorch_state_dict_keys(_load_weight_files(files), model.config)
+        remapped_state_dict = {
+            key if key.startswith("model.") else f"model.{key}": value
+            for key, value in fixed_state_dict.items()
+        }
+        remapped_state_dict = model._prepare_pretrained_state_dict(remapped_state_dict)
+        missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
+        if missing_keys:
+            logging.warning("Missing %s checkpoint keys: %s", cls.name, missing_keys)
+        if unexpected_keys:
+            logging.warning("Unexpected %s checkpoint keys: %s", cls.name, unexpected_keys)
+        if model.eval_after_pretrained_load:
+            model.eval()
         return model
+
+    def _prepare_pretrained_state_dict(self, state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
+        return state_dict
 
     def _fix_pytorch_state_dict_keys(
         self, state_dict, model_config
@@ -1028,11 +1290,15 @@ class PI05Policy(PreTrainedPolicy):
 
         # Action queue logic for n_action_steps > 1
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
+            action_batch = self._prepare_action_batch(batch)
+            actions = self.predict_action_chunk(action_batch)[:, : self.config.n_action_steps]
             # Transpose to get shape (n_action_steps, batch_size, action_dim)
             self._action_queue.extend(actions.transpose(0, 1))
 
         return self._action_queue.popleft()
+
+    def _prepare_action_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        return batch
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:

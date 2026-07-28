@@ -150,6 +150,7 @@ pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 # There is no cmeel-urdfdom 5.x; <5 selects the 4.x ABI the placo/pin wheels are built against.
 placo-dep = ["placo>=0.9.6,<0.9.16", "cmeel-urdfdom>=4,<5", "cmeel-tinyxml2<11"]
 transformers-dep = ["transformers>=5.4.0,<5.6.0"]
+sentencepiece-dep = ["sentencepiece>=0.2.0,<0.3.0"] # FAST action tokenizer backend (pi052, pi0_fast)
 grpcio-dep = ["grpcio>=1.73.1,<2.0.0", "protobuf>=6.31.1,<8.0.0"]
 accelerate-dep = ["accelerate>=1.14.0,<2.0.0"]
 can-dep = ["python-can>=4.2.0,<5.0.0"]
@@ -212,7 +213,7 @@ wallx = [
     "torchdiffeq>=0.2.4,<0.3.0",
     "lerobot[qwen-vl-utils-dep]",
 ]
-pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
+pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]", "lerobot[sentencepiece-dep]"]
 molmoact2 = ["lerobot[transformers-dep]", "lerobot[peft-dep]", "lerobot[scipy-dep]"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "lerobot[accelerate-dep]"]
 multi_task_dit = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
