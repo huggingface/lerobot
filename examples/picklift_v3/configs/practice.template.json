@@ -1,6 +1,7 @@
 {
   "mode": "real",
   "camera_device": "REPLACE_STABLE_FRONT_CAMERA_PATH",
+  "camera_profile_id": "icspring_front_crop_1280x960_to_640x480_v1",
   "camera_acquisition_fps": 30,
   "robot_id": "REPLACE_FOLLOWER_CALIBRATION_ID",
   "follower_port": "REPLACE_STABLE_FOLLOWER_SERIAL_PATH",

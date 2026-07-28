@@ -1,7 +1,9 @@
-# PickLift physical placement protocol v1
+# PickLift physical placement protocol v2
 
-This protocol is frozen as `picklift_spawn_v1`. It applies to new Ubuntu
-Leader-to-Follower collection only. Historical datasets are not rewritten.
+This current protocol is frozen as `picklift_spawn_v2`. It applies to new
+Ubuntu Leader-to-Follower formal collection. The former 15–25 cm contract
+remains immutable as [`picklift_spawn_v1`](./PICKLIFT_PROTOCOL_V1.md);
+historical manifests and datasets are not rewritten.
 
 ## Coordinate frame and allowed area
 
@@ -10,7 +12,7 @@ Leader-to-Follower collection only. Historical datasets are not rewritten.
 - `spawn_x_cm` is the mat horizontal coordinate, increasing left-to-right when
   looking forward from the robot. Allowed range: **20–40 cm**.
 - `spawn_y_cm` is forward distance from the arm center. Allowed range:
-  **15–25 cm**.
+  **10–25 cm**.
 - `spawn_yaw_deg` is the object's measured yaw. Allowed range: **0–90°**.
 - Record the actual measured values, not only the planned region center.
 
@@ -21,15 +23,15 @@ Boundary values are assigned to the higher-numbered bin, except the maximum.
 
 | Region | x range (cm) | y range (cm) |
 |---|---:|---:|
-| `r1c1` | 20–26.67 | 15–18.33 |
-| `r1c2` | 26.67–33.33 | 15–18.33 |
-| `r1c3` | 33.33–40 | 15–18.33 |
-| `r2c1` | 20–26.67 | 18.33–21.67 |
-| `r2c2` | 26.67–33.33 | 18.33–21.67 |
-| `r2c3` | 33.33–40 | 18.33–21.67 |
-| `r3c1` | 20–26.67 | 21.67–25 |
-| `r3c2` | 26.67–33.33 | 21.67–25 |
-| `r3c3` | 33.33–40 | 21.67–25 |
+| `r1c1` | 20–26.67 | 10–15 |
+| `r1c2` | 26.67–33.33 | 10–15 |
+| `r1c3` | 33.33–40 | 10–15 |
+| `r2c1` | 20–26.67 | 15–20 |
+| `r2c2` | 26.67–33.33 | 15–20 |
+| `r2c3` | 33.33–40 | 15–20 |
+| `r3c1` | 20–26.67 | 20–25 |
+| `r3c2` | 26.67–33.33 | 20–25 |
+| `r3c3` | 33.33–40 | 20–25 |
 
 Sample the nine regions evenly. Within each selected region, randomize the
 actual square-center position and yaw in 0–90°.
@@ -57,7 +59,7 @@ deterministic training view.
 
 Every episode provenance record includes:
 
-- `spawn_protocol_version=picklift_spawn_v1`
+- `spawn_protocol_version=picklift_spawn_v2`
 - `spawn_id`
 - `spawn_region`
 - `spawn_x_cm`, `spawn_y_cm`, `spawn_yaw_deg`

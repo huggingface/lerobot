@@ -38,7 +38,7 @@ def render_dashboard(
     cv2.rectangle(canvas, (0, 0), (960, 58), (0, 0, 0), -1)
     cv2.putText(
         canvas,
-        "FRONT  |  canonical 640x480 RGB  |  Dataset v3 @ 20 FPS",
+        "FRONT | aligned 1280x960 crop -> canonical 640x480 RGB",
         (20, 38),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.72,

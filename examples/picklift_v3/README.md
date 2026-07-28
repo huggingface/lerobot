@@ -19,6 +19,21 @@ The frozen physical placement protocol and per-episode procedure are in
 [`PICKLIFT_PROTOCOL.md`](./PICKLIFT_PROTOCOL.md) and
 [`OPERATOR_CHECKLIST.md`](./OPERATOR_CHECKLIST.md). Start a balanced schedule
 from [`spawn_plan.template.json`](./spawn_plan.template.json).
+New formal collection uses `picklift_spawn_v2` (forward 10–25 cm, lateral
+centerline ±10 cm). The previous 15–25 cm contract remains available as
+[`picklift_spawn_v1`](./PICKLIFT_PROTOCOL_V1.md) and is never retroactively
+applied to historical manifests.
+
+The aligned front profile is
+`icspring_front_crop_1280x960_to_640x480_v1`: acquire native 1920×1080 RGB
+MJPEG at 30 FPS, center-crop `(x=320, y=60, width=1280, height=960)`, preserve
+the lens distortion, and resize with OpenCV `INTER_AREA` to the canonical
+640×480 RGB training view. Dataset sampling remains exactly 20 FPS. This
+implements the camera geometry that was accepted during real/MuJoCo
+alignment; the matching MuJoCo reference uses vertical FOV 47°.
+See [`CAMERA_PROFILE.md`](./CAMERA_PROFILE.md) for the exact executable
+pipeline and the distinction between the accepted MuJoCo FOV and approximate
+physical-lens measurement.
 
 The normal command is deliberately fail-closed. `mode=real` additionally
 requires `powered_real_run_ack=I_HAVE_COMPLETED_THE_POWERED_SAFETY_CHECK`.

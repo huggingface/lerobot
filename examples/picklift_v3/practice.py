@@ -5,8 +5,11 @@ import json
 import time
 from pathlib import Path
 
+import numpy as np
+
+from examples.picklift_v3.backend import RealSO101Backend, SyntheticBackend
+from examples.picklift_v3.camera_profile import validate_camera_profile_config
 from examples.picklift_v3.operator_ui import OperatorUI
-from examples.picklift_v3.record import RealSO101Backend, SyntheticBackend
 
 PRACTICE_ACK = "I_UNDERSTAND_THIS_IS_LIVE_PRACTICE"
 
@@ -15,6 +18,7 @@ def validate_practice_config(cfg: dict) -> None:
     required = (
         "mode",
         "camera_device",
+        "camera_profile_id",
         "camera_acquisition_fps",
         "robot_id",
         "follower_port",
@@ -29,6 +33,7 @@ def validate_practice_config(cfg: dict) -> None:
         raise ValueError(f"missing practice configuration: {', '.join(missing)}")
     if cfg["mode"] not in {"real", "synthetic"}:
         raise ValueError("mode must be real or synthetic")
+    validate_camera_profile_config(cfg)
     if float(cfg["control_hz"]) < 20:
         raise ValueError("control_hz must be >= 20")
     if cfg["alignment_mode"] not in {"direct_absolute", "relative_rebase"}:
@@ -44,14 +49,22 @@ def validate_practice_config(cfg: dict) -> None:
 def run_practice(cfg: dict, backend=None, ui=None, max_seconds: float | None = None) -> dict:
     """Run live Leader-to-Follower control without creating or writing a dataset."""
     validate_practice_config(cfg)
-    backend = backend or (SyntheticBackend() if cfg["mode"] == "synthetic" else RealSO101Backend(cfg))
     ui = ui or OperatorUI(target_frames=0)
     period = 1 / float(cfg["control_hz"])
     frames = 0
     started = time.monotonic()
     last_front = None
     ui.open()
+    ui.show(
+        np.zeros((480, 640, 3), dtype=np.uint8),
+        status="WAITING",
+        message="Connecting proven collection backend...",
+        button_labels=("CONNECTING", "WAIT", "QUIT"),
+    )
+    print("PRACTICE_UI_READY", flush=True)
+    backend = backend or (SyntheticBackend(cfg) if cfg["mode"] == "synthetic" else RealSO101Backend(cfg))
     backend.connect()
+    print("PRACTICE_BACKEND_CONNECTED", flush=True)
     try:
         next_tick = time.perf_counter()
         while True:

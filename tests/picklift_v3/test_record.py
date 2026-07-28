@@ -3,10 +3,13 @@ import json
 import numpy as np
 import pytest
 
+from examples.picklift_v3.backend import RelativeRebaser, SyntheticBackend
+from examples.picklift_v3.camera_profile import (
+    ALIGNED_FRONT_CAMERA_PROFILE_ID,
+    SYNTHETIC_FRONT_CAMERA_PROFILE_ID,
+)
 from examples.picklift_v3.record import (
     FPS,
-    RelativeRebaser,
-    SyntheticBackend,
     features,
     record,
     spawn_region_for,
@@ -26,6 +29,7 @@ def config(tmp_path):
         "task": "engineering_smoke: contract check",
         "real_world_setup_version": "synthetic_v1",
         "camera_config_version": "synthetic_v1",
+        "camera_profile_id": SYNTHETIC_FRONT_CAMERA_PROFILE_ID,
         "camera_device": "synthetic",
         "camera_intrinsics_version": "n/a-v1",
         "camera_extrinsics_version": "n/a-v1",
@@ -36,9 +40,10 @@ def config(tmp_path):
         "leader_calibration_id": "synthetic",
         "leader_serial_id": "synthetic",
         "spawn_id": "engineering_spawn_0000",
+        "spawn_protocol_version": "picklift_spawn_v2",
         "spawn_region": "r2c2",
         "spawn_x_cm": 30,
-        "spawn_y_cm": 20,
+        "spawn_y_cm": 18,
         "spawn_yaw_deg": 45,
         "result": "failure",
         "formal_data": False,
@@ -98,6 +103,7 @@ def test_required_provenance(tmp_path):
     cfg = config(tmp_path)
     root = record(cfg)
     provenance = json.loads((root / "provenance/episodes/episode_000000.json").read_text())
+    session = json.loads((root / "provenance/session.json").read_text())
     for key in (
         "operator_id",
         "session_id",
@@ -111,6 +117,8 @@ def test_required_provenance(tmp_path):
         "robot_calibration_id",
         "follower_serial_id",
         "camera_config_version",
+        "camera_profile_id",
+        "camera_profile",
         "record_fps",
         "start_time",
         "end_time",
@@ -127,6 +135,8 @@ def test_required_provenance(tmp_path):
         "result",
     ):
         assert key in provenance
+    assert session["camera_profile"] == provenance["camera_profile"]
+    assert session["spawn_protocol_version"] == "picklift_spawn_v2"
     assert provenance["formal_data"] is False
 
 
@@ -149,7 +159,17 @@ def test_fail_closed_config(tmp_path, mutation, error):
 def test_real_mode_requires_powered_ack(tmp_path):
     cfg = config(tmp_path)
     cfg["mode"] = "real"
+    cfg["camera_profile_id"] = ALIGNED_FRONT_CAMERA_PROFILE_ID
+    cfg["camera_config_version"] = ALIGNED_FRONT_CAMERA_PROFILE_ID
     with pytest.raises(PermissionError, match="powered safety check"):
+        validate_config(cfg)
+
+
+def test_real_mode_rejects_camera_profile_version_mismatch(tmp_path):
+    cfg = config(tmp_path)
+    cfg["mode"] = "real"
+    cfg["camera_profile_id"] = ALIGNED_FRONT_CAMERA_PROFILE_ID
+    with pytest.raises(ValueError, match="camera_config_version"):
         validate_config(cfg)
 
 
@@ -176,8 +196,8 @@ def test_direct_absolute_config_is_allowed(tmp_path):
 @pytest.mark.parametrize(
     ("x_cm", "y_cm", "region"),
     [
-        (20, 15, "r1c1"),
-        (30, 20, "r2c2"),
+        (20, 10, "r1c1"),
+        (30, 18, "r2c2"),
         (40, 25, "r3c3"),
     ],
 )
@@ -185,11 +205,25 @@ def test_spawn_region_mapping(x_cm, y_cm, region):
     assert spawn_region_for(x_cm, y_cm) == region
 
 
+def test_legacy_spawn_v1_mapping_remains_available():
+    assert spawn_region_for(20, 15, "picklift_spawn_v1") == "r1c1"
+    assert spawn_region_for(30, 20, "picklift_spawn_v1") == "r2c2"
+    assert spawn_region_for(40, 25, "picklift_spawn_v1") == "r3c3"
+
+
+def test_spawn_v2_balanced_grid_covers_all_nine_regions():
+    regions = {spawn_region_for(x_cm, y_cm) for y_cm in (12, 17, 22) for x_cm in (23, 30, 37)}
+    assert regions == {f"r{row}c{column}" for row in range(1, 4) for column in range(1, 4)}
+    assert spawn_region_for(30, 15) == "r2c2"
+    assert spawn_region_for(30, 20) == "r3c2"
+
+
 @pytest.mark.parametrize(
     ("mutation", "error"),
     [
         ({"spawn_x_cm": 19}, "20..40"),
-        ({"spawn_y_cm": 26}, "15..25"),
+        ({"spawn_y_cm": 9}, "10..25"),
+        ({"spawn_protocol_version": "picklift_spawn_unknown"}, "unsupported"),
         ({"spawn_yaw_deg": 91}, "0..90"),
         ({"spawn_region": "r1c1"}, "does not match"),
         ({"result": "success", "success": False}, "success must be true"),

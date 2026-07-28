@@ -13,20 +13,31 @@ from typing import Protocol
 
 import numpy as np
 
+from examples.picklift_v3.backend import (
+    JOINTS,
+    RealSO101Backend,
+    SyntheticBackend,
+)
+from examples.picklift_v3.camera_profile import (
+    camera_profile,
+    validate_camera_profile_config,
+)
 from lerobot import __version__ as lerobot_version
 from lerobot.datasets import CODEBASE_VERSION, LeRobotDataset
 
-JOINTS = (
-    "shoulder_pan",
-    "shoulder_lift",
-    "elbow_flex",
-    "wrist_flex",
-    "wrist_roll",
-    "gripper",
-)
 FPS = 20
 REAL_ACK = "I_HAVE_COMPLETED_THE_POWERED_SAFETY_CHECK"
-SPAWN_PROTOCOL_VERSION = "picklift_spawn_v1"
+SPAWN_PROTOCOL_VERSION = "picklift_spawn_v2"
+SPAWN_BOUNDS_CM = {
+    "picklift_spawn_v1": {
+        "x": (20.0, 40.0),
+        "y": (15.0, 25.0),
+    },
+    "picklift_spawn_v2": {
+        "x": (20.0, 40.0),
+        "y": (10.0, 25.0),
+    },
+}
 RESULTS = {"pending", "success", "failure", "discard"}
 REQUIRED = (
     "dataset_root",
@@ -38,6 +49,7 @@ REQUIRED = (
     "task",
     "real_world_setup_version",
     "camera_config_version",
+    "camera_profile_id",
     "camera_device",
     "camera_intrinsics_version",
     "camera_extrinsics_version",
@@ -48,6 +60,7 @@ REQUIRED = (
     "leader_calibration_id",
     "leader_serial_id",
     "spawn_id",
+    "spawn_protocol_version",
     "spawn_region",
     "spawn_x_cm",
     "spawn_y_cm",
@@ -87,13 +100,23 @@ def git_commit() -> str:
     ).stdout.strip()
 
 
-def spawn_region_for(x_cm: float, y_cm: float) -> str:
-    if not 20 <= x_cm <= 40:
-        raise ValueError("spawn_x_cm must be within mat horizontal 20..40 cm")
-    if not 15 <= y_cm <= 25:
-        raise ValueError("spawn_y_cm must be within forward depth 15..25 cm")
-    column = min(int((x_cm - 20) / (20 / 3)), 2) + 1
-    row = min(int((y_cm - 15) / (10 / 3)), 2) + 1
+def spawn_region_for(
+    x_cm: float,
+    y_cm: float,
+    protocol_version: str = SPAWN_PROTOCOL_VERSION,
+) -> str:
+    try:
+        bounds = SPAWN_BOUNDS_CM[protocol_version]
+    except KeyError as exc:
+        raise ValueError(f"unsupported spawn_protocol_version: {protocol_version}") from exc
+    x_min, x_max = bounds["x"]
+    y_min, y_max = bounds["y"]
+    if not x_min <= x_cm <= x_max:
+        raise ValueError(f"spawn_x_cm must be within mat horizontal {x_min:g}..{x_max:g} cm")
+    if not y_min <= y_cm <= y_max:
+        raise ValueError(f"spawn_y_cm must be within forward depth {y_min:g}..{y_max:g} cm")
+    column = min(int((x_cm - x_min) / ((x_max - x_min) / 3)), 2) + 1
+    row = min(int((y_cm - y_min) / ((y_max - y_min) / 3)), 2) + 1
     return f"r{row}c{column}"
 
 
@@ -107,6 +130,9 @@ def validate_config(cfg: dict) -> None:
         raise ValueError("control_hz must be >= 20")
     if int(cfg.get("camera_acquisition_fps", 0)) < FPS:
         raise ValueError("camera_acquisition_fps must be >= 20")
+    validate_camera_profile_config(cfg)
+    if cfg["mode"] == "real" and cfg["camera_config_version"] != cfg["camera_profile_id"]:
+        raise ValueError("camera_config_version must equal the immutable real camera_profile_id")
     if cfg.get("alignment_mode") not in {"relative_rebase", "direct_absolute"}:
         raise ValueError("alignment_mode must be relative_rebase or direct_absolute")
     if float(cfg.get("startup_hold_s", -1)) < 0:
@@ -118,7 +144,7 @@ def validate_config(cfg: dict) -> None:
     x_cm = float(cfg["spawn_x_cm"])
     y_cm = float(cfg["spawn_y_cm"])
     yaw_deg = float(cfg["spawn_yaw_deg"])
-    expected_region = spawn_region_for(x_cm, y_cm)
+    expected_region = spawn_region_for(x_cm, y_cm, cfg["spawn_protocol_version"])
     if cfg["spawn_region"] != expected_region:
         raise ValueError(f"spawn_region does not match actual coordinates: expected {expected_region}")
     if not 0 <= yaw_deg <= 90:
@@ -149,162 +175,6 @@ def validate_config(cfg: dict) -> None:
                 raise ValueError(f"{key} must use a stable /dev/serial/by-id path")
 
 
-class SyntheticBackend:
-    def __init__(self) -> None:
-        self.index = 0
-
-    def connect(self) -> None:
-        pass
-
-    def read_pre_action(self) -> tuple[np.ndarray, np.ndarray]:
-        state = np.arange(6, dtype=np.float32) + self.index / 100
-        image = np.zeros((480, 640, 3), dtype=np.uint8)
-        image[..., 0] = self.index % 255
-        return state, image
-
-    def requested_action(self) -> np.ndarray:
-        return np.arange(6, dtype=np.float32) + 0.5
-
-    def send_action(self, action: np.ndarray) -> np.ndarray:
-        self.index += 1
-        return np.clip(action, -100, 100).astype(np.float32)
-
-    def preview_frame(self) -> np.ndarray:
-        return self.read_pre_action()[1]
-
-    def close(self) -> None:
-        pass
-
-
-@dataclass
-class RelativeRebaser:
-    offset: np.ndarray | None = None
-
-    def initialize(self, leader: np.ndarray, follower: np.ndarray) -> np.ndarray:
-        leader = np.asarray(leader, dtype=np.float32)
-        follower = np.asarray(follower, dtype=np.float32)
-        if leader.shape != (6,) or follower.shape != (6,):
-            raise ValueError("relative rebase requires two six-joint vectors")
-        self.offset = follower - leader
-        return self.apply(leader)
-
-    def apply(self, leader: np.ndarray) -> np.ndarray:
-        if self.offset is None:
-            raise RuntimeError("relative rebase used before initialization")
-        leader = np.asarray(leader, dtype=np.float32)
-        if leader.shape != (6,):
-            raise ValueError("leader action must contain six joints")
-        return (leader + self.offset).astype(np.float32)
-
-
-class RealSO101Backend:
-    def __init__(self, cfg: dict):
-        from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-        from lerobot.robots.so_follower.config_so_follower import SO101FollowerConfig
-        from lerobot.robots.so_follower.so_follower import SO101Follower
-        from lerobot.teleoperators.so_leader.config_so_leader import SO101LeaderConfig
-        from lerobot.teleoperators.so_leader.so_leader import SO101Leader
-
-        camera = OpenCVCameraConfig(
-            index_or_path=cfg["camera_device"],
-            width=640,
-            height=480,
-            fps=int(cfg["camera_acquisition_fps"]),
-        )
-        self.robot = SO101Follower(
-            SO101FollowerConfig(
-                port=cfg["follower_port"],
-                id=cfg["robot_id"],
-                cameras={"front": camera},
-                use_degrees=True,
-                max_relative_target=cfg.get("max_relative_target", 5.0),
-            )
-        )
-        self.leader = SO101Leader(
-            SO101LeaderConfig(port=cfg["leader_port"], id=cfg["leader_id"], use_degrees=True)
-        )
-        self.rebaser = RelativeRebaser()
-        self.alignment_mode = cfg["alignment_mode"]
-        self.startup_hold_s = float(cfg["startup_hold_s"])
-
-    def _set_follower_torque(self, enabled: bool) -> None:
-        value = 1 if enabled else 0
-        self.robot.bus.sync_write("Torque_Enable", value, normalize=False, num_retry=2)
-        actual = self.robot.bus.sync_read("Torque_Enable", normalize=False, num_retry=2)
-        if any(int(state) != value for state in actual.values()):
-            raise RuntimeError(f"follower torque verification failed: expected {value}, got {actual}")
-
-    def connect(self) -> None:
-        # Deliberately bypass Robot.connect(): the generic SO implementation performs
-        # configuration writes before establishing a no-jump goal. Existing setup is
-        # audited separately; here we open buses, latch the present raw follower pose
-        # as its goal, and only then enable torque.
-        self.robot.bus.connect(handshake=True)
-        self.leader.bus.connect(handshake=True)
-        try:
-            for camera in self.robot.cameras.values():
-                camera.connect()
-            follower_raw = self.robot.bus.sync_read("Present_Position", normalize=False)
-            self.robot.bus.sync_write("Goal_Position", follower_raw, normalize=False)
-            follower = self._read_follower_state()
-            leader = self._read_leader_state()
-            if self.alignment_mode == "relative_rebase":
-                initial_command = self.rebaser.initialize(leader, follower)
-                if not np.allclose(initial_command, follower, atol=1e-5):
-                    raise RuntimeError("relative rebase failed zero-jump invariant")
-            self._set_follower_torque(True)
-            time.sleep(self.startup_hold_s)
-        except BaseException:
-            if self.robot.bus.is_connected:
-                try:
-                    self._set_follower_torque(False)
-                finally:
-                    self.robot.bus.disconnect(disable_torque=False)
-            if self.leader.bus.is_connected:
-                self.leader.bus.disconnect(disable_torque=False)
-            raise
-
-    def _read_follower_state(self) -> np.ndarray:
-        state = self.robot.bus.sync_read("Present_Position")
-        return np.asarray([state[j] for j in JOINTS], dtype=np.float32)
-
-    def _read_leader_state(self) -> np.ndarray:
-        action = self.leader.bus.sync_read("Present_Position")
-        return np.asarray([action[j] for j in JOINTS], dtype=np.float32)
-
-    def read_pre_action(self) -> tuple[np.ndarray, np.ndarray]:
-        obs = self.robot.get_observation()
-        state = np.asarray([obs[f"{j}.pos"] for j in JOINTS], dtype=np.float32)
-        image = np.asarray(obs["front"], dtype=np.uint8)
-        if image.shape != (480, 640, 3):
-            raise RuntimeError(f"front camera violated canonical shape: {image.shape}")
-        return state, image
-
-    def requested_action(self) -> np.ndarray:
-        leader = self._read_leader_state()
-        return self.rebaser.apply(leader) if self.alignment_mode == "relative_rebase" else leader
-
-    def send_action(self, action: np.ndarray) -> np.ndarray:
-        requested = {f"{joint}.pos": float(action[i]) for i, joint in enumerate(JOINTS)}
-        sent = self.robot.send_action(requested)
-        return np.asarray([sent[f"{j}.pos"] for j in JOINTS], dtype=np.float32)
-
-    def preview_frame(self) -> np.ndarray:
-        return np.asarray(self.robot.cameras["front"].read_latest(), dtype=np.uint8)
-
-    def close(self) -> None:
-        if self.robot.bus.is_connected:
-            try:
-                self._set_follower_torque(False)
-            finally:
-                self.robot.bus.disconnect(disable_torque=False)
-        for camera in self.robot.cameras.values():
-            if camera.is_connected:
-                camera.disconnect()
-        if self.leader.bus.is_connected:
-            self.leader.bus.disconnect(disable_torque=False)
-
-
 def features(use_videos: bool) -> dict:
     names = list(JOINTS)
     return {
@@ -327,7 +197,7 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
     validate_config(cfg)
     root = Path(cfg["dataset_root"]).resolve()
     start: str | None = None
-    backend = backend or (SyntheticBackend() if cfg["mode"] == "synthetic" else RealSO101Backend(cfg))
+    backend = backend or (SyntheticBackend(cfg) if cfg["mode"] == "synthetic" else RealSO101Backend(cfg))
     dataset = LeRobotDataset.create(
         cfg["repo_id"],
         fps=FPS,
@@ -378,8 +248,9 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
         ui = OperatorUI(target_frames=sample_count)
         ui.open()
         spawn_summary = (
-            f"{cfg['spawn_id']} | {cfg['spawn_region']}\n"
-            f"x={cfg['spawn_x_cm']}  y={cfg['spawn_y_cm']}  yaw={cfg['spawn_yaw_deg']}"
+            f"{cfg['spawn_protocol_version']} | {cfg['spawn_id']} | {cfg['spawn_region']}\n"
+            f"x={cfg['spawn_x_cm']} y={cfg['spawn_y_cm']} yaw={cfg['spawn_yaw_deg']}\n"
+            "front: aligned crop -> 640x480"
         )
         ui.wait_for_start(backend.preview_frame, message=spawn_summary)
     elif cfg.get("operator_cue_wait", False):
@@ -432,7 +303,10 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
                     status="RECORDING",
                     elapsed_s=((sample_index + 1) / FPS),
                     frames=sample_index + 1,
-                    message=f"{cfg['spawn_id']} | {cfg['spawn_region']}\nMove Leader | END stops early",
+                    message=(
+                        f"{cfg['spawn_id']} | {cfg['spawn_region']}\n"
+                        "aligned front | Dataset 20 FPS\nMove Leader | END stops early"
+                    ),
                 )
                 if command == "stop":
                     actual_termination_reason = "operator_end"
@@ -465,7 +339,6 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
         **{k: cfg[k] for k in REQUIRED},
         "backend": "real" if cfg["mode"] == "real" else "synthetic",
         "control_mode": "leader_follower",
-        "spawn_protocol_version": SPAWN_PROTOCOL_VERSION,
         "collection_commit": git_commit(),
         "lerobot_version": lerobot_version,
         "lerobot_dataset_version": CODEBASE_VERSION,
@@ -473,7 +346,8 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
         "camera_acquisition_fps": cfg["camera_acquisition_fps"],
         "record_fps": FPS,
         "joint_order": list(JOINTS),
-        "canonical_front": {"width": 640, "height": 480, "color": "RGB"},
+        "camera_profile": camera_profile(cfg["camera_profile_id"]),
+        "canonical_front": camera_profile(cfg["camera_profile_id"])["output"],
         "alignment_mode": cfg["alignment_mode"],
         "startup_hold_s": cfg["startup_hold_s"],
         "initial_rebase_offset": (
@@ -494,6 +368,7 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
     common["result"] = actual_result
     common["success"] = actual_success
     write_json(root / "provenance/dataset.json", common)
+    write_json(root / "provenance/session.json", common)
     write_json(root / "provenance/episodes/episode_000000.json", {**common, "episode_index": 0})
     return root
 

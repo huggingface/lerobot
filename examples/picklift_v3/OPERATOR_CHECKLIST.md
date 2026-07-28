@@ -11,7 +11,7 @@
 ## Before every episode
 
 - [ ] Select the planned `spawn_id` and region.
-- [ ] Place the object within x=20–40 cm and y=15–25 cm.
+- [ ] Place the object within x=20–40 cm and y=10–25 cm.
 - [ ] Record actual square-center x/y and actual yaw=0–90°.
 - [ ] Confirm the UI shows the same spawn ID, region, x/y/yaw.
 - [ ] Operator hands/body are out of the front image.

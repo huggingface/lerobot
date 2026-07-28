@@ -1,5 +1,6 @@
+from examples.picklift_v3.backend import SyntheticBackend
+from examples.picklift_v3.camera_profile import SYNTHETIC_FRONT_CAMERA_PROFILE_ID
 from examples.picklift_v3.practice import run_practice, validate_practice_config
-from examples.picklift_v3.record import SyntheticBackend
 
 
 class FakeUI:
@@ -11,8 +12,9 @@ class FakeUI:
     def open(self):
         self.opened = True
 
-    def show(self, *_args, **_kwargs):
-        self.calls += 1
+    def show(self, *_args, **kwargs):
+        if kwargs.get("status") == "PRACTICE":
+            self.calls += 1
         return "stop" if self.calls == 3 else None
 
     def close(self):
@@ -23,6 +25,7 @@ def synthetic_config():
     return {
         "mode": "synthetic",
         "camera_device": "synthetic",
+        "camera_profile_id": SYNTHETIC_FRONT_CAMERA_PROFILE_ID,
         "camera_acquisition_fps": 30,
         "robot_id": "synthetic",
         "follower_port": "synthetic",
