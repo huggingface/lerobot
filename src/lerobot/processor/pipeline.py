@@ -47,7 +47,7 @@ from safetensors.torch import load_file, save_file
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.types import EnvAction, EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
 from lerobot.utils.constants import HF_LEROBOT_HOME
-from lerobot.utils.hub import HubMixin
+from lerobot.utils.hub import HubMixin, extract_commit_hash
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
 
@@ -727,6 +727,10 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         # 1. Load configuration using simplified 3-way logic
         loaded_config, base_path = cls._load_config(model_id, config_filename, hub_download_kwargs)
+        if not is_local_source:
+            commit_hash = extract_commit_hash(base_path, revision)
+            if commit_hash is not None:
+                hub_download_kwargs["revision"] = commit_hash
 
         # 2. Validate configuration and handle migration
         cls._validate_loaded_config(model_id, loaded_config, config_filename)

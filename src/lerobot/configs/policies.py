@@ -29,7 +29,7 @@ from huggingface_hub.errors import HfHubHTTPError
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import auto_select_torch_device, is_amp_available, is_torch_device_available
-from lerobot.utils.hub import HubMixin
+from lerobot.utils.hub import HubMixin, extract_commit_hash
 
 from .types import FeatureType, PolicyFeature
 
@@ -81,6 +81,26 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     pretrained_path: Path | None = None
     # Optional Hub revision (commit hash, branch, or tag) to pin the pretrained model version.
     pretrained_revision: str | None = None
+
+    @property
+    def _commit_hash(self) -> str | None:
+        """Resolved Hub commit for this runtime load; never serialized."""
+        return self.__dict__.get("_runtime_commit_hash")
+
+    @property
+    def _commit_hash_source(self) -> str | None:
+        """Hub repo whose revision resolved to ``_commit_hash``."""
+        return self.__dict__.get("_runtime_commit_hash_source")
+
+    def _set_hub_commit_hash(self, commit_hash: str | None, source: str | None) -> None:
+        self.__dict__["_runtime_commit_hash"] = commit_hash
+        self.__dict__["_runtime_commit_hash_source"] = source if commit_hash is not None else None
+
+    def get_hub_revision(self, source: str | Path | None, revision: str | None = None) -> str | None:
+        """Return the pinned revision when ``source`` owns the resolved commit."""
+        if self._commit_hash is not None and self._commit_hash_source == str(source):
+            return self._commit_hash
+        return revision
 
     def __post_init__(self) -> None:
         if not self.device or not is_torch_device_available(self.device):
@@ -182,7 +202,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     ) -> T:
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
-        if Path(model_id).is_dir():
+        is_local = Path(model_id).is_dir()
+        if is_local:
             if CONFIG_NAME in os.listdir(model_id):
                 config_file = os.path.join(model_id, CONFIG_NAME)
             else:
@@ -208,8 +229,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
         if config_file is None:
             raise FileNotFoundError(f"{CONFIG_NAME} not found in {model_id}")
 
+        commit_hash = None if is_local else extract_commit_hash(config_file, revision)
         with open(config_file) as f:
             config = json.load(f)
+        # Runtime Hub metadata must never become part of the serialized config schema.
+        config.pop("_commit_hash", None)
+        config.pop("_commit_hash_source", None)
 
         # Resolve the concrete config subclass from the serialized "type" tag, then parse
         # the config (with CLI overrides) directly for that class. The "type" key is
@@ -231,4 +256,6 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
 
         cli_overrides = policy_kwargs.pop("cli_overrides", [])
         with draccus.config_type("json"):
-            return draccus.parse(config_cls, config_file, args=cli_overrides)
+            parsed_config = draccus.parse(config_cls, config_file, args=cli_overrides)
+        parsed_config._set_hub_commit_hash(commit_hash, model_id)
+        return parsed_config

@@ -241,6 +241,68 @@ def test_from_pretrained_hub_source_missing_local_state_still_calls_hub(monkeypa
         ProcessorStepRegistry.unregister("hub_state_step")
 
 
+def test_from_pretrained_pins_hub_state_to_config_commit(monkeypatch, tmp_path):
+    """A mutable processor revision is resolved once and reused for state files."""
+
+    @ProcessorStepRegistry.register("pinned_hub_state_step")
+    class PinnedHubStateStep(ProcessorStep):
+        def __init__(self):
+            self.value = torch.tensor(0)
+
+        def __call__(self, transition: EnvTransition) -> EnvTransition:
+            return transition
+
+        def transform_features(
+            self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+        ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+            return features
+
+        def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+            self.value = state["value"]
+
+    try:
+        commit_hash = "a" * 40
+        snapshot_dir = tmp_path / "models--user--policy" / "snapshots" / commit_hash
+        snapshot_dir.mkdir(parents=True)
+        config_path = snapshot_dir / "processor.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "name": "PinnedHubStatePipeline",
+                    "steps": [
+                        {
+                            "registry_name": "pinned_hub_state_step",
+                            "state_file": "hub_state.safetensors",
+                        }
+                    ],
+                }
+            )
+        )
+        state_path = tmp_path / "downloaded.safetensors"
+        save_file({"value": torch.tensor(7)}, state_path)
+        calls = []
+
+        def fake_hub_download(**kwargs):
+            calls.append(kwargs)
+            if kwargs["filename"] == "processor.json":
+                return str(config_path)
+            return str(state_path)
+
+        monkeypatch.setattr("lerobot.processor.pipeline.hf_hub_download", fake_hub_download)
+
+        pipeline = DataProcessorPipeline.from_pretrained(
+            "user/policy",
+            config_filename="processor.json",
+            revision="main",
+        )
+
+        assert calls[0]["revision"] == "main"
+        assert calls[1]["revision"] == commit_hash
+        assert pipeline.steps[0].value.item() == 7
+    finally:
+        ProcessorStepRegistry.unregister("pinned_hub_state_step")
+
+
 # Config Validation Tests
 
 

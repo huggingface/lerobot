@@ -171,6 +171,9 @@ def make_pre_post_processors(
         ValueError: If no processor factory exists for the given policy configuration type.
     """
     if pretrained_path:
+        revision_resolver = getattr(policy_cfg, "get_hub_revision", None)
+        if callable(revision_resolver):
+            pretrained_revision = revision_resolver(pretrained_path, pretrained_revision)
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
 

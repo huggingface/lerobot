@@ -37,6 +37,7 @@ from torch import Tensor
 
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_IMAGES
+from lerobot.utils.hub import extract_commit_hash
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..pretrained import PreTrainedPolicy
@@ -195,6 +196,8 @@ class GrootPolicy(PreTrainedPolicy):
         )
 
         model_id = str(pretrained_name_or_path)
+        if config is not None:
+            revision = config.get_hub_revision(model_id, revision)
         is_finetuned_checkpoint = False
 
         # Check if this is a fine-tuned LeRobot checkpoint (has model.safetensors)
@@ -204,7 +207,7 @@ class GrootPolicy(PreTrainedPolicy):
             else:
                 # Try to download the safetensors file to check if it exists
                 try:
-                    hf_hub_download(
+                    resolved_model_file = hf_hub_download(
                         repo_id=model_id,
                         filename=SAFETENSORS_SINGLE_FILE,
                         revision=revision,
@@ -214,6 +217,10 @@ class GrootPolicy(PreTrainedPolicy):
                         token=token,
                         local_files_only=local_files_only,
                     )
+                    resolved_commit_hash = extract_commit_hash(resolved_model_file, revision)
+                    revision = resolved_commit_hash or revision
+                    if config is not None and config._commit_hash is None:
+                        config._set_hub_commit_hash(resolved_commit_hash, model_id)
                     is_finetuned_checkpoint = True
                 except HfHubHTTPError:
                     is_finetuned_checkpoint = False

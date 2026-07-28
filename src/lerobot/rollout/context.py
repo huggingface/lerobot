@@ -161,7 +161,12 @@ class RolloutContext:
 
 def _load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy:
     """Load policy weights, keeping adapter and base-model revisions independent."""
-    pretrained_revision = policy_config.pretrained_revision
+    revision_resolver = getattr(policy_config, "get_hub_revision", None)
+    pretrained_revision = (
+        revision_resolver(policy_config.pretrained_path, policy_config.pretrained_revision)
+        if callable(revision_resolver)
+        else policy_config.pretrained_revision
+    )
     policy_class = get_policy_class(policy_config.type)
 
     if not policy_config.use_peft:
