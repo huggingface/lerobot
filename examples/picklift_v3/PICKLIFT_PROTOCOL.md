@@ -88,9 +88,11 @@ interior X/Y point only; actual X/Y must still be recorded.
 9. Advance to a new `spawn_id`/pose only after a successful episode has been
    saved.
 
-Failure episodes may remain as bounded evidence with `result=failure`.
-Discard episodes are marked `result=discard` and must be excluded from the
-deterministic training view.
+The continuous workflow `picklift_continuous_batch_v1` keeps FAILURE and
+DISCARD as bounded attempt provenance but clears their pending frame buffers;
+neither enters the deterministic v3 training dataset. Only operator-confirmed
+SUCCESS attempts receive dataset episode indices. This stricter training-view
+rule does not rewrite earlier v5 pilot datasets.
 
 ## Manual success contract
 

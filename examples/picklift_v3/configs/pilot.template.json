@@ -44,7 +44,7 @@
   "formal_data": true,
   "control_hz": 50,
   "camera_acquisition_fps": 30,
-  "alignment_mode": "direct_absolute",
+  "alignment_mode": "relative_rebase",
   "startup_hold_s": 0,
   "operator_cue_wait": false,
   "operator_ui": true,

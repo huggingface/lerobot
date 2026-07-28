@@ -254,6 +254,8 @@ def test_required_provenance(tmp_path):
         "discard_definition": "recording_configuration_or_safety_anomaly",
     }
     assert provenance["formal_data"] is False
+    assert provenance["termination_reason"] == "max_duration"
+    assert provenance["recorded_frames"] == 2
 
 
 @pytest.mark.parametrize(

@@ -40,11 +40,16 @@
 ## After every episode
 
 - [ ] Click **SUCCESS**, **FAILURE**, or **DISCARD**.
+- [ ] Wait for the immediate `ACCEPTED` feedback, then `SAVING` and
+      `SAVED`/`NOT SAVED`; do not click the result twice.
 - [ ] SUCCESS is a manual visual annotation, not an automatic detection.
 - [ ] Use FAILURE for unmet task criteria; DISCARD only for recording,
       configuration, or safety anomalies.
-- [ ] Verify the saved episode manifest contains spawn ID, actual x/y,
-      `spawn_yaw_deg=null`, yaw provenance, result, and termination reason.
+- [ ] Verify the attempt manifest contains spawn ID, actual x/y,
+      `spawn_yaw_deg=null`, yaw provenance, result, termination reason, and
+      `saved_to_training`.
 - [ ] If failure/discard: retry without changing spawn ID or pose.
 - [ ] If success was saved: mark the spawn complete and advance to the next
       balanced spawn.
+- [ ] In continuous mode, wait for `READY / CONNECT`; torque has been disabled
+      before the next reset.

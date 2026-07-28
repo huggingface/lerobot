@@ -63,13 +63,13 @@ Do not supply that acknowledgement until both arms are mechanically safe,
 12 V has intentionally been enabled, the serial-role mapping has been
 confirmed, and the first-motion acceptance is authorized.
 
-The validated default is `direct_absolute`, matching the established
-Leader-to-Follower workflow: calibrated Leader joint values are sent directly
-to the Follower without a relative-step clamp. The program waits at
-`CONTROL_READY`; collection begins only after the operator explicitly confirms
-that it may start. `relative_rebase` remains available as an optional mode,
-and its startup offset is recorded in provenance. In either mode the training
-`action` is the command actually returned by `SOFollower.send_action`.
+New real collection defaults to `relative_rebase`. On every connection it
+maps the current Leader pose to the current Follower pose, so approximate
+manual alignment does not cause a START jump; the exact startup offset is
+recorded in provenance. Historical `direct_absolute` configs remain valid,
+but the continuous real batch workflow rejects them. In either mode the
+training `action` is the command actually returned by
+`SOFollower.send_action`.
 
 ## Ubuntu operator console
 
@@ -85,6 +85,27 @@ time, and frame count. Click **START** (or press `S`/Enter) only after setup is
 ready. Click **END EPISODE** (or press `E`/Space) to finish early. `Q`/Escape
 quits. After the episode, select **SUCCESS**, **FAILURE**, or **DISCARD**.
 The collector never starts merely because the window opened.
+
+For continuous 24/60-episode collection, copy and complete
+`configs/batch.template.json`, then launch:
+
+```bash
+./examples/picklift_v3/run_batch_ui.sh /path/to/completed-batch-config.json
+```
+
+The same window stays open across attempts. After each result it disables
+Follower torque, then shows the next `READY / CONNECT` step. SUCCESS advances
+through the 12 cells in balanced order; FAILURE or DISCARD retries the same
+spawn. Only confirmed SUCCESS attempts enter the deterministic v3 training
+dataset. Every attempt still receives a provenance record under
+`provenance/attempts/`; successful dataset episodes are mirrored under
+`provenance/episodes/`.
+
+Every accepted click immediately changes the selected button to `...`, draws
+a white pressed border, displays `ACCEPTED`, and locks all buttons while the
+operation runs. Encoding shows `SAVING`; completion shows `SAVED` or
+`NOT SAVED`. This prevents a delayed double-click from becoming a second
+command.
 
 ## No-recording practice
 
@@ -114,7 +135,17 @@ uv run python -m examples.picklift_v3.record \
   --config examples/picklift_v3/configs/pilot.template.json --validate-only
 ```
 
-Provenance is stored under `provenance/dataset.json` and
+Validate a continuous batch config without touching devices:
+
+```bash
+uv run python -m examples.picklift_v3.batch_record \
+  --config /path/to/completed-batch-config.json --validate-only
+```
+
+Provenance is stored under `provenance/dataset.json`,
+`provenance/session.json`, `provenance/attempts/attempt_XXXXXX.json`, and
 `provenance/episodes/episode_XXXXXX.json`. It includes the spawn protocol,
-spawn ID, actual x/y/yaw, and result. Operator values must be pseudonymous IDs;
-direct identity information is rejected.
+spawn ID, actual x/y/yaw, result, whether the attempt entered the training
+view, and the actual termination reason (`operator_end`, `operator_quit`, or
+`max_duration`). Operator values must be pseudonymous IDs; direct identity
+information is rejected.

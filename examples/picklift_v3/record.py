@@ -170,6 +170,19 @@ class ControlSample:
     sent: np.ndarray
 
 
+@dataclass(frozen=True)
+class EpisodeOutcome:
+    frame: np.ndarray
+    frames: int
+    start_time: str
+    end_time: str
+    termination_reason: str
+    result: str
+    success: bool
+    dropped_frames: int
+    sync_anomalies: int
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -398,17 +411,31 @@ def write_json(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
-def record(cfg: dict, backend: Backend | None = None) -> Path:
-    validate_config(cfg)
-    root = Path(cfg["dataset_root"]).resolve()
-    start: str | None = None
-    backend = backend or (SyntheticBackend(cfg) if cfg["mode"] == "synthetic" else RealSO101Backend(cfg))
+def create_dataset(cfg: dict) -> LeRobotDataset:
+    return LeRobotDataset.create(
+        cfg["repo_id"],
+        fps=FPS,
+        root=Path(cfg["dataset_root"]).resolve(),
+        robot_type="so101_follower" if cfg["mode"] == "real" else "synthetic_so101",
+        features=features(bool(cfg["use_videos"])),
+        use_videos=bool(cfg["use_videos"]),
+    )
+
+
+def capture_episode(
+    cfg: dict,
+    backend: Backend,
+    dataset: LeRobotDataset,
+    ui=None,
+) -> EpisodeOutcome:
     dropped = 0
     sync_anomalies = 0
-    actual_termination_reason = cfg["termination_reason"]
+    actual_termination_reason = "max_duration"
     actual_result = cfg["result"]
     actual_success = cfg["success"]
     sample_count = round(float(cfg["episode_seconds"]) * FPS)
+    if sample_count <= 0:
+        raise ValueError("episode_seconds must produce at least one 20 FPS sample")
     period = 1 / FPS
     control_period = 1 / float(cfg["control_hz"])
     condition = threading.Condition()
@@ -437,34 +464,11 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
             with condition:
                 condition.notify_all()
 
-    ui = None
-    if cfg.get("operator_ui", False):
-        from examples.picklift_v3.operator_ui import OperatorUI
-
-        ui = OperatorUI(target_frames=sample_count)
-        ui.open()
-    try:
-        backend.connect()
-        if ui is not None:
-            ui.wait_for_start(backend.preview_frame, message=spawn_ui_summary(cfg))
-        elif cfg.get("operator_cue_wait", False):
-            input("CONTROL_READY: waiting for operator cue (press ENTER to start)")
-        dataset = LeRobotDataset.create(
-            cfg["repo_id"],
-            fps=FPS,
-            root=root,
-            robot_type="so101_follower" if cfg["mode"] == "real" else "synthetic_so101",
-            features=features(bool(cfg["use_videos"])),
-            use_videos=bool(cfg["use_videos"]),
-        )
-    except BaseException:
-        backend.close()
-        if ui is not None:
-            ui.close()
-        raise
     start = utc_now()
     worker = threading.Thread(target=control_loop, name="picklift-control", daemon=True)
     worker.start()
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    captured_frames = 0
     try:
         next_sample = time.perf_counter()
         last_sequence = -1
@@ -487,6 +491,7 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
                     raise RuntimeError("no fresh synchronized control sample; fail-closed")
                 sample = latest
             state, front, sent = sample.state, sample.front, sample.sent
+            frame = front
             if time.perf_counter() - sample.captured_at > period:
                 sync_anomalies += 1
                 raise RuntimeError("stale synchronized sample; fail-closed")
@@ -504,6 +509,7 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
                     "task": cfg["task"],
                 }
             )
+            captured_frames = sample_index + 1
             if ui is not None:
                 command = ui.show(
                     front,
@@ -515,6 +521,7 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
                         "Cube visibly between both fingers\n"
                         "Hold 0.5-1s through END"
                     ),
+                    buttons_enabled=(False, True, True),
                 )
                 if command == "stop":
                     actual_termination_reason = "operator_end"
@@ -528,21 +535,39 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
         worker.join(timeout=2)
         if worker.is_alive():
             raise RuntimeError("control loop did not stop cleanly")
+        end = utc_now()
         print("ACTION_WINDOW_COMPLETE", flush=True)
         if ui is not None:
             actual_result = ui.review_result(front)
             actual_success = actual_result == "success"
-        dataset.save_episode()
-        dataset.finalize()
-        if ui is not None:
-            ui.show_complete(front, root)
     finally:
         stop.set()
         worker.join(timeout=2)
-        backend.close()
-        if ui is not None:
-            ui.close()
-    end = utc_now()
+    return EpisodeOutcome(
+        frame=frame,
+        frames=captured_frames,
+        start_time=start,
+        end_time=end,
+        termination_reason=actual_termination_reason,
+        result=actual_result,
+        success=actual_success,
+        dropped_frames=dropped,
+        sync_anomalies=sync_anomalies,
+    )
+
+
+def episode_provenance(
+    cfg: dict,
+    backend: Backend,
+    outcome: EpisodeOutcome,
+    *,
+    episode_index: int | None,
+    attempt_index: int = 0,
+    saved_to_training: bool = True,
+    collection_workflow_version: str = "picklift_single_episode_v1",
+) -> dict:
+    rebaser = getattr(backend, "rebaser", None)
+    rebase_offset = getattr(rebaser, "offset", None)
     common = {
         **{k: cfg[k] for k in REQUIRED},
         **{k: cfg[k] for k in V5_REQUIRED if k in cfg},
@@ -562,28 +587,68 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
         "canonical_front": camera_profile(cfg["camera_profile_id"])["output"],
         "alignment_mode": cfg["alignment_mode"],
         "startup_hold_s": cfg["startup_hold_s"],
-        "initial_rebase_offset": (
-            backend.rebaser.offset.tolist()
-            if isinstance(backend, RealSO101Backend) and backend.rebaser.offset is not None
-            else [0.0] * 6
-        ),
+        "initial_rebase_offset": rebase_offset.tolist() if rebase_offset is not None else [0.0] * 6,
         "raw_evidence": "not_recorded",
-        "start_time": start,
-        "end_time": end,
-        "dropped_frames": dropped,
-        "sync_anomalies": sync_anomalies,
+        "start_time": outcome.start_time,
+        "end_time": outcome.end_time,
+        "dropped_frames": outcome.dropped_frames,
+        "sync_anomalies": outcome.sync_anomalies,
+        "recorded_frames": outcome.frames,
         "formal_data": cfg["formal_data"],
+        "attempt_index": attempt_index,
+        "episode_index": episode_index,
+        "saved_to_training": saved_to_training,
+        "collection_workflow_version": collection_workflow_version,
     }
     if cfg["spawn_protocol_version"] == "picklift_spawn_v5":
         common["success_contract"] = SUCCESS_CONTRACT
     common["configured_termination_reason"] = cfg["termination_reason"]
-    common["termination_reason"] = actual_termination_reason
+    common["termination_reason"] = outcome.termination_reason
     common["configured_result"] = cfg["result"]
-    common["result"] = actual_result
-    common["success"] = actual_success
-    write_json(root / "provenance/dataset.json", common)
-    write_json(root / "provenance/session.json", common)
-    write_json(root / "provenance/episodes/episode_000000.json", {**common, "episode_index": 0})
+    common["result"] = outcome.result
+    common["success"] = outcome.success
+    return common
+
+
+def record(cfg: dict, backend: Backend | None = None) -> Path:
+    validate_config(cfg)
+    root = Path(cfg["dataset_root"]).resolve()
+    backend = backend or (SyntheticBackend(cfg) if cfg["mode"] == "synthetic" else RealSO101Backend(cfg))
+    ui = None
+    dataset = None
+    if cfg.get("operator_ui", False):
+        from examples.picklift_v3.operator_ui import OperatorUI
+
+        ui = OperatorUI(target_frames=round(float(cfg["episode_seconds"]) * FPS))
+        ui.open()
+    try:
+        backend.connect()
+        if ui is not None:
+            ui.wait_for_start(backend.preview_frame, message=spawn_ui_summary(cfg))
+        elif cfg.get("operator_cue_wait", False):
+            input("CONTROL_READY: waiting for operator cue (press ENTER to start)")
+        dataset = create_dataset(cfg)
+        outcome = capture_episode(cfg, backend, dataset, ui)
+        if ui is not None:
+            ui.show_saving(outcome.frame, result=outcome.result)
+        dataset.save_episode()
+        dataset.finalize()
+        provenance = episode_provenance(cfg, backend, outcome, episode_index=0)
+        write_json(root / "provenance/dataset.json", provenance)
+        write_json(root / "provenance/session.json", provenance)
+        write_json(root / "provenance/episodes/episode_000000.json", provenance)
+        if ui is not None:
+            ui.show_complete(outcome.frame, root)
+    except BaseException:
+        if dataset is not None:
+            if dataset.has_pending_frames():
+                dataset.clear_episode_buffer()
+            dataset.finalize()
+        raise
+    finally:
+        backend.close()
+        if ui is not None:
+            ui.close()
     return root
 
 

@@ -24,6 +24,74 @@ def test_dashboard_rejects_noncanonical_front():
         render_dashboard(np.zeros((720, 1280, 3), dtype=np.uint8), status="WAITING")
 
 
+def test_show_acknowledges_enabled_click_once(monkeypatch):
+    ui = OperatorUI(target_frames=20)
+    ui._mouse_command = "start"
+    acknowledgements = []
+    monkeypatch.setattr(
+        ui,
+        "_acknowledge",
+        lambda _frame, **kwargs: acknowledgements.append(kwargs),
+    )
+    monkeypatch.setattr("cv2.imshow", lambda *_args: None)
+    monkeypatch.setattr("cv2.waitKey", lambda _delay: -1)
+
+    command = ui.show(
+        np.zeros((480, 640, 3), dtype=np.uint8),
+        status="WAITING",
+        buttons_enabled=(True, False, True),
+    )
+
+    assert command == "start"
+    assert len(acknowledgements) == 1
+    assert ui._mouse_command is None
+
+
+def test_show_ignores_disabled_button_without_feedback(monkeypatch):
+    ui = OperatorUI(target_frames=20)
+    ui._mouse_command = "stop"
+    acknowledgements = []
+    monkeypatch.setattr(
+        ui,
+        "_acknowledge",
+        lambda _frame, **kwargs: acknowledgements.append(kwargs),
+    )
+    monkeypatch.setattr("cv2.imshow", lambda *_args: None)
+    monkeypatch.setattr("cv2.waitKey", lambda _delay: -1)
+
+    command = ui.show(
+        np.zeros((480, 640, 3), dtype=np.uint8),
+        status="WAITING",
+        buttons_enabled=(True, False, True),
+    )
+
+    assert command is None
+    assert acknowledgements == []
+
+
+def test_show_drops_repeat_click_during_transition_lock(monkeypatch):
+    ui = OperatorUI(target_frames=20)
+    ui._mouse_command = "start"
+    ui._input_lock_until = float("inf")
+    acknowledgements = []
+    monkeypatch.setattr(
+        ui,
+        "_acknowledge",
+        lambda _frame, **kwargs: acknowledgements.append(kwargs),
+    )
+    monkeypatch.setattr("cv2.imshow", lambda *_args: None)
+    monkeypatch.setattr("cv2.waitKey", lambda _delay: -1)
+
+    command = ui.show(
+        np.zeros((480, 640, 3), dtype=np.uint8),
+        status="REVIEW",
+        button_labels=("CONFIRM", "BACK", "DISCARD"),
+    )
+
+    assert command is None
+    assert acknowledgements == []
+
+
 def test_success_selection_requires_manual_criteria_confirmation(monkeypatch):
     ui = OperatorUI(target_frames=20)
     commands = iter(("start", None, "start"))
