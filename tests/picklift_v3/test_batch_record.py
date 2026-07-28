@@ -112,6 +112,7 @@ def test_continuous_batch_retries_failure_and_only_saves_successes(tmp_path):
     assert manifest["collection_commit"]
     assert manifest["lerobot_dataset_version"] == "v3.0"
     assert manifest["joint_order"][-1] == "gripper"
+    assert manifest["gripper_alignment_mode"] == "direct_absolute_0_100"
     assert manifest["task_frame"]["frame_id"] == "picklift_task_grid_v2"
     assert manifest["camera_profile"]["profile_id"] == "synthetic_front_640x480_v1"
     assert manifest["batch_end_time"] is not None

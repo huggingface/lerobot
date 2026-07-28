@@ -65,11 +65,14 @@ confirmed, and the first-motion acceptance is authorized.
 
 New real collection defaults to `relative_rebase`. On every connection it
 maps the current Leader pose to the current Follower pose, so approximate
-manual alignment does not cause a START jump; the exact startup offset is
-recorded in provenance. Historical `direct_absolute` configs remain valid,
-but the continuous real batch workflow rejects them. In either mode the
-training `action` is the command actually returned by
-`SOFollower.send_action`.
+manual alignment of the first five joints does not cause a START jump; the
+exact startup offset is recorded in provenance. The gripper is deliberately
+not rebased: it keeps the calibrated LeRobot 0–100 direct mapping so both full
+open and full close remain reachable. Before READY, roughly match the two
+gripper openings to avoid a gripper-only START step. Historical
+`direct_absolute` configs remain valid, but the continuous real batch workflow
+rejects them. In either mode the training `action` is the command actually
+returned by `SOFollower.send_action`.
 
 ## Ubuntu operator console
 

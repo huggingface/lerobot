@@ -58,6 +58,10 @@ class RelativeRebaser:
         if leader.shape != (6,) or follower.shape != (6,):
             raise ValueError("relative rebase requires two six-joint vectors")
         self.offset = follower - leader
+        # Preserve full calibrated 0..100 gripper travel. Rebasing the gripper
+        # would retain the startup opening error and make one endpoint
+        # unreachable.
+        self.offset[-1] = 0
         return self.apply(leader)
 
     def apply(self, leader: np.ndarray) -> np.ndarray:
@@ -66,7 +70,9 @@ class RelativeRebaser:
         leader = np.asarray(leader, dtype=np.float32)
         if leader.shape != (6,):
             raise ValueError("leader action must contain six joints")
-        return (leader + self.offset).astype(np.float32)
+        command = (leader + self.offset).astype(np.float32)
+        command[-1] = np.clip(leader[-1], 0, 100)
+        return command
 
 
 class RealSO101Backend:
@@ -124,8 +130,8 @@ class RealSO101Backend:
             leader = self._read_leader_state()
             if self.alignment_mode == "relative_rebase":
                 initial_command = self.rebaser.initialize(leader, follower)
-                if not np.allclose(initial_command, follower, atol=1e-5):
-                    raise RuntimeError("relative rebase failed zero-jump invariant")
+                if not np.allclose(initial_command[:5], follower[:5], atol=1e-5):
+                    raise RuntimeError("relative rebase failed five-axis zero-jump invariant")
             self._torque_may_be_enabled = True
             self._set_follower_torque(True)
             time.sleep(self.startup_hold_s)

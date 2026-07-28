@@ -586,6 +586,7 @@ def episode_provenance(
         "camera_profile": camera_profile(cfg["camera_profile_id"]),
         "canonical_front": camera_profile(cfg["camera_profile_id"])["output"],
         "alignment_mode": cfg["alignment_mode"],
+        "gripper_alignment_mode": "direct_absolute_0_100",
         "startup_hold_s": cfg["startup_hold_s"],
         "initial_rebase_offset": rebase_offset.tolist() if rebase_offset is not None else [0.0] * 6,
         "raw_evidence": "not_recorded",

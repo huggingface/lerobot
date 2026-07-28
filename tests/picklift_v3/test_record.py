@@ -171,6 +171,7 @@ def test_required_provenance(tmp_path):
         "camera_profile_id",
         "camera_profile",
         "record_fps",
+        "gripper_alignment_mode",
         "start_time",
         "end_time",
         "termination_reason",
@@ -237,6 +238,7 @@ def test_required_provenance(tmp_path):
     assert session["yaw_sampling_method"] == "operator_unmeasured_arbitrary"
     assert session["yaw_distribution_claim"] == "unknown"
     assert session["yaw_randomization_confirmed"] is True
+    assert session["gripper_alignment_mode"] == "direct_absolute_0_100"
     assert session["success_annotation_source"] == "operator_visual_v1"
     assert session["success_detection_mode"] == "manual_proxy_for_nexus_v1"
     assert session["lift_height_m"] is None
@@ -295,9 +297,29 @@ def test_relative_rebase_is_zero_jump_then_tracks_delta():
     leader = np.asarray([-5, -105, 97, 74, 2, 0], dtype=np.float32)
     follower = np.asarray([3, -104, 70, 87, 1, 11], dtype=np.float32)
     rebaser = RelativeRebaser()
-    np.testing.assert_array_equal(rebaser.initialize(leader, follower), follower)
-    delta = np.asarray([1, -2, 3, -4, 5, -6], dtype=np.float32)
-    np.testing.assert_array_equal(rebaser.apply(leader + delta), follower + delta)
+    initial = rebaser.initialize(leader, follower)
+    np.testing.assert_array_equal(initial[:5], follower[:5])
+    assert initial[-1] == leader[-1]
+    assert rebaser.offset[-1] == 0
+    delta = np.asarray([1, -2, 3, -4, 5, 6], dtype=np.float32)
+    command = rebaser.apply(leader + delta)
+    np.testing.assert_array_equal(command[:5], (follower + delta)[:5])
+    assert command[-1] == leader[-1] + delta[-1]
+
+
+def test_relative_rebase_preserves_full_gripper_endpoints():
+    leader = np.asarray([0, 0, 0, 0, 0, 40], dtype=np.float32)
+    follower = np.asarray([5, 5, 5, 5, 5, 70], dtype=np.float32)
+    rebaser = RelativeRebaser()
+    rebaser.initialize(leader, follower)
+
+    closed = leader.copy()
+    closed[-1] = 0
+    opened = leader.copy()
+    opened[-1] = 100
+
+    assert rebaser.apply(closed)[-1] == 0
+    assert rebaser.apply(opened)[-1] == 100
 
 
 def test_relative_rebase_fails_closed_before_initialization():

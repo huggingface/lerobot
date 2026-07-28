@@ -150,6 +150,7 @@ def _batch_manifest(
         "camera_profile",
         "canonical_front",
         "spawn_contract",
+        "gripper_alignment_mode",
         "yaw_annotation_mode",
         "yaw_intended_range_deg",
         "yaw_sampling_method",
@@ -218,7 +219,9 @@ def record_batch(
                 successes_per_spawn,
             )
             ready_message = (
-                f"{spawn_ui_summary(cfg)}\nPlace cube/change yaw; align arms\nREADY = yaw changed; no angle"
+                f"{spawn_ui_summary(cfg)}\n"
+                "Place cube; align arms + gripper gap\n"
+                "READY = yaw changed; no angle"
             )
             if not ui.wait_for_ready(last_frame, ready_message):
                 operator_quit = True

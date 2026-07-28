@@ -23,6 +23,8 @@
 - [ ] Confirm only that yaw was varied; this is not an angle annotation.
 - [ ] Confirm the UI shows the same spawn ID, region, X/Y, and
       **Yaw arbitrary 0..90 | no measure**.
+- [ ] Roughly match the Leader/Follower gripper openings; the first five joints
+      are rebased, while the gripper keeps direct calibrated 0–100 control.
 - [ ] Operator hands/body are out of the front image.
 - [ ] Robot, object, mat, and camera are stable.
 - [ ] For alignment confirmation only: place the red cube at
