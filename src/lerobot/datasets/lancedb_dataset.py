@@ -102,15 +102,8 @@ _RANGE_SLACK = 64 * 1024
 
 def _merge_spans(spans: list[tuple[int, int]], gap: int = _RANGE_SLACK) -> list[tuple[int, int]]:
     """Coalesce overlapping or nearby byte ranges into fewer, larger requests.
-
     Batch plans overlap constantly: a faststart file's head/moov/first-packet
-    prefetch trio collapses to one request, and with a keyframe every 2
-    frames, windows of samples landing near each other in the same file
-    produce touching ranges. Merging cut requests ~40% at identical bytes —
-    fewer round trips everywhere, and materially fewer quota units on
-    rate-limited gateways (HF Buckets: 3,000 API requests / 5 min). The same
-    gap-tolerant coalescing parquet readers do; correctness never depends on
-    it. Purely an optimization.
+    prefetch trio collapses to one request
     """
     merged: list[tuple[int, int]] = []
     for start, end in sorted(spans):
@@ -181,14 +174,29 @@ def build_video_byte_index(path: str | Path) -> dict:
 
 
 class _SparseBlobSource(io.RawIOBase):
-    """File-like view over a remote blob backed by prefetched byte ranges.
+    """The adapter between lance's batched fetches and the decoders' file API.
 
-    Reads inside a prefetched range are served from memory; reads outside
-    fall back to one ``read_range`` on the lazy blob handle. The fallback is
-    what makes the prefetch heuristics (head bytes, range slack) safe: a
-    miss costs one network round trip, never incorrect data.
-    ``fallback_bytes`` counts miss traffic — near zero on healthy datasets,
-    and the number to check first when remote throughput looks off.
+    lance serves video bytes as BATCHED parallel range fetches (one
+    ``fetch_blob_ranges`` wave per DataLoader batch — the fast path);
+    torchcodec and pyav consume a SEEKABLE FILE they read incrementally in
+    whatever order ffmpeg pleases. This class is the bridge: it buffers the
+    wave's ranges (kept disjoint by merge-on-add) and presents them as a
+    file. Without it, decoders would sit directly on the lazy blob handle,
+    turning every ffmpeg read into an individual round trip through the
+    Python sync bridge — the serialized pre-fetch_blob_ranges architecture
+    (droid S3: 10-14 samples/s vs 130+ through this class).
+
+    It is also the safety boundary that makes every prefetch heuristic in
+    this module (head bytes, range slack, window hints) an OPTIMIZATION
+    rather than a correctness requirement: a read outside the buffered
+    ranges falls back to one ``read_range`` on the handle — one round trip,
+    never incorrect data. ``fallback_bytes`` counts that miss traffic; it
+    is ~0 on healthy datasets and the first number to check when remote
+    throughput looks off.
+
+    If lancedb ever ships a natively prefetchable BlobFile (buffered
+    ``prefetch(ranges)`` with the same fallback semantics), this class
+    collapses into it and gets deleted.
     """
 
     def __init__(self, size: int, fallback):
@@ -738,8 +746,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         items = [self._build_item(plan, columns, row_pos) for plan in plans]
 
         if self.meta.video_keys:
-            prepared = prepared_future.result() if prepared_future is not None else None
-            decoded = self._decode_videos(plans, columns, row_pos, prepared)
+            decoded = self._decode_videos(plans, columns, row_pos, prepared_future.result())
             for item, frames in zip(items, decoded, strict=True):
                 item.update(frames)
         if self.image_transforms is not None:
@@ -807,7 +814,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         plans: list[dict],
         columns: dict[str, np.ndarray],
         row_pos: dict[int, int],
-        prepared: dict[tuple, tuple] | None = None,
+        prepared: dict[tuple, tuple],
     ) -> list[dict[str, torch.Tensor]]:
         """Decode all camera frames a batch needs, one blob fetch and one decode pass per video file.
 
@@ -828,8 +835,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
                     (sample_idx, shifted_ts)
                 )
 
-        if prepared is None:
-            prepared = self._prepare_files(list(requests))  # no window hints: safety net fetches below
         entries = self._ensure_decoders(requests, prepared)
 
         results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
