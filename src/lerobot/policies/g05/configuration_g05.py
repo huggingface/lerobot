@@ -96,6 +96,22 @@ G05_EMBODIMENT_MAPPINGS: dict[str, dict[str, tuple[int, ...]]] = {
     },
 }
 
+G05_POLICY_PARTS: dict[int, dict[str, int]] = {
+    20: {
+        "left_control": 9,
+        "left_gripper": 1,
+        "right_control": 9,
+        "right_gripper": 1,
+    },
+    27: {
+        "left_control": 9,
+        "left_gripper": 1,
+        "right_control": 9,
+        "right_gripper": 1,
+        "lower_body": 7,
+    },
+}
+
 _PROFILE_DEFAULTS = {
     "g05-base": ("checkpoint", 20, 16),
     "g05-libero": ("q01_q99", 20, 32),
@@ -128,6 +144,7 @@ class G05Config(PreTrainedConfig):
     raw_state_dim: int = 7
     chunk_size: int = 16
     normalization_mode: str = "checkpoint"
+    normalization_clip: tuple[float, float] | None = None
     use_stepwise_action_norm: bool = False
     gripper_indices: tuple[int, ...] = (6,)
     camera_order: tuple[str, ...] = field(default_factory=lambda: G05_CAMERA_PROFILES["libero"])
@@ -160,15 +177,24 @@ class G05Config(PreTrainedConfig):
         super().__post_init__()
         self.camera_order = tuple(self.camera_order)
         self.camera_sizes = {key: tuple(size) for key, size in (self.camera_sizes or {}).items()}
+        if self.normalization_clip is not None:
+            self.normalization_clip = tuple(self.normalization_clip)
+            if len(self.normalization_clip) != 2 or self.normalization_clip[0] >= self.normalization_clip[1]:
+                raise ValueError("normalization_clip must be an increasing (minimum, maximum) pair.")
         if not self.camera_sizes and self.embodiment in G05_CAMERA_SIZE_PROFILES:
             self.camera_sizes = G05_CAMERA_SIZE_PROFILES[self.embodiment].copy()
         if self.num_input_images == 0:
             self.num_input_images = len(self.camera_order) * self.n_obs_steps
         if not self.prompt_template:
+            samples_builder = self.processor_metadata.get("samples_builder") or {}
+            if isinstance(samples_builder, dict):
+                samples_builder_target = str(samples_builder.get("_target_", ""))
+            else:
+                samples_builder_target = str(samples_builder)
             self.prompt_template = make_g05_prompt_template(
                 self.num_input_images,
                 predict_cot=self.predict_cot,
-                flow_only=self.continuous_action and not self.discrete_action,
+                flow_only=samples_builder_target.endswith("FMOnly"),
             )
         if self.checkpoint_profile not in _PROFILE_DEFAULTS and self.checkpoint_profile != "custom":
             raise ValueError(
@@ -187,6 +213,10 @@ class G05Config(PreTrainedConfig):
             raise ValueError("The flow runtime requires continuous_action=True.")
         if self.action_head == "flow" and not self.return_continuous_action:
             raise ValueError("The flow runtime requires return_continuous_action=True.")
+        if self.policy_action_dim not in G05_POLICY_PARTS:
+            raise ValueError(
+                f"No named G0.5 shared action layout for policy_action_dim={self.policy_action_dim}."
+            )
         if not (self.discrete_action or self.continuous_action):
             raise ValueError("At least one G0.5 action path must be enabled.")
         if self.embodiment not in G05_EMBODIMENT_MAPPINGS:

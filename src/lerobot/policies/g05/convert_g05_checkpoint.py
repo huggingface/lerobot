@@ -54,6 +54,7 @@ _REQUIRED_PREFIXES = (
 @dataclass
 class ConversionReport:
     mapped: dict[str, str] = field(default_factory=dict)
+    shared_aliases: dict[str, str] = field(default_factory=dict)
     missing: list[str] = field(default_factory=list)
     unexpected: list[str] = field(default_factory=list)
     duplicate: list[str] = field(default_factory=list)
@@ -113,6 +114,29 @@ def convert_state_dict(
     return converted, report
 
 
+def save_converted_state_dict(state_dict: dict[str, torch.Tensor], path: Path) -> dict[str, str]:
+    """Save exact tensor aliases once, matching safetensors' strict model loader."""
+
+    aliases: dict[str, str] = {}
+    unique: dict[str, torch.Tensor] = {}
+    seen: dict[tuple[int, int, tuple[int, ...], tuple[int, ...]], str] = {}
+    for key in sorted(state_dict):
+        tensor = state_dict[key]
+        identity = (
+            tensor.untyped_storage().data_ptr(),
+            tensor.storage_offset(),
+            tuple(tensor.shape),
+            tuple(tensor.stride()),
+        )
+        if identity in seen:
+            aliases[key] = seen[identity]
+        else:
+            seen[identity] = key
+            unique[key] = tensor
+    save_file(unique, path, metadata=aliases or None)
+    return aliases
+
+
 def _load_checkpoint(path: Path) -> dict[str, torch.Tensor]:
     payload = torch.load(path, map_location="cpu", weights_only=True)
     if isinstance(payload, dict) and isinstance(payload.get("model_state_dict"), dict):
@@ -126,11 +150,19 @@ def _profile_config(profile: str, hydra: dict[str, Any]) -> G05Config:
     model = hydra.get("model", {})
     arch = model.get("model_arch", {})
     data = hydra.get("data", {})
+    embodiment = {
+        "g05-libero": "libero",
+        "g05-robotwin20": "robotwin20",
+    }.get(profile, "libero")
+    data_processor = (data.get("processors") or {}).get(embodiment, {})
+    # Match the author's build_processors merge order: embodiment data first,
+    # then task-level model.processor overrides.
+    processor_metadata = {**data_processor, **model.get("processor", {})}
     horizon = int(data.get("action_size", arch.get("horizon_steps", 16)))
     predict_cot = bool(arch.get("predict_cot", False))
     discrete = bool(arch.get("discrete_action", True))
     continuous = bool(arch.get("continuous_action", False))
-    norm_name = str(model.get("processor", {}).get("norm_default_mode", "")).lower()
+    norm_name = str(processor_metadata.get("norm_default_mode", "")).lower()
     checkpoint_normalization = {
         "q01/q99": "q01_q99",
         "z-score": "z_score",
@@ -152,11 +184,12 @@ def _profile_config(profile: str, hydra: dict[str, Any]) -> G05Config:
             return_continuous_action=True,
             chunk_size=horizon,
             normalization_mode="q01_q99",
+            normalization_clip=(-5.0, 5.0),
             use_stepwise_action_norm=True,
             camera_order=G05_CAMERA_PROFILES["libero"],
             num_input_images=num_input_images,
             author_model_config=arch,
-            processor_metadata=model.get("processor", {}),
+            processor_metadata=processor_metadata,
             action_codec_metadata=model.get("tokenizer", hydra.get("tokenizer", {})),
             author_source_revision=G05_SOURCE_REVISION,
             source_checkpoint_revision=G05_HUB_REVISION,
@@ -177,11 +210,12 @@ def _profile_config(profile: str, hydra: dict[str, Any]) -> G05Config:
             raw_action_dim=14,
             chunk_size=horizon,
             normalization_mode="q01_q99",
+            normalization_clip=(-5.0, 5.0),
             use_stepwise_action_norm=True,
             camera_order=G05_CAMERA_PROFILES["robotwin20"],
             num_input_images=num_input_images,
             author_model_config=arch,
-            processor_metadata=model.get("processor", {}),
+            processor_metadata=processor_metadata,
             action_codec_metadata=model.get("tokenizer", hydra.get("tokenizer", {})),
             author_source_revision=G05_SOURCE_REVISION,
             source_checkpoint_revision=G05_HUB_REVISION,
@@ -191,7 +225,7 @@ def _profile_config(profile: str, hydra: dict[str, Any]) -> G05Config:
     action_head = "actioncodec" if discrete else "flow"
     if checkpoint_normalization is None:
         raise ValueError("g05-base conversion requires the resolved checkpoint processor.norm_default_mode.")
-    exceptions = model.get("processor", {}).get("norm_exception_mode")
+    exceptions = processor_metadata.get("norm_exception_mode")
     if exceptions:
         raise ValueError(
             "g05-base has per-part normalization exceptions; select a concrete benchmark "
@@ -208,11 +242,12 @@ def _profile_config(profile: str, hydra: dict[str, Any]) -> G05Config:
         return_continuous_action=action_head == "flow",
         chunk_size=horizon,
         normalization_mode=checkpoint_normalization,
-        use_stepwise_action_norm=bool(model.get("processor", {}).get("use_stepwise_action_norm", False)),
+        normalization_clip=(-5.0, 5.0),
+        use_stepwise_action_norm=bool(processor_metadata.get("use_stepwise_action_norm", False)),
         camera_order=G05_CAMERA_PROFILES["libero"],
         num_input_images=num_input_images,
         author_model_config=arch,
-        processor_metadata=model.get("processor", {}),
+        processor_metadata=processor_metadata,
         action_codec_metadata=model.get("tokenizer", hydra.get("tokenizer", {})),
         author_source_revision=G05_SOURCE_REVISION,
         source_checkpoint_revision=G05_HUB_REVISION,
@@ -225,8 +260,9 @@ def _camera_sizes(
     processor_metadata: dict[str, Any], camera_order: tuple[str, ...]
 ) -> dict[str, tuple[int, int]]:
     images = (processor_metadata.get("shape_meta") or {}).get("images") or []
+    camera_size_config = processor_metadata.get("camera_size_config") or {}
     by_lerobot_key = {
-        item.get("lerobot_key"): tuple(item["shape"][-2:])
+        item.get("lerobot_key"): tuple(camera_size_config.get(item.get("camera_type"), item["shape"][-2:]))
         for item in images
         if item.get("lerobot_key") and len(item.get("shape") or ()) >= 3
     }
@@ -320,7 +356,7 @@ def convert_checkpoint(
     report.fail_if_invalid()
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    save_file(converted, output_dir / "model.safetensors")
+    report.shared_aliases = save_converted_state_dict(converted, output_dir / "model.safetensors")
     config._save_pretrained(output_dir)
     preprocessor, postprocessor = make_g05_pre_post_processors(config, dataset_stats=lerobot_stats)
     preprocessor.save_pretrained(output_dir)

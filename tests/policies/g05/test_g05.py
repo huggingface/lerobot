@@ -14,7 +14,11 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.g05.configuration_g05 import G05_EMBODIMENT_MAPPINGS, G05Config
-from lerobot.policies.g05.convert_g05_checkpoint import convert_checkpoint, convert_state_dict
+from lerobot.policies.g05.convert_g05_checkpoint import (
+    convert_checkpoint,
+    convert_state_dict,
+    save_converted_state_dict,
+)
 from lerobot.policies.g05.modeling_g05 import G05Policy
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import ACTION, OBS_STATE, POLICY_PREPROCESSOR_DEFAULT_NAME
@@ -82,6 +86,25 @@ def test_factory_wiring_is_lazy():
     assert get_policy_class("g05") is G05Policy
 
 
+def test_system2_fm_only_builder_uses_exact_cot_template_without_action_tokens():
+    config = _config(
+        action_head="flow",
+        runtime_system="system2",
+        predict_cot=True,
+        discrete_action=False,
+        continuous_action=True,
+        return_continuous_action=True,
+        processor_metadata={
+            "samples_builder": {
+                "_target_": ("g05.data_processor.processor.samples_builder.SubtaskCoTBuilderFMOnly")
+            }
+        },
+    )
+
+    assert "<prompt_text_!>\n<EOC><atomic_task_text>|Action: <EOV><eos>" in config.prompt_template
+    assert "<action_action" not in config.prompt_template
+
+
 def test_libero_and_atomic4_are_distinct_validated_mappings():
     with pytest.raises(ValueError, match="27D"):
         G05Config(
@@ -127,10 +150,35 @@ def test_libero_projection_mask_and_inverse_roundtrip():
     processed = preprocessor(batch)
     assert processed[OBS_STATE].shape == (1, 20)
     assert processed[ACTION].shape == (4, 20)
+    assert processed["action_dim_is_pad"].shape == (1, 20)
     assert processed["action_dim_is_pad"].sum() == 13
+    assert torch.equal(processed["action_op_mask"], ~processed["action_dim_is_pad"])
+    assert processed["action_parts_meta"] == {
+        "left_control": 9,
+        "left_gripper": 1,
+        "right_control": 9,
+        "right_gripper": 1,
+    }
     assert torch.equal(processed[ACTION][:, [10, 11, 12, 13, 14, 15, 19]], raw_action)
     restored = postprocessor(processed[ACTION])
     assert torch.equal(restored, raw_action)
+
+
+def test_inference_without_ground_truth_action_still_emits_action_dimension_mask():
+    config = _config()
+    preprocessor, _ = make_pre_post_processors(config)
+
+    processed = preprocessor(
+        {
+            OBS_STATE: torch.arange(7, dtype=torch.float32),
+            "observation.images.image": torch.zeros(3, 8, 8),
+            "observation.images.wrist_image": torch.zeros(3, 8, 8),
+            "task": "inference",
+        }
+    )
+
+    assert processed["action_dim_is_pad"].shape == (1, 20)
+    assert processed["action_dim_is_pad"].sum() == 13
 
 
 def test_atomic4_projection_has_mobile_base_control_mode_and_exact_inverse():
@@ -187,6 +235,28 @@ def test_quantile_mode_refuses_minmax_substitution():
         make_pre_post_processors(config, dataset_stats=stats)
 
 
+def test_checkpoint_normalization_clips_to_author_finite_range():
+    config = _config(normalization_mode="q01_q99", normalization_clip=(-5.0, 5.0))
+    stats = {
+        OBS_STATE: {"q01": torch.zeros(7), "q99": torch.ones(7)},
+        ACTION: {"q01": torch.zeros(4, 7), "q99": torch.ones(4, 7)},
+    }
+    preprocessor, _ = make_pre_post_processors(config, dataset_stats=stats)
+
+    processed = preprocessor(
+        {
+            OBS_STATE: torch.full((7,), -100.0),
+            ACTION: torch.full((4, 7), 100.0),
+            "observation.images.image": torch.zeros(3, 8, 8),
+            "observation.images.wrist_image": torch.zeros(3, 8, 8),
+            "task": "clip",
+        }
+    )
+
+    assert processed[OBS_STATE].min() == -5
+    assert processed[ACTION].max() == 5
+
+
 def test_stepwise_quantiles_constant_dimension_are_finite_and_serializable(tmp_path: Path):
     config = _config(normalization_mode="q01_q99")
     q01_action = torch.zeros(4, 7)
@@ -228,6 +298,43 @@ def test_exact_raw_task_reaches_author_command_and_head_selection():
     assert backend.last_samples[0]["command"] == raw_task
     assert action.shape == (1, 4, 20)
     assert metadata["cot_text"] == ["Subtask: move carefully"]
+
+
+def test_author_action_payload_fills_required_tokenizer_metadata():
+    policy = G05Policy(_config(), backend=TinyG05Backend())
+
+    prepared = policy._prepare_author_batch(_policy_batch())
+
+    assert set(prepared["samples"][0]["action"]) == {
+        "value",
+        "action_dim_is_pad",
+        "action_op_mask",
+        "parts_meta",
+    }
+
+
+def test_author_inference_payload_synthesizes_required_dummy_action():
+    policy = G05Policy(_config(), backend=TinyG05Backend())
+    batch = _policy_batch()
+    del batch[ACTION]
+
+    prepared = policy._prepare_author_batch(batch)
+
+    assert prepared["samples"][0]["action"]["value"].shape == (4, 20)
+
+
+def test_policy_to_moves_non_module_action_tokenizer_sidecar():
+    class TrackingTokenizer:
+        device = None
+
+        def to(self, device):
+            self.device = device
+
+    backend = TinyG05Backend()
+    backend.action_tokenizer = TrackingTokenizer()
+    policy = G05Policy(_config(), backend=backend).to("cpu")
+
+    assert backend.action_tokenizer.device == next(policy.parameters()).device
 
 
 def test_batch_two_preserves_each_raw_task_and_every_camera_slot():
@@ -332,6 +439,19 @@ def test_conversion_reports_mapping_duplicates_shapes_and_required_prefixes():
     assert strict_report.shape_mismatched["backend.model.vlm.input_proj.weight"]["source"] == [2, 3]
 
 
+def test_conversion_records_and_deduplicates_tied_weight_aliases(tmp_path: Path):
+    tied = torch.zeros(2, 3)
+    aliases = save_converted_state_dict(
+        {
+            "backend.model.vlm.input_proj.weight": tied,
+            "backend.model.vlm.output_proj.weight": tied,
+        },
+        tmp_path / "model.safetensors",
+    )
+
+    assert aliases == {"backend.model.vlm.output_proj.weight": "backend.model.vlm.input_proj.weight"}
+
+
 def test_libero_conversion_packages_model_processors_and_provenance(tmp_path: Path):
     source = tmp_path / "author"
     output = tmp_path / "lerobot"
@@ -349,18 +469,24 @@ model:
     continuous_action: true
   processor:
     use_stepwise_action_norm: true
-    shape_meta:
-      state:
-        - {key: right_ee_pose, shape: 6}
-        - {key: right_gripper, shape: 1}
-      action:
-        - {key: right_ee_pose, shape: 6}
-        - {key: right_gripper, shape: 1}
-      images:
-        - {key: image, lerobot_key: observation.images.image, shape: [3, 224, 224]}
-        - {key: wrist_image, lerobot_key: observation.images.wrist_image, shape: [3, 224, 224]}
+    norm_default_mode: q01/q99
+    camera_size_config:
+      exterior: [256, 256]
+      wrist_right: [256, 256]
 data:
   action_size: 32
+  processors:
+    libero:
+      shape_meta:
+        state:
+          - {key: right_ee_pose, shape: 6}
+          - {key: right_gripper, shape: 1}
+        action:
+          - {key: right_ee_pose, shape: 6}
+          - {key: right_gripper, shape: 1}
+        images:
+          - {key: image, camera_type: exterior, lerobot_key: observation.images.image, shape: [3, 224, 224]}
+          - {key: wrist_image, camera_type: wrist_right, lerobot_key: observation.images.wrist_image, shape: [3, 224, 224]}
 tokenizer:
   vq_config: {block_wise_autoregressive: false}
 """
@@ -404,7 +530,11 @@ tokenizer:
     config = PreTrainedConfig.from_pretrained(output)
     assert isinstance(config, G05Config)
     assert config.source_checkpoint_revision
-    assert config.prompt_template.startswith("<image0_image_!><image1_image_!>")
+    assert config.prompt_template.startswith("<chat_user_prefix><image0_image_!><image1_image_!>")
+    assert config.camera_sizes == {
+        "observation.images.image": (256, 256),
+        "observation.images.wrist_image": (256, 256),
+    }
 
 
 @pytest.mark.skipif(

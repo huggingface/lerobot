@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
-import torch.nn.functional as functional
+import torchvision.transforms.functional as vision_functional
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
@@ -41,7 +41,7 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 
-from .configuration_g05 import G05_EMBODIMENT_MAPPINGS, G05Config
+from .configuration_g05 import G05_EMBODIMENT_MAPPINGS, G05_POLICY_PARTS, G05Config
 
 
 def _copy_feature_tree(
@@ -80,13 +80,15 @@ class G05ImageTransformStep(ProcessorStep):
             if image.ndim < 3 or image.shape[-3] != 3:
                 raise ValueError(f"G0.5 camera {key!r} must end in [3,H,W], got {image.shape}.")
             was_floating_point = torch.is_floating_point(image)
-            image = image.float()
-            if not was_floating_point:
-                image = image / 255.0
             flat = image.reshape(-1, *image.shape[-3:])
             target_size = self.camera_sizes[key]
             if tuple(flat.shape[-2:]) != target_size:
-                flat = functional.interpolate(flat, size=target_size, mode="bilinear", align_corners=False)
+                # The author prepends torchvision Resize before its uint8-to-float
+                # transform. Preserve its antialiasing and uint8 quantization.
+                flat = vision_functional.resize(flat, list(target_size))
+            flat = flat.float()
+            if not was_floating_point:
+                flat = flat / 255.0
             mean = flat.new_tensor(self.mean).view(1, 3, 1, 1)
             std = flat.new_tensor(self.std).view(1, 3, 1, 1)
             observation[key] = ((flat - mean) / std).reshape(*image.shape[:-3], 3, *target_size)
@@ -161,6 +163,16 @@ class G05EmbodimentProjectionStep(ProcessorStep):
             state_mask[..., list(self.mapping["state"])] = False
             complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
             complementary["proprio_dim_is_pad"] = state_mask
+            action_mask = torch.ones(
+                *raw_state.shape[:-1],
+                self.policy_action_dim,
+                dtype=torch.bool,
+                device=observation[OBS_STATE].device,
+            )
+            action_mask[..., list(self.mapping["action"])] = False
+            complementary["action_dim_is_pad"] = action_mask
+            complementary["action_op_mask"] = ~action_mask
+            complementary["action_parts_meta"] = G05_POLICY_PARTS[self.policy_action_dim].copy()
             complementary["g05_camera_order"] = self.camera_order
             transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
         action = transition.get(TransitionKey.ACTION)
@@ -174,7 +186,7 @@ class G05EmbodimentProjectionStep(ProcessorStep):
             )
             action_mask[..., list(self.mapping["action"])] = False
             complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
-            complementary["action_dim_is_pad"] = action_mask
+            complementary.setdefault("action_dim_is_pad", action_mask)
             if "action_is_pad" not in complementary:
                 complementary["action_is_pad"] = torch.zeros(
                     *action.shape[:-1], dtype=torch.bool, device=action.device
@@ -202,6 +214,37 @@ class G05EmbodimentProjectionStep(ProcessorStep):
             "policy_action_dim": self.policy_action_dim,
             "camera_order": list(self.camera_order),
         }
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="g05_normalization_clamp")
+class G05NormalizationClampStep(ProcessorStep):
+    """Match the author's finite clamp after normalization."""
+
+    minimum: float = -5.0
+    maximum: float = 5.0
+
+    def _clamp(self, value: torch.Tensor) -> torch.Tensor:
+        return value.clamp(self.minimum, self.maximum).nan_to_num(nan=0.0, posinf=0.0, neginf=0.0)
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        transition = transition.copy()
+        observation = dict(transition.get(TransitionKey.OBSERVATION) or {})
+        if OBS_STATE in observation:
+            observation[OBS_STATE] = self._clamp(observation[OBS_STATE])
+        transition[TransitionKey.OBSERVATION] = observation
+        action = transition.get(TransitionKey.ACTION)
+        if isinstance(action, torch.Tensor):
+            transition[TransitionKey.ACTION] = self._clamp(action)
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {"minimum": self.minimum, "maximum": self.maximum}
 
 
 @dataclass
@@ -313,28 +356,36 @@ def make_g05_pre_post_processors(
         FeatureType.VISUAL: NormalizationMode.IDENTITY,
     }
 
+    steps: list[ProcessorStep] = [
+        AddBatchDimensionProcessorStep(),
+        G05ImageTransformStep(
+            camera_order=config.camera_order,
+            camera_sizes=config.camera_sizes,
+            mean=config.image_mean,
+            std=config.image_std,
+        ),
+        G05EmbodimentProjectionStep(
+            embodiment=config.embodiment,
+            policy_state_dim=config.policy_state_dim,
+            policy_action_dim=config.policy_action_dim,
+            camera_order=config.camera_order,
+        ),
+        NormalizerProcessorStep(
+            features=policy_features,
+            norm_map=norm_map,
+            stats=projected_stats,
+        ),
+    ]
+    if config.normalization_clip is not None:
+        steps.append(
+            G05NormalizationClampStep(
+                minimum=config.normalization_clip[0],
+                maximum=config.normalization_clip[1],
+            )
+        )
+    steps.append(DeviceProcessorStep(device=config.device))
     preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
-        steps=[
-            AddBatchDimensionProcessorStep(),
-            G05ImageTransformStep(
-                camera_order=config.camera_order,
-                camera_sizes=config.camera_sizes,
-                mean=config.image_mean,
-                std=config.image_std,
-            ),
-            G05EmbodimentProjectionStep(
-                embodiment=config.embodiment,
-                policy_state_dim=config.policy_state_dim,
-                policy_action_dim=config.policy_action_dim,
-                camera_order=config.camera_order,
-            ),
-            NormalizerProcessorStep(
-                features=policy_features,
-                norm_map=norm_map,
-                stats=projected_stats,
-            ),
-            DeviceProcessorStep(device=config.device),
-        ],
+        steps=steps,
         name=POLICY_PREPROCESSOR_DEFAULT_NAME,
         to_transition=batch_to_transition,
         to_output=transition_to_batch,

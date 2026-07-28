@@ -25,7 +25,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-from .configuration_g05 import G05Config
+from .configuration_g05 import G05_POLICY_PARTS, G05Config
 
 
 def _author_backend(config: G05Config) -> nn.Module:
@@ -162,6 +162,17 @@ class G05Policy(PreTrainedPolicy):
         if callable(reset):
             reset()
 
+    def to(self, *args, **kwargs) -> G05Policy:
+        """Move the author ActionCodec sidecar along with the policy module."""
+
+        result = super().to(*args, **kwargs)
+        action_tokenizer = getattr(self.backend, "action_tokenizer", None)
+        move_tokenizer = getattr(action_tokenizer, "to", None)
+        if callable(move_tokenizer):
+            device = next(self.backend.parameters()).device
+            move_tokenizer(device)
+        return result
+
     def get_optim_params(self) -> dict:
         get_params = getattr(self.backend, "get_optim_params", None)
         if callable(get_params):
@@ -242,7 +253,11 @@ class G05Policy(PreTrainedPolicy):
                 camera = self.config.camera_order[image_index % len(self.config.camera_order)]
                 sample[f"image{image_index}"] = self.config.camera_sizes[camera]
             action = batch.get(ACTION)
-            if "<action_action" in self.config.prompt_template and isinstance(action, Tensor):
+            if "<action_action" in self.config.prompt_template:
+                if not isinstance(action, Tensor):
+                    action = state.new_zeros(
+                        batch_size, self.config.chunk_size, self.config.policy_action_dim
+                    )
                 action_dim_is_pad = batch.get("action_dim_is_pad")
                 if action_dim_is_pad is None:
                     action_dim_is_pad = torch.zeros(
@@ -253,12 +268,21 @@ class G05Policy(PreTrainedPolicy):
                     )
                 elif action_dim_is_pad.ndim == 1:
                     action_dim_is_pad = action_dim_is_pad.unsqueeze(0).expand(batch_size, -1)
-                sample["action"] = {
+                action_payload = {
                     "value": action[index],
                     "action_dim_is_pad": action_dim_is_pad[index],
-                    "action_op_mask": batch.get("action_op_mask"),
-                    "parts_meta": batch.get("action_parts_meta"),
                 }
+                action_op_mask = batch.get("action_op_mask")
+                if isinstance(action_op_mask, Tensor):
+                    action_payload["action_op_mask"] = (
+                        action_op_mask[index] if action_op_mask.ndim > 1 else action_op_mask
+                    )
+                else:
+                    action_payload["action_op_mask"] = ~action_dim_is_pad[index]
+                action_payload["parts_meta"] = batch.get(
+                    "action_parts_meta", G05_POLICY_PARTS[self.config.policy_action_dim]
+                )
+                sample["action"] = action_payload
             samples.append(sample)
         prepared = dict(batch)
         prepared["samples"] = samples
