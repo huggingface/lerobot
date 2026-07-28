@@ -13,6 +13,11 @@ from typing import Protocol
 
 import numpy as np
 
+from examples.picklift_v3.alignment_reference import (
+    ALIGNMENT_REFERENCE_V1_ID,
+    alignment_reference,
+    validate_alignment_reference_config,
+)
 from examples.picklift_v3.backend import (
     JOINTS,
     RealSO101Backend,
@@ -23,6 +28,7 @@ from examples.picklift_v3.camera_profile import (
     validate_camera_profile_config,
 )
 from examples.picklift_v3.task_frame import (
+    TASK_GRID_FRAME_V1_ID,
     task_frame,
     validate_task_frame_config,
 )
@@ -31,7 +37,7 @@ from lerobot.datasets import CODEBASE_VERSION, LeRobotDataset
 
 FPS = 20
 REAL_ACK = "I_HAVE_COMPLETED_THE_POWERED_SAFETY_CHECK"
-SPAWN_PROTOCOL_VERSION = "picklift_spawn_v2"
+SPAWN_PROTOCOL_VERSION = "picklift_spawn_v3"
 SPAWN_PROTOCOLS = {
     "picklift_spawn_v1": {
         "x": (20.0, 40.0),
@@ -49,6 +55,14 @@ SPAWN_PROTOCOLS = {
         "x_description": "task-grid +X forward",
         "y_description": "task-grid +Y lateral",
     },
+    "picklift_spawn_v3": {
+        "x": (20.0, 35.0),
+        "y": (-10.0, 10.0),
+        "row_axis": "x",
+        "column_axis": "y",
+        "x_description": "task-grid +X forward",
+        "y_description": "task-grid +Y lateral",
+    },
 }
 RESULTS = {"pending", "success", "failure", "discard"}
 REQUIRED = (
@@ -60,6 +74,7 @@ REQUIRED = (
     "task_version",
     "task",
     "task_frame_id",
+    "alignment_reference_id",
     "real_world_setup_version",
     "camera_config_version",
     "camera_profile_id",
@@ -168,6 +183,14 @@ def spawn_region_for(
 
 
 def validate_config(cfg: dict) -> None:
+    if (
+        not cfg.get("alignment_reference_id")
+        and cfg.get("task_frame_id") == TASK_GRID_FRAME_V1_ID
+        and cfg.get("spawn_protocol_version") in {"picklift_spawn_v1", "picklift_spawn_v2"}
+    ):
+        # Compatibility for configs frozen before alignment references became a
+        # separate provenance object. New protocols must always provide one.
+        cfg["alignment_reference_id"] = ALIGNMENT_REFERENCE_V1_ID
     missing = [key for key in REQUIRED if key not in cfg or cfg[key] in ("", None)]
     if missing:
         raise ValueError(f"missing explicit configuration values: {', '.join(missing)}")
@@ -179,6 +202,7 @@ def validate_config(cfg: dict) -> None:
         raise ValueError("camera_acquisition_fps must be >= 20")
     validate_camera_profile_config(cfg)
     validate_task_frame_config(cfg)
+    validate_alignment_reference_config(cfg)
     if cfg["mode"] == "real" and cfg["camera_config_version"] != cfg["camera_profile_id"]:
         raise ValueError("camera_config_version must equal the immutable real camera_profile_id")
     if cfg.get("alignment_mode") not in {"relative_rebase", "direct_absolute"}:
@@ -298,7 +322,7 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
         spawn_summary = (
             f"{cfg['spawn_protocol_version']} | {cfg['spawn_id']} | {cfg['spawn_region']}\n"
             f"Xfwd={cfg['spawn_x_cm']}cm Ylat={cfg['spawn_y_cm']}cm yaw={cfg['spawn_yaw_deg']}\n"
-            f"{cfg['task_frame_id']} | aligned front"
+            f"{cfg['alignment_reference_id']} | aligned front"
         )
         ui.wait_for_start(backend.preview_frame, message=spawn_summary)
     elif cfg.get("operator_cue_wait", False):
@@ -397,6 +421,7 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
         "record_fps": FPS,
         "joint_order": list(JOINTS),
         "task_frame": task_frame(cfg["task_frame_id"]),
+        "alignment_reference": alignment_reference(cfg["alignment_reference_id"]),
         "camera_profile": camera_profile(cfg["camera_profile_id"]),
         "canonical_front": camera_profile(cfg["camera_profile_id"])["output"],
         "alignment_mode": cfg["alignment_mode"],

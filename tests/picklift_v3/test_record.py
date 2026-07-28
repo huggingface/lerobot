@@ -3,6 +3,10 @@ import json
 import numpy as np
 import pytest
 
+from examples.picklift_v3.alignment_reference import (
+    ALIGNMENT_REFERENCE_V2_ID,
+    alignment_reference,
+)
 from examples.picklift_v3.backend import RelativeRebaser, SyntheticBackend
 from examples.picklift_v3.camera_profile import (
     ALIGNED_FRONT_CAMERA_PROFILE_ID,
@@ -16,7 +20,11 @@ from examples.picklift_v3.record import (
     spawn_region_for,
     validate_config,
 )
-from examples.picklift_v3.task_frame import TASK_GRID_FRAME_ID, task_frame
+from examples.picklift_v3.task_frame import (
+    TASK_GRID_FRAME_ID,
+    TASK_GRID_FRAME_V1_ID,
+    task_frame,
+)
 
 
 def config(tmp_path):
@@ -30,6 +38,7 @@ def config(tmp_path):
         "task_version": "0.0.1-engineering",
         "task": "engineering_smoke: contract check",
         "task_frame_id": TASK_GRID_FRAME_ID,
+        "alignment_reference_id": ALIGNMENT_REFERENCE_V2_ID,
         "real_world_setup_version": "synthetic_v1",
         "camera_config_version": "synthetic_v1",
         "camera_profile_id": SYNTHETIC_FRONT_CAMERA_PROFILE_ID,
@@ -43,9 +52,9 @@ def config(tmp_path):
         "leader_calibration_id": "synthetic",
         "leader_serial_id": "synthetic",
         "spawn_id": "engineering_spawn_0000",
-        "spawn_protocol_version": "picklift_spawn_v2",
+        "spawn_protocol_version": "picklift_spawn_v3",
         "spawn_region": "r2c2",
-        "spawn_x_cm": 15,
+        "spawn_x_cm": 25,
         "spawn_y_cm": 0,
         "spawn_yaw_deg": 45,
         "result": "failure",
@@ -114,6 +123,8 @@ def test_required_provenance(tmp_path):
         "task_version",
         "task_frame_id",
         "task_frame",
+        "alignment_reference_id",
+        "alignment_reference",
         "real_world_setup_version",
         "backend",
         "control_mode",
@@ -142,12 +153,12 @@ def test_required_provenance(tmp_path):
     ):
         assert key in provenance
     assert session["camera_profile"] == provenance["camera_profile"]
-    assert session["spawn_protocol_version"] == "picklift_spawn_v2"
+    assert session["spawn_protocol_version"] == "picklift_spawn_v3"
     assert session["spawn_contract"] == {
-        "protocol_version": "picklift_spawn_v2",
+        "protocol_version": "picklift_spawn_v3",
         "x_cm": {
-            "min": 10.0,
-            "max": 25.0,
+            "min": 20.0,
+            "max": 35.0,
             "description": "task-grid +X forward",
         },
         "y_cm": {
@@ -159,10 +170,12 @@ def test_required_provenance(tmp_path):
         "region_columns_increase_along": "y",
     }
     assert session["task_frame"] == task_frame(TASK_GRID_FRAME_ID)
-    assert session["task_frame"]["known_reference"]["coordinates_m"] == {
-        "x": 0.15,
-        "y": 0.0,
+    assert session["alignment_reference"] == alignment_reference(ALIGNMENT_REFERENCE_V2_ID)
+    assert session["alignment_reference"]["red_cube_center_m"] == {
+        "x_forward": 0.25,
+        "y_lateral": 0.0,
     }
+    assert session["alignment_reference"]["physical_confirmation_status"] == ("pending_new_25cm_screenshot")
     assert provenance["formal_data"] is False
 
 
@@ -222,9 +235,9 @@ def test_direct_absolute_config_is_allowed(tmp_path):
 @pytest.mark.parametrize(
     ("x_cm", "y_cm", "region"),
     [
-        (10, -10, "r1c1"),
-        (15, 0, "r2c2"),
-        (25, 10, "r3c3"),
+        (20, -10, "r1c1"),
+        (25, 0, "r2c2"),
+        (35, 10, "r3c3"),
     ],
 )
 def test_spawn_region_mapping(x_cm, y_cm, region):
@@ -237,22 +250,53 @@ def test_legacy_spawn_v1_mapping_remains_available():
     assert spawn_region_for(40, 25, "picklift_spawn_v1") == "r3c3"
 
 
-def test_spawn_v2_balanced_grid_covers_all_nine_regions():
-    regions = {spawn_region_for(x_cm, y_cm) for x_cm in (12, 17, 22) for y_cm in (-7, 0, 7)}
+def test_legacy_spawn_v2_mapping_remains_available():
+    assert spawn_region_for(10, -10, "picklift_spawn_v2") == "r1c1"
+    assert spawn_region_for(15, 0, "picklift_spawn_v2") == "r2c2"
+    assert spawn_region_for(25, 10, "picklift_spawn_v2") == "r3c3"
+
+
+def test_legacy_v2_config_infers_frozen_alignment_reference(tmp_path):
+    cfg = config(tmp_path)
+    cfg.update(
+        {
+            "task_frame_id": TASK_GRID_FRAME_V1_ID,
+            "spawn_protocol_version": "picklift_spawn_v2",
+            "spawn_x_cm": 15,
+        }
+    )
+    cfg.pop("alignment_reference_id")
+
+    validate_config(cfg)
+
+    assert cfg["alignment_reference_id"] == "picklift_red_cube_alignment_v1"
+
+
+def test_spawn_v3_balanced_grid_covers_all_nine_regions():
+    regions = {spawn_region_for(x_cm, y_cm) for x_cm in (22, 27, 32) for y_cm in (-7, 0, 7)}
     assert regions == {f"r{row}c{column}" for row in range(1, 4) for column in range(1, 4)}
-    assert spawn_region_for(15, 0) == "r2c2"
-    assert spawn_region_for(20, 0) == "r3c2"
+    assert spawn_region_for(25, 0) == "r2c2"
+    assert spawn_region_for(30, 0) == "r3c2"
 
 
-def test_frozen_red_cube_reference_is_x_15cm_y_zero():
-    frame = task_frame(TASK_GRID_FRAME_ID)
-    assert frame["known_reference"]["coordinates_m"] == {"x": 0.15, "y": 0.0}
-    assert spawn_region_for(15, 0) == "r2c2"
-    assert "camera image" in frame["measurement_rule"]
-    assert frame["units"] == {"canonical": "meter", "operator_config": "centimeter"}
-    assert spawn_contract("picklift_spawn_v2")["x_cm"] == {
-        "min": 10.0,
-        "max": 25.0,
+def test_task_frame_v1_reference_is_immutable_and_v2_inherits_geometry():
+    frame_v1 = task_frame(TASK_GRID_FRAME_V1_ID)
+    frame_v2 = task_frame(TASK_GRID_FRAME_ID)
+    assert frame_v1["known_reference"]["coordinates_m"] == {"x": 0.15, "y": 0.0}
+    assert "known_reference" not in frame_v2
+    assert frame_v2["geometry_parent_frame_id"] == TASK_GRID_FRAME_V1_ID
+    for key in ("origin", "centerline", "axes", "units", "measurement_rule"):
+        assert frame_v2[key] == frame_v1[key]
+
+
+def test_new_red_cube_reference_is_pending_x_25cm_y_zero():
+    reference = alignment_reference(ALIGNMENT_REFERENCE_V2_ID)
+    assert reference["red_cube_center_m"] == {"x_forward": 0.25, "y_lateral": 0.0}
+    assert reference["physical_confirmation_status"] == "pending_new_25cm_screenshot"
+    assert spawn_region_for(25, 0) == "r2c2"
+    assert spawn_contract("picklift_spawn_v3")["x_cm"] == {
+        "min": 20.0,
+        "max": 35.0,
         "description": "task-grid +X forward",
     }
 
@@ -260,10 +304,12 @@ def test_frozen_red_cube_reference_is_x_15cm_y_zero():
 @pytest.mark.parametrize(
     ("mutation", "error"),
     [
-        ({"spawn_x_cm": 9}, "10..25"),
+        ({"spawn_x_cm": 19}, "20..35"),
         ({"spawn_y_cm": 11}, "-10..10"),
         ({"spawn_protocol_version": "picklift_spawn_unknown"}, "unsupported"),
         ({"task_frame_id": "picklift_task_grid_unknown"}, "task_frame"),
+        ({"alignment_reference_id": "picklift_alignment_unknown"}, "alignment_reference"),
+        ({"task_frame_id": TASK_GRID_FRAME_V1_ID}, "does not match"),
         ({"spawn_yaw_deg": 91}, "0..90"),
         ({"spawn_region": "r1c1"}, "does not match"),
         ({"result": "success", "success": False}, "success must be true"),

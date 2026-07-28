@@ -19,14 +19,16 @@ The frozen physical placement protocol and per-episode procedure are in
 [`PICKLIFT_PROTOCOL.md`](./PICKLIFT_PROTOCOL.md) and
 [`OPERATOR_CHECKLIST.md`](./OPERATOR_CHECKLIST.md). Start a balanced schedule
 from [`spawn_plan.template.json`](./spawn_plan.template.json).
-New formal collection uses `picklift_spawn_v2` with
-`picklift_task_grid_v1`: `+X` is forward along the physical/MuJoCo grid
-(10–25 cm), `+Y` is lateral along the perpendicular grid (±10 cm), and
-`Y=0` is the base centerline. The aligned red-cube reference is
-`(X=0.15 m, Y=0 m)`. These coordinates are measured from the grid only—not
-from image axes or table edges. The previous 15–25 cm contract remains available as
-[`picklift_spawn_v1`](./PICKLIFT_PROTOCOL_V1.md) and is never retroactively
-applied to historical manifests.
+New formal collection uses `picklift_spawn_v3`: `+X` forward is 20–35 cm,
+`+Y` lateral remains ±10 cm, and `Y=0` is the base centerline. Its
+`picklift_task_grid_v2` inherits the exact origin and axes from
+`picklift_task_grid_v1`; the new
+`picklift_red_cube_alignment_v2` proposes `(X=0.25 m, Y=0 m)` as the
+canonical-image center reference. That image placement remains pending until
+the operator places the physical cube at 25 cm and captures a new canonical
+frame. The v2 10–25 cm contract and v1 legacy contract remain immutable in
+[`PICKLIFT_PROTOCOL_V2.md`](./PICKLIFT_PROTOCOL_V2.md) and
+[`PICKLIFT_PROTOCOL_V1.md`](./PICKLIFT_PROTOCOL_V1.md).
 
 The aligned front profile is
 `icspring_front_crop_1280x960_to_640x480_v1`: acquire native 1920×1080 RGB
