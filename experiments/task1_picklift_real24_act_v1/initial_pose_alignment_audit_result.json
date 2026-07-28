@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "audit_id": "task1_real24_vs_nexus_gate12_initial_pose_audit_v1",
+  "status": "offline_audit_complete_remote_ready_pose_change_recommended",
+  "research_status": "diagnostic_only_not_real_robot_evaluation_not_a_paper_result",
+  "source": {
+    "script": "experiments/task1_picklift_real24_act_v1/audit_initial_pose_alignment.py",
+    "commit": "598bbe6cede7fcd44769dbedcf5e6a564e4c2648",
+    "script_sha256": "7b1cb8d990363e6da68c7b87582a76f48ab07706719a3ab74b4732edbf169ec3",
+    "pushed": false
+  },
+  "inputs": {
+    "dataset_root": "/home/ubuntu24/Teleop/artifacts/task1_picklift_formal24_s03_20260728",
+    "dataset_freeze_id": "task1_picklift_formal24_s03_freeze_v1",
+    "dataset_subset_id": "task1_picklift_formal24_s03_accepted_v1",
+    "dataset_tree_sha256": "251cbdc079b304425ccdfbd7a08f15d34858ea0dd8c19345544b8da9f3adb9f2",
+    "dataset_tree_reverified": true,
+    "episodes": 24,
+    "nexus_gate12_reset_evidence_sha256": "7ce34c0e083f0237f83de839edd84d7507b747aa87db772e2618197c4a295fd4",
+    "nexus_resets": 12
+  },
+  "joint_results": [
+    {
+      "joint": "shoulder_pan",
+      "real_frame0_min_median_max": [-7.164834976196289, 5.406593322753906, 14.813186645507812],
+      "real_population_std": 6.132580258164294,
+      "nexus_reset_min_median_max": [-0.0029162049759179354, 0.0008000901369377971, 0.0028680276591330767],
+      "nexus_minus_real_median": -5.40579322873964,
+      "nexus_median_distance_in_real_std": 0.8814875633372944,
+      "classification": "in_distribution"
+    },
+    {
+      "joint": "shoulder_lift",
+      "real_frame0_min_median_max": [-98.85713958740234, -98.32967376708984, -80.74725341796875],
+      "real_population_std": 3.5163617517078127,
+      "nexus_reset_min_median_max": [-90.00133514404297, -89.99743270874023, -89.99592590332031],
+      "nexus_minus_real_median": 8.33224105834961,
+      "nexus_median_distance_in_real_std": 2.369563101493423,
+      "classification": "distribution_shift_outside_real_tukey_fence"
+    },
+    {
+      "joint": "elbow_flex",
+      "real_frame0_min_median_max": [39.29670333862305, 45.406593322753906, 48.35165023803711],
+      "real_population_std": 1.9456001098196627,
+      "nexus_reset_min_median_max": [90.02169036865234, 90.02392959594727, 90.02719116210938],
+      "nexus_minus_real_median": 44.61733627319336,
+      "nexus_median_distance_in_real_std": 22.93242894467606,
+      "classification": "strict_ood_all_12_outside_real_observed_range"
+    },
+    {
+      "joint": "wrist_flex",
+      "real_frame0_min_median_max": [89.23076629638672, 92.21977996826172, 92.92308044433594],
+      "real_population_std": 0.7248590467826554,
+      "nexus_reset_min_median_max": [37.817874908447266, 37.821563720703125, 37.82343292236328],
+      "nexus_minus_real_median": -54.398216247558594,
+      "nexus_median_distance_in_real_std": 75.04661284012306,
+      "classification": "strict_ood_all_12_outside_real_observed_range"
+    },
+    {
+      "joint": "wrist_roll",
+      "real_frame0_min_median_max": [-3.692307710647583, 2.98901104927063, 13.802197456359863],
+      "real_population_std": 3.965297507351367,
+      "nexus_reset_min_median_max": [-0.0024203937500715256, -2.9177242681039497e-05, 0.0026942244730889797],
+      "nexus_minus_real_median": -2.9890402289802296,
+      "nexus_median_distance_in_real_std": 0.7537997397266588,
+      "classification": "in_distribution"
+    },
+    {
+      "joint": "gripper",
+      "real_frame0_min_median_max": [10.881543159484863, 18.31955909729004, 27.54821014404297],
+      "real_population_std": 4.043760413739351,
+      "nexus_reset_min_median_max": [-0.0016732770018279552, -0.00025292221107520163, 0.0024213704746216536],
+      "nexus_minus_real_median": -18.319812019501114,
+      "nexus_median_distance_in_real_std": 4.53039006892112,
+      "classification": "strict_ood_all_12_outside_real_observed_range"
+    }
+  ],
+  "representative_ready_pose": {
+    "selection": "observed_real_frame0_closest_raw_l2_to_coordinatewise_median",
+    "episode_index": 13,
+    "frame_index": 0,
+    "spawn_region": "r1c2",
+    "spawn_id": "pl_v5_s002_rep02",
+    "state": [
+      7.4285712242126465,
+      -98.32967376708984,
+      45.010990142822266,
+      92.21977996826172,
+      1.8461538553237915,
+      19.765840530395508
+    ],
+    "first_five_frames_identical": true,
+    "synthetic_pose": false,
+    "raw_l2_medoid_episode_index": 14
+  },
+  "early_frame_stability": {
+    "window": "frame_index_0_through_4",
+    "episodes_with_any_nonzero_joint_delta": 1,
+    "only_changed_episode": 0,
+    "only_changed_joint": "gripper",
+    "maximum_delta": 6.818181037902832,
+    "all_other_episode_joint_windows_identical": true
+  },
+  "pose_distance": {
+    "nexus_to_selected_ready_pose_raw_l2_min_median_max": [
+      74.18667976625316,
+      74.189356698305,
+      74.19327761756391
+    ],
+    "nexus_to_nearest_real_frame0_raw_l2_min_median_max": [
+      70.97521730564682,
+      70.977735719035,
+      70.98178738711879
+    ]
+  },
+  "assessment": {
+    "ood_or_shifted_joints": ["shoulder_lift", "elbow_flex", "wrist_flex", "gripper"],
+    "zero_of_twelve_may_be_affected": true,
+    "interpretation": "initial_pose_mismatch_is_a_plausible_material_contributor_not_causal_proof",
+    "required_next_experiment": "rerun_gate12_after_remote_ready_pose_contract_before_considering_frozen120",
+    "paper_effect_claim": false
+  },
+  "remote_interface_requirement": {
+    "proposed_signature": "adapter.reset(trial, *, ready_pose: PolicyReadyPose | None = None)",
+    "placement": "after_existing_reset_and_settle_before_policy_tick0",
+    "robot_qpos": "convert_frozen_dataset_state_to_sim_qpos_then_overwrite_robot_joints",
+    "robot_qvel": "zero_corresponding_robot_joint_velocities",
+    "simulation_time": "do_not_advance_for_ready_pose_placement",
+    "object_spawn_seed_pose": "unchanged",
+    "camera_success_clock": "unchanged",
+    "nexus_robot_init_noise": "overwritten_and_not_present_in_policy_tick0_state",
+    "rollout_accounting": "reset_settle_and_ready_pose_placement_excluded",
+    "required_manifest_evidence": [
+      "ready_pose_profile_id",
+      "source_dataset_tree_sha256",
+      "source_episode_index",
+      "requested_ready_state",
+      "observed_tick0_state",
+      "per_joint_delta"
+    ]
+  },
+  "evidence": {
+    "directory": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_act_v1_real_to_remote_sim_v1/initial_pose_alignment_audit_v1",
+    "hashes": {
+      "real_episode_initial_states.jsonl": "1f54480f039587195c004fe0d6ce044d1997503e13e550be0505a196aad6aaa4",
+      "nexus_gate12_reset_comparisons.jsonl": "6355123c6d7938f3da2bf256413f8de9592116b5a3cfdb17455a4d2827754aa5",
+      "audit_summary.json": "faaa21fefe538a59867e6573f35d9a71e65be88faaef6e5263c7ad6841a99ce2",
+      "ready_pose_contract_proposal.json": "7c57b5c926ebf7f893983071cd9eee7b5071d9f9cb0c2adbf12c3c0b61934c3b"
+    },
+    "hashes_verified": true
+  },
+  "scope": {
+    "hardware_accessed": false,
+    "simulation_rollout_executed": false,
+    "frozen120_executed": false,
+    "remote_modified": false,
+    "dataset_modified": false,
+    "checkpoint_loaded": false
+  }
+}
