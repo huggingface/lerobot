@@ -12,9 +12,11 @@ from examples.picklift_v3.record import (
     FPS,
     features,
     record,
+    spawn_contract,
     spawn_region_for,
     validate_config,
 )
+from examples.picklift_v3.task_frame import TASK_GRID_FRAME_ID, task_frame
 
 
 def config(tmp_path):
@@ -27,6 +29,7 @@ def config(tmp_path):
         "task_id": "picklift_smoke",
         "task_version": "0.0.1-engineering",
         "task": "engineering_smoke: contract check",
+        "task_frame_id": TASK_GRID_FRAME_ID,
         "real_world_setup_version": "synthetic_v1",
         "camera_config_version": "synthetic_v1",
         "camera_profile_id": SYNTHETIC_FRONT_CAMERA_PROFILE_ID,
@@ -42,8 +45,8 @@ def config(tmp_path):
         "spawn_id": "engineering_spawn_0000",
         "spawn_protocol_version": "picklift_spawn_v2",
         "spawn_region": "r2c2",
-        "spawn_x_cm": 30,
-        "spawn_y_cm": 18,
+        "spawn_x_cm": 15,
+        "spawn_y_cm": 0,
         "spawn_yaw_deg": 45,
         "result": "failure",
         "formal_data": False,
@@ -109,6 +112,8 @@ def test_required_provenance(tmp_path):
         "session_id",
         "task_id",
         "task_version",
+        "task_frame_id",
+        "task_frame",
         "real_world_setup_version",
         "backend",
         "control_mode",
@@ -127,6 +132,7 @@ def test_required_provenance(tmp_path):
         "dropped_frames",
         "sync_anomalies",
         "spawn_protocol_version",
+        "spawn_contract",
         "spawn_id",
         "spawn_region",
         "spawn_x_cm",
@@ -137,6 +143,26 @@ def test_required_provenance(tmp_path):
         assert key in provenance
     assert session["camera_profile"] == provenance["camera_profile"]
     assert session["spawn_protocol_version"] == "picklift_spawn_v2"
+    assert session["spawn_contract"] == {
+        "protocol_version": "picklift_spawn_v2",
+        "x_cm": {
+            "min": 10.0,
+            "max": 25.0,
+            "description": "task-grid +X forward",
+        },
+        "y_cm": {
+            "min": -10.0,
+            "max": 10.0,
+            "description": "task-grid +Y lateral",
+        },
+        "region_rows_increase_along": "x",
+        "region_columns_increase_along": "y",
+    }
+    assert session["task_frame"] == task_frame(TASK_GRID_FRAME_ID)
+    assert session["task_frame"]["known_reference"]["coordinates_m"] == {
+        "x": 0.15,
+        "y": 0.0,
+    }
     assert provenance["formal_data"] is False
 
 
@@ -196,9 +222,9 @@ def test_direct_absolute_config_is_allowed(tmp_path):
 @pytest.mark.parametrize(
     ("x_cm", "y_cm", "region"),
     [
-        (20, 10, "r1c1"),
-        (30, 18, "r2c2"),
-        (40, 25, "r3c3"),
+        (10, -10, "r1c1"),
+        (15, 0, "r2c2"),
+        (25, 10, "r3c3"),
     ],
 )
 def test_spawn_region_mapping(x_cm, y_cm, region):
@@ -212,18 +238,32 @@ def test_legacy_spawn_v1_mapping_remains_available():
 
 
 def test_spawn_v2_balanced_grid_covers_all_nine_regions():
-    regions = {spawn_region_for(x_cm, y_cm) for y_cm in (12, 17, 22) for x_cm in (23, 30, 37)}
+    regions = {spawn_region_for(x_cm, y_cm) for x_cm in (12, 17, 22) for y_cm in (-7, 0, 7)}
     assert regions == {f"r{row}c{column}" for row in range(1, 4) for column in range(1, 4)}
-    assert spawn_region_for(30, 15) == "r2c2"
-    assert spawn_region_for(30, 20) == "r3c2"
+    assert spawn_region_for(15, 0) == "r2c2"
+    assert spawn_region_for(20, 0) == "r3c2"
+
+
+def test_frozen_red_cube_reference_is_x_15cm_y_zero():
+    frame = task_frame(TASK_GRID_FRAME_ID)
+    assert frame["known_reference"]["coordinates_m"] == {"x": 0.15, "y": 0.0}
+    assert spawn_region_for(15, 0) == "r2c2"
+    assert "camera image" in frame["measurement_rule"]
+    assert frame["units"] == {"canonical": "meter", "operator_config": "centimeter"}
+    assert spawn_contract("picklift_spawn_v2")["x_cm"] == {
+        "min": 10.0,
+        "max": 25.0,
+        "description": "task-grid +X forward",
+    }
 
 
 @pytest.mark.parametrize(
     ("mutation", "error"),
     [
-        ({"spawn_x_cm": 19}, "20..40"),
-        ({"spawn_y_cm": 9}, "10..25"),
+        ({"spawn_x_cm": 9}, "10..25"),
+        ({"spawn_y_cm": 11}, "-10..10"),
         ({"spawn_protocol_version": "picklift_spawn_unknown"}, "unsupported"),
+        ({"task_frame_id": "picklift_task_grid_unknown"}, "task_frame"),
         ({"spawn_yaw_deg": 91}, "0..90"),
         ({"spawn_region": "r1c1"}, "does not match"),
         ({"result": "success", "success": False}, "success must be true"),

@@ -22,20 +22,32 @@ from examples.picklift_v3.camera_profile import (
     camera_profile,
     validate_camera_profile_config,
 )
+from examples.picklift_v3.task_frame import (
+    task_frame,
+    validate_task_frame_config,
+)
 from lerobot import __version__ as lerobot_version
 from lerobot.datasets import CODEBASE_VERSION, LeRobotDataset
 
 FPS = 20
 REAL_ACK = "I_HAVE_COMPLETED_THE_POWERED_SAFETY_CHECK"
 SPAWN_PROTOCOL_VERSION = "picklift_spawn_v2"
-SPAWN_BOUNDS_CM = {
+SPAWN_PROTOCOLS = {
     "picklift_spawn_v1": {
         "x": (20.0, 40.0),
         "y": (15.0, 25.0),
+        "row_axis": "y",
+        "column_axis": "x",
+        "x_description": "mat horizontal",
+        "y_description": "forward depth",
     },
     "picklift_spawn_v2": {
-        "x": (20.0, 40.0),
-        "y": (10.0, 25.0),
+        "x": (10.0, 25.0),
+        "y": (-10.0, 10.0),
+        "row_axis": "x",
+        "column_axis": "y",
+        "x_description": "task-grid +X forward",
+        "y_description": "task-grid +Y lateral",
     },
 }
 RESULTS = {"pending", "success", "failure", "discard"}
@@ -47,6 +59,7 @@ REQUIRED = (
     "task_id",
     "task_version",
     "task",
+    "task_frame_id",
     "real_world_setup_version",
     "camera_config_version",
     "camera_profile_id",
@@ -100,23 +113,57 @@ def git_commit() -> str:
     ).stdout.strip()
 
 
+def spawn_contract(protocol_version: str) -> dict:
+    try:
+        protocol = SPAWN_PROTOCOLS[protocol_version]
+    except KeyError as exc:
+        raise ValueError(f"unsupported spawn_protocol_version: {protocol_version}") from exc
+    return {
+        "protocol_version": protocol_version,
+        "x_cm": {
+            "min": protocol["x"][0],
+            "max": protocol["x"][1],
+            "description": protocol["x_description"],
+        },
+        "y_cm": {
+            "min": protocol["y"][0],
+            "max": protocol["y"][1],
+            "description": protocol["y_description"],
+        },
+        "region_rows_increase_along": protocol["row_axis"],
+        "region_columns_increase_along": protocol["column_axis"],
+    }
+
+
 def spawn_region_for(
     x_cm: float,
     y_cm: float,
     protocol_version: str = SPAWN_PROTOCOL_VERSION,
 ) -> str:
     try:
-        bounds = SPAWN_BOUNDS_CM[protocol_version]
+        protocol = SPAWN_PROTOCOLS[protocol_version]
     except KeyError as exc:
         raise ValueError(f"unsupported spawn_protocol_version: {protocol_version}") from exc
-    x_min, x_max = bounds["x"]
-    y_min, y_max = bounds["y"]
+    x_min, x_max = protocol["x"]
+    y_min, y_max = protocol["y"]
     if not x_min <= x_cm <= x_max:
-        raise ValueError(f"spawn_x_cm must be within mat horizontal {x_min:g}..{x_max:g} cm")
+        raise ValueError(f"spawn_x_cm must be within {protocol['x_description']} {x_min:g}..{x_max:g} cm")
     if not y_min <= y_cm <= y_max:
-        raise ValueError(f"spawn_y_cm must be within forward depth {y_min:g}..{y_max:g} cm")
-    column = min(int((x_cm - x_min) / ((x_max - x_min) / 3)), 2) + 1
-    row = min(int((y_cm - y_min) / ((y_max - y_min) / 3)), 2) + 1
+        raise ValueError(f"spawn_y_cm must be within {protocol['y_description']} {y_min:g}..{y_max:g} cm")
+    values = {"x": x_cm, "y": y_cm}
+    bounds = {"x": (x_min, x_max), "y": (y_min, y_max)}
+    row_axis = protocol["row_axis"]
+    column_axis = protocol["column_axis"]
+    row_min, row_max = bounds[row_axis]
+    column_min, column_max = bounds[column_axis]
+    row = min(int((values[row_axis] - row_min) / ((row_max - row_min) / 3)), 2) + 1
+    column = (
+        min(
+            int((values[column_axis] - column_min) / ((column_max - column_min) / 3)),
+            2,
+        )
+        + 1
+    )
     return f"r{row}c{column}"
 
 
@@ -131,6 +178,7 @@ def validate_config(cfg: dict) -> None:
     if int(cfg.get("camera_acquisition_fps", 0)) < FPS:
         raise ValueError("camera_acquisition_fps must be >= 20")
     validate_camera_profile_config(cfg)
+    validate_task_frame_config(cfg)
     if cfg["mode"] == "real" and cfg["camera_config_version"] != cfg["camera_profile_id"]:
         raise ValueError("camera_config_version must equal the immutable real camera_profile_id")
     if cfg.get("alignment_mode") not in {"relative_rebase", "direct_absolute"}:
@@ -249,8 +297,8 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
         ui.open()
         spawn_summary = (
             f"{cfg['spawn_protocol_version']} | {cfg['spawn_id']} | {cfg['spawn_region']}\n"
-            f"x={cfg['spawn_x_cm']} y={cfg['spawn_y_cm']} yaw={cfg['spawn_yaw_deg']}\n"
-            "front: aligned crop -> 640x480"
+            f"Xfwd={cfg['spawn_x_cm']}cm Ylat={cfg['spawn_y_cm']}cm yaw={cfg['spawn_yaw_deg']}\n"
+            f"{cfg['task_frame_id']} | aligned front"
         )
         ui.wait_for_start(backend.preview_frame, message=spawn_summary)
     elif cfg.get("operator_cue_wait", False):
@@ -305,7 +353,8 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
                     frames=sample_index + 1,
                     message=(
                         f"{cfg['spawn_id']} | {cfg['spawn_region']}\n"
-                        "aligned front | Dataset 20 FPS\nMove Leader | END stops early"
+                        f"Xfwd={cfg['spawn_x_cm']} Ylat={cfg['spawn_y_cm']} | 20 FPS\n"
+                        "Move Leader | END stops early"
                     ),
                 )
                 if command == "stop":
@@ -339,6 +388,7 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
         **{k: cfg[k] for k in REQUIRED},
         "backend": "real" if cfg["mode"] == "real" else "synthetic",
         "control_mode": "leader_follower",
+        "spawn_contract": spawn_contract(cfg["spawn_protocol_version"]),
         "collection_commit": git_commit(),
         "lerobot_version": lerobot_version,
         "lerobot_dataset_version": CODEBASE_VERSION,
@@ -346,6 +396,7 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
         "camera_acquisition_fps": cfg["camera_acquisition_fps"],
         "record_fps": FPS,
         "joint_order": list(JOINTS),
+        "task_frame": task_frame(cfg["task_frame_id"]),
         "camera_profile": camera_profile(cfg["camera_profile_id"]),
         "canonical_front": camera_profile(cfg["camera_profile_id"])["output"],
         "alignment_mode": cfg["alignment_mode"],

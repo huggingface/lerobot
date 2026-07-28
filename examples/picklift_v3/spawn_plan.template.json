@@ -1,10 +1,16 @@
 {
   "protocol_version": "picklift_spawn_v2",
+  "task_frame_id": "picklift_task_grid_v1",
   "coordinate_frame": {
-    "origin_description": "arm center at the mat bottom 30 cm mark, measured by 2 cm square centers",
-    "x": "mat horizontal coordinate in cm, 20..40; columns increase left to right looking forward from the robot",
-    "y": "forward distance from arm center in cm, 10..25; rows increase near to far",
+    "origin_description": "arm/base center projected onto the task plane at the mat bottom 30 cm mark",
+    "x": "+X forward along the grid from the robot into the workspace, 10..25 cm; rows increase near to far",
+    "y": "+Y lateral along the perpendicular grid axis with MuJoCo-matched sign, -10..+10 cm; columns increase -Y to +Y and Y=0 is the centerline",
     "yaw_deg": "object yaw in degrees, 0..90"
+  },
+  "known_reference": {
+    "description": "red cube center in frozen camera-alignment evidence",
+    "x_forward_m": 0.15,
+    "y_lateral_m": 0.0
   },
   "advance_rule": "Keep spawn_id and pose for failure/discard retries; advance only after a saved success.",
   "spawns": [

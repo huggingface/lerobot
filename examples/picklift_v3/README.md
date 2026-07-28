@@ -19,8 +19,12 @@ The frozen physical placement protocol and per-episode procedure are in
 [`PICKLIFT_PROTOCOL.md`](./PICKLIFT_PROTOCOL.md) and
 [`OPERATOR_CHECKLIST.md`](./OPERATOR_CHECKLIST.md). Start a balanced schedule
 from [`spawn_plan.template.json`](./spawn_plan.template.json).
-New formal collection uses `picklift_spawn_v2` (forward 10–25 cm, lateral
-centerline ±10 cm). The previous 15–25 cm contract remains available as
+New formal collection uses `picklift_spawn_v2` with
+`picklift_task_grid_v1`: `+X` is forward along the physical/MuJoCo grid
+(10–25 cm), `+Y` is lateral along the perpendicular grid (±10 cm), and
+`Y=0` is the base centerline. The aligned red-cube reference is
+`(X=0.15 m, Y=0 m)`. These coordinates are measured from the grid only—not
+from image axes or table edges. The previous 15–25 cm contract remains available as
 [`picklift_spawn_v1`](./PICKLIFT_PROTOCOL_V1.md) and is never retroactively
 applied to historical manifests.
 
