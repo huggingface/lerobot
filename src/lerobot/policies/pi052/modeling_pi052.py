@@ -970,7 +970,7 @@ class PI052Policy(PI05Policy):
             for p in norm.parameters():
                 p.requires_grad_(True)
         layers = getattr(text_model, "layers", None)
-        if isinstance(layers, (list, torch.nn.ModuleList)) and len(layers) > 0:
+        if isinstance(layers, list | torch.nn.ModuleList) and len(layers) > 0:
             for p in layers[-1].parameters():
                 p.requires_grad_(True)
 
@@ -1084,6 +1084,53 @@ class PI052Policy(PI05Policy):
         loss_dict["loss"] = total.detach().mean()
         return total, loss_dict
 
+    def _embed_supervised_prefix(
+        self,
+        batch: dict[str, Tensor],
+        text_labels: Tensor | None,
+        action_tokens: Tensor | None,
+        action_mask: Tensor | None,
+        *,
+        suppress_prefix_grads: bool = False,
+    ) -> tuple[Tensor, Tensor, Tensor, int, int]:
+        """Embed images, language, and optional FAST supervision once."""
+        images, img_masks = self._preprocess_images(batch)
+        with torch.no_grad() if suppress_prefix_grads else nullcontext():
+            prefix_embs, prefix_pad, prefix_att = self.model.embed_prefix(
+                images,
+                img_masks,
+                batch[OBS_LANGUAGE_TOKENS],
+                batch[OBS_LANGUAGE_ATTENTION_MASK],
+            )
+        non_fast_prefix_len = prefix_embs.shape[1]
+
+        if text_labels is not None:
+            lang_start = non_fast_prefix_len - text_labels.shape[1]
+            if lang_start >= 0:
+                prefix_att = _mark_target_span_causal(
+                    prefix_att, text_labels, lang_start, non_fast_prefix_len
+                )
+
+        fast_len = 0
+        if action_tokens is not None and action_mask is not None:
+            fast_emb = self.model.paligemma_with_expert.embed_language_tokens(action_tokens)
+            fast_len = action_tokens.shape[1]
+            prefix_embs = torch.cat([prefix_embs, fast_emb], dim=1)
+            prefix_pad = torch.cat([prefix_pad, action_mask.to(prefix_pad.dtype)], dim=1)
+            prefix_att = torch.cat(
+                [
+                    prefix_att,
+                    torch.ones(
+                        (action_tokens.shape[0], fast_len),
+                        dtype=torch.bool,
+                        device=prefix_embs.device,
+                    ),
+                ],
+                dim=1,
+            )
+
+        return prefix_embs, prefix_pad, prefix_att, non_fast_prefix_len, fast_len
+
     def _compute_all_losses_fused(
         self,
         batch: dict[str, Tensor],
@@ -1105,37 +1152,13 @@ class PI052Policy(PI05Policy):
             and getattr(self.config, "knowledge_insulation", False)
         )
 
-        # ---- prefix: images + language + (optional FAST) -------------
-        images, img_masks = self._preprocess_images(batch)
-        lang_tokens = batch[OBS_LANGUAGE_TOKENS]
-        lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
-        with torch.no_grad() if suppress_prefix_grads else nullcontext():
-            prefix_embs, prefix_pad, prefix_att = self.model.embed_prefix(
-                images, img_masks, lang_tokens, lang_masks
-            )
-        non_fast_prefix_len = prefix_embs.shape[1]  # images + language only
-
-        # Make supervised text causal rather than a bidirectional copy task.
-        if text_labels is not None:
-            lang_start = non_fast_prefix_len - text_labels.shape[1]
-            if lang_start >= 0:
-                prefix_att = _mark_target_span_causal(
-                    prefix_att, text_labels, lang_start, non_fast_prefix_len
-                )
-
-        fast_len = 0
-        if action_tokens is not None and action_mask is not None:
-            # Gemma embedding already applies its hidden-size scale.
-            fast_emb = self.model.paligemma_with_expert.embed_language_tokens(action_tokens)
-            fast_len = action_tokens.shape[1]
-            ones_att = torch.ones(
-                (action_tokens.shape[0], fast_len),
-                dtype=torch.bool,
-                device=prefix_embs.device,
-            )
-            prefix_embs = torch.cat([prefix_embs, fast_emb], dim=1)
-            prefix_pad = torch.cat([prefix_pad, action_mask.to(prefix_pad.dtype)], dim=1)
-            prefix_att = torch.cat([prefix_att, ones_att], dim=1)
+        prefix_embs, prefix_pad, prefix_att, non_fast_prefix_len, fast_len = self._embed_supervised_prefix(
+            batch,
+            text_labels,
+            action_tokens,
+            action_mask,
+            suppress_prefix_grads=suppress_prefix_grads,
+        )
 
         # Amortized flow reuses one VLM prefix across fresh denoising targets.
         num_repeats = int(getattr(self.config, "flow_num_repeats", 1))
@@ -1447,90 +1470,34 @@ class PI052Policy(PI05Policy):
         the caller doesn't want that head.
         """
 
-        images, img_masks = self._preprocess_images(batch)
-        lang_tokens = batch[OBS_LANGUAGE_TOKENS]
-        lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
-
-        prefix_embs, prefix_pad, prefix_att = self.model.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks
+        prefix_embs, prefix_pad, prefix_att, _, fast_len = self._embed_supervised_prefix(
+            batch,
+            text_labels,
+            action_tokens,
+            action_mask,
         )
-
-        # Make supervised text causal before appending FAST tokens.
-        if text_labels is not None:
-            lang_start = prefix_embs.shape[1] - text_labels.shape[1]
-            if lang_start >= 0:
-                prefix_att = _mark_target_span_causal(
-                    prefix_att, text_labels, lang_start, prefix_embs.shape[1]
-                )
-
-        fast_len = 0
-        if action_tokens is not None and action_mask is not None:
-            # embed_language_tokens already applies the Gemma sqrt(hidden) scale (tf>=5.4.0);
-            # do not scale FAST action tokens again (would double-scale).
-            fast_emb = self.model.paligemma_with_expert.embed_language_tokens(action_tokens)
-
-            fast_len = action_tokens.shape[1]
-            ones_att = torch.ones(
-                (action_tokens.shape[0], fast_len),
-                dtype=torch.bool,
-                device=prefix_embs.device,
-            )
-            full_embs = torch.cat([prefix_embs, fast_emb], dim=1)
-            full_pad = torch.cat([prefix_pad, action_mask.to(prefix_pad.dtype)], dim=1)
-            full_att = torch.cat([prefix_att, ones_att], dim=1)
-        else:
-            full_embs = prefix_embs
-            full_pad = prefix_pad
-            full_att = prefix_att
-
-        att_2d = make_att_2d_masks(full_pad, full_att)
-        position_ids = torch.cumsum(full_pad, dim=1) - 1
-        att_2d_4d = self.model._prepare_attention_masks_4d(att_2d, dtype=full_embs.dtype)
+        att_2d = make_att_2d_masks(prefix_pad, prefix_att)
+        position_ids = torch.cumsum(prefix_pad, dim=1) - 1
+        att_2d_4d = self.model._prepare_attention_masks_4d(att_2d, dtype=prefix_embs.dtype)
 
         (vlm_out, _), _ = self.model.paligemma_with_expert.forward(
             attention_mask=att_2d_4d,
             position_ids=position_ids,
             past_key_values=None,
-            inputs_embeds=[full_embs, None],
+            inputs_embeds=[prefix_embs, None],
             use_cache=False,
         )
         if vlm_out is None:
             raise RuntimeError("PI052 text+fast loss: VLM forward returned no hidden states.")
-
-        lm_head = self.model.paligemma_with_expert.paligemma.lm_head
-
-        text_loss: Tensor | None = None
-        if text_labels is not None:
-            lang_len = text_labels.shape[1]
-            # embed_prefix lays out as [images, language]; with FAST
-            # appended the full sequence is [images, language, FAST].
-            if fast_len > 0:
-                text_hidden = vlm_out[:, -(fast_len + lang_len) : -fast_len, :]
-            else:
-                text_hidden = vlm_out[:, -lang_len:, :]
-            text_loss = _shifted_lin_ce(
-                text_hidden,
-                lm_head.weight,
-                text_labels,
-                z_loss_weight=getattr(self.config, "text_ce_z_loss_weight", 0.0),
-                compiled=self.config.use_compiled_text_ce,
-                reduction=reduction,
-            )
-
-        fast_loss: Tensor | None = None
-        if action_tokens is not None and action_code_mask is not None and fast_len > 0:
-            fast_hidden = vlm_out[:, -fast_len:, :]
-            fast_loss = _fast_lin_ce(
-                fast_hidden,
-                lm_head.weight,
-                action_tokens,
-                action_code_mask,
-                predict_actions_t,
-                compiled=self.config.use_compiled_text_ce,
-                reduction=reduction,
-            )
-
-        return text_loss, fast_loss
+        return self._prefix_ce_losses(
+            vlm_out,
+            text_labels,
+            action_tokens,
+            action_code_mask,
+            fast_len,
+            predict_actions_t,
+            reduction,
+        )
 
     def select_message(
         self,
