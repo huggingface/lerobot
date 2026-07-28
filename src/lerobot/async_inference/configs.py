@@ -33,13 +33,31 @@ AGGREGATE_FUNCTIONS = {
     "conservative": lambda old, new: 0.7 * old + 0.3 * new,
 }
 
+SIMILARITY_FUNCTIONS = {
+    "euclidean": lambda s1, s2, tol: torch.linalg.norm(s1 - s2) < tol,
+    "disabled": lambda _, __, ___: False,  # Always return False, never skip an observation due to similarity
+    # Add more similarity functions as needed
+}
 
-def get_aggregate_function(name: str) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
+
+def get_aggregate_function(
+    name: str,
+) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
     """Get aggregate function by name from registry."""
     if name not in AGGREGATE_FUNCTIONS:
         available = list(AGGREGATE_FUNCTIONS.keys())
         raise ValueError(f"Unknown aggregate function '{name}'. Available: {available}")
     return AGGREGATE_FUNCTIONS[name]
+
+
+def get_similarity_function(
+    name: str,
+) -> Callable[[torch.Tensor, torch.Tensor, float], bool]:
+    """Get similarity function by name from registry."""
+    if name not in SIMILARITY_FUNCTIONS:
+        available = list(SIMILARITY_FUNCTIONS.keys())
+        raise ValueError(f"Unknown similarity function '{name}'. Available: {available}")
+    return SIMILARITY_FUNCTIONS[name]
 
 
 @dataclass
@@ -57,11 +75,21 @@ class PolicyServerConfig:
     # Timing configuration
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
     inference_latency: float = field(
-        default=DEFAULT_INFERENCE_LATENCY, metadata={"help": "Target inference latency in seconds"}
+        default=DEFAULT_INFERENCE_LATENCY,
+        metadata={"help": "Target inference latency in seconds"},
     )
 
     obs_queue_timeout: float = field(
-        default=DEFAULT_OBS_QUEUE_TIMEOUT, metadata={"help": "Timeout for observation queue in seconds"}
+        default=DEFAULT_OBS_QUEUE_TIMEOUT,
+        metadata={"help": "Timeout for observation queue in seconds"},
+    )
+
+    # Similarity function configuration (CLI-compatible)
+    similarity_fn_name: str = field(
+        default="euclidean",
+        metadata={
+            "help": f"Name of similarity function to use. Options: {list(SIMILARITY_FUNCTIONS.keys())}"
+        },
     )
 
     def __post_init__(self):
@@ -77,6 +105,12 @@ class PolicyServerConfig:
 
         if self.obs_queue_timeout < 0:
             raise ValueError(f"obs_queue_timeout must be non-negative, got {self.obs_queue_timeout}")
+
+        # Initialize similarity function if name is provided (will be updated by client)
+        if self.similarity_fn_name:
+            self.similarity_fn = get_similarity_function(self.similarity_fn_name)
+        else:
+            self.similarity_fn = None  # Will be set when client config is received
 
     @classmethod
     def from_dict(cls, config_dict: dict) -> "PolicyServerConfig":
@@ -143,6 +177,14 @@ class RobotClientConfig:
         metadata={"help": f"Name of aggregate function to use. Options: {list(AGGREGATE_FUNCTIONS.keys())}"},
     )
 
+    # Similarity function configuration (CLI-compatible, passed to server)
+    similarity_fn_name: str = field(
+        default="euclidean",
+        metadata={
+            "help": f"Name of similarity function to use. Options: {list(SIMILARITY_FUNCTIONS.keys())}"
+        },
+    )
+
     # Debug configuration
     debug_visualize_queue_size: bool = field(
         default=False, metadata={"help": "Visualize the action queue size"}
@@ -180,6 +222,8 @@ class RobotClientConfig:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
 
         self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)
+        # Validate similarity_fn_name early (will raise ValueError if invalid)
+        get_similarity_function(self.similarity_fn_name)
 
     @classmethod
     def from_dict(cls, config_dict: dict) -> "RobotClientConfig":
@@ -200,4 +244,5 @@ class RobotClientConfig:
             "task": self.task,
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
             "aggregate_fn_name": self.aggregate_fn_name,
+            "similarity_fn_name": self.similarity_fn_name,
         }

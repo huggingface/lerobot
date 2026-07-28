@@ -23,6 +23,7 @@ pytest.importorskip("grpc")
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
+from lerobot.async_inference.configs import get_similarity_function  # noqa: E402
 from lerobot.async_inference.helpers import (  # noqa: E402
     FPSTracker,
     TimedAction,
@@ -188,8 +189,8 @@ def _make_obs(state: torch.Tensor) -> TimedObservation:
     )
 
 
-def test_observations_similar_true():
-    """Distance below atol → observations considered similar."""
+def test_observations_similar_euclidean():
+    """Distance below atol → observations considered similar with euclidean distance."""
     # Create mock lerobot features for the similarity check
     lerobot_features = {
         OBS_STATE: {
@@ -199,12 +200,58 @@ def test_observations_similar_true():
         }
     }
 
+    euclidean_fn = get_similarity_function("euclidean")
+
     obs1 = _make_obs(torch.zeros(4))
     obs2 = _make_obs(0.5 * torch.ones(4))
-    assert observations_similar(obs1, obs2, lerobot_features, atol=2.0)
+    assert observations_similar(obs1, obs2, lerobot_features, similarity_fn=euclidean_fn, atol=2.0)
 
     obs3 = _make_obs(2.0 * torch.ones(4))
-    assert not observations_similar(obs1, obs3, lerobot_features, atol=2.0)
+    assert not observations_similar(obs1, obs3, lerobot_features, similarity_fn=euclidean_fn, atol=2.0)
+
+
+def test_observations_similar_deactivate():
+    """With disabled, observations should never be similar."""
+    lerobot_features = {
+        OBS_STATE: {
+            "dtype": "float32",
+            "shape": [4],
+            "names": ["shoulder", "elbow", "wrist", "gripper"],
+        }
+    }
+
+    deactivate_fn = get_similarity_function("disabled")
+
+    # Even identical observations should not be considered similar
+    obs1 = _make_obs(torch.zeros(4))
+    obs2 = _make_obs(torch.zeros(4))
+    assert not observations_similar(obs1, obs2, lerobot_features, similarity_fn=deactivate_fn, atol=0.0)
+
+    # Very close observations also not similar
+    obs3 = _make_obs(0.001 * torch.ones(4))
+    assert not observations_similar(obs1, obs3, lerobot_features, similarity_fn=deactivate_fn, atol=2.0)
+
+
+def test_get_similarity_function():
+    """Test that get_similarity_function returns correct functions."""
+    euclidean_fn = get_similarity_function("euclidean")
+    deactivate_fn = get_similarity_function("disabled")
+
+    # Test euclidean function
+    s1 = torch.tensor([0.0, 0.0, 0.0])
+    s2 = torch.tensor([1.0, 0.0, 0.0])
+    assert euclidean_fn(s1, s2, 2.0)  # Distance = 1.0 < 2.0
+    assert not euclidean_fn(s1, s2, 0.5)  # Distance = 1.0 > 0.5
+
+    # Test deactivate function - should always return False
+    assert not deactivate_fn(s1, s2, 10.0)
+    assert not deactivate_fn(s1, s1, 0.0)  # Even identical states
+
+
+def test_get_similarity_function_invalid():
+    """Test that get_similarity_function raises error for invalid names."""
+    with pytest.raises(ValueError, match="Unknown similarity function"):
+        get_similarity_function("nonexistent_function")
 
 
 # ---------------------------------------------------------------------
