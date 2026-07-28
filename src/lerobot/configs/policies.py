@@ -183,6 +183,22 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
         **policy_kwargs: Any,
     ) -> T:
         model_id = str(pretrained_name_or_path)
+        try:
+            from lerobot.policies.lingbot_vla_v2.checkpoint_lingbot_vla_v2 import (
+                apply_lingbot_vla_v2_upstream_config,
+                is_raw_lingbot_vla_v2_checkpoint,
+            )
+            from lerobot.policies.lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config
+        except ImportError:
+            is_lingbot_vla_v2_raw_checkpoint = False
+        else:
+            is_lingbot_vla_v2_raw_checkpoint = is_raw_lingbot_vla_v2_checkpoint(model_id)
+        if is_lingbot_vla_v2_raw_checkpoint:
+            cli_overrides = policy_kwargs.pop("cli_overrides", [])
+            with draccus.config_type("json"):
+                config = draccus.parse(LingbotVLAV2Config, args=cli_overrides)
+            return apply_lingbot_vla_v2_upstream_config(config)
+
         config_file: str | None = None
         if Path(model_id).is_dir():
             if CONFIG_NAME in os.listdir(model_id):

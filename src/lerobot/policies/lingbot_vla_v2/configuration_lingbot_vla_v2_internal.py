@@ -91,7 +91,7 @@ class LingbotVLAConfig(PretrainedConfig):
         super().__init__()
         if moe_implementation is None:
             moe_implementation = kwargs.pop("_moe_implementation", None)
-        self.architectures = ["LingbotVlaPolicy"]
+        self.architectures = ["LingbotVlaV2Policy"]
         self.train_state_proj = train_state_proj
         self.train_expert_only = train_expert_only
         self.use_cache = False

@@ -3,7 +3,7 @@
 LingBot-VLA 2.0 is an open-source vision-language-action model integrated into LeRobot as
 the `lingbot_vla_v2` policy. It pairs a **Qwen3-VL-4B** multimodal backbone (native-resolution
 image tokens via `image_grid_thw`) with a **sparse-MoE Qwen2 action expert** (32 experts,
-top-4, softmax router) and **Flow-Matching** continuous action generation over a unified
+top-4, sigmoid router) and **Flow-Matching** continuous action generation over a unified
 **55-D** state/action space, supporting cross-embodiment and bimanual manipulation. An
 optional predictive-dynamics branch (depth / DINO-video distillation) is available but off by
 default for the no-distillation checkpoint.
@@ -16,7 +16,7 @@ slots into the same post-train → evaluate → deploy flow as π0, SmolVLA, WAL
 - **Backbone:** Qwen3-VL-4B (native-resolution patchification; the image token budget is
   capped with `image_max_pixels` / `image_min_pixels`).
 - **Action expert:** dual-stream Qwen2 with a sparse Mixture-of-Experts MLP (32 experts,
-  top-4 routing, softmax router, `routed_scaling_factor=1.0`) plus a shared expert.
+  top-4 routing, sigmoid router, `routed_scaling_factor=4.0`) plus a shared expert.
 - **Action generation:** flow matching over a padded 55-D canonical state/action space
   (`max_state_dim = max_action_dim = 55`, `chunk_size = 50`, `num_steps = 10`).
 - **Reference checkpoint:** `robbyant/lingbot-vla-v2-6b` (~6B, "Native Depth").
@@ -34,7 +34,7 @@ slots into the same post-train → evaluate → deploy flow as π0, SmolVLA, WAL
 ## Installation
 
 ```bash
-pip install -e ".[training,lingbot-v2]"
+pip install -e ".[training,lingbot_vla2]"
 ```
 
 This pulls the LingBot-VLA v2 optional dependencies, including a Qwen3-VL capable
@@ -47,6 +47,10 @@ To use LingBot-VLA 2.0 in LeRobot, specify the policy type as:
 ```python
 policy.type=lingbot_vla_v2
 ```
+
+When fine-tuning directly from the released upstream checkpoint, use LeRobot's standard
+checkpoint entry point, `policy.path`. Do not pass `policy.type` in that command; LeRobot
+infers `lingbot_vla_v2` from the raw upstream checkpoint.
 
 LingBot-VLA 2.0 also requires the per-robot slot mapping and normalization assets used by
 its feature transform:
@@ -69,13 +73,12 @@ robot-config assets:
 ```bash
 lerobot-train \
   --dataset.repo_id=<your/dataset> \
-  --policy.type=lingbot_vla_v2 \
+  --policy.path=robbyant/lingbot-vla-v2-6b \
   --policy.repo_id=<your/lingbot_vla_v2_policy> \
   --policy.robot_config_path=/path/to/robot_config.yaml \
   --policy.norm_stats_path=/path/to/norm_stats.json \
   --policy.tokenizer_path=Qwen/Qwen3-VL-4B-Instruct \
   --policy.processor_path=Qwen/Qwen3-VL-4B-Instruct \
-  --policy.pretrained_name_or_path=robbyant/lingbot-vla-v2-6b \
   --policy.dtype=bfloat16 \
   --policy.attention_implementation=eager \
   --policy.image_max_pixels=262144 \
@@ -89,7 +92,7 @@ lerobot-train \
 
 For a local smoke test without Hub access, add `--policy.push_to_hub=false`,
 `--save_checkpoint=false`, `--num_workers=0`, and use local paths for
-`processor_path`, `tokenizer_path`, and `pretrained_name_or_path`.
+`processor_path`, `tokenizer_path`, and `policy.path`.
 
 Official real-world hyperparameters: lr `5e-5` (constant), AdamW, global batch 3, `L1_fm`
 loss, `tokenizer_max_length=72`. Multi-GPU is supported through `accelerate launch` with FSDP;
@@ -121,19 +124,20 @@ accepts that backend. The `flex` and `flex_cached` paths are experimental and sh
 as opt-in.
 
 MoE is enabled by default (`use_moe=true`) to match the released v2 architecture. Do not disable
-it, change `token_num_experts`, or change `token_top_k` when loading MoE checkpoints unless the
-checkpoint was trained with the same architecture. Use `moe_implementation=fused` only when you
-want the grouped/fused expert layout; leave it unset for the safest eager path.
+it, change `token_num_experts`, `token_top_k`, `token_moe_intermediate_size`,
+`token_shared_intermediate_size`, `router_activation`, or `routed_scaling_factor` when loading
+MoE checkpoints unless the checkpoint was trained with the same architecture. The released
+upstream checkpoint stores experts in the grouped/fused layout, so `moe_implementation=fused`
+is the default for checkpoint compatibility.
 
 Example 8-GPU launch:
 
 ```bash
 accelerate launch --num_processes=8 $(which lerobot-train) \
   --dataset.repo_id=<your/dataset> \
-  --policy.type=lingbot_vla_v2 \
+  --policy.path=robbyant/lingbot-vla-v2-6b \
   --policy.robot_config_path=/path/to/robot_config.yaml \
   --policy.norm_stats_path=/path/to/norm_stats.json \
-  --policy.pretrained_name_or_path=robbyant/lingbot-vla-v2-6b \
   --policy.dtype=bfloat16 \
   --policy.attention_implementation=sdpa \
   --policy.vit_attn_implementation=sdpa \

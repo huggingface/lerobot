@@ -36,7 +36,9 @@ from lerobot.processor import (
     ProcessorStep,
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
+    batch_to_transition,
     policy_action_to_transition,
+    transition_to_batch,
     transition_to_policy_action,
 )
 from lerobot.types import TransitionKey
@@ -48,6 +50,7 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.import_utils import _transformers_available
 
+from .checkpoint_lingbot_vla_v2 import is_raw_lingbot_vla_v2_checkpoint
 from .configuration_lingbot_vla_v2 import LingbotVLAV2Config
 
 if _transformers_available:
@@ -110,7 +113,7 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
         if not _transformers_available:
             raise ImportError(
                 "transformers is required for LingbotVLAV2FeatureTransformStep. "
-                "Install it with `pip install 'lerobot[lingbot-v2]'`."
+                "Install it with `pip install 'lerobot[lingbot_vla2]'`."
             )
         from .feature_transform import FeatureTransform
         from .qwen3vl_in_vla import apply_lingbot_qwen3_vl_patch
@@ -305,3 +308,64 @@ def make_lingbot_vla_v2_pre_post_processors(
             to_output=transition_to_policy_action,
         ),
     )
+
+
+def _apply_lingbot_vla_v2_step_overrides(
+    pipeline: PolicyProcessorPipeline,
+    overrides: dict[str, Any] | None,
+) -> None:
+    if not overrides:
+        return
+    rename_override = overrides.get("rename_observations_processor")
+    if rename_override:
+        for step in pipeline.steps:
+            if isinstance(step, RenameObservationsProcessorStep):
+                step.rename_map = rename_override.get("rename_map", step.rename_map)
+    device_override = overrides.get("device_processor")
+    if device_override:
+        for step in pipeline.steps:
+            if isinstance(step, DeviceProcessorStep):
+                step.device = device_override.get("device", step.device)
+
+
+def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
+    config: LingbotVLAV2Config,
+    pretrained_path: str,
+    *,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    preprocessor_overrides: dict[str, Any] | None = None,
+    postprocessor_overrides: dict[str, Any] | None = None,
+    preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+    postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+    pretrained_revision: str | None = None,
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    """Load processors for a LeRobot checkpoint or build them for a raw upstream checkpoint."""
+    if is_raw_lingbot_vla_v2_checkpoint(pretrained_path):
+        preprocessor, postprocessor = make_lingbot_vla_v2_pre_post_processors(
+            config=config,
+            dataset_stats=dataset_stats,
+        )
+        _apply_lingbot_vla_v2_step_overrides(preprocessor, preprocessor_overrides)
+        _apply_lingbot_vla_v2_step_overrides(postprocessor, postprocessor_overrides)
+        return preprocessor, postprocessor
+
+    preprocessor = PolicyProcessorPipeline.from_pretrained(
+        pretrained_model_name_or_path=pretrained_path,
+        config_filename=preprocessor_config_filename,
+        overrides=preprocessor_overrides or {},
+        to_transition=batch_to_transition,
+        to_output=transition_to_batch,
+        revision=pretrained_revision,
+    )
+    postprocessor = PolicyProcessorPipeline.from_pretrained(
+        pretrained_model_name_or_path=pretrained_path,
+        config_filename=postprocessor_config_filename,
+        overrides=postprocessor_overrides or {},
+        to_transition=policy_action_to_transition,
+        to_output=transition_to_policy_action,
+        revision=pretrained_revision,
+    )
+    return preprocessor, postprocessor

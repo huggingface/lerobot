@@ -1,3 +1,11 @@
+from __future__ import annotations
+
+import builtins
+import json
+import os
+from pathlib import Path
+from typing import TypeVar
+
 import einops
 import torch
 from torch import Tensor, nn
@@ -35,6 +43,13 @@ from .utils import (
 from .flex_attention import build_block_mask, flex_attention_forward, flex_attention_with_block_mask
 
 LingBotVLAWeightLoader = None  # noqa: N816  # lerobot PreTrainedPolicy handles weight loading
+from .checkpoint_lingbot_vla_v2 import (
+    LINGBOT_VLA_V2_SAFE_WEIGHTS_INDEX,
+    apply_lingbot_vla_v2_upstream_config,
+    is_raw_lingbot_vla_v2_checkpoint,
+    remap_lingbot_vla_v2_upstream_key,
+    validate_lingbot_vla_v2_upstream_loading_keys,
+)
 from .moe_loss import sequence_wise_balance_loss as triton_sequence_wise_balance_loss
 from .qwen2_action_expert import (
     Qwen2ForCausalLM,
@@ -50,6 +65,7 @@ except Exception:
 
 
 logger = logging.get_logger(__name__)
+T = TypeVar("T", bound="LingbotVLAV2Policy")
 
 
 class QwenvlWithExpertV2Config(PretrainedConfig):
@@ -1415,6 +1431,150 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
     config_class = LeRobotLingbotVLAV2Config
     name = "lingbot_vla_v2"
     _no_split_modules = ["Qwen2DecoderLayer", "FixQwen2RMSNorm", "FixAdaRMSNorm"]
+
+    @classmethod
+    def from_pretrained(
+        cls: builtins.type[T],
+        pretrained_name_or_path: str | Path,
+        *,
+        config=None,
+        force_download: bool = False,
+        resume_download: bool | None = None,
+        proxies: dict | None = None,
+        token: str | bool | None = None,
+        cache_dir: str | Path | None = None,
+        local_files_only: bool = False,
+        revision: str | None = None,
+        strict: bool = True,
+        **kwargs,
+    ) -> T:
+        """Load either a LeRobot checkpoint or the raw upstream LingBot-VLA 2.0 checkpoint."""
+        if not is_raw_lingbot_vla_v2_checkpoint(pretrained_name_or_path):
+            return super().from_pretrained(
+                pretrained_name_or_path,
+                config=config,
+                force_download=force_download,
+                resume_download=resume_download,
+                proxies=proxies,
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                revision=revision,
+                strict=strict,
+                **kwargs,
+            )
+
+        if config is None:
+            config = cls.config_class()
+        config = apply_lingbot_vla_v2_upstream_config(config)
+
+        checkpoint_dir = cls._resolve_raw_upstream_checkpoint(
+            pretrained_name_or_path,
+            force_download=force_download,
+            resume_download=resume_download,
+            proxies=proxies,
+            token=token,
+            cache_dir=cache_dir,
+            local_files_only=local_files_only,
+            revision=revision,
+        )
+        logger.info("Loading LingBot-VLA 2.0 raw upstream checkpoint from %s", checkpoint_dir)
+
+        policy = cls(config, **kwargs)
+        cls._load_raw_upstream_checkpoint(policy, checkpoint_dir)
+        policy.to(config.device)
+        policy.eval()
+        return policy
+
+    @staticmethod
+    def _resolve_raw_upstream_checkpoint(
+        pretrained_name_or_path: str | Path,
+        *,
+        force_download: bool = False,
+        resume_download: bool | None = None,
+        proxies: dict | None = None,
+        token: str | bool | None = None,
+        cache_dir: str | Path | None = None,
+        local_files_only: bool = False,
+        revision: str | None = None,
+    ) -> str:
+        model_id = str(pretrained_name_or_path)
+        if os.path.isdir(model_id):
+            return model_id
+
+        from huggingface_hub import snapshot_download
+
+        return snapshot_download(
+            repo_id=model_id,
+            revision=revision,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            proxies=proxies,
+            resume_download=resume_download,
+            token=token,
+            local_files_only=local_files_only,
+            allow_patterns=[
+                "config.json",
+                "configuration.json",
+                LINGBOT_VLA_V2_SAFE_WEIGHTS_INDEX,
+                "model-*.safetensors",
+                "tokenizer*",
+                "preprocessor_config.json",
+                "video_preprocessor_config.json",
+                "special_tokens_map.json",
+                "added_tokens.json",
+                "vocab.json",
+            ],
+        )
+
+    @staticmethod
+    def _load_raw_upstream_checkpoint(policy: LingbotVLAV2Policy, checkpoint_dir: str) -> None:
+        try:
+            from safetensors.torch import load_file
+        except ImportError as exc:
+            raise ImportError(
+                "safetensors is required to load the sharded LingBot-VLA 2.0 upstream checkpoint. "
+                "Install it with `pip install 'lerobot[lingbot_vla2]'`."
+            ) from exc
+
+        index_path = Path(checkpoint_dir) / LINGBOT_VLA_V2_SAFE_WEIGHTS_INDEX
+        if not index_path.exists():
+            raise FileNotFoundError(f"{LINGBOT_VLA_V2_SAFE_WEIGHTS_INDEX} not found in {checkpoint_dir}")
+
+        with index_path.open() as f:
+            index = json.load(f)
+        weight_map = index.get("weight_map", {})
+        remapped_weight_map = {
+            remap_lingbot_vla_v2_upstream_key(key): shard_name for key, shard_name in weight_map.items()
+        }
+        model_keys = set(policy.state_dict().keys())
+        checkpoint_keys = set(remapped_weight_map.keys())
+        missing_keys = sorted(model_keys - checkpoint_keys)
+        unexpected_keys = sorted(checkpoint_keys - model_keys)
+        _, allowed_skipped = validate_lingbot_vla_v2_upstream_loading_keys(
+            missing_keys,
+            unexpected_keys,
+            use_depth=getattr(policy.config, "use_depth", False),
+        )
+
+        loaded_keys = 0
+        for shard_name in sorted(set(weight_map.values())):
+            shard_path = Path(checkpoint_dir) / shard_name
+            shard_state = load_file(str(shard_path), device=str(policy.config.device))
+            remapped_shard_state = {}
+            for key, tensor in shard_state.items():
+                remapped_key = remap_lingbot_vla_v2_upstream_key(key)
+                if remapped_key in model_keys:
+                    remapped_shard_state[remapped_key] = tensor
+            policy.load_state_dict(remapped_shard_state, strict=False)
+            loaded_keys += len(remapped_shard_state)
+
+        logger.info(
+            "Loaded LingBot-VLA 2.0 raw upstream checkpoint: 0 missing required keys, "
+            "%s tensors loaded, %s allowed upstream-only tensors skipped.",
+            loaded_keys,
+            len(allowed_skipped),
+        )
 
     def __init__(self, config: LeRobotLingbotVLAV2Config, **kwargs):
         super().__init__(config)

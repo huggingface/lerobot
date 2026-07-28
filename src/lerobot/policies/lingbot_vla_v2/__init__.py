@@ -14,7 +14,7 @@
 
 # Only the config is imported eagerly: the modeling module pulls in heavy
 # optional dependencies (transformers>=5.5 with Qwen3-VL, qwen-vl-utils) that are
-# installed via `pip install 'lerobot[lingbot-v2]'`. The policy class is loaded
+# installed via `pip install 'lerobot[lingbot_vla2]'`. The policy class is loaded
 # lazily by the policy factory.
 from .configuration_lingbot_vla_v2 import LingbotVLAV2Config
 

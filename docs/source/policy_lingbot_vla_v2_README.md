@@ -13,7 +13,7 @@ Use this policy through the standard LeRobot interfaces: `lerobot-train`,
 Install LeRobot with the optional LingBot-VLA v2 dependencies:
 
 ```bash
-pip install -e ".[training,lingbot-v2]"
+pip install -e ".[training,lingbot_vla2]"
 ```
 
 The default config expects a Qwen3-VL processor/tokenizer and a LingBot-VLA v2 checkpoint:
@@ -24,22 +24,23 @@ robbyant/lingbot-vla-v2-6b
 ```
 
 Use local paths with `--policy.processor_path`, `--policy.tokenizer_path`, or
-`--policy.pretrained_name_or_path` when running offline.
+`--policy.path` when running offline.
 
 ## Train
 
-Use the normal LeRobot training CLI and select the policy with `--policy.type`:
+Use the normal LeRobot training CLI and initialize directly from the upstream checkpoint with
+`--policy.path`. Do not also pass `--policy.type`; LeRobot infers `lingbot_vla_v2` from the
+raw upstream checkpoint.
 
 ```bash
 lerobot-train \
   --dataset.repo_id=<repo_id> \
   --dataset.root=<dataset_root> \
-  --policy.type=lingbot_vla_v2 \
+  --policy.path=<lingbot_vla_v2_checkpoint_path_or_hub_id> \
   --policy.robot_config_path=<robot_config.yaml> \
   --policy.norm_stats_path=<norm_stats.json> \
   --policy.processor_path=<qwen3_vl_processor_or_model_path> \
   --policy.tokenizer_path=<qwen3_vl_processor_or_model_path> \
-  --policy.pretrained_name_or_path=<lingbot_vla_v2_checkpoint_path_or_hub_id> \
   --policy.image_max_pixels=262144 \
   --policy.image_min_pixels=131072 \
   --policy.device=cuda \

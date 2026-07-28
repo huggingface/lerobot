@@ -60,7 +60,6 @@ class LingbotVLAV2Config(PreTrainedConfig):
     )
 
     # ==================== Pretrained backbone ====================
-    pretrained_name_or_path: str = "robbyant/lingbot-vla-v2-6b"
     tokenizer_path: str = "Qwen/Qwen3-VL-4B-Instruct"
     vlm_family: str = "qwen3_vl"
     tokenizer_max_length: int = 72
@@ -144,13 +143,12 @@ class LingbotVLAV2Config(PreTrainedConfig):
     # configs/vla/{robotwin,real_robot}.yaml): MoE on every expert layer,
     # 32 experts, top-4 routing.
     use_moe: bool = True
-    # None -> MoE is installed on ALL expert layers (see _install_moe_blocks).
-    # Pass an explicit list to restrict it to a subset.
-    token_moe_layers: list | None = None
+    # Released 6B uses MoE on every Qwen2 expert layer.
+    token_moe_layers: list = field(default_factory=lambda: list(range(36)))
     token_num_experts: int = 32
     token_top_k: int = 4
-    token_moe_intermediate_size: int = 256
-    token_shared_intermediate_size: int = 256
+    token_moe_intermediate_size: int = 512
+    token_shared_intermediate_size: int = 704
     # ----- MoE load balancing -----
     # The released v2 checkpoints balance experts with the auxiliary-LOSS terms
     # below (sequence-wise + router-z); the loss-free bias hook is left disabled
@@ -176,11 +174,12 @@ class LingbotVLAV2Config(PreTrainedConfig):
     sequence_wise_mode: str = "per_sequence"
     # Router z-loss on raw router logits (released recipe: 1e-4).
     router_z_loss_coeff: float = 1e-4
-    router_activation: str = "softmax"
-    routed_scaling_factor: float = 1.0
-    use_shared_expert_gate: bool = True
-    # None keeps a dense (non-fused) eager path; "fused" enables grouped-GEMM experts.
-    moe_implementation: str | None = None
+    router_activation: str = "sigmoid"
+    routed_scaling_factor: float = 4.0
+    use_shared_expert_gate: bool = False
+    # The released upstream checkpoint stores experts in the stacked/fused layout.
+    # Set to None only for fresh experiments that intentionally use a ModuleList MoE.
+    moe_implementation: str | None = "fused"
 
     # ==================== Optional predictive-dynamics distillation branch ====================
     # Only used by the native-depth (6B) checkpoint. Empty ``align_params`` disables it,

@@ -45,6 +45,13 @@ def test_config_defaults_match_v2_canonical():
     assert config.return_image_grid_thw is True
     assert config.action_num_attention_heads == 32
     assert config.action_num_key_value_heads == 8
+    assert config.token_moe_layers == list(range(36))
+    assert config.token_moe_intermediate_size == 512
+    assert config.token_shared_intermediate_size == 704
+    assert config.router_activation == "sigmoid"
+    assert config.routed_scaling_factor == 4.0
+    assert config.use_shared_expert_gate is False
+    assert config.moe_implementation == "fused"
 
 
 def test_kwargs_override():
