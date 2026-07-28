@@ -220,8 +220,10 @@ def rollout(
     """
     assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
 
-    # Reset the policy and environments.
+    # Reset the policy, stateful processors, and environments.
     policy.reset()
+    for processor in (env_preprocessor, env_postprocessor, preprocessor, postprocessor):
+        processor.reset()
     observation, info = env.reset(seed=seeds)
     if render_callback is not None:
         render_callback(env)

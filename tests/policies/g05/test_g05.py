@@ -606,7 +606,11 @@ def test_checkpoint_normalization_clips_to_author_finite_range():
 
 
 def test_stepwise_quantiles_constant_dimension_are_finite_and_serializable(tmp_path: Path):
-    config = _config(normalization_mode="q01_q99")
+    config = _config(
+        normalization_mode="q01_q99",
+        use_stepwise_action_norm=True,
+        n_action_steps=2,
+    )
     q01_action = torch.zeros(4, 7)
     q99_action = torch.ones(4, 7)
     q99_action[:, 2] = 0
@@ -626,6 +630,19 @@ def test_stepwise_quantiles_constant_dimension_are_finite_and_serializable(tmp_p
     )
     assert torch.isfinite(processed[ACTION]).all()
     torch.testing.assert_close(postprocessor(processed[ACTION]), torch.zeros(4, 7))
+
+    step_q01 = torch.arange(4, dtype=torch.float32).view(4, 1).expand(4, 7)
+    step_stats = {
+        OBS_STATE: {"q01": torch.zeros(7), "q99": torch.ones(7)},
+        ACTION: {"q01": step_q01, "q99": step_q01 + 2},
+    }
+    _, stepwise_postprocessor = make_pre_post_processors(config, dataset_stats=step_stats)
+    normalized_action = torch.zeros(1, config.policy_action_dim)
+    torch.testing.assert_close(stepwise_postprocessor(normalized_action), torch.ones(1, 7))
+    torch.testing.assert_close(stepwise_postprocessor(normalized_action), torch.full((1, 7), 2.0))
+    torch.testing.assert_close(stepwise_postprocessor(normalized_action), torch.ones(1, 7))
+    stepwise_postprocessor.reset()
+    torch.testing.assert_close(stepwise_postprocessor(normalized_action), torch.ones(1, 7))
 
     preprocessor.save_pretrained(tmp_path)
     loaded = PolicyProcessorPipeline.from_pretrained(

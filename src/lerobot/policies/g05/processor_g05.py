@@ -470,6 +470,49 @@ class G05NormalizationClampStep(ProcessorStep):
 
 
 @dataclass
+@ProcessorStepRegistry.register(name="g05_stepwise_unnormalizer")
+class G05StepwiseUnnormalizerStep(UnnormalizerProcessorStep):
+    """Apply the checkpoint's action-timestep statistics to queued single actions."""
+
+    n_action_steps: int = 1
+    _action_index: int = field(default=0, init=False, repr=False)
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition.get(TransitionKey.ACTION)
+        stats = self._tensor_stats.get(ACTION)
+        if not isinstance(action, torch.Tensor) or not stats:
+            return super().__call__(transition)
+
+        first_stat = next(iter(stats.values()))
+        if first_stat.device != action.device or first_stat.dtype != action.dtype:
+            self.to(device=action.device, dtype=action.dtype)
+            stats = self._tensor_stats[ACTION]
+            first_stat = next(iter(stats.values()))
+
+        stats_steps = first_stat.shape[-2] if first_stat.ndim >= 2 else 1
+        is_single_queued_action = action.ndim <= 2 and action.shape[-2] != stats_steps
+        if not is_single_queued_action or stats_steps == 1:
+            return super().__call__(transition)
+
+        index = self._action_index % min(self.n_action_steps, stats_steps)
+        self._tensor_stats[ACTION] = {
+            name: value[index] if value.ndim >= 2 and value.shape[-2] == stats_steps else value
+            for name, value in stats.items()
+        }
+        try:
+            return super().__call__(transition)
+        finally:
+            self._tensor_stats[ACTION] = stats
+            self._action_index = (self._action_index + 1) % self.n_action_steps
+
+    def reset(self) -> None:
+        self._action_index = 0
+
+    def get_config(self) -> dict[str, Any]:
+        return {**super().get_config(), "n_action_steps": self.n_action_steps}
+
+
+@dataclass
 @ProcessorStepRegistry.register(name="g05_inverse_action_projection")
 class G05InverseActionProjectionStep(ProcessorStep):
     """Project policy-layout actions back to the environment's exact raw layout."""
@@ -708,11 +751,19 @@ def make_g05_pre_post_processors(
         to_transition=batch_to_transition,
         to_output=transition_to_batch,
     )
+    unnormalizer_cls = (
+        G05StepwiseUnnormalizerStep if config.use_stepwise_action_norm else UnnormalizerProcessorStep
+    )
+    unnormalizer_kwargs = {
+        "features": {ACTION: policy_features[ACTION]},
+        "norm_map": {FeatureType.ACTION: mode},
+        "stats": projected_stats,
+    }
+    if config.use_stepwise_action_norm:
+        unnormalizer_kwargs["n_action_steps"] = config.n_action_steps
     output_steps: list[ProcessorStep] = [
-        UnnormalizerProcessorStep(
-            features={ACTION: policy_features[ACTION]},
-            norm_map={FeatureType.ACTION: mode},
-            stats=projected_stats,
+        unnormalizer_cls(
+            **unnormalizer_kwargs,
         )
     ]
     if config.normalization_mode == "z_score_tail_mixed":
