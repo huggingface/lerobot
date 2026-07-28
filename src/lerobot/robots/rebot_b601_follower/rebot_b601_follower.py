@@ -80,9 +80,14 @@ class RebotB601Follower(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
-        }
+        features: dict[str, tuple] = {}
+        for cam in self.cameras:
+            cfg = self.config.cameras[cam]
+            if getattr(cfg, "use_rgb", True):
+                features[cam] = (cfg.height, cfg.width, 3)
+            if getattr(cfg, "use_depth", False):
+                features[f"{cam}_depth"] = (cfg.height, cfg.width, 1)
+        return features
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -169,11 +174,25 @@ class RebotB601Follower(Robot):
         print(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
+        if self.config.control_mode not in ("pos_vel", "mit"):
+            raise ValueError(
+                f"Unsupported control_mode '{self.config.control_mode}'. Use 'pos_vel' or 'mit'."
+            )
+        if self.config.gripper_control_mode not in ("force_pos", "mit"):
+            raise ValueError(
+                f"Unsupported gripper_control_mode '{self.config.gripper_control_mode}'. "
+                "Use 'force_pos' or 'mit'."
+            )
+        use_mit = self.config.control_mode == "mit"
+        gripper_use_mit = self.config.gripper_control_mode == "mit"
         self.bus.enable_all()
         for motor_name, motor in self.motors.items():
-            target_mode = (
-                MotorBridgeMode.FORCE_POS if motor_name == GRIPPER_MOTOR else MotorBridgeMode.POS_VEL
-            )
+            if motor_name == GRIPPER_MOTOR:
+                target_mode = MotorBridgeMode.MIT if gripper_use_mit else MotorBridgeMode.FORCE_POS
+            elif use_mit:
+                target_mode = MotorBridgeMode.MIT
+            else:
+                target_mode = MotorBridgeMode.POS_VEL
             for attempt in range(_ENSURE_MODE_RETRIES + 1):
                 try:
                     motor.ensure_mode(target_mode)
@@ -213,10 +232,17 @@ class RebotB601Follower(Robot):
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
         for cam_key, cam in self.cameras.items():
-            start = time.perf_counter()
-            obs_dict[cam_key] = cam.read_latest()
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+            if getattr(cam, "use_rgb", True):
+                start = time.perf_counter()
+                obs_dict[cam_key] = cam.read_latest()
+                dt_ms = (time.perf_counter() - start) * 1e3
+                logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+
+            if getattr(cam, "use_depth", False):
+                start = time.perf_counter()
+                obs_dict[f"{cam_key}_depth"] = cam.read_latest_depth()
+                dt_ms = (time.perf_counter() - start) * 1e3
+                logger.debug(f"{self} read {cam_key} depth: {dt_ms:.1f}ms")
 
         return obs_dict
 
@@ -252,22 +278,34 @@ class RebotB601Follower(Robot):
             goal_present_pos = {key: (g, present_pos.get(key, g)) for key, g in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
+        use_mit = self.config.control_mode == "mit"
         for motor_name, position_deg in goal_pos.items():
             motor = self.motors.get(motor_name)
             if motor is None:
                 continue
             idx = self.motor_names.index(motor_name)
-            vel_deg_s = (
-                self.config.pos_vel_velocity[idx]
-                if isinstance(self.config.pos_vel_velocity, list)
-                else self.config.pos_vel_velocity
-            )
             pos_rad = math.radians(position_deg)
-            vel_rad = math.radians(vel_deg_s)
             if motor_name == GRIPPER_MOTOR:
-                motor.send_force_pos(pos_rad, vel_rad, self.config.gripper_torque_ratio)
+                if self.config.gripper_control_mode == "mit":
+                    motor.send_mit(pos_rad, 0.0, self.config.gripper_mit_kp, self.config.gripper_mit_kd, 0.0)
+                else:
+                    vel_deg_s = (
+                        self.config.pos_vel_velocity[idx]
+                        if isinstance(self.config.pos_vel_velocity, list)
+                        else self.config.pos_vel_velocity
+                    )
+                    motor.send_force_pos(pos_rad, math.radians(vel_deg_s), self.config.gripper_torque_ratio)
+            elif use_mit:
+                kp = self.config.mit_kp[idx] if isinstance(self.config.mit_kp, list) else self.config.mit_kp
+                kd = self.config.mit_kd[idx] if isinstance(self.config.mit_kd, list) else self.config.mit_kd
+                motor.send_mit(pos_rad, 0.0, kp, kd, 0.0)
             else:
-                motor.send_pos_vel(pos_rad, vel_rad)
+                vel_deg_s = (
+                    self.config.pos_vel_velocity[idx]
+                    if isinstance(self.config.pos_vel_velocity, list)
+                    else self.config.pos_vel_velocity
+                )
+                motor.send_pos_vel(pos_rad, math.radians(vel_deg_s))
 
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 

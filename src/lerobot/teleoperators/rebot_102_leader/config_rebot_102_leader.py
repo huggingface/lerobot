@@ -65,7 +65,7 @@ class RebotArm102LeaderConfig:
     joint_ranges: dict[str, list[int]] = field(
         default_factory=lambda: {
             "shoulder_pan": [-150, 150],
-            "shoulder_lift": [-170, 1],
+            "shoulder_lift": [-200, 1],
             "elbow_flex": [-200, 1],
             "wrist_flex": [-80, 90],
             "wrist_yaw": [-90, 90],
