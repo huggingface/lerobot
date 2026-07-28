@@ -49,6 +49,20 @@ ready. Click **END EPISODE** (or press `E`/Space) to finish early. `Q`/Escape
 quits. After the episode, select **SUCCESS**, **FAILURE**, or **DISCARD**.
 The collector never starts merely because the window opened.
 
+## No-recording practice
+
+Double-click **SO-101 真机练习** on the Ubuntu desktop. It starts live
+Leader-to-Follower control with the canonical front camera preview and clearly
+shows `PRACTICE` and `NO DATA RECORDING`. Click **STOP** or press `E`/Space to
+finish; torque is disabled on exit. Practice mode never constructs a
+`LeRobotDataset` and does not write episodes.
+
+The launcher reads its machine-local device configuration from
+`${XDG_CONFIG_HOME:-$HOME/.config}/lerobot/picklift-practice.json` (or
+`$PICKLIFT_PRACTICE_CONFIG`). Create it from
+`configs/practice.template.json`. Stable serial/camera paths and calibration
+IDs stay in that local file and are not committed.
+
 Create an engineering smoke dataset without opening a camera or serial port:
 
 ```bash

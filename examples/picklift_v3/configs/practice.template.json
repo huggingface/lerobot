@@ -1,0 +1,14 @@
+{
+  "mode": "real",
+  "camera_device": "REPLACE_STABLE_FRONT_CAMERA_PATH",
+  "camera_acquisition_fps": 30,
+  "robot_id": "REPLACE_FOLLOWER_CALIBRATION_ID",
+  "follower_port": "REPLACE_STABLE_FOLLOWER_SERIAL_PATH",
+  "leader_id": "REPLACE_LEADER_CALIBRATION_ID",
+  "leader_port": "REPLACE_STABLE_LEADER_SERIAL_PATH",
+  "control_hz": 50,
+  "alignment_mode": "direct_absolute",
+  "startup_hold_s": 0,
+  "max_relative_target": null,
+  "live_practice_ack": "I_UNDERSTAND_THIS_IS_LIVE_PRACTICE"
+}

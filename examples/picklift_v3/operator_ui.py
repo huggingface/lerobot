@@ -52,6 +52,8 @@ def render_dashboard(
         "SAVING": (255, 180, 30),
         "SAVED": (60, 210, 80),
         "REVIEW": (190, 120, 255),
+        "PRACTICE": (60, 210, 255),
+        "STOPPED": (150, 150, 150),
         "ERROR": (30, 30, 230),
     }
     color = colors.get(status, (220, 220, 220))
@@ -65,9 +67,10 @@ def render_dashboard(
         (235, 235, 235),
         1,
     )
+    frame_text = f"Frames {frames:4d} / {target_frames:4d}" if target_frames else f"Frames {frames:6d}"
     cv2.putText(
         canvas,
-        f"Frames {frames:4d} / {target_frames:4d}",
+        frame_text,
         (990, 175),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.58,
