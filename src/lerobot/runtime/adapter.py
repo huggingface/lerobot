@@ -1,0 +1,165 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Policy adapters for the language runtime.
+
+The base adapter owns generation control and diagnostics while subclasses provide policy-specific actions and text.
+"""
+
+from __future__ import annotations
+
+import re
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any
+
+from .language_runtime import RuntimeState
+
+_SAY_RE = re.compile(r"<\s*say\s*>(.*?)<\s*/\s*say\s*>", re.IGNORECASE | re.DOTALL)
+
+
+@dataclass
+class GenerationConfig:
+    """Text-generation settings fixed for the adapter's lifetime."""
+
+    min_new_tokens: int = 0
+    temperature: float = 0.0
+    top_p: float = 1.0
+    chunks_per_regen: int = 1  # regenerate the language context every N action chunks
+    enable_memory: bool = True  # generate a running memory note on subtask change
+    enable_subtask: bool = True  # generate the low-level subtask (off => use the given text directly)
+
+
+@dataclass
+class LanguageDiagnostics:
+    """Runtime-panel generation counters keyed by text kind."""
+
+    last_raw: dict[str, str] = field(default_factory=dict)
+    empty: dict[str, int] = field(default_factory=dict)
+    repeat: int = 0
+
+    def _bump(self, table: dict[str, int], kind: str) -> int:
+        table[kind] = table.get(kind, 0) + 1
+        return table[kind]
+
+
+class BaseLanguageAdapter(ABC):
+    """Batteries-included adapter: generic high-level control, policy primitives abstract."""
+
+    def __init__(self, policy: Any, gen: GenerationConfig | None = None) -> None:
+        self.policy = policy
+        self.gen = gen or GenerationConfig()
+        self.diag = LanguageDiagnostics()
+        self._chunks_until_regen = 0
+
+    @abstractmethod
+    def select_action(self, observation: dict[str, Any], state: RuntimeState) -> Any:
+        """Produce an action chunk from the observation + current language context."""
+
+    @abstractmethod
+    def generate_text(
+        self,
+        kind: str,
+        observation: dict[str, Any] | None,
+        state: RuntimeState,
+        user_text: str | None = None,
+    ) -> str:
+        """Generate one text stream (``kind``) and return the decoded string."""
+
+    def update_language_state(self, observation: dict[str, Any] | None, state: RuntimeState) -> None:
+        """Throttled regeneration of the language context (subtask / memory / ...)."""
+        if self._chunks_until_regen > 0:
+            self._chunks_until_regen -= 1
+            return
+        self._chunks_until_regen = max(1, self.gen.chunks_per_regen) - 1
+        self._regenerate_context(observation, state)
+
+    def handle_interjection(
+        self, user_text: str, observation: dict[str, Any] | None, state: RuntimeState
+    ) -> None:
+        """React to a mid-run user message by regenerating the plan."""
+        out = self.generate_text("interjection", observation, state, user_text=user_text)
+        plan = self.plan_from_text(out)
+        if plan:
+            state.set_context("plan", plan, label="plan")
+
+    def plan_from_text(self, text: str) -> str:
+        """Strip ``<say>`` speech markers from a generated plan."""
+        plan, _speech = split_plan_and_say(text)
+        return plan
+
+    def _regenerate_context(self, observation: dict[str, Any] | None, state: RuntimeState) -> None:
+        """Default hierarchy: regenerate the subtask, then memory when it changes.
+
+        Override for a policy with a different language hierarchy.
+        """
+        if not self.gen.enable_subtask:
+            # Preserve operator-provided subtasks in direct mode.
+            return
+        subtask = self._generate_filtered("subtask", observation, state)
+        if subtask is None:
+            return
+        previous = state.language_context.get("subtask")
+        if not state.set_context("subtask", subtask, label="subtask"):
+            self.diag.repeat += 1
+            return
+        self.diag.repeat = 0
+        if previous:
+            state.extra["prior_subtask"] = previous
+        if not self.gen.enable_memory:
+            return
+        memory = self._generate_filtered("memory", observation, state)
+        if memory is not None:
+            state.set_context("memory", memory, label="memory")
+
+    def _generate_filtered(
+        self, kind: str, observation: dict[str, Any] | None, state: RuntimeState
+    ) -> str | None:
+        """Generate one ``kind``, record diagnostics, and drop empty output."""
+        text = self.generate_text(kind, observation, state)
+        self.diag.last_raw[kind] = text or ""
+        if not text:
+            count = self.diag._bump(self.diag.empty, kind)
+            if count == 1 or count % 5 == 0:
+                state.log(f"  [info] {kind} gen returned empty (x{count})")
+            return None
+        return text
+
+
+class DirectTaskPolicyAdapter(BaseLanguageAdapter):
+    """Adapter for flat policies whose preprocessors condition actions on the operator's task."""
+
+    def select_action(self, observation: dict[str, Any], state: RuntimeState) -> Any:
+        return self.policy.predict_action_chunk(observation)
+
+    def generate_text(
+        self,
+        kind: str,
+        observation: dict[str, Any] | None,
+        state: RuntimeState,
+        user_text: str | None = None,
+    ) -> str:
+        return ""
+
+
+def split_plan_and_say(text: str) -> tuple[str, str]:
+    """Split ``plan <say>speech</say>`` into ``(plan, speech)``."""
+    if not text:
+        return "", ""
+    match = _SAY_RE.search(text)
+    if not match:
+        return text.strip(), ""
+    speech = match.group(1).strip().strip('"').strip("'")
+    plan = (text[: match.start()] + text[match.end() :]).strip()
+    return plan, speech

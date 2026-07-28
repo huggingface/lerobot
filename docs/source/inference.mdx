@@ -1,6 +1,6 @@
 # Policy Deployment (lerobot-rollout)
 
-`lerobot-rollout` is the single CLI for deploying trained policies on real robots. It supports multiple execution strategies and inference backends, from quick evaluation to continuous recording and human-in-the-loop data collection.
+`lerobot-rollout` is the single CLI for deploying trained policies on real robots or in an interactive simulator. It supports multiple execution strategies and inference backends, from quick evaluation to continuous recording, language-driven control, and human-in-the-loop data collection.
 
 ## Quick Start
 
@@ -194,6 +194,52 @@ Teleop is optional — if omitted the robot holds its position during the reset 
 | `--teleop.type`                                 | Optional. Teleoperator to drive the robot during resets                    |
 | `--strategy.reset_to_initial_position`          | Whether to reset the robot to its initial position between episodes        |
 | `--strategy.smooth_leader_to_follower_handover` | Whether to turn on or off the leader -> follower smooth handover behavior. |
+
+---
+
+## Interactive language control
+
+Language-conditioned policies can expose a high-level text head in addition to
+their action head. Add `--language` to open-prompt one of these policies on a
+real robot. Language-only flags such as `--direct_subtask` select this mode
+automatically.
+
+MolmoAct2 has no high-level planner, so use direct-subtask mode and type each
+next low-level instruction yourself:
+
+```bash
+lerobot-rollout \
+    --policy.path=lerobot/MolmoAct2-SO100_101-LeRobot \
+    --policy.device=cuda \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM1 \
+    --robot.cameras='{"cam0":{"type":"opencv","index_or_path":"/dev/video0","width":640,"height":480,"fps":30,"fourcc":"MJPG","backend":200},"cam1":{"type":"opencv","index_or_path":"/dev/video2","width":640,"height":480,"fps":30,"fourcc":"MJPG","backend":200}}' \
+    --direct_subtask \
+    --robot.max_relative_target='{"shoulder_pan":5,"shoulder_lift":5,"elbow_flex":5,"wrist_flex":5,"wrist_roll":5,"gripper":5}'
+```
+
+The robot starts paused. Type a subtask, then use `/resume` and `/pause` to
+control action dispatch. Check the workspace and motion limits before resuming.
+Without `--direct_subtask`, a policy such as PI052 generates its active subtask
+from the high-level `--task` itself.
+
+RoboCasa uses the same runtime and processor path. `--sim` selects it
+automatically, so no robot configuration is needed:
+
+```bash
+MUJOCO_GL=egl lerobot-rollout \
+    --policy.path=lerobot/pi052_robocasa \
+    --sim --sim.task=CloseFridge --sim.split=pretrain \
+    --task="close the fridge" \
+    --disable_memory \
+    --sim.render_size=384 \
+    --sim.views=robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right \
+    --mode=action --ctrl_hz=20
+```
+
+Open `http://localhost:8010` for the live simulator view. Add
+`--sim.direct_subtask` to bypass the language planner and make each typed prompt
+the action policy's current subtask.
 
 ---
 
