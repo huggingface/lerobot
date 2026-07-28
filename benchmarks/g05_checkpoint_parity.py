@@ -235,7 +235,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     author_cuda = _move_to(copy.deepcopy(author_batch), device)
     port_cuda = _move_to(lerobot_batch, device)
     torch.manual_seed(args.seed)
-    with torch.inference_mode():
+    with (
+        torch.inference_mode(),
+        torch.autocast(
+            device_type=device.type,
+            dtype=torch.bfloat16,
+            enabled=config.model_weights_to_bf16 and device.type == "cuda",
+        ),
+    ):
         author_output = policy.backend.predict_action(author_cuda)
     torch.manual_seed(args.seed)
     with torch.inference_mode():
