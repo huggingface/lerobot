@@ -47,7 +47,7 @@ from safetensors.torch import load_file, save_file
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.types import EnvAction, EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
 from lerobot.utils.constants import HF_LEROBOT_HOME
-from lerobot.utils.hub import HubMixin
+from lerobot.utils.hub import HubMixin, hub_safe_id
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
 
@@ -712,7 +712,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             KeyError: If an override key doesn't match any step in the pipeline.
             ProcessorMigrationError: If the model requires migration to processor format.
         """
-        model_id = str(pretrained_model_name_or_path)
+        model_id = hub_safe_id(pretrained_model_name_or_path)
         hub_download_kwargs = {
             "force_download": force_download,
             "resume_download": resume_download,

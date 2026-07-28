@@ -12,9 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock
 
-from lerobot.utils.hub import find_latest_hub_checkpoint
+import pytest
+
+from lerobot.utils.hub import find_latest_hub_checkpoint, hub_safe_id
 
 
 def _patch_list_files(monkeypatch, files):
@@ -52,3 +56,18 @@ def test_find_latest_hub_checkpoint_ignores_non_step_entries(monkeypatch):
 def test_find_latest_hub_checkpoint_none_when_no_checkpoints(monkeypatch):
     _patch_list_files(monkeypatch, ["config.json", "model.safetensors"])
     assert find_latest_hub_checkpoint("u/run") is None
+
+
+def test_hub_safe_id_preserves_repo_ids():
+    # Repo ids must keep their forward slash on every platform.
+    assert hub_safe_id("lerobot/smolvla_base") == "lerobot/smolvla_base"
+    assert hub_safe_id(Path("lerobot/smolvla_base")) == "lerobot/smolvla_base"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="backslash separators only occur on Windows")
+def test_hub_safe_id_normalizes_windows_separators():
+    # On Windows, Path("lerobot/smolvla_base") stringifies to "lerobot\\smolvla_base",
+    # which huggingface_hub rejects as a repo id (#2552). hub_safe_id restores posix form.
+    assert str(Path("lerobot/smolvla_base")) == "lerobot\\smolvla_base"
+    assert hub_safe_id(Path("lerobot/smolvla_base")) == "lerobot/smolvla_base"
+    assert hub_safe_id("lerobot\\smolvla_base") == "lerobot/smolvla_base"

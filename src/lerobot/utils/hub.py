@@ -47,6 +47,16 @@ def find_latest_hub_checkpoint(
     return f"{CHECKPOINTS_DIR}/{max(steps, key=int)}"
 
 
+def hub_safe_id(pretrained_name_or_path: str | Path) -> str:
+    """Return ``pretrained_name_or_path`` as a string valid both as a local path and a Hub repo id.
+
+    On Windows, ``str(Path("lerobot/smolvla_base"))`` yields ``"lerobot\\smolvla_base"``, which
+    ``huggingface_hub`` rejects as an invalid repo id. Forward slashes remain valid in local
+    Windows paths, so the posix form is safe for both uses (no-op on other platforms).
+    """
+    return Path(pretrained_name_or_path).as_posix()
+
+
 class HubMixin:
     """
     A Mixin containing the functionality to push an object to the hub.

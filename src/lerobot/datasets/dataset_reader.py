@@ -200,10 +200,13 @@ class DatasetReader:
         Used to build the ``allow_patterns`` list for ``snapshot_download``.
         """
         episodes = self.episodes if self.episodes is not None else list(range(self._meta.total_episodes))
-        fpaths = [str(self._meta.get_data_file_path(ep_idx)) for ep_idx in episodes]
+        # as_posix: these paths are matched against Hub-side file names (forward slashes) as
+        # snapshot_download allow_patterns -- str(Path) would produce backslashes on Windows,
+        # matching nothing and silently downloading zero files.
+        fpaths = [self._meta.get_data_file_path(ep_idx).as_posix() for ep_idx in episodes]
         if len(self._meta.video_keys) > 0:
             video_files = [
-                str(self._meta.get_video_file_path(ep_idx, vid_key))
+                self._meta.get_video_file_path(ep_idx, vid_key).as_posix()
                 for vid_key in self._meta.video_keys
                 for ep_idx in episodes
             ]
