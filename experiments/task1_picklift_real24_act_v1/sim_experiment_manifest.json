@@ -84,6 +84,15 @@
         "follower_calibration_sha256": "c78e4f7e1383571c6aa496f62996f518b3e4122f78244d2bbc094658bc0cb8a0",
         "calibration_clamp": "per_joint_fail_closed",
         "max_relative_target": 5.0,
+        "sim_state_boundary_projection": {
+            "absolute_tolerance_dataset_units": 0.05,
+            "scope": "hardware_free_simulator_input_only",
+            "measured_trigger": "MuJoCo endpoint tracking overshoot after a sent target exactly at the frozen shoulder_lift lower calibration bound",
+            "measured_maximum_violation_dataset_units": 0.03478056519895745,
+            "larger_violation": "fail_closed_possible_coordinate_contract_mismatch",
+            "real_deployment_state_check_unchanged": true,
+            "output_calibration_clamp_unchanged": true
+        },
         "order": [
             "raw_action",
             "calibration_clipped_action",

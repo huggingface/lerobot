@@ -82,6 +82,19 @@ def test_sim_state_projection_rejects_coordinate_mismatch() -> None:
         project_sim_state_to_calibration(state)
 
 
+def test_sim_state_projection_accepts_measured_endpoint_tracking_overshoot() -> None:
+    state = np.zeros(6, dtype=np.float32)
+    state[1] = -98.9798355102539
+    projected = project_sim_state_to_calibration(state)
+    assert projected["projection_mask"][1]
+    assert projected["projection_delta"][1] == pytest.approx(
+        0.03478056519895745
+    )
+    assert projected["state"][1] == pytest.approx(
+        CALIBRATION_BOUNDS_DEG[1, 0]
+    )
+
+
 def test_summary_reports_overall_and_per_cell(tmp_path: Path) -> None:
     base = {
         "phase_id": "gate12",

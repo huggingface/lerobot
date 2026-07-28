@@ -29,7 +29,7 @@ CALIBRATION_BOUNDS_DEG = np.asarray(
 
 EXPECTED_CALIBRATION_SHA256 = "c78e4f7e1383571c6aa496f62996f518b3e4122f78244d2bbc094658bc0cb8a0"
 MAX_RELATIVE_TARGET = 5.0
-SIM_STATE_CALIBRATION_TOLERANCE = 0.01
+SIM_STATE_CALIBRATION_TOLERANCE = 0.05
 
 
 def sha256_file(path: str | Path) -> str:
@@ -83,9 +83,9 @@ def project_sim_state_to_calibration(
 ) -> dict[str, np.ndarray]:
     """Project only negligible simulator boundary noise into real calibration.
 
-    Nexus intentionally perturbs reset qpos and settles the model. Its dataset
-    conversion can therefore report values a few thousandths below the gripper
-    lower bound. This function is only for the hardware-free simulator input
+    Nexus reset/settle noise and MuJoCo tracking of a target exactly on a
+    frozen calibration endpoint can produce small simulator-only boundary
+    excursions. This function is only for the hardware-free simulator input
     seam. The real deployment path remains strict and output calibration
     clipping is unchanged.
     """
