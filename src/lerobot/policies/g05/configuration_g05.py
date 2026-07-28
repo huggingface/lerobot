@@ -168,6 +168,7 @@ class G05Config(PreTrainedConfig):
     discrete_action: bool = True
     continuous_action: bool = False
     return_continuous_action: bool = False
+    model_weights_to_bf16: bool = True
 
     policy_action_dim: int = 20
     policy_state_dim: int = 20

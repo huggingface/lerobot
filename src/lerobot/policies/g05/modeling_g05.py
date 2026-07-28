@@ -165,10 +165,25 @@ class G05Policy(PreTrainedPolicy):
         if callable(reset):
             reset()
 
+    def _apply_author_inference_precision(self) -> None:
+        """Match the released serving path's BF16 weights with declared FP32 islands."""
+
+        self.backend.to(dtype=torch.bfloat16)
+        apply_fp32_params = getattr(self.backend, "apply_fp32_params", None)
+        if callable(apply_fp32_params):
+            apply_fp32_params()
+
     def to(self, *args, **kwargs) -> G05Policy:
-        """Move the author ActionCodec sidecar along with the policy module."""
+        """Apply author inference precision and move the ActionCodec sidecar."""
 
         result = super().to(*args, **kwargs)
+        explicit_dtype = "dtype" in kwargs or any(isinstance(arg, torch.dtype | Tensor) for arg in args)
+        if (
+            self.config.model_weights_to_bf16
+            and not explicit_dtype
+            and next(self.backend.parameters()).device.type == "cuda"
+        ):
+            self._apply_author_inference_precision()
         action_tokenizer = getattr(self.backend, "action_tokenizer", None)
         move_tokenizer = getattr(action_tokenizer, "to", None)
         if callable(move_tokenizer):

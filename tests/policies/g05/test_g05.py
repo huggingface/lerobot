@@ -685,6 +685,25 @@ def test_policy_to_moves_non_module_action_tokenizer_sidecar():
     assert backend.action_tokenizer.device == next(policy.parameters()).device
 
 
+def test_author_inference_precision_preserves_declared_fp32_parameters():
+    class MixedPrecisionBackend(TinyG05Backend):
+        def __init__(self):
+            super().__init__()
+            self.bulk_weight = nn.Parameter(torch.ones(2))
+            self.precision_weight = nn.Parameter(torch.ones(2))
+
+        def apply_fp32_params(self):
+            self.precision_weight.data = self.precision_weight.data.float()
+
+    backend = MixedPrecisionBackend()
+    policy = G05Policy(_config(), backend=backend)
+
+    policy._apply_author_inference_precision()
+
+    assert backend.bulk_weight.dtype is torch.bfloat16
+    assert backend.precision_weight.dtype is torch.float32
+
+
 def test_batch_two_preserves_each_raw_task_and_every_camera_slot():
     backend = TinyG05Backend()
     policy = G05Policy(_config(), backend=backend)
