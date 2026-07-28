@@ -16,8 +16,12 @@
 
 """Test script to verify PI0.5 (pi05) support in PI0 policy"""
 
+from types import SimpleNamespace
+
 import pytest
 import torch
+from safetensors.torch import save_file
+from torch import nn
 
 pytest.importorskip("transformers")
 
@@ -29,6 +33,26 @@ from lerobot.policies.pi05 import (  # noqa: E402
 )
 from lerobot.utils.random_utils import set_seed
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
+
+
+class _CheckpointPolicy(PI05Policy):
+    def __init__(self, config, **kwargs):
+        nn.Module.__init__(self)
+        self.config = config
+        self.loaded_state_dict = None
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        self.loaded_state_dict = state_dict
+        return [], []
+
+
+def test_from_pretrained_loads_existing_single_file_checkpoint(tmp_path):
+    save_file({"weight": torch.tensor([1.0])}, tmp_path / "model.safetensors")
+
+    policy = _CheckpointPolicy.from_pretrained(tmp_path, config=SimpleNamespace())
+
+    assert policy.loaded_state_dict is not None
+    torch.testing.assert_close(policy.loaded_state_dict["model.weight"], torch.tensor([1.0]))
 
 
 @require_cuda
