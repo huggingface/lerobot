@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "status": "gate12_interface_pass_stop_before_frozen120",
+  "research_status": "diagnostic_only_not_real_robot_evaluation_not_a_paper_result",
+  "plan_sha256": "c26bf3caa788708cf8ccb332e2f84771d271b05795634a9b1022ed97d06b8c86",
+  "checkpoint": {
+    "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_act_v1/full_100k/checkpoints/100000/pretrained_model",
+    "model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb"
+  },
+  "remote": {
+    "root": "/home/ubuntu24/SO101QuestRemote",
+    "deployed_commit": "a5914b14261488193b007e004c81ceefb1eed254",
+    "adapter": "/home/ubuntu24/SO101QuestRemote/robot-host/nexus_picklift_policy_adapter.py",
+    "adapter_sha256": "f061b123b27c780090ba5a4510aebeebda12ffa980200684dad56a6ee19dbbf3",
+    "runtime_python": "/home/ubuntu24/SO101QuestRemote-runtime/.venv/bin/python",
+    "python_version": "3.12.3",
+    "so101_nexus_version": "0.4.13"
+  },
+  "source": {
+    "runner_commit": "6c3190929cc8975afd11cb7372b4c2efa202af5c",
+    "sim_boundary_fix_and_run_commit": "4491f93ba0a0e684d29ba2c8133347fa72723cf9",
+    "runner": "experiments/task1_picklift_real24_act_v1/run_remote_sim_gate12.py",
+    "sim_interface": "experiments/task1_picklift_real24_act_v1/sim_policy_inference.py",
+    "safety": "experiments/task1_picklift_real24_act_v1/deployment_safety.py",
+    "tests": "experiments/task1_picklift_real24_act_v1/test_sim_policy_interface.py",
+    "tests_passed": 10,
+    "pushed": false
+  },
+  "failed_gate": {
+    "run_id": "gate12_real24_act100k_remote_a5914b_20260729_v1",
+    "source_commit": "6c3190929cc8975afd11cb7372b4c2efa202af5c",
+    "interface_gate_pass": false,
+    "interface_valid_episodes": 3,
+    "interface_error_episodes": 9,
+    "evidence_dir": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_act_v1_real_to_remote_sim_v1/gate12_real24_act100k_remote_a5914b_20260729_v1",
+    "hashes": {
+      "episodes.jsonl": "28fa6e3755ab26b17dd13ea3d8fef717277432e4529cd96ac98ad482d22df4de",
+      "ticks.jsonl": "d4b3b162f37edcb7236fad8f34555256cc0790798de5cffe2bfe40d7c2bfa0bf",
+      "run_manifest.json": "08993b5e94fe10b667c27cf44411a004abb49df5c445dcfb2e44b155d6074f95",
+      "summary.json": "90a66a48872b1e8527e50e781648375b8b1a2db3aca143e91793a8976f22437c"
+    }
+  },
+  "failure_diagnosis": {
+    "evidence_dir": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_act_v1_real_to_remote_sim_v1/gate12_failure_diagnosis_v1",
+    "classification": "nexus_reset_settle_boundary_noise_not_coordinate_contract_error",
+    "violating_joint": "gripper",
+    "failed_seed_count": 9,
+    "minimum_below_lower_by": 0.00018166014342568815,
+    "maximum_below_lower_by": 0.0016732770018279552,
+    "sim_only_projection_tolerance": 0.01,
+    "larger_violation_remains_fail_closed": true,
+    "hashes": {
+      "reset_state_diagnostic.jsonl": "7ce34c0e083f0237f83de839edd84d7507b747aa87db772e2618197c4a295fd4",
+      "summary.json": "5692578edcd75d4f83600226cd5cef8d4bb0a1c4bbfd3553b9b1d943530d2336"
+    }
+  },
+  "passing_gate": {
+    "run_id": "gate12_real24_act100k_remote_a5914b_20260729_v2",
+    "source_commit": "4491f93ba0a0e684d29ba2c8133347fa72723cf9",
+    "interface_gate_pass": true,
+    "episodes": 12,
+    "interface_valid_episodes": 12,
+    "environment_steps": 18000,
+    "policy_ticks": 7200,
+    "raw_action_count": 7200,
+    "sent_action_count": 7200,
+    "calibration_clipped_action_count": 0,
+    "relative_clipped_action_count": 299,
+    "relative_clipped_joint_value_count": 545,
+    "sim_state_projected_ticks": 9,
+    "maximum_absolute_projection_delta": 0.0016732770018279552,
+    "legal_timeout_episodes": 12,
+    "task_successes": 0,
+    "runtime_seconds": 138.49287278899283,
+    "evidence_dir": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_act_v1_real_to_remote_sim_v1/gate12_real24_act100k_remote_a5914b_20260729_v2",
+    "hashes": {
+      "episodes.jsonl": "d4e109d3b81095e895ed9b81b3c1ffb14919771214edb450e31fbe26de0d780c",
+      "ticks.jsonl": "084c7076e9279a7a65f1ddc988b1f09f4c2ff9a7d0d5bc97a417d4dcac686119",
+      "run_manifest.json": "e0af601107dcd288efea858b5921dead8070c5719819e8fc4e43487294999105",
+      "summary.json": "b53f9853e73c9a88fc89680d9df7a11f033273ab9763fd0b7cf6618993946976"
+    }
+  },
+  "safety_and_scope": {
+    "hardware_accessed": false,
+    "serial_accessed": false,
+    "hardware_camera_accessed": false,
+    "torque_enabled": false,
+    "twelve_volts_requested": false,
+    "gateway_started": false,
+    "quest_started": false,
+    "real_robot_started": false,
+    "lerobot_dataset_written": false,
+    "checkpoint_changed": false,
+    "training_or_finetuning_performed": false,
+    "frozen120_started": false,
+    "next_action": "await_explicit_frozen120_go"
+  }
+}
