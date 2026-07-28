@@ -91,12 +91,21 @@ def test_load_training_batch_size_absent_returns_none(tmp_path, optimizer, sched
 
 
 def test_update_last_checkpoint(tmp_path):
+    # On Windows without Developer Mode the link is a directory junction rather
+    # than a symlink, so assert on resolution rather than on the link type.
     checkpoint = tmp_path / "0005"
     checkpoint.mkdir()
     update_last_checkpoint(checkpoint)
     last_checkpoint = tmp_path / LAST_CHECKPOINT_LINK
-    assert last_checkpoint.is_symlink()
-    assert last_checkpoint.resolve() == checkpoint
+    assert last_checkpoint.resolve() == checkpoint.resolve()
+
+    # Updating to a newer checkpoint must replace the existing link.
+    checkpoint2 = tmp_path / "0010"
+    checkpoint2.mkdir()
+    update_last_checkpoint(checkpoint2)
+    assert last_checkpoint.resolve() == checkpoint2.resolve()
+    # The old checkpoint's contents are untouched by the replacement.
+    assert checkpoint.exists()
 
 
 @patch("lerobot.common.train_utils.save_training_state")
@@ -212,9 +221,10 @@ def test_resolve_resume_checkpoint_downloads_latest_and_links(tmp_path, monkeypa
 
     assert checkpoint_dir == out / CHECKPOINTS_DIR / "020000"
     last = out / CHECKPOINTS_DIR / LAST_CHECKPOINT_LINK
-    assert last.is_symlink()
-    # `last` points at the downloaded step dir.
-    assert (last.parent / last.readlink()).resolve() == checkpoint_dir.resolve()
+    # `last` points at the downloaded step dir. On Windows without Developer
+    # Mode the link is a directory junction rather than a symlink, so assert
+    # on resolution rather than on the link type (as in test_update_last_checkpoint).
+    assert last.resolve() == checkpoint_dir.resolve()
 
 
 def test_resolve_resume_checkpoint_raises_without_checkpoints(tmp_path, monkeypatch):

@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 from pathlib import Path
 
 from huggingface_hub import HfApi, snapshot_download
@@ -86,8 +87,24 @@ def update_last_checkpoint(checkpoint_dir: Path) -> Path:
     last_checkpoint_dir = checkpoint_dir.parent / LAST_CHECKPOINT_LINK
     if last_checkpoint_dir.is_symlink():
         last_checkpoint_dir.unlink()
+    elif last_checkpoint_dir.is_dir():
+        # A directory junction left by the Windows fallback below is not a symlink.
+        # os.rmdir removes the junction itself, never its contents, and refuses to
+        # remove a real non-empty directory, so genuine data cannot be clobbered.
+        os.rmdir(last_checkpoint_dir)
     relative_target = checkpoint_dir.relative_to(checkpoint_dir.parent)
-    last_checkpoint_dir.symlink_to(relative_target)
+    try:
+        last_checkpoint_dir.symlink_to(relative_target)
+    except OSError as e:
+        # Windows only allows symlink creation for administrators or users with
+        # Developer Mode enabled (WinError 1314). Fall back to a directory
+        # junction, which needs no privileges and resolves the same way.
+        if os.name == "nt" and getattr(e, "winerror", None) == 1314:
+            import _winapi
+
+            _winapi.CreateJunction(str(checkpoint_dir), str(last_checkpoint_dir))
+        else:
+            raise
 
 
 def save_checkpoint(
