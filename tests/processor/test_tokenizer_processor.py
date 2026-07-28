@@ -104,6 +104,7 @@ def test_action_tokenizer_config_preserves_token_mapping():
         "fast_skip_tokens": 64,
         "paligemma_tokenizer_name": "custom/paligemma",
         "allow_truncation": False,
+        "prepend_bos": True,
         "action_tokenizer_name": "custom/fast",
     }
 
