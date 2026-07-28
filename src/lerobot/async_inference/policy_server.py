@@ -18,6 +18,10 @@ Example:
 python -m lerobot.async_inference.policy_server \
      --host=127.0.0.1 \
      --port=8080 \
+     --policy_type=pi0 \
+     --pretrained_name_or_path=/path/to/pretrained_model \
+     --policy_device=cuda \
+     --actions_per_chunk=50 \
      --fps=30 \
      --inference_latency=0.033 \
      --obs_queue_timeout=1
@@ -30,6 +34,7 @@ import threading
 import time
 from concurrent import futures
 from dataclasses import asdict
+from pathlib import Path
 from pprint import pformat
 from queue import Empty, Queue
 from typing import Any
@@ -38,6 +43,7 @@ import draccus
 import grpc
 import torch
 
+from lerobot.configs import PreTrainedConfig
 from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.transport import (
@@ -84,9 +90,12 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.policy_type = None
         self.lerobot_features = None
         self.actions_per_chunk = None
+        self.rename_map: dict[str, str] = {}
         self.policy = None
         self.preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None
         self.postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None
+        self._loaded_policy_setup_key = None
+        self._policy_setup_lock = threading.Lock()
 
     @property
     def running(self):
@@ -94,7 +103,78 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
     @property
     def policy_image_features(self):
-        return self.policy.config.image_features
+        return self._policy_config.image_features
+
+    @property
+    def _policy_config(self):
+        if self.policy is None:
+            raise RuntimeError("Policy has not been initialized")
+
+        get_base_model = getattr(self.policy, "get_base_model", None)
+        if callable(get_base_model):
+            return get_base_model().config
+
+        return self.policy.config
+
+    def _load_policy(self, policy_type: str, pretrained_name_or_path: str):
+        policy_class = get_policy_class(policy_type)
+        pretrained_path = Path(pretrained_name_or_path)
+
+        if pretrained_path.is_dir() and (pretrained_path / "adapter_config.json").is_file():
+            from peft import PeftConfig, PeftModel
+
+            self.logger.info("Loading policy's PEFT adapter.")
+            peft_config = PeftConfig.from_pretrained(pretrained_name_or_path)
+            if not peft_config.base_model_name_or_path:
+                raise ValueError(
+                    "No pretrained model name found in adapter config. Can't instantiate the base policy."
+                )
+
+            policy_config = PreTrainedConfig.from_pretrained(pretrained_name_or_path)
+            policy = policy_class.from_pretrained(peft_config.base_model_name_or_path, config=policy_config)
+            return PeftModel.from_pretrained(policy, pretrained_name_or_path, config=peft_config)
+
+        return policy_class.from_pretrained(pretrained_name_or_path)
+
+    def _make_policy_setup_key(self, policy_specs: RemotePolicyConfig) -> tuple[Any, ...]:
+        return (
+            policy_specs.policy_type,
+            policy_specs.pretrained_name_or_path,
+            policy_specs.device,
+            policy_specs.actions_per_chunk,
+            tuple(sorted(policy_specs.rename_map.items())),
+            pformat(asdict(policy_specs)["lerobot_features"], sort_dicts=True),
+        )
+
+    def _resolve_policy_specs(self, client_specs: RemotePolicyConfig) -> RemotePolicyConfig:
+        """Merge client-provided robot features with server-owned policy settings."""
+        policy_specs = RemotePolicyConfig(
+            policy_type=self.config.policy_type or client_specs.policy_type,
+            pretrained_name_or_path=self.config.pretrained_name_or_path
+            or client_specs.pretrained_name_or_path,
+            lerobot_features=client_specs.lerobot_features,
+            actions_per_chunk=self.config.actions_per_chunk or client_specs.actions_per_chunk,
+            device=self.config.policy_device or client_specs.device,
+            rename_map=client_specs.rename_map,
+        )
+
+        missing = [
+            name
+            for name, value in (
+                ("policy_type", policy_specs.policy_type),
+                ("pretrained_name_or_path", policy_specs.pretrained_name_or_path),
+                ("actions_per_chunk", policy_specs.actions_per_chunk),
+                ("policy_device", policy_specs.device),
+            )
+            if value is None
+        ]
+        if missing:
+            raise ValueError(
+                "Missing policy configuration: "
+                f"{', '.join(missing)}. Set these options on the policy server or robot client."
+            )
+
+        return policy_specs
 
     def _reset_server(self) -> None:
         """Flushes server state when new client connects."""
@@ -122,10 +202,12 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         client_id = context.peer()
 
-        policy_specs = pickle.loads(request.data)  # nosec
+        client_specs = pickle.loads(request.data)  # nosec
 
-        if not isinstance(policy_specs, RemotePolicyConfig):
-            raise TypeError(f"Policy specs must be a RemotePolicyConfig. Got {type(policy_specs)}")
+        if not isinstance(client_specs, RemotePolicyConfig):
+            raise TypeError(f"Policy specs must be a RemotePolicyConfig. Got {type(client_specs)}")
+
+        policy_specs = self._resolve_policy_specs(client_specs)
 
         if policy_specs.policy_type not in SUPPORTED_POLICIES:
             raise ValueError(
@@ -145,26 +227,37 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.policy_type = policy_specs.policy_type  # act, pi0, etc.
         self.lerobot_features = policy_specs.lerobot_features
         self.actions_per_chunk = policy_specs.actions_per_chunk
+        self.rename_map = policy_specs.rename_map
 
-        policy_class = get_policy_class(self.policy_type)
+        with self._policy_setup_lock:
+            policy_setup_key = self._make_policy_setup_key(policy_specs)
+            if (
+                self._loaded_policy_setup_key == policy_setup_key
+                and self.policy is not None
+                and self.preprocessor is not None
+                and self.postprocessor is not None
+            ):
+                self.logger.info("Policy setup unchanged; reusing loaded policy and processors.")
+                return services_pb2.Empty()
 
-        start = time.perf_counter()
-        self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
-        self.policy.to(self.device)
+            start = time.perf_counter()
+            self.policy = self._load_policy(self.policy_type, policy_specs.pretrained_name_or_path)
+            self.policy.to(self.device)
 
-        # Load preprocessor and postprocessor, overriding device to match requested device
-        device_override = {"device": self.device}
-        self.preprocessor, self.postprocessor = make_pre_post_processors(
-            self.policy.config,
-            pretrained_path=policy_specs.pretrained_name_or_path,
-            preprocessor_overrides={
-                "device_processor": device_override,
-                "rename_observations_processor": {"rename_map": policy_specs.rename_map},
-            },
-            postprocessor_overrides={"device_processor": device_override},
-        )
+            # Load preprocessor and postprocessor, overriding device to match requested device
+            device_override = {"device": self.device}
+            self.preprocessor, self.postprocessor = make_pre_post_processors(
+                self._policy_config,
+                pretrained_path=policy_specs.pretrained_name_or_path,
+                preprocessor_overrides={
+                    "device_processor": device_override,
+                    "rename_observations_processor": {"rename_map": policy_specs.rename_map},
+                },
+                postprocessor_overrides={"device_processor": device_override},
+            )
 
-        end = time.perf_counter()
+            end = time.perf_counter()
+            self._loaded_policy_setup_key = policy_setup_key
 
         self.logger.info(f"Time taken to put policy on {self.device}: {end - start:.4f} seconds")
 
@@ -175,11 +268,11 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         client_id = context.peer()
         self.logger.debug(f"Receiving observations from {client_id}")
 
-        receive_time = time.time()  # comparing timestamps so need time.time()
         start_deserialize = time.perf_counter()
         received_bytes = receive_bytes_in_chunks(
             request_iterator, None, self.shutdown_event, self.logger
         )  # blocking call while looping over request_iterator
+        receive_time = time.time()  # payload has been fully received
         timed_observation = pickle.loads(received_bytes)  # nosec
         deserialize_time = time.perf_counter() - start_deserialize
 
@@ -187,6 +280,15 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         obs_timestep = timed_observation.get_timestep()
         obs_timestamp = timed_observation.get_timestamp()
+        client_send_timestamp = getattr(timed_observation, "client_send_timestamp", None)
+        if client_send_timestamp is not None:
+            client_to_server_ms = (
+                receive_time - client_send_timestamp
+            ) * 1000
+            self.logger.info(
+                f"[LATENCY] client_to_server={client_to_server_ms:.2f}ms | "
+                f"observation_timestep={obs_timestep}"
+            )
 
         # Calculate FPS metrics
         fps_metrics = self.fps_tracker.calculate_fps_metrics(obs_timestamp)
@@ -233,6 +335,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             inference_time = time.perf_counter() - start_time
 
             start_time = time.perf_counter()
+            server_send_timestamp = time.time()
+            for timed_action in action_chunk:
+                timed_action.server_send_timestamp = server_send_timestamp
             actions_bytes = pickle.dumps(action_chunk)  # nosec
             serialize_time = time.perf_counter() - start_time
 
@@ -343,6 +448,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             observation_t.get_observation(),
             self.lerobot_features,
             self.policy_image_features,
+            self.rename_map,
         )
         prepare_time = time.perf_counter() - start_prepare
 

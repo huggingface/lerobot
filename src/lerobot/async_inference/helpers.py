@@ -89,10 +89,11 @@ def raw_observation_to_observation(
     raw_observation: RawObservation,
     lerobot_features: dict[str, dict],
     policy_image_features: dict[str, PolicyFeature],
+    rename_map: dict[str, str] | None = None,
 ) -> Observation:
     observation = {}
 
-    observation = prepare_raw_observation(raw_observation, lerobot_features, policy_image_features)
+    observation = prepare_raw_observation(raw_observation, lerobot_features, policy_image_features, rename_map)
     for k, v in observation.items():
         if isinstance(v, torch.Tensor):  # VLAs present natural-language instructions in observations
             if "image" in k:
@@ -145,6 +146,7 @@ def prepare_raw_observation(
     robot_obs: RawObservation,
     lerobot_features: dict[str, dict],
     policy_image_features: dict[str, PolicyFeature],
+    rename_map: dict[str, str] | None = None,
 ) -> Observation:
     """Matches keys from the raw robot_obs dict to the keys expected by a given policy (passed as
     policy_image_features)."""
@@ -153,6 +155,9 @@ def prepare_raw_observation(
     lerobot_obs = make_lerobot_observation(robot_obs, lerobot_features)
 
     # 2. Greps all observation.images.<> keys
+    if rename_map:
+        lerobot_obs = {rename_map.get(key, key): value for key, value in lerobot_obs.items()}
+
     image_keys = list(filter(is_image_key, lerobot_obs))
     # state's shape is expected as (B, state_dim)
     state_dict = {OBS_STATE: extract_state_from_raw_observation(lerobot_obs)}
@@ -221,6 +226,7 @@ class TimedData:
 @dataclass
 class TimedAction(TimedData):
     action: Action
+    server_send_timestamp: float | None = None
 
     def get_action(self):
         return self.action
@@ -230,6 +236,7 @@ class TimedAction(TimedData):
 class TimedObservation(TimedData):
     observation: RawObservation
     must_go: bool = False
+    client_send_timestamp: float | None = None
 
     def get_observation(self):
         return self.observation
@@ -265,11 +272,11 @@ class FPSTracker:
 
 @dataclass
 class RemotePolicyConfig:
-    policy_type: str
-    pretrained_name_or_path: str
+    policy_type: str | None
+    pretrained_name_or_path: str | None
     lerobot_features: dict[str, PolicyFeature]
-    actions_per_chunk: int
-    device: str = "cpu"
+    actions_per_chunk: int | None
+    device: str | None = "cpu"
     rename_map: dict[str, str] = field(default_factory=dict)
 
 

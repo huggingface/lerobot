@@ -140,6 +140,52 @@ def test_time_action_chunk(policy_server):
         assert abs(ta.get_timestamp() - expected_ts) < 1e-6
 
 
+def test_server_policy_config_overrides_client_policy_config():
+    from lerobot.async_inference.configs import PolicyServerConfig
+    from lerobot.async_inference.helpers import RemotePolicyConfig
+    from lerobot.async_inference.policy_server import PolicyServer
+
+    server = PolicyServer(
+        PolicyServerConfig(
+            policy_type="pi0",
+            pretrained_name_or_path="/server/model",
+            actions_per_chunk=50,
+            policy_device="cuda",
+        )
+    )
+    client_specs = RemotePolicyConfig(
+        policy_type=None,
+        pretrained_name_or_path=None,
+        lerobot_features={},
+        actions_per_chunk=None,
+        device=None,
+    )
+
+    resolved = server._resolve_policy_specs(client_specs)
+
+    assert resolved.policy_type == "pi0"
+    assert resolved.pretrained_name_or_path == "/server/model"
+    assert resolved.actions_per_chunk == 50
+    assert resolved.device == "cuda"
+
+
+def test_server_policy_config_falls_back_to_client():
+    from lerobot.async_inference.configs import PolicyServerConfig
+    from lerobot.async_inference.helpers import RemotePolicyConfig
+    from lerobot.async_inference.policy_server import PolicyServer
+
+    server = PolicyServer(PolicyServerConfig())
+    client_specs = RemotePolicyConfig(
+        policy_type="act",
+        pretrained_name_or_path="/client/model",
+        lerobot_features={},
+        actions_per_chunk=20,
+        device="cpu",
+    )
+
+    assert server._resolve_policy_specs(client_specs) == client_specs
+
+
 def test_maybe_enqueue_observation_must_go(policy_server):
     """An observation with `must_go=True` is always enqueued."""
     obs = _make_obs(torch.zeros(6), must_go=True)
