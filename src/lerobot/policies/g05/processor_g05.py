@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
@@ -18,6 +18,7 @@ import torchvision.transforms.functional as vision_functional
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
@@ -25,6 +26,7 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
+    RelativeActionsProcessorStep,
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import (
@@ -33,6 +35,7 @@ from lerobot.processor.converters import (
     transition_to_batch,
     transition_to_policy_action,
 )
+from lerobot.processor.relative_action_processor import to_relative_actions
 from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     ACTION,
@@ -116,6 +119,87 @@ class G05ImageTransformStep(ProcessorStep):
 
 
 @dataclass
+@ProcessorStepRegistry.register(name="g05_action_operation_mask")
+class G05ActionOperationMaskStep(ProcessorStep):
+    """Reproduce the author's per-part R1 movement mask used by ActionCodec."""
+
+    action_parts: tuple[tuple[str, int], ...]
+    joint_threshold: float | None = None
+    gripper_threshold: float | None = None
+    velocity_threshold: float | None = None
+    eef_threshold: float | None = 1e-3
+    dim_thresholds: dict[str, tuple[float, ...]] = field(default_factory=dict)
+
+    _VELOCITY_KEYS = ("torso", "chassis")
+
+    def __post_init__(self) -> None:
+        self.action_parts = tuple((key, int(width)) for key, width in self.action_parts)
+        self.dim_thresholds = {
+            key: tuple(float(value) for value in values) for key, values in self.dim_thresholds.items()
+        }
+
+    def _threshold(self, key: str, width: int, action: torch.Tensor) -> torch.Tensor:
+        if key in self.dim_thresholds:
+            values = self.dim_thresholds[key]
+            if len(values) != width:
+                raise ValueError(
+                    f"G0.5 action filter threshold {key!r} has {len(values)} values, expected {width}."
+                )
+            return action.new_tensor(values)
+        if "gripper" in key:
+            value = self.gripper_threshold
+        elif "eef" in key or "ee_pose" in key:
+            value = self.eef_threshold
+        elif any(velocity_key in key for velocity_key in self._VELOCITY_KEYS):
+            value = self.velocity_threshold
+        else:
+            value = self.joint_threshold
+        return action.new_full((width,), float(value or 0.0))
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition.get(TransitionKey.ACTION)
+        if not isinstance(action, torch.Tensor):
+            return transition
+        if action.shape[-1] != sum(width for _, width in self.action_parts):
+            raise ValueError("G0.5 action filter metadata does not match the raw action width.")
+        half = action.shape[-2] // 2
+        masks = []
+        offset = 0
+        for key, width in self.action_parts:
+            part = action[..., offset : offset + width]
+            threshold = self._threshold(key, width, action)
+            if "hand" in key:
+                flag = torch.ones(*part.shape[:-2], width, dtype=torch.bool, device=part.device)
+            elif any(velocity_key in key for velocity_key in self._VELOCITY_KEYS):
+                flag = (part[..., :half, :].abs() >= threshold).any(dim=-2)
+            else:
+                deviation = (part[..., :half, :] - part[..., :1, :]).abs()
+                flag = (deviation >= threshold).any(dim=-2)
+            masks.append(flag)
+            offset += width
+        transition = transition.copy()
+        complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+        complementary["action_op_mask"] = torch.cat(masks, dim=-1)
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "action_parts": [list(part) for part in self.action_parts],
+            "joint_threshold": self.joint_threshold,
+            "gripper_threshold": self.gripper_threshold,
+            "velocity_threshold": self.velocity_threshold,
+            "eef_threshold": self.eef_threshold,
+            "dim_thresholds": {key: list(values) for key, values in self.dim_thresholds.items()},
+        }
+
+
+@dataclass
 @ProcessorStepRegistry.register(name="g05_embodiment_projection")
 class G05EmbodimentProjectionStep(ProcessorStep):
     """Map raw embodiment coordinates into the checkpoint's padded policy layout."""
@@ -158,8 +242,10 @@ class G05EmbodimentProjectionStep(ProcessorStep):
                 # values. The author evaluator consumes only qpos[0].
                 raw_state = torch.cat((raw_state[..., :6], raw_state[..., 6:7]), dim=-1)
             observation[OBS_STATE] = self._project(raw_state, self.mapping["state"], self.policy_state_dim)
+            # Masks describe feature dimensions, not observation-history timesteps.
+            batch_shape = raw_state.shape[:-2] if raw_state.ndim >= 3 else raw_state.shape[:-1]
             state_mask = torch.ones(
-                *raw_state.shape[:-1],
+                *batch_shape,
                 self.policy_state_dim,
                 dtype=torch.bool,
                 device=observation[OBS_STATE].device,
@@ -168,14 +254,20 @@ class G05EmbodimentProjectionStep(ProcessorStep):
             complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
             complementary["proprio_dim_is_pad"] = state_mask
             action_mask = torch.ones(
-                *raw_state.shape[:-1],
+                *batch_shape,
                 self.policy_action_dim,
                 dtype=torch.bool,
                 device=observation[OBS_STATE].device,
             )
             action_mask[..., list(self.mapping["action"])] = False
             complementary["action_dim_is_pad"] = action_mask
-            complementary["action_op_mask"] = ~action_mask
+            raw_action_op_mask = complementary.get("action_op_mask")
+            if isinstance(raw_action_op_mask, torch.Tensor):
+                complementary["action_op_mask"] = self._project(
+                    raw_action_op_mask, self.mapping["action"], self.policy_action_dim
+                ).bool()
+            else:
+                complementary["action_op_mask"] = ~action_mask
             complementary["action_parts_meta"] = G05_POLICY_PARTS[self.policy_action_dim].copy()
             complementary["g05_camera_order"] = self.camera_order
             transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
@@ -218,6 +310,118 @@ class G05EmbodimentProjectionStep(ProcessorStep):
             "policy_action_dim": self.policy_action_dim,
             "camera_order": list(self.camera_order),
         }
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="g05_relative_joint_actions")
+class G05RelativeJointActionsStep(RelativeActionsProcessorStep):
+    """Author-compatible joint deltas using the last proprio history step."""
+
+    num_obs_steps: int = 1
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        observation = transition.get(TransitionKey.OBSERVATION, {})
+        state = observation.get(OBS_STATE) if observation else None
+        if isinstance(state, torch.Tensor) and state.ndim >= 3:
+            state = state[..., -1, :]
+        elif (
+            isinstance(state, torch.Tensor)
+            and state.ndim == 2
+            and self.num_obs_steps > 1
+            and state.shape[-2] == self.num_obs_steps
+        ):
+            state = state[-1]
+        if state is not None:
+            self._last_state = state
+        if not self.enabled:
+            return transition
+        new_transition = transition.copy()
+        action = new_transition.get(TransitionKey.ACTION)
+        if action is not None and state is not None:
+            mask = self._build_mask(action.shape[-1])
+            new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask)
+        return new_transition
+
+    def get_config(self) -> dict[str, Any]:
+        return {**super().get_config(), "num_obs_steps": self.num_obs_steps}
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="g05_tail_normalization")
+class G05TailNormalizationStep(ProcessorStep):
+    """Apply or invert the author's q01/q99 log-tail compression."""
+
+    inverse: bool = False
+    tail_scale: float = 0.075
+    stats: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
+    _tensor_stats: dict[str, dict[str, torch.Tensor]] = field(default_factory=dict, init=False, repr=False)
+
+    _TAIL_STATS = ("tail_q01", "tail_q99", "tail_mean", "tail_mask")
+
+    def __post_init__(self) -> None:
+        self._tensor_stats = {
+            key: {
+                name: torch.as_tensor(value)
+                for name, value in feature_stats.items()
+                if name in self._TAIL_STATS
+            }
+            for key, feature_stats in self.stats.items()
+        }
+
+    def _transform(self, value: torch.Tensor, key: str) -> torch.Tensor:
+        if key not in self._tensor_stats:
+            return value
+        stats = {name: tensor.to(value.device) for name, tensor in self._tensor_stats[key].items()}
+        if set(stats) != set(self._TAIL_STATS):
+            raise ValueError(f"Incomplete G0.5 tail statistics for {key}.")
+        q01 = stats["tail_q01"].to(value.dtype)
+        q99 = stats["tail_q99"].to(value.dtype)
+        mean = stats["tail_mean"].to(value.dtype)
+        mask = stats["tail_mask"].bool()
+        degenerate = (q99 <= q01) | (mean <= q01) | (mean >= q99)
+        mask = mask & ~degenerate
+        c_pos = torch.where(mask, self.tail_scale * (q99 - mean), torch.ones_like(q99))
+        c_neg = torch.where(mask, self.tail_scale * (mean - q01), torch.ones_like(q01))
+        if self.inverse:
+            positive = q99 + c_pos * torch.expm1(torch.clamp((value - q99) / c_pos, min=0.0))
+            negative = q01 - c_neg * torch.expm1(torch.clamp((q01 - value) / c_neg, min=0.0))
+        else:
+            positive = q99 + c_pos * torch.log1p(torch.clamp((value - q99) / c_pos, min=0.0))
+            negative = q01 - c_neg * torch.log1p(torch.clamp((q01 - value) / c_neg, min=0.0))
+        transformed = torch.where(value > q99, positive, torch.where(value < q01, negative, value))
+        return torch.where(mask, transformed, value)
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        transition = transition.copy()
+        observation = dict(transition.get(TransitionKey.OBSERVATION) or {})
+        if OBS_STATE in observation:
+            observation[OBS_STATE] = self._transform(observation[OBS_STATE], OBS_STATE)
+        transition[TransitionKey.OBSERVATION] = observation
+        action = transition.get(TransitionKey.ACTION)
+        if isinstance(action, torch.Tensor):
+            transition[TransitionKey.ACTION] = self._transform(action, ACTION)
+        return transition
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        return {
+            f"{key}.{name}": tensor.cpu()
+            for key, feature_stats in self._tensor_stats.items()
+            for name, tensor in feature_stats.items()
+        }
+
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        self._tensor_stats = {}
+        for flat_key, tensor in state.items():
+            key, name = flat_key.rsplit(".", 1)
+            self._tensor_stats.setdefault(key, {})[name] = tensor
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {"inverse": self.inverse, "tail_scale": self.tail_scale}
 
 
 @dataclass
@@ -287,10 +491,40 @@ class G05InverseActionProjectionStep(ProcessorStep):
         return {"embodiment": self.embodiment, "policy_action_dim": self.policy_action_dim}
 
 
+@dataclass
+@ProcessorStepRegistry.register(name="g05_action_history_crop")
+class G05ActionHistoryCropStep(ProcessorStep):
+    """Remove the author model's observation-alignment prefix from action chunks."""
+
+    num_obs_steps: int = 1
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition.get(TransitionKey.ACTION)
+        if not isinstance(action, torch.Tensor) or self.num_obs_steps <= 1:
+            return transition
+        start = self.num_obs_steps - 1
+        if action.ndim < 2 or action.shape[-2] <= start:
+            raise ValueError(
+                "G0.5 action history crop requires a full action chunk with at least "
+                f"{self.num_obs_steps} steps, got {tuple(action.shape)}."
+            )
+        transition = transition.copy()
+        transition[TransitionKey.ACTION] = action[..., start:, :]
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {"num_obs_steps": self.num_obs_steps}
+
+
 def _normalization_mode(config: G05Config) -> NormalizationMode:
     if config.normalization_mode == "q01_q99":
         return NormalizationMode.QUANTILES
-    if config.normalization_mode == "z_score":
+    if config.normalization_mode in {"z_score", "z_score_tail_mixed"}:
         return NormalizationMode.MEAN_STD
     return NormalizationMode.IDENTITY
 
@@ -360,6 +594,12 @@ def make_g05_pre_post_processors(
         FeatureType.VISUAL: NormalizationMode.IDENTITY,
     }
 
+    relative_step = G05RelativeJointActionsStep(
+        enabled=config.use_relative_actions,
+        exclude_joints=list(config.relative_exclude_joints),
+        action_names=list(config.action_feature_names) or None,
+        num_obs_steps=config.n_obs_steps,
+    )
     steps: list[ProcessorStep] = [
         AddBatchDimensionProcessorStep(),
         G05ImageTransformStep(
@@ -368,18 +608,43 @@ def make_g05_pre_post_processors(
             mean=config.image_mean,
             std=config.image_std,
         ),
-        G05EmbodimentProjectionStep(
-            embodiment=config.embodiment,
-            policy_state_dim=config.policy_state_dim,
-            policy_action_dim=config.policy_action_dim,
-            camera_order=config.camera_order,
-        ),
+    ]
+    action_filter = config.processor_metadata.get("action_filter") or {}
+    if str(action_filter.get("_target_", "")).endswith("R1LiteJointActionFilter"):
+        action_parts = tuple(
+            (str(item["key"]), int(item["shape"]))
+            for item in (config.processor_metadata.get("shape_meta") or {}).get("action", [])
+        )
+        steps.append(
+            G05ActionOperationMaskStep(
+                action_parts=action_parts,
+                joint_threshold=action_filter.get("joint_threshold"),
+                gripper_threshold=action_filter.get("gripper_threshold"),
+                velocity_threshold=action_filter.get("velocity_threshold"),
+                eef_threshold=action_filter.get("eef_threshold", 1e-3),
+                dim_thresholds=action_filter.get("dim_thresholds") or {},
+            )
+        )
+    steps.extend(
+        [
+            relative_step,
+            G05EmbodimentProjectionStep(
+                embodiment=config.embodiment,
+                policy_state_dim=config.policy_state_dim,
+                policy_action_dim=config.policy_action_dim,
+                camera_order=config.camera_order,
+            ),
+        ]
+    )
+    if config.normalization_mode == "z_score_tail_mixed":
+        steps.append(G05TailNormalizationStep(stats=projected_stats or {}))
+    steps.append(
         NormalizerProcessorStep(
             features=policy_features,
             norm_map=norm_map,
             stats=projected_stats,
-        ),
-    ]
+        )
+    )
     if config.normalization_clip is not None:
         steps.append(
             G05NormalizationClampStep(
@@ -394,18 +659,27 @@ def make_g05_pre_post_processors(
         to_transition=batch_to_transition,
         to_output=transition_to_batch,
     )
-    postprocessor = PolicyProcessorPipeline[PolicyAction, PolicyAction](
-        steps=[
-            UnnormalizerProcessorStep(
-                features={ACTION: policy_features[ACTION]},
-                norm_map={FeatureType.ACTION: mode},
-                stats=projected_stats,
-            ),
+    output_steps: list[ProcessorStep] = [
+        UnnormalizerProcessorStep(
+            features={ACTION: policy_features[ACTION]},
+            norm_map={FeatureType.ACTION: mode},
+            stats=projected_stats,
+        )
+    ]
+    if config.normalization_mode == "z_score_tail_mixed":
+        output_steps.append(G05TailNormalizationStep(inverse=True, stats=projected_stats or {}))
+    output_steps.extend(
+        [
             G05InverseActionProjectionStep(
                 embodiment=config.embodiment, policy_action_dim=config.policy_action_dim
             ),
             DeviceProcessorStep(device="cpu"),
-        ],
+            AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
+            G05ActionHistoryCropStep(num_obs_steps=config.n_obs_steps),
+        ]
+    )
+    postprocessor = PolicyProcessorPipeline[PolicyAction, PolicyAction](
+        steps=output_steps,
         name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
         to_transition=policy_action_to_transition,
         to_output=transition_to_policy_action,

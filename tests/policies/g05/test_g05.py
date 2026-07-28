@@ -15,7 +15,10 @@ from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.g05.configuration_g05 import G05_EMBODIMENT_MAPPINGS, G05Config
 from lerobot.policies.g05.convert_g05_checkpoint import (
+    _camera_sizes,
+    _profile_config,
     convert_checkpoint,
+    convert_dataset_stats,
     convert_state_dict,
     save_converted_state_dict,
 )
@@ -103,6 +106,156 @@ def test_system2_fm_only_builder_uses_exact_cot_template_without_action_tokens()
 
     assert "<prompt_text_!>\n<EOC><atomic_task_text>|Action: <EOV><eos>" in config.prompt_template
     assert "<action_action" not in config.prompt_template
+
+
+def _base_r1lite_hydra():
+    state_action = [
+        {"key": "left_arm", "shape": 6},
+        {"key": "left_gripper", "shape": 1},
+        {"key": "right_arm", "shape": 6},
+        {"key": "right_gripper", "shape": 1},
+    ]
+    images = [
+        {
+            "key": "head_rgb",
+            "camera_type": "exterior",
+            "lerobot_key": "observation.images.head_rgb",
+            "shape": [3, 224, 224],
+        },
+        {
+            "key": "left_wrist_rgb",
+            "camera_type": "wrist_left",
+            "lerobot_key": "observation.images.left_wrist_rgb",
+            "shape": [3, 224, 224],
+        },
+        {
+            "key": "right_wrist_rgb",
+            "camera_type": "wrist_right",
+            "lerobot_key": "observation.images.right_wrist_rgb",
+            "shape": [3, 224, 224],
+        },
+    ]
+    return {
+        "model": {
+            "model_arch": {
+                "action_dim": 27,
+                "proprio_dim": 27,
+                "num_input_images": 18,
+                "horizon_steps": 32,
+                "predict_cot": True,
+                "discrete_action": True,
+                "continuous_action": True,
+            },
+            "processor": {
+                "num_obs_steps": 6,
+                "use_stepwise_action_norm": True,
+                "camera_size_config": {
+                    "exterior": [256, 256],
+                    "wrist_left": [256, 256],
+                    "wrist_right": [256, 256],
+                },
+                "samples_builder": {
+                    "_target_": "g05.data_processor.processor.samples_builder.MixedSamplesBuilder"
+                },
+            },
+        },
+        "data": {
+            "action_size": 32,
+            "processors": {
+                "galaxea_r1lite": {
+                    "shape_meta": {
+                        "state": state_action,
+                        "action": state_action,
+                        "images": images,
+                    },
+                    "norm_default_mode": "z-score-tail",
+                    "norm_exception_mode": {
+                        "state": {"left_gripper": "q01/q99", "right_gripper": "q01/q99"},
+                        "action": {"left_gripper": "q01/q99", "right_gripper": "q01/q99"},
+                    },
+                    "action_filter": {
+                        "_target_": (
+                            "g05.data_processor.processor.galaxea_action_processor.R1LiteJointActionFilter"
+                        ),
+                        "joint_threshold": 0.002,
+                        "gripper_threshold": 0.01,
+                    },
+                }
+            },
+        },
+    }
+
+
+def _base_r1lite_stats():
+    result = {"state": {}, "action": {}}
+    for category in result:
+        for key, width in (
+            ("left_arm", 6),
+            ("left_gripper", 1),
+            ("right_arm", 6),
+            ("right_gripper", 1),
+        ):
+            if category == "action":
+                shape = (32, width)
+                prefix = "stepwise"
+            else:
+                shape = (width,)
+                prefix = "global"
+            result[category][key] = {
+                f"{prefix}_mean": torch.zeros(shape).tolist(),
+                f"{prefix}_std": torch.ones(shape).tolist(),
+                f"{prefix}_q01": torch.full(shape, -1.0).tolist(),
+                f"{prefix}_q99": torch.full(shape, 1.0).tolist(),
+            }
+    return {"galaxea_r1lite": result}
+
+
+def test_base_system2_requires_named_embodiment_and_roundtrips_mixed_tail_stats(tmp_path):
+    hydra = _base_r1lite_hydra()
+    with pytest.raises(ValueError, match="concrete --embodiment"):
+        _profile_config("g05-base", hydra)
+
+    config = _profile_config("g05-base", hydra, embodiment="galaxea_r1lite")
+    actioncodec_config = _profile_config(
+        "g05-base", hydra, embodiment="galaxea_r1lite", action_head="actioncodec"
+    )
+    config.camera_sizes = _camera_sizes(config.processor_metadata, config.camera_order)
+    config.camera_sizes = dict.fromkeys(config.camera_order, (8, 8))
+    stats = convert_dataset_stats(_base_r1lite_stats(), config)
+    preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=stats)
+    raw_state = torch.linspace(-2, 2, 14).repeat(1, 6, 1)
+    raw_action = raw_state[:, -1] + torch.linspace(-0.2, 0.2, 14).repeat(1, 32, 1)
+
+    raw_batch = {
+        OBS_STATE: raw_state,
+        ACTION: raw_action,
+        **{camera: torch.zeros(1, 6, 3, 8, 8, dtype=torch.uint8) for camera in config.camera_order},
+        "task": ["native system 2"],
+    }
+    processed = preprocessor(raw_batch)
+    restored = postprocessor(processed[ACTION])
+
+    assert config.runtime_system == "system2"
+    assert config.predict_cot and config.discrete_action and config.continuous_action
+    assert config.action_head == "flow" and actioncodec_config.action_head == "actioncodec"
+    assert actioncodec_config.runtime_system == "system2"
+    assert not actioncodec_config.return_continuous_action
+    assert config.policy_action_dim == 27
+    assert config.num_input_images == 18
+    assert "<prompt_text_!>" in config.prompt_template
+    # G0.5-base's 32-step head includes n_obs_steps - 1 alignment steps.
+    assert processed["action_dim_is_pad"].shape == (1, 27)
+    assert not processed["action_op_mask"].any()
+    assert restored.shape == (1, 27, 14)
+    torch.testing.assert_close(restored, raw_action[:, 5:], atol=2e-5, rtol=2e-5)
+
+    preprocessor.save_pretrained(tmp_path)
+    postprocessor.save_pretrained(tmp_path)
+    loaded_preprocessor, loaded_postprocessor = make_pre_post_processors(config, pretrained_path=tmp_path)
+    reloaded = loaded_preprocessor(raw_batch)
+    reloaded_restored = loaded_postprocessor(reloaded[ACTION])
+    torch.testing.assert_close(reloaded[ACTION], processed[ACTION])
+    torch.testing.assert_close(reloaded_restored, restored)
 
 
 def test_libero_and_atomic4_are_distinct_validated_mappings():

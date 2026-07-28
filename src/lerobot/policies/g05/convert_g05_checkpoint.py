@@ -146,14 +146,32 @@ def _load_checkpoint(path: Path) -> dict[str, torch.Tensor]:
     return payload
 
 
-def _profile_config(profile: str, hydra: dict[str, Any]) -> G05Config:
+def _profile_config(
+    profile: str,
+    hydra: dict[str, Any],
+    embodiment: str | None = None,
+    action_head: str | None = None,
+) -> G05Config:
     model = hydra.get("model", {})
     arch = model.get("model_arch", {})
     data = hydra.get("data", {})
-    embodiment = {
+    fixed_embodiment = {
         "g05-libero": "libero",
         "g05-robotwin20": "robotwin20",
-    }.get(profile, "libero")
+    }.get(profile)
+    if fixed_embodiment is not None:
+        if embodiment is not None and embodiment != fixed_embodiment:
+            raise ValueError(f"{profile} requires embodiment={fixed_embodiment!r}.")
+        embodiment = fixed_embodiment
+    elif profile == "g05-base":
+        available = sorted((data.get("processors") or {}).keys())
+        if embodiment is None:
+            raise ValueError(f"g05-base requires a concrete --embodiment; choose one of {available}.")
+        if embodiment not in available:
+            raise ValueError(f"g05-base embodiment must be one of {available}, got {embodiment!r}.")
+    else:
+        raise ValueError(f"Unsupported G0.5 profile {profile!r}.")
+    assert embodiment is not None
     data_processor = (data.get("processors") or {}).get(embodiment, {})
     # Match the author's build_processors merge order: embodiment data first,
     # then task-level model.processor overrides.
@@ -162,16 +180,27 @@ def _profile_config(profile: str, hydra: dict[str, Any]) -> G05Config:
     predict_cot = bool(arch.get("predict_cot", False))
     discrete = bool(arch.get("discrete_action", True))
     continuous = bool(arch.get("continuous_action", False))
+    if action_head is None:
+        action_head = "flow" if continuous else "actioncodec"
+    if action_head not in {"flow", "actioncodec"}:
+        raise ValueError("action_head must be 'flow' or 'actioncodec'.")
+    if action_head == "flow" and not continuous:
+        raise ValueError("The selected checkpoint does not enable the continuous flow action head.")
+    if action_head == "actioncodec" and not discrete:
+        raise ValueError("The selected checkpoint does not enable the autoregressive ActionCodec head.")
+    if profile != "g05-base" and action_head != "flow":
+        raise ValueError(f"The released {profile} checkpoint supports only --action-head flow.")
     norm_name = str(processor_metadata.get("norm_default_mode", "")).lower()
     checkpoint_normalization = {
         "q01/q99": "q01_q99",
         "z-score": "z_score",
+        "z-score-tail": "z_score_tail_mixed",
         "identity": "identity",
         "dummy": "identity",
     }.get(norm_name)
     arch = dict(arch)
     arch.pop("_target_", None)
-    num_input_images = int(arch.get("num_input_images", len(G05_CAMERA_PROFILES["libero"])))
+    num_input_images = int(arch.get("num_input_images", len(G05_CAMERA_PROFILES[embodiment])))
     if profile == "g05-libero":
         return G05Config(
             checkpoint_profile=profile,
@@ -222,29 +251,42 @@ def _profile_config(profile: str, hydra: dict[str, Any]) -> G05Config:
             license="other",
             tags=["g05", "robotics", "non-commercial"],
         )
-    action_head = "actioncodec" if discrete else "flow"
-    if checkpoint_normalization is None:
-        raise ValueError("g05-base conversion requires the resolved checkpoint processor.norm_default_mode.")
-    exceptions = processor_metadata.get("norm_exception_mode")
-    if exceptions:
-        raise ValueError(
-            "g05-base has per-part normalization exceptions; select a concrete benchmark "
-            "profile or add a named LeRobot normalization contract instead of flattening it."
-        )
+    if checkpoint_normalization != "z_score_tail_mixed":
+        raise ValueError("The pinned g05-base R1 contract requires z-score-tail normalization.")
+    exceptions = processor_metadata.get("norm_exception_mode") or {}
+    exception_modes = {mode for category in exceptions.values() for mode in (category or {}).values()}
+    if exception_modes - {"q01/q99"}:
+        raise ValueError(f"Unsupported g05-base normalization exceptions: {exceptions}.")
+    shape_meta = processor_metadata.get("shape_meta") or {}
+    raw_state_dim = sum(int(item["shape"]) for item in shape_meta.get("state", []))
+    raw_action_dim = sum(int(item["shape"]) for item in shape_meta.get("action", []))
+    action_feature_names = tuple(
+        f"{item['key']}.{index}"
+        for item in shape_meta.get("action", [])
+        for index in range(int(item["shape"]))
+    )
     return G05Config(
         checkpoint_profile="g05-base",
-        embodiment="libero",
+        embodiment=embodiment,
         action_head=action_head,
         runtime_system="system2" if predict_cot else "system1",
         predict_cot=predict_cot,
         discrete_action=discrete,
         continuous_action=continuous,
         return_continuous_action=action_head == "flow",
+        policy_action_dim=int(arch.get("action_dim", 27)),
+        policy_state_dim=int(arch.get("proprio_dim", 27)),
+        raw_state_dim=raw_state_dim,
+        raw_action_dim=raw_action_dim,
         chunk_size=horizon,
         normalization_mode=checkpoint_normalization,
         normalization_clip=(-5.0, 5.0),
+        use_relative_actions=True,
+        relative_exclude_joints=("gripper",),
+        action_feature_names=action_feature_names,
         use_stepwise_action_norm=bool(processor_metadata.get("use_stepwise_action_norm", False)),
-        camera_order=G05_CAMERA_PROFILES["libero"],
+        camera_order=G05_CAMERA_PROFILES[embodiment],
+        n_obs_steps=int(processor_metadata.get("num_obs_steps", 1)),
         num_input_images=num_input_images,
         author_model_config=arch,
         processor_metadata=processor_metadata,
@@ -280,6 +322,52 @@ def convert_dataset_stats(payload: dict[str, Any], config: G05Config) -> dict[st
     if config.embodiment in payload:
         payload = payload[config.embodiment]
     shape_meta = config.processor_metadata.get("shape_meta") or {}
+    if config.normalization_mode == "z_score_tail_mixed":
+        exceptions = config.processor_metadata.get("norm_exception_mode") or {}
+        default_mode = str(config.processor_metadata.get("norm_default_mode"))
+        result: dict[str, dict[str, torch.Tensor]] = {}
+        for source_category, feature_name in (("state", OBS_STATE), ("action", ACTION)):
+            category_stats = payload.get(source_category)
+            component_meta = shape_meta.get(source_category)
+            if not isinstance(category_stats, dict) or not isinstance(component_meta, list):
+                raise ValueError(
+                    f"dataset_stats.json and processor shape_meta must define {source_category!r} components."
+                )
+            prefix = (
+                "stepwise" if source_category == "action" and config.use_stepwise_action_norm else "global"
+            )
+            collected: dict[str, list[torch.Tensor]] = {
+                name: [] for name in ("mean", "std", "tail_q01", "tail_q99", "tail_mean", "tail_mask")
+            }
+            for component in component_meta:
+                key = component["key"]
+                stats = category_stats.get(key)
+                if not isinstance(stats, dict):
+                    raise ValueError(f"Missing checkpoint statistics for {source_category}.{key}.")
+                mode = (exceptions.get(source_category) or {}).get(key, default_mode)
+                q01 = torch.as_tensor(stats[f"{prefix}_q01"], dtype=torch.float32)
+                q99 = torch.as_tensor(stats[f"{prefix}_q99"], dtype=torch.float32)
+                mean = torch.as_tensor(stats[f"{prefix}_mean"], dtype=torch.float32)
+                std = torch.as_tensor(stats[f"{prefix}_std"], dtype=torch.float32)
+                if mode == "q01/q99":
+                    collected["mean"].append((q01 + q99) / 2)
+                    collected["std"].append((q99 - q01) / 2)
+                    tail_mask = torch.zeros(q01.shape[-1], dtype=torch.bool)
+                elif mode == "z-score-tail":
+                    collected["mean"].append(mean)
+                    collected["std"].append(std)
+                    tail_mask = torch.ones(q01.shape[-1], dtype=torch.bool)
+                else:
+                    raise ValueError(
+                        f"Unsupported checkpoint normalization mode {source_category}.{key}={mode!r}."
+                    )
+                collected["tail_q01"].append(q01)
+                collected["tail_q99"].append(q99)
+                collected["tail_mean"].append(mean)
+                collected["tail_mask"].append(tail_mask)
+            result[feature_name] = {name: torch.cat(parts, dim=-1) for name, parts in collected.items()}
+        return result
+
     stat_names = (
         ("q01", "q99")
         if config.normalization_mode == "q01_q99"
@@ -327,6 +415,8 @@ def convert_checkpoint(
     profile: str,
     *,
     license_file: Path,
+    embodiment: str | None = None,
+    action_head: str | None = None,
     expected_state: dict[str, torch.Tensor] | None = None,
 ) -> ConversionReport:
     hydra_path = source_dir / ".hydra" / "config.yaml"
@@ -346,7 +436,7 @@ def convert_checkpoint(
         raise FileNotFoundError(f"Incomplete G0.5 checkpoint bundle: {missing_files}")
 
     hydra = yaml.safe_load(hydra_path.read_text())
-    config = _profile_config(profile, hydra)
+    config = _profile_config(profile, hydra, embodiment=embodiment, action_head=action_head)
     camera_sizes = _camera_sizes(config.processor_metadata, config.camera_order)
     if camera_sizes:
         config.camera_sizes = camera_sizes
@@ -381,10 +471,25 @@ def main() -> None:
     parser.add_argument("--source-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--profile", choices=("g05-base", "g05-libero", "g05-robotwin20"), required=True)
+    parser.add_argument(
+        "--embodiment",
+        choices=("galaxea_r1lite", "galaxea_r1pro"),
+        help="Required concrete embodiment for g05-base.",
+    )
+    parser.add_argument(
+        "--action-head",
+        choices=("flow", "actioncodec"),
+        help="Select one enabled g05-base output head; benchmark checkpoints are flow-only.",
+    )
     parser.add_argument("--license-file", type=Path, required=True)
     args = parser.parse_args()
     report = convert_checkpoint(
-        args.source_dir, args.output_dir, args.profile, license_file=args.license_file
+        args.source_dir,
+        args.output_dir,
+        args.profile,
+        license_file=args.license_file,
+        embodiment=args.embodiment,
+        action_head=args.action_head,
     )
     print(json.dumps(asdict(report), indent=2, sort_keys=True))
 

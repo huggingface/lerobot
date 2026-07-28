@@ -15,11 +15,11 @@ conditioned on the same post-reasoning KV state.
 
 ## Supported checkpoint contracts
 
-| Profile          | Released action path                       | Raw → policy layout                          | Cameras                        |              Chunk | Normalization            |
-| ---------------- | ------------------------------------------ | -------------------------------------------- | ------------------------------ | -----------------: | ------------------------ |
-| `g05-base`       | Explicitly selected AR ActionCodec or flow | selected named embodiment                    | selected named camera contract | checkpoint-defined | resolved checkpoint mode |
-| `g05-libero`     | Continuous flow                            | right EEF 6 + gripper 1 → 20D grouped layout | exterior, right wrist          |                 32 | stepwise q01/q99         |
-| `g05-robotwin20` | Continuous flow                            | two arms 6+gripper → 20D grouped layout      | high, left wrist, right wrist  |                 32 | stepwise q01/q99         |
+| Profile          | Released action path                       | Raw → policy layout                          | Cameras                            |                    Chunk | Normalization                   |
+| ---------------- | ------------------------------------------ | -------------------------------------------- | ---------------------------------- | -----------------------: | ------------------------------- |
+| `g05-base`       | Explicitly selected AR ActionCodec or flow | R1 Lite/Pro joints → 27D whole-body layout   | head + both wrists, 6-step history | 32 model / 27 executable | z-score-tail + q01/q99 grippers |
+| `g05-libero`     | Continuous flow                            | right EEF 6 + gripper 1 → 20D grouped layout | exterior, right wrist              |                       32 | stepwise q01/q99                |
+| `g05-robotwin20` | Continuous flow                            | two arms 6+gripper → 20D grouped layout      | high, left wrist, right wrist      |                       32 | stepwise q01/q99                |
 
 The converter stores the resolved Hydra model, processor, ActionCodec metadata,
 statistics, exact prompt template, source revision, and license with the converted
@@ -64,10 +64,25 @@ uv run python -m lerobot.policies.g05.convert_g05_checkpoint \
   --license-file /path/to/GalaxeaVLA/LICENSE-G0.5
 ```
 
-Use `--profile g05-base` for the base checkpoint or `--profile
-g05-robotwin20` for RoboTwin. `conversion_report.json` records every mapped,
-missing, unexpected, duplicate, and shape-mismatched tensor; conversion fails
-when strict required-state validation fails.
+For the base checkpoint, select both its concrete embodiment and one of its
+enabled output heads:
+
+```bash
+uv run python -m lerobot.policies.g05.convert_g05_checkpoint \
+  --source-dir /path/to/checkpoints/g05-base \
+  --output-dir outputs/g05-base-r1lite-flow-lerobot \
+  --profile g05-base \
+  --embodiment galaxea_r1lite \
+  --action-head flow \
+  --license-file /path/to/GalaxeaVLA/LICENSE-G0.5
+```
+
+Use `--action-head actioncodec` for the autoregressive action path,
+`--embodiment galaxea_r1pro` for R1 Pro, or `--profile g05-robotwin20` for
+RoboTwin. The base model's 32-step head contains five history-alignment steps;
+postprocessing returns the 27 executable actions. `conversion_report.json`
+records every mapped, missing, unexpected, duplicate, and shape-mismatched
+tensor; conversion fails when strict required-state validation fails.
 
 ## Interactive System 1 and System 2 runtime
 

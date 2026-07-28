@@ -36,6 +36,16 @@ G05_CAMERA_PROFILES: dict[str, tuple[str, ...]] = {
         "observation.images.cam_left_wrist",
         "observation.images.cam_right_wrist",
     ),
+    "galaxea_r1lite": (
+        "observation.images.head_rgb",
+        "observation.images.left_wrist_rgb",
+        "observation.images.right_wrist_rgb",
+    ),
+    "galaxea_r1pro": (
+        "observation.images.head_rgb",
+        "observation.images.left_wrist_rgb",
+        "observation.images.right_wrist_rgb",
+    ),
     "atomic_4": (
         "observation.images.robot0_agentview_left",
         "observation.images.robot0_eye_in_hand",
@@ -46,6 +56,8 @@ G05_CAMERA_PROFILES: dict[str, tuple[str, ...]] = {
 G05_CAMERA_SIZE_PROFILES: dict[str, dict[str, tuple[int, int]]] = {
     "libero": dict.fromkeys(G05_CAMERA_PROFILES["libero"], (224, 224)),
     "robotwin20": dict.fromkeys(G05_CAMERA_PROFILES["robotwin20"], (256, 256)),
+    "galaxea_r1lite": dict.fromkeys(G05_CAMERA_PROFILES["galaxea_r1lite"], (256, 256)),
+    "galaxea_r1pro": dict.fromkeys(G05_CAMERA_PROFILES["galaxea_r1pro"], (256, 256)),
     "atomic_4": dict.fromkeys(G05_CAMERA_PROFILES["atomic_4"], (256, 256)),
 }
 
@@ -86,6 +98,14 @@ G05_EMBODIMENT_MAPPINGS: dict[str, dict[str, tuple[int, ...]]] = {
         "state": (0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 15, 19),
         "action": (0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 15, 19),
     },
+    "galaxea_r1lite": {
+        "state": (0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 15, 19),
+        "action": (0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 15, 19),
+    },
+    "galaxea_r1pro": {
+        "state": (0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15, 16, 19),
+        "action": (0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15, 16, 19),
+    },
     "atomic_4": {
         # EEF relative xyz+quat -> right_control[0:7], base xyz+quat -> lower_body[0:7],
         # the two parallel-jaw qpos values -> the two one-dimensional gripper slots.
@@ -113,7 +133,7 @@ G05_POLICY_PARTS: dict[int, dict[str, int]] = {
 }
 
 _PROFILE_DEFAULTS = {
-    "g05-base": ("checkpoint", 20, 16),
+    "g05-base": ("z_score_tail_mixed", 27, 32),
     "g05-libero": ("q01_q99", 20, 32),
     "g05-robotwin20": ("q01_q99", 20, 32),
 }
@@ -145,6 +165,9 @@ class G05Config(PreTrainedConfig):
     chunk_size: int = 16
     normalization_mode: str = "checkpoint"
     normalization_clip: tuple[float, float] | None = None
+    use_relative_actions: bool = False
+    relative_exclude_joints: tuple[str, ...] = ()
+    action_feature_names: tuple[str, ...] = ()
     use_stepwise_action_norm: bool = False
     gripper_indices: tuple[int, ...] = (6,)
     camera_order: tuple[str, ...] = field(default_factory=lambda: G05_CAMERA_PROFILES["libero"])
@@ -152,6 +175,7 @@ class G05Config(PreTrainedConfig):
     image_mean: tuple[float, float, float] = (0.5, 0.5, 0.5)
     image_std: tuple[float, float, float] = (0.5, 0.5, 0.5)
     num_input_images: int = 0
+    num_prompt_images: int = 0
 
     author_source_revision: str = G05_SOURCE_REVISION
     source_checkpoint_revision: str = G05_HUB_REVISION
@@ -181,10 +205,14 @@ class G05Config(PreTrainedConfig):
             self.normalization_clip = tuple(self.normalization_clip)
             if len(self.normalization_clip) != 2 or self.normalization_clip[0] >= self.normalization_clip[1]:
                 raise ValueError("normalization_clip must be an increasing (minimum, maximum) pair.")
+        self.relative_exclude_joints = tuple(self.relative_exclude_joints)
+        self.action_feature_names = tuple(self.action_feature_names)
         if not self.camera_sizes and self.embodiment in G05_CAMERA_SIZE_PROFILES:
             self.camera_sizes = G05_CAMERA_SIZE_PROFILES[self.embodiment].copy()
         if self.num_input_images == 0:
             self.num_input_images = len(self.camera_order) * self.n_obs_steps
+        if self.num_prompt_images == 0:
+            self.num_prompt_images = len(self.camera_order)
         if not self.prompt_template:
             samples_builder = self.processor_metadata.get("samples_builder") or {}
             if isinstance(samples_builder, dict):
@@ -192,7 +220,7 @@ class G05Config(PreTrainedConfig):
             else:
                 samples_builder_target = str(samples_builder)
             self.prompt_template = make_g05_prompt_template(
-                self.num_input_images,
+                self.num_prompt_images,
                 predict_cot=self.predict_cot,
                 flow_only=samples_builder_target.endswith("FMOnly"),
             )
@@ -239,8 +267,16 @@ class G05Config(PreTrainedConfig):
                 raise ValueError("Selected state mapping exceeds policy_state_dim.")
             if max(mapping["action"]) >= self.policy_action_dim:
                 raise ValueError("Selected action mapping exceeds policy_action_dim.")
-        if self.normalization_mode not in {"checkpoint", "q01_q99", "z_score", "identity"}:
-            raise ValueError("normalization_mode must be checkpoint, q01_q99, z_score, or identity.")
+        if self.normalization_mode not in {
+            "checkpoint",
+            "q01_q99",
+            "z_score",
+            "z_score_tail_mixed",
+            "identity",
+        }:
+            raise ValueError(
+                "normalization_mode must be checkpoint, q01_q99, z_score, z_score_tail_mixed, or identity."
+            )
         if self.checkpoint_profile == "g05-libero":
             if self.chunk_size != 32 or self.normalization_mode != "q01_q99":
                 raise ValueError("g05-libero requires a 32-step chunk and q01/q99 normalization.")
@@ -257,6 +293,8 @@ class G05Config(PreTrainedConfig):
             raise ValueError(
                 "num_input_images must equal len(camera_order) * n_obs_steps for the selected checkpoint."
             )
+        if self.num_prompt_images != len(self.camera_order):
+            raise ValueError("num_prompt_images must equal len(camera_order).")
         if any(len(size) != 2 or min(size) <= 0 for size in self.camera_sizes.values()):
             raise ValueError("Every G0.5 camera size must be a positive (height, width) pair.")
         if len(self.image_mean) != 3 or len(self.image_std) != 3 or min(self.image_std) <= 0:

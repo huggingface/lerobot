@@ -249,7 +249,7 @@ class G05Policy(PreTrainedPolicy):
                 sample["frequency"] = frequency
             if self.config.predict_cot:
                 sample["prompt"] = "predict subtask"
-            for image_index in range(self.config.num_input_images):
+            for image_index in range(self.config.num_prompt_images):
                 camera = self.config.camera_order[image_index % len(self.config.camera_order)]
                 sample[f"image{image_index}"] = self.config.camera_sizes[camera]
             action = batch.get(ACTION)
