@@ -311,7 +311,11 @@ class LingBotVAPolicy(PreTrainedPolicy):
             latents, self._train_sched_latent, action_mask=None, action_mode=False, noisy_cond_prob=0.5
         )
         action_dict = self._add_noise_stream(
-            actions, self._train_sched_action, action_mask=actions_mask, action_mode=True, noisy_cond_prob=0.0
+            actions,
+            self._train_sched_action,
+            action_mask=actions_mask,
+            action_mode=True,
+            noisy_cond_prob=self.config.action_noisy_cond_prob,
         )
         latent_dict["text_emb"] = text_emb
         action_dict["text_emb"] = text_emb

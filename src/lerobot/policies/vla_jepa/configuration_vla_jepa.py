@@ -171,9 +171,14 @@ class VLAJEPAConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list[int]:
-        # load video_horizon frames starting from current timestep: [t, t+1, ..., t+video_horizon-1]
-        # matches original repo's observation_indices=list(range(video_horizon))
-        return list(range(self.num_video_frames))
+        # matches original repo's observation_indices=list(range(video_horizon)) when the chunk
+        # fits within video_horizon frames. When chunk_size is longer (e.g. folding's 30-step
+        # chunk vs 8 video frames), spread the frames evenly across the chunk instead of
+        # clustering them at the start, so the world model sees dynamics over the whole horizon.
+        if self.num_video_frames >= self.chunk_size:
+            return list(range(self.num_video_frames))
+        stride = (self.chunk_size - 1) // (self.num_video_frames - 1)
+        return [i * stride for i in range(self.num_video_frames)]
 
     @property
     def action_delta_indices(self) -> list[int]:
