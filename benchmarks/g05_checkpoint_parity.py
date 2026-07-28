@@ -150,9 +150,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     device = torch.device(args.device)
     checkpoint = args.checkpoint.resolve()
     if not OmegaConf.has_resolver("oc.load"):
+
+        def _oc_load(path: str, key: str | None = None) -> Any:
+            loaded = OmegaConf.load(args.author_source / path)
+            return OmegaConf.select(loaded, key) if key is not None else loaded
+
         OmegaConf.register_new_resolver(
             "oc.load",
-            lambda path: OmegaConf.load(args.author_source / str(path)),
+            _oc_load,
         )
     author_cfg = OmegaConf.load(checkpoint / "author_config.yaml")
     author_processors = build_processors(author_cfg)
