@@ -138,8 +138,8 @@ def say(text: str, blocking: bool = False):
             subprocess.run(cmd, check=True, timeout=5)
         else:
             subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logging.warning("Text-to-speech command failed: %s | Error: %s", cmd, e)
 
 
 def log_say(text: str, play_sounds: bool = True, blocking: bool = False):
