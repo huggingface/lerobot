@@ -8,12 +8,13 @@
 - [ ] Front camera mount, lighting, mat, and object version match the session
       configuration.
 - [ ] Pseudonymous operator/session/task/setup values are filled in.
-- [ ] The 3×3 spawn plan is balanced.
+- [ ] The 3×4/12-cell spawn plan is balanced.
 
 ## Before every episode
 
 - [ ] Select the planned `spawn_id` and region.
-- [ ] Measure along the grid—not the image or table edge.
+- [ ] Identify the cell from the physical mat's 5×5 cm coarse boundary lines,
+      not from the camera image or table edge.
 - [ ] Place the object at `X forward=20–35 cm`,
       `Y lateral=−10–+10 cm`.
 - [ ] Record actual square-center x/y and actual yaw=0–90°.
@@ -22,7 +23,7 @@
 - [ ] Robot, object, mat, and camera are stable.
 - [ ] For alignment confirmation only: place the red cube at
       `(X=25 cm, Y=0)` and verify it in a new canonical screenshot; do not use
-      the old 15 cm image.
+      the old 15 cm image or count this boundary point as an episode.
 - [ ] Click **START** only after all checks above pass.
 
 ## After every episode

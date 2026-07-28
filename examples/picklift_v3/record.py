@@ -6,6 +6,7 @@ import re
 import subprocess
 import threading
 import time
+from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,7 +38,7 @@ from lerobot.datasets import CODEBASE_VERSION, LeRobotDataset
 
 FPS = 20
 REAL_ACK = "I_HAVE_COMPLETED_THE_POWERED_SAFETY_CHECK"
-SPAWN_PROTOCOL_VERSION = "picklift_spawn_v3"
+SPAWN_PROTOCOL_VERSION = "picklift_spawn_v4"
 SPAWN_PROTOCOLS = {
     "picklift_spawn_v1": {
         "x": (20.0, 40.0),
@@ -62,6 +63,19 @@ SPAWN_PROTOCOLS = {
         "column_axis": "y",
         "x_description": "task-grid +X forward",
         "y_description": "task-grid +Y lateral",
+    },
+    "picklift_spawn_v4": {
+        "x": (20.0, 35.0),
+        "y": (-10.0, 10.0),
+        "row_axis": "x",
+        "column_axis": "y",
+        "x_description": "task-grid +X forward",
+        "y_description": "task-grid +Y lateral",
+        "cell_edges": {
+            "x": (20.0, 25.0, 30.0, 35.0),
+            "y": (-10.0, -5.0, 0.0, 5.0, 10.0),
+        },
+        "cell_size_cm": 5.0,
     },
 }
 RESULTS = {"pending", "success", "failure", "discard"}
@@ -133,7 +147,7 @@ def spawn_contract(protocol_version: str) -> dict:
         protocol = SPAWN_PROTOCOLS[protocol_version]
     except KeyError as exc:
         raise ValueError(f"unsupported spawn_protocol_version: {protocol_version}") from exc
-    return {
+    contract = {
         "protocol_version": protocol_version,
         "x_cm": {
             "min": protocol["x"][0],
@@ -148,6 +162,21 @@ def spawn_contract(protocol_version: str) -> dict:
         "region_rows_increase_along": protocol["row_axis"],
         "region_columns_increase_along": protocol["column_axis"],
     }
+    if "cell_edges" in protocol:
+        row_edges = protocol["cell_edges"][protocol["row_axis"]]
+        column_edges = protocol["cell_edges"][protocol["column_axis"]]
+        contract.update(
+            {
+                "cell_size_cm": protocol["cell_size_cm"],
+                "cell_edges_cm": {axis: list(edges) for axis, edges in protocol["cell_edges"].items()},
+                "grid_shape": {
+                    "rows": len(row_edges) - 1,
+                    "columns": len(column_edges) - 1,
+                    "cells": (len(row_edges) - 1) * (len(column_edges) - 1),
+                },
+            }
+        )
+    return contract
 
 
 def spawn_region_for(
@@ -165,21 +194,39 @@ def spawn_region_for(
         raise ValueError(f"spawn_x_cm must be within {protocol['x_description']} {x_min:g}..{x_max:g} cm")
     if not y_min <= y_cm <= y_max:
         raise ValueError(f"spawn_y_cm must be within {protocol['y_description']} {y_min:g}..{y_max:g} cm")
-    values = {"x": x_cm, "y": y_cm}
-    bounds = {"x": (x_min, x_max), "y": (y_min, y_max)}
     row_axis = protocol["row_axis"]
     column_axis = protocol["column_axis"]
-    row_min, row_max = bounds[row_axis]
-    column_min, column_max = bounds[column_axis]
-    row = min(int((values[row_axis] - row_min) / ((row_max - row_min) / 3)), 2) + 1
-    column = (
-        min(
-            int((values[column_axis] - column_min) / ((column_max - column_min) / 3)),
-            2,
+    values = {"x": x_cm, "y": y_cm}
+    if "cell_edges" in protocol:
+        row_edges = protocol["cell_edges"][row_axis]
+        column_edges = protocol["cell_edges"][column_axis]
+        row = min(bisect_right(row_edges, values[row_axis]), len(row_edges) - 1)
+        column = min(
+            bisect_right(column_edges, values[column_axis]),
+            len(column_edges) - 1,
         )
-        + 1
-    )
+    else:
+        bounds = {"x": (x_min, x_max), "y": (y_min, y_max)}
+        row_min, row_max = bounds[row_axis]
+        column_min, column_max = bounds[column_axis]
+        row = min(int((values[row_axis] - row_min) / ((row_max - row_min) / 3)), 2) + 1
+        column = (
+            min(
+                int((values[column_axis] - column_min) / ((column_max - column_min) / 3)),
+                2,
+            )
+            + 1
+        )
     return f"r{row}c{column}"
+
+
+def spawn_ui_summary(cfg: dict) -> str:
+    cell_count = spawn_contract(cfg["spawn_protocol_version"]).get("grid_shape", {}).get("cells", 9)
+    return (
+        f"{cfg['spawn_protocol_version']} | {cfg['spawn_id']} | {cfg['spawn_region']}\n"
+        f"Xfwd={cfg['spawn_x_cm']}cm Ylat={cfg['spawn_y_cm']}cm yaw={cfg['spawn_yaw_deg']}\n"
+        f"{cell_count} cells | {cfg['alignment_reference_id']}"
+    )
 
 
 def validate_config(cfg: dict) -> None:
@@ -219,6 +266,13 @@ def validate_config(cfg: dict) -> None:
     expected_region = spawn_region_for(x_cm, y_cm, cfg["spawn_protocol_version"])
     if cfg["spawn_region"] != expected_region:
         raise ValueError(f"spawn_region does not match actual coordinates: expected {expected_region}")
+    if (
+        cfg["spawn_protocol_version"] == "picklift_spawn_v4"
+        and cfg["formal_data"]
+        and x_cm == 25.0
+        and y_cm == 0.0
+    ):
+        raise ValueError("(25, 0) is alignment-only and cannot be a formal randomized episode pose")
     if not 0 <= yaw_deg <= 90:
         raise ValueError("spawn_yaw_deg must be within 0..90 degrees")
     if cfg["result"] not in RESULTS:
@@ -319,12 +373,7 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
 
         ui = OperatorUI(target_frames=sample_count)
         ui.open()
-        spawn_summary = (
-            f"{cfg['spawn_protocol_version']} | {cfg['spawn_id']} | {cfg['spawn_region']}\n"
-            f"Xfwd={cfg['spawn_x_cm']}cm Ylat={cfg['spawn_y_cm']}cm yaw={cfg['spawn_yaw_deg']}\n"
-            f"{cfg['alignment_reference_id']} | aligned front"
-        )
-        ui.wait_for_start(backend.preview_frame, message=spawn_summary)
+        ui.wait_for_start(backend.preview_frame, message=spawn_ui_summary(cfg))
     elif cfg.get("operator_cue_wait", False):
         input("CONTROL_READY: waiting for operator cue (press ENTER to start)")
     start = utc_now()

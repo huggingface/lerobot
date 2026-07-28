@@ -1,29 +1,39 @@
 {
-  "protocol_version": "picklift_spawn_v3",
+  "protocol_version": "picklift_spawn_v4",
   "task_frame_id": "picklift_task_grid_v2",
   "alignment_reference_id": "picklift_red_cube_alignment_v2",
   "coordinate_frame": {
     "origin_description": "arm/base center projected onto the task plane at the mat bottom 30 cm mark",
-    "x": "+X forward along the grid from the robot into the workspace, 20..35 cm; rows increase near to far",
-    "y": "+Y lateral along the perpendicular grid axis with MuJoCo-matched sign, -10..+10 cm; columns increase -Y to +Y and Y=0 is the centerline",
+    "x": "+X forward; exact 5 cm physical coarse-grid edges 20/25/30/35 cm; rows increase near to far",
+    "y": "+Y lateral with MuJoCo-matched sign; exact 5 cm physical coarse-grid edges -10/-5/0/+5/+10 cm; columns increase -Y to +Y",
     "yaw_deg": "object yaw in degrees, 0..90"
   },
+  "grid_shape": {
+    "rows": 3,
+    "columns": 4,
+    "cells": 12,
+    "cell_size_cm": 5
+  },
   "alignment_reference": {
-    "description": "proposed red cube center targeting the canonical image center; pending a new physical screenshot",
+    "description": "alignment-only red cube location targeting the canonical image center; never count as a randomized cell episode",
     "x_forward_m": 0.25,
     "y_lateral_m": 0.0,
     "physical_confirmation_status": "pending_new_25cm_screenshot"
   },
   "advance_rule": "Keep spawn_id and pose for failure/discard retries; advance only after a saved success.",
+  "placement_rule": "Place clearly inside the named physical 5x5 cm cell; recommended points are first-pass interiors, while actual x/y/yaw must be measured and recorded.",
   "spawns": [
-    {"spawn_id": "pl_v3_s001", "spawn_region": "r1c1", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
-    {"spawn_id": "pl_v3_s002", "spawn_region": "r1c2", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
-    {"spawn_id": "pl_v3_s003", "spawn_region": "r1c3", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
-    {"spawn_id": "pl_v3_s004", "spawn_region": "r2c1", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
-    {"spawn_id": "pl_v3_s005", "spawn_region": "r2c2", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
-    {"spawn_id": "pl_v3_s006", "spawn_region": "r2c3", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
-    {"spawn_id": "pl_v3_s007", "spawn_region": "r3c1", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
-    {"spawn_id": "pl_v3_s008", "spawn_region": "r3c2", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
-    {"spawn_id": "pl_v3_s009", "spawn_region": "r3c3", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"}
+    {"spawn_id": "pl_v4_s001", "spawn_region": "r1c1", "recommended_x_cm": 22.5, "recommended_y_cm": -7.5, "recommended_yaw_deg": 0, "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v4_s002", "spawn_region": "r1c2", "recommended_x_cm": 22.5, "recommended_y_cm": -2.5, "recommended_yaw_deg": 30, "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v4_s003", "spawn_region": "r1c3", "recommended_x_cm": 22.5, "recommended_y_cm": 2.5, "recommended_yaw_deg": 60, "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v4_s004", "spawn_region": "r1c4", "recommended_x_cm": 22.5, "recommended_y_cm": 7.5, "recommended_yaw_deg": 90, "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v4_s005", "spawn_region": "r2c1", "recommended_x_cm": 27.5, "recommended_y_cm": -7.5, "recommended_yaw_deg": 60, "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v4_s006", "spawn_region": "r2c2", "recommended_x_cm": 27.5, "recommended_y_cm": -2.5, "recommended_yaw_deg": 90, "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v4_s007", "spawn_region": "r2c3", "recommended_x_cm": 27.5, "recommended_y_cm": 2.5, "recommended_yaw_deg": 0, "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v4_s008", "spawn_region": "r2c4", "recommended_x_cm": 27.5, "recommended_y_cm": 7.5, "recommended_yaw_deg": 30, "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v4_s009", "spawn_region": "r3c1", "recommended_x_cm": 32.5, "recommended_y_cm": -7.5, "recommended_yaw_deg": 30, "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v4_s010", "spawn_region": "r3c2", "recommended_x_cm": 32.5, "recommended_y_cm": -2.5, "recommended_yaw_deg": 60, "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v4_s011", "spawn_region": "r3c3", "recommended_x_cm": 32.5, "recommended_y_cm": 2.5, "recommended_yaw_deg": 90, "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v4_s012", "spawn_region": "r3c4", "recommended_x_cm": 32.5, "recommended_y_cm": 7.5, "recommended_yaw_deg": 0, "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"}
   ]
 }

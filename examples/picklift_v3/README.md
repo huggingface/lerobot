@@ -19,14 +19,18 @@ The frozen physical placement protocol and per-episode procedure are in
 [`PICKLIFT_PROTOCOL.md`](./PICKLIFT_PROTOCOL.md) and
 [`OPERATOR_CHECKLIST.md`](./OPERATOR_CHECKLIST.md). Start a balanced schedule
 from [`spawn_plan.template.json`](./spawn_plan.template.json).
-New formal collection uses `picklift_spawn_v3`: `+X` forward is 20–35 cm,
-`+Y` lateral remains ±10 cm, and `Y=0` is the base centerline. Its
+New formal collection uses `picklift_spawn_v4`: `+X` forward is 20–35 cm,
+`+Y` lateral remains ±10 cm, and the physical mat's 5 cm coarse lines define
+an exact 3×4/12-cell grid with X edges 20/25/30/35 cm and Y edges
+−10/−5/0/+5/+10 cm. Its
 `picklift_task_grid_v2` inherits the exact origin and axes from
 `picklift_task_grid_v1`; the new
 `picklift_red_cube_alignment_v2` proposes `(X=0.25 m, Y=0 m)` as the
 canonical-image center reference. That image placement remains pending until
 the operator places the physical cube at 25 cm and captures a new canonical
-frame. The v2 10–25 cm contract and v1 legacy contract remain immutable in
+frame. The alignment point is not an episode placement. The v3 3×3 contract,
+v2 10–25 cm contract, and v1 legacy contract remain immutable in
+[`PICKLIFT_PROTOCOL_V3.md`](./PICKLIFT_PROTOCOL_V3.md),
 [`PICKLIFT_PROTOCOL_V2.md`](./PICKLIFT_PROTOCOL_V2.md) and
 [`PICKLIFT_PROTOCOL_V1.md`](./PICKLIFT_PROTOCOL_V1.md).
 
