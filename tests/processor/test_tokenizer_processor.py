@@ -25,7 +25,7 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.processor import DataProcessorPipeline, TokenizerProcessorStep
+from lerobot.processor import ActionTokenizerProcessorStep, DataProcessorPipeline, TokenizerProcessorStep
 from lerobot.processor.converters import create_transition, identity_transition
 from lerobot.types import TransitionKey
 from lerobot.utils.constants import (
@@ -86,6 +86,46 @@ class MockTokenizer:
             result = {k: v.squeeze(0) for k, v in result.items()}
 
         return result
+
+
+def test_action_tokenizer_config_preserves_token_mapping():
+    processor = object.__new__(ActionTokenizerProcessorStep)
+    processor.trust_remote_code = True
+    processor.max_action_tokens = 384
+    processor.fast_skip_tokens = 64
+    processor.paligemma_tokenizer_name = "custom/paligemma"
+    processor.allow_truncation = False
+    processor.action_tokenizer_name = "custom/fast"
+    processor.action_tokenizer_input_object = None
+
+    assert processor.get_config() == {
+        "trust_remote_code": True,
+        "max_action_tokens": 384,
+        "fast_skip_tokens": 64,
+        "paligemma_tokenizer_name": "custom/paligemma",
+        "allow_truncation": False,
+        "action_tokenizer_name": "custom/fast",
+    }
+
+
+def test_action_tokenizer_can_reject_truncated_sequences():
+    processor = object.__new__(ActionTokenizerProcessorStep)
+    processor.max_action_tokens = 4
+    processor.fast_skip_tokens = 128
+    processor.allow_truncation = False
+    processor.action_tokenizer = lambda _actions: [1, 2, 3]
+    processor._paligemma_tokenizer = type(
+        "Tokenizer",
+        (),
+        {
+            "vocab_size": 1000,
+            "bos_token_id": 2,
+            "encode": lambda _self, text, **_kwargs: [10, 11] if text == "Action: " else [12, 1],
+        },
+    )()
+
+    with pytest.raises(ValueError, match="max_action_tokens=4"):
+        processor._tokenize_action(torch.zeros(1, 2, 1))
 
 
 @pytest.fixture

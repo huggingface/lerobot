@@ -78,7 +78,7 @@ class MessageTurn:
             raise ValueError(f"Unsupported message stream: {self.stream!r}")
         if self.content is None and self.tool_calls_from is None:
             raise ValueError("MessageTurn.content is required unless tool_calls_from is set.")
-        if self.content is not None and not isinstance(self.content, (str, list)):
+        if self.content is not None and not isinstance(self.content, str | list):
             raise TypeError("MessageTurn.content must be a string, a list of HF-style blocks, or None.")
         if isinstance(self.content, list):
             for block in self.content:
@@ -147,7 +147,7 @@ class TrainingRecipe:
         return cls.from_dict(data)
 
     def _validate_message_recipe(self) -> None:
-        """Ensure every templated binding is known and at least one turn is a target."""
+        """Validate bindings and require text or low-level action supervision."""
         assert self.messages is not None
         known_bindings = set(DEFAULT_BINDINGS) | set(self.bindings or {}) | {"task"}
 
@@ -156,8 +156,14 @@ class TrainingRecipe:
             if missing:
                 raise ValueError(f"MessageTurn references unknown binding(s): {sorted(missing)}")
 
-        if not any(turn.target for turn in self.messages):
-            raise ValueError("Message recipes must contain at least one target turn.")
+        has_target = any(turn.target for turn in self.messages)
+        has_low_level = any(turn.stream == "low_level" for turn in self.messages)
+        if not (has_target or has_low_level):
+            raise ValueError(
+                "Message recipes must contain at least one supervised turn — "
+                "either ``target: true`` (text CE) or ``stream: low_level`` "
+                "(flow/action loss)."
+            )
 
     def _validate_blend_recipe(self) -> None:
         """Ensure each blend component is a non-empty, weighted message recipe."""
