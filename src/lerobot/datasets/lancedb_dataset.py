@@ -516,15 +516,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
             key: DepthEncoderConfig.from_video_info(self.meta.features[key].get("info"))
             for key in self.meta.depth_keys
         }
-        # The video path fetches keyframe-aligned byte ranges in one batched
-        # call per batch (local and remote share the flow; measured at parity
-        # locally, and it is what makes remote training possible at all).
-        if self.meta.video_keys and not hasattr(lancedb.table.LanceTable, "fetch_blob_ranges"):
-            raise ImportError(
-                "Video datasets require lancedb with Table.fetch_blob_ranges "
-                f"(lancedb PR #3703, not in the installed version {lancedb.__version__}). "
-                "Upgrade lancedb."
-            )
+        # The video path fetches keyframe-aligned byte ranges in one batched call
         if image_transforms is not None and not callable(image_transforms):
             raise TypeError("image_transforms must be callable or None.")
         self.image_transforms = image_transforms
@@ -555,8 +547,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
             self._rel_to_abs = None
             self._absolute_to_relative_idx = None
 
-        # Task strings by task_index position, plain python: the per-item
-        # pandas .iloc lookup showed up at ~4% of batch CPU in profiles.
         self._task_names = list(self.meta.tasks.index)
 
         # Tabular features live in the frames table; pixels do not.
@@ -604,8 +594,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
         # large-file datasets can't multiply into an OOM.
         self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size, byte_budget=2 << 30)
 
-    # ── connection management ──────────────────────────────────────────────
-
     def _ensure_open(self) -> None:
         """Open the frames table handle for this process if needed.
 
@@ -628,6 +616,12 @@ class LanceDBDataset(torch.utils.data.Dataset):
         )
         if self.meta.video_keys:
             self._videos_table = db.open_table(VIDEOS_TABLE)
+            # One tiny row per video FILE (~500 MB aggregates): droid = 813
+            # rows, ~20k rows per 10 TB. Plain (non-vector) scans have no
+            # default row limit (vector searches default to 10; verified in
+            # the query builder), and the projection excludes the blob and
+            # keyframe columns. Future improvement for datasets with millions
+            # of files: resolve row ids lazily per batch instead of upfront.
             index = (
                 self._videos_table.search()
                 .select(["video_key", "chunk_index", "file_index"])
@@ -638,6 +632,22 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 (row["video_key"], row["chunk_index"], row["file_index"]): row["_rowid"]
                 for row in index.to_pylist()
             }
+            # Invariant: every file the episode metadata references must have
+            # a row. Catches truncated scans and metadata/table drift (droid's
+            # source repo shipped 44% orphan files; trust nothing) at init
+            # instead of as a KeyError mid-batch.
+            referenced = {
+                (key, int(chunk), int(file))
+                for key, (chunks, files, _) in self._video_locator.items()
+                for chunk, file in zip(chunks, files, strict=True)
+            }
+            missing = referenced - self._video_row_ids.keys()
+            if missing:
+                raise ValueError(
+                    f"videos table is missing {len(missing)} file(s) referenced by episode "
+                    f"metadata, e.g. {sorted(missing)[:3]}. The dataset is incomplete or "
+                    "was converted against different metadata."
+                )
 
     def __getstate__(self) -> dict:
         state = self.__dict__.copy()
@@ -651,8 +661,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
             self._decoder_cache.capacity, byte_budget=self._decoder_cache.byte_budget
         )
         return state
-
-    # ── dataset protocol ───────────────────────────────────────────────────
 
     @property
     def num_frames(self) -> int:

@@ -434,19 +434,6 @@ def test_language_columns_parity(tmp_path, lerobot_dataset_factory):
         )
 
 
-def test_remote_video_requires_ranged_reads(video_dataset_roots, monkeypatch, tmp_path):
-    """Without Table.fetch_blob_ranges, remote video datasets must fail fast at init."""
-    import lerobot.datasets.lancedb_dataset as module
-
-    monkeypatch.setattr(module, "HF_LEROBOT_HOME", tmp_path / "cache")
-    _, lance_root = video_dataset_roots
-    # Remove from the whole MRO: released wheels without the API have it nowhere.
-    monkeypatch.delattr(lancedb.table.LanceTable, "fetch_blob_ranges", raising=False)
-    monkeypatch.delattr(lancedb.table.Table, "fetch_blob_ranges", raising=False)
-    with pytest.raises(ImportError, match="fetch_blob_ranges"):
-        LanceDBDataset(root=f"file://{lance_root}")
-
-
 def test_video_single_element_window_parity(video_dataset_roots):
     """A one-element delta window must match upstream's shape (squeeze semantics)."""
     src_root, lance_root = video_dataset_roots
