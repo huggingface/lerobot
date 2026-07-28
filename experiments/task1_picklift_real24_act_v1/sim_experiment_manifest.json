@@ -1,0 +1,132 @@
+{
+    "experiment_id": "task1_picklift_real24_act_v1_real_to_remote_sim_v1",
+    "status": "act_interface_ready_remote_adapter_contract_pending",
+    "research_status": "diagnostic_only_not_real_robot_evaluation_not_a_paper_result",
+    "policy": {
+        "checkpoint_selection_rule": "fixed_step_100000_only",
+        "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_act_v1/full_100k/checkpoints/100000/pretrained_model",
+        "model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb",
+        "training_or_finetuning_allowed": false,
+        "alternate_checkpoint_allowed": false,
+        "processor_source": "checkpoint_pretrained_model",
+        "control_hz": 20
+    },
+    "adapter_boundary": {
+        "owner_thread_id": "019fa434-b4e1-7601-a84e-8569eeb8d4f5",
+        "contract_status": "pending_research_control_handoff",
+        "act_side_does_not_own": [
+            "Nexus scene",
+            "camera implementation",
+            "reset implementation",
+            "success detection",
+            "termination semantics"
+        ],
+        "required_observation": {
+            "observation.state": {
+                "shape": [6],
+                "dtype": "floating_finite",
+                "joint_order": [
+                    "shoulder_pan",
+                    "shoulder_lift",
+                    "elbow_flex",
+                    "wrist_flex",
+                    "wrist_roll",
+                    "gripper"
+                ]
+            },
+            "observation.images.front": {
+                "shape": [480, 640, 3],
+                "dtype": "uint8",
+                "color": "RGB",
+                "source": "active Remote canonical front"
+            }
+        },
+        "returned_action": {
+            "shape": [6],
+            "dtype": "float32_finite",
+            "field_for_environment_step": "sent_action"
+        }
+    },
+    "action_safety": {
+        "calibration_bounds_source": "task1_picklift_formal24_s03_qa_v1",
+        "follower_calibration_sha256": "c78e4f7e1383571c6aa496f62996f518b3e4122f78244d2bbc094658bc0cb8a0",
+        "calibration_clamp": "per_joint_fail_closed",
+        "max_relative_target": 5.0,
+        "order": [
+            "raw_action",
+            "calibration_clipped_action",
+            "sent_action_after_relative_clamp"
+        ],
+        "rejects": [
+            "wrong state shape",
+            "non-floating state",
+            "non-finite state",
+            "state outside frozen calibration range",
+            "wrong RGB shape",
+            "non-uint8 RGB",
+            "wrong action shape",
+            "non-finite action",
+            "checkpoint path or hash mismatch"
+        ]
+    },
+    "interface_gate": {
+        "phase_id": "gate12",
+        "episodes": 12,
+        "success_required": false,
+        "pass_rule": "All 12 episodes reset, provide contract-valid state and canonical RGB, complete at least one finite action step, and produce a legal termination or timeout evidence record.",
+        "cells": [
+            {"order": 1, "cell": "r1c1", "x_cm": 22.5, "y_cm": -7.5, "seed": 9000},
+            {"order": 2, "cell": "r1c2", "x_cm": 22.5, "y_cm": -2.5, "seed": 9001},
+            {"order": 3, "cell": "r1c3", "x_cm": 22.5, "y_cm": 2.5, "seed": 9002},
+            {"order": 4, "cell": "r1c4", "x_cm": 22.5, "y_cm": 7.5, "seed": 9003},
+            {"order": 5, "cell": "r2c1", "x_cm": 27.5, "y_cm": -7.5, "seed": 9004},
+            {"order": 6, "cell": "r2c2", "x_cm": 27.5, "y_cm": -2.5, "seed": 9005},
+            {"order": 7, "cell": "r2c3", "x_cm": 27.5, "y_cm": 2.5, "seed": 9006},
+            {"order": 8, "cell": "r2c4", "x_cm": 27.5, "y_cm": 7.5, "seed": 9007},
+            {"order": 9, "cell": "r3c1", "x_cm": 32.5, "y_cm": -7.5, "seed": 9008},
+            {"order": 10, "cell": "r3c2", "x_cm": 32.5, "y_cm": -2.5, "seed": 9009},
+            {"order": 11, "cell": "r3c3", "x_cm": 32.5, "y_cm": 2.5, "seed": 9010},
+            {"order": 12, "cell": "r3c4", "x_cm": 32.5, "y_cm": 7.5, "seed": 9011}
+        ]
+    },
+    "diagnostic_rollout": {
+        "phase_id": "frozen120",
+        "start_condition": "gate12_passed_and_remote_adapter_contract_frozen",
+        "episodes": 120,
+        "maximum_episode_seconds": 30,
+        "cells": [
+            "r1c1", "r1c2", "r1c3", "r1c4",
+            "r2c1", "r2c2", "r2c3", "r2c4",
+            "r3c1", "r3c2", "r3c3", "r3c4"
+        ],
+        "seeds_per_cell": [1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009],
+        "adaptive_stopping": false
+    },
+    "episode_evidence_required": [
+        "phase_id",
+        "cell",
+        "seed",
+        "initial_pose",
+        "success",
+        "env_steps",
+        "first_success_step",
+        "confirmed_success_step",
+        "max_lift_m",
+        "is_grasped",
+        "terminated",
+        "truncated",
+        "timeout",
+        "termination_reason",
+        "raw_action_count",
+        "calibration_clipped_action_count",
+        "relative_clipped_action_count",
+        "sent_action_count",
+        "failure_type"
+    ],
+    "interpretation_boundary": [
+        "Does not replace the frozen 12-trial real-robot evaluation.",
+        "Does not establish sim-to-real performance.",
+        "Does not establish a paper effect.",
+        "Success rate is diagnostic evidence only."
+    ]
+}

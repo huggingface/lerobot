@@ -28,6 +28,7 @@ CALIBRATION_BOUNDS_DEG = np.asarray(
 )
 
 EXPECTED_CALIBRATION_SHA256 = "c78e4f7e1383571c6aa496f62996f518b3e4122f78244d2bbc094658bc0cb8a0"
+MAX_RELATIVE_TARGET = 5.0
 
 
 def sha256_file(path: str | Path) -> str:
@@ -73,3 +74,41 @@ def clamp_action_fail_closed(action: np.ndarray) -> tuple[np.ndarray, np.ndarray
     if not np.isfinite(clipped).all():
         raise RuntimeError("Calibration clipping produced a non-finite action.")
     return clipped.astype(np.float32), clip_mask
+
+
+def apply_action_safety(
+    raw_action: np.ndarray,
+    current_state: np.ndarray,
+    max_relative_target: float = MAX_RELATIVE_TARGET,
+) -> dict[str, np.ndarray]:
+    state = np.asarray(current_state, dtype=np.float64)
+    if state.shape != (6,):
+        raise RuntimeError(f"Observation state must have shape (6,), got {state.shape}.")
+    if not np.isfinite(state).all():
+        raise RuntimeError("Observation state contains NaN or infinity; refusing to produce an action.")
+    if not np.isfinite(max_relative_target) or max_relative_target <= 0:
+        raise RuntimeError("max_relative_target must be a positive finite scalar.")
+
+    lower = CALIBRATION_BOUNDS_DEG[:, 0]
+    upper = CALIBRATION_BOUNDS_DEG[:, 1]
+    if ((state < lower) | (state > upper)).any():
+        raise RuntimeError(
+            "Observation state is outside the frozen Follower calibration range; "
+            "refusing Real-to-Sim policy inference."
+        )
+
+    calibration_clipped, calibration_mask = clamp_action_fail_closed(raw_action)
+    relative_lower = np.maximum(lower, state - max_relative_target)
+    relative_upper = np.minimum(upper, state + max_relative_target)
+    sent = np.clip(calibration_clipped.astype(np.float64), relative_lower, relative_upper)
+    relative_mask = sent != calibration_clipped
+    if not np.isfinite(sent).all():
+        raise RuntimeError("Relative clipping produced a non-finite action.")
+
+    return {
+        "raw_action": np.asarray(raw_action, dtype=np.float32),
+        "calibration_clipped_action": calibration_clipped,
+        "sent_action": sent.astype(np.float32),
+        "calibration_clip_mask": calibration_mask,
+        "relative_clip_mask": relative_mask,
+    }

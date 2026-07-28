@@ -72,3 +72,30 @@ connection, latches the current raw Follower position as the initial goal
 before verified torque enable, applies the frozen calibration clamp before
 every send, retains `max_relative_target=5.0` as a second rate limit, logs raw,
 clipped, and actually sent actions, and disables torque in `finally`.
+
+## Hardware-free Real-to-Remote-Sim diagnostic
+
+`sim_policy_inference.py` is the ACT-owned, hardware-free policy endpoint for
+the existing Remote adapter. It accepts only a finite floating state `[6]` and
+the active Remote canonical `uint8` RGB front frame `[480,640,3]`. It loads only
+the fixed 100k checkpoint and its saved processors, then returns raw,
+calibration-clipped, and relative-clipped `sent_action` values.
+
+The ACT side does not import or own the Remote environment, scene, camera,
+reset, success, or termination implementation. The Remote adapter contract
+must be handed off by the owning task before either the 12-episode interface
+gate or the frozen 120-episode diagnostic is started.
+
+No-environment checkpoint smoke:
+
+```bash
+cd /home/ubuntu24/Teleop/lerobot
+.venv/bin/python \
+  experiments/task1_picklift_real24_act_v1/fake_sim_policy_smoke.py \
+  --output /home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_act_v1/fake_sim_policy_smoke.json
+```
+
+The rollout plan and evidence schema are frozen in
+`sim_experiment_manifest.json`. `summarize_sim_results.py` validates episode
+JSONL and reports overall and per-cell diagnostic success rates. These results
+never replace the 12 real-robot trials and are not paper-effect evidence.
