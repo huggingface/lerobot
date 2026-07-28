@@ -403,14 +403,6 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
     root = Path(cfg["dataset_root"]).resolve()
     start: str | None = None
     backend = backend or (SyntheticBackend(cfg) if cfg["mode"] == "synthetic" else RealSO101Backend(cfg))
-    dataset = LeRobotDataset.create(
-        cfg["repo_id"],
-        fps=FPS,
-        root=root,
-        robot_type="so101_follower" if cfg["mode"] == "real" else "synthetic_so101",
-        features=features(bool(cfg["use_videos"])),
-        use_videos=bool(cfg["use_videos"]),
-    )
     dropped = 0
     sync_anomalies = 0
     actual_termination_reason = cfg["termination_reason"]
@@ -445,16 +437,31 @@ def record(cfg: dict, backend: Backend | None = None) -> Path:
             with condition:
                 condition.notify_all()
 
-    backend.connect()
     ui = None
     if cfg.get("operator_ui", False):
         from examples.picklift_v3.operator_ui import OperatorUI
 
         ui = OperatorUI(target_frames=sample_count)
         ui.open()
-        ui.wait_for_start(backend.preview_frame, message=spawn_ui_summary(cfg))
-    elif cfg.get("operator_cue_wait", False):
-        input("CONTROL_READY: waiting for operator cue (press ENTER to start)")
+    try:
+        backend.connect()
+        if ui is not None:
+            ui.wait_for_start(backend.preview_frame, message=spawn_ui_summary(cfg))
+        elif cfg.get("operator_cue_wait", False):
+            input("CONTROL_READY: waiting for operator cue (press ENTER to start)")
+        dataset = LeRobotDataset.create(
+            cfg["repo_id"],
+            fps=FPS,
+            root=root,
+            robot_type="so101_follower" if cfg["mode"] == "real" else "synthetic_so101",
+            features=features(bool(cfg["use_videos"])),
+            use_videos=bool(cfg["use_videos"]),
+        )
+    except BaseException:
+        backend.close()
+        if ui is not None:
+            ui.close()
+        raise
     start = utc_now()
     worker = threading.Thread(target=control_loop, name="picklift-control", daemon=True)
     worker.start()
