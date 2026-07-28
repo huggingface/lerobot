@@ -39,7 +39,6 @@ _lawam_deps_available = (
     _transformers_available
     and _diffusers_available
     and is_package_available("qwen-vl-utils", import_name="qwen_vl_utils")
-    and is_package_available("timm")
     and is_package_available("PyYAML", import_name="yaml")
 )
 
@@ -72,7 +71,6 @@ def _require_lawam_packages() -> None:
     require_package("transformers", extra="lawam")
     require_package("diffusers", extra="lawam")
     require_package("qwen-vl-utils", extra="lawam", import_name="qwen_vl_utils")
-    require_package("timm", extra="lawam")
     require_package("PyYAML", extra="lawam", import_name="yaml")
 
 
@@ -151,8 +149,6 @@ def _build_native_policy_config(config: LaWAMConfig) -> LatentWorldPolicyConfig:
         use_action_positional_embeddings=bool(config.flow_use_action_positional_embeddings),
     )
     policy_cfg = LatentWorldPolicyConfig(flow_cfg=flow_cfg)
-    policy_cfg.future_action_window_size = int(config.chunk_size) - 1
-    policy_cfg.past_action_window_size = 0
     policy_cfg.action_horizon = int(config.chunk_size)
     policy_cfg.hf_cache_dir = config.hf_cache_dir
     policy_cfg.lam_ckpt_path = str(config.lam_ckpt_path)
@@ -206,9 +202,7 @@ class LaWAMModel(nn.Module):
         super().__init__()
         self.config = config
         self.policy_cfg = _build_native_policy_config(config)
-        self.policy_backend = LatentWorldPolicyBackend.build(
-            self.policy_cfg, vlm_model_id=str(config.base_vlm)
-        )
+        self.policy_backend = LatentWorldPolicyBackend(self.policy_cfg, vlm_model_id=str(config.base_vlm))
         freeze_policy = _load_lawam_checkpoint_freeze_config(config)
         if freeze_policy is not None:
             apply_policy_freeze(self.policy_backend, freeze_policy)
@@ -256,9 +250,8 @@ class LaWAMPolicy(PreTrainedPolicy):
         self.config = config
 
         self.model = kwargs.pop("native_model", None)
-        self._native_config = kwargs.pop("native_config", None)
         if self.model is None:
-            self.model, self._native_config = self._load_native_model_and_config()
+            self.model = self._load_native_model()
 
         if not isinstance(self.model, nn.Module):
             raise TypeError(f"`native_model` must be a torch.nn.Module, got {type(self.model)}.")
@@ -270,7 +263,7 @@ class LaWAMPolicy(PreTrainedPolicy):
         self.model.to(config.device)
         self.reset()
 
-    def _load_native_model_and_config(self) -> tuple[nn.Module, Any]:
+    def _load_native_model(self) -> nn.Module:
         model = LaWAMModel(self.config)
         if self.config.lawam_checkpoint_path:
             state_dict = _load_local_checkpoint(self.config.lawam_checkpoint_path)
@@ -280,7 +273,7 @@ class LaWAMPolicy(PreTrainedPolicy):
             missing, unexpected = model.load_state_dict(state_dict, strict=False)
             _log_checkpoint_key_mismatch("Missing", missing)
             _log_checkpoint_key_mismatch("Unexpected", unexpected)
-        return model, self.config
+        return model
 
     def _build_train_collator(self):
         policy_cfg = getattr(self.model, "policy_cfg", None)

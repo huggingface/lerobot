@@ -13,8 +13,9 @@ from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from .cross_attention_dit import DiT, AlternateVLDiT
+import torch.nn.functional as functional
+
+from .cross_attention_dit import AlternateVLDiT, DiT
 
 
 class ContinuousTimeEncoder(nn.Module):
@@ -36,7 +37,7 @@ class ContinuousTimeEncoder(nn.Module):
         angles = t.unsqueeze(-1) * self.freqs.to(device=t.device)
         emb = torch.cat([torch.sin(angles), torch.cos(angles)], dim=-1)
         if emb.shape[-1] < self.embedding_dim:
-            emb = F.pad(emb, (0, self.embedding_dim - emb.shape[-1]))
+            emb = functional.pad(emb, (0, self.embedding_dim - emb.shape[-1]))
         return emb[..., : self.embedding_dim]
 
 
@@ -94,9 +95,9 @@ class CategorySpecificLinear(nn.Module):
         self.b = nn.Parameter(torch.zeros(num_categories, hidden_dim))
 
     def forward(self, x: torch.Tensor, cat_ids: torch.Tensor) -> torch.Tensor:
-        selected_W = self.W[cat_ids]
+        selected_weight = self.W[cat_ids]
         selected_b = self.b[cat_ids]
-        return torch.bmm(x, selected_W) + selected_b.unsqueeze(1)
+        return torch.bmm(x, selected_weight) + selected_b.unsqueeze(1)
 
 
 class CategorySpecificMLP(nn.Module):
@@ -107,7 +108,7 @@ class CategorySpecificMLP(nn.Module):
         self.layer2 = CategorySpecificLinear(num_categories, hidden_dim, output_dim)
 
     def forward(self, x: torch.Tensor, cat_ids: torch.Tensor) -> torch.Tensor:
-        hidden = F.relu(self.layer1(x, cat_ids))
+        hidden = functional.relu(self.layer1(x, cat_ids))
         return self.layer2(hidden, cat_ids)
 
 
@@ -230,7 +231,7 @@ class ConditionalFlowMatchingHead(nn.Module):
             self.future_tokens = None
 
         # cross_attention_dim must be set so condition tokens are consumed by cross-attention blocks.
-        DiTClass = AlternateVLDiT if self.config.use_alternate_vldit else DiT
+        dit_class = AlternateVLDiT if self.config.use_alternate_vldit else DiT
 
         dit_kwargs = {
             "num_attention_heads": self.config.attention_heads,
@@ -246,7 +247,7 @@ class ConditionalFlowMatchingHead(nn.Module):
         if self.config.use_alternate_vldit:
             dit_kwargs["attend_text_every_n_blocks"] = self.config.attend_text_every_n_blocks
 
-        self.DiT = DiTClass(**dit_kwargs)
+        self.DiT = dit_class(**dit_kwargs)
         self.cfg_embeddings = nn.Parameter(
             torch.randn(1, self.config.num_vision_tokens, self.config.vision_dim)
         )
@@ -558,7 +559,7 @@ class ConditionalFlowMatchingHead(nn.Module):
         # Decoder output is velocity directly, aligned with GR00T flow matching.
         pred_velocity_all = self.action_decoder(dit_output, embodiment_id)
         pred_velocity = pred_velocity_all[:, -actions.shape[1] :, :]
-        loss_elem = F.mse_loss(pred_velocity, velocity_target, reduction="none")
+        loss_elem = functional.mse_loss(pred_velocity, velocity_target, reduction="none")
         valid = actions_mask_f
         robot_valid = (embodiment_id.to(device=device, dtype=torch.long) != 0).to(dtype=model_dtype)
         valid = valid * robot_valid.view(-1, 1, 1)
@@ -579,7 +580,6 @@ class ConditionalFlowMatchingHead(nn.Module):
         cfg_scale: float | None = None,
         num_inference_steps: int | None = None,
         attention_mask: torch.Tensor | None = None,
-        return_padded: bool = False,
     ) -> torch.Tensor:
         device = h_t.device
         model_dtype = self._compute_dtype()
@@ -612,7 +612,6 @@ class ConditionalFlowMatchingHead(nn.Module):
             raise ValueError(
                 f"Required horizon from hz ({base_horizon}) exceeds configured action_horizon ({action_horizon})."
             )
-        output_horizon = action_horizon if return_padded else base_horizon
         t_grid, time_valid, _ = build_time_grid(
             horizon_sec=float(self.config.horizon_sec),
             hz=action_hz_f,
@@ -792,4 +791,4 @@ class ConditionalFlowMatchingHead(nn.Module):
             x_t = x_t + dt * pred_velocity
             x_t = x_t * time_valid.unsqueeze(-1).to(dtype=x_t.dtype)
 
-        return x_t[:, :output_horizon, :]
+        return x_t[:, :base_horizon, :]

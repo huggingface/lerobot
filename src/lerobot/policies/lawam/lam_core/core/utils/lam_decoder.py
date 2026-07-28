@@ -1,5 +1,6 @@
-import torch.nn as nn
 import torch
+import torch.nn as nn
+
 from .modules import CategorySpecificMLP
 from .pos_embs import Fixed2DPositionalEncoding
 
@@ -69,7 +70,7 @@ class AdaLNBlock(nn.Module):
         return x
 
 
-class LAMDecoder_v2(nn.Module):
+class LAMDecoderV2(nn.Module):
     def __init__(
         self,
         context_dim,
@@ -143,9 +144,11 @@ class LAMDecoder_v2(nn.Module):
         reconstructed_features = self.last_ln(reconstructed_features)
 
         if not self.train_in_latent:
-            B, K, D = reconstructed_features.shape
+            batch_size, _, feature_dim = reconstructed_features.shape
             rec_img = self.to_pixel(
-                reconstructed_features.transpose(1, 2).reshape(B, D, self.grid_height, self.grid_width)
+                reconstructed_features.transpose(1, 2).reshape(
+                    batch_size, feature_dim, self.grid_height, self.grid_width
+                )
             )
             return rec_img.unsqueeze(1)  # [B, 1, 3, H, W]
         else:
@@ -181,7 +184,7 @@ class StatePredictor(nn.Module):
         )
 
     def forward(self, z_t: torch.Tensor, state_0: torch.Tensor, embodiment_id: torch.Tensor) -> torch.Tensor:
-        B = state_0.size(0)
+        batch_size = state_0.size(0)
         if not isinstance(embodiment_id, torch.Tensor):
             raise TypeError(
                 f"StatePredictor expects `embodiment_id` as torch.Tensor, got {type(embodiment_id).__name__}."
@@ -191,8 +194,8 @@ class StatePredictor(nn.Module):
             emb = emb.squeeze(1)
         elif emb.ndim != 1:
             raise ValueError(f"`embodiment_id` must be [B] or [B,1], got {tuple(emb.shape)}")
-        if emb.shape[0] != B:
-            raise ValueError(f"embodiment_id batch mismatch: got {emb.shape[0]}, expected {B}")
+        if emb.shape[0] != batch_size:
+            raise ValueError(f"embodiment_id batch mismatch: got {emb.shape[0]}, expected {batch_size}")
         emb = emb.to(device=state_0.device, dtype=torch.long)
         single_timestep = state_0.dim() == 3 and state_0.size(1) == 1
         if single_timestep:

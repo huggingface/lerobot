@@ -26,18 +26,24 @@ from torch import nn
 pytest.importorskip("transformers", reason="lawam requires the `lawam` extra (transformers)")
 pytest.importorskip("diffusers", reason="lawam requires the `lawam` extra (diffusers)")
 pytest.importorskip("qwen_vl_utils", reason="lawam requires the `lawam` extra (qwen-vl-utils)")
-pytest.importorskip("timm", reason="lawam requires the `lawam` extra (timm)")
 pytest.importorskip("yaml", reason="lawam requires the `lawam` extra (PyYAML)")
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.lawam.configuration_lawam import LaWAMConfig
+from lerobot.policies.lawam.lam_core.core.utils.modules import build_modal_block_attention_mask
 from lerobot.policies.lawam.latent_world.train_collator import valid_action_horizon_steps
 from lerobot.policies.lawam.modeling_lawam import (
     LaWAMPolicy,
     _build_native_policy_config,
     _load_lawam_checkpoint_freeze_config,
     _normalize_lawam_checkpoint_state_dict,
+)
+from lerobot.policies.lawam.vlas.qwen3vl import (
+    freeze_qwen3vl,
+    keep_first_n_llm_layers,
+    remove_lm_head,
+    unfreeze_last_n_llm_layers,
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -103,6 +109,22 @@ class _FakeNativeLaWAM(nn.Module):
             dtype=torch.float32,
         ).reshape(batch_size, self.chunk_size, self.action_dim)
         return {"normalized_actions": actions}
+
+
+class _FakeQwen3VL(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.model = nn.Module()
+        self.model.visual = nn.Module()
+        self.model.visual.encoder = nn.Linear(2, 2)
+        self.model.visual.merger = nn.Linear(2, 2)
+        self.model.language_model = nn.Module()
+        self.model.language_model.embed_tokens = nn.Embedding(4, 2)
+        self.model.language_model.layers = nn.ModuleList([nn.Linear(2, 2) for _ in range(4)])
+        self.lm_head = nn.Linear(2, 4, bias=False)
+
+    def get_input_embeddings(self):
+        return self.model.language_model.embed_tokens
 
 
 def make_batch(batch_size: int = 2) -> dict:
@@ -253,6 +275,45 @@ def test_checkpoint_normalization_populates_shared_vlm_adapter_alias() -> None:
 def test_train_collator_masks_only_flow_horizon_steps() -> None:
     assert valid_action_horizon_steps(window_size=50, horizon_sec=1.2, action_hz=20.0) == 24
     assert valid_action_horizon_steps(window_size=8, horizon_sec=0.4, action_hz=20.0) == 8
+
+
+def test_lam_modal_mask_allows_query_and_same_modality_attention() -> None:
+    mask = build_modal_block_attention_mask(
+        num_frames=2,
+        grid_height=1,
+        grid_width=1,
+        add_tokens=1,
+        num_queries=1,
+    )
+
+    assert mask.shape == (5, 5)
+    assert mask[4].all()
+    assert mask[0, 2]
+    assert mask[1, 3]
+    assert not mask[0, 1]
+
+
+def test_qwen3vl_freeze_and_layer_selection() -> None:
+    model = _FakeQwen3VL()
+
+    freeze_qwen3vl(
+        model,
+        freeze_vision_backbone=True,
+        freeze_llm_backbone=True,
+        freeze_embedding=False,
+        unfreeze_vision_merger=True,
+    )
+    keep_first_n_llm_layers(model, 2)
+    unfreeze_last_n_llm_layers(model, 1)
+    remove_lm_head(model)
+
+    assert not model.model.visual.encoder.weight.requires_grad
+    assert model.model.visual.merger.weight.requires_grad
+    assert model.get_input_embeddings().weight.requires_grad
+    assert len(model.model.language_model.layers) == 2
+    assert not model.model.language_model.layers[0].weight.requires_grad
+    assert model.model.language_model.layers[1].weight.requires_grad
+    assert not hasattr(model, "lm_head")
 
 
 def test_training_forward_converts_batch_to_lawam_samples() -> None:

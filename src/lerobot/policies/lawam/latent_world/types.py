@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-from typing import Union
 from collections.abc import Sequence
+from typing import NotRequired, Required
 
 import numpy as np
 import torch
 from typing_extensions import TypedDict
-from typing import NotRequired, Required
 
-TensorLike2D = Union[torch.Tensor, np.ndarray, Sequence[float], Sequence[Sequence[float]]]
+TensorLike2D = torch.Tensor | np.ndarray | Sequence[float] | Sequence[Sequence[float]]
 FrameArray = np.ndarray
 ImageViews = Sequence[FrameArray]
-VideoViews = Sequence[Sequence[FrameArray]]
 
 
 class LatentWorldPolicyTrainRawSample(TypedDict):

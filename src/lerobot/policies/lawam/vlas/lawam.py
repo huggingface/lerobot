@@ -1,12 +1,11 @@
+import logging
 from contextlib import nullcontext
 from dataclasses import dataclass, field
-import logging
-from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as functional
 
 from lerobot.policies.lawam.lam_core.core.lam_model import load_latent_action_model
 from lerobot.policies.lawam.latent_world.processor_utils import (
@@ -14,13 +13,13 @@ from lerobot.policies.lawam.latent_world.processor_utils import (
     configure_latent_world_processor,
 )
 from lerobot.policies.lawam.latent_world.types import LatentWorldPolicyInferBatch, LatentWorldPolicyTrainBatch
-from .vlm_auto import (
-    load_vlm_auto,
-    remove_lm_head,
-)
 from lerobot.policies.lawam.utils import sync_managed_modules_training_mode
 
 from .flowmatching_expert import ConditionalFlowMatchingConfig, ConditionalFlowMatchingHead
+from .qwen3vl import (
+    load_qwen3vl,
+    remove_lm_head,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +32,15 @@ class LatentWorldPolicyConfig:
     flow_cfg: ConditionalFlowMatchingConfig = field(default_factory=ConditionalFlowMatchingConfig)
 
     # Action chunk (Qwen-compatible schema)
-    future_action_window_size: int = 7
-    past_action_window_size: int = 0
     action_horizon: int = 8
 
     # Base checkpoints
-    hf_cache_dir: str | Path | None = None
+    hf_cache_dir: str | None = None
     lam_ckpt_path: str = ""
     lam_yaml_path: str = ""
 
     # VLM dtype
     vlm_dtype: torch.dtype = torch.bfloat16
-    remove_lm_head: bool = True
 
     # Placeholder token
     latent_action_placeholder_token: str = "<ACT_PH>"
@@ -59,10 +55,6 @@ class LatentWorldPolicyConfig:
     future_prediction: bool = False
     repeated_diffusion_steps: int = 4
     flow_only_mode: bool = False
-    enable_flow_h_t1_scheduled_sampling: bool = False
-    flow_h_t1_pred_prob_start: float = 0.0
-    flow_h_t1_pred_prob_end: float = 1.0
-    flow_h_t1_pred_ramp_steps: int = 20000
     detach_future_feature: bool = False
 
     # Independent additions
@@ -124,7 +116,9 @@ class VLMToLAMQFormer(nn.Module):
     def forward(self, context: torch.Tensor) -> torch.Tensor:
         bsz = int(context.shape[0])
         queries = self.query.expand(bsz, -1, -1).to(device=context.device, dtype=context.dtype)
-        for norm_q, norm_kv, xattn, ffn in zip(self.norm_qs, self.norm_kvs, self.cross_attns, self.ffns):
+        for norm_q, norm_kv, xattn, ffn in zip(
+            self.norm_qs, self.norm_kvs, self.cross_attns, self.ffns, strict=True
+        ):
             q = norm_q(queries)
             kv = norm_kv(context)
             attn_out, _ = xattn(q, kv, kv)
@@ -143,7 +137,11 @@ def _load_vlm_and_processor(
     vlm_model_id: str,
 ) -> tuple[nn.Module, Any, Any, int]:
     processor_spec = build_latent_world_processor_spec(policy_cfg=cfg, vlm_model_id=vlm_model_id)
-    vlm, processor = load_vlm_auto(processor_spec.model_id, processor_spec.cache_dir, dtype=cfg.vlm_dtype)
+    vlm, processor = load_qwen3vl(
+        processor_spec.model_id,
+        processor_spec.cache_dir,
+        dtype=cfg.vlm_dtype,
+    )
     processor, tokenizer, placeholder_token_id = configure_latent_world_processor(
         processor,
         placeholder_token=processor_spec.placeholder_token,
@@ -163,17 +161,10 @@ def _load_vlm_and_processor(
             )
         vlm.resize_token_embeddings(target_vocab_size)
 
-    if hasattr(vlm, "generation_config") and vlm.generation_config is not None:
-        vlm.generation_config.max_new_tokens = 4
     if hasattr(vlm, "config") and vlm.config is not None:
-        try:
-            vlm.config.loss_type = "ForCausalLMLoss"
-            vlm.config.use_cache = False
-        except Exception:
-            logger.debug("Failed to update VLM generation config.", exc_info=True)
+        vlm.config.use_cache = False
 
-    if bool(getattr(cfg, "remove_lm_head", True)):
-        remove_lm_head(vlm)
+    remove_lm_head(vlm)
 
     return vlm, processor, tokenizer, placeholder_token_id
 
@@ -317,14 +308,6 @@ class LatentWorldPolicyBackend(nn.Module):
         # 5) Flow head.
         self.flow = ConditionalFlowMatchingHead(config=self.model_cfg.flow_cfg)
         self.flow.action_horizon = int(self.model_cfg.action_horizon)
-        self._flow_train_step: int = 0
-        if bool(self.model_cfg.enable_flow_h_t1_scheduled_sampling) and not bool(
-            self.model_cfg.detach_future_feature
-        ):
-            print(
-                "[LatentWorldPolicyBackend][warn] enable_flow_h_t1_scheduled_sampling=true and "
-                "detach_future_feature=false: flow gradients through GT-conditioned branch can increase loss_perceptual."
-            )
         self.sync_training_modes(mode=self.training)
 
     def _inject_queries(
@@ -478,8 +461,8 @@ class LatentWorldPolicyBackend(nn.Module):
                 f"teacher={tuple(teacher_latent.shape)}"
             )
         if str(latent_loss_type).lower() == "mse":
-            return F.mse_loss(pred_latent, teacher_latent)
-        return 1 - F.cosine_similarity(pred_latent, teacher_latent, dim=-1).mean()
+            return functional.mse_loss(pred_latent, teacher_latent)
+        return 1 - functional.cosine_similarity(pred_latent, teacher_latent, dim=-1).mean()
 
     def _compute_distill_loss(
         self,
@@ -514,16 +497,6 @@ class LatentWorldPolicyBackend(nn.Module):
             decoded = decoded[:, 0, :, :] if decoded.shape[1] == 1 else decoded[:, -1, :, :]
         return decoded
 
-    @classmethod
-    def build(
-        cls,
-        cfg: LatentWorldPolicyConfig,
-        *,
-        vlm_model_id: str,
-    ) -> "LatentWorldPolicyBackend":
-        model = cls(cfg, vlm_model_id=vlm_model_id)
-        return model
-
     def train(self, mode: bool = True):
         super().train(mode)
         self.sync_training_modes(mode=mode)
@@ -538,61 +511,14 @@ class LatentWorldPolicyBackend(nn.Module):
             mode=mode,
         )
 
-    def set_flow_train_step(self, step: int) -> None:
-        self._flow_train_step = max(0, int(step))
-
-    def _flow_h_t1_pred_prob(self) -> float:
-        if not bool(self.model_cfg.enable_flow_h_t1_scheduled_sampling):
-            return 1.0
-        start = float(self.model_cfg.flow_h_t1_pred_prob_start)
-        end = float(self.model_cfg.flow_h_t1_pred_prob_end)
-        ramp_steps = max(1, int(self.model_cfg.flow_h_t1_pred_ramp_steps))
-        ratio = min(1.0, float(self._flow_train_step) / float(ramp_steps))
-        prob = start + (end - start) * ratio
-        return float(max(0.0, min(1.0, prob)))
-
     def _build_flow_future_condition(
         self,
         *,
         h_t1_pred: torch.Tensor,
-        h_t1_gt: torch.Tensor,
     ) -> torch.Tensor:
-        if h_t1_pred.shape != h_t1_gt.shape:
-            raise ValueError(
-                f"[LatentWorldPolicyBackend] h_t1 shape mismatch: pred={tuple(h_t1_pred.shape)}, gt={tuple(h_t1_gt.shape)}"
-            )
-
         if not self.training:
             return h_t1_pred
-
-        prob_pred = self._flow_h_t1_pred_prob()
-        bsz = int(h_t1_pred.shape[0])
-        pred_mask = torch.rand(bsz, 1, 1, device=h_t1_pred.device) < prob_pred
-        cond_future = torch.where(pred_mask, h_t1_pred, h_t1_gt)
-
-        if not bool(self.model_cfg.detach_future_feature):
-            gt_mask = (~pred_mask).to(dtype=h_t1_pred.dtype)
-            # Straight-through bridge:
-            cond_future = cond_future + gt_mask * (h_t1_pred - h_t1_pred.detach())
-        else:
-            cond_future = cond_future.detach()
-
-        return cond_future
-
-    # ------------------
-    # Checkpoint IO
-    # ------------------
-    def save_pretrained(self, save_directory: str | Path, **kwargs):
-        save_dir = Path(str(save_directory))
-        save_dir.mkdir(parents=True, exist_ok=True)
-
-        out = self.vlm.save_pretrained(str(save_dir), **kwargs)
-        ckpt_path = save_dir / "pytorch_model.pt"
-        state_dict = self.state_dict()
-        torch.save(state_dict, ckpt_path)
-        num_params = sum(p.numel() for p in self.parameters())
-        print(f"[LatentWorldPolicyBackend] Full checkpoint saved to: {ckpt_path} (num_params={num_params})")
-        return out
+        return h_t1_pred.detach() if self.model_cfg.detach_future_feature else h_t1_pred
 
     # ------------------
     # Forward
@@ -609,12 +535,6 @@ class LatentWorldPolicyBackend(nn.Module):
         act_query = self.act_query.to(device=device, dtype=vlm_embed_dtype)
         flow_query = flow_query.to(device=device, dtype=vlm_embed_dtype)
         return act_query, flow_query
-
-    def _prepare_train_batch(self, *, batch: LatentWorldPolicyTrainBatch) -> LatentWorldPolicyTrainBatch:
-        return batch
-
-    def _prepare_infer_batch(self, *, batch: LatentWorldPolicyInferBatch) -> LatentWorldPolicyInferBatch:
-        return batch
 
     def _run_shared_encoding_core(
         self,
@@ -714,10 +634,7 @@ class LatentWorldPolicyBackend(nn.Module):
         # - Flow/loss stage: float32 autocast
         lam_stage_dtype = torch.bfloat16
         flow_stage_dtype = torch.float32
-        prepared_batch = cast(
-            LatentWorldPolicyTrainBatch,
-            self._prepare_train_batch(batch=batch),
-        )
+        prepared_batch = batch
         device = prepared_batch["input_ids"].device
 
         shared = self._run_shared_encoding_train(
@@ -736,7 +653,7 @@ class LatentWorldPolicyBackend(nn.Module):
                 )
 
             if self.model_cfg.future_prediction:
-                loss_perceptual = F.mse_loss(shared.h_t1_pred, shared.h_t1_gt)
+                loss_perceptual = functional.mse_loss(shared.h_t1_pred, shared.h_t1_gt)
             else:
                 loss_perceptual = torch.tensor(0.0, device=device, dtype=lam_stage_dtype)
 
@@ -751,10 +668,8 @@ class LatentWorldPolicyBackend(nn.Module):
             repeat_steps = int(self.model_cfg.repeated_diffusion_steps)
             h_t_rep = shared.h_t.repeat(repeat_steps, *([1] * (shared.h_t.ndim - 1)))
             h_t1_pred_rep = shared.h_t1_pred.repeat(repeat_steps, *([1] * (shared.h_t1_pred.ndim - 1)))
-            h_t1_gt_rep = shared.h_t1_gt.repeat(repeat_steps, *([1] * (shared.h_t1_gt.ndim - 1)))
             h_t1_cond_rep = self._build_flow_future_condition(
                 h_t1_pred=h_t1_pred_rep,
-                h_t1_gt=h_t1_gt_rep,
             )
             h_vlm_rep = h_vlm_for_flow.repeat(repeat_steps, *([1] * (h_vlm_for_flow.ndim - 1)))
             state_rep = prepared_batch["state"].repeat(
@@ -808,14 +723,9 @@ class LatentWorldPolicyBackend(nn.Module):
         batch: LatentWorldPolicyInferBatch,
         guidance_scale: float | None = None,
         num_inference_steps: int | None = None,
-        return_intermediates: bool = False,
-        return_padded: bool = False,
-    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    ) -> torch.Tensor:
         flow_stage_dtype = torch.float32
-        prepared_batch = cast(
-            LatentWorldPolicyInferBatch,
-            self._prepare_infer_batch(batch=batch),
-        )
+        prepared_batch = batch
 
         if guidance_scale is None:
             guidance_scale = float(self.flow.config.cfg_guidance_scale)
@@ -841,19 +751,5 @@ class LatentWorldPolicyBackend(nn.Module):
                 cfg_scale=guidance_scale,
                 num_inference_steps=num_inference_steps,
                 attention_mask=attn_flow,
-                return_padded=bool(return_padded),
             )
-
-        if not return_intermediates:
-            return actions
-
-        num_tokens = shared.h_t_original.shape[1]
-        hw = int(num_tokens**0.5)
-        if hw * hw != num_tokens:
-            hw = 16
-        intermediates = {
-            "h_t": shared.h_t_original.detach().cpu(),
-            "h_t1_pred": shared.h_t1_pred.detach().cpu(),
-            "vision_tokens_hw": (hw, hw),
-        }
-        return actions, intermediates
+        return actions

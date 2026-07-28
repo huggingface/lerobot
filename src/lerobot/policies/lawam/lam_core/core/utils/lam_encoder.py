@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
 
+from .modules import CategorySpecificMLP, QFormerAttention
 from .pos_embs import (
-    Fixed3DPositionalEncoding,
     Fixed2DPositionalEncoding,
+    Fixed3DPositionalEncoding,
     PositionalEncoding,
 )
-from .modules import QFormer_att, CategorySpecificMLP
 
 
 class LAMEncoder(nn.Module):
@@ -59,7 +59,7 @@ class LAMEncoder(nn.Module):
             self.pos_state_embed = None
             self.state_project = None
         self.add_state = add_state
-        self.QFormer = QFormer_att(
+        self.QFormer = QFormerAttention(
             query_dim=context_dim,
             context_dim=context_dim,
             num_frames=num_frames,
@@ -81,7 +81,7 @@ class LAMEncoder(nn.Module):
     ) -> torch.Tensor:
         if features.dim() != 4:
             raise ValueError(f"features must have shape [B,T,K,D], got: {tuple(features.shape)}")
-        B, T = int(features.shape[0]), int(features.shape[1])
+        batch_size, num_frames = int(features.shape[0]), int(features.shape[1])
         expected_tokens = int(self.grid_height * self.grid_width)
         if features.shape[-2] != expected_tokens:
             raise ValueError(
@@ -89,12 +89,12 @@ class LAMEncoder(nn.Module):
                 f"for grid_hw=({self.grid_height},{self.grid_width})."
             )
         x_ctx = self.project_in(features)
-        if T == self.num_frames:
+        if self.num_frames == num_frames:
             x_ctx = self.pos_embed(x_ctx)  # [B, T, hw, D]
-        elif T == 1:
+        elif num_frames == 1:
             x_ctx = self.pos_embed_2d(x_ctx[:, 0]).unsqueeze(1)  # [B, 1, hw, D]
         else:
-            raise ValueError(f"LAMEncoder only supports T={self.num_frames} or T=1, got T={T}.")
+            raise ValueError(f"LAMEncoder only supports T={self.num_frames} or T=1, got T={num_frames}.")
         if self.add_state:
             if states is None:
                 raise ValueError("states cannot be None: LAMEncoder(add_state=True) requires state input.")
@@ -106,7 +106,7 @@ class LAMEncoder(nn.Module):
                 raise ValueError(
                     f"states must have shape [B,T,max_state_dim] or [B,T,1,max_state_dim], got: {tuple(states.shape)}"
                 )
-            if int(states.shape[0]) != B or int(states.shape[1]) != T:
+            if int(states.shape[0]) != batch_size or int(states.shape[1]) != num_frames:
                 raise ValueError(
                     f"states and features have mismatched batch/time dimensions: states={tuple(states.shape)} vs features={tuple(features.shape)}"
                 )
@@ -121,8 +121,8 @@ class LAMEncoder(nn.Module):
                 emb = emb.squeeze(1)
             elif emb.ndim != 1:
                 raise ValueError(f"`embodiment_id` must be [B] or [B,1], got {tuple(emb.shape)}")
-            if emb.shape[0] != B:
-                raise ValueError(f"embodiment_id batch mismatch: got {emb.shape[0]}, expected {B}")
+            if emb.shape[0] != batch_size:
+                raise ValueError(f"embodiment_id batch mismatch: got {emb.shape[0]}, expected {batch_size}")
             emb = emb.to(device=states.device, dtype=torch.long)
             states = self.pos_state_embed(self.state_project(states, emb))
             x_ctx = torch.cat([x_ctx, states.unsqueeze(-2)], dim=-2)  # [B, T, (hw+1), D]

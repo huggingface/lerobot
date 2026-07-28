@@ -72,12 +72,8 @@ class LatentWorldPolicyInferBatchBuilder:
             extra_keys = sorted(set(ex.keys()) - self._ALLOWED_INFER_KEYS)
             if extra_keys:
                 raise KeyError(
-                    "inference examples[{idx}] contains unsupported keys {keys}. "
-                    "Allowed keys are: {allowed}.".format(
-                        idx=ex_idx,
-                        keys=extra_keys,
-                        allowed=sorted(self._ALLOWED_INFER_KEYS),
-                    )
+                    f"inference examples[{ex_idx}] contains unsupported keys {extra_keys}. "
+                    f"Allowed keys are: {sorted(self._ALLOWED_INFER_KEYS)}."
                 )
             missing_keys = sorted(self._REQUIRED_INFER_KEYS - set(ex.keys()))
             if missing_keys:
@@ -110,12 +106,8 @@ class LatentWorldPolicyInferBatchBuilder:
                     )
                     if explicit_state_mask.shape[0] not in (1, aligned_state.shape[0]):
                         raise ValueError(
-                            "examples[{idx}]['state_mask'] must have shape [D] or [T, D] matching state T; "
-                            "got state_mask={mask_shape}, state={state_shape}.".format(
-                                idx=ex_idx,
-                                mask_shape=tuple(explicit_state_mask.shape),
-                                state_shape=tuple(aligned_state.shape),
-                            )
+                            f"examples[{ex_idx}]['state_mask'] must have shape [D] or [T, D] matching state T; "
+                            f"got state_mask={tuple(explicit_state_mask.shape)}, state={tuple(aligned_state.shape)}."
                         )
                     state_dim_mask = state_dim_mask & explicit_state_mask[-1]
                 state_tensors.append(aligned_state[-1])

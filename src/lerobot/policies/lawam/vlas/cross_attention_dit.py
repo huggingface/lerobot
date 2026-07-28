@@ -15,7 +15,7 @@
 
 
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as functional
 from diffusers import ConfigMixin, ModelMixin
 from diffusers.configuration_utils import register_to_config
 from diffusers.models.attention import Attention, FeedForward
@@ -85,7 +85,6 @@ class BasicTransformerBlock(nn.Module):
         norm_type: str = "layer_norm",  # 'layer_norm', 'ada_norm', 'ada_norm_zero', 'ada_norm_single', 'ada_norm_continuous', 'layer_norm_i2vgen'
         norm_eps: float = 1e-5,
         final_dropout: bool = False,
-        attention_type: str = "default",
         positional_embeddings: str | None = None,
         num_positional_embeddings: int | None = None,
         ff_inner_dim: int | None = None,
@@ -226,7 +225,6 @@ class DiT(ModelMixin, ConfigMixin):
         dropout: float = 0.2,
         attention_bias: bool = True,
         activation_fn: str = "gelu-approximate",
-        num_embeds_ada_norm: int | None = 1000,
         upcast_attention: bool = False,
         norm_type: str = "ada_norm",
         norm_elementwise_affine: bool = False,
@@ -334,7 +332,7 @@ class DiT(ModelMixin, ConfigMixin):
 
         # Output processing
         conditioning = temb
-        shift, scale = self.proj_out_1(F.silu(conditioning)).chunk(2, dim=-1)
+        shift, scale = self.proj_out_1(functional.silu(conditioning)).chunk(2, dim=-1)
         if scale.ndim == hidden_states.ndim - 1:
             scale = scale[:, None]
             shift = shift[:, None]
@@ -423,7 +421,7 @@ class AlternateVLDiT(DiT):
             all_hidden_states.append(hidden_states)
 
         conditioning = temb
-        shift, scale = self.proj_out_1(F.silu(conditioning)).chunk(2, dim=-1)
+        shift, scale = self.proj_out_1(functional.silu(conditioning)).chunk(2, dim=-1)
         if scale.ndim == hidden_states.ndim - 1:
             scale = scale[:, None]
             shift = shift[:, None]

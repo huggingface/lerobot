@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any
 from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 import torch
 
 from lerobot.policies.lawam.latent_world.types import (
-    LatentWorldPolicyInferBatch,
     LatentWorldPolicyInferExample,
     LatentWorldPolicyTrainBatch,
 )
@@ -38,7 +37,6 @@ class LatentWorldPolicyRunner:
         self,
         examples: Sequence[LatentWorldPolicyInferExample],
         *,
-        return_intermediates: bool = False,
         guidance_scale: float | None = None,
         num_inference_steps: int | None = None,
     ) -> dict[str, Any]:
@@ -65,24 +63,16 @@ class LatentWorldPolicyRunner:
         if len(set(expected_lens)) != 1:
             raise ValueError(
                 "Real-time batched inference currently requires all examples to share the same "
-                "effective action length. Got expected_lens={expected_lens} from action_hz={hz_values} "
-                "with horizon_sec={horizon_sec}.".format(
-                    expected_lens=expected_lens,
-                    hz_values=hz_values,
-                    horizon_sec=horizon_sec,
-                )
+                f"effective action length. Got expected_lens={expected_lens} from action_hz={hz_values} "
+                f"with horizon_sec={horizon_sec}."
             )
         expected_len = int(expected_lens[0])
 
         actions = self.policy_backend.predict_action(
             batch=batch,
-            return_intermediates=bool(return_intermediates),
             guidance_scale=guidance_scale,
             num_inference_steps=num_inference_steps,
         )
-        intermediates = None
-        if isinstance(actions, tuple):
-            actions, intermediates = actions
         if not torch.is_tensor(actions):
             actions = torch.as_tensor(actions)
         actual_len = int(actions.shape[1])
@@ -92,53 +82,4 @@ class LatentWorldPolicyRunner:
                 f"actual_len={actual_len}, expected_len={expected_len}, "
                 f"horizon_sec={horizon_sec}, action_hz={hz_values}."
             )
-        return map_policy_infer_output(actions, intermediates=intermediates)
-
-    @torch.inference_mode()
-    def infer_step_with_aligned_targets_from_train_batch(
-        self,
-        train_batch: LatentWorldPolicyTrainBatch,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        primary_video = train_batch["primary_video"]
-        if primary_video.ndim != 5 or int(primary_video.shape[1]) < 1:
-            raise ValueError(
-                "Expected `primary_video` tensor with shape [B, T, C, H, W] and T>=1 "
-                f"for aligned inference, got {tuple(primary_video.shape)}."
-            )
-
-        infer_batch: LatentWorldPolicyInferBatch = {
-            "pixel_values": train_batch["pixel_values"],
-            "input_ids": train_batch["input_ids"],
-            "attention_mask": train_batch["attention_mask"],
-            "act_placeholder_mask": train_batch["act_placeholder_mask"],
-            "flow_placeholder_mask": train_batch["flow_placeholder_mask"],
-            "primary_image": primary_video[:, 0, :, :, :],
-            "state": train_batch["state"],
-            "state_mask": train_batch["state_mask"],
-            "embodiment_id": train_batch["embodiment_id"],
-            "action_hz": train_batch["action_hz"],
-            "image_grid_thw": train_batch["image_grid_thw"],
-        }
-
-        pred_actions = self.policy_backend.predict_action(
-            batch=infer_batch,
-            return_padded=True,
-        )
-        if isinstance(pred_actions, tuple):
-            pred_actions = pred_actions[0]
-        if not torch.is_tensor(pred_actions):
-            pred_actions = torch.as_tensor(pred_actions)
-
-        target_actions = train_batch["actions"]
-        action_mask = train_batch["actions_mask"]
-        if not torch.is_tensor(target_actions) or not torch.is_tensor(action_mask):
-            raise TypeError("LatentWorld eval expects tensor `actions` and `actions_mask` from train_batch.")
-
-        pred_actions = pred_actions.detach()
-        target_actions = target_actions.to(
-            device=pred_actions.device,
-            dtype=pred_actions.dtype,
-            non_blocking=True,
-        )
-        action_mask = action_mask.to(device=pred_actions.device, dtype=torch.bool, non_blocking=True)
-        return pred_actions, target_actions, action_mask
+        return map_policy_infer_output(actions)

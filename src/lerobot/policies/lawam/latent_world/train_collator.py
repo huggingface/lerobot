@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Sequence
+from typing import Any
 
 import torch
 
@@ -21,10 +21,10 @@ from lerobot.policies.lawam.latent_world.types import (
     LatentWorldPolicyTrainBatch,
     LatentWorldPolicyTrainRawSample,
 )
-from lerobot.policies.lawam.latent_world.vlm_adapter import build_qwenvl_messages
 from lerobot.policies.lawam.latent_world.vlm_adapter import (
     DEFAULT_LATENT_WORLD_POLICY_COT_PROMPT,
     DEFAULT_LATENT_WORLD_TEMPORAL_COT_PROMPT,
+    build_qwenvl_messages,
 )
 
 

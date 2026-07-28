@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-
 import numpy as np
 import torch
-from torchvision.transforms import v2
-from torchvision.transforms import functional as TF
+from torchvision.transforms import functional as transform_functional, v2
 
 MAX_SOURCE_ASPECT = 4.0 / 3.0
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -115,7 +113,7 @@ def apply_shared_random_resized_crop_uint8(
     max_left = max(0, width - crop_w)
     top = 0 if max_top == 0 else int(torch.randint(0, max_top + 1, ()).item())
     left = 0 if max_left == 0 else int(torch.randint(0, max_left + 1, ()).item())
-    cropped = TF.resized_crop(
+    cropped = transform_functional.resized_crop(
         frames_uint8.contiguous(),
         top=top,
         left=left,
@@ -141,7 +139,7 @@ def apply_center_crop_90_uint8(frames_uint8: torch.Tensor) -> torch.Tensor:
     crop_h, crop_w = _crop_size_for_area_scale(height, width, area_scale=0.9)
     top = max(0, (height - crop_h) // 2)
     left = max(0, (width - crop_w) // 2)
-    cropped = TF.resized_crop(
+    cropped = transform_functional.resized_crop(
         frames_uint8.contiguous(),
         top=top,
         left=left,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Sequence
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -79,7 +79,7 @@ def build_qwenvl_messages(
         raise ValueError("Wrist images and instructions must have the same length.")
 
     messages = []
-    for imgs, wrist_imgs, instruction in zip(images, wrist_images, instructions):
+    for imgs, wrist_imgs, instruction in zip(images, wrist_images, instructions, strict=True):
         content = [{"type": "image", "image": img} for img in imgs]
         text_before_wrist, text_after_wrist = build_prompt_segments(
             instruction=instruction,

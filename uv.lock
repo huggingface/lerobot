@@ -3090,7 +3090,6 @@ lawam = [
     { name = "diffusers" },
     { name = "pyyaml" },
     { name = "qwen-vl-utils" },
-    { name = "timm" },
     { name = "transformers" },
 ]
 lekiwi = [
@@ -3432,7 +3431,6 @@ requires-dist = [
     { name = "lerobot", extras = ["smolvla"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["test"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["timm-dep"], marker = "extra == 'groot'" },
-    { name = "lerobot", extras = ["timm-dep"], marker = "extra == 'lawam'" },
     { name = "lerobot", extras = ["topreward"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["training"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'annotations'" },

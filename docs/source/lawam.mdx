@@ -4,13 +4,13 @@
 
 Resources:
 
-| Resource              | Link                                                                                                         | Used for                                                    |
-| --------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| Project page          | [rlinf.github.io/LaWAM](https://rlinf.github.io/LaWAM/)                                                      | Method overview                                             |
-| Paper                 | [arXiv:2606.15768](https://arxiv.org/abs/2606.15768)                                                         | Citation and method details                                 |
-| Code                  | [RLinf/LaWAM](https://github.com/RLinf/LaWAM)                                                                | Original training and evaluation code                       |
-| Checkpoint collection | [lawam-checkpoints](https://huggingface.co/collections/jialei02/lawam-checkpoints)                           | Released LAM, pretraining, and LIBERO checkpoints           |
-| LIBERO dataset        | [jialei02/libero_merged_no_noops_20hz](https://huggingface.co/datasets/jialei02/libero_merged_no_noops_20hz) | LIBERO SFT                                                  |
+| Resource              | Link                                                                                                         | Used for                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
+| Project page          | [rlinf.github.io/LaWAM](https://rlinf.github.io/LaWAM/)                                                      | Method overview                                   |
+| Paper                 | [arXiv:2606.15768](https://arxiv.org/abs/2606.15768)                                                         | Citation and method details                       |
+| Code                  | [RLinf/LaWAM](https://github.com/RLinf/LaWAM)                                                                | Original training and evaluation code             |
+| Checkpoint collection | [lawam-checkpoints](https://huggingface.co/collections/jialei02/lawam-checkpoints)                           | Released LAM, pretraining, and LIBERO checkpoints |
+| LIBERO dataset        | [jialei02/libero_merged_no_noops_20hz](https://huggingface.co/datasets/jialei02/libero_merged_no_noops_20hz) | LIBERO SFT                                        |
 
 ## Installation
 
@@ -112,8 +112,7 @@ lerobot-eval \
   --policy.push_to_hub=false \
   --env.type=libero \
   --env.task=libero_object \
-  --eval.n_episodes=10 \
-  --eval.max_episodes_rendered=0
+  --eval.n_episodes=10
 ```
 
 For original LaWAM checkpoints, the adapter automatically looks for `config.yaml` and `dataset_statistics.json` in the checkpoint run directory, for example next to `$LAWAM_LIBERO_DIR/final_model/`. The YAML file restores checkpoint-specific runtime settings such as LLM layer pruning, and the statistics file provides state/action normalization. If your stats file is stored elsewhere, pass `--policy.lawam_dataset_stats_path=/path/to/dataset_statistics.json`. If the stats file contains multiple datasets, select one with `--policy.lawam_unnorm_key=<key>`.
@@ -142,9 +141,7 @@ for suite in libero_spatial libero_object libero_goal libero_10; do
       --env.task=$suite \
       "--env.task_ids=[$task_id]" \
       --eval.n_episodes=50 \
-      --eval.batch_size=50 \
       --eval.use_async_envs=true \
-      --eval.max_episodes_rendered=0 \
       --output_dir=outputs/lawam_libero/$suite/task_$task_id
   done
 done
