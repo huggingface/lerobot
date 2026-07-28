@@ -31,6 +31,7 @@ from torch import Tensor, nn
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.utils.hub import extract_commit_hash
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..common.vla_utils import pad_vector, resize_with_pad
@@ -459,6 +460,7 @@ class XVLAPolicy(PreTrainedPolicy):
             )
 
         model_id = str(pretrained_name_or_path)
+        revision = config.get_hub_revision(model_id, revision)
         instance = cls(config, **kwargs)
         # step 2: locate model.safetensors
         if os.path.isdir(model_id):
@@ -480,6 +482,8 @@ class XVLAPolicy(PreTrainedPolicy):
                     token=token,
                     local_files_only=local_files_only,
                 )
+                if config._commit_hash is None:
+                    config._set_hub_commit_hash(extract_commit_hash(model_file, revision), model_id)
             except HfHubHTTPError as e:
                 raise FileNotFoundError(f"model.safetensors not found on the Hub at {model_id}") from e
 

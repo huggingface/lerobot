@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import builtins
+import re
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, TypeVar
@@ -23,6 +24,29 @@ from huggingface_hub.utils import validate_hf_hub_args
 from .constants import CHECKPOINTS_DIR
 
 T = TypeVar("T", bound="HubMixin")
+REGEX_COMMIT_HASH = re.compile(r"^[0-9a-f]{40}$")
+
+
+def extract_commit_hash(resolved_file: str | Path | None, revision: str | None = None) -> str | None:
+    """Extract the immutable commit hash backing a resolved Hub file.
+
+    Hub cache paths contain ``snapshots/<commit_hash>/``. If the requested
+    revision is already a full commit hash, use it as a fallback for custom
+    cache layouts that do not expose the standard snapshot path.
+    """
+    if resolved_file is not None:
+        path_parts = Path(resolved_file).parts
+        try:
+            snapshot_index = path_parts.index("snapshots")
+            commit_hash = path_parts[snapshot_index + 1]
+            if REGEX_COMMIT_HASH.fullmatch(commit_hash):
+                return commit_hash
+        except (ValueError, IndexError):
+            pass
+
+    if revision is not None and REGEX_COMMIT_HASH.fullmatch(revision):
+        return revision
+    return None
 
 
 def find_latest_hub_checkpoint(

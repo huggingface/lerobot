@@ -55,6 +55,7 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
 )
+from lerobot.utils.hub import extract_commit_hash
 
 from ..common.vla_utils import pad_vector, prepare_attention_masks_4d, resize_with_pad_torch
 from ..pretrained import PreTrainedPolicy, T
@@ -808,6 +809,8 @@ class PI0FastPolicy(PreTrainedPolicy):
                 **kwargs,
             )
 
+        revision = config.get_hub_revision(pretrained_name_or_path, revision)
+
         # Initialize model without loading weights
         # Check if dataset_stats were provided in kwargs
         model = cls(config, **kwargs)
@@ -826,9 +829,13 @@ class PI0FastPolicy(PreTrainedPolicy):
                     resume_download=kwargs.get("resume_download"),
                     proxies=kwargs.get("proxies"),
                     token=kwargs.get("token"),
-                    revision=kwargs.get("revision"),
+                    revision=revision,
                     local_files_only=kwargs.get("local_files_only", False),
                 )
+                if config._commit_hash is None:
+                    config._set_hub_commit_hash(
+                        extract_commit_hash(resolved_file, revision), str(pretrained_name_or_path)
+                    )
                 from safetensors.torch import load_file
 
                 original_state_dict = load_file(resolved_file)

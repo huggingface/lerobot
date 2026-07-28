@@ -14,7 +14,7 @@
 
 from unittest.mock import MagicMock
 
-from lerobot.utils.hub import find_latest_hub_checkpoint
+from lerobot.utils.hub import extract_commit_hash, find_latest_hub_checkpoint
 
 
 def _patch_list_files(monkeypatch, files):
@@ -52,3 +52,20 @@ def test_find_latest_hub_checkpoint_ignores_non_step_entries(monkeypatch):
 def test_find_latest_hub_checkpoint_none_when_no_checkpoints(monkeypatch):
     _patch_list_files(monkeypatch, ["config.json", "model.safetensors"])
     assert find_latest_hub_checkpoint("u/run") is None
+
+
+def test_extract_commit_hash_from_hub_snapshot_path():
+    commit_hash = "a" * 40
+    resolved_file = f"/cache/models--user--policy/snapshots/{commit_hash}/config.json"
+
+    assert extract_commit_hash(resolved_file, revision="main") == commit_hash
+
+
+def test_extract_commit_hash_falls_back_to_full_sha_revision():
+    commit_hash = "b" * 40
+
+    assert extract_commit_hash("/custom/cache/config.json", revision=commit_hash) == commit_hash
+
+
+def test_extract_commit_hash_rejects_mutable_revision_without_snapshot():
+    assert extract_commit_hash("/custom/cache/config.json", revision="main") is None

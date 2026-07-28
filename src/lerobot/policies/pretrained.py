@@ -33,7 +33,7 @@ from lerobot.__version__ import __version__
 from lerobot.configs import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.device_utils import resolve_safetensors_device
-from lerobot.utils.hub import HubMixin
+from lerobot.utils.hub import HubMixin, extract_commit_hash
 
 from .utils import log_model_loading_keys
 
@@ -190,6 +190,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 **kwargs,
             )
         model_id = str(pretrained_name_or_path)
+        revision = config.get_hub_revision(model_id, revision)
         instance = cls(config, **kwargs)
         if os.path.isdir(model_id):
             print("Loading weights from local directory")
@@ -208,6 +209,8 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                     token=token,
                     local_files_only=local_files_only,
                 )
+                if config._commit_hash is None:
+                    config._set_hub_commit_hash(extract_commit_hash(model_file, revision), model_id)
                 policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
             except HfHubHTTPError as e:
                 raise FileNotFoundError(
