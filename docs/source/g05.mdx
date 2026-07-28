@@ -11,7 +11,7 @@ conditioned on the same post-reasoning KV state.
 > [G0.5 Community License](https://huggingface.co/OpenGalaxea/G05/blob/main/licenses/LICENSE-G0.5),
 > including non-commercial restrictions. LeRobot does not vendor the author model,
 > download gated files, or imply that Apache-2.0 applies to those materials. Accept
-> the license yourself and use a local checkpoint.
+> the license yourself and use a private or local checkpoint.
 
 ## Supported checkpoint contracts
 
@@ -49,6 +49,7 @@ Python-support update is required for real-model execution.
 ```bash
 git clone https://github.com/OpenGalaxea/GalaxeaVLA.git
 git -C GalaxeaVLA checkout b34966f387dd2ae0f003143b81494afd9213e613
+export PYTHONPATH="/path/to/GalaxeaVLA/src:${PYTHONPATH}"
 ```
 
 ## Convert a local checkpoint
