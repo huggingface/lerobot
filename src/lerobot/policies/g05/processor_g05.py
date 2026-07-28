@@ -27,6 +27,7 @@ from lerobot.processor import (
     ProcessorStep,
     ProcessorStepRegistry,
     RelativeActionsProcessorStep,
+    RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import (
@@ -62,22 +63,35 @@ class G05ImageTransformStep(ProcessorStep):
     camera_sizes: dict[str, tuple[int, int]]
     mean: tuple[float, float, float]
     std: tuple[float, float, float]
+    optional_camera_keys: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         self.camera_order = tuple(self.camera_order)
         self.camera_sizes = {key: tuple(value) for key, value in self.camera_sizes.items()}
         self.mean = tuple(self.mean)
         self.std = tuple(self.std)
+        self.optional_camera_keys = tuple(self.optional_camera_keys)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION)
         if observation is None:
             return transition
         missing = [key for key in self.camera_order if key not in observation]
-        if missing:
+        required_missing = [key for key in missing if key not in self.optional_camera_keys]
+        if required_missing:
             raise ValueError(f"G0.5 is missing camera(s) {missing}; required order is {self.camera_order}.")
         transition = transition.copy()
         observation = dict(observation)
+        if missing:
+            reference = next(
+                (torch.as_tensor(observation[key]) for key in self.camera_order if key in observation),
+                None,
+            )
+            if reference is None:
+                raise ValueError("G0.5 cannot pad optional cameras without one available reference camera.")
+            for key in missing:
+                height, width = self.camera_sizes[key]
+                observation[key] = reference.new_zeros(*reference.shape[:-2], height, width)
         for key in self.camera_order:
             image = torch.as_tensor(observation[key])
             if image.ndim < 3 or image.shape[-3] != 3:
@@ -104,9 +118,8 @@ class G05ImageTransformStep(ProcessorStep):
         result = _copy_feature_tree(features)
         observations = result.setdefault(PipelineFeatureType.OBSERVATION, {})
         for key in self.camera_order:
-            if key in observations:
-                height, width = self.camera_sizes[key]
-                observations[key] = PolicyFeature(type=FeatureType.VISUAL, shape=(3, height, width))
+            height, width = self.camera_sizes[key]
+            observations[key] = PolicyFeature(type=FeatureType.VISUAL, shape=(3, height, width))
         return result
 
     def get_config(self) -> dict[str, Any]:
@@ -115,6 +128,7 @@ class G05ImageTransformStep(ProcessorStep):
             "camera_sizes": {key: list(value) for key, value in self.camera_sizes.items()},
             "mean": list(self.mean),
             "std": list(self.std),
+            "optional_camera_keys": list(self.optional_camera_keys),
         }
 
 
@@ -492,6 +506,39 @@ class G05InverseActionProjectionStep(ProcessorStep):
 
 
 @dataclass
+@ProcessorStepRegistry.register(name="g05_libero_gripper")
+class G05LiberoGripperStep(ProcessorStep):
+    """Convert the released checkpoint's gripper value to LIBERO's binary command."""
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition.get(TransitionKey.ACTION)
+        if not isinstance(action, torch.Tensor):
+            return transition
+        if action.shape[-1] != 7:
+            raise ValueError(f"G0.5 LIBERO action must have 7 dimensions, got {action.shape[-1]}.")
+        value = action[..., -1]
+        in_unit_interval = (value >= 0.0) & (value <= 1.0)
+        open_gripper = torch.where(in_unit_interval, value > 0.5, value > 0.0)
+        transition = transition.copy()
+        action = action.clone()
+        action[..., -1] = torch.where(
+            open_gripper,
+            value.new_tensor(-1.0),
+            value.new_tensor(1.0),
+        )
+        transition[TransitionKey.ACTION] = action
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {}
+
+
+@dataclass
 @ProcessorStepRegistry.register(name="g05_action_history_crop")
 class G05ActionHistoryCropStep(ProcessorStep):
     """Remove the author model's observation-alignment prefix from action chunks."""
@@ -601,12 +648,14 @@ def make_g05_pre_post_processors(
         num_obs_steps=config.n_obs_steps,
     )
     steps: list[ProcessorStep] = [
+        RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         G05ImageTransformStep(
             camera_order=config.camera_order,
             camera_sizes=config.camera_sizes,
             mean=config.image_mean,
             std=config.image_std,
+            optional_camera_keys=config.optional_camera_keys,
         ),
     ]
     action_filter = config.processor_metadata.get("action_filter") or {}
@@ -668,11 +717,15 @@ def make_g05_pre_post_processors(
     ]
     if config.normalization_mode == "z_score_tail_mixed":
         output_steps.append(G05TailNormalizationStep(inverse=True, stats=projected_stats or {}))
+    output_steps.append(
+        G05InverseActionProjectionStep(
+            embodiment=config.embodiment, policy_action_dim=config.policy_action_dim
+        )
+    )
+    if config.libero_gripper_binarize:
+        output_steps.append(G05LiberoGripperStep())
     output_steps.extend(
         [
-            G05InverseActionProjectionStep(
-                embodiment=config.embodiment, policy_action_dim=config.policy_action_dim
-            ),
             DeviceProcessorStep(device="cpu"),
             AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
             G05ActionHistoryCropStep(num_obs_steps=config.n_obs_steps),

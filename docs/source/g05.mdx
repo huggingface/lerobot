@@ -15,11 +15,12 @@ conditioned on the same post-reasoning KV state.
 
 ## Supported checkpoint contracts
 
-| Profile          | Released action path                       | Raw → policy layout                          | Cameras                            |                    Chunk | Normalization                   |
-| ---------------- | ------------------------------------------ | -------------------------------------------- | ---------------------------------- | -----------------------: | ------------------------------- |
-| `g05-base`       | Explicitly selected AR ActionCodec or flow | R1 Lite/Pro joints → 27D whole-body layout   | head + both wrists, 6-step history | 32 model / 27 executable | z-score-tail + q01/q99 grippers |
-| `g05-libero`     | Continuous flow                            | right EEF 6 + gripper 1 → 20D grouped layout | exterior, right wrist              |                       32 | stepwise q01/q99                |
-| `g05-robotwin20` | Continuous flow                            | two arms 6+gripper → 20D grouped layout      | high, left wrist, right wrist      |                       32 | stepwise q01/q99                |
+| Profile          | Released action path                       | Raw → policy layout                          | Cameras                               | Predicted | Executed | Normalization                   |
+| ---------------- | ------------------------------------------ | -------------------------------------------- | ------------------------------------- | --------: | -------: | ------------------------------- |
+| `g05-base`       | Explicitly selected AR ActionCodec or flow | R1 Lite/Pro joints → 27D whole-body layout   | head + both wrists, 6-step history    |        32 |       16 | z-score-tail + q01/q99 grippers |
+| `g05-libero`     | Continuous flow                            | right EEF 6 + gripper 1 → 20D grouped layout | exterior, right wrist                 |        32 |       10 | stepwise q01/q99                |
+| `g05-robotwin20` | Continuous flow                            | two arms 6+gripper → 20D grouped layout      | high, left wrist, right wrist         |        32 |        8 | stepwise q01/q99                |
+| `g05-so101`      | Flow or AR ActionCodec + native CoT        | right arm joints 6 → 20D grouped layout      | exterior, optional left + right wrist |        32 |       16 | stepwise q01/q99                |
 
 The converter stores the resolved Hydra model, processor, ActionCodec metadata,
 statistics, exact prompt template, source revision, and license with the converted
@@ -54,7 +55,9 @@ git -C GalaxeaVLA checkout b34966f387dd2ae0f003143b81494afd9213e613
 
 The command never contacts the Hub. Point it at a complete local bundle containing
 the checkpoint Hydra config, weights, `dataset_stats.json`,
-`action_tokenizer.pt`, and `hf_processor/`.
+`action_tokenizer.pt`, and `hf_processor/`. For released bundles, the converter
+also discovers the tokenizer and `qwen3_5_2b_base_processor/` in the parent
+directory.
 
 ```bash
 uv run python -m lerobot.policies.g05.convert_g05_checkpoint \
@@ -84,6 +87,32 @@ postprocessing returns the 27 executable actions. `conversion_report.json`
 records every mapped, missing, unexpected, duplicate, and shape-mismatched
 tensor; conversion fails when strict required-state validation fails.
 
+The official RoboTwin config contains a pinned data include. Resolve and package
+it from the audited author checkout:
+
+```bash
+uv run python -m lerobot.policies.g05.convert_g05_checkpoint \
+  --source-dir /path/to/G05/g05-robotwin20 \
+  --output-dir outputs/g05-robotwin20-lerobot \
+  --profile g05-robotwin20 \
+  --author-source /path/to/GalaxeaVLA \
+  --license-file /path/to/GalaxeaVLA/LICENSE-G0.5
+```
+
+SO-100 and SO-101 share the released `so100` embodiment token and six-joint
+right-arm contract. A missing left-wrist camera is zero-padded exactly as in the
+author deployment client:
+
+```bash
+uv run python -m lerobot.policies.g05.convert_g05_checkpoint \
+  --source-dir /path/to/G05/g05-so101 \
+  --output-dir outputs/g05-so101-lerobot \
+  --profile g05-so101 \
+  --action-head flow \
+  --author-source /path/to/GalaxeaVLA \
+  --license-file /path/to/GalaxeaVLA/LICENSE-G0.5
+```
+
 ## Interactive System 1 and System 2 runtime
 
 System 1 executes the selected ActionCodec or flow chunk directly:
@@ -109,6 +138,28 @@ lerobot-rollout \
   --task="clear the table" \
   --mode=action
 ```
+
+For a physical SO-101, start paused, confirm the camera indices and arm port,
+then type `/action <task>`:
+
+```bash
+lerobot-rollout \
+  --language \
+  --policy.path=lerobot/g05_so101 \
+  --policy.device=cuda \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=my_follower \
+  --robot.cameras='{exterior: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist_right: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}' \
+  --task="pick up the cube" \
+  --mode=paused \
+  --ctrl_hz=30 \
+  --chunk_hz=1
+```
+
+The checkpoint is non-commercial and may be private; authenticate with
+`hf auth login` before loading it. Do not add `--direct_subtask` when inspecting
+the checkpoint's native System 2 CoT telemetry.
 
 ## Validation status
 

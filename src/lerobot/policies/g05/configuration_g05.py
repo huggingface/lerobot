@@ -31,10 +31,15 @@ G05_CAMERA_PROFILES: dict[str, tuple[str, ...]] = {
         "observation.images.image",
         "observation.images.wrist_image",
     ),
-    "robotwin20": (
-        "observation.images.cam_high",
-        "observation.images.cam_left_wrist",
-        "observation.images.cam_right_wrist",
+    "robotwin": (
+        "observation.images.head_camera",
+        "observation.images.left_camera",
+        "observation.images.right_camera",
+    ),
+    "so100": (
+        "observation.images.exterior",
+        "observation.images.wrist_left",
+        "observation.images.wrist_right",
     ),
     "galaxea_r1lite": (
         "observation.images.head_rgb",
@@ -55,7 +60,8 @@ G05_CAMERA_PROFILES: dict[str, tuple[str, ...]] = {
 
 G05_CAMERA_SIZE_PROFILES: dict[str, dict[str, tuple[int, int]]] = {
     "libero": dict.fromkeys(G05_CAMERA_PROFILES["libero"], (224, 224)),
-    "robotwin20": dict.fromkeys(G05_CAMERA_PROFILES["robotwin20"], (256, 256)),
+    "robotwin": dict.fromkeys(G05_CAMERA_PROFILES["robotwin"], (256, 256)),
+    "so100": dict.fromkeys(G05_CAMERA_PROFILES["so100"], (256, 256)),
     "galaxea_r1lite": dict.fromkeys(G05_CAMERA_PROFILES["galaxea_r1lite"], (256, 256)),
     "galaxea_r1pro": dict.fromkeys(G05_CAMERA_PROFILES["galaxea_r1pro"], (256, 256)),
     "atomic_4": dict.fromkeys(G05_CAMERA_PROFILES["atomic_4"], (256, 256)),
@@ -94,9 +100,13 @@ G05_EMBODIMENT_MAPPINGS: dict[str, dict[str, tuple[int, ...]]] = {
         "state": (10, 11, 12, 13, 14, 15, 19),
         "action": (10, 11, 12, 13, 14, 15, 19),
     },
-    "robotwin20": {
+    "robotwin": {
         "state": (0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 15, 19),
         "action": (0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 15, 19),
+    },
+    "so100": {
+        "state": (10, 11, 12, 13, 14, 15),
+        "action": (10, 11, 12, 13, 14, 15),
     },
     "galaxea_r1lite": {
         "state": (0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 15, 19),
@@ -136,6 +146,7 @@ _PROFILE_DEFAULTS = {
     "g05-base": ("z_score_tail_mixed", 27, 32),
     "g05-libero": ("q01_q99", 20, 32),
     "g05-robotwin20": ("q01_q99", 20, 32),
+    "g05-so101": ("q01_q99", 20, 32),
 }
 
 
@@ -163,6 +174,7 @@ class G05Config(PreTrainedConfig):
     raw_action_dim: int = 7
     raw_state_dim: int = 7
     chunk_size: int = 16
+    n_action_steps: int = 16
     normalization_mode: str = "checkpoint"
     normalization_clip: tuple[float, float] | None = None
     use_relative_actions: bool = False
@@ -170,8 +182,10 @@ class G05Config(PreTrainedConfig):
     action_feature_names: tuple[str, ...] = ()
     use_stepwise_action_norm: bool = False
     gripper_indices: tuple[int, ...] = (6,)
+    libero_gripper_binarize: bool = False
     camera_order: tuple[str, ...] = field(default_factory=lambda: G05_CAMERA_PROFILES["libero"])
     camera_sizes: dict[str, tuple[int, int]] = field(default_factory=dict)
+    optional_camera_keys: tuple[str, ...] = ()
     image_mean: tuple[float, float, float] = (0.5, 0.5, 0.5)
     image_std: tuple[float, float, float] = (0.5, 0.5, 0.5)
     num_input_images: int = 0
@@ -201,6 +215,7 @@ class G05Config(PreTrainedConfig):
         super().__post_init__()
         self.camera_order = tuple(self.camera_order)
         self.camera_sizes = {key: tuple(size) for key, size in (self.camera_sizes or {}).items()}
+        self.optional_camera_keys = tuple(self.optional_camera_keys)
         if self.normalization_clip is not None:
             self.normalization_clip = tuple(self.normalization_clip)
             if len(self.normalization_clip) != 2 or self.normalization_clip[0] >= self.normalization_clip[1]:
@@ -235,6 +250,8 @@ class G05Config(PreTrainedConfig):
             raise ValueError("runtime_system must be 'system1' or 'system2'.")
         if self.runtime_system == "system2" and not self.predict_cot:
             raise ValueError("G0.5 System 2 requires predict_cot=True in the converted checkpoint.")
+        if not 1 <= self.n_action_steps <= self.chunk_size:
+            raise ValueError("n_action_steps must be between 1 and chunk_size.")
         if self.action_head == "actioncodec" and not self.discrete_action:
             raise ValueError("The ActionCodec runtime requires discrete_action=True.")
         if self.action_head == "flow" and not self.continuous_action:
@@ -282,6 +299,8 @@ class G05Config(PreTrainedConfig):
                 raise ValueError("g05-libero requires a 32-step chunk and q01/q99 normalization.")
             if self.action_head != "flow":
                 raise ValueError("The released g05-libero config enables only the continuous flow path.")
+            if not self.libero_gripper_binarize:
+                raise ValueError("g05-libero requires the official binary gripper command transform.")
         expected_cameras = G05_CAMERA_PROFILES.get(self.embodiment)
         if expected_cameras is not None and tuple(self.camera_order) != expected_cameras:
             raise ValueError(
@@ -289,6 +308,8 @@ class G05Config(PreTrainedConfig):
             )
         if set(self.camera_sizes) != set(self.camera_order):
             raise ValueError("camera_sizes must contain exactly the ordered checkpoint camera keys.")
+        if not set(self.optional_camera_keys) <= set(self.camera_order):
+            raise ValueError("optional_camera_keys must be a subset of camera_order.")
         if self.num_input_images != len(self.camera_order) * self.n_obs_steps:
             raise ValueError(
                 "num_input_images must equal len(camera_order) * n_obs_steps for the selected checkpoint."
@@ -321,6 +342,10 @@ class G05Config(PreTrainedConfig):
             self.input_features[OBS_STATE] = PolicyFeature(
                 type=FeatureType.STATE, shape=(self.raw_state_dim,)
             )
+        for key in self.camera_order:
+            if key not in self.input_features:
+                height, width = self.camera_sizes[key]
+                self.input_features[key] = PolicyFeature(type=FeatureType.VISUAL, shape=(3, height, width))
         if ACTION not in self.output_features:
             self.output_features[ACTION] = PolicyFeature(
                 type=FeatureType.ACTION, shape=(self.raw_action_dim,)

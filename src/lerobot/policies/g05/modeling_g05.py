@@ -133,7 +133,10 @@ class G05Policy(PreTrainedPolicy):
             "g05_dataset_stats.json",
             "author_config.yaml",
             "LICENSE-G0.5",
+            "LICENSE_QWEN3_5.txt",
+            "THIRD_PARTY_NOTICES.md",
             "NOTICE",
+            "README.md",
             "conversion_report.json",
         ):
             source = next((root / name for root in roots if (root / name).is_file()), None)
@@ -336,7 +339,7 @@ class G05Policy(PreTrainedPolicy):
                 raise ValueError(
                     "G0.5 select_action requires batch size 1; use predict_action_chunk for B>1."
                 )
-            self._action_queue.extend(chunk[0])
+            self._action_queue.extend(chunk[0, : self.config.n_action_steps])
         return self._action_queue.popleft().unsqueeze(0)
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any] | None]:

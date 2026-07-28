@@ -146,18 +146,57 @@ def _load_checkpoint(path: Path) -> dict[str, torch.Tensor]:
     return payload
 
 
+def _resolve_model_arch(hydra: dict[str, Any], data_override: dict[str, Any] | None) -> dict[str, Any]:
+    """Resolve the official Hydra snapshot without importing the author package."""
+
+    from omegaconf import OmegaConf
+
+    def multiply(expression: str) -> int:
+        factors = [part.strip() for part in str(expression).split("*")]
+        if not factors or any(not part.isdigit() for part in factors):
+            raise ValueError(f"Unsupported G0.5 eval expression {expression!r}.")
+        result = 1
+        for factor in factors:
+            result *= int(factor)
+        return result
+
+    if not OmegaConf.has_resolver("obs_image_steps"):
+        OmegaConf.register_new_resolver("obs_image_steps", lambda value: int(value))
+    if not OmegaConf.has_resolver("eval"):
+        OmegaConf.register_new_resolver("eval", multiply)
+    payload = dict(hydra)
+    if data_override is not None:
+        payload["data"] = data_override
+    resolved = OmegaConf.to_container(OmegaConf.create(payload)["model"]["model_arch"], resolve=True)
+    if not isinstance(resolved, dict):
+        raise TypeError("Expected model.model_arch to resolve to a mapping.")
+    return resolved
+
+
 def _profile_config(
     profile: str,
     hydra: dict[str, Any],
     embodiment: str | None = None,
     action_head: str | None = None,
+    data_override: dict[str, Any] | None = None,
 ) -> G05Config:
     model = hydra.get("model", {})
-    arch = model.get("model_arch", {})
-    data = hydra.get("data", {})
+    data = data_override if data_override is not None else hydra.get("data", {})
+    if not isinstance(data, dict):
+        raise ValueError(
+            "The checkpoint Hydra config contains an unresolved data include. "
+            "Pass --author-source so the converter can package the pinned data contract."
+        )
+    arch = _resolve_model_arch(hydra, data_override)
+    action_codec_metadata = model.get("tokenizer")
+    if not isinstance(action_codec_metadata, dict):
+        action_codec_metadata = hydra.get("tokenizer")
+    if not isinstance(action_codec_metadata, dict):
+        action_codec_metadata = {}
     fixed_embodiment = {
         "g05-libero": "libero",
-        "g05-robotwin20": "robotwin20",
+        "g05-robotwin20": "robotwin",
+        "g05-so101": "so100",
     }.get(profile)
     if fixed_embodiment is not None:
         if embodiment is not None and embodiment != fixed_embodiment:
@@ -188,7 +227,7 @@ def _profile_config(
         raise ValueError("The selected checkpoint does not enable the continuous flow action head.")
     if action_head == "actioncodec" and not discrete:
         raise ValueError("The selected checkpoint does not enable the autoregressive ActionCodec head.")
-    if profile != "g05-base" and action_head != "flow":
+    if profile not in {"g05-base", "g05-so101"} and action_head != "flow":
         raise ValueError(f"The released {profile} checkpoint supports only --action-head flow.")
     norm_name = str(processor_metadata.get("norm_default_mode", "")).lower()
     checkpoint_normalization = {
@@ -200,7 +239,13 @@ def _profile_config(
     }.get(norm_name)
     arch = dict(arch)
     arch.pop("_target_", None)
-    num_input_images = int(arch.get("num_input_images", len(G05_CAMERA_PROFILES[embodiment])))
+    n_obs_steps = int(processor_metadata.get("num_obs_steps", data.get("obs_size", 1)))
+    raw_num_input_images = arch.get("num_input_images", len(G05_CAMERA_PROFILES[embodiment]) * n_obs_steps)
+    num_input_images = (
+        int(raw_num_input_images)
+        if isinstance(raw_num_input_images, int | float)
+        else len(G05_CAMERA_PROFILES[embodiment]) * n_obs_steps
+    )
     if profile == "g05-libero":
         return G05Config(
             checkpoint_profile=profile,
@@ -212,14 +257,16 @@ def _profile_config(
             continuous_action=continuous,
             return_continuous_action=True,
             chunk_size=horizon,
+            n_action_steps=10,
             normalization_mode="q01_q99",
             normalization_clip=(-5.0, 5.0),
             use_stepwise_action_norm=True,
+            libero_gripper_binarize=True,
             camera_order=G05_CAMERA_PROFILES["libero"],
             num_input_images=num_input_images,
             author_model_config=arch,
             processor_metadata=processor_metadata,
-            action_codec_metadata=model.get("tokenizer", hydra.get("tokenizer", {})),
+            action_codec_metadata=action_codec_metadata,
             author_source_revision=G05_SOURCE_REVISION,
             source_checkpoint_revision=G05_HUB_REVISION,
             license="other",
@@ -228,7 +275,7 @@ def _profile_config(
     if profile == "g05-robotwin20":
         return G05Config(
             checkpoint_profile=profile,
-            embodiment="robotwin20",
+            embodiment="robotwin",
             action_head="flow",
             runtime_system="system1",
             predict_cot=predict_cot,
@@ -238,18 +285,57 @@ def _profile_config(
             raw_state_dim=14,
             raw_action_dim=14,
             chunk_size=horizon,
+            n_action_steps=min(8, horizon),
             normalization_mode="q01_q99",
             normalization_clip=(-5.0, 5.0),
             use_stepwise_action_norm=True,
-            camera_order=G05_CAMERA_PROFILES["robotwin20"],
+            camera_order=G05_CAMERA_PROFILES["robotwin"],
             num_input_images=num_input_images,
             author_model_config=arch,
             processor_metadata=processor_metadata,
-            action_codec_metadata=model.get("tokenizer", hydra.get("tokenizer", {})),
+            action_codec_metadata=action_codec_metadata,
             author_source_revision=G05_SOURCE_REVISION,
             source_checkpoint_revision=G05_HUB_REVISION,
             license="other",
             tags=["g05", "robotics", "non-commercial"],
+        )
+    if profile == "g05-so101":
+        shape_meta = processor_metadata.get("shape_meta") or {}
+        raw_state_dim = sum(int(item["shape"]) for item in shape_meta.get("state", []))
+        raw_action_dim = sum(int(item["shape"]) for item in shape_meta.get("action", []))
+        action_feature_names = tuple(
+            f"{item['key']}.{index}"
+            for item in shape_meta.get("action", [])
+            for index in range(int(item["shape"]))
+        )
+        return G05Config(
+            checkpoint_profile=profile,
+            embodiment="so100",
+            action_head=action_head,
+            runtime_system="system2",
+            predict_cot=predict_cot,
+            discrete_action=discrete,
+            continuous_action=continuous,
+            return_continuous_action=action_head == "flow",
+            raw_state_dim=raw_state_dim,
+            raw_action_dim=raw_action_dim,
+            chunk_size=horizon,
+            n_action_steps=min(16, horizon),
+            normalization_mode="q01_q99",
+            normalization_clip=(-5.0, 5.0),
+            use_relative_actions=True,
+            action_feature_names=action_feature_names,
+            use_stepwise_action_norm=True,
+            camera_order=G05_CAMERA_PROFILES["so100"],
+            optional_camera_keys=("observation.images.wrist_left",),
+            num_input_images=num_input_images,
+            author_model_config=arch,
+            processor_metadata=processor_metadata,
+            action_codec_metadata=action_codec_metadata,
+            author_source_revision=G05_SOURCE_REVISION,
+            source_checkpoint_revision=G05_HUB_REVISION,
+            license="other",
+            tags=["g05", "robotics", "so101", "non-commercial"],
         )
     if checkpoint_normalization != "z_score_tail_mixed":
         raise ValueError("The pinned g05-base R1 contract requires z-score-tail normalization.")
@@ -279,6 +365,7 @@ def _profile_config(
         raw_state_dim=raw_state_dim,
         raw_action_dim=raw_action_dim,
         chunk_size=horizon,
+        n_action_steps=min(16, horizon),
         normalization_mode=checkpoint_normalization,
         normalization_clip=(-5.0, 5.0),
         use_relative_actions=True,
@@ -290,7 +377,7 @@ def _profile_config(
         num_input_images=num_input_images,
         author_model_config=arch,
         processor_metadata=processor_metadata,
-        action_codec_metadata=model.get("tokenizer", hydra.get("tokenizer", {})),
+        action_codec_metadata=action_codec_metadata,
         author_source_revision=G05_SOURCE_REVISION,
         source_checkpoint_revision=G05_HUB_REVISION,
         license="other",
@@ -308,12 +395,65 @@ def _camera_sizes(
         for item in images
         if item.get("lerobot_key") and len(item.get("shape") or ()) >= 3
     }
-    if by_lerobot_key:
-        missing = [key for key in camera_order if key not in by_lerobot_key]
-        if missing:
-            raise ValueError(f"Checkpoint processor shape_meta is missing cameras {missing}.")
+    if by_lerobot_key and all(key in by_lerobot_key for key in camera_order):
         return {key: by_lerobot_key[key] for key in camera_order}
+    if len(images) == len(camera_order):
+        return {
+            key: tuple(camera_size_config.get(item.get("camera_type"), item["shape"][-2:]))
+            for key, item in zip(camera_order, images, strict=True)
+        }
     return {}
+
+
+def _write_model_card(output_dir: Path, config: G05Config) -> None:
+    system = "System 2 (native CoT + actions)" if config.runtime_system == "system2" else "System 1"
+    output_dir.joinpath("README.md").write_text(
+        f"""---
+license: other
+license_name: g05-community-license
+license_link: https://huggingface.co/OpenGalaxea/G05/blob/main/licenses/LICENSE-G0.5
+library_name: lerobot
+tags:
+- robotics
+- lerobot
+- g05
+- non-commercial
+---
+
+# LeRobot conversion of OpenGalaxea G0.5
+
+This is a mechanically converted `{config.checkpoint_profile}` checkpoint for LeRobot.
+It uses the `{config.action_head}` action head and exposes {system}.
+
+The weights, configuration, ActionCodec tokenizer, and processor assets are derivative
+materials licensed under the **G0.5 Community License Agreement
+(Non-Commercial + Limited Patent License)**, not Apache-2.0. Use is limited to the
+purposes allowed by `LICENSE-G0.5`.
+
+## Modification notice
+
+LeRobot changed the checkpoint container, tensor key prefixes, portable sidecar paths,
+and serialized preprocessing/postprocessing metadata. Model tensor values were not
+trained or numerically altered. See `conversion_report.json` for the complete key map
+and source revisions.
+
+This repository does not imply endorsement by Galaxea.
+"""
+    )
+
+
+def _resolve_data_include(hydra: dict[str, Any], author_source: Path | None) -> dict[str, Any] | None:
+    if isinstance(hydra.get("data"), dict):
+        return None
+    if author_source is None:
+        return None
+    candidate = author_source / "configs" / "data" / "robotwin.yaml"
+    if not candidate.is_file():
+        raise FileNotFoundError(f"Could not resolve checkpoint data include from {candidate}.")
+    payload = yaml.safe_load(candidate.read_text())
+    if not isinstance(payload, dict):
+        raise TypeError(f"Expected a data mapping in {candidate}.")
+    return payload
 
 
 def convert_dataset_stats(payload: dict[str, Any], config: G05Config) -> dict[str, dict[str, torch.Tensor]]:
@@ -417,6 +557,7 @@ def convert_checkpoint(
     license_file: Path,
     embodiment: str | None = None,
     action_head: str | None = None,
+    author_source: Path | None = None,
     expected_state: dict[str, torch.Tensor] | None = None,
 ) -> ConversionReport:
     hydra_path = source_dir / ".hydra" / "config.yaml"
@@ -426,8 +567,30 @@ def convert_checkpoint(
         source_dir / "checkpoints" / "model_state_dict.pt",
     )
     checkpoint_path = next((path for path in candidates if path.is_file()), None)
-    tokenizer_path = source_dir / "action_tokenizer.pt"
-    processor_path = source_dir / "hf_processor"
+    tokenizer_path = next(
+        (
+            path
+            for path in (
+                source_dir / "action_tokenizer.pt",
+                source_dir / "checkpoints" / "action_tokenizer.pt",
+                source_dir.parent / "action_tokenizer.pt",
+            )
+            if path.is_file()
+        ),
+        source_dir / "action_tokenizer.pt",
+    )
+    processor_path = next(
+        (
+            path
+            for path in (
+                source_dir / "hf_processor",
+                source_dir / "qwen3_5_2b_base_processor",
+                source_dir.parent / "qwen3_5_2b_base_processor",
+            )
+            if path.is_dir()
+        ),
+        source_dir / "hf_processor",
+    )
     required = [hydra_path, stats_path, tokenizer_path, processor_path, license_file]
     missing_files = [str(path) for path in required if not path.exists()]
     if checkpoint_path is None:
@@ -436,10 +599,18 @@ def convert_checkpoint(
         raise FileNotFoundError(f"Incomplete G0.5 checkpoint bundle: {missing_files}")
 
     hydra = yaml.safe_load(hydra_path.read_text())
-    config = _profile_config(profile, hydra, embodiment=embodiment, action_head=action_head)
+    data_override = _resolve_data_include(hydra, author_source)
+    config = _profile_config(
+        profile,
+        hydra,
+        embodiment=embodiment,
+        action_head=action_head,
+        data_override=data_override,
+    )
     camera_sizes = _camera_sizes(config.processor_metadata, config.camera_order)
     if camera_sizes:
         config.camera_sizes = camera_sizes
+    config.validate_features()
     stats_payload = json.loads(stats_path.read_text())
     lerobot_stats = convert_dataset_stats(stats_payload, config)
     converted, report = convert_state_dict(_load_checkpoint(checkpoint_path), expected_state)
@@ -454,14 +625,26 @@ def convert_checkpoint(
     shutil.copy2(stats_path, output_dir / "g05_dataset_stats.json")
     shutil.copy2(tokenizer_path, output_dir / "action_tokenizer.pt")
     shutil.copytree(processor_path, output_dir / "hf_processor", dirs_exist_ok=True)
-    shutil.copy2(hydra_path, output_dir / "author_config.yaml")
+    packaged_hydra = dict(hydra)
+    if data_override is not None:
+        packaged_hydra["data"] = data_override
+    (output_dir / "author_config.yaml").write_text(yaml.safe_dump(packaged_hydra, sort_keys=False))
     shutil.copy2(license_file, output_dir / "LICENSE-G0.5")
+    if author_source is not None:
+        for name in ("LICENSE_QWEN3_5.txt", "THIRD_PARTY_NOTICES.md"):
+            source = author_source / name
+            if source.is_file():
+                shutil.copy2(source, output_dir / name)
     (output_dir / "NOTICE").write_text(
         "G0.5 is licensed under the G0.5 Community License Agreement "
         "(Non-Commercial + Limited Patent License), not sold, Copyright © 2026 "
         "Galaxea. All rights reserved by Galaxea. “Galaxea” and related marks are "
-        "trademarks of Galaxea or its affiliates.\n"
+        "trademarks of Galaxea or its affiliates.\n\n"
+        "Modification notice: LeRobot converted the checkpoint container, tensor key "
+        "prefixes, portable sidecar paths, and processor metadata. Tensor values were "
+        "not trained or numerically altered.\n"
     )
+    _write_model_card(output_dir, config)
     (output_dir / "conversion_report.json").write_text(json.dumps(asdict(report), indent=2, sort_keys=True))
     return report
 
@@ -470,7 +653,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--profile", choices=("g05-base", "g05-libero", "g05-robotwin20"), required=True)
+    parser.add_argument(
+        "--profile",
+        choices=("g05-base", "g05-libero", "g05-robotwin20", "g05-so101"),
+        required=True,
+    )
     parser.add_argument(
         "--embodiment",
         choices=("galaxea_r1lite", "galaxea_r1pro"),
@@ -482,6 +669,11 @@ def main() -> None:
         help="Select one enabled g05-base output head; benchmark checkpoints are flow-only.",
     )
     parser.add_argument("--license-file", type=Path, required=True)
+    parser.add_argument(
+        "--author-source",
+        type=Path,
+        help="Pinned GalaxeaVLA checkout used to resolve official config includes and notices.",
+    )
     args = parser.parse_args()
     report = convert_checkpoint(
         args.source_dir,
@@ -490,6 +682,7 @@ def main() -> None:
         license_file=args.license_file,
         embodiment=args.embodiment,
         action_head=args.action_head,
+        author_source=args.author_source,
     )
     print(json.dumps(asdict(report), indent=2, sort_keys=True))
 
