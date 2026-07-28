@@ -207,8 +207,8 @@ lerobot-record \
     --dataset.num_episodes=5 \
     --dataset.single_task="Grab the black cube" \
     --dataset.streaming_encoding=true \
-    # --dataset.rgb_encoder.vcodec=auto \
     --dataset.encoder_threads=2
+    # Optionally, set --dataset.rgb_encoder.vcodec=auto to pick a specific video codec
 ```
 </hfoption>
 <hfoption id="API example">
@@ -418,7 +418,7 @@ If you want to dive deeper into this important topic, you can check out the [blo
 
 ## Visualize a dataset
 
-If you uploaded your dataset to the hub with `--control.push_to_hub=true`, you can [visualize your dataset online](https://huggingface.co/spaces/lerobot/visualize_dataset) by copy pasting your repo id given by:
+If you uploaded your dataset to the hub with `--dataset.push_to_hub=true`, you can [visualize your dataset online](https://huggingface.co/spaces/lerobot/visualize_dataset) by copy pasting your repo id given by:
 
 ```bash
 echo ${HF_USER}/so101_test

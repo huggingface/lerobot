@@ -205,9 +205,10 @@ lerobot-record \
     --teleop.type=openarm_leader \
     --teleop.port=can1 \
     --teleop.id=my_leader \
-    --repo-id=my_hf_username/my_openarm_dataset \
-    --fps=30 \
-    --num-episodes=10
+    --dataset.repo_id=my_hf_username/my_openarm_dataset \
+    --dataset.single_task="Grab the black cube" \
+    --dataset.fps=30 \
+    --dataset.num_episodes=10
 ```
 
 ## Configuration Options
