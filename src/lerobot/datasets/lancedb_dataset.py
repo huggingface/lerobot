@@ -942,7 +942,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 spans = [
                     span
                     for first, last in frame_windows
-                    for span in [self._window_byte_range(meta, first, last)]
+                    for span in [self._window_byte_range(key[0], meta, first, last)]
                     if not source.covers(*span)
                 ]
                 if spans:
@@ -970,7 +970,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
             for _, shifted_ts in file_requests:
                 first = round(shifted_ts[0] * fps)
                 last = round(shifted_ts[-1] * fps)
-                start, end = self._window_byte_range(meta, min(first, last) - reach_back, max(first, last))
+                start, end = self._window_byte_range(
+                    key[0], meta, min(first, last) - reach_back, max(first, last)
+                )
                 if not source.covers(start, end):
                     spans.append((start, end))
             spans_by_key[key] = spans
@@ -1110,14 +1112,19 @@ class LanceDBDataset(torch.utils.data.Dataset):
         while len(self._file_meta) > 2048:
             self._file_meta.popitem(last=False)
 
-    @staticmethod
-    def _window_byte_range(meta: dict, first_frame: int, last_frame: int) -> tuple[int, int]:
-        """Byte range covering frames [first, last]: preceding keyframe to next keyframe."""
+    def _window_byte_range(self, key: str, meta: dict, first_frame: int, last_frame: int) -> tuple[int, int]:
+        """Byte range covering frames [first, last]: preceding keyframe to next keyframe.
+
+        Depth ranges get 4x the readahead slack: 12-bit depth packets run
+        ~90 KB (vs ~64 KB for the standard pad), so a window ending on one
+        would otherwise leak its readahead to fallback round trips.
+        """
         kf_indices, kf_positions = meta["kf_indices"], meta["kf_positions"]
         start_idx = max(int(np.searchsorted(kf_indices, first_frame, side="right")) - 1, 0)
         end_idx = int(np.searchsorted(kf_indices, last_frame, side="right"))
         end = int(kf_positions[end_idx]) if end_idx < len(kf_positions) else meta["file_size"]
-        return int(kf_positions[start_idx]), min(end + _RANGE_SLACK, meta["file_size"])
+        slack = _RANGE_SLACK * 4 if key in self.meta.depth_keys else _RANGE_SLACK
+        return int(kf_positions[start_idx]), min(end + slack, meta["file_size"])
 
     def _build_item(self, plan: dict, columns: dict[str, np.ndarray], row_pos: dict[int, int]) -> dict:
         base = row_pos[plan["abs_idx"]]
