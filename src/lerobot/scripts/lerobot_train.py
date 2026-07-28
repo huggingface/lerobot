@@ -22,7 +22,8 @@ import dataclasses
 import logging
 import sys
 import time
-from contextlib import nullcontext
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
 
@@ -69,6 +70,20 @@ from lerobot.utils.utils import (
 )
 
 from .lerobot_eval import eval_policy_all
+
+
+@contextmanager
+def _make_eval_envs(cfg: TrainPipelineConfig) -> Iterator[dict[str, dict[int, Any]]]:
+    """Create evaluation environments for one run and always dispose of them."""
+    envs = make_env(
+        cfg.env,
+        n_envs=cfg.eval.batch_size,
+        use_async_envs=cfg.eval.use_async_envs,
+    )
+    try:
+        yield envs
+    finally:
+        close_envs(envs)
 
 
 def _dataloader_worker_kwargs(cfg: TrainPipelineConfig) -> dict[str, Any]:
@@ -276,14 +291,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # Other ranks read from the shared copy populated by the main process.
     if not is_main_process:
         dataset, eval_dataset = make_train_eval_datasets(cfg)
-
-    # Create environment used for evaluating checkpoints during training on simulation data.
-    # On real-world data, no need to create an environment as evaluations are done outside train.py,
-    # using the eval.py instead, with gym_dora environment and dora-rs.
-    eval_env = None
-    if cfg.env_eval_freq > 0 and cfg.env is not None and is_main_process:
-        logging.info("Creating env")
-        eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     if cfg.is_reward_model_training:
         if is_main_process:
@@ -692,7 +699,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             if is_main_process:
                 step_id = get_step_identifier(step, cfg.steps)
                 logging.info(f"Eval policy at step {step}")
-                with torch.no_grad(), accelerator.autocast():
+                with _make_eval_envs(cfg) as eval_env, torch.no_grad(), accelerator.autocast():
                     eval_info = eval_policy_all(
                         envs=eval_env,  # dict[suite][task_id] -> vec_env
                         policy=accelerator.unwrap_model(policy),
@@ -739,9 +746,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     if is_main_process:
         progbar.close()
-
-    if eval_env:
-        close_envs(eval_env)
 
     is_fsdp = accelerator.distributed_type == DistributedType.FSDP
     model_state_dict = accelerator.get_state_dict(policy) if is_fsdp else None
