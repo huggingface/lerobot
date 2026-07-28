@@ -177,6 +177,7 @@ def make_pre_post_processors(
             return make_groot_pre_post_processors_from_pretrained(
                 config=policy_cfg,
                 pretrained_path=pretrained_path,
+                revision=pretrained_revision,
                 dataset_stats=kwargs.get("dataset_stats"),
                 dataset_meta=kwargs.get("dataset_meta"),
                 preprocessor_overrides=kwargs.get("preprocessor_overrides"),
