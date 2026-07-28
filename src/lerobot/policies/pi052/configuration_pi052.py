@@ -25,28 +25,25 @@ from ..pi05.configuration_pi05 import PI05Config
 @PreTrainedConfig.register_subclass("pi052")
 @dataclass
 class PI052Config(PI05Config):
-    """PI0.5 configuration for recipe-driven text and action supervision."""
+    """PI0.5 with recipe-driven text and action supervision."""
 
     # Recipe / language stack ---------------------------------------------
     recipe_path: str | None = "recipes/subtask_mem.yaml"
-    """Recipe path relative to ``src/lerobot/configs/``, or ``None`` for the plain PI0.5 prompt."""
+    """Recipe path, or ``None`` for the plain PI0.5 prompt."""
 
     apply_chat_template: bool = False
-    """Whether to apply a tokenizer chat template.
-
-    PaliGemma defaults to plain recipe-rendered prefixes because it is not chat-pretrained.
-    """
+    """Apply the tokenizer's chat template."""
 
     # Balance frequent recipe text supervision against the paper's α=10 flow weight.
     text_loss_weight: float = 1.0
-    """LM-head cross-entropy weight; ``0`` disables text training."""
+    """Text cross-entropy weight; ``0`` disables it."""
 
     flow_loss_weight: float = 10.0
-    """Weight on action-expert flow matching relative to text supervision."""
+    """Flow-matching loss weight."""
 
     # Backbone training ---------------------------------------------------
     unfreeze_lm_head: bool = True
-    """Keep PaliGemma's language head trainable for hierarchical inference."""
+    """Train PaliGemma's language head."""
 
     # Optional context dropout improves tolerance to missing or stale language state.
     plan_dropout_prob: float = 0.0
@@ -55,85 +52,66 @@ class PI052Config(PI05Config):
 
     # FAST adds discrete-action CE to the text and flow objectives from paper §III.B-C.
     enable_fast_action_loss: bool = True
-    """Add FAST-tokenized action cross-entropy to text CE and flow matching."""
+    """Add FAST action-token cross-entropy."""
 
     action_tokenizer_name: str = "physical-intelligence/fast"
-    """HF identifier for the FAST action tokenizer."""
+    """FAST tokenizer identifier."""
 
     max_action_tokens: int = 256
-    """Maximum number of FAST tokens per action chunk."""
+    """Maximum FAST tokens per action chunk."""
 
     fast_skip_tokens: int = 1152
-    """Number of top-of-vocab tokens the FAST id mapping skips.
-
-    1152 skips PaliGemma's 128 ``<seg>`` and 1024 ``<loc>`` special tokens so
-    FAST codes land in plain-text ids below 256000 and never collide with the
-    ``<loc>`` targets used for VQA. openpi's pi0-FAST convention is 128 (FAST
-    occupies the ``<loc>`` range); use 128 only to stay weight-compatible with
-    checkpoints trained that way."""
+    """Reserved vocabulary IDs skipped by FAST token mapping."""
 
     fast_action_loss_weight: float = 1.0
-    """Weight on FAST action-token CE relative to continuous-flow supervision."""
+    """FAST action-token loss weight."""
 
     subtask_replan_steps: int = 0
-    """Environment steps between subtask generations during evaluation.
-
-    Non-positive values regenerate each action chunk while still refreshing the action prompt every chunk.
-    """
+    """Steps between subtask generations; non-positive replans every chunk."""
 
     joint_subtask_conditioning: bool = False
-    """Condition low-level action inference on the task plus the generated subtask.
-
-    Matches paper-style joint-sequence recipes (``recipes/subtask_joint.yaml``)
-    where one sample supervises the subtask text and conditions the action
-    losses on it: the inference prefix becomes
-    ``User: {task}, State: ...;\\nAssistant: {subtask}<eos>`` with the subtask
-    span attended causally, exactly as trained. Leave ``False`` for the blend
-    recipes, whose low-level samples use ``User: {subtask}, State: ...;``."""
+    """Condition actions on the task and generated subtask."""
 
     auto_fit_fast_tokenizer: bool = False
-    """Fit and cache a dataset-specific FAST tokenizer before training.
-
-    Disabled by default to avoid the extra dataset pass and use the universal tokenizer.
-    """
+    """Fit and cache a dataset-specific FAST tokenizer."""
 
     fast_tokenizer_cache_dir: str = "~/.cache/lerobot/fast_tokenizers"
-    """Where fitted FAST tokenizers are stored. ``~`` expands."""
+    """Cache directory for fitted FAST tokenizers."""
 
     fast_tokenizer_fit_samples: int = 1024
-    """Number of action chunks sampled when fitting FAST."""
+    """Action chunks sampled for tokenizer fitting."""
 
     fast_tokenizer_validation_samples: int = 256
-    """Held-out action chunks used to validate tokenizer reconstruction."""
+    """Held-out chunks used for tokenizer validation."""
 
     fast_tokenizer_max_reconstruction_rmse: float = 0.10
-    """Maximum normalized RMSE allowed across held-out action chunks."""
+    """Maximum validation reconstruction RMSE."""
 
     fast_tokenizer_max_dim_rmse: float = 0.20
-    """Maximum normalized RMSE allowed for any nonconstant action dimension."""
+    """Maximum per-dimension validation RMSE."""
 
     # Knowledge insulation detaches VLM K/V from action-loss gradients (paper §III.B).
     knowledge_insulation: bool = True
-    """Block action-loss gradients through VLM keys and values."""
+    """Detach VLM keys and values from action-loss gradients."""
 
     # Optional training backends. Defaults preserve the eager/SDPA path.
     use_flashrt_adarms: bool = False
-    """Use FlashRT adaptive RMSNorm kernels when available."""
+    """Use FlashRT adaptive RMSNorm kernels."""
 
     use_compiled_text_ce: bool = False
-    """Compile the materialized-logits text and FAST CE path."""
+    """Compile text and FAST cross-entropy."""
 
     use_compiled_vision: bool = False
-    """Compile the SigLIP tower for no-grad flow and inference passes."""
+    """Compile the SigLIP vision tower."""
 
     use_flex_attention: bool = False
-    """Use FlexAttention for amortized KI, with SDPA fallback where unsupported."""
+    """Use FlexAttention for knowledge insulation."""
 
     use_manual_attention: bool = False
-    """Use materialized-logits attention for explicitly profiled KI shapes."""
+    """Use manual attention for profiled KI shapes."""
 
     manual_attention_scope: str = "all"
-    """Apply manual attention to all KI queries or only action queries."""
+    """Manual-attention scope: ``all`` or ``action``."""
 
     # Scale language-head updates relative to the base optimizer schedule.
     lm_head_lr_scale: float = 1.0
@@ -149,10 +127,7 @@ class PI052Config(PI05Config):
     text_ce_z_loss_weight: float = 1e-4
 
     use_flashrt_fp8_mlp: bool = False
-    """Enable calibrated FlashRT FP8 kernels for Gemma and SigLIP MLPs.
-
-    Apply after loading with ``PI052Policy.apply_flashrt_fp8_mlp``; unavailable kernels keep BF16.
-    """
+    """Use calibrated FlashRT FP8 MLP kernels."""
 
     # Keep serialized PI052 AdamW options local because PI05Config lacks them.
     optimizer_foreach: bool | None = False
