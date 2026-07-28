@@ -413,7 +413,6 @@ def is_lance_dataset(
         )
     except Exception:
         # Unknown repo, no network, auth failure: fall back to the parquet loader,
-        # which owns the error reporting for those cases.
         return False
     return len(paths) > 0
 
@@ -483,8 +482,11 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self._storage_options = storage_options
 
         if root is not None and _is_remote_uri(root):
-            # Object-store root (s3://, gs://, ...): tables are read in place,
-            # meta/ is mirrored to a local cache directory once.
+            # Object-store root (s3://, gs://, ...): tables are read in
+            # place. meta/ is materialized ONCE from the meta table into a
+            # local cache dir, because LeRobotDatasetMetadata (upstream's
+            # class, kept unforked on purpose) reads files from a directory.
+            # The table is the transport; the files are its API.
             self._db_uri = str(root).rstrip("/")
             self.root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", self._db_uri)
             if not (self.root / "meta").exists():
