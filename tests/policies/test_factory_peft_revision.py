@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -47,18 +46,23 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch)
     peft_config_from_pretrained = MagicMock(return_value=peft_config)
     adapted_policy = torch.nn.Linear(1, 1)
     peft_model_from_pretrained = MagicMock(return_value=adapted_policy)
-    monkeypatch.setitem(
-        sys.modules,
-        "peft",
-        SimpleNamespace(
-            PeftConfig=SimpleNamespace(from_pretrained=peft_config_from_pretrained),
-            PeftModel=SimpleNamespace(from_pretrained=peft_model_from_pretrained),
-        ),
+    require_package = MagicMock()
+    monkeypatch.setattr(policy_factory, "require_package", require_package)
+    monkeypatch.setattr(
+        policy_factory,
+        "PeftConfig",
+        SimpleNamespace(from_pretrained=peft_config_from_pretrained),
+    )
+    monkeypatch.setattr(
+        policy_factory,
+        "PeftModel",
+        SimpleNamespace(from_pretrained=peft_model_from_pretrained),
     )
 
     policy = policy_factory.make_policy(cfg, ds_meta=dataset_meta)
 
     assert policy is adapted_policy
+    require_package.assert_called_once_with("peft", extra="peft")
     peft_config_from_pretrained.assert_called_once_with(
         "user/adapter",
         revision="adapter-sha",
