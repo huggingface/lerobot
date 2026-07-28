@@ -2879,6 +2879,7 @@ all = [
     { name = "motorbridge-smart-servo" },
     { name = "mypy" },
     { name = "num2words" },
+    { name = "omegaconf" },
     { name = "pandas" },
     { name = "peft" },
     { name = "placo" },
@@ -3019,6 +3020,9 @@ feetech = [
     { name = "deepdiff" },
     { name = "feetech-servo-sdk" },
     { name = "pyserial" },
+]
+g05 = [
+    { name = "omegaconf" },
 ]
 gamepad = [
     { name = "hidapi" },
@@ -3349,6 +3353,7 @@ requires-dist = [
     { name = "lerobot", extras = ["feetech"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["feetech"], marker = "extra == 'hopejr'" },
     { name = "lerobot", extras = ["feetech"], marker = "extra == 'lekiwi'" },
+    { name = "lerobot", extras = ["g05"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["gamepad"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["groot"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["grpcio-dep"], marker = "extra == 'async'" },
@@ -3451,6 +3456,7 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.19.1" },
     { name = "num2words", marker = "extra == 'smolvla'", specifier = ">=0.5.14,<0.6.0" },
     { name = "numpy", specifier = ">=2.0.0,<2.3.0" },
+    { name = "omegaconf", marker = "extra == 'g05'", specifier = ">=2.3.0,<3.0.0" },
     { name = "onnx", marker = "extra == 'unitree-g1'", specifier = ">=1.16.0,<2.0.0" },
     { name = "onnxruntime", marker = "extra == 'unitree-g1'", specifier = ">=1.16.0,<2.0.0" },
     { name = "openai", marker = "extra == 'annotations'", specifier = ">=1.40,<2.0" },

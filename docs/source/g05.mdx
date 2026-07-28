@@ -1,0 +1,110 @@
+# OpenGalaxea G0.5
+
+G0.5 is a Qwen3.5-2B vision-language-action model that can generate embodied
+reasoning and actions in one stream. LeRobot exposes the action phase as System 1
+and the optional native chain-of-thought phase as System 2. They are not separate
+models: the runtime obtains both from one inference call and the action stays
+conditioned on the same post-reasoning KV state.
+
+> [!WARNING]
+> G0.5 code and checkpoints use the
+> [G0.5 Community License](https://huggingface.co/OpenGalaxea/G05/blob/main/licenses/LICENSE-G0.5),
+> including non-commercial restrictions. LeRobot does not vendor the author model,
+> download gated files, or imply that Apache-2.0 applies to those materials. Accept
+> the license yourself and use a local checkpoint.
+
+## Supported checkpoint contracts
+
+| Profile          | Released action path                       | Raw → policy layout                          | Cameras                        |              Chunk | Normalization            |
+| ---------------- | ------------------------------------------ | -------------------------------------------- | ------------------------------ | -----------------: | ------------------------ |
+| `g05-base`       | Explicitly selected AR ActionCodec or flow | selected named embodiment                    | selected named camera contract | checkpoint-defined | resolved checkpoint mode |
+| `g05-libero`     | Continuous flow                            | right EEF 6 + gripper 1 → 20D grouped layout | exterior, right wrist          |                 32 | stepwise q01/q99         |
+| `g05-robotwin20` | Continuous flow                            | two arms 6+gripper → 20D grouped layout      | high, left wrist, right wrist  |                 32 | stepwise q01/q99         |
+
+The converter stores the resolved Hydra model, processor, ActionCodec metadata,
+statistics, exact prompt template, source revision, and license with the converted
+checkpoint. Loading rejects a different head, horizon, processor mode, or
+normalization contract.
+
+The named `atomic_4` adapter is intentionally separate from LIBERO. Its raw state
+is EEF relative xyz+quaternion, base xyz+quaternion, and two gripper positions
+(16D). Its action is EEF delta xyz+rpy, gripper, four mobile-base commands, and a
+control-mode flag (12D). This needs G0.5's 27D whole-body layout; a released 20D
+LIBERO checkpoint is rejected.
+
+## Install
+
+Install LeRobot's small config dependency:
+
+```bash
+uv sync --extra g05 --extra test
+```
+
+Then clone the audited author source and install it only after reviewing and
+accepting its license. The author package currently declares Python 3.10 while
+LeRobot uses Python 3.12, so a compatible deployment environment or an upstream
+Python-support update is required for real-model execution.
+
+```bash
+git clone https://github.com/OpenGalaxea/GalaxeaVLA.git
+git -C GalaxeaVLA checkout b34966f387dd2ae0f003143b81494afd9213e613
+```
+
+## Convert a local checkpoint
+
+The command never contacts the Hub. Point it at a complete local bundle containing
+the checkpoint Hydra config, weights, `dataset_stats.json`,
+`action_tokenizer.pt`, and `hf_processor/`.
+
+```bash
+uv run python -m lerobot.policies.g05.convert_g05_checkpoint \
+  --source-dir /path/to/checkpoints/g05-libero \
+  --output-dir outputs/g05-libero-lerobot \
+  --profile g05-libero \
+  --license-file /path/to/GalaxeaVLA/LICENSE-G0.5
+```
+
+Use `--profile g05-base` for the base checkpoint or `--profile
+g05-robotwin20` for RoboTwin. `conversion_report.json` records every mapped,
+missing, unexpected, duplicate, and shape-mismatched tensor; conversion fails
+when strict required-state validation fails.
+
+## Interactive System 1 and System 2 runtime
+
+System 1 executes the selected ActionCodec or flow chunk directly:
+
+```bash
+lerobot-rollout \
+  --policy.path=outputs/g05-base-lerobot \
+  --language --direct_subtask \
+  --task="pick up the cup" \
+  --mode=action
+```
+
+System 2 is available only when the converted checkpoint metadata has
+`predict_cot=true`. The adapter forwards the operator task byte-for-byte and
+returns CoT telemetry and the matching action chunk atomically. It never samples
+`task_aug` text, launches a second planner, or feeds generated CoT back as a
+replacement task.
+
+```bash
+lerobot-rollout \
+  --policy.path=outputs/g05-system2-lerobot \
+  --language \
+  --task="clear the table" \
+  --mode=action
+```
+
+## Validation status
+
+CPU unit tests cover factory loading, config incompatibilities, prompt pass-through,
+LIBERO and `atomic_4` mappings, padding masks, inverse action projection, strict
+conversion diagnostics, a finite forward/backward/update, and save/reload parity.
+Numerical author-oracle parity and 50-episode LIBERO/RoboTwin evaluation require
+licensed checkpoint access and suitable CUDA hardware; no benchmark number is
+claimed by this integration until those gates run.
+
+```bash
+uv run pytest tests/policies/g05 tests/runtime/test_g05_adapter.py -q
+uv run ruff check src/lerobot/policies/g05 tests/policies/g05
+```

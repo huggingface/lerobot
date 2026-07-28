@@ -82,7 +82,7 @@ def test_system2_surfaces_same_pass_cot_and_action():
         state.language_context["cot_text"]
         == "BBox: cup [1,2,3,4]|\nSubtask: grasp the cup|Updated Memory: cup located"
     )
-    assert state.language_context["subtask"] == "grasp the cup"
+    assert state.extra["g05_subtask"] == "grasp the cup"
     assert state.language_context["memory"] == "cup located"
 
 
@@ -100,7 +100,7 @@ def test_system2_accepts_batch_safe_tuple_metadata():
     chunk = G05PolicyAdapter(ReasoningPolicy()).select_action({}, state)
 
     assert chunk == "chunk"
-    assert state.language_context["subtask"] == "move left"
+    assert state.extra["g05_subtask"] == "move left"
     assert state.language_context["plan"] == "first move left"
 
 
@@ -126,7 +126,7 @@ def test_system2_reasoning_does_not_invalidate_same_pass_action_chunk():
 
     assert executed == ["a0"]
     assert list(runtime.state.action_queue) == ["a1"]
-    assert runtime.state.language_context["subtask"] == "pick cup"
+    assert runtime.state.extra["g05_subtask"] == "pick cup"
 
 
 def test_system2_rejects_checkpoint_without_predict_cot():

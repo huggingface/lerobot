@@ -71,6 +71,8 @@
     title: EO-1
   - local: lingbot_va
     title: LingBot-VA
+  - local: g05
+    title: OpenGalaxea G0.5
   - local: fastwam
     title: FastWAM
   - local: evo1

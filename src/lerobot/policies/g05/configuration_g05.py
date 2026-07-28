@@ -1,0 +1,282 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Configuration for the OpenGalaxea G0.5 policy adapter."""
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.optim.optimizers import AdamWConfig
+from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
+from lerobot.utils.constants import ACTION, OBS_STATE
+
+G05_SOURCE_REVISION = "b34966f387dd2ae0f003143b81494afd9213e613"
+G05_HUB_REVISION = "e312be81e90c56a55bcb26b57429bd39a335b449"
+
+G05_CAMERA_PROFILES: dict[str, tuple[str, ...]] = {
+    "libero": (
+        "observation.images.image",
+        "observation.images.wrist_image",
+    ),
+    "robotwin20": (
+        "observation.images.cam_high",
+        "observation.images.cam_left_wrist",
+        "observation.images.cam_right_wrist",
+    ),
+    "atomic_4": (
+        "observation.images.robot0_agentview_left",
+        "observation.images.robot0_eye_in_hand",
+        "observation.images.robot0_agentview_right",
+    ),
+}
+
+G05_CAMERA_SIZE_PROFILES: dict[str, dict[str, tuple[int, int]]] = {
+    "libero": dict.fromkeys(G05_CAMERA_PROFILES["libero"], (224, 224)),
+    "robotwin20": dict.fromkeys(G05_CAMERA_PROFILES["robotwin20"], (256, 256)),
+    "atomic_4": dict.fromkeys(G05_CAMERA_PROFILES["atomic_4"], (256, 256)),
+}
+
+
+def make_g05_prompt_template(num_images: int, *, predict_cot: bool, flow_only: bool) -> str:
+    """Reproduce the selected author SamplesBuilder template exactly."""
+
+    images = "".join(f"<image{index}_image_!>" for index in range(num_images))
+    prefix = (
+        f"<chat_user_prefix>{images}<bos>"
+        "Embodiment: <embodiment_text_!>; Task: <command_text_!_200> "
+        "State: <proprio_proprio_!>;"
+        "<chat_user_suffix><chat_assistant_prefix>"
+    )
+    if predict_cot:
+        action = "Action: <EOV><eos>" if flow_only else "Action: <EOV><action_action>|<eos>"
+        return f"{prefix}<prompt_text_!>\n<EOC><atomic_task_text>|{action}"
+    if flow_only:
+        # BaseActionSamplesBuilderFMOnly intentionally has no chat wrapper.
+        return (
+            f"{images}<bos>Embodiment: <embodiment_text_!>; "
+            "Task: <command_text_!_200> State: <proprio_proprio_!>;\n"
+            "Action: <EOV><EOC><eos>"
+        )
+    return f"{prefix}Action: <EOV><EOC><action_action>|<eos>"
+
+
+# Raw dimensions are inserted in these exact policy slots. The G0.5 shared layout is:
+# left_control[9] | left_gripper[1] | right_control[9] | right_gripper[1] | lower_body[7].
+# LIBERO uses only the right EEF delta and right gripper. atomic_4 is a single-arm mobile
+# manipulator and therefore has a deliberately separate state/action map.
+G05_EMBODIMENT_MAPPINGS: dict[str, dict[str, tuple[int, ...]]] = {
+    "libero": {
+        "state": (10, 11, 12, 13, 14, 15, 19),
+        "action": (10, 11, 12, 13, 14, 15, 19),
+    },
+    "robotwin20": {
+        "state": (0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 15, 19),
+        "action": (0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 15, 19),
+    },
+    "atomic_4": {
+        # EEF relative xyz+quat -> right_control[0:7], base xyz+quat -> lower_body[0:7],
+        # the two parallel-jaw qpos values -> the two one-dimensional gripper slots.
+        "state": (10, 11, 12, 13, 14, 15, 16, 20, 21, 22, 23, 24, 25, 26, 9, 19),
+        # EEF delta xyz+rpy -> right_control[0:6], gripper -> right_gripper,
+        # base motion[4] -> lower_body[0:4], control mode -> lower_body[4].
+        "action": (10, 11, 12, 13, 14, 15, 19, 20, 21, 22, 23, 24),
+    },
+}
+
+_PROFILE_DEFAULTS = {
+    "g05-base": ("checkpoint", 20, 16),
+    "g05-libero": ("q01_q99", 20, 32),
+    "g05-robotwin20": ("q01_q99", 20, 32),
+}
+
+
+@PreTrainedConfig.register_subclass("g05")
+@dataclass
+class G05Config(PreTrainedConfig):
+    """LeRobot-side, checkpoint-auditable configuration for G0.5.
+
+    ``author_model_config`` is populated by the conversion script from the selected
+    checkpoint's Hydra config. It is intentionally checkpoint state rather than a
+    collection of guessed LeRobot defaults.
+    """
+
+    checkpoint_profile: str = "g05-base"
+    embodiment: str = "libero"
+    action_head: str = "actioncodec"  # actioncodec (AR) or flow (continuous)
+    runtime_system: str = "system1"  # system1 actions, or unified system2 CoT+actions
+    predict_cot: bool = False
+    discrete_action: bool = True
+    continuous_action: bool = False
+    return_continuous_action: bool = False
+
+    policy_action_dim: int = 20
+    policy_state_dim: int = 20
+    raw_action_dim: int = 7
+    raw_state_dim: int = 7
+    chunk_size: int = 16
+    normalization_mode: str = "checkpoint"
+    use_stepwise_action_norm: bool = False
+    gripper_indices: tuple[int, ...] = (6,)
+    camera_order: tuple[str, ...] = field(default_factory=lambda: G05_CAMERA_PROFILES["libero"])
+    camera_sizes: dict[str, tuple[int, int]] = field(default_factory=dict)
+    image_mean: tuple[float, float, float] = (0.5, 0.5, 0.5)
+    image_std: tuple[float, float, float] = (0.5, 0.5, 0.5)
+    num_input_images: int = 0
+
+    author_source_revision: str = G05_SOURCE_REVISION
+    source_checkpoint_revision: str = G05_HUB_REVISION
+    author_model_config: dict[str, Any] = field(default_factory=dict)
+    processor_metadata: dict[str, Any] = field(default_factory=dict)
+    action_codec_metadata: dict[str, Any] = field(default_factory=dict)
+    prompt_template: str = ""
+
+    normalization_mapping: dict[str, NormalizationMode] = field(
+        default_factory=lambda: {
+            "VISUAL": NormalizationMode.IDENTITY,
+            "STATE": NormalizationMode.IDENTITY,
+            "ACTION": NormalizationMode.IDENTITY,
+        }
+    )
+    optimizer_lr: float = 8e-5
+    optimizer_betas: tuple[float, float] = (0.9, 0.95)
+    optimizer_weight_decay: float = 0.01
+    optimizer_grad_clip_norm: float = 1.0
+    scheduler_warmup_steps: int = 500
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.camera_order = tuple(self.camera_order)
+        self.camera_sizes = {key: tuple(size) for key, size in (self.camera_sizes or {}).items()}
+        if not self.camera_sizes and self.embodiment in G05_CAMERA_SIZE_PROFILES:
+            self.camera_sizes = G05_CAMERA_SIZE_PROFILES[self.embodiment].copy()
+        if self.num_input_images == 0:
+            self.num_input_images = len(self.camera_order) * self.n_obs_steps
+        if not self.prompt_template:
+            self.prompt_template = make_g05_prompt_template(
+                self.num_input_images,
+                predict_cot=self.predict_cot,
+                flow_only=self.continuous_action and not self.discrete_action,
+            )
+        if self.checkpoint_profile not in _PROFILE_DEFAULTS and self.checkpoint_profile != "custom":
+            raise ValueError(
+                f"Unknown G0.5 checkpoint_profile={self.checkpoint_profile!r}; "
+                f"expected one of {sorted(_PROFILE_DEFAULTS)} or 'custom'."
+            )
+        if self.action_head not in {"actioncodec", "flow"}:
+            raise ValueError("action_head must be 'actioncodec' or 'flow'.")
+        if self.runtime_system not in {"system1", "system2"}:
+            raise ValueError("runtime_system must be 'system1' or 'system2'.")
+        if self.runtime_system == "system2" and not self.predict_cot:
+            raise ValueError("G0.5 System 2 requires predict_cot=True in the converted checkpoint.")
+        if self.action_head == "actioncodec" and not self.discrete_action:
+            raise ValueError("The ActionCodec runtime requires discrete_action=True.")
+        if self.action_head == "flow" and not self.continuous_action:
+            raise ValueError("The flow runtime requires continuous_action=True.")
+        if self.action_head == "flow" and not self.return_continuous_action:
+            raise ValueError("The flow runtime requires return_continuous_action=True.")
+        if not (self.discrete_action or self.continuous_action):
+            raise ValueError("At least one G0.5 action path must be enabled.")
+        if self.embodiment not in G05_EMBODIMENT_MAPPINGS:
+            raise ValueError(f"No named G0.5 embodiment mapping for {self.embodiment!r}.")
+        if self.embodiment == "atomic_4":
+            if self.policy_action_dim < 27 or self.policy_state_dim < 27:
+                raise ValueError(
+                    "atomic_4 includes mobile-base/control-mode semantics and requires the 27D "
+                    "G0.5 shared layout; a 20D LIBERO checkpoint is incompatible."
+                )
+            if self.raw_action_dim != 12 or self.raw_state_dim != 16:
+                raise ValueError("atomic_4 requires raw_state_dim=16 and raw_action_dim=12.")
+        mapping = G05_EMBODIMENT_MAPPINGS.get(self.embodiment)
+        if mapping is not None:
+            if len(mapping["state"]) != self.raw_state_dim:
+                raise ValueError("raw_state_dim does not match the selected embodiment mapping.")
+            if len(mapping["action"]) != self.raw_action_dim:
+                raise ValueError("raw_action_dim does not match the selected embodiment mapping.")
+            if max(mapping["state"]) >= self.policy_state_dim:
+                raise ValueError("Selected state mapping exceeds policy_state_dim.")
+            if max(mapping["action"]) >= self.policy_action_dim:
+                raise ValueError("Selected action mapping exceeds policy_action_dim.")
+        if self.normalization_mode not in {"checkpoint", "q01_q99", "z_score", "identity"}:
+            raise ValueError("normalization_mode must be checkpoint, q01_q99, z_score, or identity.")
+        if self.checkpoint_profile == "g05-libero":
+            if self.chunk_size != 32 or self.normalization_mode != "q01_q99":
+                raise ValueError("g05-libero requires a 32-step chunk and q01/q99 normalization.")
+            if self.action_head != "flow":
+                raise ValueError("The released g05-libero config enables only the continuous flow path.")
+        expected_cameras = G05_CAMERA_PROFILES.get(self.embodiment)
+        if expected_cameras is not None and tuple(self.camera_order) != expected_cameras:
+            raise ValueError(
+                f"{self.embodiment} camera_order must be {expected_cameras}, got {self.camera_order}."
+            )
+        if set(self.camera_sizes) != set(self.camera_order):
+            raise ValueError("camera_sizes must contain exactly the ordered checkpoint camera keys.")
+        if self.num_input_images != len(self.camera_order) * self.n_obs_steps:
+            raise ValueError(
+                "num_input_images must equal len(camera_order) * n_obs_steps for the selected checkpoint."
+            )
+        if any(len(size) != 2 or min(size) <= 0 for size in self.camera_sizes.values()):
+            raise ValueError("Every G0.5 camera size must be a positive (height, width) pair.")
+        if len(self.image_mean) != 3 or len(self.image_std) != 3 or min(self.image_std) <= 0:
+            raise ValueError("G0.5 image_mean/image_std must be three channels with positive std.")
+
+    def validate_features(self) -> None:
+        if self.input_features is None:
+            self.input_features = {}
+        if self.output_features is None:
+            self.output_features = {}
+        state = self.input_features.get(OBS_STATE)
+        if state is not None and state.shape[-1] != self.raw_state_dim:
+            raise ValueError(
+                f"G0.5 {self.embodiment} expects {self.raw_state_dim} raw state dimensions, "
+                f"got {state.shape[-1]}."
+            )
+        action = self.output_features.get(ACTION)
+        if action is not None and action.shape[-1] != self.raw_action_dim:
+            raise ValueError(
+                f"G0.5 {self.embodiment} expects {self.raw_action_dim} raw action dimensions, "
+                f"got {action.shape[-1]}."
+            )
+        if OBS_STATE not in self.input_features:
+            self.input_features[OBS_STATE] = PolicyFeature(
+                type=FeatureType.STATE, shape=(self.raw_state_dim,)
+            )
+        if ACTION not in self.output_features:
+            self.output_features[ACTION] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(self.raw_action_dim,)
+            )
+
+    def get_optimizer_preset(self) -> AdamWConfig:
+        return AdamWConfig(
+            lr=self.optimizer_lr,
+            betas=self.optimizer_betas,
+            weight_decay=self.optimizer_weight_decay,
+            grad_clip_norm=self.optimizer_grad_clip_norm,
+        )
+
+    def get_scheduler_preset(self) -> LRSchedulerConfig | None:
+        return ConstantWithWarmupSchedulerConfig(num_warmup_steps=self.scheduler_warmup_steps)
+
+    @property
+    def observation_delta_indices(self) -> list[int]:
+        return list(range(-(self.n_obs_steps - 1), 1))
+
+    @property
+    def action_delta_indices(self) -> list[int]:
+        return list(range(self.chunk_size))
+
+    @property
+    def reward_delta_indices(self) -> None:
+        return None

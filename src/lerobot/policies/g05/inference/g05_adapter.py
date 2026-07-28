@@ -81,6 +81,8 @@ class G05PolicyAdapter(BaseLanguageAdapter):
         if raw_mode is None:
             raw_mode = _read_config(config, "runtime_system_mode")
         if raw_mode is None:
+            raw_mode = _read_config(config, "runtime_system")
+        if raw_mode is None:
             raw_mode = "auto"
         normalized = _MODE_ALIASES.get(str(raw_mode).strip().lower())
         if normalized is None:
@@ -166,9 +168,12 @@ class G05PolicyAdapter(BaseLanguageAdapter):
         explicit_subtask = _as_text(metadata.get("subtask"))
         subtask = explicit_subtask or _extract_labeled_text(_SUBTASK_RE, text)
         if subtask:
-            previous = state.language_context.get("subtask")
-            if _set_generated_context(state, "subtask", subtask, label="subtask") and previous:
-                state.extra["prior_subtask"] = previous
+            # PR #4183's rollout observation provider treats language_context["subtask"]
+            # as the next policy command. G0.5 CoT must not replace the operator's task:
+            # it is telemetry from the same unified stream, not a separately supervised
+            # low-level prompt. Keep the parsed value visible without changing prompt routing.
+            state.extra["g05_subtask"] = subtask
+            state.log(f"  subtask: {subtask}")
 
         explicit_memory = _as_text(metadata.get("memory"))
         memory = explicit_memory or _extract_labeled_text(_MEMORY_RE, text)
