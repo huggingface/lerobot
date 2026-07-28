@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "status": "aligned_gate12_interface_pass_stop_before_frozen120",
+  "research_status": "diagnostic_only_not_real_robot_evaluation_not_a_paper_result",
+  "fixed_policy": {
+    "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_act_v1/full_100k/checkpoints/100000/pretrained_model",
+    "model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb",
+    "checkpoint_changed": false,
+    "training_or_finetuning_performed": false
+  },
+  "remote": {
+    "root": "/home/ubuntu24/SO101QuestRemote",
+    "deployed_commit": "1dfac5c108e830a55b114b1a75bd00bdb5d877b7",
+    "adapter_sha256": "8cd784ee8f36c3b5b36204ce4fe1b2c017af715dab120514113d33b00d7366ff",
+    "ready_pose_module_sha256": "627908e2cc7aecab4c95a1bed09f461685be56d07ac194e9e7ef38cd3e90e533",
+    "active_reset_profile": "picklift_real24_aligned_reset_v2",
+    "remote_modified_by_act_task": false
+  },
+  "ready_pose": {
+    "profile_id": "task1_real24_ready_pose_reset_v1",
+    "source_dataset_tree_sha256": "251cbdc079b304425ccdfbd7a08f15d34858ea0dd8c19345544b8da9f3adb9f2",
+    "source_episode_index": 13,
+    "source_frame_index": 0,
+    "state_sha256": "ecb871efad5692e192ac0f690bc0e959fef371bbb8338a31b23ca697741e3b56",
+    "absolute_tolerance_dataset_units": 0.00001,
+    "explicitly_passed_to_every_adapter_reset": true
+  },
+  "plan": {
+    "phase": "gate12",
+    "plan_sha256": "c26bf3caa788708cf8ccb332e2f84771d271b05795634a9b1022ed97d06b8c86",
+    "seeds": [9000, 9001, 9002, 9003, 9004, 9005, 9006, 9007, 9008, 9009, 9010, 9011],
+    "cells": ["r1c1", "r1c2", "r1c3", "r1c4", "r2c1", "r2c2", "r2c3", "r2c4", "r3c1", "r3c2", "r3c3", "r3c4"]
+  },
+  "source": {
+    "aligned_runner_commit": "8c1f7d5f3c4f8246de4220621b850970f82899a1",
+    "bounded_sim_overshoot_fix_and_passing_run_commit": "149df1ef98f74f95900d7cd127e09f71bf62d644",
+    "runner_sha256": "5235dad01032994f13de9b2178c5faa2dc345e6c1b10b79ea13ea90d90f3d049",
+    "experiment_manifest_sha256": "32284431c2be89a6c9cb4cb5fe82a1894e254825a2454f8983941951dfd6e680",
+    "tests_passed": 14,
+    "pushed": false
+  },
+  "failed_aligned_gate": {
+    "run_id": "gate12_aligned_real24_act100k_remote_1dfac5_20260729_v1",
+    "source_commit": "8c1f7d5f3c4f8246de4220621b850970f82899a1",
+    "interface_gate_pass": false,
+    "interface_valid_episodes": 11,
+    "ready_pose_tick0_valid_episodes": 12,
+    "object_spawn_plan_valid_episodes": 12,
+    "failed_cell": "r3c1",
+    "failed_seed": 9008,
+    "failure": "simulator shoulder_lift endpoint tracking overshoot exceeded the prior sim-only 0.01 state projection tolerance",
+    "replayed_state_at_env_step_5": -98.9798355102539,
+    "frozen_calibration_lower_bound": -98.94505494505495,
+    "below_lower_by": 0.03478056519895745,
+    "evidence_dir": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_act_v1_real_to_remote_sim_v1/gate12_aligned_real24_act100k_remote_1dfac5_20260729_v1",
+    "hashes": {
+      "episodes.jsonl": "84108bc2483563336e4bab3bce4b58ebfbc95d792b1a4aa9bd6e12309aa2be42",
+      "ticks.jsonl": "dccf2e9c113e24bb5890df3b0d824e12968e2bbeaf12f6ce1ff6795447e5621b",
+      "run_manifest.json": "6c96333f693b6024c1faa54a2eec7942a97d207f2d27023b7ecb2c2f4b857412",
+      "summary.json": "75a5c2f517ab596b6171278f7792b6f00ad7005acd758dd99552f1a1b6ee9674"
+    }
+  },
+  "sim_only_bounded_fix": {
+    "state_projection_tolerance_dataset_units": 0.05,
+    "measured_required_delta": 0.03478056519895745,
+    "larger_violation_remains_fail_closed": true,
+    "ready_pose_tick0_tolerance_unchanged": 0.00001,
+    "real_deployment_strict_state_check_unchanged": true,
+    "output_calibration_clamp_unchanged": true,
+    "max_relative_target": 5.0
+  },
+  "passing_aligned_gate": {
+    "run_id": "gate12_aligned_real24_act100k_remote_1dfac5_20260729_v2",
+    "source_commit": "149df1ef98f74f95900d7cd127e09f71bf62d644",
+    "interface_gate_pass": true,
+    "episodes": 12,
+    "interface_valid_episodes": 12,
+    "ready_pose_tick0_valid_episodes": 12,
+    "object_spawn_plan_valid_episodes": 12,
+    "maximum_absolute_ready_pose_tick0_delta": 0.000002852781832984874,
+    "policy_ticks": 7200,
+    "environment_steps": 18000,
+    "raw_action_count": 7200,
+    "sent_action_count": 7200,
+    "calibration_clipped_action_count": 3,
+    "calibration_clipped_joint_value_count": 3,
+    "relative_clipped_action_count": 237,
+    "relative_clipped_joint_value_count": 321,
+    "sim_state_projected_ticks": 1,
+    "maximum_absolute_sim_state_projection_delta": 0.03478056564927101,
+    "all_observation_raw_sent_environment_actions_finite": true,
+    "legal_timeout_episodes": 12,
+    "successes": 0,
+    "failure_types": {
+      "policy_task_failure": 12
+    },
+    "runtime_seconds": 152.50764083399554,
+    "evidence_dir": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_act_v1_real_to_remote_sim_v1/gate12_aligned_real24_act100k_remote_1dfac5_20260729_v2",
+    "hashes": {
+      "episodes.jsonl": "f824b4753913202dcb97ba2c1a64b66cdf8897d287f622fe6a55c0a7e8909d30",
+      "ticks.jsonl": "60e08bb4f1f8586a9fd88f795f4deb830b7c4096ca5fe582c1aaa562fbb17c28",
+      "run_manifest.json": "5f6dd2a34c9b7fff7e5dd2f2018fedddcdf7ab1d9bfc842c4cee6337877ab318",
+      "summary.json": "de05a2d865bd014fe0bb2acca093933cb0d4a6c44e5387a9254f9b6d60305c22"
+    }
+  },
+  "interpretation": {
+    "success_not_required_for_interface_gate": true,
+    "success_rate_is_diagnostic_only": true,
+    "real_robot_evaluation_replaced": false,
+    "paper_effect_claim": false
+  },
+  "scope": {
+    "hardware_accessed": false,
+    "serial_accessed": false,
+    "hardware_camera_accessed": false,
+    "robot_or_torque_enabled": false,
+    "twelve_volts_requested": false,
+    "gateway_quest_or_real_started": false,
+    "lerobot_dataset_written": false,
+    "frozen120_started": false,
+    "next_action": "await_explicit_research_control_frozen120_go"
+  }
+}
