@@ -427,6 +427,8 @@ def capture_episode(
     backend: Backend,
     dataset: LeRobotDataset,
     ui=None,
+    *,
+    review_with_ui: bool = True,
 ) -> EpisodeOutcome:
     dropped = 0
     sync_anomalies = 0
@@ -537,7 +539,7 @@ def capture_episode(
             raise RuntimeError("control loop did not stop cleanly")
         end = utc_now()
         print("ACTION_WINDOW_COMPLETE", flush=True)
-        if ui is not None:
+        if ui is not None and review_with_ui:
             actual_result = ui.review_result(front)
             actual_success = actual_result == "success"
     finally:

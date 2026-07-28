@@ -60,6 +60,7 @@ def render_dashboard(
         "STOPPED": (150, 150, 150),
         "ERROR": (30, 30, 230),
         "READY": (0, 200, 255),
+        "RESET": (60, 210, 255),
         "CONNECTING": (255, 180, 30),
         "ACCEPTED": (60, 210, 80),
         "NOT SAVED": (30, 140, 230),
@@ -305,6 +306,34 @@ class OperatorUI:
                 return True
             if command == "quit":
                 return False
+            time.sleep(0.01)
+
+    def wait_for_next_start(self, frame_provider, message: str) -> bool:
+        while True:
+            command = self.show(
+                frame_provider(),
+                status="RESET",
+                message=f"NO DATA RECORDING\n{message}",
+                button_labels=("START NEXT", "", "FINISH / QUIT"),
+                buttons_enabled=(True, False, True),
+            )
+            if command == "start":
+                return True
+            if command == "quit":
+                return False
+            time.sleep(0.01)
+
+    def wait_for_finish(self, frame_provider) -> None:
+        while True:
+            command = self.show(
+                frame_provider(),
+                status="RESET",
+                message=("SESSION TARGET COMPLETE\nNO DATA RECORDING\nLower/release safely, then FINISH"),
+                button_labels=("FINISH", "", ""),
+                buttons_enabled=(True, False, False),
+            )
+            if command == "start":
+                return
             time.sleep(0.01)
 
     def review_result(self, frame_rgb: np.ndarray) -> str:

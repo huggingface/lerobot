@@ -96,13 +96,17 @@ For continuous 24/60-episode collection, copy and complete
 ./examples/picklift_v3/run_batch_ui.sh /path/to/completed-batch-config.json
 ```
 
-The same window stays open across attempts. After each result it disables
-Follower torque, then shows the next `READY / CONNECT` step. SUCCESS advances
+The same window stays open across attempts. In
+`picklift_continuous_batch_v2_live_reset`, END stops dataset writes but starts
+a clearly labelled `RESET / NO DATA RECORDING` phase in which Follower keeps
+following Leader. The operator can lower/release the cube and move directly to
+the next ready pose without disconnecting torque or manually realigning.
+`START NEXT` ends reset mode and begins the next episode. SUCCESS advances
 through the 12 cells in balanced order; FAILURE or DISCARD retries the same
 spawn. Only confirmed SUCCESS attempts enter the deterministic v3 training
 dataset. Every attempt still receives a provenance record under
 `provenance/attempts/`; successful dataset episodes are mirrored under
-`provenance/episodes/`.
+`provenance/episodes/`. Torque is disabled on FINISH, operator quit, or error.
 
 Every accepted click immediately changes the selected button to `...`, draws
 a white pressed border, displays `ACCEPTED`, and locks all buttons while the

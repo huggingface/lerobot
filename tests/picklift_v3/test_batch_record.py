@@ -14,6 +14,8 @@ class FakeBatchUI:
         self.results = iter(results)
         self.opened = False
         self.closed = False
+        self.next_start_count = 0
+        self.finish_count = 0
 
     def open(self):
         self.opened = True
@@ -30,6 +32,16 @@ class FakeBatchUI:
     def wait_for_start(self, _frame_provider, message=""):
         assert "picklift_spawn_v5" in message
 
+    def wait_for_next_start(self, frame_provider, message):
+        assert frame_provider().shape == (480, 640, 3)
+        assert "Follower LIVE" in message
+        self.next_start_count += 1
+        return True
+
+    def wait_for_finish(self, frame_provider):
+        assert frame_provider().shape == (480, 640, 3)
+        self.finish_count += 1
+
     def show(self, _frame, **_kwargs):
         return "stop"
 
@@ -41,6 +53,19 @@ class FakeBatchUI:
 
     def show_attempt_complete(self, _frame, **_kwargs):
         pass
+
+
+class CountingSyntheticBackend(SyntheticBackend):
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self.connect_calls = 0
+        self.close_calls = 0
+
+    def connect(self):
+        self.connect_calls += 1
+
+    def close(self):
+        self.close_calls += 1
 
 
 def batch_config(tmp_path, *, successes_per_spawn=1, max_attempts=4):
@@ -80,8 +105,14 @@ def batch_config(tmp_path, *, successes_per_spawn=1, max_attempts=4):
 def test_continuous_batch_retries_failure_and_only_saves_successes(tmp_path):
     cfg = batch_config(tmp_path, successes_per_spawn=1, max_attempts=4)
     ui = FakeBatchUI(["failure", "success", "success"])
+    backends = []
 
-    root = record_batch(cfg, backend_factory=SyntheticBackend, ui=ui)
+    def backend_factory(backend_cfg):
+        backend = CountingSyntheticBackend(backend_cfg)
+        backends.append(backend)
+        return backend
+
+    root = record_batch(cfg, backend_factory=backend_factory, ui=ui)
 
     from lerobot.datasets import LeRobotDataset
 
@@ -116,7 +147,14 @@ def test_continuous_batch_retries_failure_and_only_saves_successes(tmp_path):
     assert manifest["task_frame"]["frame_id"] == "picklift_task_grid_v2"
     assert manifest["camera_profile"]["profile_id"] == "synthetic_front_640x480_v1"
     assert manifest["batch_end_time"] is not None
+    assert manifest["post_end_control_mode"] == "live_follow_no_recording"
+    assert manifest["inter_episode_control"].startswith("live Leader-to-Follower")
+    assert ui.next_start_count == 2
+    assert ui.finish_count == 1
     assert ui.opened and ui.closed
+    assert len(backends) == 1
+    assert backends[0].connect_calls == 1
+    assert backends[0].close_calls == 1
 
 
 def test_multiple_successes_per_spawn_are_balanced_across_cells(tmp_path):

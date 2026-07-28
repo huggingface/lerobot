@@ -53,5 +53,6 @@
 - [ ] If failure/discard: retry without changing spawn ID or pose.
 - [ ] If success was saved: mark the spawn complete and advance to the next
       balanced spawn.
-- [ ] In continuous mode, wait for `READY / CONNECT`; torque has been disabled
-      before the next reset.
+- [ ] In continuous v2 mode, use the live `RESET / NO DATA RECORDING` phase to
+      lower/release and move to the next pose; click `START NEXT` only after
+      hands leave the image and the next setup is stable.

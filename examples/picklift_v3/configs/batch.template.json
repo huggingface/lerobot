@@ -1,5 +1,5 @@
 {
-  "collection_workflow_version": "picklift_continuous_batch_v1",
+  "collection_workflow_version": "picklift_continuous_batch_v2_live_reset",
   "successes_per_spawn": 2,
   "max_attempts": 60,
   "base_config": {

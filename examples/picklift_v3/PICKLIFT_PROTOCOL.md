@@ -88,11 +88,14 @@ interior X/Y point only; actual X/Y must still be recorded.
 9. Advance to a new `spawn_id`/pose only after a successful episode has been
    saved.
 
-The continuous workflow `picklift_continuous_batch_v1` keeps FAILURE and
-DISCARD as bounded attempt provenance but clears their pending frame buffers;
-neither enters the deterministic v3 training dataset. Only operator-confirmed
-SUCCESS attempts receive dataset episode indices. This stricter training-view
-rule does not rewrite earlier v5 pilot datasets.
+The continuous workflows keep FAILURE and DISCARD as bounded attempt
+provenance but clear their pending frame buffers; neither enters the
+deterministic v3 training dataset. Only operator-confirmed SUCCESS attempts
+receive dataset episode indices. In
+`picklift_continuous_batch_v2_live_reset`, END stops recording while live
+Leader-to-Follower control continues in an explicit no-data reset phase;
+`START NEXT` resumes recording. This stricter training-view rule and live
+reset workflow do not rewrite earlier v5 pilot or batch-v1 datasets.
 
 ## Manual success contract
 
