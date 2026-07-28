@@ -48,7 +48,6 @@ from lerobot.utils.import_utils import _peft_available, require_package
 
 from .evo1.configuration_evo1 import Evo1Config
 from .groot.configuration_groot import GrootConfig
-from .lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
 
@@ -196,26 +195,6 @@ def make_pre_post_processors(
                 postprocessor_config_filename=kwargs.get(
                     "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
                 ),
-            )
-
-        if isinstance(policy_cfg, LingbotVLAV2Config):
-            from .lingbot_vla_v2.processor_lingbot_vla_v2 import (
-                make_lingbot_vla_v2_pre_post_processors_from_pretrained,
-            )
-
-            return make_lingbot_vla_v2_pre_post_processors_from_pretrained(
-                config=policy_cfg,
-                pretrained_path=pretrained_path,
-                dataset_stats=kwargs.get("dataset_stats"),
-                preprocessor_overrides=kwargs.get("preprocessor_overrides"),
-                postprocessor_overrides=kwargs.get("postprocessor_overrides"),
-                preprocessor_config_filename=kwargs.get(
-                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
-                ),
-                postprocessor_config_filename=kwargs.get(
-                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
-                ),
-                pretrained_revision=pretrained_revision,
             )
 
         preprocessor = PolicyProcessorPipeline.from_pretrained(

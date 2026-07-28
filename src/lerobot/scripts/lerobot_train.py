@@ -345,6 +345,13 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     active_cfg = cfg.trainable_config
     processor_pretrained_path = active_cfg.pretrained_path
+    if getattr(active_cfg, "type", None) == "lingbot_vla_v2":
+        from lerobot.policies.lingbot_vla_v2.checkpoint_lingbot_vla_v2 import (
+            is_raw_lingbot_vla_v2_checkpoint,
+        )
+
+        if is_raw_lingbot_vla_v2_checkpoint(processor_pretrained_path):
+            processor_pretrained_path = None
 
     processor_kwargs = {}
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:

@@ -17,9 +17,9 @@ the port has been checked against a known-good pretrained model.
   tensor shape mismatch.
 - [x] Keep allowed skipped tensors limited to disabled distillation/depth/align heads when
   `use_depth=False`.
-- [x] Make raw upstream processor construction work when `make_pre_post_processors(...)` receives
-  `pretrained_path`, instead of trying to load serialized LeRobot processor JSON from the raw
-  upstream checkpoint directory.
+- [x] Make the standard train/eval CLI build fresh LingBot processors from the policy config for
+  raw upstream checkpoints, instead of trying to load serialized LeRobot processor JSON from the
+  raw upstream checkpoint directory.
 - [x] Rename the optional dependency extra from `lingbot-v2` to `lingbot_vla2` in code and docs.
 - [x] Remove confirmed dead v1-era code in `modeling_lingbot_vla_v2_base.py` if it is not needed
   by the v2 LeRobot wrapper.
