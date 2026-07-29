@@ -18,6 +18,7 @@ import json
 import logging
 from unittest.mock import patch
 
+import pandas as pd
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
@@ -26,7 +27,7 @@ import datasets  # noqa: E402
 import torch
 
 from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
-from lerobot.datasets.aggregate import aggregate_datasets
+from lerobot.datasets.aggregate import aggregate_datasets, append_or_create_parquet_file
 from lerobot.datasets.feature_utils import features_equal_for_merge
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from tests.fixtures.constants import (
@@ -53,6 +54,18 @@ def assert_data_shards_one_row_group_per_episode(root):
             assert len(rg_episodes) == 1, f"{shard} row group {i} spans episodes {rg_episodes}"
         n_episodes += len(set(episodes))
     return n_episodes
+
+
+def test_append_or_create_parquet_file_requires_aggr_root(tmp_path):
+    with pytest.raises(ValueError, match="aggr_root must be provided"):
+        append_or_create_parquet_file(
+            pd.DataFrame(),
+            tmp_path / "source.parquet",
+            {"chunk": 0, "file": 0},
+            max_mb=1,
+            chunk_size=1,
+            default_path="chunk-{chunk_index}/file-{file_index}.parquet",
+        )
 
 
 def assert_episode_and_frame_counts(aggr_ds, expected_episodes, expected_frames):

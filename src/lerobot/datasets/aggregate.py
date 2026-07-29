@@ -19,7 +19,7 @@ import copy
 import logging
 import shutil
 from pathlib import Path
-from typing import Any, TypeAlias, cast
+from typing import Any, NotRequired, TypedDict
 
 import datasets
 import pandas as pd
@@ -52,10 +52,27 @@ from .video_utils import concatenate_video_files, get_video_duration_in_s
 
 logger = logging.getLogger(__name__)
 
-FeatureDict: TypeAlias = dict[str, dict[str, Any]]
-ChunkFile: TypeAlias = tuple[int, int]
-IndexState: TypeAlias = dict[str, Any]
-VideoIndexState: TypeAlias = dict[str, IndexState]
+type FeatureDict = dict[str, dict[str, Any]]
+type ChunkFile = tuple[int, int]
+
+
+class IndexState(TypedDict):
+    chunk: int
+    file: int
+    src_to_dst: NotRequired[dict[ChunkFile, ChunkFile]]
+
+
+class VideoIndex(TypedDict):
+    chunk: int
+    file: int
+    latest_duration: float
+    episode_duration: float
+    src_to_offset: NotRequired[dict[ChunkFile, float]]
+    src_to_dst: NotRequired[dict[ChunkFile, ChunkFile]]
+    dst_file_durations: NotRequired[dict[ChunkFile, float]]
+
+
+type VideoIndexState = dict[str, VideoIndex]
 
 
 def merge_video_feature_info_for_aggregate(all_metadata: list[LeRobotDatasetMetadata]) -> FeatureDict:
@@ -421,15 +438,16 @@ def aggregate_videos(
             videos_idx[key]["dst_file_durations"] = {}
 
     for key, video_idx in videos_idx.items():
-        unique_chunk_file_pairs = {
-            (chunk, file)
-            for chunk, file in zip(
-                src_meta.episodes[f"videos/{key}/chunk_index"],
-                src_meta.episodes[f"videos/{key}/file_index"],
-                strict=False,
-            )
-        }
-        unique_chunk_file_pairs = sorted(unique_chunk_file_pairs)
+        unique_chunk_file_pairs: list[ChunkFile] = sorted(
+            {
+                (chunk, file)
+                for chunk, file in zip(
+                    src_meta.episodes[f"videos/{key}/chunk_index"],
+                    src_meta.episodes[f"videos/{key}/file_index"],
+                    strict=False,
+                )
+            }
+        )
 
         chunk_idx = video_idx["chunk"]
         file_idx = video_idx["file"]
@@ -532,14 +550,16 @@ def aggregate_data(
     Returns:
         dict: Updated data_idx with current chunk and file indices.
     """
-    unique_chunk_file_ids = {
-        (c, f)
-        for c, f in zip(
-            src_meta.episodes["data/chunk_index"], src_meta.episodes["data/file_index"], strict=False
-        )
-    }
-
-    unique_chunk_file_ids = sorted(unique_chunk_file_ids)
+    unique_chunk_file_ids: list[ChunkFile] = sorted(
+        {
+            (c, f)
+            for c, f in zip(
+                src_meta.episodes["data/chunk_index"],
+                src_meta.episodes["data/file_index"],
+                strict=False,
+            )
+        }
+    )
     contains_images = len(dst_meta.image_keys) > 0
 
     # retrieve features schema for proper image typing in parquet
@@ -608,16 +628,16 @@ def aggregate_metadata(
     Returns:
         dict: Updated meta_idx with current chunk and file indices.
     """
-    chunk_file_ids = {
-        (c, f)
-        for c, f in zip(
-            src_meta.episodes["meta/episodes/chunk_index"],
-            src_meta.episodes["meta/episodes/file_index"],
-            strict=False,
-        )
-    }
-
-    chunk_file_ids = sorted(chunk_file_ids)
+    chunk_file_ids: list[ChunkFile] = sorted(
+        {
+            (c, f)
+            for c, f in zip(
+                src_meta.episodes["meta/episodes/chunk_index"],
+                src_meta.episodes["meta/episodes/file_index"],
+                strict=False,
+            )
+        }
+    )
     for chunk_idx, file_idx in chunk_file_ids:
         src_path = src_meta.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
         df = pd.read_parquet(src_path)
@@ -682,8 +702,12 @@ def append_or_create_parquet_file(
     Returns:
         tuple: (updated_idx, (dst_chunk, dst_file)) where updated_idx is the index dict
                and (dst_chunk, dst_file) is the actual destination file the data was written to.
+
+    Raises:
+        ValueError: If aggr_root is not provided.
     """
-    aggr_root = cast(Path, aggr_root)
+    if aggr_root is None:
+        raise ValueError("aggr_root must be provided.")
 
     dst_chunk, dst_file = idx["chunk"], idx["file"]
     dst_path = aggr_root / default_path.format(chunk_index=dst_chunk, file_index=dst_file)
