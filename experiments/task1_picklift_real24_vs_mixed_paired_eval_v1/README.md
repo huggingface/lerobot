@@ -4,6 +4,19 @@ This directory owns the software-frozen 24-trial matched real comparison. It
 does not contain a hardware result. Historical evaluation evidence, both
 checkpoints, and all training datasets remain immutable.
 
+## Hardware protocol revision v2
+
+The first authorized `t01` attempt preserved in the evidence root never
+entered the policy window: all joints reached the frozen ready target closely,
+but `elbow_flex` plateaued at a 2.54945 degree observation error for the full
+60-second movement timeout. The operator confirmed there was no obstruction.
+
+Revision v2 changes only the ready-pose observation tolerance from 1.0 to 3.0
+degrees. It continues to request the exact same frozen Real-24 ready vector.
+Both checkpoints, trial order, policy reset/tick-0 ordering, official action
+send path, 30-second window, and post-trial return target remain unchanged.
+The invalid v1 artifact is immutable; the rerun is linked as `replacement1`.
+
 ## Frozen comparison
 
 - Model A: fixed Real24-only ACT step 100000, model SHA
@@ -11,7 +24,7 @@ checkpoints, and all training datasets remain immutable.
 - Model B: fixed Real24+Quest-Sim24 ACT step 100000, model SHA
   `e054e682057f09a4653af00a4580da173d3d1658ef5c34244bdbf3ca1a125de5`.
 - Twelve fixed 5 cm grid centers; both models run once per cell in the frozen
-  alternating order in `evaluation_plan.json`.
+  alternating order in `evaluation_plan_ready_tolerance3_v2.json`.
 - Every trial moves to the same frozen ready pose before and after the
   30-second action window. ACT reset occurs after ready arrival and before
   tick 0.

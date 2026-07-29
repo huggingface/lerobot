@@ -23,6 +23,11 @@ class FakeClock:
 
 def test_frozen_plan_has_exact_24_trial_paired_order() -> None:
     plan = evaluator.load_frozen_plan()
+    assert (
+        plan["setup"]["ready_pose_arrival_tolerance_degrees"]
+        == evaluator.EXPECTED_READY_MOVE_TOLERANCE
+        == 3.0
+    )
     assert len(plan["trials"]) == 24
     assert [(row["cell_id"], row["model_id"]) for row in plan["trials"]] == list(
         evaluator.EXPECTED_SCHEDULE

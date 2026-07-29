@@ -17,9 +17,9 @@ import numpy as np
 
 EXPERIMENT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = EXPERIMENT_DIR.parents[1]
-DEFAULT_PLAN = EXPERIMENT_DIR / "evaluation_plan.json"
+DEFAULT_PLAN = EXPERIMENT_DIR / "evaluation_plan_ready_tolerance3_v2.json"
 EXPECTED_PLAN_SHA256 = (
-    "fba25f6599f000b5f8173357868f6af9fc941be60e93840e9733add27ef3b660"
+    "1eb82cc573a661f85d7c21ced5651a9cc64c8809873a3299d13e86d59fd19ada"
 )
 EXPECTED_RESEARCH_PLAN_SHA256 = (
     "c62fd6505368fe7417048530d8538799026aaa05f85236d5c957d02135305ce0"
@@ -28,8 +28,9 @@ EXPECTED_ENGINE_SHA256 = (
     "380b8c1c13f0f38a59e129b78d845a1cbd8916411af1f61a56b9267e83205f96"
 )
 EXPECTED_PROFILE_SHA256 = (
-    "01e50c86adc1a03f2bb1675469502e6969e2cc6a4a51dc8db0b75e6049b5d4c5"
+    "60025f6478a63bcf9b301a75cd27124b19f1cf4f6b142f8576e6b10abf4f95a5"
 )
+EXPECTED_READY_MOVE_TOLERANCE = 3.0
 EXPECTED_EVALUATION_ID = (
     "task1_picklift_real24_vs_mixed_paired_real24_eval24_v1"
 )
@@ -138,6 +139,11 @@ def load_frozen_plan(path: Path = DEFAULT_PLAN) -> dict:
         raise RuntimeError("Ready pose is required after every trial.")
     if setup["policy_reset_after_ready_pose"] is not True:
         raise RuntimeError("Policy reset must happen after ready pose.")
+    if (
+        setup["ready_pose_arrival_tolerance_degrees"]
+        != EXPECTED_READY_MOVE_TOLERANCE
+    ):
+        raise RuntimeError("Ready-pose arrival tolerance differs from revision v2.")
     if ready_pose_state_sha256(setup["ready_pose_state"]) != READY_POSE_STATE_SHA256:
         raise RuntimeError("Frozen ready-pose vector hash mismatch.")
     success = plan["success_contract"]
@@ -519,6 +525,8 @@ def load_official_engine(plan: dict):
         raise RuntimeError("Official-send engine source hash changed.")
     if str(engine_path.parent) not in sys.path:
         sys.path.insert(0, str(engine_path.parent))
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
     spec = importlib.util.spec_from_file_location(
         "task1_official_send_engine",
         engine_path,
@@ -589,6 +597,15 @@ def execute_hardware(args: argparse.Namespace, plan: dict) -> None:
     engine.EXPECTED_PROFILE_SHA256 = EXPECTED_PROFILE_SHA256
     engine.EXPECTED_EVALUATION_ID = EXPECTED_EVALUATION_ID
     profile_path = resolve_repo_path(plan["evaluation_profile"]["path"])
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    ready_movement = profile["ready_pose_movement"]
+    if (
+        ready_movement["arrival_tolerance_degrees"]
+        != EXPECTED_READY_MOVE_TOLERANCE
+    ):
+        raise RuntimeError("Loaded profile has the wrong ready-pose tolerance.")
+    engine.READY_MOVE_TOLERANCE = EXPECTED_READY_MOVE_TOLERANCE
+    engine.READY_MOVE_PROFILE_ID = ready_movement["profile_id"]
     engine_args = argparse.Namespace(
         execute_hardware=True,
         operator_confirmed_ready=True,
