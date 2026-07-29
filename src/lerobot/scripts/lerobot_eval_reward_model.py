@@ -272,8 +272,15 @@ def evaluate(args: argparse.Namespace) -> None:
     frame_index = np.concatenate(frame_indices).astype(np.int64)
     residual = prediction - target
     advantage = _compute_advantages(target, prediction, episode_index, args.n_step)
-    threshold = float(np.percentile(advantage, args.threshold_percentile * 100))
-    advantage_label = np.where(advantage > threshold, "positive", "negative")
+    intervention = (
+        np.concatenate(interventions)
+        if interventions and sum(map(len, interventions)) == len(prediction)
+        else np.zeros(len(prediction), dtype=bool)
+    )
+    threshold_source = advantage[~intervention]
+    threshold = float(np.percentile(threshold_source, args.threshold_percentile * 100))
+    raw_advantage_label = np.where(advantage > threshold, "positive", "negative")
+    advantage_label = np.where(intervention, "positive", raw_advantage_label)
 
     terminal_success = np.isclose(target[terminal], 0.0, atol=1e-6)
     metrics = {
@@ -290,7 +297,10 @@ def evaluate(args: argparse.Namespace) -> None:
         "spearman": _spearman(prediction, target),
         "terminal_success_auc": _binary_auc(prediction[terminal], terminal_success),
         "advantage_threshold": threshold,
-        "positive_fraction": float(np.mean(advantage_label == "positive")),
+        "positive_fraction_non_intervention": float(
+            np.mean(raw_advantage_label[~intervention] == "positive")
+        ),
+        "positive_fraction_after_intervention_override": float(np.mean(advantage_label == "positive")),
     }
     for name, value in metrics.items():
         logger.info("%s: %s", name, f"{value:.6f}" if isinstance(value, float) else value)
@@ -304,6 +314,7 @@ def evaluate(args: argparse.Namespace) -> None:
         "predicted_value": prediction,
         "residual": residual,
         "advantage": advantage,
+        "advantage_label_raw": raw_advantage_label,
         "advantage_label": advantage_label,
         "is_terminal": terminal,
     }
@@ -322,8 +333,8 @@ def evaluate(args: argparse.Namespace) -> None:
             axis=1,
         )
         output["state_motion_norm"] = state_motion
-    if interventions and sum(map(len, interventions)) == len(prediction):
-        output["intervention"] = np.concatenate(interventions)
+    if interventions:
+        output["intervention"] = intervention
     pd.DataFrame(output).to_csv(output_path, index=False)
     logger.info("Wrote per-frame predictions to %s", output_path)
 
