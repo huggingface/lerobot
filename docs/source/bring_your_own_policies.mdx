@@ -165,6 +165,8 @@ Batches are flat dictionaries keyed by the constants in [`lerobot.utils.constant
 
 LeRobot uses `PolicyProcessorPipeline`s to normalize inputs and de-normalize outputs around your policy. For a concrete reference, see [`processor_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/processor_act.py) or [`processor_diffusion.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/diffusion/processor_diffusion.py).
 
+Pay close attention here: processors are the most common reproducibility pain point. A mismatch in normalization mode (`IDENTITY` vs `MEAN_STD` vs `MIN_MAX` vs `QUANTILES`/`QUANTILE10`) or in which features get normalized will train and eval without erroring, yet silently wreck results. Make sure the modes match how the checkpoint was trained, that the required stats exist (e.g. `QUANTILES` needs `q01`/`q99`), and that the pre- and post-processors stay consistent.
+
 ```python
 # processor_my_policy.py
 from typing import Any
@@ -304,7 +306,9 @@ Mirror an existing policy that's structurally similar to yours; the diff is smal
 
 ### Heavy / optional dependencies
 
-Most policies need a heavy backbone (transformers, diffusers, a specific VLM SDK). The convention is **two-step gating**: a `TYPE_CHECKING`-guarded import at module top, and a `require_package` runtime check in the constructor. [`modeling_diffusion.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/diffusion/modeling_diffusion.py) is the canonical reference:
+Most policies need a heavy backbone (transformers, diffusers, a specific VLM SDK). Wherever one exists, prefer loading it e.g from `transformers` or `diffusers` rather than re-implementing the architecture in-tree.
+
+The convention is **two-step gating**: a `TYPE_CHECKING`-guarded import at module top, and a `require_package` runtime check in the constructor. [`modeling_diffusion.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/diffusion/modeling_diffusion.py) is the canonical reference:
 
 ```python
 from typing import TYPE_CHECKING
@@ -374,6 +378,7 @@ The general expectations are in [`CONTRIBUTING.md`](https://github.com/huggingfa
 - [ ] Optional deps live behind a `[project.optional-dependencies]` extra and the `TYPE_CHECKING + require_package` guard.
 - [ ] `tests/policies/` updated; backward-compat artifact committed & policy-specific tests.
 - [ ] `src/lerobot/policies/<name>/README.md` symlinked into `docs/source/policy_<name>_README.md`; user-facing `docs/source/<name>.mdx` written and added to `_toctree.yml`.
+- [ ] `lerobot-train --policy.type my_policy ...` runs end-to-end for at least a few steps + save a checkpoint that can be loaded and run by `lerobot-eval` or `lerobot-rollout`.
 - [ ] `templates/lerobot_modelcard_template.md` has a description entry and a `policy_docs` link for your policy.
 - [ ] The models table in the root `README.md` lists your policy in the right category, linking to your doc page.
 - [ ] At least one reproducible benchmark eval in the policy MDX with a published checkpoint (sim benchmark, or real-robot dataset + checkpoint).
