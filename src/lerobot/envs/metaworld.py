@@ -155,6 +155,7 @@ class MetaworldEnv(gym.Env):
             env.model.cam_pos[2] = [0.75, 0.075, 0.7]
         env.reset()
         env._freeze_rand_vec = False  # otherwise no randomization
+        env.seeded_rand_vec = True  # use seeded RNG so reset(seed=X) controls object positions
         self._env = env
 
     def render(self) -> np.ndarray:
@@ -220,6 +221,8 @@ class MetaworldEnv(gym.Env):
         self._ensure_env()
         super().reset(seed=seed)
 
+        if seed is not None:
+            self._env.seed(seed)
         raw_obs, info = self._env.reset(seed=seed)
 
         observation = self._format_raw_obs(raw_obs)
