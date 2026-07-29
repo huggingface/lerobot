@@ -30,3 +30,22 @@ feed-forward 3200, encoder 4, decoder 1, VAE latent 32, KL 10, learning rate
 
 Artifacts live under `/home/ubuntu24/Teleop/artifacts`. This task performs no
 hardware access and no simulation or real rollout.
+
+## Completed offline result
+
+- Derived Dataset v3 tree SHA-256:
+  `b137d32531e9455afdaea385ad93fea7584f4b790146a861cba217dec7a79b7c`.
+- Smoke: 500 steps, final loss `2.669`; actual samples were exactly 2,000
+  Real and 2,000 Sim.
+- Full run: 100,000 steps in 5,016 seconds; final loss `0.051`, L1 `0.050`,
+  KLD `0.000`; actual samples were exactly 400,000 Real and 400,000 Sim.
+- Fixed step-100000 model SHA-256:
+  `b7faae880393bdbf5e44ebeaab1f399f732d6ee325be698f999c90eb865cee68`.
+- CUDA reload and offline inference passed for one Real and one Sim sample;
+  both returned finite `[1,6]` actions. The saved processor contains the
+  ImageNet mean/std values.
+- Frozen training evidence:
+  `/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real24_questsim24_act_v2/training_result_v1`.
+
+These are offline engineering facts only; Mixed v2 has not been evaluated in
+MuJoCo or on the real robot.
