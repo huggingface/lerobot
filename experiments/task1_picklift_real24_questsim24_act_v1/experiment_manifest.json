@@ -5,8 +5,8 @@
   "research_plan": "experiment-design/task1-picklift-real24-questsim24-act-v1.json",
   "paper_result": false,
   "dataset": {
-    "repo_id": "local/task1_picklift_real24_questsim24_combined48_v1",
-    "root": "/home/ubuntu24/Teleop/artifacts/datasets/task1_picklift_real24_questsim24_act_v1/combined48_v1",
+    "repo_id": "local/task1_picklift_real24_questsim24_combined48_v2",
+    "root": "/home/ubuntu24/Teleop/artifacts/datasets/task1_picklift_real24_questsim24_act_v1/combined48_v2",
     "episodes": 48,
     "frames": 7966,
     "real_episodes": 24,

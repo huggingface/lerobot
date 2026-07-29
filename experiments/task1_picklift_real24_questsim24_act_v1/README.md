@@ -16,6 +16,10 @@ This experiment implements research plan
 - Normalization: numeric statistics are recomputed from the derived parquet
   files; visual statistics are computed over every decoded 640x480 training
   pixel. `use_imagenet_stats=false`.
+- `combined48_v1` was retained as a pre-training failed candidate because
+  evidence-only strings were accidentally embedded in its visual stats entry.
+  `combined48_v2` moves those strings to the external manifest and is the only
+  dataset identity used by smoke and full training.
 - Policy: ACT ResNet18/ImageNet initialization, front-only, state-to-action,
   67-step chunks at 20 Hz, fixed 500-step smoke followed by one 100,000-step
   run from scratch.

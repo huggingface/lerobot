@@ -19,7 +19,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 
 PLAN_ID = "task1-picklift-real24-questsim24-act-v1"
-DERIVED_DATASET_ID = "task1_picklift_real24_questsim24_combined48_v1"
+DERIVED_DATASET_ID = "task1_picklift_real24_questsim24_combined48_v2"
 DERIVED_REPO_ID = f"local/{DERIVED_DATASET_ID}"
 DERIVED_FREEZE_ID = f"{DERIVED_DATASET_ID}_freeze_v1"
 
@@ -52,11 +52,11 @@ SIM_SUBSET_SHA256 = "9f19cf5c3839a73b6d6727fd7480e36696669cefb9a952bac10ddd1cf60
 
 DEFAULT_OUTPUT_ROOT = Path(
     "/home/ubuntu24/Teleop/artifacts/datasets/"
-    "task1_picklift_real24_questsim24_act_v1/combined48_v1"
+    "task1_picklift_real24_questsim24_act_v1/combined48_v2"
 )
 DEFAULT_EVIDENCE_ROOT = Path(
     "/home/ubuntu24/Teleop/artifacts/evidence/"
-    "task1_picklift_real24_questsim24_act_v1/combined48_freeze_v1"
+    "task1_picklift_real24_questsim24_act_v1/combined48_freeze_v2"
 )
 
 CANONICAL_JOINT_NAMES = [
@@ -442,8 +442,6 @@ def exact_video_stats(root: Path, expected_frames: int) -> dict:
         "q50": channel_shape(quantile(0.50) / 255.0),
         "q90": channel_shape(quantile(0.90) / 255.0),
         "q99": channel_shape(quantile(0.99) / 255.0),
-        "decoded_frames": decoded_frames,
-        "method": "exact uint8 histogram over every decoded training-video pixel",
     }
 
 
@@ -621,7 +619,13 @@ def main() -> None:
             "features": derived.meta.features,
             "normalization_statistics": {
                 "numeric": "recomputed from the derived data parquet files",
-                "visual": image_stats,
+                "visual": {
+                    "stats": image_stats,
+                    "decoded_frames": 7966,
+                    "method": (
+                        "exact uint8 histogram over every decoded training-video pixel"
+                    ),
+                },
                 "use_imagenet_stats": False,
             },
             "source_tree_sha256": {

@@ -20,9 +20,9 @@ DEFAULT_CHECKPOINT = Path(
 )
 DEFAULT_DATASET = Path(
     "/home/ubuntu24/Teleop/artifacts/datasets/"
-    "task1_picklift_real24_questsim24_act_v1/combined48_v1"
+    "task1_picklift_real24_questsim24_act_v1/combined48_v2"
 )
-REPO_ID = "local/task1_picklift_real24_questsim24_combined48_v1"
+REPO_ID = "local/task1_picklift_real24_questsim24_combined48_v2"
 
 
 def sha256_file(path: Path) -> str:
