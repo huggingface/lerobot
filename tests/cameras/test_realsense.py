@@ -135,9 +135,11 @@ def test_connect_cleans_up_after_warmup_failure_and_allows_retry():
         read_threads.append(camera.thread)
         raise TimeoutError("no frame")
 
+    # Every attempt times out, so connect() exhausts its retries and reports the failure.
     with (
         patch.object(camera, "async_read", side_effect=fail_warmup),
-        pytest.raises(TimeoutError, match="no frame"),
+        patch.object(camera, "_hardware_reset"),
+        pytest.raises(ConnectionError, match="failed to capture frames"),
     ):
         camera.connect()
 
