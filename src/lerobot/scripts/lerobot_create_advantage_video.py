@@ -312,45 +312,46 @@ def _draw_status_badge(
     intervention: bool,
     episode_index: int,
 ) -> None:
-    if intervention:
-        text = "HUMAN CORRECTION"
-        color = THEME.intervention
-    elif label == "positive":
-        text = "POSITIVE ADVANTAGE"
+    del episode_index
+    if label == "positive":
+        text = "POSITIVE"
         color = THEME.positive
     else:
-        text = "NEGATIVE ADVANTAGE"
+        text = "NEGATIVE"
         color = THEME.negative
-    font_scale = max(0.48, frame.shape[1] / 1500)
+    if intervention:
+        text = "POSITIVE  ·  HUMAN CORRECTION"
+
+    height, width = frame.shape[:2]
+    horizontal_margin = max(18, round(width * 0.04))
+    bar_height = max(34, round(height * 0.075))
+    bottom_margin = max(14, round(height * 0.03))
+    x0 = horizontal_margin
+    x1 = width - horizontal_margin
+    y1 = height - bottom_margin
+    y0 = y1 - bar_height
+    radius = max(8, bar_height // 3)
+
+    _alpha_rounded_rectangle(
+        frame,
+        (x0, y0),
+        (x1, y1),
+        color,
+        alpha=0.58,
+        radius=radius,
+    )
+
+    font_scale = max(0.5, min(0.8, width / 1100))
     text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)[0]
-    x0, y0 = 16, 16
-    x1 = x0 + text_size[0] + 24
-    y1 = y0 + 32
-    _alpha_rounded_rectangle(frame, (x0, y0), (x1, y1), color, alpha=0.92, radius=8)
+    text_x = x0 + (x1 - x0 - text_size[0]) // 2
+    text_y = y0 + (bar_height + text_size[1]) // 2
     _draw_text(
         frame,
         text,
-        (x0 + 12, y0 + 22),
+        (text_x, text_y),
         scale=font_scale,
         color=(255, 255, 255),
         thickness=1,
-    )
-    episode_text = f"EPISODE {episode_index:03d}"
-    episode_width = cv2.getTextSize(episode_text, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 1)[0][0]
-    _alpha_rounded_rectangle(
-        frame,
-        (frame.shape[1] - episode_width - 40, 16),
-        (frame.shape[1] - 16, 48),
-        THEME.background,
-        alpha=0.78,
-        radius=8,
-    )
-    _draw_text(
-        frame,
-        episode_text,
-        (frame.shape[1] - episode_width - 28, 38),
-        scale=0.46,
-        color=THEME.text,
     )
 
 
@@ -520,8 +521,6 @@ def create_advantage_video(
     start_timestamp = float(episode_metadata[f"videos/{camera_key}/from_timestamp"])
     end_timestamp = float(episode_metadata[f"videos/{camera_key}/to_timestamp"])
     fps = float(metadata.fps)
-    tasks = episode_metadata.get("tasks") or []
-    task = str(tasks[0]) if len(tasks) else ""
 
     output_dir.mkdir(parents=True, exist_ok=True)
     camera_name = camera_key.replace(".", "_").replace("/", "_")
@@ -543,15 +542,12 @@ def create_advantage_video(
         capture.release()
         decode_proxy_path.unlink(missing_ok=True)
         raise RuntimeError(f"Could not read video dimensions from {video_path}")
-    dashboard_height = max(132, round(frame_height * 0.27))
-    output_height = frame_height + dashboard_height
-
     temp_path = output_path.with_name(output_path.stem + "_temp.mp4")
     writer = cv2.VideoWriter(
         str(temp_path),
         cv2.VideoWriter_fourcc(*"mp4v"),
         fps,
-        (width, output_height),
+        (width, frame_height),
     )
     if not writer.isOpened():
         capture.release()
@@ -582,15 +578,7 @@ def create_advantage_video(
                 intervention,
                 episode_index,
             )
-            dashboard = _draw_dashboard(
-                width,
-                dashboard_height,
-                episode,
-                index,
-                fps,
-                task,
-            )
-            writer.write(np.concatenate((frame, dashboard), axis=0))
+            writer.write(frame)
             written += 1
     finally:
         writer.release()
