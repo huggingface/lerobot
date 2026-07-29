@@ -9,15 +9,16 @@ conditioned on the same post-reasoning KV state.
 Transformers includes the native multimodal Qwen3.5 backbone, vision tower, and
 processor. G0.5 is not a stock `Qwen3_5ForConditionalGeneration` checkpoint,
 however: it adds the proprioception/action path, action expert, flow-matching
-head, ActionCodec, and unified CoT/action decode. The current integration
-therefore keeps the pinned G0.5 author package as the model backend.
+head, ActionCodec, and unified CoT/action decode. LeRobot implements those G0.5
+components natively and loads converted checkpoints without the OpenGalaxea
+Python package, Hydra, or OmegaConf.
 
 > [!WARNING]
 > G0.5 code and checkpoints use the
 > [G0.5 Community License](https://huggingface.co/OpenGalaxea/G05/blob/main/licenses/LICENSE-G0.5),
-> including non-commercial restrictions. LeRobot does not vendor the author model,
-> download gated files, or imply that Apache-2.0 applies to those materials. Accept
-> the license yourself and use a private or local checkpoint.
+> including non-commercial restrictions. LeRobot does not redistribute checkpoint
+> weights, download gated files, or imply that Apache-2.0 applies to those materials.
+> Accept the license yourself and use a private or local checkpoint.
 
 ## Supported checkpoint contracts
 
@@ -29,8 +30,8 @@ therefore keeps the pinned G0.5 author package as the model backend.
 | `g05-so101`      | Flow or AR ActionCodec + native CoT        | right arm joints 6 → 20D grouped layout      | exterior, optional left + right wrist |        32 |       16 | stepwise q01/q99                |
 
 Each packaged checkpoint stores the resolved model and processor configuration,
-ActionCodec metadata, statistics, exact prompt template, source revision, and
-license. Loading rejects a different head, horizon, processor mode, or
+ActionCodec metadata, statistics, exact prompt template, and license. Loading
+rejects a different head, horizon, processor mode, or
 normalization contract.
 
 The converted checkpoints are private under the LeRobot organization:
@@ -51,21 +52,10 @@ Atomic-4 dataset; reusing the R1 Lite statistics would be incorrect.
 
 ## Install
 
-Install LeRobot's small config dependency:
+Install LeRobot with the G0.5 Transformers dependency:
 
 ```bash
 uv sync --extra g05 --extra test
-```
-
-Then clone the audited author source and install it only after reviewing and
-accepting its license. The author package currently declares Python 3.10 while
-LeRobot uses Python 3.12, so a compatible deployment environment or an upstream
-Python-support update is required for real-model execution.
-
-```bash
-git clone https://github.com/OpenGalaxea/GalaxeaVLA.git
-git -C GalaxeaVLA checkout b34966f387dd2ae0f003143b81494afd9213e613
-export PYTHONPATH="/path/to/GalaxeaVLA/src:${PYTHONPATH}"
 ```
 
 The LeRobot organization hosts the prepared base, LIBERO, RoboTwin, and SO-101
@@ -124,9 +114,10 @@ the checkpoint's native System 2 CoT telemetry.
 
 ## Fine-tune with `lerobot-train`
 
-G0.5 implements LeRobot's training surface: `forward` runs the author training
-backend, the policy exposes the author VLM/vision/action optimizer groups, and
-the checkpoint can be saved, resumed, and loaded by the normal LeRobot scripts.
+G0.5 implements LeRobot's training surface natively: `forward` computes
+assistant-token cross entropy and flow-matching loss, the policy exposes
+VLM/vision/action optimizer groups, and the checkpoint can be saved, resumed,
+and loaded by the normal LeRobot scripts.
 For example, fine-tune the private SO-101 checkpoint on a LeRobot dataset:
 
 ```bash
@@ -157,7 +148,7 @@ Grounded VQA boxes are converted from pixel-space `xyxy` JSON using the source
 camera dimensions captured before image resizing, then serialized as G0.5
 `<locXXXX>` tokens. Joint samples preserve the released checkpoint's
 `BBox → Subtask → Action` order. The user/task conditioning tokens remain
-masked; the author backend applies its language/action objective to the
+masked; the native backend applies its language/action objective to the
 assistant sequence.
 
 Generate the required `subtask` and grounded `vqa` language columns with
@@ -197,30 +188,26 @@ lerobot-train \
 
 CPU unit tests cover factory loading, config incompatibilities, prompt pass-through,
 LIBERO and `atomic_4` mappings, padding masks, inverse action projection, a finite
-forward/backward/update, author optimizer-group wiring, and save/reload parity:
+forward/backward/update, optimizer-group wiring, and save/reload parity:
 
 ```bash
 uv run pytest tests/policies/g05 tests/runtime/test_g05_adapter.py -q
 uv run ruff check src/lerobot/policies/g05 tests/policies/g05
 ```
 
-An RTX 5090 smoke test loaded the real private `g05_libero` checkpoint and
-completed a batch-size-one BF16 forward, backward, gradient clip, and AdamW
-step. It produced finite loss `2.77356`, finite pre-clip gradient norm `54.38`,
-all six author optimizer groups, and 23.59 GiB peak allocated CUDA memory.
+The converted private `g05_base` checkpoint strict-loaded all 945 native model
+tensors, and its ActionCodec sidecar strict-loaded all 208 tensors, with no
+missing, unexpected, or shape-mismatched keys. Prompt token IDs and masks match
+the released runtime exactly. ActionCodec code IDs match exactly; decoded values
+differ only by normal floating-point noise. A batch-size-one System 1 flow smoke
+produced a finite `[1, 32, 27]` action chunk on an RTX 5090.
 
-The same RTX 5090 also loaded the private `g05_so101` checkpoint and completed
-a real joint `BBox → Subtask → Action` forward and backward through the
-recipe-driven path. It produced finite total loss `4.38332`, including non-zero
-`ce_loss=4.04244` and `fm_loss=0.340881`, with 15.58 GiB peak allocated CUDA
-memory.
-
-The converted private `g05_base` checkpoint strict-loaded all 946 mapped tensors
-with no missing, duplicate, unexpected, or shape-mismatched keys. Author/LeRobot
-parity was exact for images, tokens, and masks; normalized state/action inputs
-matched within `1.2e-7`, and postprocessing within `1.8e-6`. A System 2 smoke
-generated a native `Subtask:` trace and a finite `[1, 32, 27]` action chunk in
-the same pass, using 11.02 GiB peak allocated memory.
+The same native base checkpoint completed a real joint language/action forward
+and backward on the RTX 5090. It produced finite `ce_loss=13.8141` and
+`fm_loss=1.32647`, finite gradients for all 945 model tensors, all six optimizer
+groups, and 19.32 GiB peak allocated CUDA memory. A System 2 smoke generated
+`Subtask: grasp and lift the red cup with the right gripper` and a finite
+same-pass `[1, 32, 27]` action in 1.07 seconds at 11.0 GiB peak.
 
 A 50-episode LIBERO/RoboTwin success-rate comparison additionally requires the
 matching simulator, task assets, reset seeds, and author evaluator; no task-level

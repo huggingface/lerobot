@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 import shutil
 from collections import deque
@@ -33,27 +32,25 @@ from .configuration_g05 import (
     make_g05_cot_prompt_template,
     make_g05_prompt_template,
 )
+from .native_g05 import G05NativeBackend
 
 
-def _author_backend(config: G05Config) -> nn.Module:
+def _native_backend(config: G05Config) -> nn.Module:
     if not config.author_model_config:
         raise ValueError(
             "G0.5 author_model_config is empty. Load a packaged checkpoint, or "
             "inject a backend explicitly for testing."
         )
-    try:
-        from omegaconf import OmegaConf
-
-        module = importlib.import_module("g05.models.g05.g05_policy_qwen35")
-    except ImportError as exc:
-        raise ImportError(
-            "The OpenGalaxea G0.5 author package is required for real model execution. "
-            "Clone the pinned GalaxeaVLA source, accept LICENSE-G0.5, and install its "
-            "runtime dependencies in a compatible environment. LeRobot does not vendor "
-            "or silently download that non-commercial code."
-        ) from exc
-    backend_cls = module.G05PolicyQwen35
-    return backend_cls(**OmegaConf.to_container(OmegaConf.create(config.author_model_config)))
+    model_config = dict(config.author_model_config)
+    model_config.update(
+        {
+            "predict_cot": config.predict_cot,
+            "discrete_action": config.discrete_action,
+            "continuous_action": config.continuous_action,
+            "return_continuous_action": config.return_continuous_action,
+        }
+    )
+    return G05NativeBackend.from_config(model_config)
 
 
 class G05Policy(PreTrainedPolicy):
@@ -65,7 +62,7 @@ class G05Policy(PreTrainedPolicy):
     def __init__(self, config: G05Config, backend: nn.Module | None = None):
         super().__init__(config)
         config.validate_features()
-        self.backend = backend if backend is not None else _author_backend(config)
+        self.backend = backend if backend is not None else _native_backend(config)
         if not isinstance(self.backend, nn.Module):
             raise TypeError(f"G0.5 backend must be an nn.Module, got {type(self.backend)}.")
         self._action_queue: deque[Tensor] = deque()
@@ -150,7 +147,7 @@ class G05Policy(PreTrainedPolicy):
                 shutil.copy2(source, save_directory / name)
 
         # Serialized paths are portable sidecar names. Local/Hub loading resolves them
-        # against the downloaded checkpoint directory before constructing the author model.
+        # against the downloaded checkpoint directory before constructing the native model.
         if (processor_path is not None and processor_path.exists()) or (
             tokenizer_path is not None and tokenizer_path.exists()
         ):
@@ -191,7 +188,7 @@ class G05Policy(PreTrainedPolicy):
                 weight.data = weight.data.float()
 
     def to(self, *args, **kwargs) -> G05Policy:
-        """Apply author inference precision and move the ActionCodec sidecar."""
+        """Apply the released inference precision and move the ActionCodec sidecar."""
 
         result = super().to(*args, **kwargs)
         explicit_dtype = "dtype" in kwargs or any(isinstance(arg, torch.dtype | Tensor) for arg in args)

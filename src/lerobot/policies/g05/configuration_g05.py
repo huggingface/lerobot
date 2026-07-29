@@ -188,9 +188,9 @@ _PROFILE_DEFAULTS = {
 class G05Config(PreTrainedConfig):
     """LeRobot-side, checkpoint-auditable configuration for G0.5.
 
-    ``author_model_config`` comes from the packaged checkpoint's resolved Hydra
-    config. It is intentionally checkpoint state rather than a collection of
-    guessed LeRobot defaults.
+    ``author_model_config`` is the backward-compatible serialized field holding
+    the packaged checkpoint's resolved native architecture. It is checkpoint
+    state rather than a collection of guessed LeRobot defaults.
     """
 
     checkpoint_profile: str = "g05-base"

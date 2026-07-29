@@ -2879,7 +2879,6 @@ all = [
     { name = "motorbridge-smart-servo" },
     { name = "mypy" },
     { name = "num2words" },
-    { name = "omegaconf" },
     { name = "pandas" },
     { name = "peft" },
     { name = "placo" },
@@ -3022,7 +3021,7 @@ feetech = [
     { name = "pyserial" },
 ]
 g05 = [
-    { name = "omegaconf" },
+    { name = "transformers" },
 ]
 gamepad = [
     { name = "hidapi" },
@@ -3456,7 +3455,6 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.19.1" },
     { name = "num2words", marker = "extra == 'smolvla'", specifier = ">=0.5.14,<0.6.0" },
     { name = "numpy", specifier = ">=2.0.0,<2.3.0" },
-    { name = "omegaconf", marker = "extra == 'g05'", specifier = ">=2.3.0,<3.0.0" },
     { name = "onnx", marker = "extra == 'unitree-g1'", specifier = ">=1.16.0,<2.0.0" },
     { name = "onnxruntime", marker = "extra == 'unitree-g1'", specifier = ">=1.16.0,<2.0.0" },
     { name = "openai", marker = "extra == 'annotations'", specifier = ">=1.40,<2.0" },
@@ -3505,6 +3503,7 @@ requires-dist = [
     { name = "torchvision", marker = "sys_platform != 'linux'", specifier = ">=0.22.0,<0.27.0" },
     { name = "torchvision", marker = "sys_platform == 'linux'", specifier = ">=0.22.0,<0.27.0", index = "https://download.pytorch.org/whl/cu128" },
     { name = "tqdm", specifier = ">=4.66.0,<5.0.0" },
+    { name = "transformers", marker = "extra == 'g05'", specifier = ">=5.4.0,<5.6.0" },
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.6.0" },
     { name = "wandb", marker = "extra == 'training'", specifier = ">=0.24.0,<0.28.0" },
 ]
