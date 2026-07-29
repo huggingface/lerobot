@@ -24,7 +24,6 @@ import sys
 import time
 from collections.abc import Iterator
 from copy import copy, deepcopy
-from datetime import datetime
 from pathlib import Path
 from statistics import mean
 from typing import TYPE_CHECKING, Any
@@ -61,30 +60,16 @@ def init_logging(
         accelerator: Optional Accelerator instance (for multi-GPU detection)
     """
 
-    def custom_format(record: logging.LogRecord) -> str:
-        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        fnameline = f"{record.pathname}:{record.lineno}"
-        pid_str = f"[PID: {os.getpid()}] " if display_pid else ""
-        msg = f"{record.levelname} {pid_str}{dt} {fnameline[-15:]:>15} {record.getMessage()}"
-        # Preserve traceback / stack info (logging.Formatter.format default behavior).
-        # Replacing Formatter.format wholesale would otherwise drop logging.exception()
-        # and log(..., exc_info=True) traces — critical for HIL-SERL actor/learner.
-        if record.exc_info:
-            if not record.exc_text:
-                record.exc_text = logging.Formatter().formatException(record.exc_info)
-            if record.exc_text:
-                msg = f"{msg}
-{record.exc_text}"
-        if record.stack_info:
-            if msg[-1:] != "
-":
-                msg = msg + "
-"
-            msg = msg + record.stack_info
-        return msg
+    class LeRobotFormatter(logging.Formatter):
+        def format(self, record: logging.LogRecord) -> str:
+            record.lerobot_location = f"{record.pathname}:{record.lineno}"[-15:]
+            record.lerobot_pid = f"[PID: {os.getpid()}] " if display_pid else ""
+            return super().format(record)
 
-    formatter = logging.Formatter()
-    formatter.format = custom_format
+    formatter = LeRobotFormatter(
+        "%(levelname)s %(lerobot_pid)s%(asctime)s %(lerobot_location)15s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
     logger = logging.getLogger()
     logger.setLevel(logging.NOTSET)
