@@ -27,12 +27,10 @@ def test_cpu_always_available():
 
 
 def test_missing_cuda_raises_valueerror():
-    with patch("torch.cuda.is_available", return_value=False):
-        with pytest.raises(ValueError, match="CUDA"):
-            get_safe_torch_device("cuda")
+    with patch("torch.cuda.is_available", return_value=False), pytest.raises(ValueError, match="CUDA"):
+        get_safe_torch_device("cuda")
 
 
 def test_missing_mps_raises_valueerror():
-    with patch("torch.backends.mps.is_available", return_value=False):
-        with pytest.raises(ValueError, match="MPS"):
-            get_safe_torch_device("mps")
+    with patch("torch.backends.mps.is_available", return_value=False), pytest.raises(ValueError, match="MPS"):
+        get_safe_torch_device("mps")
