@@ -6,8 +6,11 @@ pytest.importorskip("transformers")
 from transformers import Qwen3Config
 from transformers.models.qwen3.modeling_qwen3 import Qwen3Attention, Qwen3MLP
 
-from lerobot.policies.being_h05.modeling_mot import BeingH05Qwen3ForCausalLM
-from lerobot.policies.being_h05.modeling_native import ActionEncoder, MPGEnhancement
+from lerobot.policies.being_h05.modeling_being_h05 import (
+    ActionEncoder,
+    BeingH05Qwen3ForCausalLM,
+    MPGEnhancement,
+)
 
 
 def test_action_encoder_batched_and_packed_paths_match():

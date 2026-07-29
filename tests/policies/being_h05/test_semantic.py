@@ -6,14 +6,12 @@ import torch
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.policies.being_h05.configuration_being_h05 import ROBOCASA_CAMERA_KEYS, BeingH05Config
 from lerobot.policies.being_h05.processor_being_h05 import (
-    BeingH05SemanticPackStep,
-    make_being_h05_pre_post_processors,
-)
-from lerobot.policies.being_h05.semantic import (
     ACTION_SLOTS,
     STATE_SLOTS,
+    BeingH05SemanticPackStep,
     atomic4_to_named,
     inverse_normalize,
+    make_being_h05_pre_post_processors,
     named_to_atomic4_action,
     normalize,
     pack_named,
