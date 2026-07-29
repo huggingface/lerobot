@@ -855,7 +855,6 @@ class BeingH05Policy(PreTrainedPolicy):
             tokenizer_path or config.tokenizer_name,
             revision=tokenizer_load_revision if tokenizer_path else config.tokenizer_revision,
             use_fast=False,
-            trust_remote_code=True,
         )
         special = self.tokenizer.convert_tokens_to_ids(
             ["<|im_start|>", "<|im_end|>", "<img>", "</img>", "<|state_start|>", "<|state_end|>"]
