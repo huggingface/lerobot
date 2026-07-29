@@ -55,6 +55,7 @@ from lerobot.processor import (
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_metal_follower,
     bi_openarm_follower,
     bi_rebot_b601_follower,
     bi_so_follower,
@@ -63,6 +64,7 @@ from lerobot.robots import (  # noqa: F401
     koch_follower,
     lekiwi,
     make_robot_from_config,
+    metal_follower,
     omx_follower,
     openarm_follower,
     reachy2,
