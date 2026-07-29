@@ -161,8 +161,48 @@ def _load_csv_episodes(csv_files: list) -> dict:
     return {"episodes": episodes, "metadata": {}}
 
 
-def build_features(sensor_type: str, config_path: str = None, has_image: bool = False) -> dict:
-    """Build the complete feature dict for LeRobotDataset."""
+def detect_image_dimensions(input_dir: Path, episodes: dict) -> tuple | None:
+    """Detect actual image dimensions from the first available tactile image.
+
+    Returns (height, width) or None if no images found.
+    """
+    for ep_frames in episodes.values():
+        for frame_data in ep_frames:
+            img = frame_data.get("tactile_image")
+            if img is None:
+                continue
+
+            # Handle numpy array
+            if isinstance(img, np.ndarray):
+                if img.ndim >= 2:
+                    return (img.shape[0], img.shape[1])
+
+            # Handle file path string
+            if isinstance(img, str):
+                img_path = input_dir / img
+                if img_path.exists():
+                    try:
+                        from PIL import Image
+                        with Image.open(img_path) as im:
+                            w, h = im.size
+                            return (h, w)
+                    except Exception as e:
+                        print(f"Warning: Could not read image {img_path}: {e}")
+                        continue
+
+    return None
+
+
+def build_features(sensor_type: str, config_path: str = None, has_image: bool = False, image_shape: tuple = None) -> dict:
+    """Build the complete feature dict for LeRobotDataset.
+
+    Args:
+        sensor_type: Type of tactile sensor.
+        config_path: Optional path to custom feature config YAML.
+        has_image: Whether to include image features.
+        image_shape: Optional (height, width) for tactile images. If None and
+                     has_image is True, uses default (480, 640).
+    """
     features = {}
     features.update(BASE_FEATURES)
 
@@ -179,9 +219,16 @@ def build_features(sensor_type: str, config_path: str = None, has_image: bool = 
     sensor_config = SENSOR_CONFIGS.get(sensor_type, SENSOR_CONFIGS["gelsight"])
     if sensor_config.get("has_image") or has_image:
         image_key = sensor_config.get("image_key", "observation.images.tactile")
+
+        # Determine image shape dynamically or fall back to default
+        if image_shape is not None:
+            h, w = image_shape
+        else:
+            h, w = 480, 640  # default fallback
+
         features[image_key] = {
             "dtype": "video",
-            "shape": [480, 640, 3],
+            "shape": [h, w, 3],
             "names": ["height", "width", "channels"],
         }
 
@@ -253,7 +300,7 @@ def convert(
 ):
     """Main conversion function."""
     try:
-        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+        from lerobot.datasets import LeRobotDataset
     except ImportError:
         print("lerobot not found. Install with: pip install lerobot")
         sys.exit(1)
@@ -270,7 +317,17 @@ def convert(
                 has_image = True
                 break
 
-    features = build_features(sensor_type, config_path, has_image)
+    # Detect actual image dimensions from data if images are present
+    image_shape = None
+    if has_image:
+        detected = detect_image_dimensions(input_dir, episodes)
+        if detected is not None:
+            image_shape = detected
+            print(f"Detected image dimensions: {image_shape[0]}x{image_shape[1]}")
+        else:
+            print("Warning: Could not detect image dimensions, using default 480x640")
+
+    features = build_features(sensor_type, config_path, has_image, image_shape)
     use_videos = has_image
 
     print(f"Sensor: {sensor_type}")

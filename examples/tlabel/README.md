@@ -81,7 +81,7 @@ See `config/tlabel_default_features.yaml` for the full default configuration.
 Once converted, the dataset works with any LeRobot-compatible training pipeline:
 
 ```python
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 dataset = LeRobotDataset("username/tactile_dataset")
 print(dataset.features)  # Includes observation.tactile.* features
