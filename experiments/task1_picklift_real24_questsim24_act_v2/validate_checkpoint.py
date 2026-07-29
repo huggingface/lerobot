@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from safetensors.torch import load_file
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies import make_pre_post_processors
@@ -89,6 +90,19 @@ def main() -> None:
     if {sample["source_domain"] for sample in samples} != {"real", "simulation"}:
         raise RuntimeError("Offline validation must include both Real and Sim samples")
 
+    processor_stats_path = args.checkpoint / "policy_preprocessor_step_3_normalizer_processor.safetensors"
+    processor_stats = load_file(processor_stats_path)
+    image_mean = processor_stats["observation.images.front.mean"].cpu().flatten().tolist()
+    image_std = processor_stats["observation.images.front.std"].cpu().flatten().tolist()
+    expected_mean = [0.485, 0.456, 0.406]
+    expected_std = [0.229, 0.224, 0.225]
+    if not np.allclose(image_mean, expected_mean, atol=1e-7) or not np.allclose(
+        image_std, expected_std, atol=1e-7
+    ):
+        raise RuntimeError(
+            f"Saved visual processor is not ImageNet normalization: mean={image_mean}, std={image_std}"
+        )
+
     result = {
         "status": "pass",
         "checkpoint": str(args.checkpoint),
@@ -96,6 +110,13 @@ def main() -> None:
         "samples": samples,
         "domains_validated": ["real", "simulation"],
         "all_outputs_shape_1x6_and_finite": True,
+        "saved_visual_processor": {
+            "status": "pass_imagenet_stats",
+            "path": str(processor_stats_path),
+            "sha256": sha256_file(processor_stats_path),
+            "mean": image_mean,
+            "std": image_std,
+        },
         "hardware_accessed": False,
         "simulation_rollout_started": False,
     }
