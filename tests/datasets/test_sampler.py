@@ -25,7 +25,7 @@ from datasets import Dataset  # noqa: E402
 from lerobot.datasets.io_utils import (
     hf_transform_to_torch,
 )
-from lerobot.datasets.sampler import EpisodeAwareSampler
+from lerobot.datasets.sampler import DomainBalancedSampler, EpisodeAwareSampler
 
 
 def calculate_episode_data_index(hf_dataset: Dataset) -> dict[str, torch.Tensor]:
@@ -234,3 +234,49 @@ def test_compute_sampler_state():
         "epoch": 1,
         "start_index": 100,
     }
+
+
+def test_domain_balanced_sampler_exact_batches_and_no_oversampling():
+    sampler = DomainBalancedSampler(
+        dataset_from_indices=[0, 5, 10, 16],
+        dataset_to_indices=[5, 10, 16, 22],
+        episode_indices=[0, 1, 2, 3],
+        domain_episode_groups={"real": [0, 1], "simulation": [2, 3]},
+        batch_size=4,
+        seed=1000,
+    )
+    order = list(sampler)
+    assert len(order) == 20
+    for offset in range(0, len(order), 4):
+        batch = order[offset : offset + 4]
+        assert sum(index < 10 for index in batch) == 2
+        assert sum(index >= 10 for index in batch) == 2
+    assert len(set(order)) == len(order)
+    assert sampler.domain_frame_counts == {"real": 10, "simulation": 12}
+
+
+def test_domain_balanced_sampler_is_deterministic_and_resume_exact():
+    kwargs = {
+        "dataset_from_indices": [0, 8],
+        "dataset_to_indices": [8, 16],
+        "episode_indices": [0, 1],
+        "domain_episode_groups": {"real": [0], "simulation": [1]},
+        "batch_size": 4,
+        "seed": 17,
+    }
+    expected = list(DomainBalancedSampler(**kwargs))
+    assert list(DomainBalancedSampler(**kwargs)) == expected
+    resumed = DomainBalancedSampler(**kwargs)
+    resumed.load_state_dict({"epoch": 0, "start_index": 8})
+    assert list(resumed) == expected[8:]
+
+
+def test_domain_balanced_sampler_requires_exact_episode_partition():
+    with pytest.raises(ValueError, match="cover exactly"):
+        DomainBalancedSampler(
+            dataset_from_indices=[0, 5],
+            dataset_to_indices=[5, 10],
+            episode_indices=[0, 1],
+            domain_episode_groups={"real": [0], "simulation": [2]},
+            batch_size=4,
+        )

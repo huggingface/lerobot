@@ -159,6 +159,157 @@ class EpisodeAwareSampler:
         return self._num_frames
 
 
+class DomainBalancedSampler:
+    """Deterministic equal-domain sampler with exact per-batch quotas.
+
+    Each epoch independently shuffles the valid frames inside every domain,
+    uses each selected frame at most once, and stops at the largest number of
+    complete balanced batches supported by the smallest domain. This avoids
+    both implicit oversampling and partial, imbalanced batches.
+    """
+
+    def __init__(
+        self,
+        dataset_from_indices: list[int],
+        dataset_to_indices: list[int],
+        episode_indices: list[int],
+        domain_episode_groups: dict[str, list[int]],
+        batch_size: int,
+        episode_indices_to_use: list[int] | None = None,
+        drop_n_first_frames: int = 0,
+        drop_n_last_frames: int = 0,
+        seed: int = 0,
+        absolute_to_relative_idx: dict[int, int] | None = None,
+    ):
+        if len(domain_episode_groups) < 2:
+            raise ValueError("At least two domains are required")
+        if batch_size <= 0 or batch_size % len(domain_episode_groups) != 0:
+            raise ValueError(
+                f"batch_size={batch_size} must be divisible by the "
+                f"{len(domain_episode_groups)} configured domains"
+            )
+        if drop_n_first_frames < 0 or drop_n_last_frames < 0:
+            raise ValueError("Frame-drop counts must be non-negative")
+
+        from_indices = np.asarray(dataset_from_indices, dtype=np.int64)
+        to_indices = np.asarray(dataset_to_indices, dtype=np.int64)
+        episode_indices_array = np.asarray(episode_indices, dtype=np.int64)
+        if not (from_indices.shape == to_indices.shape == episode_indices_array.shape):
+            raise ValueError("Episode indices and frame-bound arrays must have the same length")
+        if len({int(value) for value in episode_indices_array}) != len(episode_indices_array):
+            raise ValueError("episode_indices must be unique")
+
+        available = {int(value) for value in episode_indices_array}
+        if episode_indices_to_use is not None:
+            requested = {int(value) for value in episode_indices_to_use}
+            unknown = requested - available
+            if unknown:
+                raise ValueError(f"Requested episodes are absent from the dataset: {sorted(unknown)}")
+            available = requested
+
+        flattened = [int(episode) for episodes in domain_episode_groups.values() for episode in episodes]
+        if len(flattened) != len(set(flattened)):
+            raise ValueError("An episode may belong to only one domain")
+        configured = set(flattened)
+        if configured != available:
+            raise ValueError(
+                "Balanced domain episode groups must cover exactly the active dataset episodes; "
+                f"missing={sorted(available - configured)}, extra={sorted(configured - available)}"
+            )
+
+        bounds = {
+            int(episode): (int(start), int(stop))
+            for episode, start, stop in zip(episode_indices_array, from_indices, to_indices, strict=True)
+        }
+        self.domain_names = list(domain_episode_groups)
+        self._domain_frame_indices: list[np.ndarray] = []
+        for domain, episodes in domain_episode_groups.items():
+            frame_indices: list[int] = []
+            for episode in episodes:
+                start, stop = bounds[int(episode)]
+                start += drop_n_first_frames
+                stop -= drop_n_last_frames
+                if stop <= start:
+                    raise ValueError(
+                        f"Episode {episode} in domain {domain!r} has no frames after frame drops"
+                    )
+                for absolute_idx in range(start, stop):
+                    relative_idx = (
+                        absolute_to_relative_idx[absolute_idx]
+                        if absolute_to_relative_idx is not None
+                        else absolute_idx
+                    )
+                    frame_indices.append(relative_idx)
+            self._domain_frame_indices.append(np.asarray(frame_indices, dtype=np.int64))
+
+        self.batch_size = batch_size
+        self.samples_per_domain_per_batch = batch_size // len(self.domain_names)
+        self.num_batches = min(
+            len(indices) // self.samples_per_domain_per_batch for indices in self._domain_frame_indices
+        )
+        if self.num_batches <= 0:
+            raise ValueError("No complete balanced batch can be formed")
+        self._num_samples = self.num_batches * batch_size
+        self.seed = seed
+        self._epoch = 0
+        self._start_index = 0
+
+    @property
+    def domain_frame_counts(self) -> dict[str, int]:
+        return {
+            domain: len(indices)
+            for domain, indices in zip(self.domain_names, self._domain_frame_indices, strict=True)
+        }
+
+    def set_epoch(self, epoch: int) -> None:
+        self._epoch = epoch
+
+    def state_dict(self) -> dict:
+        return {"epoch": self._epoch, "start_index": self._start_index}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._epoch = state["epoch"]
+        self._start_index = state["start_index"]
+
+    def _epoch_generator(self, epoch: int, stream: int) -> torch.Generator:
+        epoch_seed = int(
+            np.random.SeedSequence([self.seed, epoch, stream]).generate_state(1, dtype=np.uint64)[0]
+        )
+        return torch.Generator().manual_seed(epoch_seed)
+
+    def __iter__(self) -> Iterator[int]:
+        epoch, start = self._epoch, self._start_index
+        self._epoch += 1
+        self._start_index = 0
+        return self._iter_epoch(epoch, start)
+
+    def _iter_epoch(self, epoch: int, start: int) -> Iterator[int]:
+        selected_by_domain = []
+        samples_per_domain = self.num_batches * self.samples_per_domain_per_batch
+        for domain_index, indices in enumerate(self._domain_frame_indices):
+            order = torch.randperm(len(indices), generator=self._epoch_generator(epoch, domain_index))[
+                :samples_per_domain
+            ]
+            selected_by_domain.append(indices[order.numpy()])
+
+        sequence: list[int] = []
+        for batch_index in range(self.num_batches):
+            batch: list[int] = []
+            offset = batch_index * self.samples_per_domain_per_batch
+            stop = offset + self.samples_per_domain_per_batch
+            for selected in selected_by_domain:
+                batch.extend(int(value) for value in selected[offset:stop])
+            within_batch = torch.randperm(
+                self.batch_size,
+                generator=self._epoch_generator(epoch, len(self.domain_names) + batch_index),
+            )
+            sequence.extend(batch[int(index)] for index in within_batch)
+        yield from sequence[start:]
+
+    def __len__(self) -> int:
+        return self._num_samples
+
+
 def compute_sampler_state(step: int, num_frames: int, batch_size: int, num_processes: int) -> dict:
     """Map an optimization step to an `EpisodeAwareSampler` state for sample-exact resume.
 
