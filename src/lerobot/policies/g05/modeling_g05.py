@@ -178,6 +178,17 @@ class G05Policy(PreTrainedPolicy):
         apply_fp32_params = getattr(self.backend, "apply_fp32_params", None)
         if callable(apply_fp32_params):
             apply_fp32_params()
+        if self.config.predict_cot:
+            # The author Qwen3.5 final norm is an FP32 island and its fused CE
+            # kernel disables autocast, so the tied output projection must be
+            # FP32 as well. Otherwise CoT training reaches FLCE with FP32 hidden
+            # states and a BF16 weight and fails before computing text loss.
+            model = getattr(self.backend, "model", None)
+            vlm = getattr(model, "vlm", None)
+            output_proj = getattr(vlm, "output_proj", None)
+            weight = getattr(output_proj, "weight", None)
+            if isinstance(weight, nn.Parameter):
+                weight.data = weight.data.float()
 
     def to(self, *args, **kwargs) -> G05Policy:
         """Apply author inference precision and move the ActionCodec sidecar."""

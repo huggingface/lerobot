@@ -648,6 +648,28 @@ def test_author_inference_precision_preserves_declared_fp32_parameters():
     assert backend.precision_weight.dtype is torch.float32
 
 
+def test_system2_precision_keeps_tied_lm_head_compatible_with_fp32_final_norm():
+    class CoTPrecisionBackend(TinyG05Backend):
+        def __init__(self):
+            super().__init__()
+            self.model = nn.Module()
+            self.model.vlm = nn.Module()
+            self.model.vlm.input_proj = nn.Embedding(8, 4)
+            self.model.vlm.output_proj = nn.Linear(4, 8, bias=False)
+            self.model.vlm.output_proj.weight = self.model.vlm.input_proj.weight
+
+        def apply_fp32_params(self):
+            pass
+
+    backend = CoTPrecisionBackend()
+    policy = G05Policy(_config(predict_cot=True, runtime_system="system2"), backend=backend)
+
+    policy._apply_author_inference_precision()
+
+    assert backend.model.vlm.output_proj.weight.dtype is torch.float32
+    assert backend.model.vlm.input_proj.weight is backend.model.vlm.output_proj.weight
+
+
 def test_batch_two_preserves_each_raw_task_and_every_camera_slot():
     backend = TinyG05Backend()
     policy = G05Policy(_config(), backend=backend)
