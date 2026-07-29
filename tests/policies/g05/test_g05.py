@@ -237,36 +237,6 @@ def test_select_action_discards_tail_beyond_execution_window():
     assert calls == 2
 
 
-def test_libero_and_atomic4_are_distinct_validated_mappings():
-    with pytest.raises(ValueError, match="27D"):
-        G05Config(
-            checkpoint_profile="custom",
-            embodiment="atomic_4",
-            raw_state_dim=16,
-            raw_action_dim=12,
-            camera_order=(
-                "observation.images.robot0_agentview_left",
-                "observation.images.robot0_eye_in_hand",
-                "observation.images.robot0_agentview_right",
-            ),
-        )
-
-    cfg = G05Config(
-        checkpoint_profile="custom",
-        embodiment="atomic_4",
-        raw_state_dim=16,
-        raw_action_dim=12,
-        policy_state_dim=27,
-        policy_action_dim=27,
-        camera_order=(
-            "observation.images.robot0_agentview_left",
-            "observation.images.robot0_eye_in_hand",
-            "observation.images.robot0_agentview_right",
-        ),
-    )
-    assert cfg.embodiment == "atomic_4"
-
-
 def test_libero_projection_mask_and_inverse_roundtrip():
     config = _config()
     preprocessor, postprocessor = make_pre_post_processors(config)
@@ -329,50 +299,6 @@ def test_lerobot_libero_two_finger_state_matches_author_first_qpos_contract():
 
     checkpoint_slots = G05_EMBODIMENT_MAPPINGS["libero"]["state"]
     assert torch.equal(processed[OBS_STATE][0, list(checkpoint_slots)], env_state[:7])
-
-
-def test_atomic4_projection_has_mobile_base_control_mode_and_exact_inverse():
-    config = G05Config(
-        checkpoint_profile="custom",
-        embodiment="atomic_4",
-        raw_state_dim=16,
-        raw_action_dim=12,
-        policy_state_dim=27,
-        policy_action_dim=27,
-        normalization_mode="identity",
-        camera_order=(
-            "observation.images.robot0_agentview_left",
-            "observation.images.robot0_eye_in_hand",
-            "observation.images.robot0_agentview_right",
-        ),
-        input_features={
-            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(16,)),
-            "observation.images.robot0_agentview_left": PolicyFeature(
-                type=FeatureType.VISUAL, shape=(3, 8, 8)
-            ),
-            "observation.images.robot0_eye_in_hand": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 8, 8)),
-            "observation.images.robot0_agentview_right": PolicyFeature(
-                type=FeatureType.VISUAL, shape=(3, 8, 8)
-            ),
-        },
-        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,))},
-        device="cpu",
-    )
-    preprocessor, postprocessor = make_pre_post_processors(config)
-    raw_action = torch.arange(12, dtype=torch.float32).repeat(3, 1)
-    batch = {
-        OBS_STATE: torch.arange(16, dtype=torch.float32),
-        ACTION: raw_action,
-        **{camera: torch.zeros(3, 8, 8) for camera in config.camera_order},
-        "task": "atomic",
-    }
-
-    processed = preprocessor(batch)
-    indices = G05_EMBODIMENT_MAPPINGS["atomic_4"]["action"]
-    assert torch.equal(processed[ACTION][..., list(indices)], raw_action)
-    assert torch.equal(postprocessor(processed[ACTION]), raw_action)
-    # Last five raw dimensions are base motion[4] and control mode.
-    assert indices[-5:] == (20, 21, 22, 23, 24)
 
 
 def test_quantile_mode_refuses_minmax_substitution():

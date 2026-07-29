@@ -51,11 +51,6 @@ G05_CAMERA_PROFILES: dict[str, tuple[str, ...]] = {
         "observation.images.left_wrist_rgb",
         "observation.images.right_wrist_rgb",
     ),
-    "atomic_4": (
-        "observation.images.robot0_agentview_left",
-        "observation.images.robot0_eye_in_hand",
-        "observation.images.robot0_agentview_right",
-    ),
 }
 
 G05_CAMERA_SIZE_PROFILES: dict[str, dict[str, tuple[int, int]]] = {
@@ -64,7 +59,6 @@ G05_CAMERA_SIZE_PROFILES: dict[str, dict[str, tuple[int, int]]] = {
     "so100": dict.fromkeys(G05_CAMERA_PROFILES["so100"], (256, 256)),
     "galaxea_r1lite": dict.fromkeys(G05_CAMERA_PROFILES["galaxea_r1lite"], (256, 256)),
     "galaxea_r1pro": dict.fromkeys(G05_CAMERA_PROFILES["galaxea_r1pro"], (256, 256)),
-    "atomic_4": dict.fromkeys(G05_CAMERA_PROFILES["atomic_4"], (256, 256)),
 }
 
 
@@ -126,8 +120,7 @@ def make_g05_cot_prompt_template(
 
 # Raw dimensions are inserted in these exact policy slots. The G0.5 shared layout is:
 # left_control[9] | left_gripper[1] | right_control[9] | right_gripper[1] | lower_body[7].
-# LIBERO uses only the right EEF delta and right gripper. atomic_4 is a single-arm mobile
-# manipulator and therefore has a deliberately separate state/action map.
+# LIBERO uses only the right EEF delta and right gripper.
 G05_EMBODIMENT_MAPPINGS: dict[str, dict[str, tuple[int, ...]]] = {
     "libero": {
         "state": (10, 11, 12, 13, 14, 15, 19),
@@ -148,14 +141,6 @@ G05_EMBODIMENT_MAPPINGS: dict[str, dict[str, tuple[int, ...]]] = {
     "galaxea_r1pro": {
         "state": (0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15, 16, 19),
         "action": (0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15, 16, 19),
-    },
-    "atomic_4": {
-        # EEF relative xyz+quat -> right_control[0:7], base xyz+quat -> lower_body[0:7],
-        # the two parallel-jaw qpos values -> the two one-dimensional gripper slots.
-        "state": (10, 11, 12, 13, 14, 15, 16, 20, 21, 22, 23, 24, 25, 26, 9, 19),
-        # EEF delta xyz+rpy -> right_control[0:6], gripper -> right_gripper,
-        # base motion[4] -> lower_body[0:4], control mode -> lower_body[4].
-        "action": (10, 11, 12, 13, 14, 15, 19, 20, 21, 22, 23, 24),
     },
 }
 
@@ -307,14 +292,6 @@ class G05Config(PreTrainedConfig):
             raise ValueError("At least one G0.5 action path must be enabled.")
         if self.embodiment not in G05_EMBODIMENT_MAPPINGS:
             raise ValueError(f"No named G0.5 embodiment mapping for {self.embodiment!r}.")
-        if self.embodiment == "atomic_4":
-            if self.policy_action_dim < 27 or self.policy_state_dim < 27:
-                raise ValueError(
-                    "atomic_4 includes mobile-base/control-mode semantics and requires the 27D "
-                    "G0.5 shared layout; a 20D LIBERO checkpoint is incompatible."
-                )
-            if self.raw_action_dim != 12 or self.raw_state_dim != 16:
-                raise ValueError("atomic_4 requires raw_state_dim=16 and raw_action_dim=12.")
         mapping = G05_EMBODIMENT_MAPPINGS.get(self.embodiment)
         if mapping is not None:
             if len(mapping["state"]) != self.raw_state_dim:
