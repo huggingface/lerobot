@@ -36,15 +36,13 @@ def load_json(fpath: Path) -> Any:
         return json.load(f)
 
 
-def write_json(data: Any, fpath: Path) -> None:
+def write_json(data: JsonLike, fpath: Path) -> None:
     """Write JSON-serializable data to a file.
 
-    Creates parent directories if they don't exist. Accepts any value that
-    ``json.dump`` can encode (dict, list, str, …) so callers are not forced
-    through a spurious ``dict``-only annotation.
+    Creates parent directories if they don't exist.
 
     Args:
-        data: JSON-serializable payload.
+        data: JSON-serializable data to write.
         fpath (Path): The path to the output JSON file.
     """
     fpath.parent.mkdir(exist_ok=True, parents=True)
