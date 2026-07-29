@@ -1,24 +1,46 @@
 # Third-Party Cameras & Sensors
 
-Beyond the cameras natively supported by LeRobot (OpenCV, Intel RealSense, ZMQ, Reachy 2), the community has published drop-in camera plugins using the `lerobot_camera_` package convention. Because LeRobot auto-discovers any installed package prefixed with `lerobot_camera_` and registers its `CameraConfig` subclass, these work with unmodified LeRobot — just `pip install` and reference the new camera `type` from the CLI. This page collects community-maintained camera and sensor integrations.
+The LeRobot ecosystem extends far beyond its natively supported cameras (OpenCV, Intel RealSense, ZMQ, Reachy 2). Thanks to LeRobot's plugin architecture, the community has built drop-in camera and sensor integrations — from depth cameras to vision-based tactile sensors. This page showcases community-maintained camera and sensor integrations you can use for teleoperation, data collection, and policy deployment.
 
-<Tip>
-These projects are developed and maintained by third parties. Please refer to each repository for installation instructions, hardware requirements, and support.
-</Tip>
+> [!IMPORTANT]
+> These projects are developed and maintained by third parties. Please refer to each repository for installation instructions, hardware requirements, and support.
 
-## Cameras & Vision Sensors
+Drop-in plugins are auto-discovered by package name: LeRobot imports any installed package prefixed with `lerobot_camera_`. Once installed, reference the camera `type` the plugin registers (see its README — it may differ from the package name) directly from any LeRobot command:
+
+```bash
+pip install lerobot_camera_<name>
+
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: <name>, width: 640, height: 480, fps: 30} }" \
+    --dataset.repo_id=${HF_USER}/my-dataset \
+    --dataset.num_episodes=5
+```
+
+## Tactile Sensors
 
 **[lerobot-camera-xense](https://github.com/xensedyl/lerobot-camera-xense)** — by xensedyl
 
-A drop-in camera plugin (registers the `xense` camera type) for Xense vision-based tactile sensors via `xensesdk>=2.0.0`. Exposes rectified/difference images for the standard image observation path, plus richer outputs — depth, 2D markers, force fields, force resultants, and 3D mesh — with a per-sensor process backend for multi-sensor setups.
+A drop-in plugin registering the `xense` camera type for [Xense](https://www.xenserobotics.com/) vision-based tactile sensors, exposing rectified/difference images plus depth, 2D markers, and distributed force fields.
 
-**[hex_lerobot_drivers cameras](https://github.com/hexfellow/hex_lerobot_drivers)** — by hexfellow
+## Depth Cameras
 
-Part of HEXFELLOW's LeRobot plugin suite, providing two camera plugins published on PyPI: [`lerobot_camera_berxel`](https://pypi.org/project/lerobot-camera-berxel/) for Berxel (depth) cameras, and [`lerobot_camera_dummy`](https://pypi.org/project/lerobot-camera-dummy/), a simulated MuJoCo camera for the Hex Arm useful for teleoperation and recording without physical camera hardware. (The same repo also ships Hex Arm robots and leader teleoperators — see the [Robots & Teleoperators](./third_party_robots) page.)
+**[lerobot_camera_berxel](https://github.com/hexfellow/hex_lerobot_drivers/tree/main/lerobot_camera_berxel)** — by hexfellow
 
-**[lerobot_camera_imageclient](https://github.com/CoNG-harvard/lerobot_camera_imageclient)** — by CoNG-harvard
+[Berxel](https://www.berxel.com/) depth camera plugin from [HEXFELLOW](https://hexfellow.com/)'s LeRobot suite on PyPI (the same repo also ships Hex Arm robots and teleoperators).
 
-A LeRobot camera plugin that sources frames from an external image client, following the `lerobot_camera_` auto-discovery convention.
+## Networked Cameras
+
+**[lerobot_camera_zmq (UR5e/GELLO)](https://github.com/F-Fer/lerobot_ur5e_gello)** — by F-Fer
+
+The `lerobot_camera_zmq` plugin from F-Fer's UR5e/GELLO monorepo: streams [Stereolabs ZED](https://www.stereolabs.com/) and USB camera frames from a Raspberry Pi over the network.
+
+## Virtual Cameras
+
+**[lerobot_camera_dummy](https://github.com/hexfellow/hex_lerobot_drivers/tree/main/lerobot_camera_dummy)** — by hexfellow
+
+A simulated MuJoCo camera for the Hex Arm from [HEXFELLOW](https://hexfellow.com/)'s LeRobot suite, for teleoperation and recording without physical camera hardware.
 
 ## Contributing
 
