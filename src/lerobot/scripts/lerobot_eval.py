@@ -62,7 +62,7 @@ from dataclasses import asdict
 from functools import partial
 from pathlib import Path
 from pprint import pformat
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import einops
 import gymnasium as gym
@@ -87,13 +87,21 @@ from lerobot.processor import PolicyProcessorPipeline
 from lerobot.types import PolicyAction
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
-from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
     init_logging,
     inside_slurm,
 )
+
+if TYPE_CHECKING or _peft_available:
+    from peft import PeftModel
+else:
+    PeftModel = None
+
+
+logger = logging.getLogger(__name__)
 
 
 def _env_features_to_dataset_features(env_features: dict) -> dict:
@@ -444,15 +452,16 @@ def eval_policy(
         exc = ValueError(
             f"Policy of type 'PreTrainedPolicy' is expected, but type '{type(policy)}' was provided."
         )
-        try:
-            from peft import PeftModel
-
-            if not isinstance(policy, PeftModel):
-                raise exc
-        except ImportError:
-            raise exc from None
+        if not _peft_available:
+            raise exc
+        require_package("peft", extra="peft")
+        if not isinstance(policy, PeftModel):
+            raise exc
 
     start = time.time()
+    # Preserve the mode for direct callers. eval_policy_all scopes the mode
+    # around all tasks so parallel evaluations cannot race with each other.
+    was_training = policy.training
     policy.eval()
 
     # Determine how many batched rollouts we need to get n_episodes. Note that if n_episodes is not evenly
@@ -555,7 +564,7 @@ def eval_policy(
         if seeds:
             all_seeds.extend(seeds)
         else:
-            all_seeds.append(None)
+            all_seeds.extend([None] * env.num_envs)
 
         # FIXME: episode_data is either None or it doesn't exist
         if return_episode_data:
@@ -674,6 +683,8 @@ def eval_policy(
     if save_predicted_video:
         info["predicted_video_paths"] = predicted_video_paths
 
+    policy.train(was_training)
+
     return info
 
 
@@ -791,13 +802,13 @@ def eval_main(cfg: EvalPipelineConfig):
             recording_repo_id=cfg.eval.recording_repo_id,
             recording_private=cfg.eval.recording_private,
         )
-        print("Overall Aggregated Metrics:")
-        print(info["overall"])
+        logger.info("Overall Aggregated Metrics:")
+        logger.info(info["overall"])
 
         # Print per-suite stats
         for task_group, task_group_info in info.items():
-            print(f"\nAggregated Metrics for {task_group}:")
-            print(task_group_info)
+            logger.info(f"\nAggregated Metrics for {task_group}:")
+            logger.info(task_group_info)
     # Close all vec envs
     close_envs(envs)
 
@@ -1010,40 +1021,48 @@ def eval_policy_all(
         recording_private=recording_private,
     )
 
-    if max_parallel_tasks <= 1:
-        prefetch_thread: threading.Thread | None = None
-        for i, (task_group, task_id, env) in enumerate(tasks):
-            if prefetch_thread is not None:
-                prefetch_thread.join()
-                prefetch_thread = None
+    # Set the shared policy's mode before launching any workers. Restoring it
+    # inside individual tasks would let one task enable training mode while
+    # another task is still evaluating.
+    was_training = policy.training
+    policy.eval()
+    try:
+        if max_parallel_tasks <= 1:
+            prefetch_thread: threading.Thread | None = None
+            for i, (task_group, task_id, env) in enumerate(tasks):
+                if prefetch_thread is not None:
+                    prefetch_thread.join()
+                    prefetch_thread = None
 
-            try:
-                tg, tid, metrics = task_runner(task_group, task_id, env)
-                _accumulate_to(tg, metrics)
-                per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
-            finally:
-                env.close()
-                # Prefetch next task's workers *after* closing current env to prevent
-                # GPU memory overlap between consecutive tasks.
-                if i + 1 < len(tasks):
-                    next_env = tasks[i + 1][2]
-                    if hasattr(next_env, "_ensure"):
-                        prefetch_thread = threading.Thread(target=next_env._ensure, daemon=True)
-                        prefetch_thread.start()
-    else:
-        with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
-            fut2meta = {}
-            for task_group, task_id, env in tasks:
-                fut = executor.submit(task_runner, task_group, task_id, env)
-                fut2meta[fut] = (task_group, task_id, env)
-            for fut in cf.as_completed(fut2meta):
-                tg, tid, env = fut2meta[fut]
                 try:
-                    tg, tid, metrics = fut.result()
+                    tg, tid, metrics = task_runner(task_group, task_id, env)
                     _accumulate_to(tg, metrics)
                     per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
                 finally:
                     env.close()
+                    # Prefetch next task's workers *after* closing current env to prevent
+                    # GPU memory overlap between consecutive tasks.
+                    if i + 1 < len(tasks):
+                        next_env = tasks[i + 1][2]
+                        if hasattr(next_env, "_ensure"):
+                            prefetch_thread = threading.Thread(target=next_env._ensure, daemon=True)
+                            prefetch_thread.start()
+        else:
+            with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
+                fut2meta = {}
+                for task_group, task_id, env in tasks:
+                    fut = executor.submit(task_runner, task_group, task_id, env)
+                    fut2meta[fut] = (task_group, task_id, env)
+                for fut in cf.as_completed(fut2meta):
+                    tg, tid, env = fut2meta[fut]
+                    try:
+                        tg, tid, metrics = fut.result()
+                        _accumulate_to(tg, metrics)
+                        per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                    finally:
+                        env.close()
+    finally:
+        policy.train(was_training)
 
     # compute aggregated metrics helper (robust to lists/scalars)
     def _agg_from_list(xs):

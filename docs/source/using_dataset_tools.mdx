@@ -252,6 +252,10 @@ lerobot-dataset-viz \
     --episode-index 0
 ```
 
+For a private or gated dataset, authenticate first with `hf auth login`, or set the
+`HF_TOKEN` environment variable. The Hub client then discovers the credential
+automatically; no token argument is needed.
+
 **From a local folder:**
 Add the `--root` option and set `--mode local`. For example, to search in `./my_local_data_dir/lerobot/pusht`:
 
