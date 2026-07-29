@@ -194,7 +194,7 @@ def render_sample(
         task=task,
         dataset_ctx=dataset_ctx,
     )
-    return _render_message_recipe(selected_recipe, bindings, sample_idx=sample_idx)
+    return _render_message_recipe(selected_recipe, bindings)
 
 
 def _render_vqa_if_present(
@@ -225,7 +225,7 @@ def _render_vqa_if_present(
             task=task,
             dataset_ctx=dataset_ctx,
         )
-        rendered = _render_message_recipe(component, bindings, sample_idx=sample_idx)
+        rendered = _render_message_recipe(component, bindings)
         if rendered is not None:
             renderable.append((float(component.weight or 0.0), rendered))
 
@@ -382,8 +382,6 @@ def _parse_resolver_args(args: str) -> dict[str, Any]:
 def _render_message_recipe(
     recipe: TrainingRecipe,
     bindings: dict[str, LanguageRow | str | None],
-    *,
-    sample_idx: int,
 ) -> RenderedMessages | None:
     """Expand ``recipe.messages`` into rendered chat messages using ``bindings``."""
     assert recipe.messages is not None
@@ -393,10 +391,8 @@ def _render_message_recipe(
     streams: list[str | None] = []
     target_indices: list[int] = []
 
-    for turn_idx, turn in enumerate(recipe.messages):
+    for turn in recipe.messages:
         if turn.if_present is not None and bindings.get(turn.if_present) is None:
-            continue
-        if _drop_message_turn(turn.dropout, sample_idx=sample_idx, turn_idx=turn_idx):
             continue
 
         message = {"role": turn.role}
@@ -427,21 +423,6 @@ def _render_message_recipe(
     }
     _validate_rendered(rendered)
     return rendered
-
-
-def _drop_message_turn(dropout: float, *, sample_idx: int, turn_idx: int) -> bool:
-    """Apply reproducible, independent dropout to one recipe message."""
-
-    if dropout <= 0.0:
-        return False
-    if dropout >= 1.0:
-        return True
-    digest = hashlib.blake2b(
-        f"message_dropout:{sample_idx}:{turn_idx}".encode(),
-        digest_size=8,
-    ).digest()
-    draw = int.from_bytes(digest, "big") / 2**64
-    return draw < dropout
 
 
 def _render_content(

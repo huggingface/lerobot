@@ -1,9 +1,6 @@
 # G0.5 CoT supervision from the signals LeRobot can currently provide:
 # active subtasks and camera-grounded bounding boxes.
-#
-# BBox and Subtask turns are dropped independently and deterministically. This
-# produces Action-only, BBox+Action, Subtask+Action, and
-# BBox+Subtask+Action samples without a policy-specific recipe selector.
+# Each target is emitted when its corresponding annotation is present.
 
 bindings:
   bbox: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.exterior)"
@@ -16,7 +13,6 @@ messages:
       stream: low_level,
       target: true,
       if_present: bbox,
-      dropout: 0.5,
     }
   - {
       role: assistant,
@@ -24,5 +20,4 @@ messages:
       stream: low_level,
       target: true,
       if_present: subtask,
-      dropout: 0.5,
     }

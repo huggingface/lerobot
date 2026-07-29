@@ -176,35 +176,7 @@ def test_deterministic_blend_sampling():
     assert first == second
 
 
-def test_message_dropout_skips_missing_optional_bindings():
-    recipe = TrainingRecipe(
-        messages=[
-            MessageTurn(role="user", content="${task}", stream="low_level"),
-            MessageTurn(
-                role="assistant",
-                content="${subtask}",
-                stream="low_level",
-                target=True,
-                if_present="subtask",
-                dropout=0.5,
-            ),
-        ]
-    )
-
-    rendered = render_sample(
-        recipe=recipe,
-        persistent=[],
-        events=[],
-        t=0.0,
-        sample_idx=0,
-        task="pick the cup",
-    )
-
-    assert rendered["messages"] == [{"role": "user", "content": "pick the cup"}]
-    assert rendered["target_message_indices"] == []
-
-
-def test_g05_dropout_produces_all_bbox_subtask_combinations():
+def test_g05_recipe_emits_available_bbox_and_subtask():
     recipe = TrainingRecipe.from_yaml("src/lerobot/configs/recipes/g05_bbox_subtask.yaml")
     persistent = [persistent_row("assistant", "grasp the cup", "subtask", 0.0)]
     events = [
@@ -216,64 +188,18 @@ def test_g05_dropout_produces_all_bbox_subtask_combinations():
         }
     ]
 
-    rendered_by_targets = {}
-    for sample_idx in range(100):
-        rendered = render_sample(
-            recipe=recipe,
-            persistent=persistent,
-            events=events,
-            t=0.0,
-            sample_idx=sample_idx,
-            task="pick the cup",
-        )
-        targets = tuple(
-            rendered["messages"][idx]["content"].split(":", 1)[0]
-            for idx in rendered["target_message_indices"]
-        )
-        rendered_by_targets.setdefault(targets, rendered)
-
-    assert set(rendered_by_targets) == {
-        (),
-        ("BBoxJSON",),
-        ("Subtask",),
-        ("BBoxJSON", "Subtask"),
-    }
-    joint = rendered_by_targets[("BBoxJSON", "Subtask")]
-    assert joint["messages"][1]["content"].startswith("BBoxJSON:")
-    assert joint["messages"][2]["content"] == "Subtask: grasp the cup"
-
-
-def test_message_dropout_is_deterministic_for_sample_index():
-    recipe = TrainingRecipe(
-        messages=[
-            MessageTurn(role="user", content="${task}", stream="low_level"),
-            MessageTurn(
-                role="assistant",
-                content="${subtask}",
-                stream="low_level",
-                target=True,
-                dropout=0.5,
-            ),
-        ]
-    )
-
-    first = render_sample(
+    rendered = render_sample(
         recipe=recipe,
-        persistent=PERSISTENT,
-        events=[],
+        persistent=persistent,
+        events=events,
         t=0.0,
-        sample_idx=42,
+        sample_idx=0,
         task="pick the cup",
     )
-    second = render_sample(
-        recipe=recipe,
-        persistent=PERSISTENT,
-        events=[],
-        t=0.0,
-        sample_idx=42,
-        task="pick the cup",
-    )
-    assert first == second
+
+    assert rendered["target_message_indices"] == [1, 2]
+    assert rendered["messages"][1]["content"].startswith("BBoxJSON:")
+    assert rendered["messages"][2]["content"] == "Subtask: grasp the cup"
 
 
 def test_emitted_at_filters_vqa_by_camera():
