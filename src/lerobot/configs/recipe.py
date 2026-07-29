@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Any, Literal, get_args
 
@@ -49,8 +50,9 @@ class MessageTurn:
     ``content`` may be a plain string, a list of HF-style multimodal blocks, or
     ``None`` when ``tool_calls_from`` supplies tool-call payloads instead.
     ``stream`` tags the turn for downstream filtering, ``target`` flags it as a
-    training target, and ``if_present`` skips the turn when the named binding
-    resolves to ``None``.
+    training target, ``if_present`` skips the turn when the named binding
+    resolves to ``None``, and ``dropout`` independently omits it for a
+    deterministic fraction of samples.
     """
 
     role: MessageRole
@@ -59,6 +61,7 @@ class MessageTurn:
     target: bool = False
     if_present: str | None = None
     tool_calls_from: str | None = None
+    dropout: float = 0.0
 
     def __post_init__(self) -> None:
         """Validate role, stream, and content after dataclass construction."""
@@ -86,6 +89,11 @@ class MessageTurn:
                     raise ValueError(
                         "Multimodal content blocks must be HF-style dictionaries with a type key."
                     )
+        if isinstance(self.dropout, bool) or not isinstance(self.dropout, int | float):
+            raise TypeError("MessageTurn.dropout must be a probability.")
+        self.dropout = float(self.dropout)
+        if not isfinite(self.dropout) or not 0.0 <= self.dropout <= 1.0:
+            raise ValueError("MessageTurn.dropout must be between 0 and 1.")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MessageTurn:
@@ -106,7 +114,6 @@ class TrainingRecipe:
     bindings: dict[str, str] | None = None
     requires: list[str] | None = None
     blend: dict[str, TrainingRecipe] | None = None
-    select_from_applicable: bool = False
     weight: float | None = None
 
     def __post_init__(self) -> None:

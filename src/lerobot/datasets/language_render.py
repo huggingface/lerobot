@@ -169,17 +169,6 @@ def render_sample(
     persistent_rows = _normalize_rows(persistent or [])
     event_rows = _normalize_rows(events or [])
 
-    if recipe.blend is not None and recipe.select_from_applicable:
-        return _render_applicable_blend(
-            recipe,
-            persistent=persistent_rows,
-            events=event_rows,
-            t=t,
-            sample_idx=sample_idx,
-            task=task,
-            dataset_ctx=dataset_ctx,
-        )
-
     # Route sparse VQA frames to a matching view-specific component before weighted selection.
     # This avoids dropping annotated frames or selecting VQA without annotations.
     if recipe.blend is not None:
@@ -205,55 +194,7 @@ def render_sample(
         task=task,
         dataset_ctx=dataset_ctx,
     )
-    return _render_message_recipe(selected_recipe, bindings)
-
-
-def _render_applicable_blend(
-    recipe: TrainingRecipe,
-    *,
-    persistent: Sequence[LanguageRow],
-    events: Sequence[LanguageRow],
-    t: float,
-    sample_idx: int,
-    task: str | None,
-    dataset_ctx: Any | None,
-) -> RenderedMessages | None:
-    """Select deterministically among components whose required bindings resolve.
-
-    Ordinary blends preserve their historical select-then-resolve behavior.
-    Annotation-dependent policies such as G0.5 instead need the author
-    ``MixedSamplesBuilder`` contract: discard unavailable CoT formats first,
-    then draw according to the remaining relative weights.
-    """
-
-    assert recipe.blend is not None
-    renderable: list[tuple[float, RenderedMessages]] = []
-    for component in recipe.blend.values():
-        bindings = _resolve_bindings(
-            component,
-            persistent=persistent,
-            events=events,
-            t=t,
-            sample_idx=sample_idx,
-            task=task,
-            dataset_ctx=dataset_ctx,
-        )
-        rendered = _render_message_recipe(component, bindings)
-        if rendered is not None:
-            renderable.append((float(component.weight or 0.0), rendered))
-
-    if not renderable:
-        return None
-
-    total_weight = sum(weight for weight, _ in renderable)
-    digest = hashlib.blake2b(f"applicable:{sample_idx}".encode(), digest_size=8).digest()
-    draw = int.from_bytes(digest, "big") / 2**64 * total_weight
-    cumulative = 0.0
-    for weight, rendered in renderable:
-        cumulative += weight
-        if draw < cumulative:
-            return rendered
-    return renderable[-1][1]
+    return _render_message_recipe(selected_recipe, bindings, sample_idx=sample_idx)
 
 
 def _render_vqa_if_present(
@@ -284,7 +225,7 @@ def _render_vqa_if_present(
             task=task,
             dataset_ctx=dataset_ctx,
         )
-        rendered = _render_message_recipe(component, bindings)
+        rendered = _render_message_recipe(component, bindings, sample_idx=sample_idx)
         if rendered is not None:
             renderable.append((float(component.weight or 0.0), rendered))
 
@@ -441,6 +382,8 @@ def _parse_resolver_args(args: str) -> dict[str, Any]:
 def _render_message_recipe(
     recipe: TrainingRecipe,
     bindings: dict[str, LanguageRow | str | None],
+    *,
+    sample_idx: int,
 ) -> RenderedMessages | None:
     """Expand ``recipe.messages`` into rendered chat messages using ``bindings``."""
     assert recipe.messages is not None
@@ -450,8 +393,10 @@ def _render_message_recipe(
     streams: list[str | None] = []
     target_indices: list[int] = []
 
-    for turn in recipe.messages:
+    for turn_idx, turn in enumerate(recipe.messages):
         if turn.if_present is not None and bindings.get(turn.if_present) is None:
+            continue
+        if _drop_message_turn(turn.dropout, sample_idx=sample_idx, turn_idx=turn_idx):
             continue
 
         message = {"role": turn.role}
@@ -482,6 +427,21 @@ def _render_message_recipe(
     }
     _validate_rendered(rendered)
     return rendered
+
+
+def _drop_message_turn(dropout: float, *, sample_idx: int, turn_idx: int) -> bool:
+    """Apply reproducible, independent dropout to one recipe message."""
+
+    if dropout <= 0.0:
+        return False
+    if dropout >= 1.0:
+        return True
+    digest = hashlib.blake2b(
+        f"message_dropout:{sample_idx}:{turn_idx}".encode(),
+        digest_size=8,
+    ).digest()
+    draw = int.from_bytes(digest, "big") / 2**64
+    return draw < dropout
 
 
 def _render_content(

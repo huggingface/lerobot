@@ -156,15 +156,10 @@ lerobot-train \
 
 The bundled `g05_bbox_subtask.yaml` recipe resolves the active
 `language_persistent` `subtask` and camera-scoped grounded `vqa` event at each
-sample timestamp. It filters out unavailable formats before selecting one of
-four author-compatible objectives:
-
-| Assistant sequence         | Weight |
-| -------------------------- | -----: |
-| Action only                |      1 |
-| Subtask, then action       |      2 |
-| BBox, then action          |      1 |
-| BBox, subtask, then action |      1 |
+sample timestamp. It applies independent `0.5` dropout to the optional BBox and
+Subtask targets, producing Action-only, Subtask+Action, BBox+Action, and joint
+BBox+Subtask+Action samples. An unavailable annotation is skipped before
+dropout through the recipe's `if_present` guard.
 
 Grounded VQA boxes are converted from pixel-space `xyxy` JSON using the source
 camera dimensions captured before image resizing, then serialized as G0.5

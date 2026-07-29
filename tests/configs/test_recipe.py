@@ -47,6 +47,17 @@ def test_message_turn_requires_a_stream():
         MessageTurn(role="user", content="${task}")
 
 
+@pytest.mark.parametrize("dropout", [-0.1, 1.1, float("inf"), float("nan")])
+def test_message_turn_rejects_invalid_dropout(dropout):
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        MessageTurn(role="user", content="${task}", stream="high_level", dropout=dropout)
+
+
+def test_message_turn_rejects_non_numeric_dropout():
+    with pytest.raises(TypeError, match="probability"):
+        MessageTurn(role="user", content="${task}", stream="high_level", dropout="half")
+
+
 def test_message_recipe_requires_at_least_one_target():
     with pytest.raises(ValueError, match="target"):
         TrainingRecipe(
@@ -152,33 +163,25 @@ def test_from_dict_with_nested_blend():
     assert isinstance(recipe.blend["a"].messages[0], MessageTurn)
 
 
-def test_applicable_blend_round_trips_from_dict():
+def test_message_dropout_round_trips_from_dict():
     recipe = TrainingRecipe.from_dict(
         {
-            "select_from_applicable": True,
-            "blend": {
-                "subtask": {
-                    "weight": 2,
-                    "requires": ["subtask"],
-                    "messages": [
-                        {
-                            "role": "assistant",
-                            "content": "${subtask}",
-                            "stream": "low_level",
-                            "target": True,
-                        }
-                    ],
+            "messages": [
+                {"role": "user", "content": "${task}", "stream": "low_level"},
+                {
+                    "role": "assistant",
+                    "content": "${subtask}",
+                    "stream": "low_level",
+                    "target": True,
+                    "if_present": "subtask",
+                    "dropout": 0.5,
                 },
-                "action": {
-                    "weight": 1,
-                    "messages": [{"role": "user", "content": "${task}", "stream": "low_level"}],
-                },
-            },
+            ]
         }
     )
 
-    assert recipe.select_from_applicable
-    assert recipe.blend["subtask"].requires == ["subtask"]
+    assert recipe.messages[1].dropout == 0.5
+    assert recipe.messages[1].if_present == "subtask"
 
 
 def test_from_yaml_round_trips_through_load_recipe(tmp_path: Path):

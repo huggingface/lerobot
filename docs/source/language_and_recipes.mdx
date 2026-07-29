@@ -146,29 +146,22 @@ The renderer does not apply a tokenizer chat template. Policy processors decide 
 Blend recipes select one weighted sub-recipe deterministically from the sample index.
 `recipes/subtask_mem.yaml` trains the compact core blend — high-level subtask prediction, low-level execution, and memory. `recipes/subtask_mem_vqa_speech.yaml` is the fuller variant that also adds VQA and spoken interjection responses.
 
-Annotation-dependent blends can set `select_from_applicable: true` and declare
-`requires` on each component. The renderer first removes components whose
-required bindings resolve to `None`, then performs the deterministic weighted
-selection. This matches mixed-CoT policies where unavailable annotation formats
-must not consume probability:
+Message turns can set `dropout` to a probability between `0` and `1`. Dropout is
+deterministic for a given sample index and independent between turns. Combine it
+with `if_present` to sample optional supervision formats while gracefully
+skipping annotations that are unavailable:
 
 ```yaml
-select_from_applicable: true
-blend:
-  subtask:
-    weight: 2
-    requires: [subtask]
-    messages:
-      - {
-          role: assistant,
-          content: "${subtask}",
-          stream: low_level,
-          target: true,
-        }
-  action:
-    weight: 1
-    messages:
-      - { role: user, content: "${task}", stream: low_level }
+messages:
+  - { role: user, content: "${task}", stream: low_level }
+  - {
+      role: assistant,
+      content: "${subtask}",
+      stream: low_level,
+      target: true,
+      if_present: subtask,
+      dropout: 0.5,
+    }
 ```
 
 A message recipe with a supervised assistant turn on the `low_level` stream trains
