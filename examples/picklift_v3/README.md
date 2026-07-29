@@ -63,16 +63,20 @@ Do not supply that acknowledgement until both arms are mechanically safe,
 12 V has intentionally been enabled, the serial-role mapping has been
 confirmed, and the first-motion acceptance is authorized.
 
-New real collection defaults to `relative_rebase`. On every connection it
-maps the current Leader pose to the current Follower pose, so approximate
-manual alignment of the first five joints does not cause a START jump; the
-exact startup offset is recorded in provenance. The gripper is deliberately
-not rebased: it keeps the calibrated LeRobot 0–100 direct mapping so both full
-open and full close remain reachable. Before READY, roughly match the two
-gripper openings to avoid a gripper-only START step. Historical
-`direct_absolute` configs remain valid, but the continuous real batch workflow
-rejects them. In either mode the training `action` is the command actually
-returned by `SOFollower.send_action`.
+Future real collection uses the official calibrated SO-101 absolute joint
+mapping (`direct_absolute`) with `max_relative_target=null`. It applies no
+collector-side rebase, clipping, threshold gate, or hidden action transform.
+The recorded `observation.state` is the Follower state read before the command,
+and `action` is the target actually returned by `SOFollower.send_action`.
+`relative_rebase` remains readable only for historical collection identities
+and is rejected by the new continuous batch workflow.
+
+Before CONNECT/START, bring Leader and Follower into a similar, visually safe
+ready area, including a similar gripper opening. This is an operator workflow,
+not a numeric pose or blocking threshold. Between episodes the Follower keeps
+following Leader while no frames are written; reset the cube and both arms,
+check the view and gripper, then START. See
+[`COLLECTION_PROTOCOL_V6.md`](./COLLECTION_PROTOCOL_V6.md).
 
 ## Ubuntu operator console
 
@@ -97,7 +101,7 @@ For continuous 24/60-episode collection, copy and complete
 ```
 
 The same window stays open across attempts. In
-`picklift_continuous_batch_v2_live_reset`, END stops dataset writes but starts
+`picklift_continuous_batch_v3_absolute_live_reset`, END stops dataset writes but starts
 a clearly labelled `RESET / NO DATA RECORDING` phase in which Follower keeps
 following Leader. The operator can lower/release the cube and move directly to
 the next ready pose without disconnecting torque or manually realigning.
@@ -113,6 +117,12 @@ a white pressed border, displays `ACCEPTED`, and locks all buttons while the
 operation runs. Encoding shows `SAVING`; completion shows `SAVED` or
 `NOT SAVED`. This prevents a delayed double-click from becoming a second
 command.
+
+Each episode provenance contains ordered collector sample sequence numbers,
+monotonic timestamp offsets, and SHA-256 for every canonical RGB frame. It
+reports exact unique-content and repeated/consecutive-duplicate counts under
+`picklift_camera_sequence_evidence_v1`. The sequence is explicitly a collector
+control-sample sequence, not a fabricated hardware-camera frame number.
 
 ## No-recording practice
 

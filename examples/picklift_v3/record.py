@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -39,6 +40,8 @@ from lerobot.datasets import CODEBASE_VERSION, LeRobotDataset
 FPS = 20
 REAL_ACK = "I_HAVE_COMPLETED_THE_POWERED_SAFETY_CHECK"
 SPAWN_PROTOCOL_VERSION = "picklift_spawn_v5"
+COLLECTION_PROTOCOL_VERSION = "picklift_collection_v6_absolute_camera_sequence"
+CAMERA_EVIDENCE_VERSION = "picklift_camera_sequence_evidence_v1"
 SPAWN_PROTOCOLS = {
     "picklift_spawn_v1": {
         "x": (20.0, 40.0),
@@ -181,6 +184,7 @@ class EpisodeOutcome:
     success: bool
     dropped_frames: int
     sync_anomalies: int
+    camera_frame_evidence: dict
 
 
 def utc_now() -> str:
@@ -343,8 +347,11 @@ def validate_config(cfg: dict) -> None:
     ):
         raise ValueError("(25, 0) is alignment-only and cannot be a formal randomized episode pose")
     if cfg["spawn_protocol_version"] == "picklift_spawn_v5":
-        if cfg["collection_protocol_version"] != "picklift_collection_v5":
-            raise ValueError("v5 requires collection_protocol_version=picklift_collection_v5")
+        if cfg["collection_protocol_version"] not in {
+            "picklift_collection_v5",
+            COLLECTION_PROTOCOL_VERSION,
+        }:
+            raise ValueError("collection_protocol_version is not compatible with picklift_spawn_v5")
         if cfg["task_spec_revision"] != "picklift_taskspec_v2_unmeasured_yaw":
             raise ValueError("v5 requires task_spec_revision=picklift_taskspec_v2_unmeasured_yaw")
         if cfg["yaw_annotation_mode"] != "unmeasured_random" or cfg["spawn_yaw_deg"] is not None:
@@ -363,6 +370,11 @@ def validate_config(cfg: dict) -> None:
             raise ValueError("v5 requires success_detection_mode=manual_proxy_for_nexus_v1")
         if cfg["lift_height_m"] is not None or cfg["is_grasped"] is not None:
             raise ValueError("v5 unavailable lift_height_m and is_grasped measurements must remain null")
+        if cfg["collection_protocol_version"] == COLLECTION_PROTOCOL_VERSION:
+            if cfg["alignment_mode"] != "direct_absolute":
+                raise ValueError(f"{COLLECTION_PROTOCOL_VERSION} requires alignment_mode=direct_absolute")
+            if cfg.get("max_relative_target") is not None:
+                raise ValueError(f"{COLLECTION_PROTOCOL_VERSION} requires max_relative_target=null")
     else:
         yaw_deg = float(cfg["spawn_yaw_deg"])
         if not 0 <= yaw_deg <= 90:
@@ -471,6 +483,9 @@ def capture_episode(
     worker.start()
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
     captured_frames = 0
+    camera_sequences: list[int] = []
+    camera_timestamps: list[float] = []
+    camera_hashes: list[str] = []
     try:
         next_sample = time.perf_counter()
         last_sequence = -1
@@ -503,6 +518,9 @@ def capture_episode(
                 raise RuntimeError("actual-sent action contract violation")
             if front.shape != (480, 640, 3) or front.dtype != np.uint8:
                 raise RuntimeError("front synchronization/canonical image contract violation")
+            camera_sequences.append(sample.sequence)
+            camera_timestamps.append(sample.captured_at)
+            camera_hashes.append(hashlib.sha256(front.tobytes()).hexdigest())
             dataset.add_frame(
                 {
                     "observation.state": state,
@@ -545,6 +563,28 @@ def capture_episode(
     finally:
         stop.set()
         worker.join(timeout=2)
+    timestamp_origin = camera_timestamps[0] if camera_timestamps else 0.0
+    timestamp_offsets = [round(value - timestamp_origin, 9) for value in camera_timestamps]
+    timestamp_deltas = [
+        camera_timestamps[index] - camera_timestamps[index - 1] for index in range(1, len(camera_timestamps))
+    ]
+    unique_hashes = len(set(camera_hashes))
+    camera_frame_evidence = {
+        "contract_version": CAMERA_EVIDENCE_VERSION,
+        "sequence_source": "collector_control_sample",
+        "sample_sequences": camera_sequences,
+        "sample_timestamp_offsets_s": timestamp_offsets,
+        "timestamp_clock": "time.perf_counter",
+        "timestamps_strictly_monotonic": all(delta > 0 for delta in timestamp_deltas),
+        "nonmonotonic_timestamp_count": sum(delta <= 0 for delta in timestamp_deltas),
+        "canonical_rgb_sha256": camera_hashes,
+        "unique_content_hash_count": unique_hashes,
+        "repeated_content_frame_count": len(camera_hashes) - unique_hashes,
+        "consecutive_duplicate_count": sum(
+            current == previous for previous, current in zip(camera_hashes, camera_hashes[1:], strict=False)
+        ),
+        "recorded_frame_count": len(camera_hashes),
+    }
     return EpisodeOutcome(
         frame=frame,
         frames=captured_frames,
@@ -555,6 +595,7 @@ def capture_episode(
         success=actual_success,
         dropped_frames=dropped,
         sync_anomalies=sync_anomalies,
+        camera_frame_evidence=camera_frame_evidence,
     )
 
 
@@ -588,6 +629,14 @@ def episode_provenance(
         "camera_profile": camera_profile(cfg["camera_profile_id"]),
         "canonical_front": camera_profile(cfg["camera_profile_id"])["output"],
         "alignment_mode": cfg["alignment_mode"],
+        "action_mapping": (
+            "official_so101_direct_absolute"
+            if cfg["alignment_mode"] == "direct_absolute"
+            else "legacy_relative_rebase"
+        ),
+        "action_transform": "none" if cfg["alignment_mode"] == "direct_absolute" else "relative_rebase",
+        "max_relative_target": cfg.get("max_relative_target"),
+        "state_action_order": "pre_action_follower_state_then_actual_sent_target",
         "gripper_alignment_mode": "direct_absolute_0_100",
         "startup_hold_s": cfg["startup_hold_s"],
         "initial_rebase_offset": rebase_offset.tolist() if rebase_offset is not None else [0.0] * 6,
@@ -596,6 +645,7 @@ def episode_provenance(
         "end_time": outcome.end_time,
         "dropped_frames": outcome.dropped_frames,
         "sync_anomalies": outcome.sync_anomalies,
+        "camera_frame_evidence": outcome.camera_frame_evidence,
         "recorded_frames": outcome.frames,
         "formal_data": cfg["formal_data"],
         "attempt_index": attempt_index,

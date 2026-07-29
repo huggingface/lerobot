@@ -16,6 +16,7 @@ import numpy as np
 from examples.picklift_v3.backend import RealSO101Backend, SyntheticBackend
 from examples.picklift_v3.operator_ui import OperatorUI
 from examples.picklift_v3.record import (
+    COLLECTION_PROTOCOL_VERSION,
     FPS,
     Backend,
     capture_episode,
@@ -26,7 +27,7 @@ from examples.picklift_v3.record import (
     write_json,
 )
 
-BATCH_WORKFLOW_VERSION = "picklift_continuous_batch_v2_live_reset"
+BATCH_WORKFLOW_VERSION = "picklift_continuous_batch_v3_absolute_live_reset"
 SPAWN_FIELDS = (
     "spawn_id",
     "spawn_region",
@@ -128,8 +129,14 @@ def validate_batch_config(batch_cfg: dict) -> list[dict]:
         seen_spawn_ids.add(spawn["spawn_id"])
         cfg = _attempt_config(base, spawn, repetition=0, successes_per_spawn=successes_per_spawn)
         validate_config(cfg)
-        if cfg["mode"] == "real" and cfg["alignment_mode"] != "relative_rebase":
-            raise ValueError("real continuous batch requires alignment_mode=relative_rebase")
+        if cfg["collection_protocol_version"] != COLLECTION_PROTOCOL_VERSION:
+            raise ValueError(
+                f"continuous batch v3 requires collection_protocol_version={COLLECTION_PROTOCOL_VERSION}"
+            )
+        if cfg["alignment_mode"] != "direct_absolute":
+            raise ValueError("continuous batch v3 requires alignment_mode=direct_absolute")
+        if cfg.get("max_relative_target") is not None:
+            raise ValueError("continuous batch v3 requires max_relative_target=null")
         configs.append(cfg)
 
     roots = {Path(cfg["dataset_root"]).resolve() for cfg in configs}
@@ -200,6 +207,11 @@ def _batch_manifest(
         "canonical_front",
         "spawn_contract",
         "gripper_alignment_mode",
+        "action_mapping",
+        "action_transform",
+        "max_relative_target",
+        "state_action_order",
+        "camera_frame_evidence",
         "post_end_control_mode",
         "yaw_annotation_mode",
         "yaw_intended_range_deg",
@@ -230,7 +242,8 @@ def _batch_manifest(
         ],
         "advance_rule": "success advances; failure/discard retries the same spawn",
         "training_view_rule": "only operator-confirmed SUCCESS attempts enter the v3 dataset",
-        "inter_episode_control": "live Leader-to-Follower reset with no dataset writes",
+        "inter_episode_control": "live absolute Leader-to-Follower reset with no dataset writes",
+        "ready_pose_policy": "operator_visual_similar_ready_area_no_numeric_threshold",
         "last_attempt": last_attempt,
     }
 
@@ -272,8 +285,8 @@ def record_batch(
             )
             ready_message = (
                 f"{spawn_ui_summary(cfg)}\n"
-                "Place cube; align arms + gripper gap\n"
-                "READY = yaw changed; no angle"
+                "Place cube; bring both arms to a similar ready area\n"
+                "Check view + gripper; yaw changed; no angle"
             )
             if backend is None:
                 if not ui.wait_for_ready(last_frame, ready_message):
@@ -283,7 +296,7 @@ def record_batch(
                 ui.show_status(
                     last_frame,
                     status="CONNECTING",
-                    message="Connecting and rebasing\nKeep both arms still",
+                    message="Connecting with absolute joint mapping\nKeep both arms still",
                 )
                 backend = backend_factory(cfg)
                 try:
@@ -301,7 +314,11 @@ def record_batch(
             else:
                 if live_reset is None:
                     raise RuntimeError("connected batch is missing live reset follower")
-                reset_message = f"{spawn_ui_summary(cfg)}\nFollower LIVE; reset and place cube"
+                reset_message = (
+                    f"{spawn_ui_summary(cfg)}\n"
+                    "Follower LIVE (not recording); reset both arms to a similar ready area\n"
+                    "Check view + gripper, then START"
+                )
                 if not ui.wait_for_next_start(live_reset.frame, reset_message):
                     operator_quit = True
                     break

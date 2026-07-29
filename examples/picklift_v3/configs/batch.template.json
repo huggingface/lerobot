@@ -1,5 +1,5 @@
 {
-  "collection_workflow_version": "picklift_continuous_batch_v2_live_reset",
+  "collection_workflow_version": "picklift_continuous_batch_v3_absolute_live_reset",
   "successes_per_spawn": 2,
   "max_attempts": 60,
   "base_config": {
@@ -28,7 +28,7 @@
     "leader_calibration_id": "so101_leader_main",
     "leader_serial_id": "1a86_USB_Single_Serial_5C82107516",
     "leader_port": "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C82107516-if00",
-    "collection_protocol_version": "picklift_collection_v5",
+    "collection_protocol_version": "picklift_collection_v6_absolute_camera_sequence",
     "spawn_protocol_version": "picklift_spawn_v5",
     "yaw_annotation_mode": "unmeasured_random",
     "yaw_intended_range_deg": [0, 90],
@@ -42,7 +42,7 @@
     "formal_data": true,
     "control_hz": 50,
     "camera_acquisition_fps": 30,
-    "alignment_mode": "relative_rebase",
+    "alignment_mode": "direct_absolute",
     "startup_hold_s": 0,
     "operator_cue_wait": false,
     "operator_ui": true,

@@ -96,7 +96,7 @@ class RealSO101Backend:
                 id=cfg["robot_id"],
                 cameras={"front": camera},
                 use_degrees=True,
-                max_relative_target=cfg.get("max_relative_target", 5.0),
+                max_relative_target=cfg.get("max_relative_target"),
             )
         )
         self.leader = SO101Leader(

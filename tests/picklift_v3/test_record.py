@@ -8,12 +8,14 @@ from examples.picklift_v3.alignment_reference import (
     ALIGNMENT_REFERENCE_V2_ID,
     alignment_reference,
 )
-from examples.picklift_v3.backend import RelativeRebaser, SyntheticBackend
+from examples.picklift_v3.backend import RealSO101Backend, RelativeRebaser, SyntheticBackend
 from examples.picklift_v3.camera_profile import (
     ALIGNED_FRONT_CAMERA_PROFILE_ID,
     SYNTHETIC_FRONT_CAMERA_PROFILE_ID,
 )
 from examples.picklift_v3.record import (
+    CAMERA_EVIDENCE_VERSION,
+    COLLECTION_PROTOCOL_VERSION,
     FPS,
     features,
     record,
@@ -55,7 +57,7 @@ def config(tmp_path):
         "leader_calibration_id": "synthetic",
         "leader_serial_id": "synthetic",
         "spawn_id": "engineering_spawn_0000",
-        "collection_protocol_version": "picklift_collection_v5",
+        "collection_protocol_version": COLLECTION_PROTOCOL_VERSION,
         "spawn_protocol_version": "picklift_spawn_v5",
         "spawn_region": "r1c1",
         "spawn_x_cm": 22.5,
@@ -74,13 +76,14 @@ def config(tmp_path):
         "formal_data": False,
         "control_hz": 50,
         "camera_acquisition_fps": 30,
-        "alignment_mode": "relative_rebase",
+        "alignment_mode": "direct_absolute",
         "startup_hold_s": 0,
         "record_fps": FPS,
         "episode_seconds": 0.1,
         "success": False,
         "termination_reason": "engineering_smoke_complete",
         "use_videos": False,
+        "max_relative_target": None,
     }
 
 
@@ -230,7 +233,7 @@ def test_required_provenance(tmp_path):
         "y_lateral": 0.0,
     }
     assert session["alignment_reference"]["physical_confirmation_status"] == ("pending_new_25cm_screenshot")
-    assert session["collection_protocol_version"] == "picklift_collection_v5"
+    assert session["collection_protocol_version"] == COLLECTION_PROTOCOL_VERSION
     assert session["task_spec_revision"] == "picklift_taskspec_v2_unmeasured_yaw"
     assert session["spawn_yaw_deg"] is None
     assert session["yaw_annotation_mode"] == "unmeasured_random"
@@ -258,6 +261,19 @@ def test_required_provenance(tmp_path):
     assert provenance["formal_data"] is False
     assert provenance["termination_reason"] == "max_duration"
     assert provenance["recorded_frames"] == 2
+    evidence = provenance["camera_frame_evidence"]
+    assert evidence["contract_version"] == CAMERA_EVIDENCE_VERSION
+    assert evidence["recorded_frame_count"] == 2
+    assert evidence["unique_content_hash_count"] == 2
+    assert evidence["repeated_content_frame_count"] == 0
+    assert evidence["timestamps_strictly_monotonic"] is True
+    assert len(evidence["sample_sequences"]) == 2
+    assert len(evidence["sample_timestamp_offsets_s"]) == 2
+    assert len(evidence["canonical_rgb_sha256"]) == 2
+    assert provenance["action_mapping"] == "official_so101_direct_absolute"
+    assert provenance["action_transform"] == "none"
+    assert provenance["max_relative_target"] is None
+    assert provenance["state_action_order"] == "pre_action_follower_state_then_actual_sent_target"
 
 
 @pytest.mark.parametrize(
@@ -331,6 +347,51 @@ def test_direct_absolute_config_is_allowed(tmp_path):
     cfg = config(tmp_path)
     cfg["alignment_mode"] = "direct_absolute"
     validate_config(cfg)
+
+
+def test_future_protocol_rejects_relative_rebase_and_max_relative_limit(tmp_path):
+    cfg = config(tmp_path)
+    cfg["alignment_mode"] = "relative_rebase"
+    with pytest.raises(ValueError, match="direct_absolute"):
+        validate_config(cfg)
+
+    cfg = config(tmp_path)
+    cfg["max_relative_target"] = 5.0
+    with pytest.raises(ValueError, match="max_relative_target=null"):
+        validate_config(cfg)
+
+
+def test_historical_v5_relative_rebase_config_remains_readable(tmp_path):
+    cfg = config(tmp_path)
+    cfg["collection_protocol_version"] = "picklift_collection_v5"
+    cfg["alignment_mode"] = "relative_rebase"
+    validate_config(cfg)
+
+
+def test_real_backend_direct_absolute_has_no_hidden_transform():
+    backend = RealSO101Backend.__new__(RealSO101Backend)
+    backend.alignment_mode = "direct_absolute"
+    expected = np.asarray([-5, -105, 97, 74, 2, 63], dtype=np.float32)
+    backend._read_leader_state = lambda: expected.copy()
+    np.testing.assert_array_equal(backend.requested_action(), expected)
+
+
+class StaticFrameBackend(EvidenceBackend):
+    def read_pre_action(self):
+        state, image = super().read_pre_action()
+        image.fill(7)
+        return state, image
+
+
+def test_camera_evidence_detects_exact_repeated_frames(tmp_path):
+    cfg = config(tmp_path)
+    root = record(cfg, StaticFrameBackend())
+    provenance = json.loads((root / "provenance/episodes/episode_000000.json").read_text())
+    evidence = provenance["camera_frame_evidence"]
+    assert evidence["recorded_frame_count"] == 2
+    assert evidence["unique_content_hash_count"] == 1
+    assert evidence["repeated_content_frame_count"] == 1
+    assert evidence["consecutive_duplicate_count"] == 1
 
 
 @pytest.mark.parametrize(

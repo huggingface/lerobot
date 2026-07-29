@@ -148,7 +148,10 @@ def test_continuous_batch_retries_failure_and_only_saves_successes(tmp_path):
     assert manifest["camera_profile"]["profile_id"] == "synthetic_front_640x480_v1"
     assert manifest["batch_end_time"] is not None
     assert manifest["post_end_control_mode"] == "live_follow_no_recording"
-    assert manifest["inter_episode_control"].startswith("live Leader-to-Follower")
+    assert manifest["inter_episode_control"].startswith("live absolute Leader-to-Follower")
+    assert manifest["ready_pose_policy"] == "operator_visual_similar_ready_area_no_numeric_threshold"
+    assert manifest["action_mapping"] == "official_so101_direct_absolute"
+    assert manifest["action_transform"] == "none"
     assert ui.next_start_count == 2
     assert ui.finish_count == 1
     assert ui.opened and ui.closed
@@ -182,7 +185,7 @@ def test_multiple_successes_per_spawn_are_balanced_across_cells(tmp_path):
     ]
 
 
-def test_real_batch_fails_closed_without_relative_rebase(tmp_path):
+def test_real_batch_accepts_direct_absolute_future_protocol(tmp_path):
     cfg = batch_config(tmp_path)
     cfg["base_config"].update(
         {
@@ -196,9 +199,24 @@ def test_real_batch_fails_closed_without_relative_rebase(tmp_path):
         }
     )
 
+    validate_batch_config(cfg)
+
+
+def test_batch_rejects_relative_rebase_and_legacy_protocol(tmp_path):
+    cfg = batch_config(tmp_path)
+    cfg["base_config"]["alignment_mode"] = "relative_rebase"
     try:
         validate_batch_config(cfg)
     except ValueError as exc:
-        assert "relative_rebase" in str(exc)
+        assert "direct_absolute" in str(exc)
     else:
-        raise AssertionError("real continuous batch accepted direct_absolute")
+        raise AssertionError("batch v3 accepted relative_rebase")
+
+    cfg = batch_config(tmp_path)
+    cfg["base_config"]["collection_protocol_version"] = "picklift_collection_v5"
+    try:
+        validate_batch_config(cfg)
+    except ValueError as exc:
+        assert "collection_protocol_version" in str(exc)
+    else:
+        raise AssertionError("batch v3 accepted legacy collection protocol")
