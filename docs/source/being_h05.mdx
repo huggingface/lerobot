@@ -198,43 +198,6 @@ RoboCasa 1.0 renamed two checkpoint-era task identifiers:
 Resolve these aliases before constructing the environment while keeping the
 environment's task instruction unchanged.
 
-## Performance and Validation Results
-
-The native LeRobot checkpoints were compared with the pinned author
-implementation in BF16 on an NVIDIA RTX 5090.
-
-| Checkpoint | Batch | Author loss | LeRobot loss | Flow max abs | Sample max abs |
-| ---------- | ----: | ----------: | -----------: | -----------: | -------------: |
-| Base       |     1 |    2.555654 |     2.555654 |            0 |              0 |
-| Base       |     2 |    5.126004 |     5.126004 |            0 |              0 |
-| RoboCasa   |     1 |    1.503128 |     1.503128 |            0 |              0 |
-| RoboCasa   |     2 |    5.692251 |     5.692251 |            0 |              0 |
-
-Preprocessing, missing-camera masks, prompt tokens, normalization, semantic
-slots, the flow sampler, and final environment actions all had maximum and p99
-absolute error zero.
-
-The final native implementation also matches all 1,086 tensor names and shapes
-in both LeRobot checkpoints. CUDA BF16 lockstep tests of the Qwen3-MoT path,
-flow-training objective, four-step solver, and RoboCasa MPG refinement were
-bitwise equal to the pinned implementation.
-
-In a lockstep 50-episode RoboCasa comparison, both the author and LeRobot
-policies achieved **12/50 successes (24.0%)**, for a source-to-LeRobot delta of
-zero percentage points. Across 3,892 policy requests, no action-parity failures
-were observed.
-
-## Reproducibility
-
-| Artifact            | Revision                                   |
-| ------------------- | ------------------------------------------ |
-| Being-H source      | `ab1204954cb5e68f0bc52a376982e962c763bbbe` |
-| Base checkpoint     | `bb31ffcf7d67a8d5ec82d715d5e1678581ef6374` |
-| RoboCasa checkpoint | `75989b121eab7d0a8e421d846acf268c2938883d` |
-| RoboCasa            | `be22d659b02db8f6d7f3a3c3edc742934fdcbaae` |
-| RoboSuite           | `aaa8b9b214ce8e77e82926d677b4d61d55e577ab` |
-| MuJoCo              | `3.3.1`                                    |
-
 ## References
 
 - [Being-H repository](https://github.com/BeingBeyond/Being-H)
