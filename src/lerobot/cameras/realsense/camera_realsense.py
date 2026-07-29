@@ -126,6 +126,9 @@ class RealSenseCamera(Camera):
 
         self.config = config
 
+        self.width: int | None = config.width
+        self.height: int | None = config.height
+
         if config.serial_number_or_name.isdigit():
             self.serial_number = config.serial_number_or_name
         else:
@@ -136,6 +139,9 @@ class RealSenseCamera(Camera):
         self.use_rgb = config.use_rgb
         self.use_depth = config.use_depth
         self.warmup_s = config.warmup_s
+        self.exposure: int | None = config.exposure
+        self.gain: int | None = config.gain
+        self.white_balance: int | None = config.white_balance
 
         self.rs_pipeline: rs.pipeline | None = None
         self.rs_profile: rs.pipeline_profile | None = None
@@ -150,13 +156,22 @@ class RealSenseCamera(Camera):
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
 
-        if self.height and self.width:
-            self.capture_width, self.capture_height = self.width, self.height
-            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
-                self.capture_width, self.capture_height = self.height, self.width
+        self.capture_width: int | None = None
+        self.capture_height: int | None = None
+        self._reset_connection_settings()
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}({self.serial_number})"
+
+    def _reset_connection_settings(self) -> None:
+        """Restore settings that may have been auto-detected during a failed connection."""
+        self.fps = self.config.fps
+        self.width = self.config.width
+        self.height = self.config.height
+        self.warmup_s = self.config.warmup_s
+        self.capture_width, self.capture_height = self.width, self.height
+        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+            self.capture_width, self.capture_height = self.height, self.width
 
     @property
     def is_connected(self) -> bool:
@@ -174,24 +189,14 @@ class RealSenseCamera(Camera):
                 return
         logger.warning(f"{self} device not found for hardware reset, skipping.")
 
-    def _teardown_pipeline(self) -> None:
-        """Stops the read thread and the RealSense pipeline.
-
-        Shared by :meth:`disconnect` and :meth:`connect`'s retry loop.
-        """
-        if self.thread is not None:
-            self._stop_read_thread()
-
-        if self.rs_pipeline is not None:
-            self.rs_pipeline.stop()
-            self.rs_pipeline = None
-            self.rs_profile = None
-
     def _open_pipeline(self) -> None:
         """Initializes the RealSense pipeline, starts it, and starts the background read thread.
 
         Raises:
-            ConnectionError: If the pipeline fails to start.
+            ValueError: If the configuration is invalid, a requested sensor option is unsupported,
+                or a requested sensor value is invalid.
+            ConnectionError: If the camera is found but fails to start the pipeline or no RealSense devices are detected at all.
+            RuntimeError: If the pipeline starts but fails to apply requested settings.
         """
         rs_pipeline = rs.pipeline()
         rs_config = rs.config()
@@ -209,9 +214,10 @@ class RealSenseCamera(Camera):
 
         try:
             self._configure_capture_settings()
+            self._configure_sensor_options()
             self._start_read_thread()
         except BaseException:
-            self._teardown_pipeline()
+            self._release_after_failed_setup()
             raise
 
     def _run_warmup(self) -> None:
@@ -233,6 +239,14 @@ class RealSenseCamera(Camera):
                 self.use_depth and self.latest_depth_frame is None
             ):
                 raise ConnectionError(f"{self} failed to capture frames during warmup.")
+
+    def _release_after_failed_setup(self) -> None:
+        """Releases the device handle and restores auto-detected settings after a failed attempt."""
+        try:
+            self._cleanup_resources()
+        except Exception:
+            logger.exception(f"Failed to fully clean up {self} after connect() failed.")
+        self._reset_connection_settings()
 
     @check_if_already_connected
     def connect(self, warmup: bool = True) -> None:
@@ -273,7 +287,7 @@ class RealSenseCamera(Camera):
                 last_error = e
             finally:
                 if not connected:
-                    self._teardown_pipeline()
+                    self._release_after_failed_setup()
 
             if connected:
                 logger.info(f"{self} connected.")
@@ -414,6 +428,111 @@ class RealSenseCamera(Camera):
 
         self.new_frame_event.clear()
         return self._async_read(timeout_ms=10000, read_depth=read_depth)
+
+    def _get_color_sensor(self) -> "rs.sensor":
+        """Returns the sensor that controls the color stream.
+
+        Most RealSense cameras expose "RGB Camera" for color. The D405 has no
+        separate RGB module — its color stream comes from "Stereo Module".
+        We try RGB Camera first, then fall back to Stereo Module.
+        """
+        if self.rs_profile is None:
+            raise RuntimeError(f"{self}: rs_profile must be initialized before use.")
+
+        device = self.rs_profile.get_device()
+        sensors = {s.get_info(rs.camera_info.name): s for s in device.query_sensors()}
+
+        for name in ("RGB Camera", "Stereo Module"):
+            if name in sensors:
+                return sensors[name]
+
+        available = list(sensors.keys())
+        raise RuntimeError(f"{self}: no color sensor found. Available sensors: {available}")
+
+    def _set_sensor_option(self, sensor: "rs.sensor", option: "rs.option", value: float, label: str) -> None:
+        """Sets a sensor option, re-raising range errors with actionable diagnostics."""
+        try:
+            sensor.set_option(option, value)
+        except Exception as e:
+            range_info = ""
+            try:
+                option_range = sensor.get_option_range(option)
+                range_info = (
+                    f" (supported range: min={option_range.min}, max={option_range.max}, "
+                    f"step={option_range.step}, default={option_range.default})"
+                )
+            except Exception:
+                range_info = " (option range unavailable)"
+            raise ValueError(
+                f"{self}: failed to set {label} to {value}{range_info}. Original error: {e}"
+            ) from e
+
+    def _configure_sensor_options(self) -> None:
+        """Applies manual sensor options (exposure, gain, white balance) to the color sensor.
+
+        When exposure or gain is set, auto-exposure is disabled first. When white_balance
+        is set, auto white balance is disabled first. An omitted option is left unchanged,
+        and configuration is skipped entirely if all options are omitted.
+
+        Raises:
+            ValueError: If the sensor does not support a requested option or a requested
+                value is invalid. Invalid-value errors include the option name, requested
+                value, and supported range when available.
+        """
+        if self.exposure is None and self.gain is None and self.white_balance is None:
+            return
+
+        color_sensor = self._get_color_sensor()
+
+        requested_options = (
+            (rs.option.exposure, self.exposure, "exposure"),
+            (rs.option.gain, self.gain, "gain"),
+            (rs.option.white_balance, self.white_balance, "white balance"),
+        )
+        unsupported_options = [
+            label
+            for option, value, label in requested_options
+            if value is not None and not color_sensor.supports(option)
+        ]
+        if unsupported_options:
+            raise ValueError(
+                f"{self}: color sensor does not support requested manual options: {unsupported_options}."
+            )
+
+        manual_exposure_requested = self.exposure is not None or self.gain is not None
+        if manual_exposure_requested:
+            if color_sensor.supports(rs.option.enable_auto_exposure):
+                self._set_sensor_option(color_sensor, rs.option.enable_auto_exposure, 0, "auto-exposure")
+                logger.info(f"{self} auto-exposure disabled.")
+            else:
+                logger.warning(
+                    f"{self} sensor does not support disabling auto-exposure; "
+                    "applying manual exposure/gain directly."
+                )
+
+        if self.exposure is not None:
+            self._set_sensor_option(color_sensor, rs.option.exposure, self.exposure, "exposure")
+            logger.info(f"{self} exposure set to {self.exposure}.")
+
+        if self.gain is not None:
+            self._set_sensor_option(color_sensor, rs.option.gain, self.gain, "gain")
+            logger.info(f"{self} gain set to {self.gain}.")
+
+        if self.white_balance is not None:
+            if color_sensor.supports(rs.option.enable_auto_white_balance):
+                self._set_sensor_option(
+                    color_sensor, rs.option.enable_auto_white_balance, 0, "auto white balance"
+                )
+                logger.info(f"{self} auto white balance disabled.")
+            else:
+                logger.warning(
+                    f"{self} sensor does not support disabling auto white balance; "
+                    "applying manual white balance directly."
+                )
+            self._set_sensor_option(
+                color_sensor, rs.option.white_balance, self.white_balance, "white balance"
+            )
+            logger.info(f"{self} white balance set to {self.white_balance}.")
 
     @check_if_not_connected
     def read_depth(self, timeout_ms: int = 200) -> NDArray[Any]:
@@ -620,6 +739,27 @@ class RealSenseCamera(Camera):
             self.latest_timestamp = None
             self.new_frame_event.clear()
 
+    def _cleanup_resources(self) -> None:
+        """Stop background reads and stop the pipeline, including after partial setup."""
+        read_thread = self.thread
+        rs_pipeline = self.rs_pipeline
+
+        try:
+            self._stop_read_thread()
+        finally:
+            self.rs_pipeline = None
+            self.rs_profile = None
+            try:
+                if rs_pipeline is not None:
+                    rs_pipeline.stop()
+            finally:
+                # Stopping the pipeline may unblock a hardware read that outlived
+                # the first bounded join in _stop_read_thread().
+                if read_thread is not None and read_thread.is_alive():
+                    read_thread.join(timeout=2.0)
+                    if read_thread.is_alive():  # pragma: no cover
+                        logger.warning(f"{self} read thread remained alive after stopping the pipeline.")
+
     def _async_read(self, timeout_ms: float, read_depth: bool = False) -> NDArray[Any]:
         """Shared helper for :meth:`async_read`/:meth:`async_read_depth`: return the latest buffered frame."""
         if self.thread is None or not self.thread.is_alive():
@@ -763,7 +903,7 @@ class RealSenseCamera(Camera):
                 f"Attempted to disconnect {self}, but it appears already disconnected."
             )
 
-        self._teardown_pipeline()
+        self._cleanup_resources()
 
         with self.frame_lock:
             self.latest_color_frame = None
