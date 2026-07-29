@@ -25,19 +25,12 @@ import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode
 from lerobot.processor import (
-    AddBatchDimensionProcessorStep,
-    DeviceProcessorStep,
-    NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
-    RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
-)
-from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
-from lerobot.utils.constants import (
-    POLICY_POSTPROCESSOR_DEFAULT_NAME,
-    POLICY_PREPROCESSOR_DEFAULT_NAME,
+    make_default_policy_processor_steps,
+    make_policy_processor_pipelines,
 )
 
 from .configuration_lingbot_va import LingBotVAConfig
@@ -52,15 +45,13 @@ def make_lingbot_va_pre_post_processors(
 ]:
     """Build the pre/post processor pipelines for LingBot-VA."""
 
+    steps = make_default_policy_processor_steps(config, dataset_stats)
+
     input_steps: list[ProcessorStep] = [
-        RenameObservationsProcessorStep(rename_map={}),
-        AddBatchDimensionProcessorStep(),
-        NormalizerProcessorStep(
-            features={**config.input_features, **config.output_features},
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats,
-        ),
-        DeviceProcessorStep(device=config.device),
+        steps.rename_observations,
+        steps.add_batch_dim,
+        steps.normalize,
+        steps.to_device,
     ]
 
     # Unnormalize actions from [-1, 1] to physical units (QUANTILES) using q01/q99 restored from the checkpoint.
@@ -70,18 +61,7 @@ def make_lingbot_va_pre_post_processors(
             norm_map={FeatureType.ACTION: NormalizationMode.QUANTILES},
             stats=dataset_stats,
         ),
-        DeviceProcessorStep(device="cpu"),
+        steps.to_cpu,
     ]
 
-    return (
-        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
-            steps=input_steps,
-            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-        ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
-            steps=output_steps,
-            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-        ),
-    )
+    return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
