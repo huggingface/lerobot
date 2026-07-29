@@ -57,6 +57,14 @@ def test_message_recipe_requires_at_least_one_target():
         )
 
 
+def test_message_recipe_requires_known_bindings():
+    with pytest.raises(ValueError, match="requires unknown binding"):
+        TrainingRecipe(
+            messages=[_minimal_target_turn()],
+            requires=["not_a_binding"],
+        )
+
+
 def test_recipe_rejects_both_messages_and_blend():
     with pytest.raises(ValueError, match="only one"):
         TrainingRecipe(
@@ -142,6 +150,35 @@ def test_from_dict_with_nested_blend():
     assert recipe.blend["b"].weight == 2.0
     # Inner messages were promoted to MessageTurn instances.
     assert isinstance(recipe.blend["a"].messages[0], MessageTurn)
+
+
+def test_applicable_blend_round_trips_from_dict():
+    recipe = TrainingRecipe.from_dict(
+        {
+            "select_from_applicable": True,
+            "blend": {
+                "subtask": {
+                    "weight": 2,
+                    "requires": ["subtask"],
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "content": "${subtask}",
+                            "stream": "low_level",
+                            "target": True,
+                        }
+                    ],
+                },
+                "action": {
+                    "weight": 1,
+                    "messages": [{"role": "user", "content": "${task}", "stream": "low_level"}],
+                },
+            },
+        }
+    )
+
+    assert recipe.select_from_applicable
+    assert recipe.blend["subtask"].requires == ["subtask"]
 
 
 def test_from_yaml_round_trips_through_load_recipe(tmp_path: Path):

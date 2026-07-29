@@ -1,0 +1,60 @@
+# G0.5's released MixedSamplesBuilder semantics, limited to the CoT signals
+# LeRobot can currently provide: active subtasks and grounded bounding boxes.
+#
+# The renderer first removes branches whose required annotations are missing,
+# then deterministically samples among the remaining weights. The G0.5 policy
+# processor converts the selected target messages into the checkpoint's exact
+# BBox/Subtask/action template and supervises the complete assistant segment.
+
+select_from_applicable: true
+blend:
+  no_cot_action:
+    weight: 1
+    messages:
+      - {role: user, content: "${task}", stream: low_level}
+
+  subtask_action:
+    weight: 2
+    requires: [subtask]
+    messages:
+      - {role: user, content: "${task}", stream: low_level}
+      - {
+          role: assistant,
+          content: "Subtask: ${subtask}",
+          stream: low_level,
+          target: true,
+        }
+
+  bbox_action:
+    weight: 1
+    requires: [bbox]
+    bindings:
+      bbox: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.exterior)"
+    messages:
+      - {role: user, content: "${task}", stream: low_level}
+      - {
+          role: assistant,
+          content: "BBoxJSON: ${bbox}",
+          stream: low_level,
+          target: true,
+        }
+
+  bbox_subtask_action:
+    weight: 1
+    requires: [bbox, subtask]
+    bindings:
+      bbox: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.exterior)"
+    messages:
+      - {role: user, content: "${task}", stream: low_level}
+      - {
+          role: assistant,
+          content: "BBoxJSON: ${bbox}",
+          stream: low_level,
+          target: true,
+        }
+      - {
+          role: assistant,
+          content: "Subtask: ${subtask}",
+          stream: low_level,
+          target: true,
+        }

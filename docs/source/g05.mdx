@@ -123,9 +123,11 @@ For example, fine-tune the private SO-101 checkpoint on a LeRobot dataset:
 export HF_USER=your_hf_username
 
 lerobot-train \
-  --dataset.repo_id=${HF_USER}/my_so101_dataset \
+  --dataset.repo_id=${HF_USER}/my_so101_dataset_annotated \
   --policy.path=lerobot/g05_so101 \
   --policy.device=cuda \
+  --policy.recipe_path=recipes/g05_bbox_subtask.yaml \
+  --policy.cot_bbox_camera=observation.images.exterior \
   --policy.repo_id=${HF_USER}/g05_so101_finetuned \
   --policy.private=true \
   --output_dir=outputs/train/g05_so101 \
@@ -134,6 +136,31 @@ lerobot-train \
   --steps=10000 \
   --save_freq=1000
 ```
+
+The bundled `g05_bbox_subtask.yaml` recipe resolves the active
+`language_persistent` `subtask` and camera-scoped grounded `vqa` event at each
+sample timestamp. It filters out unavailable formats before selecting one of
+four author-compatible objectives:
+
+| Assistant sequence         | Weight |
+| -------------------------- | -----: |
+| Action only                |      1 |
+| Subtask, then action       |      2 |
+| BBox, then action          |      1 |
+| BBox, subtask, then action |      1 |
+
+Grounded VQA boxes are converted from pixel-space `xyxy` JSON using the source
+camera dimensions captured before image resizing, then serialized as G0.5
+`<locXXXX>` tokens. Joint samples preserve the released checkpoint's
+`BBox → Subtask → Action` order. The user/task conditioning tokens remain
+masked; the author backend applies its language/action objective to the
+assistant sequence.
+
+Generate the required `subtask` and grounded `vqa` language columns with
+`lerobot-annotate` as described in the
+[annotation pipeline](./annotation_pipeline). The bundled recipe targets
+`observation.images.exterior`; copy the YAML and change its camera-filtered
+bindings when training an embodiment with a different grounded camera.
 
 The SO-101 recipe uses AdamW at `8e-5` with 1,000 warmup steps. The packaged
 LIBERO and RoboTwin configurations use their released `1e-5` recipe, with

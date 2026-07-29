@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import shutil
 from collections import deque
 from collections.abc import Mapping
@@ -26,7 +27,12 @@ from lerobot.optim.optimizers import OptimizerParams
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-from .configuration_g05 import G05_POLICY_PARTS, G05Config
+from .configuration_g05 import (
+    G05_POLICY_PARTS,
+    G05Config,
+    make_g05_cot_prompt_template,
+    make_g05_prompt_template,
+)
 
 
 def _author_backend(config: G05Config) -> nn.Module:
@@ -229,6 +235,158 @@ class G05Policy(PreTrainedPolicy):
             return value[index]
         return value
 
+    def _recipe_cot_targets(
+        self,
+        batch: Mapping[str, Any],
+        index: int,
+        batch_size: int,
+    ) -> tuple[str | None, str | None]:
+        """Read the selected recipe's supervised Subtask/BBox messages."""
+
+        messages = batch.get("messages")
+        target_indices = batch.get("target_message_indices")
+        if messages is None or target_indices is None:
+            return None, None
+
+        sample_messages = messages
+        if (
+            isinstance(messages, list | tuple)
+            and len(messages) == batch_size
+            and (not messages or isinstance(messages[0], list | tuple))
+        ):
+            sample_messages = messages[index]
+        sample_target_indices = target_indices
+        has_batched_target_indices = (isinstance(target_indices, Tensor) and target_indices.ndim > 1) or (
+            isinstance(target_indices, list | tuple)
+            and len(target_indices) == batch_size
+            and (not target_indices or isinstance(target_indices[0], list | tuple | Tensor))
+        )
+        if has_batched_target_indices:
+            sample_target_indices = target_indices[index]
+        if isinstance(sample_messages, Mapping):
+            sample_messages = [sample_messages]
+        if isinstance(sample_target_indices, Tensor):
+            sample_target_indices = sample_target_indices.detach().cpu().tolist()
+        if not isinstance(sample_messages, list | tuple) or not isinstance(
+            sample_target_indices, list | tuple
+        ):
+            return None, None
+
+        subtask: str | None = None
+        bbox_json: str | None = None
+        for target_index in sample_target_indices:
+            message = sample_messages[int(target_index)]
+            content = message.get("content") if isinstance(message, Mapping) else None
+            if not isinstance(content, str):
+                continue
+            if content.startswith("Subtask:"):
+                value = content.removeprefix("Subtask:").strip()
+                if value:
+                    subtask = value
+            elif content.startswith("BBoxJSON:"):
+                value = content.removeprefix("BBoxJSON:").strip()
+                if value:
+                    bbox_json = value
+        return subtask, bbox_json
+
+    @staticmethod
+    def _format_bbox_target(bbox_json: str | None, image_size: tuple[int, int]) -> str | None:
+        """Convert LeRobot grounded-VQA JSON into G0.5's location-token format."""
+
+        if not bbox_json:
+            return None
+        try:
+            payload = json.loads(bbox_json)
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        if isinstance(payload.get("answer"), Mapping):
+            payload = payload["answer"]
+
+        height, width = image_size
+        boxes: list[tuple[str, list[float]]] = []
+        detections = payload.get("detections")
+        if isinstance(detections, list):
+            for detection in detections:
+                if not isinstance(detection, Mapping) or detection.get("bbox_format", "xyxy") != "xyxy":
+                    continue
+                coords = detection.get("bbox")
+                if not isinstance(coords, list | tuple) or len(coords) != 4:
+                    continue
+                label = str(detection.get("label") or "object")
+                boxes.append((label, [float(value) for value in coords]))
+        else:
+            for label, coords in payload.items():
+                if isinstance(coords, list | tuple) and len(coords) == 4:
+                    boxes.append((str(label), [float(value) for value in coords]))
+        if not boxes:
+            return None
+
+        def normalize(coords: list[float]) -> list[float]:
+            if max(abs(value) for value in coords) <= 1.0:
+                return coords
+            x1, y1, x2, y2 = coords
+            return [x1 / width, y1 / height, x2 / width, y2 / height]
+
+        def location_token(value: float) -> str:
+            location = max(0, min(1023, round(value * 1024)))
+            return f"<loc{location:04d}>"
+
+        formatted = []
+        for label, raw_coords in boxes:
+            x1, y1, x2, y2 = normalize(raw_coords)
+            locations = "".join(location_token(value) for value in (y1, x1, y2, x2))
+            formatted.append(f"{label} {locations}")
+        return "BBox: " + "; ".join(formatted)
+
+    def _apply_recipe_cot(
+        self,
+        sample: dict[str, Any],
+        batch: Mapping[str, Any],
+        index: int,
+        batch_size: int,
+    ) -> bool:
+        """Populate one author sample from recipe-rendered CoT targets."""
+
+        subtask, bbox_json = self._recipe_cot_targets(batch, index, batch_size)
+        image_size = batch.get("g05_bbox_image_size")
+        if (
+            isinstance(image_size, list | tuple)
+            and len(image_size) == batch_size
+            and image_size
+            and isinstance(image_size[0], list | tuple | Tensor)
+        ):
+            image_size = image_size[index]
+        if isinstance(image_size, Tensor):
+            image_size = image_size.detach().cpu().tolist()
+        if not isinstance(image_size, list | tuple) or len(image_size) != 2:
+            camera = self.config.cot_bbox_camera or self.config.camera_order[0]
+            image_size = self.config.camera_sizes[camera]
+        bbox = self._format_bbox_target(bbox_json, (int(image_size[0]), int(image_size[1])))
+
+        fields = tuple(field for field, value in (("bbox", bbox), ("subtask", subtask)) if value)
+        if not fields:
+            return False
+        flow_only = "<action_action" not in self.config.prompt_template
+        sample["template"] = make_g05_cot_prompt_template(
+            self.config.num_prompt_images,
+            fields=fields,
+            flow_only=flow_only,
+        )
+        if bbox is not None:
+            sample["bbox"] = bbox
+        if subtask is not None:
+            sample["atomic_task"] = f"Subtask: {subtask}"
+        sample["prompt"] = {
+            ("bbox",): "predict bbox",
+            ("subtask",): "predict subtask",
+            ("bbox", "subtask"): "predict bbox, subtask and action",
+        }[fields]
+        return True
+
     def _prepare_author_batch(self, batch: Mapping[str, Any], task: str | None = None) -> dict[str, Any]:
         prepare = getattr(self.backend, "prepare_lerobot_batch", None)
         if callable(prepare):
@@ -284,13 +442,30 @@ class G05Policy(PreTrainedPolicy):
             if frequency is not None:
                 sample["frequency"] = frequency
             if self.config.predict_cot:
-                sample["prompt"] = "predict subtask"
-                atomic_task = batch.get("atomic_task")
-                if atomic_task is not None:
-                    atomic_task = str(self._batch_item(atomic_task, index, batch_size))
-                    sample["atomic_task"] = (
-                        atomic_task if atomic_task.startswith("Subtask:") else f"Subtask: {atomic_task}"
-                    )
+                rendered_recipe = "messages" in batch
+                applied_recipe_cot = rendered_recipe and self._apply_recipe_cot(
+                    sample, batch, index, batch_size
+                )
+                if not applied_recipe_cot:
+                    # During mixed-recipe training an applicable no-CoT branch is a
+                    # genuine target format. At inference, where actions are absent,
+                    # retain the checkpoint's configured System 2 prompt.
+                    if rendered_recipe and isinstance(batch.get(ACTION), Tensor):
+                        sample["template"] = make_g05_prompt_template(
+                            self.config.num_prompt_images,
+                            predict_cot=False,
+                            flow_only="<action_action" not in self.config.prompt_template,
+                        )
+                    else:
+                        sample["prompt"] = "predict subtask"
+                        atomic_task = batch.get("atomic_task")
+                        if atomic_task is not None:
+                            atomic_task = str(self._batch_item(atomic_task, index, batch_size))
+                            sample["atomic_task"] = (
+                                atomic_task
+                                if atomic_task.startswith("Subtask:")
+                                else f"Subtask: {atomic_task}"
+                            )
             for image_index in range(self.config.num_prompt_images):
                 camera = self.config.camera_order[image_index % len(self.config.camera_order)]
                 sample[f"image{image_index}"] = self.config.camera_sizes[camera]

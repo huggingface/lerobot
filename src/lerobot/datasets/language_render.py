@@ -169,6 +169,17 @@ def render_sample(
     persistent_rows = _normalize_rows(persistent or [])
     event_rows = _normalize_rows(events or [])
 
+    if recipe.blend is not None and recipe.select_from_applicable:
+        return _render_applicable_blend(
+            recipe,
+            persistent=persistent_rows,
+            events=event_rows,
+            t=t,
+            sample_idx=sample_idx,
+            task=task,
+            dataset_ctx=dataset_ctx,
+        )
+
     # Route sparse VQA frames to a matching view-specific component before weighted selection.
     # This avoids dropping annotated frames or selecting VQA without annotations.
     if recipe.blend is not None:
@@ -195,6 +206,54 @@ def render_sample(
         dataset_ctx=dataset_ctx,
     )
     return _render_message_recipe(selected_recipe, bindings)
+
+
+def _render_applicable_blend(
+    recipe: TrainingRecipe,
+    *,
+    persistent: Sequence[LanguageRow],
+    events: Sequence[LanguageRow],
+    t: float,
+    sample_idx: int,
+    task: str | None,
+    dataset_ctx: Any | None,
+) -> RenderedMessages | None:
+    """Select deterministically among components whose required bindings resolve.
+
+    Ordinary blends preserve their historical select-then-resolve behavior.
+    Annotation-dependent policies such as G0.5 instead need the author
+    ``MixedSamplesBuilder`` contract: discard unavailable CoT formats first,
+    then draw according to the remaining relative weights.
+    """
+
+    assert recipe.blend is not None
+    renderable: list[tuple[float, RenderedMessages]] = []
+    for component in recipe.blend.values():
+        bindings = _resolve_bindings(
+            component,
+            persistent=persistent,
+            events=events,
+            t=t,
+            sample_idx=sample_idx,
+            task=task,
+            dataset_ctx=dataset_ctx,
+        )
+        rendered = _render_message_recipe(component, bindings)
+        if rendered is not None:
+            renderable.append((float(component.weight or 0.0), rendered))
+
+    if not renderable:
+        return None
+
+    total_weight = sum(weight for weight, _ in renderable)
+    digest = hashlib.blake2b(f"applicable:{sample_idx}".encode(), digest_size=8).digest()
+    draw = int.from_bytes(digest, "big") / 2**64 * total_weight
+    cumulative = 0.0
+    for weight, rendered in renderable:
+        cumulative += weight
+        if draw < cumulative:
+            return rendered
+    return renderable[-1][1]
 
 
 def _render_vqa_if_present(
@@ -385,6 +444,8 @@ def _render_message_recipe(
 ) -> RenderedMessages | None:
     """Expand ``recipe.messages`` into rendered chat messages using ``bindings``."""
     assert recipe.messages is not None
+    if any(bindings.get(name) is None for name in recipe.requires or ()):
+        return None
     messages: list[dict[str, Any]] = []
     streams: list[str | None] = []
     target_indices: list[int] = []

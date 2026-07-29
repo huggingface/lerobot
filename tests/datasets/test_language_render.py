@@ -176,6 +176,74 @@ def test_deterministic_blend_sampling():
     assert first == second
 
 
+def test_applicable_blend_filters_missing_bindings_before_weighted_selection():
+    recipe = TrainingRecipe(
+        select_from_applicable=True,
+        blend={
+            "missing": TrainingRecipe(
+                weight=1_000,
+                requires=["subtask"],
+                messages=[
+                    MessageTurn(
+                        role="assistant",
+                        content="${subtask}",
+                        stream="low_level",
+                        target=True,
+                    )
+                ],
+            ),
+            "action": TrainingRecipe(
+                weight=1,
+                messages=[MessageTurn(role="user", content="${task}", stream="low_level")],
+            ),
+        },
+    )
+
+    rendered = render_sample(
+        recipe=recipe,
+        persistent=[],
+        events=[],
+        t=0.0,
+        sample_idx=0,
+        task="pick the cup",
+    )
+
+    assert rendered["messages"] == [{"role": "user", "content": "pick the cup"}]
+    assert rendered["target_message_indices"] == []
+
+
+def test_applicable_blend_can_select_joint_bbox_subtask_target():
+    recipe = TrainingRecipe.from_yaml("src/lerobot/configs/recipes/g05_bbox_subtask.yaml")
+    persistent = [persistent_row("assistant", "grasp the cup", "subtask", 0.0)]
+    events = [
+        {
+            "role": "assistant",
+            "content": '{"detections": [{"label": "cup", "bbox": [1, 2, 3, 4]}]}',
+            "style": "vqa",
+            "camera": "observation.images.exterior",
+        }
+    ]
+
+    rendered = next(
+        candidate
+        for sample_idx in range(100)
+        if (
+            candidate := render_sample(
+                recipe=recipe,
+                persistent=persistent,
+                events=events,
+                t=0.0,
+                sample_idx=sample_idx,
+                task="pick the cup",
+            )
+        )
+        and candidate["target_message_indices"] == [1, 2]
+    )
+
+    assert rendered["messages"][1]["content"].startswith("BBoxJSON:")
+    assert rendered["messages"][2]["content"] == "Subtask: grasp the cup"
+
+
 def test_emitted_at_filters_vqa_by_camera():
     top = emitted_at(
         3.0,

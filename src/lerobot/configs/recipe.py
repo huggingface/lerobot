@@ -104,7 +104,9 @@ class TrainingRecipe:
 
     messages: list[MessageTurn] | None = None
     bindings: dict[str, str] | None = None
+    requires: list[str] | None = None
     blend: dict[str, TrainingRecipe] | None = None
+    select_from_applicable: bool = False
     weight: float | None = None
 
     def __post_init__(self) -> None:
@@ -151,6 +153,9 @@ class TrainingRecipe:
         assert self.messages is not None
         known_bindings = set(DEFAULT_BINDINGS) | set(self.bindings or {}) | {"task"}
 
+        missing_requirements = set(self.requires or ()) - known_bindings
+        if missing_requirements:
+            raise ValueError(f"TrainingRecipe requires unknown binding(s): {sorted(missing_requirements)}")
         for turn in self.messages:
             missing = self._referenced_bindings(turn) - known_bindings
             if missing:
@@ -168,6 +173,8 @@ class TrainingRecipe:
     def _validate_blend_recipe(self) -> None:
         """Ensure each blend component is a non-empty, weighted message recipe."""
         assert self.blend is not None
+        if self.requires:
+            raise ValueError("A blend recipe cannot declare requires; set it on its components.")
         if not self.blend:
             raise ValueError("Blend recipes must contain at least one component.")
 

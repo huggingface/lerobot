@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -48,10 +49,52 @@ from lerobot.utils.constants import (
 from .configuration_g05 import G05_EMBODIMENT_MAPPINGS, G05_POLICY_PARTS, G05Config
 
 
+def _load_recipe(path_str: str) -> Any:
+    """Load an absolute recipe path or one relative to ``lerobot/configs``."""
+
+    from lerobot.configs.recipe import TrainingRecipe
+
+    path = Path(path_str)
+    if not path.is_absolute() and not path.exists():
+        from lerobot.configs import recipe as recipe_module
+
+        candidate = Path(recipe_module.__file__).resolve().parent / path
+        if candidate.exists():
+            path = candidate
+    return TrainingRecipe.from_yaml(path)
+
+
 def _copy_feature_tree(
     features: dict[PipelineFeatureType, dict[str, PolicyFeature]],
 ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
     return {kind: values.copy() for kind, values in features.items()}
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="g05_bbox_image_size")
+class G05BBoxImageSizeStep(ProcessorStep):
+    """Preserve the annotated camera's source size before checkpoint resizing."""
+
+    camera_key: str
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        observation = transition.get(TransitionKey.OBSERVATION) or {}
+        image = observation.get(self.camera_key)
+        if image is None:
+            return transition
+        image = torch.as_tensor(image)
+        if image.ndim < 3:
+            raise ValueError(f"G0.5 bbox camera {self.camera_key!r} has invalid shape {image.shape}.")
+        transition = transition.copy()
+        complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+        complementary["g05_bbox_image_size"] = (int(image.shape[-2]), int(image.shape[-1]))
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
 
 
 @dataclass
@@ -690,17 +733,26 @@ def make_g05_pre_post_processors(
         action_names=list(config.action_feature_names) or None,
         num_obs_steps=config.n_obs_steps,
     )
-    steps: list[ProcessorStep] = [
-        RenameObservationsProcessorStep(rename_map={}),
-        AddBatchDimensionProcessorStep(),
+    steps: list[ProcessorStep] = [RenameObservationsProcessorStep(rename_map={})]
+    if config.recipe_path:
+        from lerobot.processor.render_messages_processor import RenderMessagesStep
+
+        steps.extend(
+            [
+                G05BBoxImageSizeStep(camera_key=config.cot_bbox_camera or config.camera_order[0]),
+                RenderMessagesStep(recipe=_load_recipe(config.recipe_path)),
+            ]
+        )
+    steps.append(AddBatchDimensionProcessorStep())
+    steps.append(
         G05ImageTransformStep(
             camera_order=config.camera_order,
             camera_sizes=config.camera_sizes,
             mean=config.image_mean,
             std=config.image_std,
             optional_camera_keys=config.optional_camera_keys,
-        ),
-    ]
+        )
+    )
     action_filter = config.processor_metadata.get("action_filter") or {}
     if str(action_filter.get("_target_", "")).endswith("R1LiteJointActionFilter"):
         action_parts = tuple(

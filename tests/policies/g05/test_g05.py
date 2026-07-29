@@ -492,6 +492,119 @@ def test_system2_training_target_is_forwarded_without_replacing_operator_task():
     assert prepared["samples"][0]["atomic_task"] == "Subtask: grasp the cup"
 
 
+def test_system2_recipe_subtask_target_selects_author_template():
+    policy = G05Policy(_config(predict_cot=True, runtime_system="system2"), backend=TinyG05Backend())
+    batch = _policy_batch("operator task")
+    batch["messages"] = [
+        [
+            {"role": "user", "content": "operator task"},
+            {"role": "assistant", "content": "Subtask: grasp the cup"},
+        ]
+    ]
+    batch["target_message_indices"] = [[1]]
+
+    sample = policy._prepare_author_batch(batch)["samples"][0]
+
+    assert sample["command"] == "operator task"
+    assert sample["prompt"] == "predict subtask"
+    assert sample["atomic_task"] == "Subtask: grasp the cup"
+    assert "<EOC><atomic_task_text>|Action: <EOV><action_action>|<eos>" in sample["template"]
+
+
+def test_system2_recipe_bbox_and_subtask_use_checkpoint_field_order():
+    policy = G05Policy(_config(predict_cot=True, runtime_system="system2"), backend=TinyG05Backend())
+    batch = _policy_batch("operator task")
+    batch["messages"] = [
+        [
+            {"role": "user", "content": "operator task"},
+            {
+                "role": "assistant",
+                "content": (
+                    'BBoxJSON: {"detections": [{"label": "cup", "bbox_format": "xyxy", '
+                    '"bbox": [20, 10, 100, 50]}]}'
+                ),
+            },
+            {"role": "assistant", "content": "Subtask: grasp the cup"},
+        ]
+    ]
+    batch["target_message_indices"] = [[1, 2]]
+    batch["g05_bbox_image_size"] = (100, 200)
+
+    sample = policy._prepare_author_batch(batch)["samples"][0]
+
+    assert sample["prompt"] == "predict bbox, subtask and action"
+    assert sample["bbox"] == "BBox: cup <loc0102><loc0102><loc0512><loc0512>"
+    assert sample["atomic_task"] == "Subtask: grasp the cup"
+    assert "<EOC><bbox_text>|<atomic_task_text>|Action:" in sample["template"]
+
+
+def test_system2_recipe_no_cot_branch_uses_action_only_training_template():
+    policy = G05Policy(_config(predict_cot=True, runtime_system="system2"), backend=TinyG05Backend())
+    batch = _policy_batch("operator task")
+    batch["messages"] = [[{"role": "user", "content": "operator task"}]]
+    batch["target_message_indices"] = [[]]
+
+    sample = policy._prepare_author_batch(batch)["samples"][0]
+
+    assert "prompt" not in sample
+    assert "atomic_task" not in sample
+    assert "<chat_assistant_prefix>Action: <EOV><EOC><action_action>|<eos>" in sample["template"]
+
+
+def test_recipe_preprocessor_resolves_lerobot_subtask_and_bbox_annotations():
+    pytest.importorskip("datasets", reason="recipe rendering requires lerobot[dataset]")
+    config = _config(
+        predict_cot=True,
+        runtime_system="system2",
+        recipe_path="recipes/g05_bbox_subtask.yaml",
+    )
+    preprocessor, _ = make_pre_post_processors(config)
+    policy = G05Policy(config, backend=TinyG05Backend())
+    raw = {
+        OBS_STATE: torch.zeros(7),
+        ACTION: torch.zeros(4, 7),
+        "observation.images.image": torch.zeros(3, 100, 200, dtype=torch.uint8),
+        "observation.images.wrist_image": torch.zeros(3, 100, 200, dtype=torch.uint8),
+        "task": "operator task",
+        "timestamp": torch.tensor(0.0),
+        "language_persistent": [
+            {
+                "role": "assistant",
+                "content": "grasp the cup",
+                "style": "subtask",
+                "timestamp": 0.0,
+                "camera": None,
+                "tool_calls": None,
+            }
+        ],
+        "language_events": [
+            {
+                "role": "assistant",
+                "content": (
+                    '{"detections": [{"label": "cup", "bbox_format": "xyxy", "bbox": [20, 10, 100, 50]}]}'
+                ),
+                "style": "vqa",
+                "camera": "observation.images.exterior",
+                "tool_calls": None,
+            }
+        ],
+    }
+
+    processed = next(
+        candidate
+        for sample_index in range(100)
+        if (candidate := preprocessor({**raw, "index": torch.tensor(sample_index)}))["target_message_indices"]
+        == [[1, 2]]
+    )
+    sample = policy._prepare_author_batch(processed)["samples"][0]
+
+    assert "language_persistent" not in processed
+    assert "language_events" not in processed
+    assert sample["bbox"] == "BBox: cup <loc0102><loc0102><loc0512><loc0512>"
+    assert sample["atomic_task"] == "Subtask: grasp the cup"
+    assert "<EOC><bbox_text>|<atomic_task_text>|Action:" in sample["template"]
+
+
 def test_author_inference_payload_synthesizes_required_dummy_action():
     policy = G05Policy(_config(), backend=TinyG05Backend())
     batch = _policy_batch()

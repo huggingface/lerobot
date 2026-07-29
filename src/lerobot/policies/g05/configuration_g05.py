@@ -91,6 +91,39 @@ def make_g05_prompt_template(num_images: int, *, predict_cot: bool, flow_only: b
     return f"{prefix}Action: <EOV><EOC><action_action>|<eos>"
 
 
+def make_g05_cot_prompt_template(
+    num_images: int,
+    *,
+    fields: tuple[str, ...],
+    flow_only: bool,
+) -> str:
+    """Build the exact author template for a selected Subtask/BBox CoT format."""
+
+    supported_fields = {"bbox", "subtask"}
+    if not fields or not set(fields) <= supported_fields:
+        raise ValueError(
+            f"G0.5 CoT fields must be a non-empty subset of {sorted(supported_fields)}, got {fields}."
+        )
+    # The released BBoxSubtaskCoTBuilder emits BBox before Subtask. Preserve
+    # checkpoint serialization even though the paper's schematic orders the
+    # independently composable labels differently.
+    ordered_fields = tuple(field for field in ("bbox", "subtask") if field in fields)
+    placeholders = {
+        "bbox": "<bbox_text>|",
+        "subtask": "<atomic_task_text>|",
+    }
+    images = "".join(f"<image{index}_image_!>" for index in range(num_images))
+    prefix = (
+        f"<chat_user_prefix>{images}<bos>"
+        "Embodiment: <embodiment_text_!>; Task: <command_text_!_200> "
+        "State: <proprio_proprio_!>;"
+        "<chat_user_suffix><chat_assistant_prefix>"
+        "<prompt_text_!>\n<EOC>"
+    )
+    action = "Action: <EOV><eos>" if flow_only else "Action: <EOV><action_action>|<eos>"
+    return prefix + "".join(placeholders[field] for field in ordered_fields) + action
+
+
 # Raw dimensions are inserted in these exact policy slots. The G0.5 shared layout is:
 # left_control[9] | left_gripper[1] | right_control[9] | right_gripper[1] | lower_body[7].
 # LIBERO uses only the right EEF delta and right gripper. atomic_4 is a single-arm mobile
@@ -198,6 +231,8 @@ class G05Config(PreTrainedConfig):
     processor_metadata: dict[str, Any] = field(default_factory=dict)
     action_codec_metadata: dict[str, Any] = field(default_factory=dict)
     prompt_template: str = ""
+    recipe_path: str | None = None
+    cot_bbox_camera: str | None = None
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -254,6 +289,8 @@ class G05Config(PreTrainedConfig):
             raise ValueError("runtime_system must be 'system1' or 'system2'.")
         if self.runtime_system == "system2" and not self.predict_cot:
             raise ValueError("G0.5 System 2 requires predict_cot=True in the packaged checkpoint.")
+        if self.recipe_path is not None and not self.predict_cot:
+            raise ValueError("G0.5 recipe-driven CoT training requires predict_cot=True.")
         if not 1 <= self.n_action_steps <= self.chunk_size:
             raise ValueError("n_action_steps must be between 1 and chunk_size.")
         if self.action_head == "actioncodec" and not self.discrete_action:
@@ -314,6 +351,8 @@ class G05Config(PreTrainedConfig):
             raise ValueError("camera_sizes must contain exactly the ordered checkpoint camera keys.")
         if not set(self.optional_camera_keys) <= set(self.camera_order):
             raise ValueError("optional_camera_keys must be a subset of camera_order.")
+        if self.cot_bbox_camera is not None and self.cot_bbox_camera not in self.camera_order:
+            raise ValueError("cot_bbox_camera must be one of camera_order.")
         if self.num_input_images != len(self.camera_order) * self.n_obs_steps:
             raise ValueError(
                 "num_input_images must equal len(camera_order) * n_obs_steps for the selected checkpoint."
