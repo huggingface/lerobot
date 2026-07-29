@@ -6,12 +6,23 @@ and the optional native chain-of-thought phase as System 2. They are not separat
 models: the runtime obtains both from one inference call and the action stays
 conditioned on the same post-reasoning KV state.
 
+## Model Overview
+
 Transformers includes the native multimodal Qwen3.5 backbone, vision tower, and
 processor. G0.5 is not a stock `Qwen3_5ForConditionalGeneration` checkpoint,
 however: it adds the proprioception/action path, action expert, flow-matching
 head, ActionCodec, and unified CoT/action decode. LeRobot implements those G0.5
 components natively and loads converted checkpoints without the OpenGalaxea
 Python package, Hydra, or OmegaConf.
+
+### What the LeRobot Integration Covers
+
+- Standard `policy.type=g05` configuration and Hub checkpoint loading.
+- Native continuous flow and discrete ActionCodec action generation.
+- Optional same-pass System 2 reasoning and action generation.
+- Serializable camera, state, action, normalization, and prompt processors.
+- Fine-tuning through `lerobot-train` and inference through `lerobot-rollout`.
+- LIBERO, RoboTwin, SO-101, and released R1 Lite/Pro checkpoint contracts.
 
 > [!WARNING]
 > G0.5 code and checkpoints use the
@@ -20,7 +31,9 @@ Python package, Hydra, or OmegaConf.
 > weights, download gated files, or imply that Apache-2.0 applies to those materials.
 > Accept the license yourself and use a private or local checkpoint.
 
-## Supported checkpoint contracts
+## Checkpoints
+
+### Input and Output Contracts
 
 | Profile          | Released action path                       | Raw → policy layout                          | Cameras                               | Predicted | Executed | Normalization                   |
 | ---------------- | ------------------------------------------ | -------------------------------------------- | ------------------------------------- | --------: | -------: | ------------------------------- |
@@ -36,12 +49,14 @@ normalization contract.
 
 The converted checkpoints are private under the LeRobot organization:
 
-| Repository               | Contract                     |
-| ------------------------ | ---------------------------- |
-| `lerobot/g05_base`       | 27D base, R1 Lite processor  |
-| `lerobot/g05_libero`     | 20D LIBERO                   |
-| `lerobot/g05_robotwin20` | 20D RoboTwin                 |
-| `lerobot/g05_so101`      | 20D SO-101 (`so100` profile) |
+### Converted Checkpoints
+
+| Repository                                                                | Contract                     |
+| ------------------------------------------------------------------------- | ---------------------------- |
+| [`lerobot/g05_base`](https://huggingface.co/lerobot/g05_base)             | 27D base, R1 Lite processor  |
+| [`lerobot/g05_libero`](https://huggingface.co/lerobot/g05_libero)         | 20D LIBERO                   |
+| [`lerobot/g05_robotwin20`](https://huggingface.co/lerobot/g05_robotwin20) | 20D RoboTwin                 |
+| [`lerobot/g05_so101`](https://huggingface.co/lerobot/g05_so101)           | 20D SO-101 (`so100` profile) |
 
 `lerobot/g05_base` supplies those 27D model weights, both action heads, the
 ActionCodec tokenizer, and the released six-step R1 Lite processor/statistics
@@ -50,7 +65,7 @@ Atomic-4 dataset statistics. Loading the base weights for Atomic-4 therefore
 requires an `atomic_4` `G05Config` plus statistics computed from the target
 Atomic-4 dataset; reusing the R1 Lite statistics would be incorrect.
 
-## Install
+## Installation Requirements
 
 Install LeRobot with the G0.5 Transformers dependency:
 
@@ -64,7 +79,13 @@ SO-100 and SO-101 share the released `so100` embodiment token and six-joint
 right-arm contract. A missing left-wrist camera is zero-padded exactly as in the
 author deployment client.
 
-## Interactive System 1 and System 2 runtime
+## Usage
+
+Load the checkpoint that matches the target embodiment with the standard
+`--policy.path` option. The packaged configuration selects the correct action
+head, camera order, dimensions, normalization, and execution horizon.
+
+### Interactive System 1 and System 2 Runtime
 
 System 1 executes the selected ActionCodec or flow chunk directly:
 
@@ -112,13 +133,27 @@ The checkpoint is non-commercial and may be private; authenticate with
 `hf auth login` before loading it. Do not add `--direct_subtask` when inspecting
 the checkpoint's native System 2 CoT telemetry.
 
-## Fine-tune with `lerobot-train`
+## Data Requirements
+
+The dataset must expose the state, action, camera, and task features matching
+the selected checkpoint contract. For SO-101, use camera names `exterior` and
+`wrist_right`; the optional `wrist_left` input is zero-filled.
+
+Training System 2 language targets additionally requires the checkpoint's
+annotated CoT fields. A normal LeRobot recording supplies action supervision
+but does not synthesize CoT labels. Generate `subtask` and grounded `vqa`
+language columns with `lerobot-annotate` as described in the
+[annotation pipeline](./annotation_pipeline).
+
+## Training
 
 G0.5 implements LeRobot's training surface natively: `forward` computes
 assistant-token cross entropy and flow-matching loss, the policy exposes
 VLM/vision/action optimizer groups, and the checkpoint can be saved, resumed,
 and loaded by the normal LeRobot scripts.
 For example, fine-tune the private SO-101 checkpoint on a LeRobot dataset:
+
+### Training Command Example
 
 ```bash
 export HF_USER=your_hf_username
@@ -169,13 +204,6 @@ multipliers. Override these only when deliberately changing the author recipe:
 --policy.optimizer_vision_lr_multiplier=0.1
 ```
 
-The dataset must expose the state, action, camera, and task features matching the
-selected checkpoint contract in the table above. For SO-101, use camera names
-`exterior` and `wrist_right`; the optional `wrist_left` input is zero-filled.
-Training System 2 language targets additionally requires the checkpoint's
-annotated CoT fields; a normal LeRobot recording supplies action supervision but
-does not synthesize CoT labels.
-
 Resume a saved run with the standard LeRobot checkpoint:
 
 ```bash
@@ -184,7 +212,24 @@ lerobot-train \
   --resume=true
 ```
 
-## Validation status
+## Key Configuration Parameters
+
+| Parameter                                 | Description                                                      |
+| ----------------------------------------- | ---------------------------------------------------------------- |
+| `policy.checkpoint_profile`               | Selects the packaged base, LIBERO, RoboTwin, or SO-101 contract  |
+| `policy.action_head`                      | Uses the checkpoint's `flow` or `actioncodec` action path        |
+| `policy.runtime_system`                   | Selects direct System 1 or unified System 2 reasoning and action |
+| `policy.chunk_size`                       | Number of actions predicted in each chunk                        |
+| `policy.n_action_steps`                   | Number of actions executed before replanning                     |
+| `policy.recipe_path`                      | Optional language-supervision recipe used during fine-tuning     |
+| `policy.optimizer_backbone_lr_multiplier` | Learning-rate multiplier for the language backbone               |
+| `policy.optimizer_vision_lr_multiplier`   | Learning-rate multiplier for the vision tower                    |
+
+Do not override checkpoint contract fields unless deliberately converting or
+validating another embodiment. Incompatible action heads, dimensions, horizons,
+processor modes, and normalization contracts are rejected during loading.
+
+## Evaluation and Validation
 
 CPU unit tests cover factory loading, config incompatibilities, prompt pass-through,
 LIBERO and `atomic_4` mappings, padding masks, inverse action projection, a finite
@@ -242,3 +287,16 @@ bash scripts/run/eval_libero.sh checkpoints/g05-libero/model.pt \
   --num_parallel 1 \
   --output_dir outputs/g05-libero-author-eval
 ```
+
+## References
+
+- [OpenGalaxea G0.5 model](https://huggingface.co/OpenGalaxea/G05)
+- [OpenGalaxea G0.5 repository](https://github.com/OpenGalaxea/GalaxeaVLA)
+- [LeRobot language annotation pipeline](./annotation_pipeline)
+
+## License
+
+The native LeRobot integration is distributed with LeRobot, while G0.5 code
+and checkpoint weights remain subject to the
+[G0.5 Community License](https://huggingface.co/OpenGalaxea/G05/blob/main/licenses/LICENSE-G0.5).
+Review and accept that license before downloading or using a checkpoint.
