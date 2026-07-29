@@ -36,7 +36,7 @@ raw upstream checkpoint.
 lerobot-train \
   --dataset.repo_id=<repo_id> \
   --dataset.root=<dataset_root> \
-  --policy.path=<lingbot_vla_v2_checkpoint_path_or_hub_id> \
+  --policy.path=robbyant/lingbot-vla-v2-6b \
   --policy.robot_config_path=<robot_config.yaml> \
   --policy.norm_stats_path=<norm_stats.json> \
   --policy.processor_path=<qwen3_vl_processor_or_model_path> \
