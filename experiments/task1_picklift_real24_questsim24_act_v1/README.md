@@ -27,3 +27,15 @@ This experiment implements research plan
 All dataset, checkpoint, log, and validation evidence stays under
 `/home/ubuntu24/Teleop/artifacts`. No hardware or simulation rollout is part of
 this experiment.
+
+## Completed result
+
+- Combined48 v2 tree:
+  `cf70d2195325779187a8433992754f739ff8c99541182e5b32da90cd68ac2086`
+- Fixed step-100000 model:
+  `e054e682057f09a4653af00a4580da173d3d1658ef5c34244bdbf3ca1a125de5`
+- Final logged metrics: loss `0.051`, L1 `0.050`, KLD `0.000`.
+- Offline reload and inference: pass, output shape `[1, 6]`, all finite.
+
+See `combined48_result.json`, `run_result.json`, and
+`offline_validation_result.json` for immutable artifact paths and hashes.

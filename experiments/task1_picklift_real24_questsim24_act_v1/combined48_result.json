@@ -1,0 +1,102 @@
+{
+  "schema": "task1_picklift_combined48_result_index_v1",
+  "status": "pass",
+  "plan_id": "task1-picklift-real24-questsim24-act-v1",
+  "research_plan_commit": "63874ee",
+  "dataset": {
+    "dataset_id": "task1_picklift_real24_questsim24_combined48_v2",
+    "freeze_id": "task1_picklift_real24_questsim24_combined48_v2_freeze_v1",
+    "repo_id": "local/task1_picklift_real24_questsim24_combined48_v2",
+    "root": "/home/ubuntu24/Teleop/artifacts/datasets/task1_picklift_real24_questsim24_act_v1/combined48_v2",
+    "tree_sha256": "cf70d2195325779187a8433992754f739ff8c99541182e5b32da90cd68ac2086",
+    "file_count": 56,
+    "total_bytes": 150631670,
+    "episodes": 48,
+    "frames": 7966,
+    "fps": 20,
+    "domain_episode_counts": {
+      "real": 24,
+      "remote_mujoco_human_quest": 24
+    },
+    "domain_frame_counts": {
+      "real": 3790,
+      "remote_mujoco_human_quest": 4176
+    },
+    "simulation_frame_fraction": 0.5242279688676876,
+    "source_episodes_exactly_once": true,
+    "domain_sampling_weight_or_duplication": false,
+    "high_resolution_sidecars_copied": false
+  },
+  "source_identity": {
+    "real": {
+      "root": "/home/ubuntu24/Teleop/artifacts/task1_picklift_formal24_s03_20260728",
+      "tree_sha256": "251cbdc079b304425ccdfbd7a08f15d34858ea0dd8c19345544b8da9f3adb9f2",
+      "subset_sha256": "a0449033d3f2b447cf6b0774ac5d363c8073ab10667799bf3920b61805373e1d",
+      "episodes": 24,
+      "frames": 3790
+    },
+    "simulation": {
+      "root": "/home/ubuntu24/SO101QuestRemote-data/formal/task1_picklift_quest_remote_mujoco_formal24_20260729_r1",
+      "tree_sha256": "1e78c636c8c6d6a508bafda557177bd096a75469680b563544b798077f2761fd",
+      "subset_sha256": "9f19cf5c3839a73b6d6727fd7480e36696669cefb9a952bac10ddd1cf60847a9",
+      "episodes": 24,
+      "frames": 4176
+    }
+  },
+  "compatibility": {
+    "official_lerobot_0_6_1_loader": "pass for both sources and derived dataset",
+    "state_action": "float32[6]",
+    "front": "RGB 640x480 at 20 FPS, front only",
+    "canonical_joint_order": [
+      "shoulder_pan.pos",
+      "shoulder_lift.pos",
+      "elbow_flex.pos",
+      "wrist_flex.pos",
+      "wrist_roll.pos",
+      "gripper.pos"
+    ],
+    "units": "arm degrees and gripper range_0_100",
+    "task": "same PickLift red-cube grasp and >=5 cm stable-lift semantics",
+    "derived_metadata_normalization": [
+      "append .pos to Real joint names",
+      "set canonical mixed robot_type to so101",
+      "use one canonical PickLift task string",
+      "keep AV1 and H.264 source video files separate without re-encoding"
+    ],
+    "distribution_differences": "recorded in source_compatibility_audit.json and intentionally non-blocking"
+  },
+  "normalization": {
+    "use_imagenet_stats": false,
+    "numeric": "recomputed over all 7966 derived parquet rows",
+    "visual": "exact histogram over all 7966 decoded 640x480 RGB frames",
+    "visual_pixel_count_per_channel": 2447155200,
+    "visual_mean": [
+      0.5915917853498128,
+      0.4940934888660539,
+      0.36133322563565184
+    ],
+    "visual_std": [
+      0.24963749580579575,
+      0.2345047878072636,
+      0.2055241353192946
+    ]
+  },
+  "evidence": {
+    "root": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real24_questsim24_act_v1/combined48_freeze_v2",
+    "source_compatibility_audit.json": "1f60bd5d5b9e494257522985da6e34ebf9c36a570fc7cd0d16a89e86940471cf",
+    "derived_manifest.json": "5a76d2ac917a7a6c33fe44f1d372ca91eda5a575e47d91b225210eeabd14ea6e",
+    "freeze_manifest.json": "36a944c582528ea9532cd792f9d5a814ebd54cf874f78e64c749c4df6d611d5e",
+    "tree_inventory.sha256": "cf70d2195325779187a8433992754f739ff8c99541182e5b32da90cd68ac2086",
+    "verification.json": "c586682090cf797858c4711ca3da77e0359d4eb452cd9b6af2a866bc1996358b",
+    "build_log": {
+      "path": "/home/ubuntu24/Teleop/artifacts/logs/task1_picklift_real24_questsim24_act_v1/build_combined48_v2.log",
+      "sha256": "be2df62a73721eb1b8ff7ca0388fe4ca49c753a5ca215015f49b30a5a3c3cfeb"
+    }
+  },
+  "superseded_candidate": {
+    "dataset_id": "task1_picklift_real24_questsim24_combined48_v1",
+    "tree_sha256": "5d0874982049df6393ed7195738454ff1236e0528f6bba192a4c175f8e021b05",
+    "training_used": false,
+    "reason": "evidence-only strings were embedded in visual stats; processor rejected non-numeric stats before smoke step 1"
+  }
+}
