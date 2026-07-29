@@ -56,3 +56,20 @@ The frozen comparison is Mixed v1 `52/120`, whose immutable evidence is
 verified before use. Mixed v2 and Mixed v1 share the Remote runner contract,
 but this remains a single-seed, small-sample descriptive simulation diagnostic.
 It does not isolate a causal mechanism or establish real-robot/paper performance.
+
+## Completed result
+
+- Gate12: `12/12` interface-valid, `5/12` official success.
+- Frozen120: `120/120` interface-valid, `45/120 = 37.50%` official success,
+  `72,000` policy ticks, and `180,000` environment steps.
+- Mixed v1 frozen120: `52/120 = 43.33%`; the descriptive Mixed v2-minus-v1
+  difference is `-7/120`, or `-5.83` percentage points.
+- All 120 episodes ended through the frozen `max_steps_reached` rule. Mixed v2
+  failures were `75 policy_task_failure`; no interface failure occurred.
+- Nexus formal-sink clipping affected `30,624/72,000` policy ticks and
+  `31,150/432,000` joint values. The runner did not modify requested actions.
+- Evidence root:
+  `/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_mixed_v2_act_remote_sim_eval_v1`.
+
+These figures passed independent per-tick recomputation and immutable hash
+verification. They remain Remote-simulation diagnostics only.

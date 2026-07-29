@@ -1,0 +1,948 @@
+{
+  "action_contract": {
+    "follower_calibration_state_gate": false,
+    "max_relative_target": null,
+    "nexus_environment_clip_preserved": true,
+    "raw_equals_requested": true,
+    "runner_absolute_calibration_clamp": false,
+    "runner_relative_clamp": false,
+    "sim_state_projection": false
+  },
+  "comparison": {
+    "by_cell": {
+      "r1c1": {
+        "mixed_v1_success_rate": 0.8,
+        "mixed_v1_successes": 8,
+        "mixed_v2_success_rate": 0.4,
+        "mixed_v2_successes": 4,
+        "success_difference_v2_minus_v1": -4,
+        "success_rate_difference_v2_minus_v1": -0.4
+      },
+      "r1c2": {
+        "mixed_v1_success_rate": 0.5,
+        "mixed_v1_successes": 5,
+        "mixed_v2_success_rate": 0.7,
+        "mixed_v2_successes": 7,
+        "success_difference_v2_minus_v1": 2,
+        "success_rate_difference_v2_minus_v1": 0.19999999999999996
+      },
+      "r1c3": {
+        "mixed_v1_success_rate": 0.1,
+        "mixed_v1_successes": 1,
+        "mixed_v2_success_rate": 0.1,
+        "mixed_v2_successes": 1,
+        "success_difference_v2_minus_v1": 0,
+        "success_rate_difference_v2_minus_v1": 0.0
+      },
+      "r1c4": {
+        "mixed_v1_success_rate": 0.1,
+        "mixed_v1_successes": 1,
+        "mixed_v2_success_rate": 0.2,
+        "mixed_v2_successes": 2,
+        "success_difference_v2_minus_v1": 1,
+        "success_rate_difference_v2_minus_v1": 0.1
+      },
+      "r2c1": {
+        "mixed_v1_success_rate": 0.7,
+        "mixed_v1_successes": 7,
+        "mixed_v2_success_rate": 0.8,
+        "mixed_v2_successes": 8,
+        "success_difference_v2_minus_v1": 1,
+        "success_rate_difference_v2_minus_v1": 0.10000000000000009
+      },
+      "r2c2": {
+        "mixed_v1_success_rate": 0.8,
+        "mixed_v1_successes": 8,
+        "mixed_v2_success_rate": 0.5,
+        "mixed_v2_successes": 5,
+        "success_difference_v2_minus_v1": -3,
+        "success_rate_difference_v2_minus_v1": -0.30000000000000004
+      },
+      "r2c3": {
+        "mixed_v1_success_rate": 0.2,
+        "mixed_v1_successes": 2,
+        "mixed_v2_success_rate": 0.3,
+        "mixed_v2_successes": 3,
+        "success_difference_v2_minus_v1": 1,
+        "success_rate_difference_v2_minus_v1": 0.09999999999999998
+      },
+      "r2c4": {
+        "mixed_v1_success_rate": 0.4,
+        "mixed_v1_successes": 4,
+        "mixed_v2_success_rate": 0.3,
+        "mixed_v2_successes": 3,
+        "success_difference_v2_minus_v1": -1,
+        "success_rate_difference_v2_minus_v1": -0.10000000000000003
+      },
+      "r3c1": {
+        "mixed_v1_success_rate": 0.7,
+        "mixed_v1_successes": 7,
+        "mixed_v2_success_rate": 0.6,
+        "mixed_v2_successes": 6,
+        "success_difference_v2_minus_v1": -1,
+        "success_rate_difference_v2_minus_v1": -0.09999999999999998
+      },
+      "r3c2": {
+        "mixed_v1_success_rate": 0.4,
+        "mixed_v1_successes": 4,
+        "mixed_v2_success_rate": 0.4,
+        "mixed_v2_successes": 4,
+        "success_difference_v2_minus_v1": 0,
+        "success_rate_difference_v2_minus_v1": 0.0
+      },
+      "r3c3": {
+        "mixed_v1_success_rate": 0.2,
+        "mixed_v1_successes": 2,
+        "mixed_v2_success_rate": 0.1,
+        "mixed_v2_successes": 1,
+        "success_difference_v2_minus_v1": -1,
+        "success_rate_difference_v2_minus_v1": -0.1
+      },
+      "r3c4": {
+        "mixed_v1_success_rate": 0.3,
+        "mixed_v1_successes": 3,
+        "mixed_v2_success_rate": 0.1,
+        "mixed_v2_successes": 1,
+        "success_difference_v2_minus_v1": -2,
+        "success_rate_difference_v2_minus_v1": -0.19999999999999998
+      }
+    },
+    "comparison_boundary": "Mixed v2 versus Mixed v1 is a same-Remote-contract, single-seed, small-sample descriptive diagnostic. It does not isolate the bundled engineering changes, establish a causal effect, or constitute a real-robot or paper performance conclusion.",
+    "contract_relationship": "same Remote runner, plan, reset, ready, spawn, camera, clock, success, observation, action-processing, and frozen120 trial contract; model checkpoint and checkpoint-owned processor differ",
+    "mixed_v1": {
+      "environment_clipped_action_count": 22465,
+      "episodes": 120,
+      "failure_types": {
+        "policy_task_failure": 68
+      },
+      "frozen_summary_sha256": "de94cd50a02dd768b6636b521fc68b9437fdf62ea37569af86b66479f9853ee9",
+      "model_sha256": "e054e682057f09a4653af00a4580da173d3d1658ef5c34244bdbf3ca1a125de5",
+      "official_success_rate": 0.43333333333333335,
+      "official_successes": 52,
+      "result_index_path": "/home/ubuntu24/Teleop/lerobot/experiments/task1_picklift_mixed_act_remote_sim_eval_v1/result_index.json",
+      "result_index_sha256": "711e59df28ab2982652587eb56cba2df49c285e1a492f4077b33991f018e8221"
+    },
+    "mixed_v2": {
+      "environment_clipped_action_count": 30624,
+      "episodes": 120,
+      "failure_types": {
+        "policy_task_failure": 75
+      },
+      "model_sha256": "b7faae880393bdbf5e44ebeaab1f399f732d6ee325be698f999c90eb865cee68",
+      "official_success_rate": 0.375,
+      "official_successes": 45
+    },
+    "overall_difference_v2_minus_v1": {
+      "percentage_points": -5.833333333333335,
+      "success_rate": -0.05833333333333335,
+      "successes": -7
+    },
+    "schema_version": 1,
+    "status": "same_remote_contract_descriptive_diagnostic_only"
+  },
+  "frozen120": {
+    "by_cell": {
+      "r1c1": {
+        "confirmed_success_steps": [
+          261,
+          259,
+          323,
+          324
+        ],
+        "env_steps": 15000,
+        "environment_clipped_action_count": 2867,
+        "environment_clipped_joint_value_count": 2912,
+        "episodes": 10,
+        "failure_types": {
+          "policy_task_failure": 6
+        },
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [
+          237,
+          460,
+          459,
+          235,
+          299,
+          300
+        ],
+        "interface_valid_episodes": 10,
+        "maximum_lift_m": 0.27328125187426444,
+        "object_spawn_plan_valid_episodes": 10,
+        "raw_action_count": 6000,
+        "ready_pose_tick0_valid_episodes": 10,
+        "requested_action_count": 6000,
+        "success_rate": 0.4,
+        "successes": 4,
+        "termination_reasons": {
+          "max_steps_reached": 10
+        }
+      },
+      "r1c2": {
+        "confirmed_success_steps": [
+          1025,
+          669,
+          467,
+          334,
+          849,
+          378,
+          553
+        ],
+        "env_steps": 15000,
+        "environment_clipped_action_count": 2466,
+        "environment_clipped_joint_value_count": 2495,
+        "episodes": 10,
+        "failure_types": {
+          "policy_task_failure": 3
+        },
+        "final_is_grasped_episodes": 2,
+        "first_success_steps": [
+          1001,
+          645,
+          443,
+          310,
+          825,
+          354,
+          529,
+          676
+        ],
+        "interface_valid_episodes": 10,
+        "maximum_lift_m": 0.2593226268089736,
+        "object_spawn_plan_valid_episodes": 10,
+        "raw_action_count": 6000,
+        "ready_pose_tick0_valid_episodes": 10,
+        "requested_action_count": 6000,
+        "success_rate": 0.7,
+        "successes": 7,
+        "termination_reasons": {
+          "max_steps_reached": 10
+        }
+      },
+      "r1c3": {
+        "confirmed_success_steps": [
+          858
+        ],
+        "env_steps": 15000,
+        "environment_clipped_action_count": 2827,
+        "environment_clipped_joint_value_count": 2888,
+        "episodes": 10,
+        "failure_types": {
+          "policy_task_failure": 9
+        },
+        "final_is_grasped_episodes": 2,
+        "first_success_steps": [
+          834,
+          692
+        ],
+        "interface_valid_episodes": 10,
+        "maximum_lift_m": 0.2553592065903141,
+        "object_spawn_plan_valid_episodes": 10,
+        "raw_action_count": 6000,
+        "ready_pose_tick0_valid_episodes": 10,
+        "requested_action_count": 6000,
+        "success_rate": 0.1,
+        "successes": 1,
+        "termination_reasons": {
+          "max_steps_reached": 10
+        }
+      },
+      "r1c4": {
+        "confirmed_success_steps": [
+          697,
+          679
+        ],
+        "env_steps": 15000,
+        "environment_clipped_action_count": 1618,
+        "environment_clipped_joint_value_count": 1681,
+        "episodes": 10,
+        "failure_types": {
+          "policy_task_failure": 8
+        },
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [
+          669,
+          655
+        ],
+        "interface_valid_episodes": 10,
+        "maximum_lift_m": 0.25269377255004444,
+        "object_spawn_plan_valid_episodes": 10,
+        "raw_action_count": 6000,
+        "ready_pose_tick0_valid_episodes": 10,
+        "requested_action_count": 6000,
+        "success_rate": 0.2,
+        "successes": 2,
+        "termination_reasons": {
+          "max_steps_reached": 10
+        }
+      },
+      "r2c1": {
+        "confirmed_success_steps": [
+          288,
+          303,
+          356,
+          671,
+          491,
+          250,
+          1360,
+          664
+        ],
+        "env_steps": 15000,
+        "environment_clipped_action_count": 2599,
+        "environment_clipped_joint_value_count": 2681,
+        "episodes": 10,
+        "failure_types": {
+          "policy_task_failure": 2
+        },
+        "final_is_grasped_episodes": 2,
+        "first_success_steps": [
+          264,
+          279,
+          332,
+          274,
+          467,
+          226,
+          285,
+          304
+        ],
+        "interface_valid_episodes": 10,
+        "maximum_lift_m": 0.28784689972681754,
+        "object_spawn_plan_valid_episodes": 10,
+        "raw_action_count": 6000,
+        "ready_pose_tick0_valid_episodes": 10,
+        "requested_action_count": 6000,
+        "success_rate": 0.8,
+        "successes": 8,
+        "termination_reasons": {
+          "max_steps_reached": 10
+        }
+      },
+      "r2c2": {
+        "confirmed_success_steps": [
+          485,
+          693,
+          371,
+          886,
+          467
+        ],
+        "env_steps": 15000,
+        "environment_clipped_action_count": 2760,
+        "environment_clipped_joint_value_count": 2794,
+        "episodes": 10,
+        "failure_types": {
+          "policy_task_failure": 5
+        },
+        "final_is_grasped_episodes": 1,
+        "first_success_steps": [
+          461,
+          669,
+          1021,
+          405,
+          347,
+          862,
+          443
+        ],
+        "interface_valid_episodes": 10,
+        "maximum_lift_m": 0.2782823536872542,
+        "object_spawn_plan_valid_episodes": 10,
+        "raw_action_count": 6000,
+        "ready_pose_tick0_valid_episodes": 10,
+        "requested_action_count": 6000,
+        "success_rate": 0.5,
+        "successes": 5,
+        "termination_reasons": {
+          "max_steps_reached": 10
+        }
+      },
+      "r2c3": {
+        "confirmed_success_steps": [
+          508,
+          265,
+          1012
+        ],
+        "env_steps": 15000,
+        "environment_clipped_action_count": 2257,
+        "environment_clipped_joint_value_count": 2294,
+        "episodes": 10,
+        "failure_types": {
+          "policy_task_failure": 7
+        },
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [
+          484,
+          241,
+          631,
+          988
+        ],
+        "interface_valid_episodes": 10,
+        "maximum_lift_m": 0.28600831956817635,
+        "object_spawn_plan_valid_episodes": 10,
+        "raw_action_count": 6000,
+        "ready_pose_tick0_valid_episodes": 10,
+        "requested_action_count": 6000,
+        "success_rate": 0.3,
+        "successes": 3,
+        "termination_reasons": {
+          "max_steps_reached": 10
+        }
+      },
+      "r2c4": {
+        "confirmed_success_steps": [
+          268,
+          260,
+          960
+        ],
+        "env_steps": 15000,
+        "environment_clipped_action_count": 2080,
+        "environment_clipped_joint_value_count": 2114,
+        "episodes": 10,
+        "failure_types": {
+          "policy_task_failure": 7
+        },
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [
+          244,
+          236,
+          936
+        ],
+        "interface_valid_episodes": 10,
+        "maximum_lift_m": 0.2374655802461313,
+        "object_spawn_plan_valid_episodes": 10,
+        "raw_action_count": 6000,
+        "ready_pose_tick0_valid_episodes": 10,
+        "requested_action_count": 6000,
+        "success_rate": 0.3,
+        "successes": 3,
+        "termination_reasons": {
+          "max_steps_reached": 10
+        }
+      },
+      "r3c1": {
+        "confirmed_success_steps": [
+          314,
+          852,
+          299,
+          324,
+          1035,
+          1205
+        ],
+        "env_steps": 15000,
+        "environment_clipped_action_count": 3155,
+        "environment_clipped_joint_value_count": 3195,
+        "episodes": 10,
+        "failure_types": {
+          "policy_task_failure": 4
+        },
+        "final_is_grasped_episodes": 2,
+        "first_success_steps": [
+          290,
+          828,
+          275,
+          300,
+          1011,
+          1181
+        ],
+        "interface_valid_episodes": 10,
+        "maximum_lift_m": 0.2812989288191588,
+        "object_spawn_plan_valid_episodes": 10,
+        "raw_action_count": 6000,
+        "ready_pose_tick0_valid_episodes": 10,
+        "requested_action_count": 6000,
+        "success_rate": 0.6,
+        "successes": 6,
+        "termination_reasons": {
+          "max_steps_reached": 10
+        }
+      },
+      "r3c2": {
+        "confirmed_success_steps": [
+          1046,
+          349,
+          339,
+          517
+        ],
+        "env_steps": 15000,
+        "environment_clipped_action_count": 3013,
+        "environment_clipped_joint_value_count": 3043,
+        "episodes": 10,
+        "failure_types": {
+          "policy_task_failure": 6
+        },
+        "final_is_grasped_episodes": 1,
+        "first_success_steps": [
+          1022,
+          325,
+          462,
+          315,
+          493
+        ],
+        "interface_valid_episodes": 10,
+        "maximum_lift_m": 0.26552866846563083,
+        "object_spawn_plan_valid_episodes": 10,
+        "raw_action_count": 6000,
+        "ready_pose_tick0_valid_episodes": 10,
+        "requested_action_count": 6000,
+        "success_rate": 0.4,
+        "successes": 4,
+        "termination_reasons": {
+          "max_steps_reached": 10
+        }
+      },
+      "r3c3": {
+        "confirmed_success_steps": [
+          988
+        ],
+        "env_steps": 15000,
+        "environment_clipped_action_count": 2897,
+        "environment_clipped_joint_value_count": 2942,
+        "episodes": 10,
+        "failure_types": {
+          "policy_task_failure": 9
+        },
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [
+          964
+        ],
+        "interface_valid_episodes": 10,
+        "maximum_lift_m": 0.26056700214138545,
+        "object_spawn_plan_valid_episodes": 10,
+        "raw_action_count": 6000,
+        "ready_pose_tick0_valid_episodes": 10,
+        "requested_action_count": 6000,
+        "success_rate": 0.1,
+        "successes": 1,
+        "termination_reasons": {
+          "max_steps_reached": 10
+        }
+      },
+      "r3c4": {
+        "confirmed_success_steps": [
+          679
+        ],
+        "env_steps": 15000,
+        "environment_clipped_action_count": 2085,
+        "environment_clipped_joint_value_count": 2111,
+        "episodes": 10,
+        "failure_types": {
+          "policy_task_failure": 9
+        },
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [
+          655
+        ],
+        "interface_valid_episodes": 10,
+        "maximum_lift_m": 0.2427608546386776,
+        "object_spawn_plan_valid_episodes": 10,
+        "raw_action_count": 6000,
+        "ready_pose_tick0_valid_episodes": 10,
+        "requested_action_count": 6000,
+        "success_rate": 0.1,
+        "successes": 1,
+        "termination_reasons": {
+          "max_steps_reached": 10
+        }
+      }
+    },
+    "core_hashes": {
+      "episodes.jsonl": "88114b5cd393506f5a045a9da052948f74beadc931b7fc1e3fc73584dff9c533",
+      "run_manifest.json": "adb3cdb1796c17af7dd14ade647ec2951de13b01f2361a660266f4ce6e23a474",
+      "summary.json": "9f252b83ca76dfa5728a11da668368cf91add6c4e7828b77ba18568dd2611ac8",
+      "ticks.jsonl": "1dcb3b8f60a3db2940fa158c932f81c839323ab78cae5576fd71b366b1550ce5"
+    },
+    "environment_clipped_action_count": 30624,
+    "environment_clipped_action_rate": 0.42533333333333334,
+    "environment_clipped_joint_value_count": 31150,
+    "environment_clipped_joint_value_rate": 0.07210648148148148,
+    "environment_steps": 180000,
+    "episodes": 120,
+    "episodes_with_any_official_success_step": 53,
+    "evidence_dir": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_mixed_v2_act_remote_sim_eval_v1/frozen120_mixed_v2_act100k_remote_1dfac5_20260730_v1",
+    "failure_types": {
+      "policy_task_failure": 75
+    },
+    "final_is_grasped_episodes": 10,
+    "hashes_sha256": "46133ecb46425dc82577bcb8c8cb73a029182f2292cdefa040daf18d4dab2302",
+    "interface_valid": 120,
+    "maximum_lift_m": 0.28784689972681754,
+    "median_confirmed_success_step": 491,
+    "median_first_official_success_step": 460,
+    "official_success_rate": 0.375,
+    "official_successes": 45,
+    "policy_ticks": 72000,
+    "runtime_seconds": 1365.4149990860024,
+    "termination_reasons": {
+      "max_steps_reached": 120
+    },
+    "verification_index_sha256": "5170a1d7b0586c2b9942b488719c694e8be7411b59a5fa7f61bb651d5ea5aa81",
+    "verification_sha256": "0a1e0b16935cfd06d312fa24ef3a83e76607a935c9e142ecf4fca1a2cea599a3"
+  },
+  "gate12": {
+    "by_cell": {
+      "r1c1": {
+        "confirmed_success_steps": [
+          284
+        ],
+        "env_steps": 1500,
+        "environment_clipped_action_count": 295,
+        "environment_clipped_joint_value_count": 301,
+        "episodes": 1,
+        "failure_types": {},
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [
+          260
+        ],
+        "interface_valid_episodes": 1,
+        "maximum_lift_m": 0.12383385597133093,
+        "object_spawn_plan_valid_episodes": 1,
+        "raw_action_count": 600,
+        "ready_pose_tick0_valid_episodes": 1,
+        "requested_action_count": 600,
+        "success_rate": 1.0,
+        "successes": 1,
+        "termination_reasons": {
+          "max_steps_reached": 1
+        }
+      },
+      "r1c2": {
+        "confirmed_success_steps": [
+          401
+        ],
+        "env_steps": 1500,
+        "environment_clipped_action_count": 283,
+        "environment_clipped_joint_value_count": 283,
+        "episodes": 1,
+        "failure_types": {},
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [
+          377
+        ],
+        "interface_valid_episodes": 1,
+        "maximum_lift_m": 0.1652926888212194,
+        "object_spawn_plan_valid_episodes": 1,
+        "raw_action_count": 600,
+        "ready_pose_tick0_valid_episodes": 1,
+        "requested_action_count": 600,
+        "success_rate": 1.0,
+        "successes": 1,
+        "termination_reasons": {
+          "max_steps_reached": 1
+        }
+      },
+      "r1c3": {
+        "confirmed_success_steps": [],
+        "env_steps": 1500,
+        "environment_clipped_action_count": 318,
+        "environment_clipped_joint_value_count": 333,
+        "episodes": 1,
+        "failure_types": {
+          "policy_task_failure": 1
+        },
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [],
+        "interface_valid_episodes": 1,
+        "maximum_lift_m": 0.006564126425753774,
+        "object_spawn_plan_valid_episodes": 1,
+        "raw_action_count": 600,
+        "ready_pose_tick0_valid_episodes": 1,
+        "requested_action_count": 600,
+        "success_rate": 0.0,
+        "successes": 0,
+        "termination_reasons": {
+          "max_steps_reached": 1
+        }
+      },
+      "r1c4": {
+        "confirmed_success_steps": [],
+        "env_steps": 1500,
+        "environment_clipped_action_count": 174,
+        "environment_clipped_joint_value_count": 178,
+        "episodes": 1,
+        "failure_types": {
+          "policy_task_failure": 1
+        },
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [],
+        "interface_valid_episodes": 1,
+        "maximum_lift_m": 0.008899988545192722,
+        "object_spawn_plan_valid_episodes": 1,
+        "raw_action_count": 600,
+        "ready_pose_tick0_valid_episodes": 1,
+        "requested_action_count": 600,
+        "success_rate": 0.0,
+        "successes": 0,
+        "termination_reasons": {
+          "max_steps_reached": 1
+        }
+      },
+      "r2c1": {
+        "confirmed_success_steps": [
+          689
+        ],
+        "env_steps": 1500,
+        "environment_clipped_action_count": 362,
+        "environment_clipped_joint_value_count": 377,
+        "episodes": 1,
+        "failure_types": {},
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [
+          665
+        ],
+        "interface_valid_episodes": 1,
+        "maximum_lift_m": 0.17565930882720526,
+        "object_spawn_plan_valid_episodes": 1,
+        "raw_action_count": 600,
+        "ready_pose_tick0_valid_episodes": 1,
+        "requested_action_count": 600,
+        "success_rate": 1.0,
+        "successes": 1,
+        "termination_reasons": {
+          "max_steps_reached": 1
+        }
+      },
+      "r2c2": {
+        "confirmed_success_steps": [],
+        "env_steps": 1500,
+        "environment_clipped_action_count": 343,
+        "environment_clipped_joint_value_count": 362,
+        "episodes": 1,
+        "failure_types": {
+          "policy_task_failure": 1
+        },
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [
+          315
+        ],
+        "interface_valid_episodes": 1,
+        "maximum_lift_m": 0.0862513301740765,
+        "object_spawn_plan_valid_episodes": 1,
+        "raw_action_count": 600,
+        "ready_pose_tick0_valid_episodes": 1,
+        "requested_action_count": 600,
+        "success_rate": 0.0,
+        "successes": 0,
+        "termination_reasons": {
+          "max_steps_reached": 1
+        }
+      },
+      "r2c3": {
+        "confirmed_success_steps": [],
+        "env_steps": 1500,
+        "environment_clipped_action_count": 304,
+        "environment_clipped_joint_value_count": 313,
+        "episodes": 1,
+        "failure_types": {
+          "policy_task_failure": 1
+        },
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [],
+        "interface_valid_episodes": 1,
+        "maximum_lift_m": 0.004961413037797447,
+        "object_spawn_plan_valid_episodes": 1,
+        "raw_action_count": 600,
+        "ready_pose_tick0_valid_episodes": 1,
+        "requested_action_count": 600,
+        "success_rate": 0.0,
+        "successes": 0,
+        "termination_reasons": {
+          "max_steps_reached": 1
+        }
+      },
+      "r2c4": {
+        "confirmed_success_steps": [
+          253
+        ],
+        "env_steps": 1500,
+        "environment_clipped_action_count": 318,
+        "environment_clipped_joint_value_count": 334,
+        "episodes": 1,
+        "failure_types": {},
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [
+          229
+        ],
+        "interface_valid_episodes": 1,
+        "maximum_lift_m": 0.2689217662807104,
+        "object_spawn_plan_valid_episodes": 1,
+        "raw_action_count": 600,
+        "ready_pose_tick0_valid_episodes": 1,
+        "requested_action_count": 600,
+        "success_rate": 1.0,
+        "successes": 1,
+        "termination_reasons": {
+          "max_steps_reached": 1
+        }
+      },
+      "r3c1": {
+        "confirmed_success_steps": [],
+        "env_steps": 1500,
+        "environment_clipped_action_count": 368,
+        "environment_clipped_joint_value_count": 381,
+        "episodes": 1,
+        "failure_types": {
+          "policy_task_failure": 1
+        },
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [],
+        "interface_valid_episodes": 1,
+        "maximum_lift_m": 0.00625490143159496,
+        "object_spawn_plan_valid_episodes": 1,
+        "raw_action_count": 600,
+        "ready_pose_tick0_valid_episodes": 1,
+        "requested_action_count": 600,
+        "success_rate": 0.0,
+        "successes": 0,
+        "termination_reasons": {
+          "max_steps_reached": 1
+        }
+      },
+      "r3c2": {
+        "confirmed_success_steps": [],
+        "env_steps": 1500,
+        "environment_clipped_action_count": 181,
+        "environment_clipped_joint_value_count": 181,
+        "episodes": 1,
+        "failure_types": {
+          "policy_task_failure": 1
+        },
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [],
+        "interface_valid_episodes": 1,
+        "maximum_lift_m": 0.02984223645411825,
+        "object_spawn_plan_valid_episodes": 1,
+        "raw_action_count": 600,
+        "ready_pose_tick0_valid_episodes": 1,
+        "requested_action_count": 600,
+        "success_rate": 0.0,
+        "successes": 0,
+        "termination_reasons": {
+          "max_steps_reached": 1
+        }
+      },
+      "r3c3": {
+        "confirmed_success_steps": [],
+        "env_steps": 1500,
+        "environment_clipped_action_count": 107,
+        "environment_clipped_joint_value_count": 107,
+        "episodes": 1,
+        "failure_types": {
+          "policy_task_failure": 1
+        },
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [],
+        "interface_valid_episodes": 1,
+        "maximum_lift_m": 9.627004662485575e-06,
+        "object_spawn_plan_valid_episodes": 1,
+        "raw_action_count": 600,
+        "ready_pose_tick0_valid_episodes": 1,
+        "requested_action_count": 600,
+        "success_rate": 0.0,
+        "successes": 0,
+        "termination_reasons": {
+          "max_steps_reached": 1
+        }
+      },
+      "r3c4": {
+        "confirmed_success_steps": [
+          328
+        ],
+        "env_steps": 1500,
+        "environment_clipped_action_count": 119,
+        "environment_clipped_joint_value_count": 119,
+        "episodes": 1,
+        "failure_types": {},
+        "final_is_grasped_episodes": 0,
+        "first_success_steps": [
+          304
+        ],
+        "interface_valid_episodes": 1,
+        "maximum_lift_m": 0.22764921435108684,
+        "object_spawn_plan_valid_episodes": 1,
+        "raw_action_count": 600,
+        "ready_pose_tick0_valid_episodes": 1,
+        "requested_action_count": 600,
+        "success_rate": 1.0,
+        "successes": 1,
+        "termination_reasons": {
+          "max_steps_reached": 1
+        }
+      }
+    },
+    "core_hashes": {
+      "episodes.jsonl": "d032dd9b5970cb58784ada1d0c0e4140fb1954f457ffe893c440342a13000f2e",
+      "run_manifest.json": "9863ca4f26c409321b64f782a6188b8eb1173d205ee65cfed7fbe6710ca40675",
+      "summary.json": "48e8b7ea6826ce5b772c68f9e63bc800a5d677954c3326ba6cbc1eca3c2422aa",
+      "ticks.jsonl": "2c997347eca84009e35485533716d73082e43c142ab576a6bb750a67e1417ee7"
+    },
+    "environment_clipped_action_count": 3172,
+    "environment_clipped_action_rate": 0.44055555555555553,
+    "environment_clipped_joint_value_count": 3269,
+    "environment_clipped_joint_value_rate": 0.07567129629629629,
+    "environment_steps": 18000,
+    "episodes": 12,
+    "episodes_with_any_official_success_step": 6,
+    "evidence_dir": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_mixed_v2_act_remote_sim_eval_v1/gate12_mixed_v2_act100k_remote_1dfac5_20260730_v1",
+    "failure_types": {
+      "policy_task_failure": 7
+    },
+    "final_is_grasped_episodes": 0,
+    "hashes_sha256": "5dfe03ac75022ba480bc557e7246e16047d4e6a3f84e9afc0a8cee286a4efe25",
+    "interface_valid": 12,
+    "maximum_lift_m": 0.2689217662807104,
+    "median_confirmed_success_step": 328,
+    "median_first_official_success_step": 309.5,
+    "official_success_rate": 0.4166666666666667,
+    "official_successes": 5,
+    "policy_ticks": 7200,
+    "runtime_seconds": 133.67867613700218,
+    "termination_reasons": {
+      "max_steps_reached": 12
+    },
+    "verification_index_sha256": "7e7ae94bdbcd5bc7bf0b9ce5a7f32c264da31e6229ef2f389c7b9cecb6be9949",
+    "verification_sha256": "df9453760884a727fe6bf39bd9c2a7326bb097ff1dd1d60c7ece0e94fac1501e"
+  },
+  "hardware_access": {
+    "camera": false,
+    "follower_12v": false,
+    "gateway": false,
+    "quest": false,
+    "real": false,
+    "robot": false,
+    "serial": false,
+    "torque": false
+  },
+  "model": {
+    "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim24_act_v2/full_100k/checkpoints/100000/pretrained_model",
+    "checkpoint_owned_processor": {
+      "normalizer_stats_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim24_act_v2/full_100k/checkpoints/100000/pretrained_model/policy_preprocessor_step_3_normalizer_processor.safetensors",
+      "normalizer_stats_sha256": "422dc7786245bb41c7799e0efc12570970db1b5802f58bb1170af6bdcae78893",
+      "policy_preprocessor_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim24_act_v2/full_100k/checkpoints/100000/pretrained_model/policy_preprocessor.json",
+      "policy_preprocessor_sha256": "adc8a12dd079a93b4e6fd4e7f15e93126c9927463593a4de3174643e59fca28a",
+      "status": "pass_checkpoint_owned_imagenet_stats",
+      "use_imagenet_stats": true,
+      "visual_mean": [
+        0.48500001430511475,
+        0.4560000002384186,
+        0.4059999883174896
+      ],
+      "visual_std": [
+        0.2290000021457672,
+        0.2240000069141388,
+        0.22499999403953552
+      ]
+    },
+    "model_sha256": "b7faae880393bdbf5e44ebeaab1f399f732d6ee325be698f999c90eb865cee68"
+  },
+  "plan_id": "task1_picklift_mixed_v2_act100k_remote_sim_eval_v1",
+  "plan_sha256": "f06a201d7261f75b8dbb24a8510a9c4ab52f48c475cb2744ee2547b6f51a4aa3",
+  "remote": {
+    "adapter_sha256": "8cd784ee8f36c3b5b36204ce4fe1b2c017af715dab120514113d33b00d7366ff",
+    "camera_spawn": "formal v5",
+    "deployed_commit": "1dfac5c108e830a55b114b1a75bd00bdb5d877b7",
+    "plan_sha256": "c26bf3caa788708cf8ccb332e2f84771d271b05795634a9b1022ed97d06b8c86",
+    "ready_pose_profile": "task1_real24_ready_pose_reset_v1",
+    "ready_pose_state_sha256": "ecb871efad5692e192ac0f690bc0e959fef371bbb8338a31b23ca697741e3b56",
+    "reset_profile": "picklift_real24_aligned_reset_v2",
+    "success": "official MuJoCoPickLift-v1 info.success for 25 consecutive environment steps"
+  },
+  "schema_version": 1,
+  "source_commit": "b88917eb32daf9f15e9f191efe00ecb4818ff846",
+  "status": "complete_independently_verified_diagnostic_only"
+}
