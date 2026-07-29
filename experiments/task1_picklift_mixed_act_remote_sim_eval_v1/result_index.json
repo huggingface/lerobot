@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "plan_id": "task1_picklift_mixed_act100k_remote_sim_eval_v1",
+  "status": "complete_independently_verified_diagnostic_only",
+  "source_commit": "3373ffaa0900d7055736058052958608c101e102",
+  "plan_sha256": "231063547b30d42e77ec5432ff6e95efa7f0babeffe71de75f1c6813bd22feb9",
+  "model": {
+    "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim24_act_v1/full_100k/checkpoints/100000/pretrained_model",
+    "model_sha256": "e054e682057f09a4653af00a4580da173d3d1658ef5c34244bdbf3ca1a125de5"
+  },
+  "remote": {
+    "deployed_commit": "1dfac5c108e830a55b114b1a75bd00bdb5d877b7",
+    "adapter_sha256": "8cd784ee8f36c3b5b36204ce4fe1b2c017af715dab120514113d33b00d7366ff",
+    "plan_sha256": "c26bf3caa788708cf8ccb332e2f84771d271b05795634a9b1022ed97d06b8c86",
+    "reset_profile": "picklift_real24_aligned_reset_v2",
+    "ready_pose_profile": "task1_real24_ready_pose_reset_v1",
+    "ready_pose_state_sha256": "ecb871efad5692e192ac0f690bc0e959fef371bbb8338a31b23ca697741e3b56",
+    "camera_spawn": "formal v5",
+    "success": "official MuJoCoPickLift-v1 info.success for 25 consecutive environment steps"
+  },
+  "action_contract": {
+    "raw_equals_requested": true,
+    "follower_calibration_state_gate": false,
+    "sim_state_projection": false,
+    "max_relative_target": null,
+    "runner_absolute_calibration_clamp": false,
+    "runner_relative_clamp": false,
+    "nexus_environment_clip_preserved": true
+  },
+  "gate12": {
+    "evidence_dir": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_mixed_act_remote_sim_eval_v1/gate12_mixed_act100k_remote_1dfac5_20260729_v1",
+    "episodes": 12,
+    "interface_valid": 12,
+    "policy_ticks": 7200,
+    "environment_steps": 18000,
+    "official_successes": 5,
+    "official_success_rate": 0.4166666666666667,
+    "environment_clipped_action_count": 2524,
+    "environment_clipped_joint_value_count": 2571,
+    "runtime_seconds": 137.24176164899836,
+    "core_hashes": {
+      "episodes.jsonl": "637207eb48dc67f588271754f5ee39d9be154c8770ffda774dde1b85696c09cf",
+      "ticks.jsonl": "5e1a13a86bbaeec065d29a9864c865f5c40e45951487685ad3f176b1c06b6908",
+      "run_manifest.json": "09a424f59c8e96b390355b7f274da1e7d613dd523002b0b0e669673712b4089b",
+      "summary.json": "5ea927daee2864c80c825c0b69dd945a81fa516962d0335e7bf652990ed98390"
+    },
+    "hashes_sha256": "bf69e704f3bc65e23e7452878a145a8d4d56cf8f042ef267453293d1a1ea540a",
+    "verification_sha256": "2962dd8d899f0413e6a715a4692206c76e8124e5629ca465480810e30cbec2bb",
+    "verification_index_sha256": "0ad79c2daaea172abbedd007b392610e0abf717f737fa5aff8c216032f3c9ee4"
+  },
+  "frozen120": {
+    "evidence_dir": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_mixed_act_remote_sim_eval_v1/frozen120_mixed_act100k_remote_1dfac5_20260729_v1",
+    "episodes": 120,
+    "interface_valid": 120,
+    "policy_ticks": 72000,
+    "environment_steps": 180000,
+    "official_successes": 52,
+    "official_success_rate": 0.43333333333333335,
+    "episodes_with_any_official_success_step": 63,
+    "median_first_official_success_step": 645.0,
+    "median_confirmed_success_step": 674.5,
+    "maximum_lift_m": 0.2975609896186367,
+    "final_is_grasped_episodes": 6,
+    "environment_clipped_action_count": 22465,
+    "environment_clipped_action_rate": 0.31201388888888887,
+    "environment_clipped_joint_value_count": 22938,
+    "environment_clipped_joint_value_rate": 0.0530972222222222,
+    "failure_types": {
+      "policy_task_failure": 68
+    },
+    "termination_reasons": {
+      "max_steps_reached": 120
+    },
+    "runtime_seconds": 1362.2556249129993,
+    "by_cell": {
+      "r1c1": {"successes": 8, "success_rate": 0.8, "environment_clipped_action_count": 1805, "maximum_lift_m": 0.2760458879069073, "final_is_grasped_episodes": 0},
+      "r1c2": {"successes": 5, "success_rate": 0.5, "environment_clipped_action_count": 1864, "maximum_lift_m": 0.27380060659109234, "final_is_grasped_episodes": 1},
+      "r1c3": {"successes": 1, "success_rate": 0.1, "environment_clipped_action_count": 2006, "maximum_lift_m": 0.26062056004677836, "final_is_grasped_episodes": 0},
+      "r1c4": {"successes": 1, "success_rate": 0.1, "environment_clipped_action_count": 1355, "maximum_lift_m": 0.25572137331086475, "final_is_grasped_episodes": 0},
+      "r2c1": {"successes": 7, "success_rate": 0.7, "environment_clipped_action_count": 1908, "maximum_lift_m": 0.2686612662712098, "final_is_grasped_episodes": 1},
+      "r2c2": {"successes": 8, "success_rate": 0.8, "environment_clipped_action_count": 1771, "maximum_lift_m": 0.2975609896186367, "final_is_grasped_episodes": 0},
+      "r2c3": {"successes": 2, "success_rate": 0.2, "environment_clipped_action_count": 1857, "maximum_lift_m": 0.2585910887084003, "final_is_grasped_episodes": 1},
+      "r2c4": {"successes": 4, "success_rate": 0.4, "environment_clipped_action_count": 1761, "maximum_lift_m": 0.27304041767203, "final_is_grasped_episodes": 0},
+      "r3c1": {"successes": 7, "success_rate": 0.7, "environment_clipped_action_count": 1829, "maximum_lift_m": 0.2762384178623857, "final_is_grasped_episodes": 2},
+      "r3c2": {"successes": 4, "success_rate": 0.4, "environment_clipped_action_count": 1939, "maximum_lift_m": 0.25431688456235213, "final_is_grasped_episodes": 0},
+      "r3c3": {"successes": 2, "success_rate": 0.2, "environment_clipped_action_count": 2459, "maximum_lift_m": 0.2859892678188575, "final_is_grasped_episodes": 1},
+      "r3c4": {"successes": 3, "success_rate": 0.3, "environment_clipped_action_count": 1911, "maximum_lift_m": 0.2710696427564603, "final_is_grasped_episodes": 0}
+    },
+    "core_hashes": {
+      "episodes.jsonl": "70223f97cc73c1dd20988068d08e4b3e9a5a53378858bd699b09476412d7f8c2",
+      "ticks.jsonl": "316bc113ba53d263f9be863320b344fc62913572a67835997beabea53ac573a3",
+      "run_manifest.json": "add75d28f3de2041329f4e0650daeec3709af7232c6f1ef83a2adfc0681a4436",
+      "summary.json": "de94cd50a02dd768b6636b521fc68b9437fdf62ea37569af86b66479f9853ee9"
+    },
+    "hashes_sha256": "d9307b182290cbc4d78d646dad76c0c62575f5039cc64a6795850cabb13d109e",
+    "verification_sha256": "6bae15d10f5510a4ec58c0ac12179e82eef7650dca23de7bbca32e52f67c1c71",
+    "verification_index_sha256": "b47db9cf399c6b19b4cfc2d056484000b1d1d1fe1fe7214ba8bc5319b45e2714"
+  },
+  "comparison_boundary": "Historical Real-only 1/120 used a different action-processing version. This mixed result and the historical Real-only result are not directly attributable comparisons and do not isolate a model or dataset effect.",
+  "video_export": {
+    "exported": false,
+    "reason": "Optional only; the immutable tick evidence stores canonical RGB hashes rather than pixel frames, and no extra replay trial was permitted."
+  },
+  "hardware_access": {
+    "serial": false,
+    "camera": false,
+    "robot": false,
+    "torque": false,
+    "follower_12v": false,
+    "gateway": false,
+    "quest": false,
+    "real": false
+  }
+}
