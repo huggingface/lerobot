@@ -18,9 +18,11 @@ task to predict a chunk of robot actions with flow matching.
 | Action head       | Flow-matching encoder and decoder                | Predicts 16-step action chunks             |
 | Processors        | LeRobot preprocessor and postprocessor pipelines | Maps robot data to and from semantic slots |
 
-The Qwen configuration, tokenizer, and vision tower come from Transformers.
-The MoT action expert, packed NaViT language path, multimodal connector, and
-flow-action modules use the pinned Being-H0.5 implementation.
+LeRobot owns the complete runtime implementation. The tokenizer, Qwen3
+projections, MLPs, normalization and rotary embeddings, and InternVL vision
+tower reuse Transformers components. The checkpoint-specific packed MoT
+attention, connector, semantic packing, and flow-action modules live in
+`lerobot.policies.being_h05`.
 
 ### What the LeRobot integration supports
 
@@ -34,23 +36,15 @@ flow-action modules use the pinned Being-H0.5 implementation.
 
 ## Installation
 
-1. Install LeRobot by following the [installation guide](./installation).
-2. Install the Being-H0.5 dependencies:
+Install LeRobot by following the [installation guide](./installation), then
+install the Being-H0.5 extra:
 
-   ```bash
-   pip install -e ".[being_h05]"
-   ```
+```bash
+pip install -e ".[being_h05]"
+```
 
-3. Clone the pinned author implementation and add it to `PYTHONPATH`:
-
-   ```bash
-   git clone https://github.com/BeingBeyond/Being-H.git
-   git -C Being-H checkout ab1204954cb5e68f0bc52a376982e962c763bbbe
-   export PYTHONPATH="$PWD/Being-H/Being-H05:$PYTHONPATH"
-   ```
-
-FlashAttention is optional. If it is unavailable, the policy automatically
-uses the eager-attention path.
+No source checkout, `PYTHONPATH` change, or separate Being-H installation is
+required.
 
 ## Checkpoints
 
@@ -175,8 +169,8 @@ environment's task instruction unchanged.
 
 ## Validation results
 
-The LeRobot checkpoints were compared with the pinned author implementation in
-BF16 on an NVIDIA RTX 5090.
+The native LeRobot checkpoints were compared with the pinned author
+implementation in BF16 on an NVIDIA RTX 5090.
 
 | Checkpoint | Batch | Author loss | LeRobot loss | Flow max abs | Sample max abs |
 | ---------- | ----: | ----------: | -----------: | -----------: | -------------: |
@@ -188,6 +182,11 @@ BF16 on an NVIDIA RTX 5090.
 Preprocessing, missing-camera masks, prompt tokens, normalization, semantic
 slots, the flow sampler, and final environment actions all had maximum and p99
 absolute error zero.
+
+The final native implementation also matches all 1,086 tensor names and shapes
+in both LeRobot checkpoints. CUDA BF16 lockstep tests of the Qwen3-MoT path,
+flow-training objective, four-step solver, and RoboCasa MPG refinement were
+bitwise equal to the pinned implementation.
 
 In a lockstep 50-episode RoboCasa comparison, both the author and LeRobot
 policies achieved **12/50 successes (24.0%)**, for a source-to-LeRobot delta of
