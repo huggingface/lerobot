@@ -33,11 +33,28 @@ ActionCodec metadata, statistics, exact prompt template, source revision, and
 license. Loading rejects a different head, horizon, processor mode, or
 normalization contract.
 
+The converted checkpoints are private under the LeRobot organization and pinned
+to the revisions validated for this integration:
+
+| Repository               | Revision                                   | Contract                     |
+| ------------------------ | ------------------------------------------ | ---------------------------- |
+| `lerobot/g05_base`       | `a74ab9a849a8e5220e2ec3c0ac94e1bcadb000d4` | 27D base, R1 Lite processor  |
+| `lerobot/g05_libero`     | `cea5cb93bf98264d5b8b498c64b18b5b768aa1ed` | 20D LIBERO                   |
+| `lerobot/g05_robotwin20` | `f3405ee0f995a7ee9bdb6992353445cae32efe54` | 20D RoboTwin                 |
+| `lerobot/g05_so101`      | `6379367ea401bb8ff1f954848721e140d8260060` | 20D SO-101 (`so100` profile) |
+
 The named `atomic_4` adapter is intentionally separate from LIBERO. Its raw state
 is EEF relative xyz+quaternion, base xyz+quaternion, and two gripper positions
 (16D). Its action is EEF delta xyz+rpy, gripper, four mobile-base commands, and a
 control-mode flag (12D). This needs G0.5's 27D whole-body layout; a released 20D
 LIBERO checkpoint is rejected.
+
+`lerobot/g05_base` supplies those 27D model weights, both action heads, the
+ActionCodec tokenizer, and the released six-step R1 Lite processor/statistics
+contract. OpenGalaxea's base release does not contain an `atomic_4` processor or
+Atomic-4 dataset statistics. Loading the base weights for Atomic-4 therefore
+requires an `atomic_4` `G05Config` plus statistics computed from the target
+Atomic-4 dataset; reusing the R1 Lite statistics would be incorrect.
 
 ## Install
 
@@ -58,7 +75,7 @@ git -C GalaxeaVLA checkout b34966f387dd2ae0f003143b81494afd9213e613
 export PYTHONPATH="/path/to/GalaxeaVLA/src:${PYTHONPATH}"
 ```
 
-The LeRobot organization hosts the prepared LIBERO, RoboTwin, and SO-101
+The LeRobot organization hosts the prepared base, LIBERO, RoboTwin, and SO-101
 checkpoints privately. Authenticate with `hf auth login` before loading them.
 SO-100 and SO-101 share the released `so100` embodiment token and six-joint
 right-arm contract. A missing left-wrist camera is zero-padded exactly as in the
@@ -210,6 +227,13 @@ a real joint `BBox → Subtask → Action` forward and backward through the
 recipe-driven path. It produced finite total loss `4.38332`, including non-zero
 `ce_loss=4.04244` and `fm_loss=0.340881`, with 15.58 GiB peak allocated CUDA
 memory.
+
+The converted private `g05_base` checkpoint strict-loaded all 946 mapped tensors
+with no missing, duplicate, unexpected, or shape-mismatched keys. Author/LeRobot
+parity was exact for images, tokens, and masks; normalized state/action inputs
+matched within `1.2e-7`, and postprocessing within `1.8e-6`. A System 2 smoke
+generated a native `Subtask:` trace and a finite `[1, 32, 27]` action chunk in
+the same pass, using 11.02 GiB peak allocated memory.
 
 A 50-episode LIBERO/RoboTwin success-rate comparison additionally requires the
 matching simulator, task assets, reset seeds, and author evaluator; no task-level
