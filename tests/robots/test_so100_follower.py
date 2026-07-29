@@ -49,7 +49,7 @@ def _make_bus_mock() -> MagicMock:
 
 
 @pytest.fixture
-def follower():
+def follower(tmp_path):
     bus_mock = _make_bus_mock()
 
     def _bus_side_effect(*_args, **kwargs):
@@ -71,7 +71,7 @@ def follower():
         ),
         patch.object(SO100Follower, "configure", lambda self: None),
     ):
-        cfg = SO100FollowerConfig(port="/dev/null")
+        cfg = SO100FollowerConfig(port="/dev/null", calibration_dir=tmp_path)
         robot = SO100Follower(cfg)
         yield robot
         if robot.is_connected:
@@ -99,15 +99,25 @@ def test_get_observation(follower):
         assert obs[f"{motor}.pos"] == idx
 
 
-def test_get_observation_uses_read_retry(follower):
+def test_get_observation_uses_read_retries(follower):
     # Feetech buses can intermittently fail a sync_read; the follower should forward the configured
     # retry count so transient failures don't abort the control loop (see #3131).
+    follower.config.num_read_retries = 7
     follower.connect()
     follower.get_observation()
 
-    follower.bus.sync_read.assert_called_once_with(
-        "Present_Position", num_retry=follower.config.max_read_retry
-    )
+    follower.bus.sync_read.assert_called_once_with("Present_Position", num_retry=7)
+
+
+def test_send_action_uses_read_retries(follower):
+    follower.config.max_relative_target = 10.0
+    follower.config.num_read_retries = 7
+    follower.connect()
+
+    action = {f"{motor}.pos": value * 10 for value, motor in enumerate(follower.bus.motors, 1)}
+    follower.send_action(action)
+
+    follower.bus.sync_read.assert_called_once_with("Present_Position", num_retry=7)
 
 
 def test_send_action(follower):

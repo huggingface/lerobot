@@ -49,8 +49,8 @@ class SOFollowerConfig:
     # Number of extra attempts when a `sync_read` of the motors fails. Feetech buses can occasionally
     # return a corrupted status packet ("Incorrect status packet!"), especially when several joints move
     # at once, which otherwise aborts the control loop. Retries are immediate (no sleep) and only happen on
-    # failure, so the steady-state read cost is unchanged. Set to `0` to restore the previous behavior.
-    max_read_retry: int = 3
+    # failure, so the steady-state read cost is unchanged.
+    num_read_retries: int = 2
 
 
 @RobotConfig.register_subclass("so101_follower")
