@@ -14,56 +14,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SONIC full-body controller for Unitree G1."""
+"""SONIC decoder whole-body controller for the Unitree G1 (token-only).
+
+Pure-Python/ONNX re-implementation of the *decode* half of NVIDIA's SONIC deploy stack.
+The encoder is intentionally absent: a token-output VLA (e.g. ``nepyope/sonic_walk``)
+supplies the 64-D latent ``motion_token`` directly each tick, and the SONIC **decoder**
+maps ``token + recent proprioception history`` to a residual action that is scaled and
+added onto ``DEFAULT_ANGLES`` to produce 50 Hz joint-position targets for the robot's PD
+controller.
+
+Index spaces: joints exist in two orderings — **IsaacLab** (policy/training order) and
+**MuJoCo** (deploy order). ``ISAACLAB_TO_MUJOCO`` / ``MUJOCO_TO_ISAACLAB`` (in g1_utils)
+convert between them. Quaternions are scalar-first ``(w, x, y, z)``.
+"""
 
 from __future__ import annotations
 
-from collections import deque
 import logging
 from typing import TYPE_CHECKING
 
-from huggingface_hub import hf_hub_download
 import numpy as np
+from huggingface_hub import hf_hub_download
 
 from lerobot.utils.import_utils import _onnxruntime_available, require_package
 
 from ..g1_utils import (
+    ISAACLAB_TO_MUJOCO,
     MUJOCO_TO_ISAACLAB,
-    WB_ACTION_DIM,
     G1_29_JointIndex,
+    get_gravity_orientation,
     lowstate_to_obs,
-    wb_action_key,
-)
-from .sonic_pipeline import (
-    CONTROL_DT,
-    DEFAULT_ANGLES,
-    ENCODER_UPDATE_EVERY,
-    TOKEN_DIM,
-    PlannerController,
-    compute_kp_kd,
     make_ort_session_options,
     ort_providers,
 )
-
-# Action-feature prefix for the latent-token interface (see _extract_token_from_action).
-TOKEN_ACTION_PREFIX = "motion_token"
-# Proprio-state prefix for the token interface: the robot echoes the last commanded
-# token here so ``lerobot-rollout`` aggregates it into a 64-D ``observation.state``.
-TOKEN_STATE_PREFIX = "motion_token_state"
-
-
-def token_action_key(i: int) -> str:
-    """Action-dict key for the i-th component of the 64-D SONIC latent token.
-
-    The ``.pos`` suffix is required so the value flows through ``lerobot-rollout``,
-    which only routes ``.pos`` scalar features onto the policy action vector.
-    """
-    return f"{TOKEN_ACTION_PREFIX}.{i}.pos"
-
-
-def token_state_key(i: int) -> str:
-    """Observation key for the i-th component of the 64-D SONIC latent token state."""
-    return f"{TOKEN_STATE_PREFIX}.{i}.pos"
 
 if TYPE_CHECKING or _onnxruntime_available:
     import onnxruntime as ort
@@ -72,18 +55,110 @@ else:
 
 logger = logging.getLogger(__name__)
 
+# ── Constants (hardware-validated; see the NVIDIA SONIC deploy reference) ──────
+CONTROL_DT = 0.02  # 50 Hz control period (s)
+TOKEN_DIM = 64  # decoder latent size
+
+# Nominal standing pose (rad), 29 joints in IsaacLab order. Decoder actions are residuals
+# added on top of this.
+DEFAULT_ANGLES = np.array(
+    [
+        -0.312, 0.0, 0.0, 0.669, -0.363, 0.0,
+        -0.312, 0.0, 0.0, 0.669, -0.363, 0.0,
+        0.0, 0.0, 0.0,
+        0.2, 0.2, 0.0, 0.6, 0.0, 0.0, 0.0,
+        0.2, -0.2, 0.0, 0.6, 0.0, 0.0, 0.0,
+    ],
+    dtype=np.float32,
+)
+
+# Per-motor-type parameters used to derive action scaling and PD gains. Keys are Unitree
+# motor model names; ARMATURE = rotor inertia, EFFORT = torque limit (N·m).
+NATURAL_FREQ = 10.0 * 2.0 * np.pi  # target closed-loop stiffness bandwidth (rad/s)
+ARMATURE = {"5020": 0.003609725, "7520_14": 0.010177520, "7520_22": 0.025101925, "4010": 0.00425}
+EFFORT = {"5020": 25.0, "7520_14": 88.0, "7520_22": 139.0, "4010": 5.0}
+
+
+def _action_scale(k):
+    """Per-motor residual-action scale (maps policy output to joint-angle delta)."""
+    return 0.25 * EFFORT[k] / (ARMATURE[k] * NATURAL_FREQ**2)
+
+
+# Per-joint motor model (IsaacLab order): legs, waist, then arms. Single source of truth
+# for both ACTION_SCALE and compute_kp_kd().
+MOTOR_MODELS = (
+    ["7520_22", "7520_22", "7520_14", "7520_22", "5020", "5020"] * 2
+    + ["7520_14", "5020", "5020"]
+    + ["5020", "5020", "5020", "5020", "5020", "4010", "4010"] * 2
+)
+ACTION_SCALE = np.array([_action_scale(k) for k in MOTOR_MODELS], dtype=np.float32)  # (29,) IsaacLab
+
+
+def _to_mujoco(a):
+    """Apply the ``MUJOCO_TO_ISAACLAB`` gather to a 29-vector (deploy-order reorder).
+
+    NOTE: this returns ``a[MUJOCO_TO_ISAACLAB]``. The ``_mj`` suffixes and the exact
+    permutation direction are a fixed convention validated against the deployed SONIC ONNX
+    policy (the decoder consumes vectors in this order). Do not "correct" the table or
+    rename toward the opposite direction without re-validating on hardware.
+    """
+    return a[MUJOCO_TO_ISAACLAB]
+
+
+DEFAULT_ANGLES_MUJOCO = _to_mujoco(DEFAULT_ANGLES)
+
+
+def compute_kp_kd():
+    """Derive per-joint PD gains (kp, kd) from motor armature and target bandwidth.
+
+    Ankle and waist joints get a x2 factor for extra stiffness. Returns two (29,) float32
+    arrays in IsaacLab joint order.
+    """
+
+    def s(k):
+        return ARMATURE[k] * NATURAL_FREQ**2
+
+    def d(k):
+        return 2.0 * 2.0 * ARMATURE[k] * NATURAL_FREQ
+
+    _double = {4, 5, 10, 11, 13, 14}  # ankle + waist indices with factor 2
+    kp = np.array([2 * s(k) if i in _double else s(k) for i, k in enumerate(MOTOR_MODELS)], dtype=np.float32)
+    kd = np.array([2 * d(k) if i in _double else d(k) for i, k in enumerate(MOTOR_MODELS)], dtype=np.float32)
+    return kp, kd
+
+
+# Action-feature prefix for the latent-token interface (see _extract_token_from_action).
+TOKEN_ACTION_PREFIX = "motion_token"
+# Proprio-state prefix for the token interface: the robot echoes the last commanded token
+# here so ``lerobot-rollout`` aggregates it into a 64-D ``observation.state``.
+TOKEN_STATE_PREFIX = "motion_token_state"
+
+
+def token_action_key(i: int) -> str:
+    """Action-dict key for the i-th component of the 64-D SONIC latent token.
+
+    The ``.pos`` suffix is required so the value flows through ``lerobot-rollout``, which
+    only routes ``.pos`` scalar features onto the policy action vector.
+    """
+    return f"{TOKEN_ACTION_PREFIX}.{i}.pos"
+
+
+def token_state_key(i: int) -> str:
+    """Observation key for the i-th component of the 64-D SONIC latent token state."""
+    return f"{TOKEN_STATE_PREFIX}.{i}.pos"
+
+
 # Startup blend duration: over the first control ticks, linearly interpolate every joint
 # from the robot's initial measured pose into the policy's commanded target, so control
 # eases in without a snap on the first command.
 INIT_RAMP_S = 3.0
 
-# Neutral ("zero pose") SONIC token, held by token_mode until the first real token
-# arrives. Captured from the encoder's own output while the robot stood idle in sim
-# (capture_neutral_token.py): the encoder is an FSQ bottleneck (~5 bit/dim, 15.5 half-
-# width, Div(16)), so its tokens live on the 1/16 grid. We store the integer FSQ codes
-# and rescale by the same 1/16 step, giving an exact on-grid token -- unlike the literal
-# all-zero token, which is off the encoder's learned manifold and decodes to a slightly
-# goofy stance. This one decodes to a stable, natural standing pose.
+# Neutral ("zero pose") SONIC token, held by token_mode until the first real token arrives.
+# Captured from the encoder's own output while the robot stood idle in sim: the encoder is
+# an FSQ bottleneck (~5 bit/dim, Div(16)), so its tokens live on the 1/16 grid. We store the
+# integer FSQ codes and rescale by 1/16, giving an exact on-grid token -- unlike the literal
+# all-zero token, which is off the learned manifold and decodes to a slightly goofy stance.
+# This one decodes to a stable, natural standing pose.
 _NEUTRAL_TOKEN_CODES = np.array(
     [-1, 3, 1, -1, 1, -3, 6, 1, 1, 1, -2, -4, -2, 0, -3, -1,
      2, -1, -3, -5, 3, 1, 1, -4, -1, -1, 1, -7, 0, 1, 2, -2,
@@ -94,98 +169,158 @@ _NEUTRAL_TOKEN_CODES = np.array(
 NEUTRAL_TOKEN = _NEUTRAL_TOKEN_CODES / 16.0  # FSQ Div(16): integer codes -> on-grid token
 
 
-def _extract_wb34_from_action(action: dict | None) -> np.ndarray | None:
-    """Reassemble a dense (34,) whole-body command from ``wb.{i}.pos`` keys, or None.
-
-    This is the OpenHLM / pi0.5 joint-based interface: one 34-D vector per tick
-    (sentinel: presence of ``wb.0.pos``) carrying absolute joint targets in real
-    units. The ``.pos`` suffix lets these flow through ``lerobot-rollout`` as normal
-    joint-position action features.
-    """
-    if not action:
-        return None
-    keys = [wb_action_key(i) for i in range(WB_ACTION_DIM)]
-    # Require the full dense command: a partial action (e.g. only ``wb.0.pos``)
-    # must not be silently zero-filled, which would drive most joints toward 0.
-    if any(key not in action for key in keys):
-        return None
-    return np.fromiter(
-        (float(action[key]) for key in keys),
-        dtype=np.float32,
-        count=WB_ACTION_DIM,
-    )
-
-
 def _extract_token_from_action(action: dict | None) -> np.ndarray | None:
     """Reassemble a dense (64,) latent token from ``motion_token.{i}`` keys, or None.
 
-    This is the token-only replay interface: instead of a joint reference driving the
-    encoder, the caller supplies the 64-D encoder latent directly (e.g. a recorded
-    ``action.motion_token`` column), which the decoder consumes with the encoder
-    bypassed. Requires the full dense token; a partial one is ignored (returns None).
+    The token-only interface: the caller supplies the 64-D encoder latent directly (e.g. a
+    token-output VLA's action), which the decoder consumes with the encoder bypassed.
+    Requires the full dense token; a partial one is ignored (returns None).
     """
     if not action:
         return None
     keys = [token_action_key(i) for i in range(TOKEN_DIM)]
     if any(key not in action for key in keys):
         return None
-    return np.fromiter(
-        (float(action[key]) for key in keys),
-        dtype=np.float32,
-        count=TOKEN_DIM,
-    )
+    return np.fromiter((float(action[key]) for key in keys), dtype=np.float32, count=TOKEN_DIM)
 
 
-def _wb34_to_reference(wb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Map a 34-D OpenHLM whole-body command to a SONIC mode-0 reference.
+class SonicDecoder:
+    """Runs the SONIC decoder ONNX model and owns the proprioception history.
 
-    Returns ``(ref29, anchor_quat)`` where ``ref29`` is the 29 joint targets in
-    IsaacLab order (what SONIC's ``motion_joint_positions`` expects) and
-    ``anchor_quat`` (wxyz) encodes the root roll/pitch (yaw=0).
-
-    OpenHLM layout : [L-arm 0:7, L-grip 7, R-arm 8:15, R-grip 15,
-                      L-leg 16:22, R-leg 22:28, waist 28:31, root rp+yaw 31:34]
-    The 29 joints are first assembled in MuJoCo / Unitree-SDK order
-    ([L-leg 0:6, R-leg 6:12, waist 12:15, L-arm 15:22, R-arm 22:29] — the
-    ``G1_29_JointIndex`` grouping OpenHLM uses), then permuted to IsaacLab order via
-    ``MUJOCO_TO_ISAACLAB``. Grippers (7, 15) are not part of the 29-DoF SONIC
-    reference, and yaw-rate (33) is integrated into the heading by the caller (it
-    cannot be represented in this static per-tick anchor).
+    Each tick it appends the latest robot state to 10-frame history buffers, then maps the
+    supplied 64-D ``token`` + that history to a residual action added onto
+    ``DEFAULT_ANGLES``. The encoder is bypassed entirely (token supplied by the policy).
     """
-    ref_mj = np.zeros(29, np.float32)  # MuJoCo / Unitree-SDK grouped order
-    ref_mj[0:6] = wb[16:22]  # left leg
-    ref_mj[6:12] = wb[22:28]  # right leg
-    ref_mj[12:15] = wb[28:31]  # waist
-    ref_mj[15:22] = wb[0:7]  # left arm
-    ref_mj[22:29] = wb[8:15]  # right arm
-    ref = ref_mj[MUJOCO_TO_ISAACLAB].astype(np.float32)  # -> IsaacLab order for SONIC
-    roll, pitch = float(wb[31]), float(wb[32])
-    cr, sr, cp, sp = np.cos(roll / 2), np.sin(roll / 2), np.cos(pitch / 2), np.sin(pitch / 2)
-    anchor = np.array([cr * cp, sr * cp, cr * sp, sr * sp], np.float32)  # Rx(roll)·Ry(pitch)
-    return ref, anchor
+
+    def __init__(self, decoder):
+        self.decoder = decoder
+        self.decoder_input = decoder.get_inputs()[0].name
+        dec_dim = int(decoder.get_inputs()[0].shape[1])
+        if dec_dim != 994:
+            raise RuntimeError(f"Unexpected decoder input dim {dec_dim} (expected 994)")
+        self.token = np.zeros(TOKEN_DIM, np.float32)
+        self.last_action_mj = np.zeros(29, np.float32)
+        self.h_q_mj = [np.zeros(29, np.float32)] * 10
+        self.h_dq_mj = [np.zeros(29, np.float32)] * 10
+        self.h_ang = [np.zeros(3, np.float32)] * 10
+        self.h_act_mj = [np.zeros(29, np.float32)] * 10
+        self.h_quat = [np.array([1, 0, 0, 0], np.float32)] * 10
+
+    def reset(self):
+        """Clear the token and 10-frame proprioception history.
+
+        ``UnitreeG1.reset()`` relies on this so the first decoder outputs of a new episode
+        are not contaminated by the previous episode's state.
+        """
+        self.token = np.zeros(TOKEN_DIM, np.float32)
+        self.last_action_mj = np.zeros(29, np.float32)
+        self.h_q_mj = [np.zeros(29, np.float32)] * 10
+        self.h_dq_mj = [np.zeros(29, np.float32)] * 10
+        self.h_ang = [np.zeros(3, np.float32)] * 10
+        self.h_act_mj = [np.zeros(29, np.float32)] * 10
+        self.h_quat = [np.array([1, 0, 0, 0], np.float32)] * 10
+
+    def update_history(self, q, dq, ang, quat):
+        """Push the latest proprioception (pos/vel/gyro/orientation) into the 10-frame buffers."""
+        quat = quat / (np.linalg.norm(quat) + 1e-8)
+        q_mj = _to_mujoco(q)
+        dq_mj = _to_mujoco(dq)
+        self.h_q_mj = [q_mj - DEFAULT_ANGLES_MUJOCO] + self.h_q_mj[:-1]
+        self.h_dq_mj = [dq_mj] + self.h_dq_mj[:-1]
+        self.h_ang = [ang.copy()] + self.h_ang[:-1]
+        self.h_act_mj = [self.last_action_mj.copy()] + self.h_act_mj[:-1]
+        self.h_quat = [quat.copy()] + self.h_quat[:-1]
+
+    def build_decoder_obs(self):
+        """Assemble the 994-D decoder input: token + 10-frame proprioception history + gravity."""
+        obs = np.zeros(994, np.float32)
+        off = 0
+        obs[off : off + 64] = self.token
+        off += 64
+        for h, sz in [
+            (list(reversed(self.h_ang)), 3),
+            (list(reversed(self.h_q_mj)), 29),
+            (list(reversed(self.h_dq_mj)), 29),
+            (list(reversed(self.h_act_mj)), 29),
+        ]:
+            for f in range(10):
+                obs[off : off + sz] = h[f]
+                off += sz
+        for q in reversed(self.h_quat):
+            obs[off : off + 3] = get_gravity_orientation(q)
+            off += 3
+        assert off == 994, f"Decoder obs mismatch: {off}"
+        return obs
+
+    def step(self, robot_obs, token, debug=False):
+        """One control tick: read robot obs, decode the supplied token -> joint targets.
+
+        Args:
+            robot_obs: dict with ``<joint>.q``/``.dq`` and ``imu.*`` fields.
+            token: 64-D latent supplied by the policy (encoder bypassed).
+            debug: log action/delta norms.
+
+        Returns:
+            dict of ``<joint>.q`` target positions (rad) in IsaacLab joint order.
+        """
+        self.token = np.asarray(token, np.float32)
+        jnames = [m.name for m in G1_29_JointIndex]
+        q = np.array(
+            [
+                robot_obs.get(f"{n}.q", DEFAULT_ANGLES[m.value])
+                for m, n in zip(G1_29_JointIndex, jnames, strict=False)
+            ],
+            np.float32,
+        )
+        dq = np.array([robot_obs.get(f"{n}.dq", 0.0) for n in jnames], np.float32)
+        quat = np.array(
+            [
+                robot_obs.get("imu.quat.w", 1),
+                robot_obs.get("imu.quat.x", 0),
+                robot_obs.get("imu.quat.y", 0),
+                robot_obs.get("imu.quat.z", 0),
+            ],
+            np.float32,
+        )
+        ang = np.array([robot_obs.get(f"imu.gyro.{a}", 0) for a in "xyz"], np.float32)
+        self.update_history(q, dq, ang, quat)
+        action_mj = (
+            self.decoder.run(None, {self.decoder_input: self.build_decoder_obs().reshape(1, -1)})[0]
+            .squeeze()
+            .astype(np.float32)
+        )
+        self.last_action_mj = action_mj.copy()
+        target = DEFAULT_ANGLES + action_mj[ISAACLAB_TO_MUJOCO] * ACTION_SCALE
+        if debug:
+            delta = target - q
+            logger.debug(
+                "token_norm=%.4f action_norm=%.4f delta_max=%.4f delta_rms=%.4f",
+                np.linalg.norm(self.token),
+                np.linalg.norm(action_mj),
+                np.max(np.abs(delta)),
+                np.sqrt(np.mean(delta**2)),
+            )
+        return {f"{m.name}.q": float(target[m.value]) for m in G1_29_JointIndex}
 
 
 class SonicRuntime:
-    """Loads the SONIC encoder/decoder ONNX models and owns the controller.
+    """Loads the SONIC decoder ONNX model and owns the decode controller.
 
-    No motion planner: the reference motion buffer is written directly each tick by
-    :class:`SonicWholeBodyController` from the incoming 34-D whole-body command.
+    Token-only deploy: the encoder is bypassed; each tick the decoder consumes a 64-D
+    latent token supplied directly by the policy.
     """
 
     def __init__(self, force_cpu: bool = False):
         require_package("onnxruntime", extra="unitree_g1")
-        encoder_path = hf_hub_download(repo_id="nvidia/GEAR-SONIC", filename="model_encoder.onnx")
         decoder_path = hf_hub_download(repo_id="nvidia/GEAR-SONIC", filename="model_decoder.onnx")
 
         providers = ort_providers(force_cpu=force_cpu)
         so = make_ort_session_options()
-
-        encoder_sess = ort.InferenceSession(encoder_path, sess_options=so, providers=providers)
         decoder_sess = ort.InferenceSession(decoder_path, sess_options=so, providers=providers)
 
-        # Report the provider actually bound, not the one requested: ORT silently falls
-        # back to CPU if CUDA can't load (e.g. libcudnn not on LD_LIBRARY_PATH), and a
-        # CPU decoder drifts the closed-loop heading. Warn loudly so it can't hide.
+        # Report the provider actually bound, not the one requested: ORT silently falls back
+        # to CPU if CUDA can't load (e.g. libcudnn not on LD_LIBRARY_PATH), and a CPU decoder
+        # drifts the closed-loop heading. Warn loudly so it can't hide.
         self.use_gpu = decoder_sess.get_providers()[0] == "CUDAExecutionProvider"
         if not force_cpu and not self.use_gpu:
             print(
@@ -196,16 +331,13 @@ class SonicRuntime:
             )
 
         self.kp, self.kd = compute_kp_kd()
-        self.controller = PlannerController(encoder_sess, decoder_sess)
+        self.controller = SonicDecoder(decoder_sess)
 
     @property
     def pipeline(self):
         return self.controller
 
     def reset(self):
-        # Full pipeline reset: clears the encoder token, proprioception history and
-        # heading, and rewinds the motion buffer. reinit_heading is set so the next
-        # step re-latches the reference frame to the current robot orientation.
         self.controller.reset()
 
     def shutdown(self):
@@ -217,10 +349,6 @@ class SonicWholeBodyController:
 
     control_dt = CONTROL_DT
     full_body = True
-    # Advertise a dense 34-D whole-body action space (OpenHLM / pi0.5) so the robot
-    # exposes ``wb.{i}.pos`` action features and ``lerobot-rollout`` can drive it
-    # directly with a 34-D VLA policy.
-    wb_action = True
 
     def __init__(self, force_cpu: bool = False):
         logger.info("Loading SONIC whole-body controller...")
@@ -229,113 +357,22 @@ class SonicWholeBodyController:
         self.kd = self._runtime.kd
         self.controller = self._runtime.controller
 
-        # Startup blend: ease from the robot's initial pose into the first commanded
-        # policy targets over INIT_RAMP_S (captured on the first control tick).
+        # Startup blend: ease from the robot's initial pose into the first commanded policy
+        # targets over INIT_RAMP_S (captured on the first control tick).
         self._init_ramp_steps = max(1, round(INIT_RAMP_S / CONTROL_DT))
         self._init_step = 0
         self._start_pose: dict[str, float] = {}
 
-        # Tick counter for the dense whole-body (OpenHLM, mode-0) path's encoder cadence.
-        self._wb_step = 0
-        # Rolling 50-frame reference trajectory (ref29 + anchor quat) built from the
-        # stream of per-tick whole-body commands, fed to the encoder as a batch.
-        self._wb_traj: deque[np.ndarray] = deque(maxlen=50)
-        self._wb_quat_traj: deque[np.ndarray] = deque(maxlen=50)
-        # Integrated heading (rad) from the whole-body command's yaw-rate (index 33),
-        # forwarded to the pipeline as ``delta_heading`` so turn commands take effect.
-        self._heading = 0.0
-
-        # Token-interface state. ``token_mode`` is set True by the robot when the deploy
-        # is token-driven (``UnitreeG1Config.sonic_token_action``): the controller then
-        # holds a stable *neutral* (all-zero) token until the first real token arrives,
-        # and afterwards holds the *last* token received between ticks (the async
-        # controller runs ~50 Hz while a token VLA streams ~30 Hz). This lives here (not
-        # in the entry-point script) so it applies uniformly to run_g1_onboard,
-        # lerobot-rollout and the sim replays. ``token_mode`` stays False for the dense
-        # 34-D whole-body / OpenHLM path, which keeps its own "hold last target" idle.
+        # Token-interface state. ``token_mode`` is set True by the robot when the deploy is
+        # token-driven (``UnitreeG1Config.sonic_token_action``): the controller then holds a
+        # stable *neutral* token until the first real token arrives, and afterwards holds the
+        # *last* token received between ticks (the async controller runs ~50 Hz while a token
+        # VLA streams ~30 Hz). This lives here (not in the entry-point script) so it applies
+        # uniformly to run_g1_server, lerobot-rollout and the sim replays.
         self.token_mode = False
         self._last_token: np.ndarray | None = None
 
-        logger.info("SONIC ready (encoder/decoder, 34-D whole-body command path)")
-
-    def _run_wholebody34(self, obs: dict, wb: np.ndarray) -> dict:
-        """Feed a dense 34-D OpenHLM whole-body command as the mode-0 encoder reference.
-
-        The 29 joint targets are held across the encoder lookahead window (zero
-        velocity) and the root roll/pitch set the anchor orientation, then the
-        encoder/decoder run directly (planner bypassed). One command per tick, so the
-        VLA's commanded pose is what SONIC tracks.
-        """
-        ref, anchor = _wb34_to_reference(wb)
-        c = self.controller
-        if c.encode_mode != 0:
-            c.encode_mode = 0
-            c.reinit_heading = True
-        # Index 33 is a yaw-rate (rad/s): integrate it into a heading offset and hand
-        # it to the pipeline as ``delta_heading`` so commanded turns are tracked rather
-        # than silently dropped (the anchor from _wb34_to_reference only carries r/p).
-        self._heading += float(wb[33]) * CONTROL_DT
-        c.delta_heading = self._heading
-        # Capture the heading/anchor reference on the first whole-body tick. The
-        # controller only latches ``init_ref_quat`` (and the base heading) inside
-        # ``step()`` when ``first_motion or reinit_heading`` — but it already boots in
-        # mode 0, so the mode-switch guard above misses the very first command and the
-        # anchor would stay identity. This mirrors the GEAR reference, which seeds
-        # ``init_ref_quat`` from the first anchor. Must run before the buffers below so
-        # ``step()`` latches ``motion_body_quats[0]`` = this tick's anchor.
-        if self._wb_step == 0:
-            c.reinit_heading = True
-
-        # Accumulate the per-tick commands into a rolling 50-frame reference
-        # trajectory so the encoder's 10-frame, step-5 lookahead sees an actual
-        # motion sequence (with velocities) instead of one repeated pose. 50 frames
-        # == chunk horizon == 10 lookahead frames × step 5.
-        self._wb_traj.append(ref)
-        self._wb_quat_traj.append(anchor)
-        traj = np.asarray(self._wb_traj, np.float32)  # (L, 29), oldest -> newest
-        quats = np.asarray(self._wb_quat_traj, np.float32)  # (L, 4)
-        n = len(traj)
-        # Per-frame velocities from finite differences (rad/s at the control rate).
-        vel = np.zeros_like(traj)
-        if n > 1:
-            vel[1:] = (traj[1:] - traj[:-1]) / CONTROL_DT
-            vel[0] = vel[1]
-        with c.motion_lock:
-            c.motion_joint_positions[:n] = traj
-            c.motion_joint_velocities[:n] = vel
-            c.motion_body_quats[:n] = quats
-            c.motion_body_pos[:n] = 0.0
-            c.motion_timesteps = n
-            c.ref_cursor = 0
-        c.playing = True
-        do_enc = self._wb_step % ENCODER_UPDATE_EVERY == 0
-        out = c.step(obs, update_encoder=do_enc, debug=False)
-        if self._wb_step % 25 == 0:
-            tgt = np.array([out[f"{m.name}.q"] for m in G1_29_JointIndex], np.float32)
-            logger.info(
-                "[WB34] step=%d |ref|mean=%.3f |target|mean=%.3f target_std=%.3f init_ref_quat=%s",
-                self._wb_step,
-                float(np.abs(ref).mean()),
-                float(np.abs(tgt).mean()),
-                float(tgt.std()),
-                np.round(c.init_ref_quat, 3).tolist(),
-            )
-        self._wb_step += 1
-        return out
-
-    def _run_token(self, obs: dict, token: np.ndarray) -> dict:
-        """Decode a supplied 64-D latent token directly (encoder bypassed).
-
-        Token-only replay: set the pipeline's cached token to the supplied one and run
-        a decode-only step (``update_encoder=False``). The decoder still closes the loop
-        on live proprioception (history is refreshed inside ``step`` from ``obs``); only
-        the encoder — which would recompute the token from a motion reference — is
-        skipped. Returns the ``<joint>.q`` target dict.
-        """
-        c = self.controller
-        c.token = np.asarray(token, np.float32)
-        self._wb_step += 1
-        return c.step(obs, update_encoder=False, debug=False)
+        logger.info("SONIC ready (decoder, 64-D token command path)")
 
     def _startup_blend(self, obs: dict, out: dict) -> dict:
         """Ease into policy control at startup: for the first ``INIT_RAMP_S`` seconds,
@@ -368,46 +405,26 @@ class SonicWholeBodyController:
             return {}
         obs = lowstate_to_obs(lowstate)
 
-        # Token-only interface (latent replay / token-output VLA): a dense 64-D
-        # ``motion_token.{i}`` command is decoded directly, bypassing the encoder.
-        # Checked before the joint path so a token action takes precedence.
+        # Token-only interface (token-output VLA): a dense 64-D ``motion_token.{i}`` command
+        # is decoded directly, encoder bypassed.
         token = _extract_token_from_action(action)
         if token is not None:
             self._last_token = token
         elif self._last_token is None and self.token_mode:
-            # Token-driven deploy, but no token has arrived yet: hold the captured
-            # neutral token (NEUTRAL_TOKEN), which the decoder maps to a stable, natural
-            # standing pose (the encoder's own idle output; see NEUTRAL_TOKEN).
+            # Token-driven deploy, but no token has arrived yet: hold the captured neutral
+            # token (NEUTRAL_TOKEN), which the decoder maps to a stable, natural standing pose.
             self._last_token = NEUTRAL_TOKEN.copy()
-        if self._last_token is not None:
-            # Either a fresh token this tick or the last one received (held between the
-            # ~30 Hz token stream and the ~50 Hz control loop).
-            return self._startup_blend(obs, self._run_token(obs, self._last_token))
-
-        # Dense 34-D whole-body command (OpenHLM / pi0.5 joint interface): a single
-        # vector per tick drives the mode-0 encoder reference directly. Until the
-        # policy produces one, hold (no command) so the robot keeps its last target.
-        wb = _extract_wb34_from_action(action)
-        if wb is None:
-            self._wb_miss = getattr(self, "_wb_miss", 0) + 1
-            if self._wb_miss % 50 == 1:
-                akeys = [k for k in action if isinstance(k, str)]
-                logger.info(
-                    "[WB34] no wb.*.pos in action this tick (miss=%d). action keys sample: %s",
-                    self._wb_miss,
-                    akeys[:8],
-                )
+        if self._last_token is None:
+            # No token yet and not in token_mode: hold (keep last target).
             return {}
-        return self._startup_blend(obs, self._run_wholebody34(obs, wb))
+        # Either a fresh token this tick or the last one received (held between the ~30 Hz
+        # token stream and the ~50 Hz control loop).
+        return self._startup_blend(obs, self.controller.step(obs, self._last_token))
 
     def reset(self):
         self._runtime.reset()
         self._init_step = 0  # re-run the startup blend after a reset
         self._start_pose = {}
-        self._wb_step = 0
-        self._wb_traj.clear()
-        self._wb_quat_traj.clear()
-        self._heading = 0.0
         # Drop the held token so token_mode re-seeds the neutral token after a reset.
         self._last_token = None
 

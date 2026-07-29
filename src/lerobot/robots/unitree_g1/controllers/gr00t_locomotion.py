@@ -81,7 +81,7 @@ def load_groot_policies(
     # background thread alongside the (torch) upper-body policy, IK and sim; letting
     # ORT grab every core starves those and makes the whole rollout stutter. These
     # are small MLPs, so 1 thread is both enough and lowest-latency.
-    from .sonic_pipeline import make_ort_session_options
+    from ..g1_utils import make_ort_session_options
 
     so = make_ort_session_options(intra_op_num_threads=1, inter_op_num_threads=1)
     policy_balance = ort.InferenceSession(balance_path, sess_options=so)

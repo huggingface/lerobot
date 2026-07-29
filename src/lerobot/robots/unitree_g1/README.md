@@ -1,38 +1,30 @@
-# Unitree G1 — SONIC encoder/decoder whole-body control
+# Unitree G1 — SONIC decoder whole-body control
 
-This package runs NVIDIA's **SONIC** encoder/decoder on the Unitree G1, in MuJoCo
-simulation or on real hardware, driven by a dense **34-D whole-body command** (the
-OpenHLM / pi0.5 action layout). It is a pure-Python/ONNX reimplementation of the
-reference-tracking half of the SONIC deploy stack (no `gear_sonic`/torch dependency, and
-no motion planner): the encoder compresses a reference motion window into a latent token
-and the decoder maps that token + proprioception history into 50 Hz joint-position
-targets for the robot's PD controller.
+This package runs NVIDIA's **SONIC** decoder on the Unitree G1, in MuJoCo simulation or
+on real hardware, driven by a **64-D latent motion token**. It is a pure-Python/ONNX
+reimplementation of the decode half of the SONIC deploy stack (no `gear_sonic`/torch
+dependency): the decoder maps a 64-D latent token + proprioception history into 50 Hz
+joint-position targets for the robot's PD controller. The encoder is bypassed — a policy
+(e.g. `nepyope/sonic_walk`) emits the token directly.
 
 ## Controllers
 
 Selected with `--robot.controller=<ClassName>`:
 
-| Controller                     | Purpose                                                      |
-| ------------------------------ | ------------------------------------------------------------ |
-| `SonicWholeBodyController`     | SONIC encoder/decoder driven by a 34-D OpenHLM/pi0.5 command |
-| `GrootLocomotionController`    | GR00T locomotion policy                                      |
-| `HolosomaLocomotionController` | Holosoma locomotion policy                                   |
+| Controller                     | Purpose                                             |
+| ------------------------------ | --------------------------------------------------- |
+| `SonicWholeBodyController`     | SONIC decoder driven by a 64-D latent motion token  |
+| `GrootLocomotionController`    | GR00T locomotion policy                             |
+| `HolosomaLocomotionController` | Holosoma locomotion policy                          |
 
-The rest of this document covers the SONIC whole-body path.
+The rest of this document covers the SONIC token path.
 
-Each tick the `SonicWholeBodyController` takes a 34-D command (`wb.0.pos … wb.33.pos`) in the OpenHLM
-layout:
-
-```
-[L-arm(7), L-grip(1), R-arm(7), R-grip(1), L-leg(6), R-leg(6), waist(3),
- root roll/pitch + yaw-rate(3)]
-```
-
-The 29 joint targets become the SONIC encode-mode-0 reference (accumulated into a rolling
-50-frame trajectory with finite-difference velocities so the encoder's lookahead sees a
-real motion sequence), the root roll/pitch set the anchor orientation, and the two grip
-scalars can drive the Dex3 hands (see below). On startup the controller **interpolates**
-from the robot's measured pose into the policy's commanded target over ~3 s (no snap).
+Each tick the `SonicWholeBodyController` takes a 64-D latent token
+(`motion_token.0.pos … motion_token.63.pos`) and decodes it directly (encoder bypassed).
+Before the first token arrives it holds a captured **neutral token** (a stable standing
+pose), then holds the last token received between ticks (the ~30 Hz token stream vs. the
+~50 Hz control loop). On startup the controller **interpolates** from the robot's measured
+pose into the policy's commanded target over ~3 s (no snap).
 
 ## Requirements
 
@@ -44,46 +36,68 @@ from the robot's measured pose into the policy's commanded target over ~3 s (no 
 - The SONIC encoder/decoder ONNX models download automatically from the
   `nvidia/GEAR-SONIC` Hub repo.
 
-## Running a rollout
+## Architecture: controller always runs onboard
 
-Drive the G1 with a 34-D VLA policy (OpenHLM / pi0.5) via `lerobot-rollout`:
+The controller runs **on the robot**, never on the laptop. The laptop is a thin client:
+it negotiates the controller with `run_g1_server` (handshake), then PUSHes the 64-D token
+and reads back the `observation.state` echo + camera frames over ZMQ.
+
+## Running a rollout (real robot)
+
+On the robot — host the SONIC decoder + camera onboard:
+
+```bash
+python -m lerobot.robots.unitree_g1.run_g1_server --handshake \
+    --cameras "ego_view:/dev/v4l/by-path/platform-3610000.usb-usb-0:2.1:1.3-video-index0:640x480"
+```
+
+On the laptop — `lerobot-rollout` drives the thin client:
 
 ```bash
 lerobot-rollout \
-  --strategy.type=base \
-  --policy.path=<pi05_openhlm_dir> \
+  --policy.path=nepyope/sonic_walk \
   --robot.type=unitree_g1 \
-  --robot.controller=SonicWholeBodyController \
-  --robot.is_simulation=true \
-  --robot.publish_hands=true \
-  --task="<language instruction>" \
-  --duration=45 --device=cuda
+  --robot.is_simulation=false --robot.onboard=false \
+  --robot.robot_ip=<ROBOT_IP> \
+  --robot.controller=SonicWholeBodyController --robot.sonic_token_action=true \
+  --robot.cameras='{ego_view: {type: zmq, server_address: <ROBOT_IP>, port: 5555, camera_name: ego_view}}' \
+  --task="walk back and forth" --device=cuda
 ```
 
-### Cameras
+## Training a token policy (no pi05 code patch)
 
-Image-conditioned policies need camera frames. Two options are available without live
-cameras:
+The SONIC token interface needs **no modeling changes** to pi05. A 64-D token action is
+handled entirely by config: pi05 builds its action projections straight from config
+(`action_in_proj = nn.Linear(max_action_dim, …)`, `action_out_proj = nn.Linear(…,
+max_action_dim)`), pads the action to `max_action_dim`, then slices back to the dataset's
+action dim. Set both dims to 64 and the pad/slice is a no-op, so the full 64-D token is
+supervised.
 
-- **Black frames**: `--robot.empty_cameras='[base, left_wrist, right_wrist]'`.
-- **Replay a recorded episode** as the camera feed:
-  ```bash
-  --robot.replay_camera_parquet=<episode.parquet> \
-  --robot.replay_camera_map='{base: head_image_left, left_wrist: left_wrist_image, right_wrist: right_wrist_image}'
-  ```
+Requirements:
 
-### Hands (Dex3)
+1. The dataset carries a 64-D `action` and 64-D `observation.state` (the motion tokens).
+2. Pass the dims to `lerobot-train`:
 
-`--robot.publish_hands=true` publishes `rt/dex3/{left,right}/cmd` from the two grip
-scalars (`wb.7.pos` left, `wb.15.pos` right). The scalar is interpolated between
-`hand_open_grip_value` (default 1.0 = open) and `hand_closed_grip_value` (default 0.0 =
-closed) and scaled onto `hand_closed_pose` (7 joints:
-`thumb_0, thumb_1, thumb_2, middle_0, middle_1, index_0, index_1`). Flip the signs in
-`hand_closed_pose` if the fingers curl the wrong way, or raise `hand_kp` for a firmer
-grip.
+```bash
+lerobot-train \
+  --dataset.repo_id=nepyope/walk_back_and_forth \
+  --policy.type=pi05 \
+  --policy.max_action_dim=64 \
+  --policy.max_state_dim=64 \
+  --policy.chunk_size=50 --policy.n_action_steps=50
+```
 
-## Observation state
+`nepyope/sonic_walk` was trained exactly this way (`config.json`: `max_action_dim=64`,
+`max_state_dim=64`, `output_features.action.shape=[64]`). Same stock code path for train
+and inference — the checkpoint's 64-wide `Linear`s load with unmodified pi05.
 
-When the whole-body controller is active the robot exposes a 34-D proprio state
-(`wb_state.0.pos … wb_state.33.pos`) in the same OpenHLM layout as the action, which the
-rollout aggregates into `observation.state` for the policy.
+## Observation / action interface (token mode)
+
+With `--robot.sonic_token_action=true` the robot advertises:
+
+- action: 64-D `motion_token.{i}.pos` (the decoder consumes it directly),
+- `observation.state`: 64-D `motion_token_state.{i}.pos` (the last commanded token,
+  echoed so a token-output VLA closes the loop on its own previous token),
+
+plus the ego camera image. The controller always runs onboard (or in sim); it is never
+built on the laptop client.

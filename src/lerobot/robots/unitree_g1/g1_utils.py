@@ -105,21 +105,6 @@ REMOTE_KEYS = REMOTE_AXES + REMOTE_BUTTONS
 KEYBOARD_KEYS_FIELD = "keyboard.keys"
 
 # ── Dense whole-body joint reference (SONIC encode_mode 0, OpenHLM / pi0.5) ──────
-# A single 34-D whole-body command per tick, in the OpenHLM action layout:
-#   [L-arm(7), L-grip(1), R-arm(7), R-grip(1), L-leg(6), R-leg(6), waist(3),
-#    root roll/pitch + yaw-rate(3)]
-# Fed as flat scalars ``wb.0.pos .. wb.33.pos``. The ``.pos`` suffix makes these
-# behave like ordinary joint-position action features so ``lerobot-rollout`` routes
-# them straight from a 34-D VLA (OpenHLM / pi0.5) onto the robot.
-WB_ACTION_PREFIX = "wb."
-WB_ACTION_DIM = 34
-
-
-def wb_action_key(i: int) -> str:
-    """Action-dict key for the ``i``-th whole-body command scalar (``wb.{i}.pos``)."""
-    return f"{WB_ACTION_PREFIX}{i}.pos"
-
-
 def default_remote_input() -> dict[str, float]:
     """Return a zeroed-out remote input dict (axes + buttons)."""
     return dict.fromkeys(REMOTE_KEYS, 0.0)
@@ -133,6 +118,35 @@ def get_gravity_orientation(quaternion: list[float] | np.ndarray) -> np.ndarray:
     gravity_orientation[1] = -2 * (qz * qy + qw * qx)
     gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
     return gravity_orientation
+
+
+def ort_providers(force_cpu: bool = False) -> list[str]:
+    """ONNX Runtime providers, preferring CUDA when available (shared by the ONNX
+    controllers: SONIC decoder, GR00T). Falls back to CPU."""
+    import onnxruntime as ort
+
+    avail = ort.get_available_providers()
+    if not force_cpu and "CUDAExecutionProvider" in avail:
+        return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    return ["CPUExecutionProvider"]
+
+
+def make_ort_session_options(intra_op_num_threads: int | None = None, inter_op_num_threads: int | None = None):
+    """Build quiet ONNX Runtime SessionOptions, optionally capping the CPU thread pool.
+
+    These tiny MLP policies are latency-bound, not throughput-bound, so letting ORT grab
+    every core starves the real-time control loop / torch policy and causes stutter. Pass
+    1 intra + 1 inter thread for lowest-latency per-step inference.
+    """
+    import onnxruntime as ort
+
+    so = ort.SessionOptions()
+    so.log_severity_level = 3
+    if intra_op_num_threads is not None:
+        so.intra_op_num_threads = intra_op_num_threads
+    if inter_op_num_threads is not None:
+        so.inter_op_num_threads = inter_op_num_threads
+    return so
 
 
 class G1_29_JointArmIndex(IntEnum):
@@ -194,43 +208,6 @@ def lowstate_to_obs(lowstate) -> dict:
         obs["wireless_remote"] = bytes(wr) if not isinstance(wr, (bytes, bytearray)) else wr
 
     return obs
-
-
-def obs_to_wb34_state(obs: dict) -> np.ndarray:
-    """Build the 34-D OpenHLM / pi0.5 proprio state from a G1 observation dict.
-
-    Mirrors the whole-body *action* layout so the policy sees state and action in
-    the same coordinates::
-
-        [L-arm(7), L-grip(1), R-arm(7), R-grip(1),
-         L-leg(6), R-leg(6), waist(3), root roll/pitch + yaw-rate(3)]
-
-    Joint positions come from the ``<joint>.q`` obs keys, which are already in
-    MuJoCo / Unitree-SDK order — the same body-part grouping OpenHLM uses
-    ([L-leg 0:6, R-leg 6:12, waist 12:15, L-arm 15:22, R-arm 22:29]) — so they are
-    regrouped directly (no IsaacLab permutation). The G1 has no grippers in its
-    29-DoF body, so both gripper slots are 0. Root roll/pitch are the IMU RPY and
-    the last slot is the IMU yaw rate (gyro z).
-    """
-    q_mj = np.array(
-        [float(obs.get(f"{m.name}.q", 0.0)) for m in G1_29_JointIndex],
-        dtype=np.float32,
-    )
-    lleg, rleg, waist = q_mj[0:6], q_mj[6:12], q_mj[12:15]
-    larm, rarm = q_mj[15:22], q_mj[22:29]
-
-    state = np.zeros(34, dtype=np.float32)
-    state[0:7] = larm
-    # state[7] left gripper — none on 29-DoF G1
-    state[8:15] = rarm
-    # state[15] right gripper — none on 29-DoF G1
-    state[16:22] = lleg
-    state[22:28] = rleg
-    state[28:31] = waist
-    state[31] = float(obs.get("imu.rpy.roll", 0.0))
-    state[32] = float(obs.get("imu.rpy.pitch", 0.0))
-    state[33] = float(obs.get("imu.gyro.z", 0.0))
-    return state
 
 
 def make_locomotion_controller(name: str | None):
