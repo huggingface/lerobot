@@ -43,7 +43,6 @@ import argparse
 import base64
 import contextlib
 import json
-import re
 import signal
 import threading
 import time
@@ -237,8 +236,7 @@ def serve_onboard_controller(
         cameras={},
     )
 
-    # Optional camera server (background thread; independent of DDS).
-    camera_server = None
+    # Optional camera server (background daemon thread; independent of DDS).
     if cameras:
         camera_server = ImageServer({"fps": camera_fps, "cameras": cameras}, port=camera_port)
         threading.Thread(target=camera_server.run, daemon=True).start()
@@ -315,55 +313,7 @@ def serve_onboard_controller(
         if state_sock is not None:
             with contextlib.suppress(Exception):
                 state_sock.close(linger=0)
-        if camera_server is not None:
-            with contextlib.suppress(Exception):
-                camera_server.stop()
         robot.disconnect()
-
-
-def parse_camera_specs(spec: str, default_width: int, default_height: int) -> dict[str, dict]:
-    """Parse a multi-camera spec string into an ImageServer ``cameras`` dict.
-
-    Format: comma-separated ``name:device[:WxH[:FOURCC]]`` entries, e.g.
-    ``head_camera:6,left_wrist:0``. ``device`` may be an integer index or an explicit
-    device path (e.g. ``/dev/video6``), including stable ``by-path`` names like
-    ``/dev/v4l/by-path/platform-...:2.1:1.3-video-index0`` which survive USB
-    re-enumeration (unlike bare ``/dev/videoN`` indices). Because a by-path name
-    itself contains colons, the optional ``WxH`` and ``FOURCC`` are parsed from the
-    *right* so the device-path colons are preserved.
-    """
-    wh_re = re.compile(r"\d+x\d+", re.IGNORECASE)
-    fourcc_re = re.compile(r"[A-Za-z0-9]{4}")
-
-    cameras: dict[str, dict] = {}
-    for entry in spec.split(","):
-        entry = entry.strip()
-        if not entry:
-            continue
-        if ":" not in entry:
-            raise ValueError(f"Invalid camera spec '{entry}', expected 'name:device[:WxH[:FOURCC]]'")
-        name, rest = entry.split(":", 1)
-        name = name.strip()
-        tokens = [t.strip() for t in rest.split(":")]
-
-        fourcc = None
-        if len(tokens) >= 3 and wh_re.fullmatch(tokens[-2]) and fourcc_re.fullmatch(tokens[-1]):
-            fourcc = tokens.pop().upper()
-        width, height = default_width, default_height
-        if len(tokens) >= 2 and wh_re.fullmatch(tokens[-1]):
-            w, h = tokens.pop().lower().split("x")
-            width, height = int(w), int(h)
-
-        raw_id = ":".join(tokens).strip()
-        if not raw_id:
-            raise ValueError(f"Invalid camera spec '{entry}', missing device")
-        device_id: int | str = int(raw_id) if raw_id.lstrip("-").isdigit() else raw_id
-        if name in cameras:
-            raise ValueError(f"Duplicate camera name '{name}' in --cameras")
-        cameras[name] = {"device_id": device_id, "shape": [height, width], "fourcc": fourcc}
-    if not cameras:
-        raise ValueError("No cameras parsed from --cameras spec")
-    return cameras
 
 
 def lowstate_to_dict(msg: hg_LowState) -> dict[str, Any]:
@@ -470,11 +420,7 @@ def main() -> None:
     """Main entry point for the robot server bridge."""
     parser = argparse.ArgumentParser(description="DDS-to-ZMQ bridge server for Unitree G1")
     parser.add_argument("--camera", action="store_true", help="Also launch camera server")
-    parser.add_argument("--camera-device", default="4",
-                        help="Camera device: index or /dev/video path or by-path name (default: 4)")
-    parser.add_argument("--cameras", default=None,
-                        help="Multi-camera spec 'name:device[:WxH[:FOURCC]]', comma-separated. Overrides "
-                             "--camera-device; device may be a by-path name to survive USB re-enumeration.")
+    parser.add_argument("--camera-device", type=int, default=4, help="Camera device ID (default: 4)")
     parser.add_argument("--camera-fps", type=int, default=30, help="Camera FPS (default: 30)")
     parser.add_argument("--camera-width", type=int, default=640, help="Camera width (default: 640)")
     parser.add_argument("--camera-height", type=int, default=480, help="Camera height (default: 480)")
@@ -542,13 +488,13 @@ def main() -> None:
             print(f"[handshake] running controller ONBOARD: {agreed['controller']} "
                   f"(sonic_token_action={agreed['sonic_token_action']})")
             cameras = None
-            if args.camera or args.cameras:
-                if args.cameras:
-                    cameras = parse_camera_specs(args.cameras, args.camera_width, args.camera_height)
-                else:
-                    dev = args.camera_device
-                    dev = int(dev) if str(dev).lstrip("-").isdigit() else dev
-                    cameras = {"head_camera": {"device_id": dev, "shape": [args.camera_height, args.camera_width]}}
+            if args.camera:
+                cameras = {
+                    "head_camera": {
+                        "device_id": args.camera_device,
+                        "shape": [args.camera_height, args.camera_width],
+                    }
+                }
             serve_onboard_controller(
                 controller=agreed["controller"],
                 sonic_token_action=bool(agreed["sonic_token_action"]),
@@ -561,20 +507,20 @@ def main() -> None:
 
     # Optionally start camera server in background thread
     camera_thread = None
-    if args.camera or args.cameras:
-        if args.cameras:
-            cameras = parse_camera_specs(args.cameras, args.camera_width, args.camera_height)
-        else:
-            # Single camera; accept an int index or a device/by-path string.
-            dev = args.camera_device
-            dev = int(dev) if str(dev).lstrip("-").isdigit() else dev
-            cameras = {"head_camera": {"device_id": dev, "shape": [args.camera_height, args.camera_width]}}
-        camera_config = {"fps": args.camera_fps, "cameras": cameras}
+    if args.camera:
+        camera_config = {
+            "fps": args.camera_fps,
+            "cameras": {
+                "head_camera": {
+                    "device_id": args.camera_device,
+                    "shape": [args.camera_height, args.camera_width],
+                }
+            },
+        }
         camera_server = ImageServer(camera_config, port=args.camera_port)
         camera_thread = threading.Thread(target=camera_server.run, daemon=True)
         camera_thread.start()
-        cam_summary = ", ".join(f"{n}(dev {c['device_id']})" for n, c in cameras.items())
-        print(f"Camera server started on port {args.camera_port}: {cam_summary}")
+        print(f"Camera server started on port {args.camera_port} (device {args.camera_device})")
 
     # initialize DDS
     ChannelFactoryInitialize(0)
