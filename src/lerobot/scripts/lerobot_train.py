@@ -22,7 +22,8 @@ import dataclasses
 import logging
 import sys
 import time
-from contextlib import nullcontext
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
 
@@ -57,7 +58,7 @@ from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
-from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -68,7 +69,36 @@ from lerobot.utils.utils import (
     inside_slurm,
 )
 
+if TYPE_CHECKING or _peft_available:
+    from peft import PeftModel
+else:
+    PeftModel = None
+
 from .lerobot_eval import eval_policy_all
+
+
+@contextmanager
+def _make_eval_envs(cfg: TrainPipelineConfig) -> Iterator[dict[str, dict[int, Any]]]:
+    """Create evaluation environments for one run and always dispose of them."""
+    envs = make_env(
+        cfg.env,
+        n_envs=cfg.eval.batch_size,
+        use_async_envs=cfg.eval.use_async_envs,
+    )
+    try:
+        yield envs
+    finally:
+        close_envs(envs)
+
+
+def _dataloader_worker_kwargs(cfg: TrainPipelineConfig) -> dict[str, Any]:
+    """Return worker-only DataLoader options, disabling them for single-process loading."""
+    workers_enabled = cfg.num_workers > 0
+    return {
+        "prefetch_factor": cfg.prefetch_factor if workers_enabled else None,
+        "persistent_workers": cfg.persistent_workers and workers_enabled,
+        "multiprocessing_context": cfg.dataloader_multiprocessing_context if workers_enabled else None,
+    }
 
 
 def update_policy(
@@ -197,8 +227,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if cfg.job.is_remote:
         return submit_to_hf(cfg)
 
-    from lerobot.utils.import_utils import require_package
-
     require_package("accelerate", extra="training")
     from accelerate import Accelerator
     from accelerate.utils import DistributedDataParallelKwargs, DistributedType
@@ -267,14 +295,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if not is_main_process:
         dataset, eval_dataset = make_train_eval_datasets(cfg)
 
-    # Create environment used for evaluating checkpoints during training on simulation data.
-    # On real-world data, no need to create an environment as evaluations are done outside train.py,
-    # using the eval.py instead, with gym_dora environment and dora-rs.
-    eval_env = None
-    if cfg.env_eval_freq > 0 and cfg.env is not None and is_main_process:
-        logging.info("Creating env")
-        eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
-
     if cfg.is_reward_model_training:
         if is_main_process:
             logging.info("Creating reward model")
@@ -302,7 +322,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if cfg.peft is not None:
         if cfg.is_reward_model_training:
             raise ValueError("PEFT is only supported for policy training. ")
-        from peft import PeftModel
+        require_package("peft", extra="peft")
 
         if isinstance(policy, PeftModel):
             logging.info("PEFT adapter already loaded from checkpoint, skipping wrap_with_peft.")
@@ -473,8 +493,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         pin_memory=device.type == "cuda",
         drop_last=False,
         collate_fn=collate_fn,
-        prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
-        persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
+        **_dataloader_worker_kwargs(cfg),
     )
 
     # Build eval dataloader if a held-out split exists
@@ -500,8 +519,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             pin_memory=device.type == "cuda",
             drop_last=False,
             collate_fn=eval_collate_fn,
-            prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
-            persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
+            **_dataloader_worker_kwargs(cfg),
         )
 
     # Prepare everything with accelerator
@@ -684,7 +702,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             if is_main_process:
                 step_id = get_step_identifier(step, cfg.steps)
                 logging.info(f"Eval policy at step {step}")
-                with torch.no_grad(), accelerator.autocast():
+                with _make_eval_envs(cfg) as eval_env, torch.no_grad(), accelerator.autocast():
                     eval_info = eval_policy_all(
                         envs=eval_env,  # dict[suite][task_id] -> vec_env
                         policy=accelerator.unwrap_model(policy),
@@ -731,9 +749,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     if is_main_process:
         progbar.close()
-
-    if eval_env:
-        close_envs(eval_env)
 
     is_fsdp = accelerator.distributed_type == DistributedType.FSDP
     model_state_dict = accelerator.get_state_dict(policy) if is_fsdp else None
