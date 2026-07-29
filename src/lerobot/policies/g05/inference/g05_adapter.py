@@ -54,14 +54,15 @@ class G05PolicyAdapter(BaseLanguageAdapter):
 
     The preferred policy hook is::
 
-        predict_action_chunk_with_runtime(observation, *, task) ->
+        predict_action_chunk_with_runtime(observation, *, task, system_mode) ->
             (action_chunk, {"cot_text": ...})
 
     ``task`` is exactly :attr:`RuntimeState.task`, including whitespace and
     Unicode.  The policy must pass it to the author prompt builder unchanged
-    before applying checkpoint-specific formatting.  A structured return is
-    required for batch-safe CoT handling; ``predict_action_chunk`` remains a
-    compatibility fallback for System 1.
+    before applying checkpoint-specific formatting. ``system_mode`` selects
+    action-only System 1 or unified CoT-plus-action System 2 for that call. A
+    structured return is required for batch-safe CoT handling;
+    ``predict_action_chunk`` remains a compatibility fallback for System 1.
     """
 
     def __init__(
@@ -78,6 +79,10 @@ class G05PolicyAdapter(BaseLanguageAdapter):
     def _resolve_system_mode(self, requested: str | None) -> str:
         config = getattr(self.policy, "config", None)
         raw_mode = requested
+        if raw_mode is None and not self.gen.enable_subtask:
+            # The shared CLI maps --direct_subtask to enable_subtask=False.
+            # For G0.5 this explicitly selects the action-only System 1 path.
+            raw_mode = "system1"
         if raw_mode is None:
             raw_mode = _read_config(config, "runtime_system_mode")
         if raw_mode is None:
@@ -125,7 +130,7 @@ class G05PolicyAdapter(BaseLanguageAdapter):
 
         runtime_hook = getattr(self.policy, "predict_action_chunk_with_runtime", None)
         if callable(runtime_hook):
-            output = runtime_hook(batch, task=state.task)
+            output = runtime_hook(batch, task=state.task, system_mode=self.system_mode)
         else:
             if self.system_mode == "system2":
                 raise RuntimeError(

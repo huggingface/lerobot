@@ -32,6 +32,8 @@ from lerobot.utils.constants import ACTION
 from .action_codec_g05 import G05NativeActionCodec
 from .processing_g05 import IGNORE_INDEX, G05SequenceBatch, G05Tokenizer, G05TokenType
 
+G05_RUNTIME_PREDICT_COT = "g05_runtime_predict_cot"
+
 
 def _qwen_text_config(values: Mapping[str, Any], *, vocab_size: int | None = None):
     """Translate the serialized G0.5 Qwen config into a Transformers config."""
@@ -1083,7 +1085,8 @@ class G05NativeBackend(nn.Module):
         result: dict[str, Any] = {}
         last_hidden = hidden_states[:, -1]
         token_types = sequence.token_types
-        if bool(self.model_config.get("predict_cot", False)):
+        predict_cot = bool(batch.get(G05_RUNTIME_PREDICT_COT, self.model_config.get("predict_cot", False)))
+        if predict_cot:
             generated, cache, last_hidden, token_types, positions = self._generate_text(
                 last_hidden,
                 token_types=sequence.token_types,

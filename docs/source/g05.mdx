@@ -94,6 +94,9 @@ lerobot-rollout \
   --mode=action
 ```
 
+`--direct_subtask` explicitly selects the action-only System 1 path, even when
+the checkpoint supports System 2 with `predict_cot=true`.
+
 System 2 is available only when the packaged checkpoint metadata has
 `predict_cot=true`. The adapter forwards the operator task byte-for-byte and
 returns CoT telemetry and the matching action chunk atomically. It never samples

@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 from lerobot.runtime import LanguageConditionedRuntime, RuntimeState
+from lerobot.runtime.adapter import GenerationConfig
 
 
 class FakeG05Policy:
@@ -25,6 +26,7 @@ class FakeG05Policy:
             predict_cot=predict_cot,
             discrete_action=discrete_action,
             continuous_action=continuous_action,
+            runtime_system="system2" if predict_cot else "system1",
         )
         self.calls = []
 
@@ -62,8 +64,8 @@ def test_system2_surfaces_same_pass_cot_and_action():
         def __init__(self):
             super().__init__(predict_cot=True, continuous_action=True)
 
-        def predict_action_chunk_with_runtime(self, observation, *, task):
-            self.calls.append((observation, task))
+        def predict_action_chunk_with_runtime(self, observation, *, task, system_mode=None):
+            self.calls.append((observation, task, system_mode))
             return {
                 "action_chunk": ["fm0", "fm1"],
                 "cot_text": "BBox: cup [1,2,3,4]|\nSubtask: grasp the cup|Updated Memory: cup located",
@@ -78,6 +80,7 @@ def test_system2_surfaces_same_pass_cot_and_action():
     assert chunk == ["fm0", "fm1"]
     assert policy.calls[0][1] == "  clear the table  "
     assert policy.calls[0][0]["task"] == "  clear the table  "
+    assert policy.calls[0][2] == "system2"
     assert (
         state.language_context["cot_text"]
         == "BBox: cup [1,2,3,4]|\nSubtask: grasp the cup|Updated Memory: cup located"
@@ -93,7 +96,7 @@ def test_system2_accepts_batch_safe_tuple_metadata():
         def __init__(self):
             super().__init__(predict_cot=True)
 
-        def predict_action_chunk_with_runtime(self, observation, *, task):
+        def predict_action_chunk_with_runtime(self, observation, *, task, system_mode=None):
             return ("chunk", {"cot_text": ["Subtask: move left"], "plan": "first move left"})
 
     state = RuntimeState(task="move")
@@ -111,7 +114,7 @@ def test_system2_reasoning_does_not_invalidate_same_pass_action_chunk():
         def __init__(self):
             super().__init__(predict_cot=True)
 
-        def predict_action_chunk_with_runtime(self, observation, *, task):
+        def predict_action_chunk_with_runtime(self, observation, *, task, system_mode=None):
             return (["a0", "a1"], {"cot_text": "Subtask: pick cup"})
 
     executed = []
@@ -149,3 +152,26 @@ def test_system2_requires_structured_single_pass_hook():
     adapter = G05PolicyAdapter(FakeG05Policy(predict_cot=True))
     with pytest.raises(RuntimeError, match="predict_action_chunk_with_runtime"):
         adapter.select_action({}, RuntimeState(task="pick"))
+
+
+def test_direct_subtask_selects_system1_on_system2_checkpoint():
+    from lerobot.policies.g05.inference.g05_adapter import G05PolicyAdapter
+
+    class SwitchablePolicy(FakeG05Policy):
+        def __init__(self):
+            super().__init__(predict_cot=True, continuous_action=True)
+
+        def predict_action_chunk_with_runtime(self, observation, *, task, system_mode=None):
+            self.calls.append(system_mode)
+            return ("chunk", {"cot_text": "Subtask: should not be generated"})
+
+    policy = SwitchablePolicy()
+    adapter = G05PolicyAdapter(policy, GenerationConfig(enable_subtask=False))
+    state = RuntimeState(task="pick")
+
+    chunk = adapter.select_action({}, state)
+
+    assert adapter.system_mode == "system1"
+    assert policy.calls == ["system1"]
+    assert chunk == "chunk"
+    assert "cot_text" not in state.language_context

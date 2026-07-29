@@ -32,7 +32,7 @@ from .configuration_g05 import (
     make_g05_cot_prompt_template,
     make_g05_prompt_template,
 )
-from .native_g05 import G05NativeBackend
+from .native_g05 import G05_RUNTIME_PREDICT_COT, G05NativeBackend
 
 
 def _native_backend(config: G05Config) -> nn.Module:
@@ -395,10 +395,19 @@ class G05Policy(PreTrainedPolicy):
         }[fields]
         return True
 
-    def _prepare_author_batch(self, batch: Mapping[str, Any], task: str | None = None) -> dict[str, Any]:
+    def _prepare_author_batch(
+        self,
+        batch: Mapping[str, Any],
+        task: str | None = None,
+        *,
+        predict_cot: bool | None = None,
+    ) -> dict[str, Any]:
+        run_predict_cot = self.config.predict_cot if predict_cot is None else predict_cot
         prepare = getattr(self.backend, "prepare_lerobot_batch", None)
         if callable(prepare):
-            return prepare(batch, task=task, config=self.config)
+            prepared = prepare(batch, task=task, config=self.config)
+            prepared[G05_RUNTIME_PREDICT_COT] = run_predict_cot
+            return prepared
 
         state = batch.get(OBS_STATE)
         if not isinstance(state, Tensor):
@@ -431,12 +440,22 @@ class G05Policy(PreTrainedPolicy):
             )
 
         samples = []
+        flow_only = "<action_action" not in self.config.prompt_template
+        inference_template = (
+            self.config.prompt_template
+            if run_predict_cot
+            else make_g05_prompt_template(
+                self.config.num_prompt_images,
+                predict_cot=False,
+                flow_only=flow_only,
+            )
+        )
         for index, raw_task in enumerate(tasks):
             proprio = state[index]
             if proprio.ndim == 1:
                 proprio = proprio.unsqueeze(0)
             sample = {
-                "template": self.config.prompt_template,
+                "template": inference_template,
                 # This is the author InputPreprocessor command slot. Keep it byte-for-byte
                 # unchanged; checkpoint-specific chat formatting occurs downstream.
                 "command": raw_task,
@@ -449,7 +468,7 @@ class G05Policy(PreTrainedPolicy):
             frequency = self.config.processor_metadata.get("frequency")
             if frequency is not None:
                 sample["frequency"] = frequency
-            if self.config.predict_cot:
+            if run_predict_cot:
                 rendered_recipe = "messages" in batch
                 applied_recipe_cot = rendered_recipe and self._apply_recipe_cot(
                     sample, batch, index, batch_size
@@ -512,12 +531,27 @@ class G05Policy(PreTrainedPolicy):
         prepared = dict(batch)
         prepared["samples"] = samples
         prepared["pixel_values"] = pixel_values
+        prepared[G05_RUNTIME_PREDICT_COT] = run_predict_cot
         return prepared
 
     def _run_inference(
-        self, batch: Mapping[str, Any], *, task: str | None = None
+        self,
+        batch: Mapping[str, Any],
+        *,
+        task: str | None = None,
+        system_mode: str | None = None,
     ) -> tuple[Tensor, dict[str, Any]]:
-        prepared = self._prepare_author_batch(batch, task=task)
+        if system_mode is None:
+            system_mode = self.config.runtime_system
+        if system_mode not in {"system1", "system2"}:
+            raise ValueError("G0.5 system_mode must be 'system1' or 'system2'.")
+        if system_mode == "system2" and not self.config.predict_cot:
+            raise ValueError("G0.5 System 2 requires predict_cot=True in the packaged checkpoint.")
+        prepared = self._prepare_author_batch(
+            batch,
+            task=task,
+            predict_cot=system_mode == "system2",
+        )
         predict = getattr(self.backend, "predict_action", None)
         device = next(self.backend.parameters()).device
         with torch.autocast(
@@ -537,19 +571,22 @@ class G05Policy(PreTrainedPolicy):
             action = result.get(ACTION)
         if not isinstance(action, Tensor):
             raise ValueError(f"G0.5 {self.config.action_head} output is missing its action tensor.")
-        metadata = {
-            key: result[key]
-            for key in ("cot_text", "generated_ids", "decoded_action_tokens", "ar_absent_keys", "_timing")
-            if key in result
-        }
+        metadata_keys = ("decoded_action_tokens", "ar_absent_keys", "_timing")
+        if system_mode == "system2":
+            metadata_keys = ("cot_text", "generated_ids", *metadata_keys)
+        metadata = {key: result[key] for key in metadata_keys if key in result}
         return action, metadata
 
     def predict_action_chunk_with_runtime(
-        self, batch: dict[str, Any], *, task: str
+        self,
+        batch: dict[str, Any],
+        *,
+        task: str,
+        system_mode: str | None = None,
     ) -> tuple[Tensor, dict[str, Any]]:
-        """Return System 1 actions and same-pass System 2 telemetry atomically."""
+        """Run the selected system and return its action plus same-pass telemetry."""
 
-        return self._run_inference(batch, task=task)
+        return self._run_inference(batch, task=task, system_mode=system_mode)
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Any], **kwargs) -> Tensor:

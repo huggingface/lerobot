@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -14,6 +15,7 @@ from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.g05.configuration_g05 import G05_EMBODIMENT_MAPPINGS, G05Config
 from lerobot.policies.g05.modeling_g05 import G05Policy
+from lerobot.policies.g05.native_g05 import G05_RUNTIME_PREDICT_COT, G05NativeBackend
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import ACTION, OBS_STATE, POLICY_PREPROCESSOR_DEFAULT_NAME
 
@@ -23,9 +25,11 @@ class TinyG05Backend(nn.Module):
         super().__init__()
         self.proj = nn.Linear(20, 20)
         self.last_samples = None
+        self.last_runtime_predict_cot = None
 
     def predict_action(self, batch):
         self.last_samples = batch["samples"]
+        self.last_runtime_predict_cot = batch[G05_RUNTIME_PREDICT_COT]
         state = batch[OBS_STATE]
         if state.ndim == 2:
             state = state.unsqueeze(1)
@@ -389,8 +393,97 @@ def test_exact_raw_task_reaches_author_command_and_head_selection():
     action, metadata = policy.predict_action_chunk_with_runtime(_policy_batch(), task=raw_task)
 
     assert backend.last_samples[0]["command"] == raw_task
+    assert backend.last_runtime_predict_cot is False
     assert action.shape == (1, 4, 20)
-    assert metadata["cot_text"] == ["Subtask: move carefully"]
+    assert "cot_text" not in metadata
+
+
+def test_same_predict_cot_checkpoint_switches_prompt_and_backend_runtime_path():
+    backend = TinyG05Backend()
+    policy = G05Policy(_config(predict_cot=True, runtime_system="system2"), backend=backend)
+
+    _, system1_metadata = policy.predict_action_chunk_with_runtime(
+        _policy_batch(),
+        task="pick",
+        system_mode="system1",
+    )
+    system1_sample = backend.last_samples[0]
+    assert backend.last_runtime_predict_cot is False
+    assert "prompt" not in system1_sample
+    assert "<atomic_task_text>" not in system1_sample["template"]
+    assert "cot_text" not in system1_metadata
+
+    _, system2_metadata = policy.predict_action_chunk_with_runtime(
+        _policy_batch(),
+        task="pick",
+        system_mode="system2",
+    )
+    system2_sample = backend.last_samples[0]
+    assert backend.last_runtime_predict_cot is True
+    assert system2_sample["prompt"] == "predict subtask"
+    assert "<atomic_task_text>" in system2_sample["template"]
+    assert system2_metadata["cot_text"] == ["Subtask: move carefully"]
+
+
+def test_system1_config_disables_cot_on_predict_cot_checkpoint_without_override():
+    backend = TinyG05Backend()
+    policy = G05Policy(_config(predict_cot=True, runtime_system="system1"), backend=backend)
+
+    _, metadata = policy.predict_action_chunk_with_runtime(_policy_batch(), task="pick")
+
+    assert backend.last_runtime_predict_cot is False
+    assert "<atomic_task_text>" not in backend.last_samples[0]["template"]
+    assert "cot_text" not in metadata
+
+
+def test_native_backend_uses_per_call_cot_gate_instead_of_checkpoint_default():
+    class TinyNativeBackend(G05NativeBackend):
+        def __init__(self):
+            nn.Module.__init__(self)
+            self.model_config = {
+                "predict_cot": True,
+                "continuous_action": True,
+                "discrete_action": False,
+                "ar": {"max_new_tokens": 4},
+            }
+            self.processor = SimpleNamespace(
+                encode_inference=lambda samples, device: SimpleNamespace(
+                    token_types=torch.zeros(len(samples), 1)
+                ),
+                eov_token_id=2,
+                decode=lambda ids: "Subtask: pick",
+            )
+            self.generated = 0
+
+        def _prefill(self, sequence, pixel_values, proprio):
+            batch_size = len(proprio)
+            return (
+                torch.zeros(batch_size, 1, 4),
+                object(),
+                torch.zeros(3, batch_size, 1, dtype=torch.long),
+            )
+
+        def _generate_text(self, last_hidden, *, token_types, positions, cache, **kwargs):
+            self.generated += 1
+            generated = torch.tensor([[1, 2]] * last_hidden.shape[0])
+            return generated, cache, last_hidden, token_types, positions
+
+        def _infer_flow(self, *, token_types, **kwargs):
+            return torch.zeros(token_types.shape[0], 4, 20)
+
+    backend = TinyNativeBackend()
+    batch = {
+        "samples": [{"proprio": torch.zeros(1, 20)}],
+        "pixel_values": {"camera": torch.zeros(1, 1, 3, 8, 8)},
+    }
+
+    system1 = backend.predict_action({**batch, G05_RUNTIME_PREDICT_COT: False})
+    assert backend.generated == 0
+    assert "cot_text" not in system1
+
+    system2 = backend.predict_action({**batch, G05_RUNTIME_PREDICT_COT: True})
+    assert backend.generated == 1
+    assert system2["cot_text"] == ["Subtask: pick"]
 
 
 def test_author_action_payload_fills_required_tokenizer_metadata():
