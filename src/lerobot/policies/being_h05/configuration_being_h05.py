@@ -21,8 +21,6 @@ class BeingH05Config(PreTrainedConfig):
     """
 
     author_model_id: str = "BeingBeyond/Being-H05-2B"
-    author_revision: str = "bb31ffcf7d67a8d5ec82d715d5e1678581ef6374"
-    author_source_revision: str = "ab1204954cb5e68f0bc52a376982e962c763bbbe"
     author_config: dict = field(default_factory=dict)
     tokenizer_name: str = "BeingBeyond/Being-H05-2B"
     tokenizer_revision: str | None = None
