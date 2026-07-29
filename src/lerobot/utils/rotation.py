@@ -34,9 +34,7 @@ class Rotation:
         # Normalize quaternion. Reject the zero vector — it has no orientation.
         norm = np.linalg.norm(self._quat)
         if norm <= 0.0 or not np.isfinite(norm):
-            raise ValueError(
-                f"Quaternion must be a non-zero finite vector; got {self._quat} (norm={norm})"
-            )
+            raise ValueError(f"Quaternion must be a non-zero finite vector; got {self._quat} (norm={norm})")
         self._quat = self._quat / norm
 
     @classmethod
