@@ -142,6 +142,8 @@ class VQBeTPolicy(PreTrainedPolicy):
 
         self._queues = populate_queues(self._queues, batch)
 
+        self._apply_pending_flush()
+
         if not self.vqbet.action_head.vqvae_model.discretized.item():
             warnings.warn(
                 "To evaluate in the environment, your VQ-BeT model should contain a pretrained Residual VQ.",

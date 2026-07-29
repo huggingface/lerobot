@@ -181,6 +181,8 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
 
         self._queues = populate_queues(self._queues, batch)
 
+        self._apply_pending_flush()
+
         if len(self._queues[ACTION]) == 0:
             actions = self.predict_action_chunk(batch)
             self._queues[ACTION].extend(actions.transpose(0, 1))

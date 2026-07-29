@@ -98,7 +98,6 @@ class SentryStrategy(RolloutStrategy):
         start_time = time.perf_counter()
         episode_start = time.perf_counter()
         episodes_since_push = 0
-        task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         logger.info("Sentry recording started (episode_duration=%.0fs)", episode_duration_s)
 
         with VideoEncodingManager(dataset):
@@ -122,6 +121,11 @@ class SentryStrategy(RolloutStrategy):
                         self._log_telemetry(obs_processed, action_dict, ctx.runtime)
                         obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
                         action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
+                        task_str = (
+                            ctx.runtime.prompt_broker.get_task()
+                            if ctx.runtime.prompt_broker
+                            else (cfg.dataset.single_task if cfg.dataset else cfg.task)
+                        )
                         frame = {**obs_frame, **action_frame, "task": task_str}
                         # ``add_frame`` writes to the in-progress episode buffer; the
                         # background pusher only ever touches *finalised* episode

@@ -32,6 +32,7 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.processor import PolicyProcessorPipeline
 
+from ..prompt_broker import PromptBroker
 from ..robot_wrapper import ThreadSafeRobot
 from .base import InferenceEngine
 from .rtc import RTCInferenceEngine
@@ -95,6 +96,7 @@ def create_inference_engine(
     use_torch_compile: bool = False,
     compile_warmup_inferences: int = 2,
     shutdown_event: Event | None = None,
+    prompt_broker: PromptBroker | None = None,
 ) -> InferenceEngine:
     """Instantiate the appropriate inference engine from a config object."""
     logger.info("Creating inference engine: %s", config.type)
@@ -108,6 +110,7 @@ def create_inference_engine(
             task=task,
             device=device,
             robot_type=robot_wrapper.robot_type,
+            prompt_broker=prompt_broker,
         )
     if isinstance(config, RTCInferenceConfig):
         return RTCInferenceEngine(
@@ -124,5 +127,6 @@ def create_inference_engine(
             compile_warmup_inferences=compile_warmup_inferences,
             rtc_queue_threshold=config.queue_threshold,
             shutdown_event=shutdown_event,
+            prompt_broker=prompt_broker,
         )
     raise ValueError(f"Unknown inference engine type: {type(config).__name__}")

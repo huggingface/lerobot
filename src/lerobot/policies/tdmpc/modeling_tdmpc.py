@@ -149,6 +149,8 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         self._queues = populate_queues(self._queues, batch)
 
+        self._apply_pending_flush()
+
         # When the action queue is depleted, populate it again by querying the policy.
         if len(self._queues[ACTION]) == 0:
             actions = self.predict_action_chunk(batch)

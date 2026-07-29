@@ -1061,6 +1061,8 @@ class PI0Policy(PreTrainedPolicy):
 
         self.eval()
 
+        self._apply_pending_flush()
+
         # Action queue logic for n_action_steps > 1
         if len(self._action_queue) == 0:
             actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
