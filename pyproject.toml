@@ -240,7 +240,7 @@ vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen
 lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[accelerate-dep]"]
 # Checkpoint weights retain their upstream licenses. The runtime itself is native
 # LeRobot code built on Transformers' Qwen3.5 implementation.
-g05 = ["transformers>=5.4.0,<5.6.0"]
+g05 = ["lerobot[transformers-dep]"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
