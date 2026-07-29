@@ -48,6 +48,7 @@ from lerobot.utils.import_utils import _peft_available, require_package
 
 from .evo1.configuration_evo1 import Evo1Config
 from .groot.configuration_groot import GrootConfig
+from .hy_vla.configuration_hy_vla import HyVLAConfig
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
 
@@ -218,6 +219,10 @@ def make_pre_post_processors(
             revision=pretrained_revision,
         )
         _reconnect_relative_absolute_steps(preprocessor, postprocessor)
+        if isinstance(policy_cfg, HyVLAConfig):
+            from .hy_vla.processor_hy_vla import reconnect_hy_vla_processors
+
+            reconnect_hy_vla_processors(preprocessor, postprocessor)
         if isinstance(policy_cfg, Evo1Config):
             from .evo1.processor_evo1 import reconcile_evo1_processors
 
