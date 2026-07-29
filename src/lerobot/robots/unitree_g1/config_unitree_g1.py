@@ -66,8 +66,8 @@ class UnitreeG1Config(RobotConfig):
     # itself, against local DDS at full rate) instead of on the laptop over the ZMQ
     # socket bridge. In this mode the robot object uses the real Unitree SDK channels
     # and expects high-level actions (arm targets + joystick axes, or 64-D SONIC
-    # tokens) fed via send_action -- e.g. by run_g1_onboard.py, which receives them
-    # from the laptop over ZMQ. Mutually exclusive with is_simulation.
+    # tokens) fed via send_action -- e.g. by run_g1_server's serve_onboard_controller,
+    # which receives them from the laptop over ZMQ. Mutually exclusive with is_simulation.
     onboard: bool = False
     # DDS network interface for onboard mode (None = SDK default, matching
     # run_g1_server.py's ChannelFactoryInitialize(0)).
@@ -83,49 +83,19 @@ class UnitreeG1Config(RobotConfig):
     # Cameras (ZMQ-based remote cameras)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
-    # Synthetic zero-image cameras exposed as ``observation.images.{name}`` (H×W×3
-    # black frames). Lets image-conditioned policies (e.g. pi0.5 / OpenHLM) run in
-    # sim before real cameras are wired. Empty = disabled.
-    empty_cameras: list[str] = field(default_factory=list)
-    empty_camera_hw: tuple[int, int] = (224, 224)
-
-    # Publish Dex3 hand commands (``rt/dex3/{left,right}/cmd``) driven by the OpenHLM
-    # gripper scalars (``wb.7.pos`` left, ``wb.15.pos`` right). Lets the 43-DoF sim
-    # (or a real Dex3-equipped G1) show grasping. The scalar in [0, 1] is remapped to
-    # a curl amount (``hand_open_grip_value`` -> open) and scaled onto
-    # ``hand_closed_pose`` (7 joints: thumb_0/1/2, middle_0/1, index_0/1). Flip signs
-    # in ``hand_closed_pose`` if fingers curl the wrong way.
-    publish_hands: bool = False
     # When False, connect() does not start the background controller thread, so a
     # caller can drive the controller synchronously (one decode per fed action),
     # reproducing the deploy's single 50Hz control clock for faithful replay.
     run_controller_thread: bool = True
-    hand_open_grip_value: float = 1.0
-    hand_closed_grip_value: float = 0.0
-    hand_closed_pose: list[float] = field(default_factory=lambda: [1.0, 0.9, 0.9, 1.3, 1.3, 1.3, 1.3])
-    hand_kp: float = 1.5
-    hand_kd: float = 0.1
-
-    # Replay recorded camera frames from a LeRobot parquet episode as the camera
-    # feed (e.g. OpenHLM-data episode). Maps a robot camera name to a parquet image
-    # column; frames advance one per observation and loop. Lets a VLA see the real
-    # task video in sim without live cameras. Empty map = disabled.
-    replay_camera_parquet: str | None = None
-    replay_camera_map: dict[str, str] = field(default_factory=dict)
-    replay_camera_loop: bool = True
 
     # Token-output VLA interface for the SONIC decoder. When True (and the controller
     # is ``SonicWholeBodyController``), the robot advertises a 64-D latent-token action
-    # space (``motion_token.{i}.pos``) instead of the 34-D whole-body command, and
-    # exposes the last commanded token as a 64-D ``observation.state``
-    # (``motion_token_state.{i}.pos``). This lets ``lerobot-rollout`` drive a policy
-    # that was trained with 64-D SONIC motion tokens as both state and action
-    # (e.g. nepyope/sonic_walk): the decoder consumes the token directly, encoder
-    # bypassed. Ignored unless a SONIC whole-body controller is active.
+    # space (``motion_token.{i}.pos``) and exposes the last commanded token as a 64-D
+    # ``observation.state`` (``motion_token_state.{i}.pos``). This lets
+    # ``lerobot-rollout`` drive a policy trained with 64-D SONIC motion tokens as both
+    # state and action (e.g. nepyope/sonic_walk): the decoder consumes the token
+    # directly, encoder bypassed. Ignored unless a SONIC whole-body controller is active.
     sonic_token_action: bool = False
-
-    # Compensates for gravity on the unitree's arms using the arm ik solver
-    gravity_compensation: bool = False
 
     # Locomotion controller class name, e.g. "GrootLocomotionController",
     # "HolosomaLocomotionController", or "SonicWholeBodyController". None disables it.
