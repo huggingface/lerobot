@@ -456,7 +456,6 @@ default.extend-ignore-identifiers-re = [
     "OT_VALUE",
     "VanderBilt",
     "seperated_timestep",
-    "PnPCounterToSink",
 ]
 
 # TODO: Uncomment when ready to use
