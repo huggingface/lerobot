@@ -475,7 +475,7 @@ ROBOTICS_TRANSFORMS = [
     ("RandomShadow", RandomShadow, {"opacity": (0.3, 0.6)}),
     ("CoarseDropout", CoarseDropout, {"max_holes": 8}),
     ("GammaCorrection", GammaCorrection, {"gamma": (0.5, 2.0)}),
-    ("PlanckianJitter", PlanckianJitter, {"strength": (0.85, 1.15)}),
+    ("PlanckianJitter", PlanckianJitter, {"temperature": (3_000, 15_000)}),
 ]
 
 
@@ -523,3 +523,93 @@ def test_make_transform_error_message_includes_custom():
     """Error message should list all registered custom transforms."""
     with pytest.raises(ValueError, match="GaussianNoise"):
         make_transform_from_config(ImageTransformConfig(type="NonExistent"))
+
+
+@pytest.mark.parametrize("name,cls,kwargs", ROBOTICS_TRANSFORMS, ids=[t[0] for t in ROBOTICS_TRANSFORMS])
+@pytest.mark.parametrize("shape", [(4, 3, 32, 32), (2, 4, 3, 16, 16)])
+def test_robotics_transform_supports_temporal_batches(name, cls, kwargs, shape):
+    img = torch.rand(shape)
+    out = cls(**kwargs)(img)
+    assert out.shape == img.shape, f"{name} changed shape: {img.shape} -> {out.shape}"
+    assert out.min() >= 0
+    assert out.max() <= 1
+
+
+@pytest.mark.parametrize(
+    "cls,kwargs",
+    [
+        (GaussianNoise, {"std": (25.0, 25.0)}),
+        (MotionBlur, {"kernel_size": 5}),
+        (JPEGCompression, {"quality": 10}),
+        (
+            GaussianPatchBrightness,
+            {"num_patches": 1, "sigma_range": (0.2, 0.2), "factor_range": (0.5, 0.5)},
+        ),
+        (RandomShadow, {"opacity": 0.5}),
+        (CoarseDropout, {"max_holes": 1, "fill_value": 0.0}),
+        (GammaCorrection, {"gamma": (2.0, 2.0)}),
+        (PlanckianJitter, {"temperature": 3_000}),
+    ],
+)
+def test_robotics_transform_is_not_silent_noop(cls, kwargs):
+    img = torch.rand(3, 32, 32)
+    out = cls(**kwargs)(img)
+    assert not torch.equal(out, img)
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [
+        GaussianNoise(std=25),
+        RandomShadow(opacity=0.5),
+        CoarseDropout(max_holes=4),
+    ],
+)
+def test_robotics_transform_random_params_are_reused(transform):
+    img = torch.rand(3, 32, 32)
+    params = transform.make_params([img])
+    torch.testing.assert_close(transform.transform(img, params), transform.transform(img, params))
+
+
+def test_motion_blur_kernel_size_stays_in_configured_range():
+    transform = MotionBlur(kernel_size=(4, 10))
+    sampled_sizes = {transform.make_params([])["kernel_size"] for _ in range(100)}
+    assert sampled_sizes <= {5, 7, 9}
+    assert sampled_sizes
+
+
+def test_gamma_correction_scalar_below_one_defines_symmetric_range():
+    transform = GammaCorrection(gamma=0.5)
+    assert transform.gamma == (0.5, 2.0)
+    assert transform(torch.rand(3, 8, 8)).shape == (3, 8, 8)
+
+
+def test_planckian_jitter_uses_correlated_temperature_coefficients():
+    img = torch.full((2, 3, 8, 8), 0.25)
+    out = PlanckianJitter(temperature=3_000)(img)
+    torch.testing.assert_close(out[:, 1], img[:, 1])
+    assert torch.all(out[:, 0] > out[:, 1])
+    assert torch.all(out[:, 2] < out[:, 1])
+
+
+def test_random_shadow_supports_small_images():
+    img = torch.rand(3, 7, 7)
+    assert RandomShadow()(img).shape == img.shape
+
+
+@pytest.mark.parametrize(
+    "cls,kwargs",
+    [
+        (GaussianNoise, {"std": (-1.0, 1.0)}),
+        (MotionBlur, {"kernel_size": 4}),
+        (JPEGCompression, {"quality": (0, 75)}),
+        (GaussianPatchBrightness, {"sigma_range": (0.0, 0.25)}),
+        (RandomShadow, {"opacity": (0.3, 1.1)}),
+        (CoarseDropout, {"max_holes": 0}),
+        (GammaCorrection, {"gamma": 0.0}),
+        (PlanckianJitter, {"temperature": (2_000, 6_500)}),
+    ],
+)
+def test_robotics_transform_rejects_invalid_config(cls, kwargs):
+    with pytest.raises(ValueError):
+        cls(**kwargs)
