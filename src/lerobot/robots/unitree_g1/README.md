@@ -60,7 +60,7 @@ lerobot-rollout \
   --robot.is_simulation=false --robot.onboard=false \
   --robot.robot_ip=<ROBOT_IP> \
   --robot.controller=SonicWholeBodyController --robot.sonic_token_action=true \
-  --robot.cameras='{ego_view: {type: zmq, server_address: <ROBOT_IP>, port: 5555, camera_name: ego_view}}' \
+  --robot.cameras='{ego_view: {type: zmq, server_address: <ROBOT_IP>, port: 5555, camera_name: ego_view, width: 640, height: 480, fps: 30}}' \
   --task="walk back and forth" --device=cuda
 ```
 

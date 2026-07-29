@@ -31,12 +31,10 @@ convert between them. Quaternions are scalar-first ``(w, x, y, z)``.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 import numpy as np
+import onnxruntime as ort
 from huggingface_hub import hf_hub_download
-
-from lerobot.utils.import_utils import _onnxruntime_available, require_package
 
 from ..g1_utils import (
     ISAACLAB_TO_MUJOCO,
@@ -47,11 +45,6 @@ from ..g1_utils import (
     make_ort_session_options,
     ort_providers,
 )
-
-if TYPE_CHECKING or _onnxruntime_available:
-    import onnxruntime as ort
-else:
-    ort = None
 
 logger = logging.getLogger(__name__)
 
@@ -311,7 +304,6 @@ class SonicRuntime:
     """
 
     def __init__(self, force_cpu: bool = False):
-        require_package("onnxruntime", extra="unitree_g1")
         decoder_path = hf_hub_download(repo_id="nvidia/GEAR-SONIC", filename="model_decoder.onnx")
 
         providers = ort_providers(force_cpu=force_cpu)

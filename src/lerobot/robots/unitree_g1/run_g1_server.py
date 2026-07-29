@@ -43,10 +43,8 @@ import argparse
 import base64
 import contextlib
 import json
-import os
 import re
 import signal
-import sys
 import threading
 import time
 from typing import Any
@@ -257,21 +255,7 @@ def serve_onboard_controller(
     sock.setsockopt(zmq.RCVTIMEO, 200)  # keeps the loop responsive to the stop event
     sock.bind(f"tcp://0.0.0.0:{action_port}")
     print(f"Onboard controller live. Waiting for laptop actions on :{action_port} ...")
-    print("Type 'e' then Enter to STOP immediately (or Ctrl-C for graceful shutdown).")
-
-    def estop_listener() -> None:
-        for line in sys.stdin:
-            if line.strip().lower() == "e":
-                print("E-STOP ('e'): going passive NOW.")
-                try:
-                    robot._shutdown_event.set()  # stop the controller loop publishing
-                    time.sleep(0.05)
-                    robot._send_zero_torque()  # motors limp; nothing overwrites it now
-                except Exception as e:  # noqa: BLE001
-                    print(f"E-stop zero-torque failed: {e}")
-                os._exit(0)  # immediate hard exit, no slow cleanup
-
-    threading.Thread(target=estop_listener, daemon=True).start()
+    print("Ctrl-C for graceful shutdown.")
 
     state_sock = None
     if state_fps > 0:
