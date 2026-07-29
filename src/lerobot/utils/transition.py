@@ -28,8 +28,6 @@ class Transition(TypedDict):
     next_state: dict[str, torch.Tensor]
     done: bool
     truncated: bool
-    # Optional metadata; Must not use ``= None`` in a TypedDict body — that is
-    # class-syntax noise, not a type-level optional marker.
     complementary_info: NotRequired[dict[str, torch.Tensor | float | int] | None]
 
 
