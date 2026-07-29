@@ -1,11 +1,14 @@
+import shutil
+import subprocess
+
+import cv2
 import numpy as np
 import pandas as pd
 import pytest
 
-pytest.importorskip("cv2")
-
 from lerobot.scripts.lerobot_create_advantage_video import (
     _contiguous_segments,
+    _create_decode_proxy,
     _draw_dashboard,
     _draw_status_badge,
 )
@@ -55,3 +58,43 @@ def test_status_badge_modifies_frame():
     _draw_status_badge(frame, "positive", intervention=False, episode_index=12)
 
     assert frame.sum() > 0
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is required")
+def test_ffmpeg_decode_proxy_handles_av1(tmp_path):
+    source = tmp_path / "source.mkv"
+    proxy = tmp_path / "proxy.mp4"
+    encode = subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=64x64:rate=10:duration=1",
+            "-c:v",
+            "libaom-av1",
+            "-cpu-used",
+            "8",
+            "-crf",
+            "40",
+            str(source),
+        ],
+        capture_output=True,
+    )
+    if encode.returncode != 0:
+        pytest.skip("ffmpeg does not provide the libaom-av1 encoder")
+
+    _create_decode_proxy(
+        source,
+        proxy,
+        start_timestamp=0,
+        end_timestamp=1,
+        fps=10,
+        expected_frames=10,
+    )
+
+    capture = cv2.VideoCapture(str(proxy))
+    frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    capture.release()
+    assert frame_count == 10

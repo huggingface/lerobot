@@ -425,6 +425,56 @@ def _encode_h264(temp_path: Path, output_path: Path) -> None:
     temp_path.unlink(missing_ok=True)
 
 
+def _create_decode_proxy(
+    source_path: Path,
+    proxy_path: Path,
+    *,
+    start_timestamp: float,
+    end_timestamp: float,
+    fps: float,
+    expected_frames: int,
+) -> Path:
+    """Decode an episode segment with system FFmpeg into an OpenCV-safe proxy."""
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise RuntimeError(
+            "System ffmpeg is required to decode this dataset's video codec. "
+            "Install ffmpeg and rerun the command."
+        )
+    duration = end_timestamp - start_timestamp
+    result = subprocess.run(  # nosec B603
+        [
+            ffmpeg,
+            "-y",
+            "-ss",
+            f"{start_timestamp:.9f}",
+            "-i",
+            str(source_path),
+            "-t",
+            f"{duration:.9f}",
+            "-an",
+            "-vf",
+            f"fps={fps:.9f}",
+            "-frames:v",
+            str(expected_frames),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "12",
+            "-pix_fmt",
+            "yuv420p",
+            str(proxy_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not proxy_path.is_file():
+        raise RuntimeError(f"FFmpeg episode decode failed:\n{result.stderr[-1500:]}")
+    return proxy_path
+
+
 def create_advantage_video(
     *,
     repo_id: str,
@@ -473,19 +523,29 @@ def create_advantage_video(
     tasks = episode_metadata.get("tasks") or []
     task = str(tasks[0]) if len(tasks) else ""
 
-    capture = cv2.VideoCapture(str(video_path))
-    capture.set(cv2.CAP_PROP_POS_MSEC, start_timestamp * 1000)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    camera_name = camera_key.replace(".", "_").replace("/", "_")
+    output_path = output_dir / f"episode_{episode_index:06d}_{camera_name}_advantage.mp4"
+    decode_proxy_path = output_path.with_name(output_path.stem + "_decode_proxy.mp4")
+    _create_decode_proxy(
+        video_path,
+        decode_proxy_path,
+        start_timestamp=start_timestamp,
+        end_timestamp=end_timestamp,
+        fps=fps,
+        expected_frames=len(episode),
+    )
+
+    capture = cv2.VideoCapture(str(decode_proxy_path))
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
     if width <= 0 or frame_height <= 0:
         capture.release()
+        decode_proxy_path.unlink(missing_ok=True)
         raise RuntimeError(f"Could not read video dimensions from {video_path}")
     dashboard_height = max(132, round(frame_height * 0.27))
     output_height = frame_height + dashboard_height
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    camera_name = camera_key.replace(".", "_").replace("/", "_")
-    output_path = output_dir / f"episode_{episode_index:06d}_{camera_name}_advantage.mp4"
     temp_path = output_path.with_name(output_path.stem + "_temp.mp4")
     writer = cv2.VideoWriter(
         str(temp_path),
@@ -495,6 +555,7 @@ def create_advantage_video(
     )
     if not writer.isOpened():
         capture.release()
+        decode_proxy_path.unlink(missing_ok=True)
         raise RuntimeError(f"Could not open video writer for {temp_path}")
 
     expected_frames = len(episode)
@@ -534,6 +595,7 @@ def create_advantage_video(
     finally:
         writer.release()
         capture.release()
+        decode_proxy_path.unlink(missing_ok=True)
 
     if written != expected_frames:
         raise RuntimeError(
