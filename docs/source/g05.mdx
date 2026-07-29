@@ -205,6 +205,12 @@ completed a batch-size-one BF16 forward, backward, gradient clip, and AdamW
 step. It produced finite loss `2.77356`, finite pre-clip gradient norm `54.38`,
 all six author optimizer groups, and 23.59 GiB peak allocated CUDA memory.
 
+The same RTX 5090 also loaded the private `g05_so101` checkpoint and completed
+a real joint `BBox → Subtask → Action` forward and backward through the
+recipe-driven path. It produced finite total loss `4.38332`, including non-zero
+`ce_loss=4.04244` and `fm_loss=0.340881`, with 15.58 GiB peak allocated CUDA
+memory.
+
 A 50-episode LIBERO/RoboTwin success-rate comparison additionally requires the
 matching simulator, task assets, reset seeds, and author evaluator; no task-level
 benchmark number is claimed until that separate gate runs.
