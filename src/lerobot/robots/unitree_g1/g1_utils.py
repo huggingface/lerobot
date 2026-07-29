@@ -119,15 +119,33 @@ def get_gravity_orientation(quaternion: list[float] | np.ndarray) -> np.ndarray:
     return gravity_orientation
 
 
-def ort_providers(force_cpu: bool = False) -> list[str]:
-    """ONNX Runtime providers, preferring CUDA when available (shared by the ONNX
-    controllers: SONIC decoder, GR00T). Falls back to CPU."""
-    import onnxruntime as ort
+# Unitree motor-model parameters shared by the controllers that derive their PD gains
+# from motor physics rather than hand-tuning (SONIC decoder, Holosoma). NATURAL_FREQ is
+# the target closed-loop stiffness bandwidth (rad/s); MOTOR_ARMATURE is per-model rotor
+# inertia (keys are Unitree motor model names). From these: kp = armature * w**2 and
+# kd = 4 * armature * w, with an optional x2 factor on stiff joints (ankles/waist).
+NATURAL_FREQ = 10.0 * 2.0 * np.pi
+MOTOR_ARMATURE = {"5020": 0.003609725, "7520_14": 0.010177520, "7520_22": 0.025101925, "4010": 0.00425}
 
-    avail = ort.get_available_providers()
-    if not force_cpu and "CUDAExecutionProvider" in avail:
-        return ["CUDAExecutionProvider", "CPUExecutionProvider"]
-    return ["CPUExecutionProvider"]
+
+def compute_pd_gains(motor_models, double_indices=()) -> tuple[np.ndarray, np.ndarray]:
+    """Derive per-joint PD gains (kp, kd) from motor armature and target bandwidth.
+
+    ``motor_models`` is a per-joint sequence of Unitree motor model names (in the
+    controller's own joint order); joints whose index is in ``double_indices`` get a
+    x2 stiffness/damping factor. Returns two (N,) float32 arrays in that same order.
+    """
+    double = set(double_indices)
+
+    def s(k):
+        return MOTOR_ARMATURE[k] * NATURAL_FREQ**2
+
+    def d(k):
+        return 4.0 * MOTOR_ARMATURE[k] * NATURAL_FREQ
+
+    kp = np.array([2 * s(k) if i in double else s(k) for i, k in enumerate(motor_models)], dtype=np.float32)
+    kd = np.array([2 * d(k) if i in double else d(k) for i, k in enumerate(motor_models)], dtype=np.float32)
+    return kp, kd
 
 
 def make_ort_session_options(intra_op_num_threads: int | None = None, inter_op_num_threads: int | None = None):

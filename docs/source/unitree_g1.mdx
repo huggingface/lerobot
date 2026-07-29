@@ -8,6 +8,15 @@
 
 The Unitree G1 humanoid is now supported in LeRobot! You can teleoperate, train locomanipulation policies, test in sim, and more. Both 29 and 23 DoF variants are supported.
 
+<Tip>
+  **New: SONIC whole-body control.** The `SonicWholeBodyController` runs NVIDIA's
+  [GEAR-SONIC](https://huggingface.co/nvidia/GEAR-SONIC) decoder on the G1, turning a
+  64-D latent motion token into full-body joint targets at 50 Hz. This lets you drive
+  the robot from a VLA policy trained on SONIC motion tokens (token in → whole-body
+  motion out) with `lerobot-rollout`, in sim or on the physical robot. See
+  [Whole-body control with SONIC](#whole-body-control-with-sonic) below.
+</Tip>
+
 ---
 
 ## Part 1: Getting Started
@@ -59,7 +68,7 @@ lerobot-teleoperate \
   --robot.controller=GrootLocomotionController
 ```
 
-This will launch a [MuJoCo sim instance](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main) for the G1. You can connect a gamepad to your machine before launching in order to control the robot's locomotion in sim. We support both [HolosomaLocomotionController](https://github.com/amazon-far/holosoma) and [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl) via `--robot.controller`.
+This will launch a [MuJoCo sim instance](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main) for the G1. You can connect a gamepad to your machine before launching in order to control the robot's locomotion in sim. We support [HolosomaLocomotionController](https://github.com/amazon-far/holosoma), [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl), and [SonicWholeBodyController](https://huggingface.co/nvidia/GEAR-SONIC) via `--robot.controller`.
 
 - Press `9` to release the robot
 - Press `7` / `8` to increase / decrease waist height
@@ -287,6 +296,53 @@ lerobot-rollout \
   --fps=30 \
   --inference.type=rtc
 ```
+
+---
+
+## Whole-body control with SONIC
+
+The `SonicWholeBodyController` runs NVIDIA's [GEAR-SONIC](https://huggingface.co/nvidia/GEAR-SONIC)
+decoder on the G1. Each 50 Hz tick it consumes a **64-D latent motion token** and emits
+full-body joint targets — the encoder is bypassed, so a policy feeds tokens in and the
+decoder turns them into motion. Before the first token arrives the controller holds a
+neutral (idle) pose.
+
+This makes the G1 drivable by a VLA policy trained to output SONIC motion tokens (token
+as both `observation.state` and `action`, e.g. [`nepyope/sonic_walk`](https://huggingface.co/nepyope/sonic_walk))
+using the standard `lerobot-rollout`. The controller always runs **onboard** the robot;
+the laptop is a thin client that streams tokens and receives camera frames over ZMQ.
+
+**On the robot** — start the server in handshake mode so it instantiates and runs the
+controller onboard against local DDS at full rate:
+
+```bash
+cd ~/lerobot
+python src/lerobot/robots/unitree_g1/run_g1_server.py --handshake --camera
+```
+
+**From your laptop** — run the token policy; `--robot.sonic_token_action=true` switches the
+robot to the 64-D latent-token action/observation interface:
+
+```bash
+lerobot-rollout \
+  --policy.path=nepyope/sonic_walk \
+  --policy.device=cuda \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=false \
+  --robot.robot_ip=<ROBOT_IP> \
+  --robot.controller=SonicWholeBodyController \
+  --robot.sonic_token_action=true \
+  --robot.cameras='{"ego_view": {"type": "zmq", "server_address": "<ROBOT_IP>", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
+  --task="walk back and forth" \
+  --duration=1000 \
+  --fps=30
+```
+
+<Tip>
+  SONIC is a token-only decoder in LeRobot: the only input path is the 64-D latent
+  vector. To train your own token policy, expose the 64-D token as the action (a config
+  choice, e.g. `pi05` with a 64-D action dim) — no policy code changes are needed.
+</Tip>
 
 ---
 

@@ -38,12 +38,14 @@ from huggingface_hub import hf_hub_download
 
 from ..g1_utils import (
     ISAACLAB_TO_MUJOCO,
+    MOTOR_ARMATURE,
     MUJOCO_TO_ISAACLAB,
+    NATURAL_FREQ,
     G1_29_JointIndex,
+    compute_pd_gains,
     get_gravity_orientation,
     lowstate_to_obs,
     make_ort_session_options,
-    ort_providers,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,16 +67,14 @@ DEFAULT_ANGLES = np.array(
     dtype=np.float32,
 )
 
-# Per-motor-type parameters used to derive action scaling and PD gains. Keys are Unitree
-# motor model names; ARMATURE = rotor inertia, EFFORT = torque limit (N·m).
-NATURAL_FREQ = 10.0 * 2.0 * np.pi  # target closed-loop stiffness bandwidth (rad/s)
-ARMATURE = {"5020": 0.003609725, "7520_14": 0.010177520, "7520_22": 0.025101925, "4010": 0.00425}
+# Per-motor torque limits (N·m), used only for SONIC's residual-action scaling. The
+# armature / bandwidth constants and the PD-gain formula are shared (see g1_utils).
 EFFORT = {"5020": 25.0, "7520_14": 88.0, "7520_22": 139.0, "4010": 5.0}
 
 
 def _action_scale(k):
     """Per-motor residual-action scale (maps policy output to joint-angle delta)."""
-    return 0.25 * EFFORT[k] / (ARMATURE[k] * NATURAL_FREQ**2)
+    return 0.25 * EFFORT[k] / (MOTOR_ARMATURE[k] * NATURAL_FREQ**2)
 
 
 # Per-joint motor model (IsaacLab order): legs, waist, then arms. Single source of truth
@@ -101,23 +101,13 @@ def _to_mujoco(a):
 DEFAULT_ANGLES_MUJOCO = _to_mujoco(DEFAULT_ANGLES)
 
 
+# Ankle + waist joint indices (IsaacLab order) that get a x2 stiffness/damping factor.
+_SONIC_DOUBLE = {4, 5, 10, 11, 13, 14}
+
+
 def compute_kp_kd():
-    """Derive per-joint PD gains (kp, kd) from motor armature and target bandwidth.
-
-    Ankle and waist joints get a x2 factor for extra stiffness. Returns two (29,) float32
-    arrays in IsaacLab joint order.
-    """
-
-    def s(k):
-        return ARMATURE[k] * NATURAL_FREQ**2
-
-    def d(k):
-        return 2.0 * 2.0 * ARMATURE[k] * NATURAL_FREQ
-
-    _double = {4, 5, 10, 11, 13, 14}  # ankle + waist indices with factor 2
-    kp = np.array([2 * s(k) if i in _double else s(k) for i, k in enumerate(MOTOR_MODELS)], dtype=np.float32)
-    kd = np.array([2 * d(k) if i in _double else d(k) for i, k in enumerate(MOTOR_MODELS)], dtype=np.float32)
-    return kp, kd
+    """SONIC per-joint PD gains (kp, kd), (29,) float32 in IsaacLab joint order."""
+    return compute_pd_gains(MOTOR_MODELS, _SONIC_DOUBLE)
 
 
 # Action-feature prefix for the latent-token interface (see _extract_token_from_action).
@@ -303,24 +293,11 @@ class SonicRuntime:
     latent token supplied directly by the policy.
     """
 
-    def __init__(self, force_cpu: bool = False):
+    def __init__(self):
         decoder_path = hf_hub_download(repo_id="nvidia/GEAR-SONIC", filename="model_decoder.onnx")
 
-        providers = ort_providers(force_cpu=force_cpu)
         so = make_ort_session_options()
-        decoder_sess = ort.InferenceSession(decoder_path, sess_options=so, providers=providers)
-
-        # Report the provider actually bound, not the one requested: ORT silently falls back
-        # to CPU if CUDA can't load (e.g. libcudnn not on LD_LIBRARY_PATH), and a CPU decoder
-        # drifts the closed-loop heading. Warn loudly so it can't hide.
-        self.use_gpu = decoder_sess.get_providers()[0] == "CUDAExecutionProvider"
-        if not force_cpu and not self.use_gpu:
-            print(
-                "[SONIC] WARNING: decoder bound to CPUExecutionProvider (CUDA unavailable). "
-                "Closed-loop replay/control will drift. Ensure libcudnn is on LD_LIBRARY_PATH "
-                "(site-packages/nvidia/*/lib).",
-                flush=True,
-            )
+        decoder_sess = ort.InferenceSession(decoder_path, sess_options=so)
 
         self.kp, self.kd = compute_kp_kd()
         self.controller = SonicDecoder(decoder_sess)
@@ -342,9 +319,9 @@ class SonicWholeBodyController:
     control_dt = CONTROL_DT
     full_body = True
 
-    def __init__(self, force_cpu: bool = False):
+    def __init__(self):
         logger.info("Loading SONIC whole-body controller...")
-        self._runtime = SonicRuntime(force_cpu=force_cpu)
+        self._runtime = SonicRuntime()
         self.kp = self._runtime.kp
         self.kd = self._runtime.kd
         self.controller = self._runtime.controller
