@@ -207,14 +207,12 @@ class RealSenseCamera(Camera):
         self.rs_pipeline = rs_pipeline
         self.rs_profile = rs_profile
 
-        opened = False
         try:
             self._configure_capture_settings()
             self._start_read_thread()
-            opened = True
-        finally:
-            if not opened:
-                self._teardown_pipeline()
+        except BaseException:
+            self._teardown_pipeline()
+            raise
 
     def _run_warmup(self) -> None:
         """Blocks until at least one valid frame has been captured by the background thread.
@@ -574,11 +572,7 @@ class RealSenseCamera(Camera):
                 capture_time = time.perf_counter()
 
                 with self.frame_lock:
-                    # A stop may have been requested while this read was in flight, in which
-                    # case _stop_read_thread() has already cleared the buffer and moved on.
-                    # Publishing now would resurrect it with a frame from a pipeline that is
-                    # being torn down. Checking under the lock makes this atomic against that
-                    # clear.
+                    # Under the lock, so a late frame cannot resurrect the buffer _stop_read_thread() cleared.
                     if stop_event.is_set():
                         break
                     if self.use_rgb:
