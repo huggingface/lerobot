@@ -45,18 +45,20 @@ class RebotArm102LeaderConfig:
         }
     )
 
-    # Per-joint sign applied to raw servo angles so the leader matches the follower
-    # convention. The gripper additionally carries a scale (e.g. -6) to widen its
-    # range to the reBot B601 follower's gripper travel.
-    joint_directions: dict[str, int] = field(
+    # Per-joint signed scale applied to raw servo angles so the leader matches the follower
+    # convention: output = raw * direction. The sign flips direction; the magnitude rescales
+    # a leader joint's travel onto a follower joint with a different range (e.g. the gripper
+    # uses -6 to widen onto the reBot B601 gripper; a follower joint with a smaller range than
+    # the leader uses a fractional magnitude like -0.667). Float so non-integer scales work.
+    joint_directions: dict[str, float] = field(
         default_factory=lambda: {
-            "shoulder_pan": -1,
-            "shoulder_lift": -1,
-            "elbow_flex": 1,
-            "wrist_flex": 1,
-            "wrist_yaw": 1,
-            "wrist_roll": -1,
-            "gripper": -6,
+            "shoulder_pan": -1.0,
+            "shoulder_lift": -1.0,
+            "elbow_flex": 1.0,
+            "wrist_flex": 1.0,
+            "wrist_yaw": 1.0,
+            "wrist_roll": -1.0,
+            "gripper": -6.0,
         }
     )
 
