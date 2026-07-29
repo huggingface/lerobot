@@ -1,0 +1,70 @@
+# Fault Injection (evaluation)
+
+Optional, **disabled-by-default** fault injection for `lerobot-eval`.
+
+Use it to measure whether a trained policy still succeeds when actions are interrupted
+in a controlled, reproducible way. This does **not** train policies and does **not**
+implement recovery behaviors.
+
+## What it does
+
+When enabled, LeRobot applies a fault transform to the final postprocessed numpy
+action batch immediately before `env.step(...)` in the eval rollout loop.
+
+- Policy weights, action-chunk queues, and processors are untouched
+- With `--fault.enabled=false` (default), evaluation behavior is unchanged: no wrap,
+  no log file, identity action path
+
+## Supported fault: `action_hold`
+
+At `trigger_step` (0-indexed episode step, must be `>= 1`), repeat the previous
+valid executed action for `duration` environment steps, then resume policy actions.
+
+| Flag | Meaning | Default |
+| --- | --- | --- |
+| `--fault.enabled` | Master switch | `false` |
+| `--fault.type` | Fault implementation | `action_hold` |
+| `--fault.trigger_step` | Step where hold begins (`>= 1`) | `55` |
+| `--fault.duration` | Hold length in env steps | `8` |
+| `--fault.probability` | Activation probability at trigger | `1.0` |
+| `--fault.seed` | RNG seed for activation decisions | `42` |
+| `--fault.env_ids` | Vector-env indices (`null` = all) | `null` |
+| `--fault.log_path` | JSONL event log path | `<output_dir>/fault_events.jsonl` |
+
+## Example
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/smolvla_libero \
+  --env.type=libero \
+  --env.task=libero_object \
+  --env.task_ids="[0]" \
+  --eval.n_episodes=1 \
+  --env.max_parallel_tasks=1 \
+  --fault.enabled=true \
+  --fault.type=action_hold \
+  --fault.trigger_step=20 \
+  --fault.duration=8 \
+  --fault.log_path=outputs/eval/fault_hold/fault_events.jsonl \
+  --output_dir=outputs/eval/fault_hold
+```
+
+A helper A/B smoke script is available:
+
+```bash
+bash scripts/run_fault_smoke.sh baseline
+bash scripts/run_fault_smoke.sh injected
+```
+
+## Evidence of injection
+
+A faulted eval is only trustworthy if `fault_events.jsonl` exists and contains
+lifecycle events (`activated` → `active` → `completed`) with both
+`proposed_action` and `executed_held_action`.
+
+Compare task success via LeRobot's usual `eval_info.json` (`overall.pc_success`).
+
+## Constraints
+
+- Requires `--env.max_parallel_tasks=1` while faults are enabled (keeps event logs consistent)
+- Unit tests live under `tests/faults/` and do not require a simulator or GPU
