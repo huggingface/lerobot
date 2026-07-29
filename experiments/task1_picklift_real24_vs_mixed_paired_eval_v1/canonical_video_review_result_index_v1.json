@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "review_id": "task1_picklift_real24_vs_mixed_paired_real24_eval24_canonical_video_review_v1",
+  "evaluation_id": "task1_picklift_real24_vs_mixed_paired_real24_eval24_v1",
+  "result_scope": "independent canonical-video review complete",
+  "paper_conclusion": false,
+  "evidence_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_mixed_paired_real24_eval24_v1/canonical_video_review_v1",
+  "operator_result_source": {
+    "commit": "bdb5b3b921649aadb01c93609207139b97512e73",
+    "manifest_sha256": "79f134d2e90004e645de2574206c685903ed7b9ef78bd72d387369112d59bc48",
+    "summary_sha256": "cbd243d94d3dc11d6f74eee1216a2647d483b0363b03475990f48e092acd1e94",
+    "evidence_hashes_sha256": "ea6211fb4cd5a73c381b5b665fafbda1115451de95e61a60bea831b810c9b89a",
+    "operator_labels_preserved": true
+  },
+  "review_source": {
+    "decisions_path": "experiments/task1_picklift_real24_vs_mixed_paired_eval_v1/canonical_video_review_v1.json",
+    "decisions_sha256": "89b43ebb946813d2a76805d29f22d61910a406e36e2e8da47aca9c773f3eecd5",
+    "freeze_script_path": "experiments/task1_picklift_real24_vs_mixed_paired_eval_v1/freeze_canonical_video_review.py",
+    "freeze_script_sha256": "aaa439df3f4e7cb1d372e4b348083f9c946a9504d7051594f9250aed20fc7efc"
+  },
+  "frozen_outputs": {
+    "review_manifest_v1_sha256": "51f9eb1b50610277dd5ceb12a33eb21e0cce3509a9e3ff0b61545912aec48d6f",
+    "review_trials_v1_sha256": "4100722d8bc6d5b32b3068ebf77bfb663cc991c4609f2c563eb4cfdb3098575c",
+    "reviewed_summary_v1_sha256": "29cbb98313c4306381bbc919e1ebcaf57753461ec49bafeb76bc57c193c3ebda",
+    "validation_v1_sha256": "d88446d2ffc39016735461ef1dd1cb37e872649d658876ebb26291897925d30e",
+    "review_hashes_v1_sha256": "5dc50a3d6af538984ee0d7d43eaa5ae59d9945ba9bb6568addf80671a4f259b4",
+    "review_label_files": 24,
+    "hashed_artifacts": 205
+  },
+  "video_and_tick_validation": {
+    "videos": 24,
+    "canonical_contract": "640x480 at 20 FPS",
+    "total_policy_ticks": 14234,
+    "total_video_frames": 14234,
+    "all_frame_counts_equal_policy_tick_counts": true,
+    "minimum_last_tick_elapsed_seconds": 29.956382696022047,
+    "maximum_last_tick_elapsed_seconds": 29.996688171988353,
+    "all_cover_full_30_second_wall_clock_policy_window": true,
+    "sha256sum_verified_artifacts": 205
+  },
+  "reviewed_result": {
+    "real24_only": {
+      "reviewed_successes": 11,
+      "trials": 12,
+      "reviewed_success_rate": 0.9166666666666666,
+      "reviewed_failures": 1
+    },
+    "real24_questsim24": {
+      "reviewed_successes": 8,
+      "trials": 12,
+      "reviewed_success_rate": 0.6666666666666666,
+      "reviewed_failures": 4
+    },
+    "paired_outcomes": {
+      "both_success": 8,
+      "both_failure": 1,
+      "real24_only_only": 3,
+      "mixed_only": 0
+    },
+    "operator_review_agreements": 24,
+    "operator_review_disagreements": 0,
+    "adjudications_required": 0,
+    "review_failure_types": {
+      "missed_grasp": 5
+    },
+    "review_failure_trials": [
+      "t06",
+      "t10",
+      "t19",
+      "t20",
+      "t22"
+    ]
+  },
+  "paired_cell_table": [
+    {
+      "cell_id": "r1c1",
+      "real24_only": true,
+      "real24_questsim24": true,
+      "outcome": "both_success"
+    },
+    {
+      "cell_id": "r1c2",
+      "real24_only": true,
+      "real24_questsim24": true,
+      "outcome": "both_success"
+    },
+    {
+      "cell_id": "r1c3",
+      "real24_only": true,
+      "real24_questsim24": false,
+      "outcome": "real24_only_only"
+    },
+    {
+      "cell_id": "r1c4",
+      "real24_only": true,
+      "real24_questsim24": true,
+      "outcome": "both_success"
+    },
+    {
+      "cell_id": "r2c1",
+      "real24_only": true,
+      "real24_questsim24": false,
+      "outcome": "real24_only_only"
+    },
+    {
+      "cell_id": "r2c2",
+      "real24_only": true,
+      "real24_questsim24": true,
+      "outcome": "both_success"
+    },
+    {
+      "cell_id": "r2c3",
+      "real24_only": true,
+      "real24_questsim24": true,
+      "outcome": "both_success"
+    },
+    {
+      "cell_id": "r2c4",
+      "real24_only": true,
+      "real24_questsim24": true,
+      "outcome": "both_success"
+    },
+    {
+      "cell_id": "r3c1",
+      "real24_only": true,
+      "real24_questsim24": true,
+      "outcome": "both_success"
+    },
+    {
+      "cell_id": "r3c2",
+      "real24_only": false,
+      "real24_questsim24": false,
+      "outcome": "both_failure"
+    },
+    {
+      "cell_id": "r3c3",
+      "real24_only": true,
+      "real24_questsim24": false,
+      "outcome": "real24_only_only"
+    },
+    {
+      "cell_id": "r3c4",
+      "real24_only": true,
+      "real24_questsim24": true,
+      "outcome": "both_success"
+    }
+  ],
+  "source_index_discrepancy": {
+    "field": "operator_result_index_v1.evidence.total_policy_ticks",
+    "committed_index_value": 14233,
+    "immutable_primary_evidence_value": 14234,
+    "resolution": "The review uses the operator manifest, operator summary, 24 steps JSONL files, and 24 MP4 frame counts; all primary sources resolve to 14234. The old index was not edited."
+  },
+  "interpretation_boundary": "Descriptive reviewed result for the frozen paired real evaluation. It does not by itself establish a causal training-data effect or a paper-level performance conclusion."
+}
