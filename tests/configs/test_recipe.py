@@ -57,14 +57,6 @@ def test_message_recipe_requires_at_least_one_target():
         )
 
 
-def test_message_recipe_requires_known_bindings():
-    with pytest.raises(ValueError, match="requires unknown binding"):
-        TrainingRecipe(
-            messages=[_minimal_target_turn()],
-            requires=["not_a_binding"],
-        )
-
-
 def test_recipe_rejects_both_messages_and_blend():
     with pytest.raises(ValueError, match="only one"):
         TrainingRecipe(

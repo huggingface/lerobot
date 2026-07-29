@@ -385,8 +385,6 @@ def _render_message_recipe(
 ) -> RenderedMessages | None:
     """Expand ``recipe.messages`` into rendered chat messages using ``bindings``."""
     assert recipe.messages is not None
-    if any(bindings.get(name) is None for name in recipe.requires or ()):
-        return None
     messages: list[dict[str, Any]] = []
     streams: list[str | None] = []
     target_indices: list[int] = []
