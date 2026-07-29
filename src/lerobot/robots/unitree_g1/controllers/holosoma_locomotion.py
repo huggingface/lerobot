@@ -16,11 +16,9 @@
 
 from __future__ import annotations
 
-import json
 import logging
 
 import numpy as np
-import onnx
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
@@ -28,6 +26,7 @@ from ..g1_utils import (
     REMOTE_AXES,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
+    compute_pd_gains,
     get_gravity_orientation,
 )
 
@@ -59,12 +58,23 @@ POLICY_FILES = {
     "ppo": "ppo_g1_29dof.onnx",
 }
 
+# Per-joint motor model in Holosoma's joint order, plus the joints that get a x2
+# stiffness/damping factor. These reproduce the kp/kd that used to be read from the
+# policy's ONNX metadata exactly (both fastsac and ppo), so gains are now derived from
+# the shared motor model (see g1_utils.compute_pd_gains) instead.
+HOLOSOMA_MOTOR_MODELS = (
+    ["7520_14", "7520_22", "7520_14", "7520_22", "5020", "5020"] * 2
+    + ["7520_14", "5020", "5020"]
+    + ["5020", "5020", "5020", "5020", "5020", "4010", "4010"] * 2
+)
+HOLOSOMA_DOUBLE = {4, 5, 10, 11, 13, 14}
+
 
 def load_policy(
     repo_id: str = DEFAULT_HOLOSOMA_REPO_ID,
     policy_type: str = "fastsac",
 ) -> tuple[ort.InferenceSession, np.ndarray, np.ndarray]:
-    """Load Holosoma locomotion policy and extract KP/KD from metadata.
+    """Load the Holosoma locomotion policy and its motor-model-derived PD gains.
 
     Args:
         repo_id: Hugging Face Hub repo ID
@@ -83,16 +93,7 @@ def load_policy(
     policy = ort.InferenceSession(policy_path)
     logger.info(f"Policy loaded: {policy.get_inputs()[0].shape} → {policy.get_outputs()[0].shape}")
 
-    # Extract KP/KD from ONNX metadata
-    model = onnx.load(policy_path, load_external_data=False)
-    metadata = {prop.key: prop.value for prop in model.metadata_props}
-
-    if "kp" not in metadata or "kd" not in metadata:
-        raise ValueError("ONNX model must contain 'kp' and 'kd' in metadata")
-
-    kp = np.array(json.loads(metadata["kp"]), dtype=np.float32)
-    kd = np.array(json.loads(metadata["kd"]), dtype=np.float32)
-    logger.info(f"Loaded KP/KD from ONNX ({len(kp)} joints)")
+    kp, kd = compute_pd_gains(HOLOSOMA_MOTOR_MODELS, HOLOSOMA_DOUBLE)
 
     return policy, kp, kd
 
