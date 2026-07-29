@@ -1,0 +1,74 @@
+{
+  "evaluation_id": "task1_picklift_real24_act100k_ready_pose_official_send_eval12_v1",
+  "status": "software_frozen_hardware_not_authorized",
+  "purpose": "Corrected future Task1 real-robot evaluation protocol with one frozen ready pose and the official LeRobot SO101 action-send path",
+  "comparison_role": "protocol-corrected follow-up; no hardware result exists yet",
+  "evaluation_profile": {
+    "profile_id": "task1_real24_ready_pose_official_send_v1",
+    "path": "experiments/task1_picklift_real24_act_v1/real_evaluation_profile_ready_pose_official_send_v1.json",
+    "sha256": "01e50c86adc1a03f2bb1675469502e6969e2cc6a4a51dc8db0b75e6049b5d4c5"
+  },
+  "historical_evidence_boundary": {
+    "immutable_historical_runs": [
+      "task1_picklift_real24_act_v1_eval12",
+      "task1_picklift_real24_act100k_maxrel_none_eval12_v1"
+    ],
+    "historical_results_are_not_rewritten": true,
+    "this_plan_has_no_hardware_trials": true
+  },
+  "policy_checkpoint": {
+    "selection_rule": "fixed_step_100000",
+    "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_act_v1/full_100k/checkpoints/100000/pretrained_model",
+    "model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb"
+  },
+  "setup": {
+    "real_world_setup_version": "picklift_real_setup_spawn_v4_5cm_grid_camera_aligned_task_grid_v2_reference_v2",
+    "task_frame_id": "picklift_task_grid_v2",
+    "camera_profile_id": "icspring_front_crop_1280x960_to_640x480_v1",
+    "camera_intrinsics_version": "uncalibrated_front_v1",
+    "camera_extrinsics_version": "uncalibrated_front_mount_v1",
+    "robot_id": "so101_follower_main",
+    "follower_calibration_sha256": "c78e4f7e1383571c6aa496f62996f518b3e4122f78244d2bbc094658bc0cb8a0",
+    "control_fps": 20,
+    "maximum_trial_seconds": 30,
+    "nominal_policy_ticks_at_target_rate": 600,
+    "max_relative_target": null,
+    "custom_absolute_action_clamp": false,
+    "action_path_profile_id": "lerobot_so101_official_send_no_custom_clamp_v1",
+    "policy_timing_profile_id": "lerobot_per_tick_pacing_no_catchup_v1",
+    "ready_pose_profile_id": "task1_real24_ready_pose_reset_v1",
+    "ready_pose_state_sha256": "ecb871efad5692e192ac0f690bc0e959fef371bbb8338a31b23ca697741e3b56",
+    "act_chunk_size": 67,
+    "act_n_action_steps": 67
+  },
+  "trials": [
+    {"order": 1, "spawn_region": "r1c1", "spawn_x_cm": 22.5, "spawn_y_cm": -7.5},
+    {"order": 2, "spawn_region": "r1c2", "spawn_x_cm": 22.5, "spawn_y_cm": -2.5},
+    {"order": 3, "spawn_region": "r1c3", "spawn_x_cm": 22.5, "spawn_y_cm": 2.5},
+    {"order": 4, "spawn_region": "r1c4", "spawn_x_cm": 22.5, "spawn_y_cm": 7.5},
+    {"order": 5, "spawn_region": "r2c1", "spawn_x_cm": 27.5, "spawn_y_cm": -7.5},
+    {"order": 6, "spawn_region": "r2c2", "spawn_x_cm": 27.5, "spawn_y_cm": -2.5},
+    {"order": 7, "spawn_region": "r2c3", "spawn_x_cm": 27.5, "spawn_y_cm": 2.5},
+    {"order": 8, "spawn_region": "r2c4", "spawn_x_cm": 27.5, "spawn_y_cm": 7.5},
+    {"order": 9, "spawn_region": "r3c1", "spawn_x_cm": 32.5, "spawn_y_cm": -7.5},
+    {"order": 10, "spawn_region": "r3c2", "spawn_x_cm": 32.5, "spawn_y_cm": -2.5},
+    {"order": 11, "spawn_region": "r3c3", "spawn_x_cm": 32.5, "spawn_y_cm": 2.5},
+    {"order": 12, "spawn_region": "r3c4", "spawn_x_cm": 32.5, "spawn_y_cm": 7.5}
+  ],
+  "outcome_contract": {
+    "success": "Visible bilateral grasp, at least 5 cm lift, stable hold for at least 0.5 s, and no drop before trial end.",
+    "failure_categories": [
+      "perception_failure",
+      "missed_grasp",
+      "unstable_grasp",
+      "wrong_trajectory",
+      "collision",
+      "premature_release",
+      "timeout",
+      "out_of_workspace",
+      "unknown"
+    ],
+    "adaptive_stopping": false,
+    "checkpoint_switching": false
+  }
+}

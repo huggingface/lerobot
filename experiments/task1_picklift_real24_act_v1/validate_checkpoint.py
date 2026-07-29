@@ -6,8 +6,8 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from deployment_safety import sha256_file
 
-from deployment_safety import clamp_action_fail_closed, sha256_file
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies import make_pre_post_processors
 from lerobot.policies.act import ACTPolicy
@@ -66,8 +66,6 @@ def main() -> None:
         raise RuntimeError(f"Expected checkpoint output shape (1, 6), got {raw_action.shape}.")
     if not np.isfinite(raw_action).all():
         raise RuntimeError("Checkpoint output contains NaN or infinity.")
-    clipped_action, clip_mask = clamp_action_fail_closed(raw_action[0])
-
     result = {
         "status": "pass",
         "checkpoint": str(args.checkpoint),
@@ -80,8 +78,17 @@ def main() -> None:
         "output_shape": list(raw_action.shape),
         "output_finite": bool(np.isfinite(raw_action).all()),
         "raw_action": raw_action[0].tolist(),
-        "calibration_clipped_action": clipped_action.tolist(),
-        "calibration_clip_mask": clip_mask.tolist(),
+        "requested_action": raw_action[0].tolist(),
+        "sent_action": None,
+        "deployment_action_semantics": {
+            "max_relative_target": None,
+            "custom_absolute_action_clamp": False,
+            "sent_action_note": (
+                "Offline validation does not instantiate a robot. Future real "
+                "deployment forwards requested_action through the official "
+                "SO101Follower.send_action path and records its returned command."
+            ),
+        },
     }
     text = json.dumps(result, indent=2, sort_keys=True)
     print(text)
