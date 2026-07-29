@@ -1,1 +1,1 @@
-../../../../docs/source/policy_being_h05_README.md
+../../../../docs/source/being_h05.mdx
