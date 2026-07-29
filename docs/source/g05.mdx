@@ -229,30 +229,7 @@ Do not override checkpoint contract fields unless deliberately converting or
 validating another embodiment. Incompatible action heads, dimensions, horizons,
 processor modes, and normalization contracts are rejected during loading.
 
-## Evaluation and Validation
-
-CPU unit tests cover factory loading, config incompatibilities, prompt pass-through,
-LIBERO and `atomic_4` mappings, padding masks, inverse action projection, a finite
-forward/backward/update, optimizer-group wiring, and save/reload parity:
-
-```bash
-uv run pytest tests/policies/g05 tests/runtime/test_g05_adapter.py -q
-uv run ruff check src/lerobot/policies/g05 tests/policies/g05
-```
-
-The converted private `g05_base` checkpoint strict-loaded all 945 native model
-tensors, and its ActionCodec sidecar strict-loaded all 208 tensors, with no
-missing, unexpected, or shape-mismatched keys. Prompt token IDs and masks match
-the released runtime exactly. ActionCodec code IDs match exactly; decoded values
-differ only by normal floating-point noise. A batch-size-one System 1 flow smoke
-produced a finite `[1, 32, 27]` action chunk on an RTX 5090.
-
-The same native base checkpoint completed a real joint language/action forward
-and backward on the RTX 5090. It produced finite `ce_loss=13.8141` and
-`fm_loss=1.32647`, finite gradients for all 945 model tensors, all six optimizer
-groups, and 19.32 GiB peak allocated CUDA memory. A System 2 smoke generated
-`Subtask: grasp and lift the red cup with the right gripper` and a finite
-same-pass `[1, 32, 27]` action in 1.07 seconds at 11.0 GiB peak.
+## Evaluation
 
 A 50-episode LIBERO/RoboTwin success-rate comparison additionally requires the
 matching simulator, task assets, reset seeds, and author evaluator; no task-level
@@ -275,17 +252,6 @@ lerobot-eval \
   --eval.n_episodes=50 \
   --seed=0 \
   --output_dir=outputs/g05-libero-lerobot-eval
-```
-
-The author-oracle command for the same 50-trial gate is:
-
-```bash
-LIBERO_CONFIG_PATH=$(pwd)/experiments/libero \
-bash scripts/run/eval_libero.sh checkpoints/g05-libero/model.pt \
-  --suites "libero_goal" \
-  --num_trials 50 \
-  --num_parallel 1 \
-  --output_dir outputs/g05-libero-author-eval
 ```
 
 ## References
