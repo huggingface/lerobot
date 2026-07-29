@@ -321,9 +321,10 @@ SmolVLA ships with `freeze_vision_encoder=True`. Unfreezing usually **improves p
 
 ```bash
 lerobot-train ... --policy.type=smolvla \
-  --policy.freeze_vision_encoder=false \
-  --policy.train_expert_only=false
+  --policy.fine_tune_vision_encoder=true
 ```
+
+This selectively trains the vision encoder and connector while leaving the language model frozen. Their learning rate defaults to `0.1 × optimizer_lr`; adjust it with `--policy.vision_encoder_lr_multiplier` if needed.
 
 ### 7.7 Signals to stop / keep going
 

@@ -67,7 +67,8 @@ class SmolVLAConfig(PreTrainedConfig):
 
     # Finetuning settings
     freeze_vision_encoder: bool = True
-    fine_tune_vision_encoder: bool = False
+    fine_tune_vision_encoder: bool = False  # Fine-tune vision + connector; takes priority over freezing.
+    vision_encoder_lr_multiplier: float = 0.1
     train_expert_only: bool = True
     train_state_proj: bool = True
 
@@ -111,6 +112,12 @@ class SmolVLAConfig(PreTrainedConfig):
         super().__post_init__()
 
         """Input validation (not exhaustive)."""
+        if self.fine_tune_vision_encoder:
+            self.freeze_vision_encoder = False
+        if self.vision_encoder_lr_multiplier <= 0:
+            raise ValueError(
+                f"`vision_encoder_lr_multiplier` must be positive, got {self.vision_encoder_lr_multiplier}."
+            )
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "

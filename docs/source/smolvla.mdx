@@ -70,6 +70,19 @@ cd lerobot && lerobot-train \
   GPU allows it, as long as loading times remain short.
 </Tip>
 
+For tasks that require adapting visual features, such as distinguishing new colors or shapes, selectively
+fine-tune the vision encoder and its connector:
+
+```bash
+lerobot-train ... \
+  --policy.path=lerobot/smolvla_base \
+  --policy.fine_tune_vision_encoder=true
+```
+
+This keeps the language model frozen with the default `train_expert_only=true` setting and trains the vision
+path at `0.1` times the main learning rate by default. Fine-tuning the vision encoder increases memory use and
+can reduce the model's general visual knowledge, so enable it only when the frozen encoder is insufficient.
+
 Fine-tuning is an art. For a complete overview of the options for finetuning, run
 
 ```bash

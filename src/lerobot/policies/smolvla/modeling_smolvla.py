@@ -162,14 +162,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.config = config
         self.init_rtc_processor()
         self.model = VLAFlowMatching(config, rtc_processor=self.rtc_processor)
-
-        if self.config.fine_tune_vision_encoder:
-            self.model.vlm_with_expert.freeze_vision_encoder = False
-            for params in self.model.vlm_with_expert.get_vlm_model().vision_model.parameters():
-                params.requires_grad = True
-            for params in self.model.vlm_with_expert.get_vlm_model().connector.parameters():
-                params.requires_grad = True
-
         self.reset()
 
     def reset(self):
@@ -194,8 +186,27 @@ class SmolVLAPolicy(PreTrainedPolicy):
             if model_value is not None:
                 model_value.rtc_processor = self.rtc_processor
 
-    def get_optim_params(self) -> dict:
-        return self.parameters()
+    def get_optim_params(self):
+        if not self.config.fine_tune_vision_encoder:
+            return self.parameters()
+
+        vision_params = []
+        other_params = []
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            if ".vision_model." in name or ".connector." in name:
+                vision_params.append(param)
+            else:
+                other_params.append(param)
+
+        return [
+            {"params": other_params},
+            {
+                "params": vision_params,
+                "lr": self.config.optimizer_lr * self.config.vision_encoder_lr_multiplier,
+            },
+        ]
 
     def _get_action_chunk(
         self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
@@ -501,6 +512,7 @@ class VLAFlowMatching(nn.Module):
         self.vlm_with_expert = SmolVLMWithExpertModel(
             model_id=self.config.vlm_model_name,
             freeze_vision_encoder=self.config.freeze_vision_encoder,
+            fine_tune_vision_encoder=self.config.fine_tune_vision_encoder,
             train_expert_only=self.config.train_expert_only,
             load_vlm_weights=self.config.load_vlm_weights,
             attention_mode=self.config.attention_mode,

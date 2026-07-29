@@ -78,6 +78,7 @@ class SmolVLMWithExpertModel(nn.Module):
         load_vlm_weights: bool = True,
         train_expert_only: bool = True,
         freeze_vision_encoder: bool = False,
+        fine_tune_vision_encoder: bool = False,
         attention_mode: str = "self_attn",
         num_expert_layers: int = -1,
         num_vlm_layers: int = -1,
@@ -141,6 +142,7 @@ class SmolVLMWithExpertModel(nn.Module):
         self.num_key_value_heads = self.config.text_config.num_key_value_heads
 
         self.freeze_vision_encoder = freeze_vision_encoder
+        self.fine_tune_vision_encoder = fine_tune_vision_encoder
         self.train_expert_only = train_expert_only
         self.attention_mode = attention_mode
         self.expert_hidden_size = lm_expert_config.hidden_size
@@ -150,10 +152,6 @@ class SmolVLMWithExpertModel(nn.Module):
         return self.vlm.model
 
     def set_requires_grad(self):
-        if self.freeze_vision_encoder:
-            self.get_vlm_model().vision_model.eval()
-            for params in self.get_vlm_model().vision_model.parameters():
-                params.requires_grad = False
         if self.train_expert_only:
             self.vlm.eval()
             for params in self.vlm.parameters():
@@ -176,6 +174,18 @@ class SmolVLMWithExpertModel(nn.Module):
             for name, params in self.vlm.named_parameters():
                 if any(k in name for k in frozen_layers):
                     params.requires_grad = False
+
+        if self.freeze_vision_encoder:
+            self.get_vlm_model().vision_model.eval()
+            for params in self.get_vlm_model().vision_model.parameters():
+                params.requires_grad = False
+
+        if self.fine_tune_vision_encoder:
+            for params in self.get_vlm_model().vision_model.parameters():
+                params.requires_grad = True
+            for params in self.get_vlm_model().connector.parameters():
+                params.requires_grad = True
+
         # To avoid unused params issue with distributed training
         for name, params in self.lm_expert.named_parameters():
             if "lm_head" in name:
@@ -184,11 +194,15 @@ class SmolVLMWithExpertModel(nn.Module):
     def train(self, mode: bool = True):
         super().train(mode)
 
+        if self.train_expert_only:
+            self.vlm.eval()
+
         if self.freeze_vision_encoder:
             self.get_vlm_model().vision_model.eval()
 
-        if self.train_expert_only:
-            self.vlm.eval()
+        if self.fine_tune_vision_encoder:
+            self.get_vlm_model().vision_model.train(mode)
+            self.get_vlm_model().connector.train(mode)
 
     def embed_image(self, image: torch.Tensor):
         patch_attention_mask = None
