@@ -10,7 +10,7 @@ from lerobot.scripts.lerobot_create_advantage_video import (
     _contiguous_segments,
     _create_decode_proxy,
     _draw_dashboard,
-    _draw_status_badge,
+    _draw_label_timeline,
 )
 
 
@@ -52,12 +52,14 @@ def test_advantage_dashboard_shape():
     assert dashboard.var() > 0
 
 
-def test_status_badge_modifies_frame():
+def test_label_timeline_modifies_only_lower_frame_region():
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    labels = np.array(["negative", "negative", "positive", "positive"])
 
-    _draw_status_badge(frame, "positive", intervention=False, episode_index=12)
+    _draw_label_timeline(frame, labels, current_index=2)
 
     assert frame.sum() > 0
+    assert frame[:350].sum() == 0
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is required")
