@@ -96,7 +96,7 @@ lerobot-train \
     --policy.type=pi0_fast \
     --output_dir=./outputs/pi0fast_training \
     --job_name=pi0fast_training \
-    --policy.pretrained_path=lerobot/pi0_fast_base \
+    --policy.pretrained_path=lerobot/pi0fast-base \
     --policy.dtype=bfloat16 \
     --policy.gradient_checkpointing=true \
     --policy.chunk_size=10 \
@@ -187,7 +187,7 @@ lerobot-train \
   --dataset.repo_id=lerobot/libero \
   --output_dir=outputs/libero_pi0fast \
   --job_name=libero_pi0fast \
-  --policy.path=lerobot/pi0fast_base \
+  --policy.path=lerobot/pi0fast-base \
   --policy.dtype=bfloat16 \
   --steps=100000 \
   --save_freq=20000 \

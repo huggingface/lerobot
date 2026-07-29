@@ -35,17 +35,16 @@ import time
 
 from lerobot.common.control_utils import (
     follower_smooth_move_to,
-    init_keyboard_listener,
-    is_headless,
     teleop_smooth_move_to,
     teleop_supports_feedback,
 )
 from lerobot.datasets import VideoEncodingManager
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
+from lerobot.utils.keyboard_input import init_keyboard_listener
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import log_rerun_data
+from lerobot.utils.visualization_utils import log_visualization_data
 
 from ..configs import EpisodicStrategyConfig
 from ..context import RolloutContext
@@ -172,6 +171,7 @@ class EpisodicStrategy(RolloutStrategy):
                             fps=fps,
                             control_time_s=reset_time_s,
                             display_data=cfg.display_data,
+                            display_mode=cfg.display_mode,
                             display_compressed=display_compressed,
                         )
 
@@ -260,6 +260,7 @@ class EpisodicStrategy(RolloutStrategy):
         fps: float,
         control_time_s: float,
         display_data: bool,
+        display_mode: str,
         display_compressed: bool,
     ) -> None:
         """Reset-phase loop: teleop drives the robot if available, no recording."""
@@ -289,7 +290,8 @@ class EpisodicStrategy(RolloutStrategy):
 
                 if display_data:
                     obs_processed = processors.robot_observation_processor(obs)
-                    log_rerun_data(
+                    log_visualization_data(
+                        display_mode,
                         observation=obs_processed,
                         action=act_teleop,
                         compress_images=display_compressed,
@@ -307,7 +309,7 @@ class EpisodicStrategy(RolloutStrategy):
 
         log_say("Stop recording", play_sounds, blocking=True)
 
-        if not is_headless() and self._listener is not None:
+        if self._listener is not None:
             self._listener.stop()
 
         if ctx.data.dataset is not None:

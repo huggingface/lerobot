@@ -56,6 +56,8 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     device: str | None = None
 
     pretrained_path: str | None = None
+    # Optional Hub revision (commit hash, branch, or tag) to pin the pretrained reward model version.
+    pretrained_revision: str | None = None
 
     push_to_hub: bool = False
     repo_id: str | None = None
