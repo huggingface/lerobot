@@ -11,7 +11,7 @@
 
 **State-of-the-art machine learning for real-world robotics**
 
-🤗 LeRobot provides a hardware-agnostic, Python-native interface for controlling real robots - from affordable arms like the SO-101 to full humanoids. Plus the tools to record, store, and share the datasets they generate. Every dataset uses the standardized **LeRobotDataset** format (synchronized video + action/state data) and can be streamed directly from the [Hugging Face Hub](https://huggingface.co/lerobot).
+🤗 LeRobot provides a hardware-agnostic, Python-native interface for controlling real robots - from affordable arms like the SO-ARM101 to full humanoids. Plus the tools to record, store, and share the datasets they generate. Every dataset uses the standardized **LeRobotDataset** format (synchronized video + action/state data) and can be streamed directly from the [Hugging Face Hub](https://huggingface.co/lerobot).
 
 🤗 On top of that data, LeRobot implements state-of-the-art policies - from lightweight imitation-learning models like ACT to large vision-language-action models like π₀ and SmolVLA - all trainable, shareable, and deployable with the same handful of CLI commands.
 
@@ -32,6 +32,15 @@ The goal: lower the barrier to entry for robotics, so that everyone can contribu
 <div align="center">
   <img src="../../media/readme/robots_control_video.webp" width="640px" alt="Reachy 2 Demo">
 </div>
+
+## How It Works
+
+**Teleoperate → Record → Train → Deploy**
+
+1. **Teleoperate** - control the robot yourself (with a leader arm, keyboard, or phone) so it can learn from your movements.
+2. **Record** - each demonstration is saved as a dataset: synchronized camera video plus the actions you took.
+3. **Train** - a policy (the neural network that will control the robot) learns to imitate your demonstrations.
+4. **Deploy** - run the trained policy on the robot and watch it complete the task on its own.
 
 ## Get Started
 
@@ -59,7 +68,9 @@ New here? [Install LeRobot](./installation), then pick your path:
     </ul>
     <p class="text-gray-700 dark:text-gray-300 text-sm">
       Once it's assembled and calibrated, record a dataset and train your first
-      policy with the <a href="./il_robots">imitation learning tutorial</a>.
+      policy with the <a href="./il_robots">imitation learning tutorial</a> -
+      or skip the CLI entirely with <a href="./lelab">LeLab</a>, a browser GUI
+      for the same workflow.
     </p>
   </div>
   <div class="border dark:border-gray-700 rounded-lg p-4 shadow">
@@ -156,4 +167,12 @@ New here? [Install LeRobot](./installation), then pick your path:
   </a>
 </div>
 
-<!-- ASSET TODO: small monochrome icons matching HF's style would read cleaner than emoji in the cards above, once available. -->
+## Common Problems
+
+Running into issues? A few of the most frequent ones:
+
+- **Blurry or unusable camera footage** - lighting matters more than resolution. See the [Cameras](./cameras) guide.
+- **Build or install errors** (`cmake`, `ffmpeg`, CUDA) - see the Troubleshooting section of the [Installation guide](./installation).
+- **Not sure which policy fits your GPU** - check the [Compute & Hardware Guide](./hardware_guide).
+- **Still stuck?** Ask on [Discord](https://discord.gg/s3KuuzsPFb) - the community (and the LeRobot team) is there to help.
+
