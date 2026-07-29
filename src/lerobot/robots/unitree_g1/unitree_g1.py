@@ -34,8 +34,8 @@ from lerobot.utils.import_utils import _unitree_sdk_available, require_package
 
 from ..robot import Robot
 from .config_unitree_g1 import UnitreeG1Config
+from .g1_kinematics import G1_29_ArmIK
 from .g1_utils import (
-    KEYBOARD_KEYS_FIELD,
     REMOTE_AXES,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
@@ -160,6 +160,9 @@ class UnitreeG1(Robot):
         self._client_state_sock = None
         self._client_state_latest: dict[str, float] = {}
         self._client_caps: dict | None = None
+
+        # Optional arm gravity compensation (feed-forward torque via the arm IK solver).
+        self.arm_ik = G1_29_ArmIK() if config.gravity_compensation else None
 
         # Initialize state variables
         self.sim_env = None
@@ -815,30 +818,34 @@ class UnitreeG1(Robot):
                 if key.endswith(".q") and key.startswith(arm_prefixes)
             }
 
-        self.publish_lowcmd(action_to_publish)
+        tau = None
+        if self.config.gravity_compensation and self.arm_ik is not None:
+            tau = np.zeros(29, dtype=np.float32)
+            action_np = np.array(
+                [
+                    action_to_publish.get(f"{joint.name}.q", self.msg.motor_cmd[joint.value].q)
+                    for joint in G1_29_JointArmIndex
+                ],
+                dtype=np.float32,
+            )
+            arm_tau = self.arm_ik.solve_tau(action_np)
+            arm_start_idx = G1_29_JointArmIndex.kLeftShoulderPitch.value
+            for joint in G1_29_JointArmIndex:
+                local_idx = joint.value - arm_start_idx
+                tau[joint.value] = arm_tau[local_idx]
+
+        self.publish_lowcmd(action_to_publish, tau=tau)
         return action
 
     def _update_controller_action(self, action: RobotAction) -> None:
         """Update controller input state from an incoming teleop action.
 
-        Controller-agnostic: every value-carrying key is forwarded verbatim into
-        ``controller_input`` (whole-body ``wb.{i}.pos`` from a 34-D VLA, or whatever a
-        future controller expects), and each controller extracts only the keys it
-        understands. The robot deliberately does not enumerate any controller's key
-        schema here.
-
-        KeyboardTeleop is the one special case: it emits the currently-pressed keys as
-        bare action keys with a ``None`` value (``dict.fromkeys(pressed, None)``), so
-        those are collected into a single held-key set under ``KEYBOARD_KEYS_FIELD``,
-        rebuilt each tick so releases clear. Special keys arrive as pynput objects and
-        are normalised to their name ("space", ...).
+        Controller-agnostic: every value-carrying key (e.g. locomotion ``remote.*``
+        axes/buttons) is forwarded verbatim into ``controller_input`` and each
+        controller extracts only the keys it understands. The robot deliberately does
+        not enumerate any controller's key schema here.
         """
         with self._controller_action_lock:
-            self.controller_input[KEYBOARD_KEYS_FIELD] = {
-                (k if isinstance(k, str) else getattr(k, "name", str(k)))
-                for k, value in action.items()
-                if value is None
-            }
             for key, value in action.items():
                 if isinstance(key, str) and value is not None:
                     self.controller_input[key] = value

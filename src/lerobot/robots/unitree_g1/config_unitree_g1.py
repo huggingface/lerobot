@@ -83,6 +83,9 @@ class UnitreeG1Config(RobotConfig):
     # Cameras (ZMQ-based remote cameras)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
+    # Compensates for gravity on the unitree's arms using the arm ik solver
+    gravity_compensation: bool = False
+
     # When False, connect() does not start the background controller thread, so a
     # caller can drive the controller synchronously (one decode per fed action),
     # reproducing the deploy's single 50Hz control clock for faithful replay.
