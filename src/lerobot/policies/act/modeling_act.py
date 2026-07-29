@@ -136,8 +136,16 @@ class ACTPolicy(PreTrainedPolicy):
         actions = self.model(batch)[0]
         return actions
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
-        """Run the batch through the model and compute the loss for training or validation."""
+    def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
+        """Run the batch through the model and compute the loss for training or validation.
+
+        Args:
+            batch: Training batch containing observations and actions.
+            reduction: How to reduce the loss. Options:
+                - "mean": Return scalar mean loss (default, backward compatible)
+                - "none": Return per-sample losses of shape (batch_size,) for sample
+                  weighting (e.g. RA-BC — see `lerobot.utils.sample_weighting`)
+        """
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
@@ -146,6 +154,25 @@ class ACTPolicy(PreTrainedPolicy):
 
         abs_err = F.l1_loss(batch[ACTION], actions_hat, reduction="none")
         valid_mask = ~batch["action_is_pad"].unsqueeze(-1)
+
+        if reduction == "none":
+            # Per-sample mean over valid (time, action) entries — the same
+            # normalization as the scalar path, applied per batch element.
+            num_valid = (valid_mask.sum(dim=(1, 2)) * abs_err.shape[-1]).clamp_min(1)
+            l1_loss = (abs_err * valid_mask).sum(dim=(1, 2)) / num_valid
+
+            loss_dict = {"l1_loss": l1_loss.mean().item()}
+            if self.config.use_vae and log_sigma_x2_hat is not None:
+                # Per-element KL: sum over the latent dimension only (the scalar
+                # path additionally means over the batch).
+                kld = (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1)
+                loss_dict["kld_loss"] = kld.mean().item()
+                loss = l1_loss + kld * self.config.kl_weight
+            else:
+                loss = l1_loss
+
+            return loss, loss_dict
+
         num_valid = valid_mask.sum() * abs_err.shape[-1]
         l1_loss = (abs_err * valid_mask).sum() / num_valid.clamp_min(1)
 
