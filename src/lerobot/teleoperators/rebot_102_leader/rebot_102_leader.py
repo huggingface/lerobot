@@ -53,6 +53,9 @@ class RebotArm102Leader(Teleoperator):
         require_package("motorbridge-smart-servo", extra="rebot", import_name="motorbridge_smart_servo")
         super().__init__(config)
         self.config = config
+        zero_directions = [name for name, direction in config.joint_directions.items() if direction == 0]
+        if zero_directions:
+            raise ValueError(f"joint_directions must be nonzero, got 0 for {zero_directions}")
         self.bus: FashionStarServo | None = None
         self.motor_names = list(config.joint_ids.keys())
         self._last_raw_positions: dict[str, float] = {}
@@ -189,9 +192,11 @@ class RebotArm102Leader(Teleoperator):
         for motor_name in self.motor_names:
             range_min, range_max = self.config.joint_ranges[motor_name]
             direction = self.config.joint_directions[motor_name]
-            sign = 1.0 if direction >= 0 else -1.0
+            # Centre the 360 deg unwrap window on the raw angle that maps to the middle of
+            # joint_ranges. joint_ranges is in follower degrees and direction is a signed scale, so
+            # that raw angle is range/direction; range*sign is only right when |direction| is 1.
             unwrapped, k = self._round_to_valid_range(
-                raw_positions[motor_name], range_min * sign, range_max * sign
+                raw_positions[motor_name], range_min / direction, range_max / direction
             )
             position = unwrapped * direction
             if k > 0:
