@@ -650,16 +650,13 @@ class UnitreeG1(Robot):
             self.msg.motor_cmd[joint].kd = self.kd[joint.value]
             self.msg.motor_cmd[joint].q = lowstate.motor_state[joint.value].q
 
-        # Start controller thread if enabled. Skipped when run_controller_thread is
-        # False so a caller can step the controller synchronously (faithful replay).
-        if self.controller is not None and self.config.run_controller_thread:
+        # Start the 50 Hz controller thread (runs the locomotion/whole-body policy and
+        # publishes low commands to DDS).
+        if self.controller is not None:
             self._controller_thread = threading.Thread(target=self._controller_loop, daemon=True)
             self._controller_thread.start()
             fps = int(1.0 / self.controller.control_dt)
             logger.info(f"Controller thread started ({fps}Hz)")
-        elif self.controller is not None:
-            logger.info("Controller thread disabled (run_controller_thread=False); "
-                        "caller must drive controller.run_step synchronously.")
 
     def _send_zero_torque(self) -> None:
         """Send a zero-gain command to make joints passive before shutting down."""
@@ -674,35 +671,6 @@ class UnitreeG1(Robot):
             logger.info("Sent zero-torque command for safe shutdown")
         except Exception as e:
             logger.warning(f"Failed to send zero-torque on disconnect: {e}")
-
-    def _graceful_stop(self) -> None:
-        """Soft shutdown: hold the current pose and ramp joint stiffness (kp) to zero
-        over ``graceful_stop_s`` while keeping damping (kd), then go passive.
-
-        Prevents the robot from collapsing the instant control ends (a bare
-        zero-torque command is kp=kd=0 ≈ free-fall). Must run after the controller
-        loop has stopped so the two aren't publishing at once.
-        """
-        if self.config.graceful_stop_s <= 0:
-            self._send_zero_torque()
-            return
-        with self._lowstate_lock:
-            lowstate = self._lowstate
-        if lowstate is None:
-            self._send_zero_torque()
-            return
-        q_hold = {f"{motor.name}.q": lowstate.motor_state[motor.value].q for motor in G1_29_JointIndex}
-        kp = np.array(self.kp, dtype=np.float32)
-        kd = np.array(self.kd, dtype=np.float32)
-        zeros = np.zeros(29, dtype=np.float32)
-        dt = self.controller.control_dt if self.controller is not None else self.config.control_dt
-        steps = max(1, int(self.config.graceful_stop_s / dt))
-        logger.info("Graceful stop: damping down over %.1fs", self.config.graceful_stop_s)
-        for i in range(steps):
-            ratio = (i + 1) / steps
-            self.publish_lowcmd(q_hold, kp=kp * (1.0 - ratio), kd=kd, tau=zeros)
-            time.sleep(dt)
-        self._send_zero_torque()
 
     def disconnect(self):
         if self._client:
@@ -724,11 +692,12 @@ class UnitreeG1(Robot):
                     "concurrent low commands (fail-safe: joints keep last command until exit)"
                 )
 
-        # Soft, damped settle instead of an instant limp (real robot only; the
-        # subscribe thread is still alive here to supply the current pose). Only ramp
-        # once the controller thread has definitely exited.
+        # Put the robot in passive mode (zero-torque) before stopping the rest (real
+        # robot only; the subscribe thread is still alive here to supply the current
+        # pose). Only publish once the controller thread has definitely exited so the
+        # two aren't publishing at once.
         if not self.config.is_simulation and controller_stopped:
-            self._graceful_stop()
+            self._send_zero_torque()
 
         if self.controller is not None and hasattr(self.controller, "shutdown"):
             self.controller.shutdown()

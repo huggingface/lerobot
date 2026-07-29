@@ -86,11 +86,6 @@ class UnitreeG1Config(RobotConfig):
     # Compensates for gravity on the unitree's arms using the arm ik solver
     gravity_compensation: bool = False
 
-    # When False, connect() does not start the background controller thread, so a
-    # caller can drive the controller synchronously (one decode per fed action),
-    # reproducing the deploy's single 50Hz control clock for faithful replay.
-    run_controller_thread: bool = True
-
     # Token-output VLA interface for the SONIC decoder. When True (and the controller
     # is ``SonicWholeBodyController``), the robot advertises a 64-D latent-token action
     # space (``motion_token.{i}.pos``) and exposes the last commanded token as a 64-D
@@ -103,8 +98,3 @@ class UnitreeG1Config(RobotConfig):
     # Locomotion controller class name, e.g. "GrootLocomotionController",
     # "HolosomaLocomotionController", or "SonicWholeBodyController". None disables it.
     controller: str | None = None
-
-    # On disconnect (e.g. Ctrl-C), seconds to hold the current pose while ramping joint
-    # stiffness (kp) to zero — a soft, damped settle instead of an instant limp /
-    # free-fall. 0 disables it (immediate zero-torque). Real robot only.
-    graceful_stop_s: float = 1.5
