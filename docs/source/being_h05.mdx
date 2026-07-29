@@ -32,7 +32,6 @@ attention, connector, semantic packing, and flow-action modules live in
 - Three ordered camera inputs and natural-language task instructions.
 - Fixed semantic 200D state and action representations with validity masks.
 - The released four-step flow-matching sampler.
-- RoboCasa's 16D observation-state and 12D environment-action convention.
 
 ## Installation Requirements
 
@@ -61,13 +60,13 @@ preprocessor and postprocessor, and model weights.
 Load a converted checkpoint through the standard LeRobot policy path:
 
 ```bash
---policy.path=lerobot/being_h05_robocasa
+--policy.path=lerobot/being_h05_base
 ```
 
-Use the base checkpoint for a new embodiment and the RoboCasa checkpoint for
-the documented Atomic-4 mapping. The packaged preprocessor and postprocessor
-restore the checkpoint's camera order, semantic slots, normalization, and
-inverse action mapping.
+The packaged preprocessor and postprocessor restore the checkpoint's camera
+order, semantic slots, normalization, and inverse action mapping. They consume
+the named state and action fields from the released Being-H0.5 contract; an
+environment-specific vector adapter is not included.
 
 ## Training
 
@@ -80,20 +79,16 @@ During training, the preprocessor:
 4. builds state/action validity masks; and
 5. packs the vision, language, state, and action tokens for the model.
 
-Fine-tune the RoboCasa checkpoint on the matching
-[`pepijn223/atomic_4_annotated`](https://huggingface.co/datasets/pepijn223/atomic_4_annotated)
-dataset with:
-
 ### Training Command Example
 
 ```bash
 lerobot-train \
-  --policy.path=lerobot/being_h05_robocasa \
-  --dataset.repo_id=pepijn223/atomic_4_annotated \
+  --policy.path=lerobot/being_h05_base \
+  --dataset.repo_id=your_name/your_dataset \
   --batch_size=1 \
   --steps=3000 \
-  --output_dir=outputs/train/being_h05_robocasa \
-  --job_name=being_h05_robocasa \
+  --output_dir=outputs/train/being_h05 \
+  --job_name=being_h05 \
   --policy.device=cuda \
   --wandb.enable=true
 ```
@@ -118,19 +113,13 @@ A training dataset must provide:
 
 - the camera features listed in `policy.image_keys`;
 - a natural-language task string for each sample;
-- state and action chunks matching the selected checkpoint's convention; and
+- the named state fields expected by the checkpoint;
+- 12D action chunks ordered as EEF translation, EEF rotation, gripper, base
+  motion, and control mode; and
 - at least `policy.chunk_size` action steps per training sample.
 
-The RoboCasa checkpoint sets `atomic_4_adapter=true`. Its expected inputs are:
-
-| Feature |             Shape | Layout                                                            |
-| ------- | ----------------: | ----------------------------------------------------------------- |
-| State   |                16 | EEF position and quaternion, base pose, two gripper joints        |
-| Action  |                12 | EEF translation and rotation, gripper, base command, control mode |
-| Images  | 3 × 3 × 224 × 224 | Left agent view, right agent view, wrist view                     |
-
-For another embodiment, map each named state and action field into the semantic
-slots used by the checkpoint. Missing modalities remain masked instead of
+Map a dataset's native robot representation to these named fields before
+training or inference. Missing semantic modalities remain masked instead of
 being treated as meaningful zero-valued inputs.
 
 ## Evaluation and Inference
@@ -140,7 +129,7 @@ Load a checkpoint through the standard LeRobot policy interface:
 ```python
 from lerobot.policies.being_h05.modeling_being_h05 import BeingH05Policy
 
-policy = BeingH05Policy.from_pretrained("lerobot/being_h05_robocasa")
+policy = BeingH05Policy.from_pretrained("lerobot/being_h05_base")
 policy.to("cuda").eval()
 ```
 
@@ -148,15 +137,15 @@ The policy predicts 16 actions at a time and executes the first
 `n_action_steps` actions before sampling another chunk. The released
 checkpoints use four flow-matching inference steps.
 
-Evaluate a RoboCasa-compatible checkpoint through the standard evaluation
-entrypoint:
+Evaluate a checkpoint after providing an environment adapter that emits the
+required named fields:
 
 ```bash
 lerobot-eval \
-  --policy.path=lerobot/being_h05_robocasa \
+  --policy.path=lerobot/being_h05_base \
   --policy.device=cuda \
-  --env.type=robocasa \
-  --env.task=CloseDrawer \
+  --env.type=<environment> \
+  --env.task=<task> \
   --eval.batch_size=1 \
   --eval.n_episodes=10
 ```
@@ -166,15 +155,14 @@ using a custom evaluation loop.
 
 ## Key Configuration Parameters
 
-| Option                | Default | Description                                   |
-| --------------------- | ------: | --------------------------------------------- |
-| `chunk_size`          |      16 | Number of actions generated per chunk         |
-| `n_action_steps`      |       8 | Actions executed before replanning            |
-| `num_inference_steps` |       4 | Flow-matching sampling steps                  |
-| `image_size`          |     224 | Required input image size                     |
-| `atomic_4_adapter`    | `false` | Enables the released RoboCasa 16D/12D mapping |
+| Option                | Default | Description                           |
+| --------------------- | ------: | ------------------------------------- |
+| `chunk_size`          |      16 | Number of actions generated per chunk |
+| `n_action_steps`      |       8 | Actions executed before replanning    |
+| `num_inference_steps` |       4 | Flow-matching sampling steps          |
+| `image_size`          |     224 | Required input image size             |
 
-## RoboCasa data convention
+## Semantic data convention
 
 Being-H0.5 uses named locations inside its fixed 200D state and action spaces:
 
@@ -187,16 +175,8 @@ Being-H0.5 uses named locations inside its fixed 200D state and action spaces:
 | Action gripper                     | `18:19`           |
 | Action base command / control mode | `70:74` / `74:75` |
 
-Only gripper and control mode are binarized by the released RoboCasa
-processor. EEF and mobile-base actions retain their original values.
-
-RoboCasa 1.0 renamed two checkpoint-era task identifiers:
-
-- `CoffeePressButton` became `StartCoffeeMachine`.
-- `PnPCounterToSink` became `PickPlaceCounterToSink`.
-
-Resolve these aliases before constructing the environment while keeping the
-environment's task instruction unchanged.
+Only gripper and control mode are binarized by the released processor. EEF and
+mobile-base actions retain their original values.
 
 ## References
 

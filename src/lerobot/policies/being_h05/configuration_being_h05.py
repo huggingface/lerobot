@@ -38,7 +38,6 @@ class BeingH05Config(PreTrainedConfig):
         "in the next {k} steps?"
     )
     metadata: dict = field(default_factory=dict)
-    atomic_4_adapter: bool = False
     optimizer_lr: float = 2e-5
     optimizer_weight_decay: float = 0.0
     scheduler_warmup_steps: int = 1000

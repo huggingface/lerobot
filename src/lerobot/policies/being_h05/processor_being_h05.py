@@ -19,7 +19,6 @@ from lerobot.processor import (
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
-    OBS_STATE,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
@@ -40,116 +39,6 @@ ACTION_SLOTS = {
     "base_motion": (70, 74),
     "control_mode": (74, 75),
 }
-
-
-def _quat_xyzw_to_matrix(q: torch.Tensor) -> torch.Tensor:
-    q = q / q.norm(dim=-1, keepdim=True).clamp_min(torch.finfo(q.dtype).eps)
-    x, y, z, w = q.unbind(-1)
-    return torch.stack(
-        [
-            1 - 2 * (y * y + z * z),
-            2 * (x * y - z * w),
-            2 * (x * z + y * w),
-            2 * (x * y + z * w),
-            1 - 2 * (x * x + z * z),
-            2 * (y * z - x * w),
-            2 * (x * z - y * w),
-            2 * (y * z + x * w),
-            1 - 2 * (x * x + y * y),
-        ],
-        dim=-1,
-    ).reshape(q.shape[:-1] + (3, 3))
-
-
-def _matrix_to_axis_angle(matrix: torch.Tensor) -> torch.Tensor:
-    batch_dim = matrix.shape[:-2]
-    m00, m01, m02, m10, m11, m12, m20, m21, m22 = matrix.reshape(batch_dim + (9,)).unbind(-1)
-    positive = torch.stack(
-        [
-            1 + m00 + m11 + m22,
-            1 + m00 - m11 - m22,
-            1 - m00 + m11 - m22,
-            1 - m00 - m11 + m22,
-        ],
-        dim=-1,
-    )
-    safe = torch.where(positive > 0, positive, 1)
-    q_abs = torch.where(positive > 0, safe.sqrt(), 0)
-    quat_by_component = torch.stack(
-        [
-            torch.stack([q_abs[..., 0].square(), m21 - m12, m02 - m20, m10 - m01], dim=-1),
-            torch.stack([m21 - m12, q_abs[..., 1].square(), m10 + m01, m02 + m20], dim=-1),
-            torch.stack([m02 - m20, m10 + m01, q_abs[..., 2].square(), m12 + m21], dim=-1),
-            torch.stack([m10 - m01, m20 + m02, m21 + m12, q_abs[..., 3].square()], dim=-1),
-        ],
-        dim=-2,
-    )
-    floor = q_abs.new_tensor(0.1)
-    candidates = quat_by_component / (2 * q_abs[..., None].max(floor))
-    index = q_abs.argmax(dim=-1, keepdim=True).unsqueeze(-1)
-    quaternion = torch.gather(candidates, -2, index.expand(*batch_dim, 1, 4)).squeeze(-2)
-    quaternion = torch.where(quaternion[..., :1] < 0, -quaternion, quaternion)
-    vector_norm = quaternion[..., 1:].norm(dim=-1, keepdim=True)
-    half_angle = torch.atan2(vector_norm, quaternion[..., :1])
-    sin_half_over_angle = 0.5 * torch.sinc(half_angle / torch.pi)
-    return quaternion[..., 1:] / sin_half_over_angle
-
-
-def _quat_xyzw_to_axis_angle(q: torch.Tensor) -> torch.Tensor:
-    # This is SciPy Rotation.from_quat(q).as_rotvec() written directly so the
-    # processor remains usable without importing an optional dependency.
-    work = q.double()
-    work = work / work.norm(dim=-1, keepdim=True).clamp_min(torch.finfo(work.dtype).eps)
-    scalar = work[..., 3:4]
-    vector = work[..., :3]
-    # A rotation at pi has scalar == 0, so q and -q are equally canonical.
-    # PyTorch3D's matrix path selects the candidate whose dominant quaternion
-    # component is positive; reproduce that tie-break to avoid a 2*pi jump.
-    dominant = vector.gather(-1, vector.abs().argmax(dim=-1, keepdim=True))
-    flip = (scalar < 0) | ((scalar.abs() <= 1e-12) & (dominant < 0))
-    work = torch.where(flip, -work, work)
-    vector = work[..., :3]
-    vector_norm = vector.norm(dim=-1, keepdim=True)
-    angle = 2 * torch.atan2(vector_norm, work[..., 3:4])
-    scale = torch.where(vector_norm > 1e-12, angle / vector_norm, 2 / work[..., 3:4])
-    return (vector * scale).to(q.dtype)
-
-
-def _author_base_quat_to_axis_angle(q_xyzw: torch.Tensor) -> torch.Tensor:
-    """Match the audited author's PyTorch3D conversion, including its ordering.
-
-    RoboSuite emits xyzw, while the author passes the array directly to
-    PyTorch3D's wxyz API. This ordering is therefore part of the released
-    checkpoint contract even though it is not the physical base rotation.
-    """
-    q_as_xyzw = torch.cat([q_xyzw[..., 1:4], q_xyzw[..., 0:1]], dim=-1)
-    return _matrix_to_axis_angle(_quat_xyzw_to_matrix(q_as_xyzw))
-
-
-def atomic4_to_named(state: torch.Tensor, action: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
-    """Map atomic_4 vectors to the semantics actually consumed by the checkpoint."""
-    if state.shape[-1] != 16:
-        raise ValueError(f"atomic_4 state must be 16D, got {state.shape[-1]}")
-    named = {
-        "eef_position": state[..., 0:3],
-        "eef_rotation": _quat_xyzw_to_axis_angle(state[..., 3:7]),
-        "gripper_qpos": state[..., 14:16],
-        "base_position": state[..., 7:10],
-        "base_rotation": _author_base_quat_to_axis_angle(state[..., 10:14]),
-    }
-    if action is not None:
-        if action.shape[-1] != 12:
-            raise ValueError(f"atomic_4 action must be 12D, got {action.shape[-1]}")
-        named.update(
-            {
-                "action.eef_position": action[..., 0:3],
-                "action.eef_rotation": action[..., 3:6],
-                "action.gripper_position": (1 - action[..., 6:7]) / 2,
-                "action.base_motion": action[..., 7:11],
-                "action.control_mode": (action[..., 11:12] + 1) / 2,
-            }
-        )
-    return named
 
 
 def pack_named(named: dict[str, torch.Tensor], slots: dict[str, tuple[int, int]], dim: int = 200):
@@ -210,19 +99,6 @@ def unpack_action(packed: torch.Tensor) -> dict[str, torch.Tensor]:
     return {key: packed[..., start:end] for key, (start, end) in ACTION_SLOTS.items()}
 
 
-def named_to_atomic4_action(named: dict[str, torch.Tensor]) -> torch.Tensor:
-    return torch.cat(
-        [
-            named["eef_position"],
-            named["eef_rotation"],
-            1 - 2 * (named["gripper_position"] > 0.5).to(named["gripper_position"].dtype),
-            named["base_motion"],
-            2 * (named["control_mode"] > 0.5).to(named["control_mode"].dtype) - 1,
-        ],
-        dim=-1,
-    )
-
-
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
@@ -233,7 +109,6 @@ class BeingH05SemanticPackStep(ProcessorStep):
     image_keys: list[str]
     prompt_template: str
     chunk_size: int
-    atomic_4_adapter: bool = False
     state_slots: dict[str, tuple[int, int]] = field(default_factory=lambda: dict(STATE_SLOTS))
     action_slots: dict[str, tuple[int, int]] = field(default_factory=lambda: dict(ACTION_SLOTS))
 
@@ -242,7 +117,6 @@ class BeingH05SemanticPackStep(ProcessorStep):
             "image_keys": self.image_keys,
             "prompt_template": self.prompt_template,
             "chunk_size": self.chunk_size,
-            "atomic_4_adapter": self.atomic_4_adapter,
             "state_slots": self.state_slots,
             "action_slots": self.action_slots,
         }
@@ -263,26 +137,21 @@ class BeingH05SemanticPackStep(ProcessorStep):
         ]
 
         action = transition.get(TransitionKey.ACTION)
-        if self.atomic_4_adapter:
-            if OBS_STATE not in observation:
-                raise ValueError("atomic_4 mapping requires observation.state.")
-            named = atomic4_to_named(observation[OBS_STATE], action)
-        else:
-            named = {}
-            for semantic in self.state_slots:
-                key = f"observation.state.{semantic}"
-                if key in observation:
-                    named[semantic] = observation[key]
-            if action is not None and action.shape[-1] == 12:
-                named.update(
-                    {
-                        "action.eef_position": action[..., 0:3],
-                        "action.eef_rotation": action[..., 3:6],
-                        "action.gripper_position": action[..., 6:7],
-                        "action.base_motion": action[..., 7:11],
-                        "action.control_mode": action[..., 11:12],
-                    }
-                )
+        named = {}
+        for semantic in self.state_slots:
+            key = f"observation.state.{semantic}"
+            if key in observation:
+                named[semantic] = observation[key]
+        if action is not None and action.shape[-1] == 12:
+            named.update(
+                {
+                    "action.eef_position": action[..., 0:3],
+                    "action.eef_rotation": action[..., 3:6],
+                    "action.gripper_position": action[..., 6:7],
+                    "action.base_motion": action[..., 7:11],
+                    "action.control_mode": action[..., 11:12],
+                }
+            )
 
         state_values = {key: value for key, value in named.items() if not key.startswith("action.")}
         if not state_values:
@@ -352,10 +221,8 @@ class BeingH05SemanticPackStep(ProcessorStep):
 @dataclass
 @ProcessorStepRegistry.register(name="being_h05_semantic_unpack")
 class BeingH05SemanticUnpackStep(ProcessorStep):
-    atomic_4_adapter: bool = False
-
     def get_config(self) -> dict[str, Any]:
-        return {"atomic_4_adapter": self.atomic_4_adapter}
+        return {}
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         action = transition.get(TransitionKey.ACTION)
@@ -364,11 +231,6 @@ class BeingH05SemanticUnpackStep(ProcessorStep):
         named = unpack_action(action)
         gripper = (named["gripper_position"] > 0.5).to(action.dtype)
         control_mode = (named["control_mode"] > 0.5).to(action.dtype)
-        if self.atomic_4_adapter:
-            # The published RoboCasa client inverts gripper convention but not
-            # control mode before passing commands to PandaOmron.
-            gripper = 1 - 2 * gripper
-            control_mode = 2 * control_mode - 1
         transition[TransitionKey.ACTION] = torch.cat(
             [
                 named["eef_position"],
@@ -395,7 +257,6 @@ def make_being_h05_pre_post_processors(
         image_keys=config.image_keys,
         prompt_template=config.prompt_template,
         chunk_size=config.chunk_size,
-        atomic_4_adapter=config.atomic_4_adapter,
     )
     pre = PolicyProcessorPipeline(
         steps=[AddBatchDimensionProcessorStep(), semantic_step, DeviceProcessorStep(config.device)],
@@ -403,7 +264,7 @@ def make_being_h05_pre_post_processors(
     )
     post = PolicyProcessorPipeline[PolicyAction, PolicyAction](
         steps=[
-            BeingH05SemanticUnpackStep(atomic_4_adapter=config.atomic_4_adapter),
+            BeingH05SemanticUnpackStep(),
             DeviceProcessorStep("cpu"),
         ],
         name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
