@@ -5,7 +5,7 @@ learning** from [BeingBeyond](https://github.com/BeingBeyond/Being-H). The
 LeRobot integration provides standard policy, processor, training, checkpoint,
 and action-selection interfaces for the released base and RoboCasa models.
 
-## Model overview
+## Model Overview
 
 Being-H0.5 combines visual observations, robot state, and a natural-language
 task to predict a chunk of robot actions with flow matching.
@@ -24,7 +24,7 @@ tower reuse Transformers components. The checkpoint-specific packed MoT
 attention, connector, semantic packing, and flow-action modules live in
 `lerobot.policies.being_h05`.
 
-### What the LeRobot integration supports
+### What the LeRobot Integration Covers
 
 - Loading the released base and RoboCasa checkpoints from the Hub.
 - Training and fine-tuning through `lerobot-train`.
@@ -34,7 +34,7 @@ attention, connector, semantic packing, and flow-action modules live in
 - The released four-step flow-matching sampler.
 - RoboCasa's 16D observation-state and 12D environment-action convention.
 
-## Installation
+## Installation Requirements
 
 Install LeRobot by following the [installation guide](./installation), then
 install the Being-H0.5 extra:
@@ -56,7 +56,20 @@ required.
 The checkpoints include the policy configuration, tokenizer, serialized
 preprocessor and postprocessor, and model weights.
 
-## Fine-tuning
+## Usage
+
+Load a converted checkpoint through the standard LeRobot policy path:
+
+```bash
+--policy.path=lerobot/being_h05_robocasa
+```
+
+Use the base checkpoint for a new embodiment and the RoboCasa checkpoint for
+the documented Atomic-4 mapping. The packaged preprocessor and postprocessor
+restore the checkpoint's camera order, semantic slots, normalization, and
+inverse action mapping.
+
+## Training
 
 `BeingH05Policy.forward` implements the released mixture-of-flow objective.
 During training, the preprocessor:
@@ -70,6 +83,8 @@ During training, the preprocessor:
 Fine-tune the RoboCasa checkpoint on the matching
 [`pepijn223/atomic_4_annotated`](https://huggingface.co/datasets/pepijn223/atomic_4_annotated)
 dataset with:
+
+### Training Command Example
 
 ```bash
 lerobot-train \
@@ -97,7 +112,7 @@ decoder-only training smoke test fits on an RTX 5090.
 
 </Tip>
 
-### Dataset requirements
+## Data Requirements
 
 A training dataset must provide:
 
@@ -118,7 +133,7 @@ For another embodiment, map each named state and action field into the semantic
 slots used by the checkpoint. Missing modalities remain masked instead of
 being treated as meaningful zero-valued inputs.
 
-## Inference
+## Evaluation and Inference
 
 Load a checkpoint through the standard LeRobot policy interface:
 
@@ -133,7 +148,23 @@ The policy predicts 16 actions at a time and executes the first
 `n_action_steps` actions before sampling another chunk. The released
 checkpoints use four flow-matching inference steps.
 
-### Key configuration options
+Evaluate a RoboCasa-compatible checkpoint through the standard evaluation
+entrypoint:
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/being_h05_robocasa \
+  --policy.device=cuda \
+  --env.type=robocasa \
+  --env.task=CloseDrawer \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+Reset the policy and its processor pipelines at every episode boundary when
+using a custom evaluation loop.
+
+## Key Configuration Parameters
 
 | Option                | Default | Description                                   |
 | --------------------- | ------: | --------------------------------------------- |
@@ -167,7 +198,7 @@ RoboCasa 1.0 renamed two checkpoint-era task identifiers:
 Resolve these aliases before constructing the environment while keeping the
 environment's task instruction unchanged.
 
-## Validation results
+## Performance and Validation Results
 
 The native LeRobot checkpoints were compared with the pinned author
 implementation in BF16 on an NVIDIA RTX 5090.
@@ -203,6 +234,12 @@ were observed.
 | RoboCasa            | `be22d659b02db8f6d7f3a3c3edc742934fdcbaae` |
 | RoboSuite           | `aaa8b9b214ce8e77e82926d677b4d61d55e577ab` |
 | MuJoCo              | `3.3.1`                                    |
+
+## References
+
+- [Being-H repository](https://github.com/BeingBeyond/Being-H)
+- [Being-H0.5 base checkpoint](https://huggingface.co/lerobot/being_h05_base)
+- [Being-H0.5 RoboCasa checkpoint](https://huggingface.co/lerobot/being_h05_robocasa)
 
 ## License
 
