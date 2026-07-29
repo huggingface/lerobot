@@ -18,6 +18,7 @@ from lerobot.utils.import_utils import require_package
 # guard the optional dependency here so importing this package fails loudly if it's missing.
 require_package("datasets", extra="dataset")
 
+from .annotate import submit_annotate_to_hf
 from .hf import submit_to_hf
 
-__all__ = ["submit_to_hf"]
+__all__ = ["submit_annotate_to_hf", "submit_to_hf"]

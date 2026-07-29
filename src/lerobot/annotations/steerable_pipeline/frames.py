@@ -413,7 +413,16 @@ def _draw_timestamp_badge(image: PIL.Image.Image, timestamp: float) -> PIL.Image
 
     result = image.copy()
     draw = ImageDraw.Draw(result)
-    font = ImageFont.load_default()
+    # Scale the timestamp to the tile so it stays legible after the model
+    # downsamples the full sheet into 768px tiles — a tiny bitmap font blurs
+    # at contact-sheet resolution and the VLM can no longer read the exact
+    # source time, which is what the boundary score depends on. ``size=`` is
+    # supported by Pillow's bitmap default since 10.1; fall back otherwise.
+    badge_px = max(14, round(image.height * 0.12))
+    try:
+        font = ImageFont.load_default(size=badge_px)
+    except TypeError:
+        font = ImageFont.load_default()
     label = f"{timestamp:06.2f}s"
     left, top, right, bottom = draw.textbbox((0, 0), label, font=font)
     text_w, text_h = right - left, bottom - top
