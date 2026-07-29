@@ -26,6 +26,7 @@ from lerobot.processor import (
     TransitionKey,
     create_transition,
     to_relative_actions,
+    to_relative_ee_actions,
 )
 
 
@@ -55,4 +56,30 @@ def reanchor_relative_rtc_prefix(
     if normalizer_step is not None:
         transition = normalizer_step(transition)
 
+    return transition[TransitionKey.ACTION].to(policy_device)
+
+
+def reanchor_relative_ee_rtc_prefix(
+    prev_actions_absolute: torch.Tensor,
+    current_state: torch.Tensor,
+    normalizer_step: NormalizerProcessorStep | None,
+    policy_device: torch.device | str,
+) -> torch.Tensor:
+    """Re-express absolute EE leftovers in the current chunk reference frame."""
+    actions = prev_actions_absolute.detach().cpu()
+    state = current_state.detach().cpu()
+    if actions.ndim not in (2, 3) or actions.shape[-1] != 7:
+        raise ValueError(
+            f"Relative EE RTC leftovers must have shape [T, 7] or [B, T, 7], got {tuple(actions.shape)}"
+        )
+    if actions.ndim == 2 and state.ndim == 2:
+        if state.shape[0] != 1:
+            raise ValueError(
+                f"Unbatched relative EE leftovers require exactly one current state, got {tuple(state.shape)}"
+            )
+        state = state[0]
+
+    transition = create_transition(action=to_relative_ee_actions(actions, state))
+    if normalizer_step is not None:
+        transition = normalizer_step(transition)
     return transition[TransitionKey.ACTION].to(policy_device)

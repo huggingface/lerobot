@@ -29,6 +29,7 @@ from lerobot.processor.relative_action_processor import (
     RelativeActionsProcessorStep,
     to_relative_actions,
 )
+from lerobot.processor.relative_ee_processor import to_relative_ee_actions
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -54,6 +55,7 @@ RTCProcessor = _rtc_mod.RTCProcessor
 
 _rtc_relative_mod = _import_rtc_module("lerobot.policies.rtc.relative", "relative.py")
 reanchor_relative_rtc_prefix = _rtc_relative_mod.reanchor_relative_rtc_prefix
+reanchor_relative_ee_rtc_prefix = _rtc_relative_mod.reanchor_relative_ee_rtc_prefix
 
 ACTION_DIM = 6
 CHUNK_SIZE = 50
@@ -710,3 +712,37 @@ class TestMultiChunkConsistency:
         )
 
         assert result.shape == x_t.shape
+
+
+def test_relative_ee_rtc_prefix_is_reanchored_from_absolute_leftovers():
+    current_state = torch.tensor([[1.0, 2.0, 3.0, 0.1, -0.2, 0.3, 0.5]])
+    absolute_actions = torch.tensor(
+        [
+            [1.1, 2.0, 3.0, 0.2, -0.1, 0.3, 0.1],
+            [1.2, 2.1, 3.0, 0.3, 0.0, 0.2, 0.9],
+        ]
+    )
+
+    actual = reanchor_relative_ee_rtc_prefix(
+        prev_actions_absolute=absolute_actions,
+        current_state=current_state,
+        normalizer_step=None,
+        policy_device="cpu",
+    )
+
+    torch.testing.assert_close(actual, to_relative_ee_actions(absolute_actions, current_state[0]))
+
+
+def test_action_queue_leftover_snapshot_is_consistent():
+    queue = ActionQueue(_make_rtc_config())
+    original = torch.randn(5, 10)
+    processed = torch.randn(5, 7)
+    queue.merge(original, processed, real_delay=0)
+    queue.get()
+    queue.get()
+
+    index, original_leftover, processed_leftover = queue.get_left_over_snapshot()
+
+    assert index == 2
+    torch.testing.assert_close(original_leftover, original[2:])
+    torch.testing.assert_close(processed_leftover, processed[2:])

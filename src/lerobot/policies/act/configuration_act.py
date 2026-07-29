@@ -85,6 +85,9 @@ class ACTConfig(PreTrainedConfig):
     chunk_size: int = 100
     n_action_steps: int = 100
 
+    # Train on fixed-reference relative end-effector action chunks.
+    use_relative_ee: bool = False
+
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,
@@ -131,6 +134,10 @@ class ACTConfig(PreTrainedConfig):
         super().__post_init__()
 
         """Input validation (not exhaustive)."""
+        if self.use_relative_ee:
+            self.normalization_mapping["STATE"] = NormalizationMode.MIN_MAX
+            self.normalization_mapping["ACTION"] = NormalizationMode.MIN_MAX
+
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
@@ -169,6 +176,8 @@ class ACTConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
+        if self.use_relative_ee:
+            return [-1, *range(self.chunk_size)]
         return list(range(self.chunk_size))
 
     @property

@@ -96,6 +96,21 @@ from .relative_action_processor import (
     to_absolute_actions,
     to_relative_actions,
 )
+from .relative_ee_processor import (
+    AbsoluteEEActionsStep,
+    RelativeEEActionsStep,
+    RelativeEEDeriveStateStep,
+    RelativeEEStateStep,
+    absolute_ee_to_relative,
+    axis_angle_to_matrix,
+    matrix_to_axis_angle,
+    matrix_to_rotation_6d,
+    relative_ee_to_absolute,
+    rotation_6d_to_matrix,
+    to_absolute_ee_actions,
+    to_relative_ee_actions,
+    to_relative_ee_state,
+)
 from .rename_processor import RenameObservationsProcessorStep, rename_stats
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 
@@ -142,7 +157,11 @@ __all__ = [
     "make_default_robot_observation_processor",
     "make_policy_processor_pipelines",
     "AbsoluteActionsProcessorStep",
+    "AbsoluteEEActionsStep",
     "RelativeActionsProcessorStep",
+    "RelativeEEActionsStep",
+    "RelativeEEDeriveStateStep",
+    "RelativeEEStateStep",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
     "NewLineTaskProcessorStep",
@@ -176,8 +195,17 @@ __all__ = [
     "transition_to_batch",
     "TransitionKey",
     "TruncatedProcessorStep",
+    "absolute_ee_to_relative",
+    "axis_angle_to_matrix",
+    "matrix_to_axis_angle",
+    "matrix_to_rotation_6d",
+    "relative_ee_to_absolute",
+    "rotation_6d_to_matrix",
     "to_absolute_actions",
+    "to_absolute_ee_actions",
     "to_relative_actions",
+    "to_relative_ee_actions",
+    "to_relative_ee_state",
     "UnnormalizerProcessorStep",
     "VanillaObservationProcessorStep",
 ]

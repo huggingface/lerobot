@@ -144,6 +144,13 @@ class ActionQueue:
                 return None
             return self.queue[self.last_index :].clone()
 
+    def get_left_over_snapshot(self) -> tuple[int, Tensor | None, Tensor | None]:
+        """Return an atomic snapshot of the index and both leftover queues."""
+        with self.lock:
+            original = None if self.original_queue is None else self.original_queue[self.last_index :].clone()
+            processed = None if self.queue is None else self.queue[self.last_index :].clone()
+            return self.last_index, original, processed
+
     def merge(
         self,
         original_actions: Tensor,

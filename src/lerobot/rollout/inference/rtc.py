@@ -33,13 +33,19 @@ from typing import Any
 import torch
 
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.rtc import ActionQueue, LatencyTracker, reanchor_relative_rtc_prefix
+from lerobot.policies.rtc import (
+    ActionQueue,
+    LatencyTracker,
+    reanchor_relative_ee_rtc_prefix,
+    reanchor_relative_rtc_prefix,
+)
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.utils import prepare_observation_for_inference
 from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
+    RelativeEEActionsStep,
 )
 from lerobot.utils.feature_utils import build_dataset_frame
 
@@ -161,6 +167,10 @@ class RTCInferenceEngine(InferenceEngine):
             (s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep) and s.enabled),
             None,
         )
+        self._relative_ee_step = next(
+            (s for s in preprocessor.steps if isinstance(s, RelativeEEActionsStep)),
+            None,
+        )
         self._normalizer_step = next(
             (s for s in preprocessor.steps if isinstance(s, NormalizerProcessorStep)),
             None,
@@ -175,6 +185,8 @@ class RTCInferenceEngine(InferenceEngine):
                         k for k in robot_wrapper.action_features if k.endswith(".pos")
                     ]
             logger.info("Relative actions enabled: RTC prefix will be re-anchored")
+        if self._relative_ee_step is not None:
+            logger.info("Relative EE enabled: RTC prefix will be re-anchored in SE(3)")
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -288,8 +300,7 @@ class RTCInferenceEngine(InferenceEngine):
                 if queue.qsize() <= self._rtc_queue_threshold:
                     try:
                         current_time = time.perf_counter()
-                        idx_before = queue.get_action_index()
-                        prev_actions = queue.get_left_over()
+                        idx_before, prev_actions, prev_abs = queue.get_left_over_snapshot()
 
                         latency = latency_tracker.max()
                         delay = math.ceil(latency / time_per_chunk) if latency else 0
@@ -302,13 +313,26 @@ class RTCInferenceEngine(InferenceEngine):
 
                         preprocessed = self._preprocessor(obs_batch)
 
-                        if prev_actions is not None and self._relative_step is not None:
-                            # Rebase against the raw cached state so the leftover tail stays in
-                            # the training-time coordinate frame.
-                            raw_state = self._relative_step.get_cached_state()
-                            if raw_state is not None:
-                                prev_abs = queue.get_processed_left_over()
-                                if prev_abs is not None and prev_abs.numel() > 0:
+                        if prev_actions is not None and self._rtc_config.enabled:
+                            if self._relative_ee_step is not None:
+                                raw_state = self._relative_ee_step.get_cached_state()
+                                if raw_state is None:
+                                    raise RuntimeError(
+                                        "Relative EE RTC re-anchoring requires a cached current EE state"
+                                    )
+                                if prev_abs is None or prev_abs.numel() == 0:
+                                    raise RuntimeError(
+                                        "Relative EE RTC re-anchoring requires absolute leftovers"
+                                    )
+                                prev_actions = reanchor_relative_ee_rtc_prefix(
+                                    prev_actions_absolute=prev_abs,
+                                    current_state=raw_state,
+                                    normalizer_step=self._normalizer_step,
+                                    policy_device=policy_device,
+                                )
+                            elif self._relative_step is not None:
+                                raw_state = self._relative_step.get_cached_state()
+                                if raw_state is not None and prev_abs is not None and prev_abs.numel() > 0:
                                     prev_actions = reanchor_relative_rtc_prefix(
                                         prev_actions_absolute=prev_abs,
                                         current_state=raw_state,

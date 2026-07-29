@@ -25,11 +25,15 @@ from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
+    AbsoluteEEActionsStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
     RelativeActionsProcessorStep,
+    RelativeEEActionsStep,
+    RelativeEEDeriveStateStep,
+    RelativeEEStateStep,
     TokenizerProcessorStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
@@ -120,11 +124,22 @@ def make_pi05_pre_post_processors(
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
 
-    relative_step = RelativeActionsProcessorStep(
-        enabled=config.use_relative_actions,
-        exclude_joints=getattr(config, "relative_exclude_joints", []),
-        action_names=getattr(config, "action_feature_names", None),
-    )
+    if config.use_relative_ee:
+        relative_step = RelativeEEActionsStep()
+        derive_state_step = RelativeEEDeriveStateStep()
+        relative_state_step = RelativeEEStateStep()
+        absolute_step = AbsoluteEEActionsStep(relative_step)
+    else:
+        relative_step = RelativeActionsProcessorStep(
+            enabled=config.use_relative_actions,
+            exclude_joints=getattr(config, "relative_exclude_joints", []),
+            action_names=getattr(config, "action_feature_names", None),
+        )
+        derive_state_step = None
+        relative_state_step = None
+        absolute_step = AbsoluteActionsProcessorStep(
+            enabled=config.use_relative_actions, relative_step=relative_step
+        )
 
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
@@ -132,7 +147,9 @@ def make_pi05_pre_post_processors(
     input_steps: list[ProcessorStep] = [
         steps.rename_observations,  # To mimic the same processor as pretrained one
         steps.add_batch_dim,
+        *([derive_state_step] if derive_state_step is not None else []),
         relative_step,
+        *([relative_state_step] if relative_state_step is not None else []),
         # NOTE: NormalizerProcessorStep MUST come before Pi05PrepareStateTokenizerProcessorStep
         # because the tokenizer step expects normalized state in [-1, 1] range for discretization
         steps.normalize,
@@ -148,7 +165,7 @@ def make_pi05_pre_post_processors(
 
     output_steps: list[ProcessorStep] = [
         steps.unnormalize,
-        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
+        absolute_step,
         steps.to_cpu,
     ]
 

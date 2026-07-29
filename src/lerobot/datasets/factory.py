@@ -28,6 +28,7 @@ from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_PREFIX, REWARD
 from .dataset_metadata import LeRobotDatasetMetadata
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
+from .relative_ee_stats import compute_relative_ee_stats
 from .streaming_dataset import StreamingLeRobotDataset
 
 
@@ -66,7 +67,32 @@ def resolve_delta_timestamps(
     return delta_timestamps
 
 
-def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
+def _validate_relative_ee_dataset(cfg: TrainPipelineConfig, ds_meta: LeRobotDatasetMetadata) -> None:
+    if cfg.trainable_config.type not in {"act", "smolvla", "pi05"}:
+        raise ValueError("Relative EE training is supported for ACT, SmolVLA, and π0.5")
+    if cfg.dataset.streaming:
+        raise ValueError("Relative EE statistics require a non-streaming dataset")
+    action_feature = ds_meta.features.get(ACTION)
+    action_shape = None if action_feature is None else tuple(action_feature["shape"])
+    if action_shape != (7,):
+        raise ValueError(
+            f"Relative EE requires raw action shape [7] with [xyz, axis-angle, gripper], got {action_shape}"
+        )
+
+
+def _prepare_relative_ee_stats(
+    dataset: LeRobotDataset,
+    chunk_size: int,
+    stats: dict | None = None,
+) -> dict:
+    derived_stats = compute_relative_ee_stats(dataset.hf_dataset, chunk_size) if stats is None else stats
+    dataset.meta.stats.update(derived_stats)
+    return derived_stats
+
+
+def make_dataset(
+    cfg: TrainPipelineConfig, *, prepare_relative_ee: bool = True
+) -> LeRobotDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
     Args:
@@ -82,10 +108,13 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
 
+    use_relative_ee = bool(getattr(cfg.trainable_config, "use_relative_ee", False))
     if isinstance(cfg.dataset.repo_id, str):
         ds_meta = LeRobotDatasetMetadata(
             cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
         )
+        if use_relative_ee:
+            _validate_relative_ee_dataset(cfg, ds_meta)
         delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta)
         if not cfg.dataset.streaming:
             dataset = LeRobotDataset(
@@ -133,6 +162,9 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             for stats_type, stats in IMAGENET_STATS.items():
                 dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
 
+    if use_relative_ee and prepare_relative_ee:
+        _prepare_relative_ee_stats(dataset, cfg.trainable_config.chunk_size)
+
     return dataset
 
 
@@ -144,10 +176,10 @@ def make_train_eval_datasets(
     The last ceil(n_episodes * eval_split) episodes per task are held out for evaluation.
     If eval_split == 0.0, returns (full_dataset, None).
     """
-    full_dataset = make_dataset(cfg)
-
     if cfg.dataset.eval_split == 0.0:
-        return full_dataset, None
+        return make_dataset(cfg), None
+
+    full_dataset = make_dataset(cfg, prepare_relative_ee=False)
 
     base_episodes = (
         full_dataset.episodes if full_dataset.episodes is not None else list(range(full_dataset.num_episodes))
@@ -210,5 +242,9 @@ def make_train_eval_datasets(
             for key in ds.meta.camera_keys:
                 for stats_type, stats in IMAGENET_STATS.items():
                     ds.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+
+    if getattr(cfg.trainable_config, "use_relative_ee", False):
+        derived_stats = _prepare_relative_ee_stats(train_dataset, cfg.trainable_config.chunk_size)
+        _prepare_relative_ee_stats(eval_dataset, cfg.trainable_config.chunk_size, derived_stats)
 
     return train_dataset, eval_dataset

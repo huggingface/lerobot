@@ -56,6 +56,9 @@ class PI05Config(PreTrainedConfig):
     # Populated at runtime from dataset metadata by make_policy.
     action_feature_names: list[str] | None = None
 
+    # Train on fixed-reference relative end-effector action chunks.
+    use_relative_ee: bool = False
+
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
 
@@ -107,6 +110,13 @@ class PI05Config(PreTrainedConfig):
         super().__post_init__()
 
         # Validate configuration
+        if self.use_relative_ee and self.use_relative_actions:
+            raise ValueError("use_relative_ee and use_relative_actions are mutually exclusive")
+        if self.use_relative_ee and self.n_obs_steps != 1:
+            raise ValueError("Relative EE mode requires n_obs_steps=1")
+        if self.use_relative_ee and (self.max_state_dim < 20 or self.max_action_dim < 10):
+            raise ValueError("Relative EE mode requires max_state_dim>=20 and max_action_dim>=10")
+
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"n_action_steps ({self.n_action_steps}) cannot be greater than chunk_size ({self.chunk_size})"
@@ -168,6 +178,8 @@ class PI05Config(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
+        if self.use_relative_ee:
+            return [-1, *range(self.chunk_size)]
         return list(range(self.chunk_size))
 
     @property

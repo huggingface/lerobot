@@ -19,9 +19,13 @@ from typing import Any
 import torch
 
 from lerobot.processor import (
+    AbsoluteEEActionsStep,
     NewLineTaskProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
+    RelativeEEActionsStep,
+    RelativeEEDeriveStateStep,
+    RelativeEEStateStep,
     TokenizerProcessorStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
@@ -61,6 +65,7 @@ def make_smolvla_pre_post_processors(
     """
 
     steps = make_default_policy_processor_steps(config, dataset_stats)
+    relative_step = RelativeEEActionsStep()
 
     input_steps = [
         steps.rename_observations,  # To mimic the same processor as pretrained one
@@ -73,10 +78,16 @@ def make_smolvla_pre_post_processors(
             max_length=config.tokenizer_max_length,
         ),
         steps.to_device,
+        *(
+            [RelativeEEDeriveStateStep(), relative_step, RelativeEEStateStep()]
+            if config.use_relative_ee
+            else []
+        ),
         steps.normalize,
     ]
     output_steps = [
         steps.unnormalize,
+        *([AbsoluteEEActionsStep(relative_step)] if config.use_relative_ee else []),
         steps.to_cpu,
     ]
     return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)

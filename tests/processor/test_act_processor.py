@@ -23,11 +23,14 @@ import torch
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.processor_act import make_act_pre_post_processors
+from lerobot.policies.factory import make_pre_post_processors
 from lerobot.processor import (
+    AbsoluteEEActionsStep,
     AddBatchDimensionProcessorStep,
     DataProcessorPipeline,
     DeviceProcessorStep,
     NormalizerProcessorStep,
+    RelativeEEActionsStep,
     RenameObservationsProcessorStep,
     TransitionKey,
     UnnormalizerProcessorStep,
@@ -410,3 +413,27 @@ def test_act_processor_bfloat16_device_float32_normalizer():
     assert normalizer_step.dtype == torch.bfloat16
     for stat_tensor in normalizer_step._tensor_stats[OBS_STATE].values():
         assert stat_tensor.dtype == torch.bfloat16
+
+
+def test_relative_ee_processors_save_load_and_reconnect():
+    config = ACTConfig(use_relative_ee=True, device="cpu")
+    config.input_features = {OBS_STATE: PolicyFeature(FeatureType.STATE, (20,))}
+    config.output_features = {ACTION: PolicyFeature(FeatureType.ACTION, (10,))}
+    stats = {
+        OBS_STATE: {"min": torch.zeros(20), "max": torch.ones(20)},
+        ACTION: {"min": torch.zeros(10), "max": torch.ones(10)},
+    }
+    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        preprocessor.save_pretrained(tmpdir)
+        postprocessor.save_pretrained(tmpdir)
+        loaded_preprocessor, loaded_postprocessor = make_pre_post_processors(config, pretrained_path=tmpdir)
+
+    relative_step = next(
+        step for step in loaded_preprocessor.steps if isinstance(step, RelativeEEActionsStep)
+    )
+    absolute_step = next(
+        step for step in loaded_postprocessor.steps if isinstance(step, AbsoluteEEActionsStep)
+    )
+    assert absolute_step.relative_step is relative_step

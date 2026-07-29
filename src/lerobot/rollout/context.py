@@ -38,6 +38,7 @@ from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import (
     PolicyProcessorPipeline,
+    RelativeEEActionsStep,
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
@@ -444,12 +445,13 @@ def build_rollout_context(
     )
 
     if isinstance(cfg.inference, SyncInferenceConfig) and any(
-        isinstance(step, RelativeActionsProcessorStep) and step.enabled
+        isinstance(step, RelativeEEActionsStep)
+        or (isinstance(step, RelativeActionsProcessorStep) and step.enabled)
         for step in getattr(preprocessor, "steps", ())
     ):
         raise NotImplementedError(
-            "SyncInferenceEngine does not support policies with relative actions for now."
-            "Use --inference.type=rtc or remove relative action processor steps from the policy pipeline."
+            "SyncInferenceEngine does not support relative-action policies. "
+            "Use --inference.type=rtc or remove relative processor steps from the policy pipeline."
         )
 
     # --- 7. Inference strategy (needs policy + pre/post + hardware) --

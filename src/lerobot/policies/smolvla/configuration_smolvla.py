@@ -29,6 +29,9 @@ class SmolVLAConfig(PreTrainedConfig):
     chunk_size: int = 50
     n_action_steps: int = 50
 
+    # Train on fixed-reference relative end-effector action chunks.
+    use_relative_ee: bool = False
+
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
@@ -110,6 +113,14 @@ class SmolVLAConfig(PreTrainedConfig):
         super().__post_init__()
 
         """Input validation (not exhaustive)."""
+        if self.use_relative_ee:
+            if self.n_obs_steps != 1:
+                raise ValueError("Relative EE mode requires n_obs_steps=1")
+            if self.max_state_dim < 20 or self.max_action_dim < 10:
+                raise ValueError("Relative EE mode requires max_state_dim>=20 and max_action_dim>=10")
+            self.normalization_mapping["STATE"] = NormalizationMode.MIN_MAX
+            self.normalization_mapping["ACTION"] = NormalizationMode.MIN_MAX
+
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "
@@ -152,6 +163,8 @@ class SmolVLAConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
+        if self.use_relative_ee:
+            return [-1, *range(self.chunk_size)]
         return list(range(self.chunk_size))
 
     @property

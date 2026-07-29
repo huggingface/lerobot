@@ -26,13 +26,15 @@ import torch
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDatasetMetadata
 
-from lerobot.configs import FeatureType, PreTrainedConfig
+from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
 from lerobot.envs import EnvConfig, env_to_policy_features
 from lerobot.lerobot_types import PolicyAction
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
+    AbsoluteEEActionsStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
+    RelativeEEActionsStep,
     batch_to_transition,
     policy_action_to_transition,
     transition_to_batch,
@@ -40,6 +42,7 @@ from lerobot.processor import (
 )
 from lerobot.utils.constants import (
     ACTION,
+    OBS_STATE,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
@@ -69,11 +72,16 @@ def _reconnect_relative_absolute_steps(
     That reference is not serializable, so we re-establish it here after loading.
     """
     relative_step = next((s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep)), None)
-    if relative_step is None:
-        return
-    for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
-            step.relative_step = relative_step
+    if relative_step is not None:
+        for step in postprocessor.steps:
+            if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
+                step.relative_step = relative_step
+
+    relative_ee_step = next((s for s in preprocessor.steps if isinstance(s, RelativeEEActionsStep)), None)
+    if relative_ee_step is not None:
+        for step in postprocessor.steps:
+            if isinstance(step, AbsoluteEEActionsStep) and step.relative_step is None:
+                step.relative_step = relative_ee_step
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -301,9 +309,22 @@ def make_policy(
             raise ValueError("env_cfg cannot be None when ds_meta is not provided")
         features = env_to_policy_features(env_cfg)
 
+    use_relative_ee = getattr(cfg, "use_relative_ee", False)
+    if use_relative_ee:
+        action_feature = features.get(ACTION)
+        if action_feature is None or action_feature.shape != (7,):
+            raise ValueError("Relative EE policies require an action feature with shape (7,).")
+        features = {
+            **features,
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(10,)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(20,)),
+        }
+
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
+    elif use_relative_ee:
+        cfg.input_features = {**cfg.input_features, OBS_STATE: features[OBS_STATE]}
 
     # Store action feature names for relative_exclude_joints support
     if ds_meta is not None and hasattr(cfg, "action_feature_names"):
