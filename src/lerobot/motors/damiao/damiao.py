@@ -743,6 +743,14 @@ class DamiaoMotorsBus(MotorsBusBase):
             for motor, value in values.items():
                 self.write(data_name, motor, value)
 
+    def sync_write_metal(self, commands: dict) -> None:
+        """Public MIT batch write. commands: name -> (kp, kd, pos_deg, vel_deg_s, torque_nm).
+
+        Exposes the bus's existing MIT torque path (sync_write("Goal_Position") hardcodes
+        feedforward torque to 0), needed for gravity-compensation / force control.
+        """
+        self._mit_control_batch(commands)
+
     def read_calibration(self) -> dict[str, MotorCalibration]:
         """Read calibration data from motors."""
         # Damiao motors don't store calibration internally
