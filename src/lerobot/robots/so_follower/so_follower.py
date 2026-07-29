@@ -144,14 +144,17 @@ class SOFollower(Robot):
 
         drive_modes = dict.fromkeys(self.bus.motors, 0)
         input(f"Fully close the gripper of {self} and press ENTER....")
-        gripper_closed_pos = self.bus.read("Present_Position", "gripper", normalize=False)
-        if abs(gripper_closed_pos - range_maxes["gripper"]) < abs(gripper_closed_pos - range_mins["gripper"]):
-            # The closed position is at the top of the recorded range, meaning the raw position increases
-            # when the gripper closes. This is inverted with respect to the expected convention
-            # (0 = closed, 100 = open), which happens when the gripper motor is mounted mirrored.
-            # Invert it in software via drive_mode so both arms share the same convention.
+        gripper_closed_pos = self.bus.read(
+            "Present_Position", "gripper", normalize=False, num_retry=self.config.num_read_retries
+        )
+        distance_to_min = abs(gripper_closed_pos - range_mins["gripper"])
+        distance_to_max = abs(gripper_closed_pos - range_maxes["gripper"])
+        if min(distance_to_min, distance_to_max) > (range_maxes["gripper"] - range_mins["gripper"]) * 0.2:
+            raise ValueError("Gripper is not fully closed. Run calibration again.")
+
+        drive_modes["gripper"] = int(distance_to_max < distance_to_min)
+        if drive_modes["gripper"]:
             logger.info("Gripper motor is inverted, setting drive_mode=1 to compensate.")
-            drive_modes["gripper"] = 1
 
         self.calibration = {}
         for motor, m in self.bus.motors.items():

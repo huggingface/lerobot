@@ -156,6 +156,7 @@ def test_configure_writes_position_pid_coefficients():
     [
         (2035, 0),  # closed position at range_min -> raw increases when opening -> not inverted
         (3528, 1),  # closed position at range_max -> raw increases when closing -> inverted
+        (2781, None),  # not near either end stop -> unsafe to infer
     ],
 )
 def test_calibrate_detects_gripper_drive_mode(follower, gripper_closed_pos, expected_drive_mode):
@@ -177,9 +178,21 @@ def test_calibrate_detects_gripper_drive_mode(follower, gripper_closed_pos, expe
         patch.object(type(follower), "_save_calibration", lambda self: None),
     ):
         follower.calibration = {}
-        follower.calibrate()
+        if expected_drive_mode is None:
+            with pytest.raises(ValueError, match="Gripper is not fully closed"):
+                follower.calibrate()
+        else:
+            follower.calibrate()
 
-    follower.bus.read.assert_called_with("Present_Position", "gripper", normalize=False)
+    follower.bus.read.assert_called_with(
+        "Present_Position",
+        "gripper",
+        normalize=False,
+        num_retry=follower.config.num_read_retries,
+    )
+    if expected_drive_mode is None:
+        return
+
     assert follower.calibration["gripper"].drive_mode == expected_drive_mode
     for motor in motors:
         if motor != "gripper":
