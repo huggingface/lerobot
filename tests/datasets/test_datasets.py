@@ -114,6 +114,20 @@ def test_dataset_initialization(tmp_path, lerobot_dataset_factory):
     assert dataset.num_frames == len(dataset)
 
 
+def test_dataset_slice(tmp_path, lerobot_dataset_factory):
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "test", total_episodes=3, total_frames=30, use_videos=False
+    )
+
+    assert len(dataset[:5]) == 5
+    assert len(dataset[::2]) == (len(dataset) + 1) // 2
+    assert [item["index"].item() for item in dataset[4::-1]] == [4, 3, 2, 1, 0]
+    assert [item["index"].item() for item in dataset[-3:]] == list(range(len(dataset) - 3, len(dataset)))
+    assert dataset[len(dataset) :] == []
+    assert isinstance(dataset[0], dict)
+    assert dataset[:1][0].keys() == dataset[0].keys()
+
+
 # TODO(rcadene, aliberts): do not run LeRobotDataset.create, instead refactor LeRobotDatasetMetadata.create
 # and test the small resulting function that validates the features
 def test_dataset_feature_with_forward_slash_raises_error():
@@ -1739,6 +1753,38 @@ def test_delta_timestamps_query_returns_correct_values(tmp_path, empty_lerobot_d
     # Previous frame is outside episode, so it's clamped to first frame and marked as padded
     assert state_values == [10.0, 10.0], f"Expected [10.0, 10.0], got {state_values}"
     assert is_pad == [True, False], f"Expected [True, False], got {is_pad}"
+
+
+def test_dataset_slice_with_delta_timestamps(tmp_path, empty_lerobot_dataset_factory):
+    features = {
+        "observation.state": {"dtype": "float32", "shape": (1,), "names": ["x"]},
+    }
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "test_slice_delta", features=features, use_videos=False, fps=10
+    )
+
+    for frame_idx in range(5):
+        dataset.add_frame(
+            {
+                "observation.state": torch.tensor([frame_idx], dtype=torch.float32),
+                "task": "task_0",
+            }
+        )
+    dataset.save_episode()
+    dataset.finalize()
+
+    sliced_dataset = LeRobotDataset(
+        dataset.repo_id,
+        root=dataset.root,
+        delta_timestamps={"observation.state": [-0.1, 0.0]},
+        tolerance_s=0.04,
+    )
+
+    items = sliced_dataset[:2]
+
+    assert items[0]["observation.state"].tolist() == [0.0, 0.0]
+    assert items[0]["observation.state_is_pad"].tolist() == [True, False]
+    assert items[1]["observation.state"].tolist() == [0.0, 1.0]
 
 
 def test_episode_filter_filters_dataset(tmp_path, lerobot_dataset_factory):
