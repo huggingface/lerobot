@@ -14,6 +14,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from numbers import Integral
 from typing import Any
 
 import torch
@@ -192,6 +193,8 @@ class RelativeActionsProcessorStep(ProcessorStep):
                 f"state_action_index_map has length {len(idx_map)} but action_dim is "
                 f"{action_dim}; it must provide one state index per action dim."
             )
+        if any(not isinstance(j, Integral) or isinstance(j, bool) for j in idx_map):
+            raise ValueError("state_action_index_map must contain only integer state indices.")
         if any(not (0 <= j < state_dim) for j in idx_map):
             raise ValueError(
                 f"state_action_index_map contains out-of-range indices for state_dim={state_dim}: {idx_map}."

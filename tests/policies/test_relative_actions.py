@@ -193,6 +193,13 @@ def test_index_map_out_of_range_raises():
         step._resolve_state_index_map(action_dim=7, state_dim=13)
 
 
+@pytest.mark.parametrize("idx_map", [[0, 1.5], [0, True]])
+def test_index_map_non_integer_raises(idx_map):
+    step = RelativeActionsProcessorStep(enabled=True, state_action_index_map=idx_map)
+    with pytest.raises(ValueError, match="only integer state indices"):
+        step._resolve_state_index_map(action_dim=2, state_dim=13)
+
+
 # NumPy stats path (compute_relative_action_stats / _compute_relative_chunk_batch)
 
 
