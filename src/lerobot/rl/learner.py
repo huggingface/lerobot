@@ -74,7 +74,7 @@ from torch.optim.optimizer import Optimizer
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
-    load_training_step,
+    load_training_metadata,
     save_checkpoint,
     update_last_checkpoint,
 )
@@ -744,7 +744,7 @@ def load_training_state(
         # Restore optimizers + RNG + step from the standard `training_state/` folder
         training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
         load_rng_state(training_state_dir)
-        step = load_training_step(training_state_dir)
+        step = load_training_metadata(training_state_dir)["step"]
         optimizers = load_optimizer_state(optimizers, training_state_dir)
 
         # Restore algorithm-owned tensors

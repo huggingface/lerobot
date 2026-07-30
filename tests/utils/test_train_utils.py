@@ -22,12 +22,10 @@ import pytest
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
-    load_training_batch_size,
-    load_training_dp_world_size,
-    load_training_step,
+    load_training_metadata,
     push_checkpoint_to_hub,
+    save_training_metadata,
     save_training_state,
-    save_training_step,
     update_last_checkpoint,
 )
 from lerobot.configs.default import DatasetConfig
@@ -62,16 +60,17 @@ def make_cfg(batch_size: int = 32) -> TrainPipelineConfig:
     return cfg
 
 
-def test_save_load_training_step(tmp_path):
-    save_training_step(5000, tmp_path, make_cfg())
+def test_save_training_metadata_writes_the_step_file(tmp_path):
+    save_training_metadata(5000, tmp_path, make_cfg())
     assert (tmp_path / TRAINING_STEP).is_file()
-    assert load_training_step(tmp_path) == 5000
 
 
 def test_save_training_state_records_topology(tmp_path, optimizer, scheduler):
     save_training_state(tmp_path, 10, make_cfg(batch_size=32), optimizer, scheduler)
-    assert load_training_dp_world_size(tmp_path) == 1
-    assert load_training_batch_size(tmp_path) == 32
+    metadata = load_training_metadata(tmp_path / TRAINING_STATE_DIR)
+    assert metadata["step"] == 10
+    assert metadata["dp_world_size"] == 1
+    assert metadata["batch_size"] == 32
 
 
 def test_update_last_checkpoint(tmp_path):

@@ -22,9 +22,7 @@ import torch
 from safetensors.torch import load_file
 
 from lerobot.common.train_utils import (
-    load_training_batch_size,
-    load_training_dp_world_size,
-    load_training_grad_accum_steps,
+    load_training_metadata,
     resume_after_prepare,
     resume_before_prepare,
     save_checkpoint,
@@ -86,17 +84,19 @@ class TestSaveCheckpoint:
             optimizer=torch.optim.Adam(policy.parameters()),
             accelerator=passthrough_accelerator(),
         )
-        assert load_training_dp_world_size(tmp_path) == 1
-        assert load_training_batch_size(tmp_path) == 3
-        assert load_training_grad_accum_steps(tmp_path) == 4
+        metadata = load_training_metadata(tmp_path / TRAINING_STATE_DIR)
+        assert metadata["dp_world_size"] == 1
+        assert metadata["batch_size"] == 3
+        assert metadata["grad_accum_steps"] == 4
 
     def test_dp_world_size_legacy_fallback(self, tmp_path):
         """Pre-v0.7 checkpoints recorded num_processes; the reader falls back to it."""
         state_dir = tmp_path / TRAINING_STATE_DIR
         state_dir.mkdir(parents=True)
         write_json({"step": 5, "num_processes": 4}, state_dir / TRAINING_STEP)
-        assert load_training_dp_world_size(tmp_path) == 4
-        assert load_training_batch_size(tmp_path) is None
+        metadata = load_training_metadata(tmp_path / TRAINING_STATE_DIR)
+        assert metadata["dp_world_size"] == 4
+        assert metadata["batch_size"] is None
 
 
 class TestResume:

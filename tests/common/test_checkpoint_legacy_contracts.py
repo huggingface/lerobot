@@ -45,7 +45,7 @@ from torch.distributed.checkpoint.api import CheckpointException
 from torch.distributed.fsdp import FSDPModule
 
 from lerobot.common.train_utils import (
-    load_training_dp_world_size,
+    load_training_metadata,
     resume_after_prepare,
     resume_before_prepare,
 )
@@ -179,7 +179,7 @@ class TestV060HardBreak:
 
     def test_topology_reader_falls_back_to_legacy_num_processes(self, tmp_path):
         make_v060_fsdp_checkpoint(tmp_path)
-        assert load_training_dp_world_size(tmp_path) == 4
+        assert load_training_metadata(tmp_path / TRAINING_STATE_DIR)["dp_world_size"] == 4
 
 
 class TestConverterEquivalence:

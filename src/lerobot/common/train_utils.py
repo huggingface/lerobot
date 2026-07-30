@@ -123,7 +123,7 @@ def update_last_checkpoint(checkpoint_dir: Path) -> None:
 # ---------------------------------------------------------------------------------------------
 
 
-def save_training_step(step: int, save_dir: Path, cfg: TrainPipelineConfig) -> None:
+def save_training_metadata(step: int, save_dir: Path, cfg: TrainPipelineConfig) -> None:
     """Record the step counter plus everything a resume needs to reason about topology changes.
 
     `step` counts loop iterations (= micro-batches), so
@@ -152,74 +152,27 @@ def save_training_step(step: int, save_dir: Path, cfg: TrainPipelineConfig) -> N
     write_json(state, save_dir / TRAINING_STEP)
 
 
-def load_training_step(training_state_dir: Path) -> int:
-    """Read the step counter recorded in `training_step.json`.
+def load_training_metadata(training_state_dir: Path) -> dict[str, Any]:
+    """Read everything `save_training_metadata` recorded, in a single pass.
+
+    Every key is always present: fields a checkpoint predates come back as None, so a caller
+    reading `metadata["batch_size"]` gets a KeyError on a typo rather than a silent None.
 
     Args:
         training_state_dir (Path): The checkpoint's `training_state/` directory.
 
     Returns:
-        int: The recorded training step (micro-batch counter).
+        dict[str, Any]: `step` plus the `dp_world_size`, `batch_size`, `grad_accum_steps` and
+            `parallelism` snapshot recorded alongside it (None where not recorded).
     """
-    return int(load_json(training_state_dir / TRAINING_STEP)["step"])
-
-
-def load_training_dp_world_size(checkpoint_dir: Path) -> int | None:
-    """Data-parallel world size recorded at checkpoint time, or None for very old checkpoints.
-
-    Falls back to the pre-v0.7 `num_processes` key (world size == dp world size back then, as
-    context parallelism did not exist). Legacy fallback for checkpoints written before v0.7;
-    remove in the next major version.
-
-    Args:
-        checkpoint_dir (Path): The checkpoint step directory (containing `training_state/`).
-
-    Returns:
-        int | None: The recorded data-parallel world size, or None for checkpoints written
-            before it (or its `num_processes` predecessor) was recorded.
-    """
-    state = load_json(checkpoint_dir / TRAINING_STATE_DIR / TRAINING_STEP)
-    return state.get("dp_world_size", state.get("num_processes"))
-
-
-def load_training_batch_size(checkpoint_dir: Path) -> int | None:
-    """Per-process batch size recorded at checkpoint time, or None for older checkpoints.
-
-    Args:
-        checkpoint_dir (Path): The checkpoint step directory (containing `training_state/`).
-
-    Returns:
-        int | None: The recorded per-process `batch_size`, or None for checkpoints written
-            before it was recorded.
-    """
-    return load_json(checkpoint_dir / TRAINING_STATE_DIR / TRAINING_STEP).get("batch_size")
-
-
-def load_training_grad_accum_steps(checkpoint_dir: Path) -> int | None:
-    """Gradient-accumulation steps recorded at checkpoint time, or None for older checkpoints.
-
-    Args:
-        checkpoint_dir (Path): The checkpoint step directory (containing `training_state/`).
-
-    Returns:
-        int | None: The recorded `gradient_accumulation_steps`, or None for checkpoints written
-            before it was recorded.
-    """
-    return load_json(checkpoint_dir / TRAINING_STATE_DIR / TRAINING_STEP).get("grad_accum_steps")
-
-
-def load_training_parallelism(checkpoint_dir: Path) -> dict[str, int] | None:
-    """Parallelism snapshot recorded at checkpoint time, or None for older checkpoints.
-
-    Args:
-        checkpoint_dir (Path): The checkpoint step directory (containing `training_state/`).
-
-    Returns:
-        dict[str, int] | None: The recorded degrees
-            (`{"dp_replicate", "dp_shard", "ring_degree", "ulysses_degree"}`), or None for
-            checkpoints written before the snapshot was recorded.
-    """
-    return load_json(checkpoint_dir / TRAINING_STATE_DIR / TRAINING_STEP).get("parallelism")
+    state = load_json(training_state_dir / TRAINING_STEP)
+    return {
+        "step": int(state["step"]),
+        "dp_world_size": state.get("dp_world_size", state.get("num_processes")),
+        "batch_size": state.get("batch_size"),
+        "grad_accum_steps": state.get("grad_accum_steps"),
+        "parallelism": state.get("parallelism"),
+    }
 
 
 # ---------------------------------------------------------------------------------------------
@@ -357,7 +310,7 @@ def save_training_state(
         save_sharded_optimizer(accelerator, optimizer, model, save_dir)
 
     if is_main_process():  # ONE grouped gate for the whole rank-0-only region
-        save_training_step(step, save_dir, cfg)
+        save_training_metadata(step, save_dir, cfg)
         save_rng_state(save_dir)
         if scheduler is not None:
             save_scheduler_state(scheduler, save_dir)
@@ -392,15 +345,16 @@ def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
     training_state_dir = cfg.checkpoint_path / TRAINING_STATE_DIR
     if not training_state_dir.is_dir():
         raise NotADirectoryError(training_state_dir)
-    _guard_resume_changes(cfg)
+    metadata = load_training_metadata(training_state_dir)
+    _guard_resume_changes(cfg, metadata)
     load_rng_state(training_state_dir)
-    return load_training_step(training_state_dir)
+    return metadata["step"]
 
 
-def _guard_resume_changes(cfg: TrainPipelineConfig) -> None:
+def _guard_resume_changes(cfg: TrainPipelineConfig, metadata: dict[str, Any]) -> None:
     """Check the resumed run settings against the ones recorded in the checkpoint.
 
-    Two tiers, both driven by the checkpoint's recorded parallelism snapshot (loaded once):
+    Two tiers, both driven by the checkpoint's recorded parallelism snapshot:
 
     - **Hard error** when the resume crosses the sharded/non-sharded boundary in either
       direction: the checkpoint's training-state artifacts only support resuming on the same
@@ -414,13 +368,15 @@ def _guard_resume_changes(cfg: TrainPipelineConfig) -> None:
 
     Args:
         cfg (TrainPipelineConfig): The resumed training config, compared against the settings
-            recorded in the checkpoint at `cfg.checkpoint_path`.
+            recorded in the checkpoint.
+        metadata (dict[str, Any]): The checkpoint's recorded training metadata, as returned by
+            `load_training_metadata`.
 
     Raises:
         ValueError: If the checkpoint records a sharded topology and the resumed run is
             non-sharded, or vice versa.
     """
-    snapshot = load_training_parallelism(cfg.checkpoint_path)
+    snapshot = metadata["parallelism"]
 
     if snapshot is not None:
         recorded_sharded = (
@@ -438,7 +394,7 @@ def _guard_resume_changes(cfg: TrainPipelineConfig) -> None:
 
     recorded = {
         "grad_accum_steps": (
-            load_training_grad_accum_steps(cfg.checkpoint_path),
+            metadata["grad_accum_steps"],
             cfg.accelerator.gradient_accumulation.steps,
         ),
     }

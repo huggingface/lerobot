@@ -47,8 +47,7 @@ from tqdm import tqdm
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
-    load_training_batch_size,
-    load_training_dp_world_size,
+    load_training_metadata,
     publish_trained_model,
     push_checkpoint_to_hub,
     resume_after_prepare,
@@ -75,6 +74,7 @@ from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_proces
 from lerobot.policies.factory import ProcessorConfigKwargs
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
+from lerobot.utils.constants import TRAINING_STATE_DIR
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
@@ -253,8 +253,9 @@ def make_dataloaders(
             # The resume offset depends on the (dp_world_size, batch_size) that produced `step`,
             # so use the values recorded in the checkpoint (falling back to the current ones for
             # older checkpoints that did not store them).
-            saved_dp_world = load_training_dp_world_size(cfg.checkpoint_path)
-            saved_batch_size = load_training_batch_size(cfg.checkpoint_path)
+            metadata = load_training_metadata(cfg.checkpoint_path / TRAINING_STATE_DIR)
+            saved_dp_world = metadata["dp_world_size"]
+            saved_batch_size = metadata["batch_size"]
             ckpt_dp_world = saved_dp_world or parallel_dims.dp_world_size
             ckpt_batch_size = saved_batch_size or cfg.batch_size
             if is_main_process() and saved_dp_world not in (None, parallel_dims.dp_world_size):
