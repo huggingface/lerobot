@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
@@ -441,8 +441,10 @@ class _StopConstructionError(Exception):
 def _fake_meta(*args, **kwargs):
     """Minimal LeRobotDatasetMetadata stand-in exposing only what __init__ reads."""
     meta = type("_Meta", (), {})()
-    meta.root = kwargs.get("root") or "/tmp/_streaming_meta"
-    meta.revision = kwargs.get("revision") or "v0"
+    root = kwargs.get("root", args[1] if len(args) > 1 else None)
+    revision = kwargs.get("revision", args[2] if len(args) > 2 else None)
+    meta.root = root or "/tmp/_streaming_meta"
+    meta.revision = revision or "v0"
     meta._version = "v3.0"
     meta.depth_keys = []
     meta.image_keys = []
@@ -461,10 +463,12 @@ def _fake_meta(*args, **kwargs):
 def test_streaming_repo_type_routes_load_dataset(repo_type, expected_source, expected_data_files):
     """repo_type='bucket' loads parquet from hf://buckets/...; 'dataset' keeps the Hub-repo path."""
     captured = {}
+    token = "hf_test_token"
 
     def fake_load_dataset(source, **kwargs):
         captured["source"] = source
         captured["data_files"] = kwargs.get("data_files")
+        captured["token"] = kwargs.get("token")
         raise _StopConstructionError
 
     with (
@@ -473,19 +477,16 @@ def test_streaming_repo_type_routes_load_dataset(repo_type, expected_source, exp
         patch("lerobot.datasets.streaming_dataset.load_dataset", fake_load_dataset),
         pytest.raises(_StopConstructionError),
     ):
-        StreamingLeRobotDataset(DUMMY_REPO_ID, repo_type=repo_type)
+        StreamingLeRobotDataset(DUMMY_REPO_ID, repo_type=repo_type, token=token)
 
     assert captured["source"] == expected_source.format(repo_id=DUMMY_REPO_ID)
     assert captured["data_files"] == expected_data_files.format(repo_id=DUMMY_REPO_ID)
+    assert captured["token"] == token
 
 
 def test_bucket_metadata_url_root(tmp_path):
     """repo_type='bucket' produces url_root pointing at hf://buckets/..."""
-    mock_fs = MagicMock()
-    with (
-        patch("huggingface_hub.HfFileSystem", return_value=mock_fs),
-        patch.object(LeRobotDatasetMetadata, "_load_metadata"),
-    ):
+    with patch.object(LeRobotDatasetMetadata, "_load_metadata"):
         meta = LeRobotDatasetMetadata(
             DUMMY_REPO_ID,
             root=tmp_path,
@@ -522,3 +523,77 @@ def test_bucket_skips_get_safe_version(tmp_path):
     # version resolution.
     mock_pull.assert_called_once()
     mock_gsv.assert_not_called()
+
+
+def test_bucket_metadata_sync_uses_stable_cache_and_token(tmp_path):
+    hub_cache = tmp_path / "hub"
+    token = "hf_test_token"
+    expected_root = hub_cache / f"buckets--{DUMMY_REPO_ID.replace('/', '--')}"
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.HF_LEROBOT_HUB_CACHE", hub_cache),
+        patch("lerobot.datasets.dataset_metadata.sync_bucket") as mock_sync,
+        patch.object(
+            LeRobotDatasetMetadata,
+            "_load_metadata",
+            side_effect=[FileNotFoundError, None],
+        ),
+    ):
+        meta = LeRobotDatasetMetadata(DUMMY_REPO_ID, repo_type="bucket", token=token)
+
+    assert meta.root == expected_root
+    mock_sync.assert_called_once_with(
+        f"hf://buckets/{DUMMY_REPO_ID}/meta",
+        str(expected_root / "meta"),
+        delete=True,
+        quiet=True,
+        token=token,
+    )
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.HF_LEROBOT_HUB_CACHE", hub_cache),
+        patch("lerobot.datasets.dataset_metadata.sync_bucket") as mock_sync,
+        patch.object(LeRobotDatasetMetadata, "_load_metadata"),
+    ):
+        cached_meta = LeRobotDatasetMetadata(DUMMY_REPO_ID, repo_type="bucket", token=token)
+
+    assert cached_meta.root == expected_root
+    mock_sync.assert_not_called()
+
+
+def test_repo_type_is_keyword_only_and_preserves_positional_episodes():
+    episodes = [1, 2]
+    with (
+        patch("lerobot.datasets.streaming_dataset.LeRobotDatasetMetadata", _fake_meta),
+        patch("lerobot.datasets.streaming_dataset.check_version_compatibility"),
+        patch(
+            "lerobot.datasets.streaming_dataset.load_dataset",
+            return_value=SimpleNamespace(num_shards=1),
+        ),
+    ):
+        dataset = StreamingLeRobotDataset(DUMMY_REPO_ID, None, episodes)
+
+    assert dataset.episodes == episodes
+    assert dataset.repo_type == "dataset"
+
+
+def test_bucket_root_caches_metadata_without_switching_to_local_streaming(tmp_path):
+    with (
+        patch("lerobot.datasets.streaming_dataset.LeRobotDatasetMetadata", _fake_meta),
+        patch("lerobot.datasets.streaming_dataset.check_version_compatibility"),
+        patch(
+            "lerobot.datasets.streaming_dataset.load_dataset",
+            return_value=SimpleNamespace(num_shards=1),
+        ) as mock_load_dataset,
+    ):
+        dataset = StreamingLeRobotDataset(DUMMY_REPO_ID, root=tmp_path, repo_type="bucket")
+
+    assert dataset.root == tmp_path
+    assert not dataset.streaming_from_local
+    assert mock_load_dataset.call_args.args == ("parquet",)
+    assert mock_load_dataset.call_args.kwargs["data_files"].startswith("hf://buckets/")
+
+
+def test_invalid_repo_type_fails_before_io():
+    with pytest.raises(ValueError, match="repo_type must be 'dataset' or 'bucket'"):
+        StreamingLeRobotDataset(DUMMY_REPO_ID, repo_type="space")

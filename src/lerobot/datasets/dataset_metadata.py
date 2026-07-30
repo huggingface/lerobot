@@ -18,13 +18,15 @@ import logging
 from collections.abc import Callable, Iterable
 from copy import deepcopy
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import packaging.version
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from huggingface_hub import snapshot_download
+from huggingface_hub import snapshot_download, sync_bucket
+from huggingface_hub.utils import WeakFileLock
 
 from lerobot.configs import DEPTH_METER_UNIT, VideoEncoderConfig
 from lerobot.utils.constants import DEFAULT_FEATURES, HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
@@ -73,8 +75,8 @@ class LeRobotDatasetMetadata:
         revision: str | None = None,
         force_cache_sync: bool = False,
         metadata_buffer_size: int = 10,
-        repo_type: str = "dataset",
         *,
+        repo_type: Literal["dataset", "bucket"] = "dataset",
         token: str | bool | None = None,
     ):
         """Load or download metadata for an existing LeRobot dataset.
@@ -104,32 +106,46 @@ class LeRobotDatasetMetadata:
                 to disable authentication, or ``None`` to use the Hugging Face
                 Hub default.
         """
+        if repo_type not in ("dataset", "bucket"):
+            raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
+
         self.repo_id = repo_id
         self.repo_type = repo_type
         self.revision = revision if revision else CODEBASE_VERSION
         self._requested_root = Path(root) if root is not None else None
-        self.root = self._requested_root if self._requested_root is not None else HF_LEROBOT_HOME / repo_id
+        if self._requested_root is not None:
+            self.root = self._requested_root
+        elif self.repo_type == "bucket":
+            self.root = HF_LEROBOT_HUB_CACHE / ("buckets--" + self.repo_id.replace("/", "--"))
+        else:
+            self.root = HF_LEROBOT_HOME / repo_id
         self._pq_writer = None
         self.latest_episode = None
         self._metadata_buffer: list[dict] = []
         self._metadata_buffer_size = metadata_buffer_size
         self._finalized = False
 
-        try:
-            if force_cache_sync or (
-                self._requested_root is None and has_legacy_hub_download_metadata(self.root)
-            ):
-                raise FileNotFoundError
-            self._load_metadata()
-        except (FileNotFoundError, NotADirectoryError):
-            if self.repo_type != "bucket" and is_valid_version(self.revision):
-                if token is None:
-                    self.revision = get_safe_version(self.repo_id, self.revision)
-                else:
-                    self.revision = get_safe_version(self.repo_id, self.revision, token=token)
+        metadata_lock = contextlib.nullcontext()
+        if self.repo_type == "bucket":
+            self.root.parent.mkdir(parents=True, exist_ok=True)
+            metadata_lock = WeakFileLock(self.root.parent / f".{self.root.name}.lock")
 
-            self._pull_from_repo(allow_patterns="meta/", token=token)
-            self._load_metadata()
+        with metadata_lock:
+            try:
+                if force_cache_sync or (
+                    self._requested_root is None and has_legacy_hub_download_metadata(self.root)
+                ):
+                    raise FileNotFoundError
+                self._load_metadata()
+            except (FileNotFoundError, NotADirectoryError):
+                if self.repo_type != "bucket" and is_valid_version(self.revision):
+                    if token is None:
+                        self.revision = get_safe_version(self.repo_id, self.revision)
+                    else:
+                        self.revision = get_safe_version(self.repo_id, self.revision, token=token)
+
+                self._pull_from_repo(allow_patterns="meta/", token=token)
+                self._load_metadata()
 
     def _flush_metadata_buffer(self) -> None:
         """Write all buffered episode metadata to parquet file."""
@@ -236,21 +252,15 @@ class LeRobotDatasetMetadata:
         *,
         token: str | bool | None = None,
     ) -> None:
-        if getattr(self, "repo_type", "dataset") == "bucket":
-            from huggingface_hub import HfFileSystem
-
-            fs = HfFileSystem()
-            dest = (
-                self._requested_root
-                if self._requested_root is not None
-                else (HF_LEROBOT_HUB_CACHE / ("buckets--" + self.repo_id.replace("/", "--")))
+        if self.repo_type == "bucket":
+            self.root.mkdir(parents=True, exist_ok=True)
+            sync_bucket(
+                f"hf://buckets/{self.repo_id}/meta",
+                str(self.root / "meta"),
+                delete=True,
+                quiet=True,
+                token=token,
             )
-            dest = Path(dest)
-            dest.mkdir(parents=True, exist_ok=True)
-            # fs.get copies the SOURCE dir INTO the target, so target=dest (not
-            # dest/meta) lands the tree as dest/meta/... rather than dest/meta/meta.
-            fs.get(f"hf://buckets/{self.repo_id}/meta", str(dest), recursive=True)
-            self.root = dest
             return
         token_kwargs = {} if token is None else {"token": token}
         if self._requested_root is None:
@@ -282,7 +292,7 @@ class LeRobotDatasetMetadata:
     @property
     def url_root(self) -> str:
         """Hugging Face Hub URL root for this dataset."""
-        if getattr(self, "repo_type", "dataset") == "bucket":
+        if self.repo_type == "bucket":
             return f"hf://buckets/{self.repo_id}"
         return f"hf://datasets/{self.repo_id}"
 
