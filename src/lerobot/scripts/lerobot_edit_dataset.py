@@ -560,9 +560,6 @@ def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
     episode_tasks_raw = cfg.operation.episode_tasks
     task_replacements = cfg.operation.task_replacements
 
-    if new_task is not None and task_replacements is not None:
-        raise ValueError("Cannot combine new_task with task_replacements for modify_tasks operation")
-
     if new_task is None and episode_tasks_raw is None and task_replacements is None:
         raise ValueError(
             "Must specify at least one of new_task, episode_tasks, or task_replacements for modify_tasks operation"

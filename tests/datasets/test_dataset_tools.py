@@ -1161,6 +1161,20 @@ def test_modify_tasks_replacements_with_episode_overrides(sample_dataset):
     assert len(modified_dataset.meta.tasks) == 3
 
 
+def test_modify_tasks_default_task_and_replacements(sample_dataset):
+    """Test that new_task acts as the default for episodes not matched by task_replacements."""
+    modified_dataset = modify_tasks(
+        sample_dataset,
+        new_task="Default task",
+        task_replacements={"task_0": "Pick the cube"},
+    )
+
+    for ep_idx in range(5):
+        expected_task = "Pick the cube" if ep_idx % 2 == 0 else "Default task"
+        assert modified_dataset.meta.episodes[ep_idx]["tasks"][0] == expected_task
+    assert len(modified_dataset.meta.tasks) == 2
+
+
 def test_modify_tasks_no_task_specified(sample_dataset):
     """Test error when no task is specified."""
     with pytest.raises(ValueError, match="Must specify at least one of new_task, episode_tasks, or task_replacements"):
@@ -1177,16 +1191,6 @@ def test_modify_tasks_invalid_task_replacements(sample_dataset):
     """Test error when task replacements refer to unknown task strings."""
     with pytest.raises(ValueError, match="Task replacements reference unknown tasks"):
         modify_tasks(sample_dataset, task_replacements={"missing_task": "New task"})
-
-
-def test_modify_tasks_rejects_default_task_and_replacements(sample_dataset):
-    """Test that default-task assignment cannot be combined with find-and-replace."""
-    with pytest.raises(ValueError, match="Cannot combine new_task with task_replacements"):
-        modify_tasks(
-            sample_dataset,
-            new_task="Default task",
-            task_replacements={"task_0": "Pick the cube"},
-        )
 
 
 def test_modify_tasks_updates_info_json(sample_dataset):

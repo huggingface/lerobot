@@ -1444,9 +1444,8 @@ def modify_tasks(
     2. Set specific tasks for specific episodes (using `episode_tasks`)
     3. Replace existing task strings wherever they appear (using `task_replacements`)
 
-    You can combine both: `new_task` sets the default, and `episode_tasks` overrides
-    specific episodes. `task_replacements` can be combined with `episode_tasks`, with
-    episode-specific overrides taking precedence.
+    You can combine all of them: `new_task` sets the default, while `episode_tasks` and 
+    `task_replacements` override specific episodes, with `episode_tasks` taking precedence.
 
     The dataset is modified in-place, updating only the task-related files:
     - meta/tasks.parquet
@@ -1485,16 +1484,10 @@ def modify_tasks(
                 task_replacements={"Pick up the cube": "Lift the cube"}
             )
     """
-    episode_tasks = episode_tasks or None
-    task_replacements = task_replacements or None
-
-    if new_task is not None and task_replacements is not None:
-        raise ValueError("Cannot combine new_task with task_replacements")
-
-    if new_task is None and episode_tasks is None and task_replacements is None:
+    if not new_task and not episode_tasks and not task_replacements:
         raise ValueError("Must specify at least one of new_task, episode_tasks, or task_replacements")
 
-    if episode_tasks is not None:
+    if episode_tasks:
         valid_indices = set(range(dataset.meta.total_episodes))
         invalid = set(episode_tasks.keys()) - valid_indices
         if invalid:
@@ -1504,12 +1497,8 @@ def modify_tasks(
     if dataset.meta.episodes is None:
         dataset.meta.episodes = load_episodes(dataset.root)
 
-    if task_replacements is not None:
-        current_tasks = {
-            dataset.meta.episodes[ep_idx]["tasks"][0]
-            for ep_idx in range(dataset.meta.total_episodes)
-            if dataset.meta.episodes[ep_idx]["tasks"]
-        }
+    if task_replacements:
+        current_tasks = set(dataset.meta.tasks.index)
         invalid_tasks = set(task_replacements) - current_tasks
         if invalid_tasks:
             raise ValueError(f"Task replacements reference unknown tasks: {sorted(invalid_tasks)}")
@@ -1518,19 +1507,19 @@ def modify_tasks(
     episode_to_task: dict[int, str] = {}
     for ep_idx in range(dataset.meta.total_episodes):
         original_tasks = dataset.meta.episodes[ep_idx]["tasks"]
-        if not original_tasks:
-            raise ValueError(f"Episode {ep_idx} has no tasks and no default task was provided")
-        original_task = original_tasks[0]
+        original_task = original_tasks[0] if original_tasks else None
 
         if episode_tasks and ep_idx in episode_tasks:
             episode_to_task[ep_idx] = episode_tasks[ep_idx]
-        elif new_task is not None:
-            episode_to_task[ep_idx] = new_task
         elif task_replacements and original_task in task_replacements:
             episode_to_task[ep_idx] = task_replacements[original_task]
-        else:
+        elif new_task:
+            episode_to_task[ep_idx] = new_task
+        elif original_task:
             # Keep original task if not overridden and no default provided
             episode_to_task[ep_idx] = original_task
+        else:
+            raise ValueError(f"Episode {ep_idx} has no task; provide new_task or episode_tasks")
 
     # Collect all unique tasks and create new task mapping
     unique_tasks = sorted(set(episode_to_task.values()))
