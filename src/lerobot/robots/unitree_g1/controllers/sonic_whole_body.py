@@ -332,8 +332,8 @@ class SonicWholeBodyController:
         self._init_step = 0
         self._start_pose: dict[str, float] = {}
 
-        # Token-interface state. ``token_mode`` is set True by the robot when the deploy is
-        # token-driven (``UnitreeG1Config.sonic_token_action``): the controller then holds a
+        # Token-interface state. ``token_mode`` is set True by the robot whenever a SONIC
+        # whole-body controller is selected (token-driven deploy): the controller then holds a
         # stable *neutral* token until the first real token arrives, and afterwards holds the
         # *last* token received between ticks (the async controller runs ~50 Hz while a token
         # VLA streams ~30 Hz). This lives here (not in the entry-point script) so it applies

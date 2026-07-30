@@ -86,15 +86,10 @@ class UnitreeG1Config(RobotConfig):
     # Compensates for gravity on the unitree's arms using the arm ik solver
     gravity_compensation: bool = False
 
-    # Token-output VLA interface for the SONIC decoder. When True (and the controller
-    # is ``SonicWholeBodyController``), the robot advertises a 64-D latent-token action
-    # space (``motion_token.{i}.pos``) and exposes the last commanded token as a 64-D
-    # ``observation.state`` (``motion_token_state.{i}.pos``). This lets
-    # ``lerobot-rollout`` drive a policy trained with 64-D SONIC motion tokens as both
-    # state and action (e.g. nepyope/sonic_walk): the decoder consumes the token
-    # directly, encoder bypassed. Ignored unless a SONIC whole-body controller is active.
-    sonic_token_action: bool = False
-
     # Locomotion controller class name, e.g. "GrootLocomotionController",
     # "HolosomaLocomotionController", or "SonicWholeBodyController". None disables it.
+    # Selecting "SonicWholeBodyController" implicitly switches the robot to the 64-D
+    # latent-token action/observation interface (``motion_token.{i}.pos`` action and a
+    # ``motion_token_state.{i}.pos`` state echo) so ``lerobot-rollout`` can drive a
+    # policy trained on SONIC motion tokens (e.g. nepyope/sonic_walk).
     controller: str | None = None

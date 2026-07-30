@@ -179,9 +179,10 @@ class UnitreeG1(Robot):
         else:
             self.controller = make_locomotion_controller(config.controller)
 
-            # Token-driven deploy: let a SONIC controller hold a neutral token until the
-            # first real one arrives, then hold the last token between control ticks.
-            if config.sonic_token_action and hasattr(self.controller, "token_mode"):
+            # Token-driven deploy: a SONIC whole-body controller always runs in token
+            # mode -- it holds a neutral token until the first real one arrives, then
+            # holds the last token between control ticks.
+            if hasattr(self.controller, "token_mode"):
                 self.controller.token_mode = True
 
         # Controller thread state
@@ -199,13 +200,23 @@ class UnitreeG1(Robot):
 
         # Token-mode state: last 64-D SONIC latent token commanded by the policy,
         # echoed back as ``observation.state`` so a token-output VLA closes the loop
-        # on its own previous token (see ``sonic_token_action``). Seeded to zeros;
-        # the controller's startup blend eases joints in regardless.
+        # on its own previous token. Implicit whenever the SONIC whole-body controller
+        # is active. Seeded to zeros; the controller's startup blend eases joints in.
         self._last_token: np.ndarray | None = None
-        if config.sonic_token_action:
+        if self._sonic_token:
             from .controllers.sonic_whole_body import TOKEN_DIM
 
             self._last_token = np.zeros(TOKEN_DIM, dtype=np.float32)
+
+    @property
+    def _sonic_token(self) -> bool:
+        """Whether the SONIC whole-body decoder is active.
+
+        A SONIC controller consumes a 64-D latent motion token as its action and echoes
+        the last commanded token as ``observation.state``. Keyed purely off the selected
+        controller so the token interface is implicit -- no separate config flag.
+        """
+        return self.config.controller == "SonicWholeBodyController"
 
     def _subscribe_lowstate(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
@@ -295,10 +306,10 @@ class UnitreeG1(Robot):
     def _token_state_ft(self) -> dict[str, type]:
         """64-D SONIC latent-token proprio state (``motion_token_state.{i}.pos``).
 
-        Exposed only in ``sonic_token_action`` mode; aggregated by the rollout into a
-        64-D ``observation.state`` (the last token the policy commanded).
+        Exposed only when a SONIC whole-body controller is active; aggregated by the
+        rollout into a 64-D ``observation.state`` (the last token the policy commanded).
         """
-        if not self.config.sonic_token_action:
+        if not self._sonic_token:
             return {}
         from .controllers.sonic_whole_body import TOKEN_DIM, token_state_key
 
@@ -314,18 +325,18 @@ class UnitreeG1(Robot):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        # Role-agnostic: the schema is a pure function of (controller name,
-        # sonic_token_action). The thin client advertises the same schema as the
-        # onboard robot so the exact same policy output routes straight through.
+        # Role-agnostic: the schema is a pure function of the controller name. The thin
+        # client advertises the same schema as the onboard robot so the exact same
+        # policy output routes straight through.
 
         # No controller configured at all: raw 29-DoF joint teleop.
-        if self.config.controller is None and not self.config.sonic_token_action:
+        if self.config.controller is None:
             return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
 
         # Token-output VLA (SONIC decoder): advertise a 64-D latent-token action space
         # (``motion_token.{i}.pos``) so ``lerobot-rollout`` maps a 64-D policy output
         # straight onto the decoder, bypassing the encoder.
-        if self.config.sonic_token_action:
+        if self._sonic_token:
             from .controllers.sonic_whole_body import TOKEN_DIM, token_action_key
 
             return {token_action_key(i): float for i in range(TOKEN_DIM)}
@@ -465,12 +476,12 @@ class UnitreeG1(Robot):
         # 1) Handshake: agree with the server on which controller it will run onboard.
         logger.info(
             "[client] handshaking with %s:%d (controller=%s, token=%s)...",
-            server_ip, HANDSHAKE_PORT, self.config.controller, self.config.sonic_token_action,
+            server_ip, HANDSHAKE_PORT, self.config.controller, self._sonic_token,
         )
         self._client_caps = request_controller(
             server_ip,
             self.config.controller,
-            sonic_token_action=self.config.sonic_token_action,
+            sonic_token_action=self._sonic_token,
             port=HANDSHAKE_PORT,
         )
         logger.info("[client] server agreed: %s", self._client_caps)
@@ -555,26 +566,10 @@ class UnitreeG1(Robot):
 
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
-            from lerobot.envs.utils import (
-                _download_hub_file,
-                _import_hub_module,
-                _normalize_hub_result,
-            )
+            from lerobot.envs import make_env
 
             self._ChannelFactoryInitialize(0, "lo")
-            # Call the hub env's make_env directly so we can disable the offscreen
-            # head_camera renderer. We drive image-conditioned policies from external
-            # camera frames, never the sim's own camera, so building a MuJoCo offscreen
-            # GL context is pure liability: it
-            # crashes with "Failed to make the EGL context current" when GLFW/SDL
-            # already own a context, killing the sim thread and hanging on
-            # "Waiting for robot state...". publish_images=False -> no renderer.
-            repo_id, _, local_file, _ = _download_hub_file(
-                "lerobot/unitree-g1-mujoco", True, None
-            )
-            hub_mod = _import_hub_module(local_file, repo_id)
-            raw = hub_mod.make_env(n_envs=1, use_async_envs=False, publish_images=False, cameras=[])
-            self._env_wrapper = _normalize_hub_result(raw)
+            self._env_wrapper = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
         elif self.config.onboard:
@@ -747,7 +742,7 @@ class UnitreeG1(Robot):
 
         # Token mode: echo the last commanded latent token as observation.state so a
         # token-output VLA closes the loop on its own previous token.
-        if self.config.sonic_token_action:
+        if self._sonic_token:
             from .controllers.sonic_whole_body import token_state_key
 
             token = self._last_token if self._last_token is not None else []
@@ -769,7 +764,7 @@ class UnitreeG1(Robot):
 
         action_to_publish = action
         if self.controller is not None:
-            if self.config.sonic_token_action:
+            if self._sonic_token:
                 from .controllers.sonic_whole_body import _extract_token_from_action
 
                 token = _extract_token_from_action(action)

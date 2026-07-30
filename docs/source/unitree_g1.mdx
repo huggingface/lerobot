@@ -320,8 +320,8 @@ cd ~/lerobot
 python src/lerobot/robots/unitree_g1/run_g1_server.py --handshake --camera
 ```
 
-**From your laptop** — run the token policy; `--robot.sonic_token_action=true` switches the
-robot to the 64-D latent-token action/observation interface:
+**From your laptop** — run the token policy; selecting `--robot.controller=SonicWholeBodyController`
+implicitly switches the robot to the 64-D latent-token action/observation interface:
 
 ```bash
 lerobot-rollout \
@@ -331,7 +331,6 @@ lerobot-rollout \
   --robot.is_simulation=false \
   --robot.robot_ip=<ROBOT_IP> \
   --robot.controller=SonicWholeBodyController \
-  --robot.sonic_token_action=true \
   --robot.cameras='{"ego_view": {"type": "zmq", "server_address": "<ROBOT_IP>", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
   --task="walk back and forth" \
   --duration=1000 \
