@@ -30,10 +30,10 @@ import types
 
 import torch
 from torch import nn
-from transformers import AutoConfig, PretrainedConfig, PreTrainedModel
+from transformers import PretrainedConfig, PreTrainedModel
 from transformers.cache_utils import Cache
 
-from .hunyuan_vl_mot import HunYuanVLMoTForConditionalGeneration
+from .hunyuan_vl_mot import HunYuanVLMoTConfig, HunYuanVLMoTForConditionalGeneration
 from .hunyuan_vl_mot.modeling_hunyuan_vl_mot import (
     _HunYuanVLMoTTextForCausalLM,
 )
@@ -126,7 +126,10 @@ class HyDualTowerConfig(PretrainedConfig):
     """
 
     model_type = "hy_dual_tower"
-    sub_configs = {"vlm_config": AutoConfig, "expert_config": AutoConfig}
+    sub_configs = {
+        "vlm_config": HunYuanVLMoTConfig,
+        "expert_config": HunYuanVLMoTConfig,
+    }
 
     def __init__(
         self,
@@ -137,6 +140,10 @@ class HyDualTowerConfig(PretrainedConfig):
         attention_implementation: str = "eager",
         **kwargs,
     ):
+        if isinstance(vlm_config, dict):
+            vlm_config = HunYuanVLMoTConfig.from_dict(vlm_config)
+        if isinstance(expert_config, dict):
+            expert_config = HunYuanVLMoTConfig.from_dict(expert_config)
         self.vlm_config = vlm_config
         self.expert_config = expert_config
 
@@ -151,8 +158,8 @@ class HyDualTowerConfig(PretrainedConfig):
 
         super().__init__(**kwargs)
 
-    def __post_init__(self):
-        super().__post_init__()
+    def __post_init__(self, **kwargs):
+        super().__post_init__(**kwargs)
         if self.train_expert_only and not self.freeze_vision_encoder:
             raise ValueError(
                 "You set `freeze_vision_encoder=False` and `train_expert_only=True` which are not compatible."

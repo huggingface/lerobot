@@ -17,16 +17,12 @@
 """Hy-VLA flow-matching model."""
 
 import copy
-import json
 import math
-import os
 import sys
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from huggingface_hub import hf_hub_download
 from torch import Tensor, nn
-from transformers import AutoConfig
 
 from ..configuration_hy_vla import HyVLAConfig
 from .hunyuan_vl_mot import (
@@ -38,7 +34,7 @@ from .modeling_dual_tower import (
 )
 
 # ---------------------------------------------------------------------------
-# VLM AutoConfig loading: returns a bundled ``HunYuanVLMoTConfig``
+# VLM config loading: returns a concrete ``HunYuanVLMoTConfig``
 # (text_config + vision_config nested form) so downstream dual_tower
 # construction has a single config schema to worry about. There are two
 # checkpoint flavours the loader handles:
@@ -49,26 +45,21 @@ from .modeling_dual_tower import (
 #       directly from the embedded dict -- no disk / network access.
 #
 #   (b) Bare VLM directory or HF Hub repo id (e.g. ``tencent/HY-Embodied-0.5``):
-#       resolved via ``AutoConfig.from_pretrained``. The HY-Embodied-0.5
-#       release ships an ``auto_map`` whose target file is not bundled, so
-#       we pin ``trust_remote_code=False`` and, on the resulting ValueError,
-#       fall back to reading ``config.json`` by hand (after stripping
-#       ``auto_map``) and routing through ``HunYuanVLMoTConfig``.
+#       loaded directly through ``HunYuanVLMoTConfig.from_pretrained``.
 #
 # Returns: a ``HunYuanVLMoTConfig`` (always).
 # ---------------------------------------------------------------------------
 
 
-def _load_vlm_autoconfig(config_or_path):
-    """Load the upstream VLM ``AutoConfig`` and return a ``HunYuanVLMoTConfig``.
+def _load_vlm_config(config_or_path):
+    """Load a concrete ``HunYuanVLMoTConfig``.
 
     Accepts either:
       * a ``HyVLAConfig`` instance -- in which case ``config.vlm_config_dict``
         is the authoritative source: no disk / network access is needed.
       * a string ``model_path`` (local dir or HF repo id) -- in which case
-        we first try plain ``AutoConfig.from_pretrained``; on failure caused
-        by a broken ``auto_map`` (typical for HY-Embodied-0.5), we fall back
-        to reading ``config.json`` as a dict and stripping ``auto_map``.
+        the concrete config class loads ``config.json`` without executing
+        checkpoint-provided code.
     """
     # ---- Path 1: embedded vlm_config_dict (self-contained VLA ckpt) ----
     if isinstance(config_or_path, HyVLAConfig) or hasattr(config_or_path, "vlm_config_dict"):
@@ -86,7 +77,7 @@ def _load_vlm_autoconfig(config_or_path):
                     f"has_text_config={'text_config' in data})."
                 )
             print(
-                "[modeling_hy_vla] VLM AutoConfig loaded from embedded "
+                "[modeling_hy_vla] VLM config loaded from embedded "
                 "vlm_config_dict (nested hunyuan_vl_mot schema).",
                 file=sys.stderr,
                 flush=True,
@@ -98,53 +89,14 @@ def _load_vlm_autoconfig(config_or_path):
         model_path = cfg.vlm_model_path
         if not model_path:
             raise ValueError(
-                "_load_vlm_autoconfig: HyVLAConfig has no "
+                "_load_vlm_config: HyVLAConfig has no "
                 "``vlm_config_dict`` AND no ``vlm_model_path``. "
                 "Self-contained ckpts must embed ``vlm_config_dict``; "
                 "raw-VLM bootstrap flows must set ``vlm_model_path``."
             )
     else:
         model_path = config_or_path
-    # ---- Path 2: AutoConfig.from_pretrained (locally registered class) ----
-    # ``trust_remote_code=False`` is required so transformers raises a
-    # deterministic ValueError on broken ``auto_map`` entries (which our
-    # except block below repairs) instead of prompting on stdin.
-    try:
-        loaded = AutoConfig.from_pretrained(model_path, trust_remote_code=False)
-        if isinstance(loaded, HunYuanVLMoTConfig):
-            return loaded
-        raise TypeError(
-            f"AutoConfig at {model_path!r} dispatched to "
-            f"{type(loaded).__name__}, expected HunYuanVLMoTConfig. The "
-            "LeRobot HunYuanVLMoTConfig must be registered before loading."
-        )
-    except (OSError, ValueError) as exc:
-        msg = str(exc).lower()
-        if (
-            "auto_map" not in msg
-            and "does not appear to have a file named" not in msg
-            and "trust_remote_code" not in msg
-        ):
-            raise
-
-    # ---- Path 3: read config.json by hand (auto_map strip) -----------
-    cfg_path = os.path.join(model_path, "config.json")
-    if not os.path.isfile(cfg_path):
-        cfg_path = hf_hub_download(repo_id=model_path, filename="config.json")
-
-    with open(cfg_path, encoding="utf-8") as fp:
-        data = json.load(fp)
-
-    data.pop("auto_map", None)
-    if data.get("model_type") != "hunyuan_vl_mot":
-        raise ValueError(
-            f"VLM config.json at {cfg_path!r} has "
-            f"model_type={data.get('model_type')!r}, expected "
-            "'hunyuan_vl_mot'. The loader requires the upstream "
-            "HY-Embodied schema."
-        )
-    data.pop("model_type", None)
-    return HunYuanVLMoTConfig(**data)
+    return HunYuanVLMoTConfig.from_pretrained(model_path, trust_remote_code=False)
 
 
 def _get_safe_dtype(dtype: torch.dtype, device: str | torch.device) -> torch.dtype:
@@ -255,7 +207,7 @@ class HyVLAFlowMatching(nn.Module):
         # Self-contained checkpoints read the VLM config from
         # ``self.config.vlm_config_dict``; fresh models resolve it from
         # ``self.config.vlm_model_path``.
-        vlm_inner_config = _load_vlm_autoconfig(self.config)
+        vlm_inner_config = _load_vlm_config(self.config)
 
         # Expert config = VLM config with ``hidden_size`` overridden by
         # ``proj_width``. Released ckpt: ``hidden_size=1024`` (vs the VLM's
