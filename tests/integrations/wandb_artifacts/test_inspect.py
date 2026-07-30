@@ -184,7 +184,7 @@ def test_inspect_git_commit_matches_lerobot_checkout_head(tmp_path):
 
 
 def test_git_commit_ignores_an_enclosing_unrelated_repository(monkeypatch):
-    unrelated_root = Path(inspect_module.__file__).resolve().parents[4]
+    unrelated_root = Path(inspect_module.__file__).resolve().parents[2]
     calls = []
 
     def _fake_run(*args, **kwargs):
