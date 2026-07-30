@@ -1,4 +1,5 @@
 """Tests for TLabel to LeRobot conversion."""
+
 import json
 import os
 import sys
@@ -67,10 +68,7 @@ class TestFeatureBuilding:
         """Custom YAML config overrides defaults."""
         config = tmp_path / "custom.yaml"
         config.write_text(
-            "observation.tactile.contact:\n"
-            "  dtype: float32\n"
-            "  shape: [1]\n"
-            "  names: [contact]\n"
+            "observation.tactile.contact:\n  dtype: float32\n  shape: [1]\n  names: [contact]\n"
         )
         features = build_features("gelsight", config_path=str(config))
         assert "observation.tactile.contact" in features
@@ -108,25 +106,13 @@ class TestFeatureExtraction:
         result = extract_tactile_features(frame, "gelsight")
 
         assert result["observation.tactile.contact"].tolist() == pytest.approx([1.0])
-        assert result["observation.tactile.force"].tolist() == pytest.approx(
-            [2.5, 0.3, 3.1]
-        )
-        assert result["observation.tactile.deformation"].tolist() == pytest.approx(
-            [0.1, 0.05]
-        )
-        assert result["observation.tactile.slip"].tolist() == pytest.approx(
-            [0.8, 1.0]
-        )
+        assert result["observation.tactile.force"].tolist() == pytest.approx([2.5, 0.3, 3.1])
+        assert result["observation.tactile.deformation"].tolist() == pytest.approx([0.1, 0.05])
+        assert result["observation.tactile.slip"].tolist() == pytest.approx([0.8, 1.0])
         assert result["observation.tactile.texture"].tolist() == pytest.approx([0.2])
-        assert result["observation.tactile.contact_geometry"].tolist() == pytest.approx(
-            [100.0, 50.0, 75.0]
-        )
-        assert result["observation.tactile.field"].tolist() == pytest.approx(
-            [1.5, 0.1, 0.3, 1.2]
-        )
-        assert result["observation.tactile.dynamics"].tolist() == pytest.approx(
-            [0.2, 0.1, 0.7]
-        )
+        assert result["observation.tactile.contact_geometry"].tolist() == pytest.approx([100.0, 50.0, 75.0])
+        assert result["observation.tactile.field"].tolist() == pytest.approx([1.5, 0.1, 0.3, 1.2])
+        assert result["observation.tactile.dynamics"].tolist() == pytest.approx([0.2, 0.1, 0.7])
 
     def test_returns_numpy_arrays(self):
         """All feature values are np.ndarray with float32 dtype."""
@@ -141,12 +127,8 @@ class TestFeatureExtraction:
         result = extract_tactile_features(frame, "paxini")
 
         assert result["observation.tactile.contact"].tolist() == pytest.approx([1.0])
-        assert result["observation.tactile.force"].tolist() == pytest.approx(
-            [0.0, 0.0, 0.0]
-        )
-        assert result["observation.tactile.deformation"].tolist() == pytest.approx(
-            [0.0, 0.0]
-        )
+        assert result["observation.tactile.force"].tolist() == pytest.approx([0.0, 0.0, 0.0])
+        assert result["observation.tactile.deformation"].tolist() == pytest.approx([0.0, 0.0])
 
     def test_empty_frame(self):
         """Empty frame returns all zeros."""
@@ -204,12 +186,7 @@ class TestDataLoading:
     def test_load_csv(self, tmp_path):
         """Load from CSV files."""
         csv_file = tmp_path / "data.csv"
-        csv_file.write_text(
-            "episode_index,contact,force_magnitude\n"
-            "0,1.0,2.5\n"
-            "0,0.0,0.0\n"
-            "1,1.0,1.0\n"
-        )
+        csv_file.write_text("episode_index,contact,force_magnitude\n0,1.0,2.5\n0,0.0,0.0\n1,1.0,1.0\n")
 
         result = _load_csv_episodes([csv_file])
         assert len(result["episodes"]) == 2

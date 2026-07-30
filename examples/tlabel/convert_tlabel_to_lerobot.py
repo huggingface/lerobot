@@ -117,8 +117,7 @@ def _load_manual(input_dir: Path) -> dict:
         csv_files = list(input_dir.glob("*.csv"))
         if not csv_files:
             raise FileNotFoundError(
-                f"No TLabel data found in {input_dir}. "
-                "Expected tlabel_export.json or *.csv files."
+                f"No TLabel data found in {input_dir}. Expected tlabel_export.json or *.csv files."
             )
         return _load_csv_episodes(csv_files)
 
@@ -184,9 +183,7 @@ def detect_image_dimensions(input_dir: Path, episodes: dict) -> tuple | None:
     return None
 
 
-def validate_image_consistency(
-    input_dir: Path, episodes: dict, expected_shape: tuple
-) -> list:
+def validate_image_consistency(input_dir: Path, episodes: dict, expected_shape: tuple) -> list:
     """Validate all image frames for existence, shape consistency, and RGB channels.
 
     Only validates frames that have a 'tactile_image' key with a non-None value.
@@ -214,20 +211,14 @@ def validate_image_consistency(
 
             if isinstance(img, np.ndarray):
                 if img.ndim < 2:
-                    issues.append(
-                        f"{prefix}: array has <2 dims, shape={img.shape}"
-                    )
+                    issues.append(f"{prefix}: array has <2 dims, shape={img.shape}")
                     continue
                 h, w = img.shape[0], img.shape[1]
                 channels = img.shape[2] if img.ndim == 3 else 1
                 if (h, w) != (exp_h, exp_w):
-                    issues.append(
-                        f"{prefix}: shape ({h}, {w}) != expected ({exp_h}, {exp_w})"
-                    )
+                    issues.append(f"{prefix}: shape ({h}, {w}) != expected ({exp_h}, {exp_w})")
                 if channels != 3:
-                    issues.append(
-                        f"{prefix}: {channels} channel(s), expected 3 (RGB)"
-                    )
+                    issues.append(f"{prefix}: {channels} channel(s), expected 3 (RGB)")
 
             elif isinstance(img, str):
                 img_path = input_dir / img
@@ -241,14 +232,9 @@ def validate_image_consistency(
                         w, h = im.size
                         mode = im.mode
                     if (h, w) != (exp_h, exp_w):
-                        issues.append(
-                            f"{prefix}: {img} is ({h}, {w}) != expected "
-                            f"({exp_h}, {exp_w})"
-                        )
+                        issues.append(f"{prefix}: {img} is ({h}, {w}) != expected ({exp_h}, {exp_w})")
                     if mode not in ("RGB",):
-                        issues.append(
-                            f"{prefix}: {img} mode='{mode}', expected 'RGB'"
-                        )
+                        issues.append(f"{prefix}: {img} mode='{mode}', expected 'RGB'")
                 except OSError as e:
                     issues.append(f"{prefix}: cannot read {img}: {e}")
 
@@ -471,14 +457,10 @@ def convert(
                 if isinstance(img, str):
                     img_path = input_dir / img
                     if not img_path.exists():
-                        raise FileNotFoundError(
-                            f"Episode {ep_idx}: image file not found: {img_path}"
-                        )
+                        raise FileNotFoundError(f"Episode {ep_idx}: image file not found: {img_path}")
                     from PIL import Image
 
-                    frame["observation.images.tactile"] = np.array(
-                        Image.open(img_path)
-                    )
+                    frame["observation.images.tactile"] = np.array(Image.open(img_path))
                 elif isinstance(img, np.ndarray):
                     frame["observation.images.tactile"] = img
 
@@ -496,9 +478,7 @@ def convert(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Convert TLabel tactile data to LeRobotDataset format"
-    )
+    parser = argparse.ArgumentParser(description="Convert TLabel tactile data to LeRobotDataset format")
     parser.add_argument(
         "--input-dir",
         type=str,
@@ -511,9 +491,7 @@ def main():
         required=True,
         help="LeRobot dataset repo ID (e.g., username/dataset_name)",
     )
-    parser.add_argument(
-        "--fps", type=int, default=30, help="Sampling rate in Hz (default: 30)"
-    )
+    parser.add_argument("--fps", type=int, default=30, help="Sampling rate in Hz (default: 30)")
     parser.add_argument(
         "--sensor-type",
         type=str,
