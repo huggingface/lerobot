@@ -13,10 +13,11 @@
 # limitations under the License.
 
 import dataclasses
+import subprocess
+import sys
+import textwrap
 
 import pytest
-
-pytest.importorskip("wandb", reason="wandb is required (install lerobot[training])")
 
 from lerobot.integrations.wandb_artifacts.refs import ArtifactRef, parse_artifact_ref
 
@@ -50,20 +51,20 @@ def test_ref_is_immutable():
     [
         "",
         "   ",
-        "a/b/c",  # missing version/alias
-        "a/b:v0",  # missing project
-        "a:v0",  # missing project and name
-        "/b/c:v0",  # empty entity
-        "a//c:v0",  # empty project
-        "a/b/:v0",  # empty name
-        "a/b/c:",  # empty version/alias
-        "a/b/c: ",  # whitespace-only version/alias
-        " a/b/c:v0",  # leading whitespace
-        "a/b/c:v0 ",  # trailing whitespace
-        "/home/user/datasets/pick-cube",  # local path
-        "./relative/dataset",  # relative local path
-        "wandb://a/b/c:v0",  # wandb:// style
-        "a/b/c:v0/extra",  # too many components
+        "a/b/c",
+        "a/b:v0",
+        "a:v0",
+        "/b/c:v0",
+        "a//c:v0",
+        "a/b/:v0",
+        "a/b/c:",
+        "a/b/c: ",
+        " a/b/c:v0",
+        "a/b/c:v0 ",
+        "/home/user/datasets/pick-cube",
+        "./relative/dataset",
+        "wandb://a/b/c:v0",
+        "a/b/c:v0/extra",
     ],
 )
 def test_parse_rejects_malformed_refs(raw):
@@ -74,3 +75,41 @@ def test_parse_rejects_malformed_refs(raw):
 def test_parse_rejects_non_string_input():
     with pytest.raises(ValueError):
         parse_artifact_ref(None)  # type: ignore[arg-type]
+
+
+def test_reference_parser_imports_without_dataset_or_wandb():
+    preamble = textwrap.dedent(
+        """
+        import builtins
+        blocked = ("datasets", "wandb")
+        real_import = builtins.__import__
+
+        def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if any(name == package or name.startswith(package + ".") for package in blocked):
+                raise ModuleNotFoundError(name + " deliberately unavailable")
+            return real_import(name, globals, locals, fromlist, level)
+
+        builtins.__import__ = guarded_import
+        """
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            preamble
+            + textwrap.dedent(
+                """
+                from lerobot.integrations.wandb_artifacts.refs import ArtifactRef, parse_artifact_ref
+                assert parse_artifact_ref("entity/project/name:v0") == ArtifactRef(
+                    entity="entity",
+                    project="project",
+                    name="name",
+                    version_or_alias="v0",
+                )
+                """
+            ),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
