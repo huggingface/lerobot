@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "evaluation_id": "task1_picklift_real24_vs_mixed_v2_paired_real24_eval24_v1",
+  "status": "operator_labels_complete_canonical_video_review_pending",
+  "plan_sha256": "d59d07a5abcc1644ba89c8d8234e00b113a676b226c10503054a341cae2d9dc5",
+  "evidence_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_mixed_v2_paired_real24_eval24_v1",
+  "operator_inputs": {
+    "manifest_path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_mixed_v2_paired_real24_eval24_v1/operator_manifest_v1.json",
+    "manifest_sha256": "9ffffd0f376e2f33dadece6fa9738309611654a0008c30081939d013f3a4edfe",
+    "summary_path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_mixed_v2_paired_real24_eval24_v1/operator_summary_v1.json",
+    "summary_sha256": "74392a3ebb007405fd6697580c210a7aa84b606b2c9a7abd2199b021ff226b68",
+    "hashes_path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_mixed_v2_paired_real24_eval24_v1/operator_evidence_hashes_v1.sha256",
+    "hashes_sha256": "68ca70102ccb1e33c98a038a8bc2244ac16aabd66a7a94dc66d2ab4cc2f19de6",
+    "hashed_artifacts": 171
+  },
+  "operator_result": {
+    "real24_only": {
+      "successes": 10,
+      "trials": 12,
+      "success_rate": 0.8333333333333334
+    },
+    "mixed_v2": {
+      "successes": 9,
+      "trials": 12,
+      "success_rate": 0.75
+    },
+    "paired_outcomes": {
+      "both_success": 8,
+      "both_failure": 1,
+      "real24_only_only": 2,
+      "mixed_only": 1
+    }
+  },
+  "evidence": {
+    "scored_trials": 24,
+    "total_policy_ticks": 14232,
+    "all_trials_have_video_and_tick_evidence": true,
+    "all_trials_returned_to_same_ready_pose": true,
+    "all_trials_torque_disable_verified": true,
+    "total_upstream_action_modified_events": 0,
+    "infrastructure_invalid_originals": 0
+  },
+  "operator_followup": {
+    "trial_id": "t03",
+    "path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_mixed_v2_paired_real24_eval24_v1/labels/t03_r1c2_mixed_v2.operator_addendum_v1.json",
+    "sha256": "0c3d9a67345472695aebcc540cbc705ace1b46415a30739e9cb37e68f3c2be5b",
+    "effect": "Refines the failure type from unknown to missed_grasp without changing the immutable operator success label."
+  },
+  "interpretation_boundary": "Descriptive paired operator result only; canonical-video review remains required. No causal or paper-level model-performance conclusion."
+}
