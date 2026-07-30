@@ -35,6 +35,8 @@ This is a Gaussian Actor policy (Gaussian policy with a tanh squash) — the pol
 [Multi-Task Diffusion Transformer (DiT)](https://huggingface.co/papers/2507.05331) extends Diffusion Policy with a large Diffusion Transformer and text + vision conditioning for multi-task robot learning. It supports both diffusion and flow-matching objectives and reaches high dexterity with only ~450M parameters.
 {% elif model_name == "wall_x" %}
 [WALL-OSS](https://huggingface.co/papers/2509.11766) is an open-source foundation model for embodied intelligence from XSquare Robot. Built on Qwen2.5-VL, it uses a tightly-coupled multimodal architecture with flow matching to unify semantic reasoning and high-frequency action generation for cross-embodiment control.
+{% elif model_name == "wall_oss_05" %}
+[Wall-OSS-0.5](https://huggingface.co/x-square-robot/wall-oss-0.5) is XSquare Robot's 4B deployment VLA. This policy preserves its released 26D continuous-flow contract.
 {% elif model_name == "xvla" %}
 [X-VLA](https://huggingface.co/papers/2510.10274) is a soft-prompted, flow-matching Vision-Language-Action framework that treats each robot or hardware setup as a "task" encoded with a small set of learnable Soft Prompt embeddings, letting a single model reconcile diverse robot morphologies, sensors, and action spaces.
 {% elif model_name == "evo1" %}
@@ -53,6 +55,7 @@ This is a **{{ model_name }}** policy trained with [LeRobot](https://github.com/
   "eo1": "https://huggingface.co/datasets/HaomingSong/lerobot-documentation-images/resolve/main/lerobot/eo_pipeline.png",
   "groot": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-groot-paper1%20(1).png",
   "wall_x": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/walloss-lerobot-paper.png",
+  "wall_oss_05": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/walloss-lerobot-paper.png",
   "xvla": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/xvla-architecture.png"
 } %}
 {% if diagrams.get(model_name) %}
@@ -82,6 +85,7 @@ This policy has been trained and pushed to the Hub using [LeRobot](https://githu
   "xvla": "xvla",
   "multi_task_dit": "multi_task_dit",
   "wall_x": "walloss",
+  "wall_oss_05": "wall_oss_05",
   "evo1": "evo1",
   "fastwam": "fastwam",
   "lingbot_va": "lingbot_va"
