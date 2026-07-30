@@ -72,6 +72,38 @@ Once a LeRobot-format EO-1 checkpoint is available, load it with:
 policy.path=your-org/your-eo1-checkpoint
 ```
 
+### Text generation and interactive control
+
+EO-1 exposes the Qwen backbone's native text generation using the same batched
+images and task field used for action inference:
+
+```python
+answers = policy.generate_text(
+    batch,
+    kind="vqa",
+    user_text="Which object is closest to the gripper?",
+)
+```
+
+Use `kind="caption"` for a scene description, `kind="grounding"` for a spatial
+query, or `kind="subtask"` for a language-level next action. Text is generated
+by EO-1 itself; no separate VLM is loaded.
+
+With the interactive language runtime, EO-1 can generate a subtask and rebuild
+its action prompt from that current subtask:
+
+```bash
+lerobot-rollout \
+  --language \
+  --policy.path=your-org/your-eo1-checkpoint \
+  --policy.device=cuda \
+  --task="clear the table" \
+  --mode=action
+```
+
+Use `/ask <question>` for image-grounded VQA or `--direct_subtask` to bypass
+subtask generation and condition actions directly on the supplied task.
+
 ## Training
 
 ### Training Command Example
@@ -91,6 +123,33 @@ lerobot-train \
   --policy.device=cuda
 ```
 
+### Train with language annotations
+
+Set `recipe_path` to train EO-1 from LeRobot's optional language columns. The
+joint subtask recipe supervises a selected assistant response and its
+continuous action chunk in the same sequence:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your_org/your_language_annotated_dataset \
+  --policy.type=eo1 \
+  --policy.recipe_path=recipes/subtask_joint.yaml \
+  --policy.text_loss_weight=0.01 \
+  --policy.flow_loss_weight=1.0 \
+  --policy.device=cuda \
+  --batch_size=1 \
+  --steps=20000
+```
+
+Targeted assistant turns receive next-token cross-entropy, while `low_level`
+recipe streams receive flow-action supervision. A row may receive either
+objective or both. User prompts, images, state tokens, action tokens, and
+padding are excluded from text loss. Without `recipe_path`, EO-1 keeps its
+original action-only training path.
+
+See [Language columns and recipes](./language_and_recipes) for the annotation
+schema and available recipes.
+
 ### Key Training Parameters
 
 | Parameter                              | Default                       | Description                                                             |
@@ -107,6 +166,10 @@ lerobot-train \
 | `policy.force_fp32_autocast`           | `true`                        | Keeps the flow head in fp32 even when the backbone uses mixed precision |
 | `policy.supervise_padding_action_dims` | `true`                        | Controls whether padded action dimensions are supervised                |
 | `policy.supervise_padding_actions`     | `true`                        | Controls whether padded future action rows are supervised               |
+| `policy.recipe_path`                   | `None`                        | Enables recipe-driven text and per-sample action supervision            |
+| `policy.text_loss_weight`              | `0.01`                        | Weight for supervised assistant-token cross-entropy                     |
+| `policy.flow_loss_weight`              | `1.0`                         | Weight for continuous flow-action loss                                  |
+| `policy.tokenizer_max_length`          | `1000`                        | Maximum joint vision-language-action sequence length                    |
 
 ## Evaluation
 

@@ -88,6 +88,10 @@ class EO1Config(PreTrainedConfig):
 
     # Training settings.
     gradient_checkpointing: bool = False  # Enable gradient checkpointing for memory optimization
+    recipe_path: str | None = None
+    tokenizer_max_length: int = 1000
+    flow_loss_weight: float = 1.0
+    text_loss_weight: float = 0.01
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -118,6 +122,12 @@ class EO1Config(PreTrainedConfig):
             raise ValueError(
                 f"n_action_steps ({self.n_action_steps}) cannot be greater than chunk_size ({self.chunk_size})"
             )
+        if self.tokenizer_max_length < self.chunk_size + 1:
+            raise ValueError("tokenizer_max_length must leave room for the EO-1 action chunk.")
+        if self.flow_loss_weight < 0 or self.text_loss_weight < 0:
+            raise ValueError("EO-1 loss weights must be non-negative.")
+        if self.flow_loss_weight == 0 and self.text_loss_weight == 0:
+            raise ValueError("At least one EO-1 training loss must be enabled.")
 
         # Populate the serialized backbone config only when the caller did not provide one.
         if self.vlm_config is None:

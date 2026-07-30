@@ -28,6 +28,7 @@ pytest.importorskip("transformers")
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.eo1.modeling_eo1 import EO1Policy
+from lerobot.policies.eo1.processor_eo1 import make_eo1_pre_post_processors
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 HIDDEN_SIZE = 8
@@ -44,6 +45,7 @@ class DummyVLMBackbone(nn.Module):
     def __init__(self, hidden_size: int, vocab_size: int = 64):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, hidden_size)
+        self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
         self.config = SimpleNamespace(text_config=SimpleNamespace(hidden_size=hidden_size))
 
     @property
@@ -89,6 +91,29 @@ class DummyVLMBackbone(nn.Module):
             last_hidden_state=inputs_embeds,
             past_key_values=SimpleNamespace(crop=lambda prefix_len: None),
         )
+
+    def generate(self, input_ids, **kwargs):
+        del kwargs
+        suffix = torch.tensor([[7, 8]], device=input_ids.device).expand(input_ids.shape[0], -1)
+        return torch.cat([input_ids, suffix], dim=1)
+
+
+class DummyTextProcessor:
+    def apply_chat_template(self, messages, **kwargs):
+        del kwargs
+        batch_size = len(messages)
+        return {
+            "input_ids": torch.tensor([[1, 2]]).expand(batch_size, -1),
+            "attention_mask": torch.ones(batch_size, 2, dtype=torch.long),
+            "pixel_values": torch.zeros(batch_size, 3, 2, 2),
+            "image_grid_thw": torch.ones(batch_size, 3, dtype=torch.long),
+            "mm_token_type_ids": torch.zeros(batch_size, 2, dtype=torch.long),
+        }
+
+    def batch_decode(self, token_ids, **kwargs):
+        del kwargs
+        assert torch.equal(token_ids, torch.tensor([[7, 8]]))
+        return ["the cup is left of the plate"]
 
 
 def make_eo1_config():
@@ -184,3 +209,104 @@ def test_lerobot_eo1_inference(monkeypatch):
     torch.testing.assert_close(action_0, fixed_chunk[:, 0, :ACTION_DIM])
     torch.testing.assert_close(action_1, fixed_chunk[:, 1, :ACTION_DIM])
     assert sample_calls["count"] == 1
+
+
+def test_lerobot_eo1_joint_text_and_action_supervision(monkeypatch):
+    monkeypatch.setattr(
+        "lerobot.policies.eo1.modeling_eo1.Qwen2_5_VLForConditionalGeneration.from_pretrained",
+        lambda *args, **kwargs: DummyVLMBackbone(HIDDEN_SIZE),
+    )
+    policy = EO1Policy(make_eo1_config())
+    batch = make_policy_batch(include_action=True)
+    labels = torch.full_like(batch["input_ids"], -100)
+    labels[:, 2] = batch["input_ids"][:, 2]
+    batch["text_labels"] = labels
+
+    loss, metrics = policy.forward(batch)
+
+    assert torch.isfinite(loss)
+    assert metrics["flow_loss"] > 0
+    assert metrics["text_loss"] > 0
+    loss.backward()
+    assert policy.model.vlm_backbone.lm_head.weight.grad is not None
+
+
+def test_lerobot_eo1_text_only_row_skips_flow(monkeypatch):
+    monkeypatch.setattr(
+        "lerobot.policies.eo1.modeling_eo1.Qwen2_5_VLForConditionalGeneration.from_pretrained",
+        lambda *args, **kwargs: DummyVLMBackbone(HIDDEN_SIZE),
+    )
+    policy = EO1Policy(make_eo1_config())
+    batch = make_policy_batch(include_action=True)
+    batch["input_ids"] = torch.tensor([[11, STATE_TOKEN_ID, 12, 13, 14, 15, 16]])
+    labels = torch.full_like(batch["input_ids"], -100)
+    labels[:, 3] = batch["input_ids"][:, 3]
+    batch["text_labels"] = labels
+
+    loss, metrics = policy.forward(batch)
+
+    assert torch.isfinite(loss)
+    assert "flow_loss" not in metrics
+    assert metrics["text_loss"] > 0
+
+
+def test_lerobot_eo1_exposes_image_conditioned_text_generation(monkeypatch):
+    monkeypatch.setattr(
+        "lerobot.policies.eo1.modeling_eo1.Qwen2_5_VLForConditionalGeneration.from_pretrained",
+        lambda *args, **kwargs: DummyVLMBackbone(HIDDEN_SIZE),
+    )
+    policy = EO1Policy(make_eo1_config())
+    policy._text_processor = DummyTextProcessor()
+    batch = {
+        OBS_STATE: torch.zeros(1, STATE_DIM),
+        "observation.images.image": torch.zeros(1, 3, 16, 16),
+        "task": ["clear the table"],
+    }
+
+    output = policy.generate_text(batch, kind="vqa", user_text="Where is the cup?")
+
+    assert output == ["the cup is left of the plate"]
+
+
+def test_eo1_recipe_processor_builds_sparse_joint_labels():
+    pytest.importorskip("datasets", reason="language recipes require lerobot[dataset]")
+    config = make_eo1_config()
+    config.vlm_base = "Qwen/Qwen2.5-VL-3B-Instruct"
+    config.recipe_path = "recipes/subtask_joint.yaml"
+    preprocessor, _ = make_eo1_pre_post_processors(
+        config,
+        dataset_stats={
+            OBS_STATE: {"mean": torch.zeros(STATE_DIM), "std": torch.ones(STATE_DIM)},
+            ACTION: {"mean": torch.zeros(ACTION_DIM), "std": torch.ones(ACTION_DIM)},
+        },
+    )
+    batch = {
+        OBS_STATE: torch.zeros(1, STATE_DIM),
+        ACTION: torch.zeros(1, CHUNK_SIZE, ACTION_DIM),
+        "observation.images.image": torch.zeros(1, 3, 56, 56),
+        "task": ["clear the table"],
+        "timestamp": torch.tensor([0.0]),
+        "index": torch.tensor([7]),
+        "language_persistent": [
+            [
+                {
+                    "role": "assistant",
+                    "content": "pick up the red block",
+                    "style": "subtask",
+                    "timestamp": 0.0,
+                    "camera": None,
+                    "tool_calls": None,
+                }
+            ]
+        ],
+        "language_events": [[]],
+    }
+
+    processed = preprocessor(batch)
+
+    labels = processed["text_labels"]
+    assert labels.shape == processed["input_ids"].shape
+    assert (labels != -100).any()
+    action_token_id = processed["action_token_id"]
+    assert (processed["input_ids"] == action_token_id).sum() == CHUNK_SIZE
+    assert not (labels == action_token_id).any()

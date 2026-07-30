@@ -21,6 +21,7 @@ from collections.abc import Callable
 from typing import Any
 
 _ADAPTERS: dict[str, str] = {
+    "eo1": "lerobot.policies.eo1.inference.eo1_adapter:EO1PolicyAdapter",
     "pi052": "lerobot.policies.pi052.inference.pi052_adapter:PI052PolicyAdapter",
     "pi05": "lerobot.runtime.adapter:DirectTaskPolicyAdapter",
     "molmoact2": "lerobot.runtime.adapter:DirectTaskPolicyAdapter",
