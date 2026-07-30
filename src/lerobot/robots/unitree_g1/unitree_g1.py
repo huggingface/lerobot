@@ -151,9 +151,6 @@ class UnitreeG1(Robot):
         self.controller: LocomotionController | None = make_locomotion_controller(config.controller)
         # Controller thread state
         self._controller_thread = None
-        # When set, the controller loop stops publishing low commands so reset() can
-        # drive the joints directly without two publishers fighting (single-publisher).
-        self._controller_paused = threading.Event()
         self._controller_action_lock = threading.Lock()
         self.controller_input = default_remote_input()
         self.controller_output = {}
@@ -308,11 +305,6 @@ class UnitreeG1(Robot):
 
         while not self._shutdown_event.is_set():
             start_time = time.time()
-
-            # Paused during reset() so the reset routine is the sole low-cmd publisher.
-            if self._controller_paused.is_set():
-                time.sleep(control_dt)
-                continue
 
             with self._lowstate_lock:
                 lowstate = self._lowstate
@@ -635,64 +627,43 @@ class UnitreeG1(Robot):
         if default_positions is None:
             default_positions = np.array(self.config.default_positions, dtype=np.float32)
 
-        # Full-body controllers (SONIC) own the whole 29-DoF command and ignore
-        # ``<joint>.q`` in send_action(), so reset() must publish the default pose
-        # directly. Pause the background controller first so the two aren't both writing
-        # low commands while the robot moves to the default pose.
-        full_body = getattr(self.controller, "full_body", False)
-        paused = False
-        if full_body and self._controller_thread is not None:
-            self._controller_paused.set()
-            paused = True
-            time.sleep(control_dt)  # let any in-flight controller tick settle
+        if self.config.is_simulation and self.sim_env is not None:
+            self.sim_env.reset()
+            self.publish_lowcmd(
+                {f"{motor.name}.q": float(default_positions[motor.value]) for motor in G1_29_JointIndex}
+            )
+        else:
+            total_time = 3.0
+            num_steps = int(total_time / control_dt)
 
-        try:
-            if self.config.is_simulation and self.sim_env is not None:
-                self.sim_env.reset()
-                self.publish_lowcmd(
-                    {f"{motor.name}.q": float(default_positions[motor.value]) for motor in G1_29_JointIndex}
-                )
-            else:
-                total_time = 3.0
-                num_steps = int(total_time / control_dt)
+            # get current state
+            obs = self.get_observation()
 
-                # get current state
-                obs = self.get_observation()
+            # record current positions
+            init_dof_pos = np.zeros(29, dtype=np.float32)
+            for motor in G1_29_JointIndex:
+                init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
 
-                # record current positions
-                init_dof_pos = np.zeros(29, dtype=np.float32)
+            # Interpolate to default position
+            for step in range(num_steps):
+                start_time = time.time()
+
+                alpha = step / num_steps
+                action_dict = {}
                 for motor in G1_29_JointIndex:
-                    init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
+                    target_pos = default_positions[motor.value]
+                    interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
+                    action_dict[f"{motor.name}.q"] = float(interp_pos)
 
-                # Interpolate to default position
-                for step in range(num_steps):
-                    start_time = time.time()
+                self.send_action(action_dict)
 
-                    alpha = step / num_steps
-                    action_dict = {}
-                    for motor in G1_29_JointIndex:
-                        target_pos = default_positions[motor.value]
-                        interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
-                        action_dict[f"{motor.name}.q"] = float(interp_pos)
+                # Maintain constant control rate
+                elapsed = time.time() - start_time
+                sleep_time = max(0, control_dt - elapsed)
+                time.sleep(sleep_time)
 
-                    # Full-body controllers no-op in send_action(); publish the pose
-                    # directly (arm-only controllers keep the send_action() path).
-                    if full_body:
-                        self.publish_lowcmd(action_dict)
-                    else:
-                        self.send_action(action_dict)
-
-                    # Maintain constant control rate
-                    elapsed = time.time() - start_time
-                    sleep_time = max(0, control_dt - elapsed)
-                    time.sleep(sleep_time)
-
-            # Reset controller internal state (gait phase, obs history, etc.) before
-            # resuming so its buffers reflect the post-reset pose.
-            if self.controller is not None and hasattr(self.controller, "reset"):
-                self.controller.reset()
-        finally:
-            if paused:
-                self._controller_paused.clear()
+        # Reset controller internal state (gait phase, obs history, etc.)
+        if self.controller is not None and hasattr(self.controller, "reset"):
+            self.controller.reset()
 
         logger.info("Reached default position")
