@@ -109,6 +109,31 @@ lerobot-train \
 ```
 
 This command performs action training conditioned on the dataset task string.
+For a new robot or dataset, normalize continuous state and action dimensions
+with the dataset's 1st and 99th percentiles:
+
+```bash
+python src/lerobot/scripts/augment_dataset_quantile_stats.py \
+  --repo-id=your_name/your_dataset
+
+lerobot-train \
+  --policy.path=lerobot/being_h05_base \
+  --policy.normalization_mapping='{"ACTION":"QUANTILES","STATE":"QUANTILES","VISUAL":"IDENTITY"}' \
+  --dataset.repo_id=your_name/your_dataset \
+  --batch_size=1 \
+  --steps=3000 \
+  --output_dir=outputs/train/being_h05_quantiles \
+  --job_name=being_h05_quantiles \
+  --policy.device=cuda
+```
+
+LeRobot stores the dataset `q01`/`q99` statistics in the saved policy
+preprocessor and postprocessor. Being-H0.5 keeps its gripper and control-mode
+fields as binary `0/1` values while applying quantile normalization to the
+remaining action dimensions. The published Base and RoboCasa checkpoints
+continue to use identity normalization; use the override only when training a
+new checkpoint.
+
 To jointly train an annotated subtask target and its action chunk, select the
 shared language recipe:
 

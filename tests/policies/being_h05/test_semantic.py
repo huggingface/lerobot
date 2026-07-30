@@ -17,11 +17,12 @@
 import pytest
 import torch
 
-from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies.being_h05.configuration_being_h05 import ROBOCASA_CAMERA_KEYS, BeingH05Config
 from lerobot.policies.being_h05.processor_being_h05 import (
     ACTION_SLOTS,
     STATE_SLOTS,
+    BeingH05BinaryActionStep,
     BeingH05MessagesStep,
     BeingH05SemanticPackStep,
     make_being_h05_pre_post_processors,
@@ -230,6 +231,75 @@ def test_recipe_pipeline_renders_language_columns_before_being_serialization():
     assert processed["being_h05_target_message_indices"] == [[1]]
     assert processed["being_h05_predict_actions"].tolist() == [True]
     assert processed[ACTION].shape == (1, config.chunk_size, 200)
+
+
+def test_quantile_normalization_round_trips_continuous_and_binary_actions(tmp_path):
+    state_features = {
+        f"observation.state.{name}": PolicyFeature(type=FeatureType.STATE, shape=(end - start,))
+        for name, (start, end) in STATE_SLOTS.items()
+    }
+    config = BeingH05Config(
+        input_features={
+            **{
+                key: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224))
+                for key in ROBOCASA_CAMERA_KEYS
+            },
+            **state_features,
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,))},
+        normalization_mapping={
+            "VISUAL": NormalizationMode.IDENTITY,
+            "STATE": NormalizationMode.QUANTILES,
+            "ACTION": NormalizationMode.QUANTILES,
+        },
+    )
+    action_q01 = torch.zeros(12)
+    action_q99 = torch.full((12,), 10.0)
+    action_q99[[6, 11]] = 1.0
+    dataset_stats = {
+        **{
+            key: {
+                "q01": torch.zeros(feature.shape),
+                "q99": torch.full(feature.shape, 10.0),
+            }
+            for key, feature in state_features.items()
+        },
+        ACTION: {"q01": action_q01, "q99": action_q99},
+    }
+    preprocessor, postprocessor = make_being_h05_pre_post_processors(config, dataset_stats)
+    preprocessor.save_pretrained(tmp_path)
+    postprocessor.save_pretrained(tmp_path)
+    preprocessor, postprocessor = make_pre_post_processors(config, pretrained_path=str(tmp_path))
+    assert isinstance(preprocessor.steps[1], BeingH05BinaryActionStep)
+    assert isinstance(preprocessor.steps[2], NormalizerProcessorStep)
+    assert isinstance(preprocessor.steps[3], BeingH05BinaryActionStep)
+    assert isinstance(postprocessor.steps[1], BeingH05BinaryActionStep)
+    assert isinstance(postprocessor.steps[2], UnnormalizerProcessorStep)
+    assert isinstance(postprocessor.steps[3], BeingH05BinaryActionStep)
+
+    raw_action = torch.tensor(
+        [[[2.5, 2.5, 2.5, 2.5, 2.5, 2.5, 0.0, 7.5, 7.5, 7.5, 7.5, 1.0] for _ in range(config.chunk_size)]]
+    )
+    batch = {
+        **{key: torch.full((1, *feature.shape), 2.5) for key, feature in state_features.items()},
+        **{key: torch.rand(1, 3, 224, 224) for key in ROBOCASA_CAMERA_KEYS},
+        ACTION: raw_action,
+        "task": ["close the drawer"],
+    }
+
+    processed = preprocessor(batch)
+    semantic_action = processed[ACTION]
+    torch.testing.assert_close(semantic_action[..., 0:6], torch.full_like(semantic_action[..., 0:6], -0.5))
+    torch.testing.assert_close(semantic_action[..., 70:74], torch.full_like(semantic_action[..., 70:74], 0.5))
+    assert not semantic_action[..., 18].any()
+    assert semantic_action[..., 74].all()
+    torch.testing.assert_close(
+        processed["being_h05.state"][..., 0:3],
+        torch.full_like(processed["being_h05.state"][..., 0:3], -0.5),
+    )
+
+    round_tripped_action = postprocessor(semantic_action)
+    torch.testing.assert_close(round_tripped_action, raw_action)
 
 
 def test_processor_pipeline_save_reload(tmp_path):

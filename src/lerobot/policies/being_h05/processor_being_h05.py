@@ -25,7 +25,7 @@ import torch
 from PIL import Image
 from torchvision.transforms import InterpolationMode, functional as tvf
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature, recipe as recipe_module
+from lerobot.configs import NormalizationMode, PipelineFeatureType, PolicyFeature, recipe as recipe_module
 from lerobot.configs.recipe import TrainingRecipe
 from lerobot.processor import (
     ProcessorStep,
@@ -51,6 +51,8 @@ ACTION_SLOTS = {
     "base_motion": (70, 74),
     "control_mode": (74, 75),
 }
+_BINARY_ACTION_INDICES = (6, 11)
+_BINARY_ACTION_STORAGE_KEY = "being_h05_binary_action"
 
 
 def pack_named(named: dict[str, torch.Tensor], slots: dict[str, tuple[int, int]], dim: int = 200):
@@ -159,6 +161,46 @@ class BeingH05MessagesStep(ProcessorStep):
         complementary["being_h05_target_message_indices"] = [list(value) for value in targets]
         complementary["being_h05_predict_actions"] = torch.tensor(predict_actions, dtype=torch.bool)
         transition = transition.copy()
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="being_h05_binary_action")
+class BeingH05BinaryActionStep(ProcessorStep):
+    """Preserve Being-H0.5's raw 0/1 action fields around shared normalization steps."""
+
+    restore: bool = False
+
+    def get_config(self) -> dict[str, Any]:
+        return {"restore": self.restore}
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition.get(TransitionKey.ACTION)
+        if action is None:
+            return transition
+
+        complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+        if self.restore:
+            binary_action = complementary.pop(_BINARY_ACTION_STORAGE_KEY, None)
+            if binary_action is None:
+                return transition
+            action = action.clone()
+            action[..., list(_BINARY_ACTION_INDICES)] = binary_action.to(
+                device=action.device, dtype=action.dtype
+            )
+        else:
+            if _BINARY_ACTION_STORAGE_KEY in complementary:
+                raise ValueError("Being-H0.5 binary action storage is already populated.")
+            complementary[_BINARY_ACTION_STORAGE_KEY] = action[..., list(_BINARY_ACTION_INDICES)].clone()
+
+        transition = transition.copy()
+        transition[TransitionKey.ACTION] = action
         transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
         return transition
 
@@ -319,24 +361,35 @@ def make_being_h05_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ):
     steps = make_default_policy_processor_steps(config, dataset_stats)
+    normalize_actions = (
+        config.normalization_mapping.get("ACTION", NormalizationMode.IDENTITY) != NormalizationMode.IDENTITY
+    )
     semantic_step = BeingH05SemanticPackStep(
         image_keys=config.image_keys,
         prompt_template=config.prompt_template,
         chunk_size=config.chunk_size,
     )
-    input_steps = [steps.add_batch_dim, steps.normalize]
+    input_steps = [steps.add_batch_dim]
+    if normalize_actions:
+        input_steps.append(BeingH05BinaryActionStep())
+    input_steps.append(steps.normalize)
+    if normalize_actions:
+        input_steps.append(BeingH05BinaryActionStep(restore=True))
     if config.recipe_path:
         from lerobot.processor.render_messages_processor import RenderMessagesStep  # noqa: PLC0415
 
         input_steps.append(RenderMessagesStep(recipe=_load_recipe(config.recipe_path)))
     input_steps.extend([semantic_step, BeingH05MessagesStep(), steps.to_device])
+    output_steps = [BeingH05SemanticUnpackStep()]
+    if normalize_actions:
+        output_steps.append(BeingH05BinaryActionStep())
+    output_steps.append(steps.unnormalize)
+    if normalize_actions:
+        output_steps.append(BeingH05BinaryActionStep(restore=True))
+    output_steps.append(steps.to_cpu)
     return make_policy_processor_pipelines(
         input_steps=input_steps,
-        output_steps=[
-            BeingH05SemanticUnpackStep(),
-            steps.unnormalize,
-            steps.to_cpu,
-        ],
+        output_steps=output_steps,
     )
 
 
