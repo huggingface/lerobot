@@ -14,8 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
 import logging
 from collections import deque
 
@@ -70,15 +68,9 @@ def load_groot_policies(
         filename="GR00T-WholeBodyControl-Walk.onnx",
     )
 
-    # Load ONNX policies with a capped thread pool. GR00T runs at 50 Hz in a
-    # background thread alongside the (torch) upper-body policy, IK and sim; letting
-    # ORT grab every core starves those and makes the whole rollout stutter. These
-    # are small MLPs, so 1 thread is both enough and lowest-latency.
-    from ..g1_utils import make_ort_session_options
-
-    so = make_ort_session_options(intra_op_num_threads=1, inter_op_num_threads=1)
-    policy_balance = ort.InferenceSession(balance_path, sess_options=so)
-    policy_walk = ort.InferenceSession(walk_path, sess_options=so)
+    # Load ONNX policies
+    policy_balance = ort.InferenceSession(balance_path)
+    policy_walk = ort.InferenceSession(walk_path)
 
     logger.info("GR00T policies loaded successfully")
 
@@ -203,16 +195,6 @@ class GrootLocomotionController:
 
         # Transform action back to target joint positions
         target_dof_pos_15 = GROOT_DEFAULT_ANGLES[:15] + self.groot_action * ACTION_SCALE
-
-        # Waist override: an external upper-body IK can command the 3 waist joints
-        # (indices 12/13/14) via ``kWaist{Yaw,Roll,Pitch}.q`` in the action dict. When
-        # present, we substitute the balance policy's waist target so the torso tracks
-        # the IK while the policy keeps only the legs balanced. Single-publisher stays
-        # intact (this thread still owns joints 0-14).
-        for idx in (G1_29_JointIndex.kWaistYaw, G1_29_JointIndex.kWaistRoll, G1_29_JointIndex.kWaistPitch):
-            key = f"{idx.name}.q"
-            if key in action and action[key] is not None:
-                target_dof_pos_15[idx.value] = float(action[key])
 
         # Build action dict
         action_dict = {}

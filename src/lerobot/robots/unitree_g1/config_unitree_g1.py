@@ -62,24 +62,6 @@ class UnitreeG1Config(RobotConfig):
     # Socket config for ZMQ bridge
     robot_ip: str = "192.168.123.164"  # default G1 IP
 
-    # Run the locomotion / whole-body controller ONBOARD the robot (policy on the G1
-    # itself, against local DDS at full rate) instead of on the laptop over the ZMQ
-    # socket bridge. In this mode the robot object uses the real Unitree SDK channels
-    # and expects high-level actions (arm targets + joystick axes, or 64-D SONIC
-    # tokens) fed via send_action -- e.g. by run_g1_server's serve_onboard_controller,
-    # which receives them from the laptop over ZMQ. Mutually exclusive with is_simulation.
-    onboard: bool = False
-    # DDS network interface for onboard mode (None = SDK default, matching
-    # run_g1_server.py's ChannelFactoryInitialize(0)).
-    dds_interface: str | None = None
-    # Onboard sub-flags. On a real G1 both are True: the built-in motion services
-    # must be released before we can write lowcmd, and locomotion axes are read from
-    # the physical wireless remote. Against a DDS sim neither applies (no
-    # MotionSwitcher, no physical remote), so set both False so the controller takes
-    # its locomotion axes purely from send_action (ZMQ) input.
-    release_motion_control: bool = True
-    physical_remote: bool = True
-
     # Cameras (ZMQ-based remote cameras)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
