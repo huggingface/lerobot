@@ -27,6 +27,7 @@ from safetensors.torch import load_file
 from torch import nn
 
 from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.lerobot_types import TransitionKey
 from lerobot.policies.factory import make_policy_config, make_pre_post_processors
 from lerobot.policies.groot.configuration_groot import (
     GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
@@ -54,7 +55,6 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
 )
-from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 

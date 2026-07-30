@@ -19,9 +19,9 @@ from dataclasses import dataclass, field
 from functools import cached_property
 
 from lerobot.cameras import CameraConfig, make_cameras_from_configs
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors.motors_bus import Motor, MotorNormMode
 from lerobot.robots import Robot, RobotConfig
-from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from tests.mocks.mock_motors_bus import MockMotorsBus
 
