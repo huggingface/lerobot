@@ -193,6 +193,76 @@ def detect_image_dimensions(input_dir: Path, episodes: dict) -> tuple | None:
     return None
 
 
+def validate_image_consistency(
+    input_dir: Path, episodes: dict, expected_shape: tuple
+) -> list:
+    """Validate all image frames for existence, shape consistency, and RGB channels.
+
+    Checks every frame that declares a tactile_image field:
+    - File must exist (for path-based images)
+    - Shape must match expected (H, W)
+    - Must have exactly 3 channels (RGB), not grayscale or RGBA
+
+    Args:
+        input_dir: Base directory for resolving relative image paths.
+        episodes: Dict mapping episode index to list of frame dicts.
+        expected_shape: (height, width) from detect_image_dimensions().
+
+    Returns:
+        List of issue description strings. Empty list means all frames are valid.
+    """
+    issues = []
+    exp_h, exp_w = expected_shape
+
+    for ep_idx, ep_frames in sorted(episodes.items()):
+        for frame_idx, frame_data in enumerate(ep_frames):
+            img = frame_data.get("tactile_image")
+            if img is None:
+                continue
+
+            prefix = f"Episode {ep_idx}, frame {frame_idx}"
+
+            if isinstance(img, np.ndarray):
+                if img.ndim < 2:
+                    issues.append(f"{prefix}: array has <2 dims, shape={img.shape}")
+                    continue
+                h, w = img.shape[0], img.shape[1]
+                channels = img.shape[2] if img.ndim == 3 else 1
+                if (h, w) != (exp_h, exp_w):
+                    issues.append(
+                        f"{prefix}: shape ({h}, {w}) != expected ({exp_h}, {exp_w})"
+                    )
+                if channels != 3:
+                    issues.append(
+                        f"{prefix}: {channels} channel(s), expected 3 (RGB)"
+                    )
+
+            elif isinstance(img, str):
+                img_path = input_dir / img
+                if not img_path.exists():
+                    issues.append(f"{prefix}: image file not found: {img}")
+                    continue
+                try:
+                    from PIL import Image
+
+                    with Image.open(img_path) as im:
+                        w, h = im.size
+                        mode = im.mode
+                    if (h, w) != (exp_h, exp_w):
+                        issues.append(
+                            f"{prefix}: {img} is ({h}, {w}) != expected "
+                            f"({exp_h}, {exp_w})"
+                        )
+                    if mode not in ("RGB",):
+                        issues.append(
+                            f"{prefix}: {img} mode='{mode}', expected 'RGB'"
+                        )
+                except Exception as e:
+                    issues.append(f"{prefix}: cannot read {img}: {e}")
+
+    return issues
+
+
 def build_features(sensor_type: str, config_path: str = None, has_image: bool = False, image_shape: tuple = None) -> dict:
     """Build the complete feature dict for LeRobotDataset.
 
@@ -309,13 +379,15 @@ def convert(
     episodes = data["episodes"]
     print(f"Found {len(episodes)} episodes")
 
+    # Check if any frame across ALL episodes has images (not just first frame)
     has_image = False
-    sensor_config = SENSOR_CONFIGS.get(sensor_type, {})
-    if sensor_config.get("has_image", False):
-        for ep_frames in episodes.values():
-            if ep_frames and "tactile_image" in ep_frames[0]:
+    for ep_frames in episodes.values():
+        for frame_data in ep_frames:
+            if "tactile_image" in frame_data:
                 has_image = True
                 break
+        if has_image:
+            break
 
     # Detect actual image dimensions from data if images are present
     image_shape = None
@@ -324,6 +396,17 @@ def convert(
         if detected is not None:
             image_shape = detected
             print(f"Detected image dimensions: {image_shape[0]}x{image_shape[1]}")
+
+            # Validate all frames for consistency
+            issues = validate_image_consistency(input_dir, episodes, image_shape)
+            if issues:
+                print(f"Image validation found {len(issues)} issue(s):")
+                for issue in issues:
+                    print(f"  - {issue}")
+                raise ValueError(
+                    f"Inconsistent images detected ({len(issues)} issue(s)). "
+                    "All tactile images must be RGB with uniform (H, W)."
+                )
         else:
             print("Warning: Could not detect image dimensions, using default 480x640")
 
