@@ -93,9 +93,17 @@ def test_validate_requires_tasks_file_when_total_tasks_nonzero(tmp_path):
 
 
 def test_validate_requires_episodes_dir_when_total_episodes_nonzero(tmp_path):
+    # total_frames=100 also requires data shards (separately tested below); satisfy both here so
+    # this test isolates the episodes-directory requirement's own pass/fail transition.
     _write_minimal_dataset(tmp_path, total_episodes=3, total_frames=100)
     with pytest.raises(DatasetDirectoryError):
         validate_dataset_directory(tmp_path)
+
+    data_chunk = tmp_path / "data" / "chunk-000"
+    data_chunk.mkdir(parents=True, exist_ok=True)
+    (data_chunk / "file-000.parquet").write_bytes(b"")
+    with pytest.raises(DatasetDirectoryError):
+        validate_dataset_directory(tmp_path)  # still missing episode metadata
 
     episodes_chunk = tmp_path / EPISODES_DIR / "chunk-000"
     episodes_chunk.mkdir(parents=True, exist_ok=True)
@@ -103,9 +111,20 @@ def test_validate_requires_episodes_dir_when_total_episodes_nonzero(tmp_path):
     validate_dataset_directory(tmp_path)  # must not raise now
 
 
+def test_validate_requires_data_shards_when_total_frames_nonzero(tmp_path):
+    _write_minimal_dataset(tmp_path, total_frames=100)
+    with pytest.raises(DatasetDirectoryError):
+        validate_dataset_directory(tmp_path)
+
+    data_chunk = tmp_path / "data" / "chunk-000"
+    data_chunk.mkdir(parents=True, exist_ok=True)
+    (data_chunk / "file-000.parquet").write_bytes(b"")
+    validate_dataset_directory(tmp_path)  # must not raise now
+
+
 def test_validate_top_level_check_passes_but_metadata_loading_would_still_fail_without_episodes(tmp_path):
     """Top-level structure (info/stats/data) can be present while episode metadata is still missing."""
-    _write_minimal_dataset(tmp_path, total_episodes=1, total_frames=10)
+    _write_minimal_dataset(tmp_path, total_episodes=1, total_frames=0)
     assert (tmp_path / STATS_PATH).is_file()
     assert (tmp_path / "data").is_dir()
     with pytest.raises(DatasetDirectoryError):

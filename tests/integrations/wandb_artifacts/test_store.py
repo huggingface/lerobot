@@ -23,6 +23,7 @@ import wandb
 from lerobot.integrations.wandb_artifacts.refs import parse_artifact_ref
 from lerobot.integrations.wandb_artifacts.store import (
     ArtifactTypeMismatchError,
+    DownloadDestinationNotEmptyError,
     MaterializedArtifact,
     download_artifact,
     upload_directory,
@@ -192,11 +193,10 @@ def test_download_artifact_rejects_type_mismatch_without_downloading(tmp_path):
     assert fake._download_root is None  # download() must never have been called
 
 
-def test_download_artifact_never_touches_preexisting_unrelated_files(tmp_path, monkeypatch):
-    # The fake's own download() is a no-op on the filesystem, so the real guarantee this asserts
-    # is that download_artifact() itself never calls a deletion primitive on download_root before
-    # delegating to artifact.download() — the actual "don't clobber the destination" behavior is
-    # the real wandb SDK's, out of scope for a network-free unit test.
+def test_download_artifact_rejects_nonempty_destination_without_touching_it(tmp_path, monkeypatch):
+    # A nonempty destination could carry a stale file from a previously downloaded, different
+    # artifact version — reject it outright rather than silently downloading alongside it. The
+    # guard must fire (and leave the file alone) before use_artifact/download are ever reached.
     import shutil
 
     def _must_not_be_called(*args, **kwargs):
@@ -207,10 +207,35 @@ def test_download_artifact_never_touches_preexisting_unrelated_files(tmp_path, m
     sentinel = tmp_path / "unrelated.txt"
     sentinel.write_text("keep me")
 
+    run = MagicMock()
+
+    with pytest.raises(DownloadDestinationNotEmptyError):
+        download_artifact(
+            run, "my-team/my-project/pick-cube:v0", expected_type="dataset", download_root=tmp_path
+        )
+
+    run.use_artifact.assert_not_called()
+    assert sentinel.read_text() == "keep me"
+
+
+def test_download_artifact_accepts_empty_existing_destination(tmp_path):
     fake = _FakeArtifact(name="pick-cube", type="dataset")
     run = MagicMock()
     run.use_artifact.return_value = fake
 
     download_artifact(run, "my-team/my-project/pick-cube:v0", expected_type="dataset", download_root=tmp_path)
 
-    assert sentinel.read_text() == "keep me"
+    assert fake._download_root == str(tmp_path)
+
+
+def test_download_artifact_accepts_nonexistent_destination(tmp_path):
+    fake = _FakeArtifact(name="pick-cube", type="dataset")
+    run = MagicMock()
+    run.use_artifact.return_value = fake
+
+    destination = tmp_path / "not-created-yet"
+    download_artifact(
+        run, "my-team/my-project/pick-cube:v0", expected_type="dataset", download_root=destination
+    )
+
+    assert fake._download_root == str(destination)

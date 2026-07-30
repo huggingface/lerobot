@@ -119,6 +119,12 @@ def validate_dataset_directory(root: Path | str) -> DatasetInfo:
                 f"{EPISODES_DIR}/ has no episode metadata parquet files."
             )
 
+    if info.total_frames > 0 and not any((root / DATA_DIR).rglob("*.parquet")):
+        raise DatasetDirectoryError(
+            f"{root} declares total_frames={info.total_frames} in {INFO_PATH} but "
+            f"{DATA_DIR}/ has no data parquet files."
+        )
+
     return info
 
 

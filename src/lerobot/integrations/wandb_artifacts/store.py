@@ -35,6 +35,15 @@ class ArtifactTypeMismatchError(ValueError):
     """A fetched artifact's declared type doesn't match what the caller expected."""
 
 
+class DownloadDestinationNotEmptyError(ValueError):
+    """A download was asked to materialize into a directory that already has content.
+
+    A previous artifact version's leftover files (e.g. extra data shards a newer version dropped)
+    would otherwise silently survive alongside the new download and get picked up by anything that
+    globs the directory — see ``lerobot.datasets.io_utils.load_nested_dataset``.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class MaterializedArtifact:
     """The result of uploading or downloading a W&B Artifact.
@@ -98,16 +107,26 @@ def download_artifact(
     """Declare ``ref`` as an input to ``run`` and download it into ``download_root``.
 
     Declaring it as a run input (rather than fetching it out-of-band via the public API) is what
-    gives the run lineage back to the exact artifact version it consumed. Never deletes or
-    overwrites anything already at ``download_root`` outside of what the artifact's own manifest
-    writes.
+    gives the run lineage back to the exact artifact version it consumed. ``download_root`` must
+    be empty or not yet exist: the W&B SDK's ``download()`` only ever writes/overwrites files that
+    are part of the artifact's manifest, so a nonempty destination could carry leftover files from
+    a previously downloaded, different version — files a naive caller (or ``load_nested_dataset``,
+    which globs everything under ``data/``) would silently pick up alongside the new download.
 
     Raises:
+        DownloadDestinationNotEmptyError: ``download_root`` already has content.
         ArtifactTypeMismatchError: the fetched artifact's declared type isn't ``expected_type``.
             Raised before any download happens.
     """
     parsed = ref if isinstance(ref, ArtifactRef) else parse_artifact_ref(ref)
     download_root = Path(download_root)
+
+    if download_root.exists() and any(download_root.iterdir()):
+        raise DownloadDestinationNotEmptyError(
+            f"{download_root} already has content; a stale file from a previously downloaded "
+            "artifact version could silently survive alongside this download. Point at an empty "
+            "or nonexistent directory."
+        )
 
     artifact = run.use_artifact(str(parsed))
     if artifact.type != expected_type:

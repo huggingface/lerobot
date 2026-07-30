@@ -35,6 +35,7 @@ from .inspect import (  # noqa: E402
 from .refs import ArtifactRef, parse_artifact_ref  # noqa: E402
 from .store import (  # noqa: E402
     ArtifactTypeMismatchError,
+    DownloadDestinationNotEmptyError,
     MaterializedArtifact,
     download_artifact,
     upload_directory,
@@ -45,6 +46,7 @@ __all__ = [
     "ArtifactTypeMismatchError",
     "DatasetDirectoryError",
     "DatasetDirectoryMetadata",
+    "DownloadDestinationNotEmptyError",
     "MaterializedArtifact",
     "download_artifact",
     "inspect_dataset_directory",

@@ -68,8 +68,15 @@ def cmd_dataset_download(args: argparse.Namespace) -> None:
     # Fail fast on a malformed ref before a run ever starts.
     parsed = parse_artifact_ref(args.ref)
 
+    # The lineage run's own home defaults to the artifact's entity/project, but a caller with only
+    # read access to the source project (e.g. a shared team dataset) needs to log it somewhere they
+    # can actually create runs — `use_artifact` accepts a fully qualified ref regardless of which
+    # project the run itself lives in, so overriding here never changes which artifact is fetched.
     run = wandb.init(
-        entity=parsed.entity, project=parsed.project, job_type="dataset_download", mode=args.mode
+        entity=args.entity or parsed.entity,
+        project=args.project or parsed.project,
+        job_type="dataset_download",
+        mode=args.mode,
     )
     try:
         result = download_artifact(run, parsed, expected_type=DATASET_ARTIFACT_TYPE, download_root=args.root)
@@ -113,6 +120,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     download_parser.add_argument(
         "--root", type=Path, required=True, help="Local directory to materialize the dataset into."
+    )
+    download_parser.add_argument(
+        "--entity",
+        default=None,
+        help="W&B entity to create the lineage run in. Defaults to the artifact's own entity (--ref). "
+        "Override if you can read the artifact but can't create runs in its project.",
+    )
+    download_parser.add_argument(
+        "--project",
+        default=None,
+        help="W&B project to create the lineage run in. Defaults to the artifact's own project (--ref).",
     )
     download_parser.add_argument("--mode", choices=["online", "offline", "disabled"], default=None)
     download_parser.set_defaults(func=cmd_dataset_download)

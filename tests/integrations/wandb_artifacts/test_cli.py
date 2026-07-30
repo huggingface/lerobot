@@ -198,6 +198,51 @@ def test_dataset_download_happy_path(tmp_path, monkeypatch, capsys):
     assert str(dest) in out
 
 
+def test_dataset_download_allows_logging_the_run_in_a_different_project(tmp_path, monkeypatch):
+    """A caller with only read access to the artifact's own project must still be able to log
+    the lineage run somewhere they can write to, without changing which artifact gets fetched."""
+    run = _fake_run()
+    init_calls = []
+    monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: init_calls.append(kwargs) or run)
+
+    dest = tmp_path / "materialized"
+    download_calls = []
+
+    def _fake_download(passed_run, ref, *, expected_type, download_root):
+        download_calls.append(str(ref))
+        _write_minimal_dataset(Path(download_root))
+        return MaterializedArtifact(
+            requested_ref=str(ref),
+            resolved_ref="source-team/source-project/pick-cube:v3",
+            local_path=Path(download_root),
+            version="v3",
+            digest="digest",
+            metadata={},
+        )
+
+    monkeypatch.setattr(cli, "download_artifact", _fake_download)
+
+    cli.main(
+        [
+            "dataset",
+            "download",
+            "--ref",
+            "source-team/source-project/pick-cube:latest",
+            "--root",
+            str(dest),
+            "--entity",
+            "my-own-team",
+            "--project",
+            "my-own-project",
+        ]
+    )
+
+    assert init_calls[0]["entity"] == "my-own-team"
+    assert init_calls[0]["project"] == "my-own-project"
+    # The fully qualified source ref must reach download_artifact unchanged.
+    assert download_calls == ["source-team/source-project/pick-cube:latest"]
+
+
 def test_dataset_download_rejects_result_missing_required_files(tmp_path, monkeypatch):
     run = _fake_run()
     monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: run)
