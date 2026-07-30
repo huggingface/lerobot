@@ -23,7 +23,7 @@ import numpy as np
 import torch
 
 
-class TransitionKey(str, Enum):  # noqa: UP042
+class TransitionKey(str, Enum):
     """Keys for accessing EnvTransition dictionary components."""
 
     # TODO(Steven): Use consts
