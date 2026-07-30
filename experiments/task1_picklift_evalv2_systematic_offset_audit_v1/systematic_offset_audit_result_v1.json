@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "audit_id": "task1_picklift_evalv2_systematic_offset_audit_v1",
+  "research_control_commit": "f4d288dcf6c5f7402560fa2cb0a5e5676cd375a6",
+  "owning_parent_commit": "de2fce222a8e7e94670efea5b2eae3ff0ac3dfb7",
+  "frozen_model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb",
+  "frozen_real24_dataset_tree_sha256": "251cbdc079b304425ccdfbd7a08f15d34858ea0dd8c19345544b8da9f3adb9f2",
+  "evidence_root": "/home/ubuntu24/Teleop/artifacts/analysis/task1_picklift_evalv2_systematic_offset_audit_v1",
+  "input_result": {
+    "reviewed_successes": 1,
+    "trials": 12,
+    "missed_grasp_failures": 11,
+    "t08_scored_artifact": "t08_evalv2_pilot_v2_r1c4_real24_only__replacement1"
+  },
+  "conclusions": {
+    "placement_setup_error": {
+      "classification": "not_confirmed",
+      "median_pixel_residual": 1.1890315488058092,
+      "maximum_pixel_residual": 3.4998620957082545,
+      "median_task_plane_error_m_approx": 0.0018836000290069189,
+      "maximum_task_plane_error_m_approx": 0.004096074321548212
+    },
+    "training_coverage_gap": {
+      "classification": "confirmed_sparse_early_image_position_coverage",
+      "trials_outside_sampled_support": 12,
+      "trials": 12,
+      "real24_sampled_support_radius_px": 3.3236448565602736,
+      "eval_nearest_real24_early_frame_distance_px_median": 13.12038607807232,
+      "eval_nearest_real24_early_frame_distance_px_maximum": 17.90741756914109,
+      "boundary": "Real24 exact metric cube pose and yaw are unknown."
+    },
+    "policy_offset": {
+      "classification": "confirmed_systematic_position_dependent_approach_offset",
+      "successful_demo_proxy_fit_rmse_m": 0.0097880485075438,
+      "eval_residual_norm_m_median": 0.03615958731832716,
+      "eval_residual_norm_m_maximum": 0.049226226790232315,
+      "x_position_fit_r_squared": 0.6516943194696609,
+      "x_residual_coefficient_on_visible_x_m_per_m": -0.554040947615889,
+      "dominant_pattern": "near-row X overshoot and far-row X shortfall, consistent with contraction toward the middle of the sampled X range",
+      "boundary": "URDF and image-homography proxy calibrated on 24 successful demonstrations; not direct fingertip contact measurement."
+    },
+    "yaw": {
+      "classification": "possible_but_not_separated",
+      "yaw0_successes": 1,
+      "yaw0_trials": 6,
+      "yaw45_successes": 0,
+      "yaw45_trials": 6,
+      "maximum_added_yaw_residual_sse_reduction_fraction": 0.01650366531084517,
+      "boundary": "Only 6+6 trials and manual yaw is not measurement truth."
+    },
+    "reachability": {
+      "classification": "no_obvious_gross_unreachability_offline_but_margin_unresolved",
+      "nominal_points_inside_task_contract": 12,
+      "trials": 12,
+      "calibrated_approaches_inside_successful_demo_grasp_hull": 10
+    }
+  },
+  "recommended_next_gate": {
+    "decision": "retain_15mm_offsets_and_use_yaw0_only_before_new_aligned_sim_collection",
+    "reason": "placement matched nominal, while sparse position coverage and a center-contraction approach trend were confirmed; yaw was not separable",
+    "do_not_select_individual_failure_cells": true,
+    "direct_new_aligned_sim_collection_authorized_by_this_audit": false
+  },
+  "artifact_hashes": {
+    "audit_manifest_json": "9089b957e459c98d7613b0fb96c3ab89dcafe74eb13d7a97c680650da58df7f0",
+    "trials_jsonl": "9dbd6c80728ac42ea44b28d15fafd8b3de860abe2f97aee087dcd0796c5846aa",
+    "trials_csv": "6b445ff509a166c0c037b39b876dac364d649361341814ef771d93fdd67959fd",
+    "real24_training_coverage_jsonl": "9c6d62af4f77d36dcc06552b450b2dfa6a656d74b176b92c79800807fdc6082e",
+    "summary_json": "a23f63644bbb83d11ebb3a9913646cd1371237919d252a82afe5291a0b797983",
+    "hashes_sha256": "22ef267d588458e367b622ca8d00cb38f5dbd2a5d4c44fb99e8f0c4295b6eaf1",
+    "independent_validation_json": "97fb544245cac10b0a3d74e1a0dc48ba4ab849e85c06be68654621446e43e820"
+  },
+  "validation": {
+    "status": "pass",
+    "verified_artifact_hashes": 20,
+    "unit_tests_passed": 4,
+    "hardware_accessed": false,
+    "dataset_written": false,
+    "policy_or_rollout_run": false
+  }
+}
