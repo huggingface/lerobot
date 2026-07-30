@@ -38,8 +38,9 @@ else:
 
 logger = logging.getLogger(__name__)
 
-# Joint controlled in FORCE_POS mode; every other joint runs in POS_VEL mode.
-# (RobStride motors default to MIT mode for every joint, including the gripper.)
+# The gripper is driven by a force-limited MIT impedance torque; every other
+# joint is driven by a plain MIT position command. RobStride motors are
+# MIT-mode only (no POS_VEL / FORCE_POS).
 GRIPPER_MOTOR = "gripper"
 # Per-joint RobStride motor models for the B601-RS (passed to motorbridge).
 # The three base joints use the larger rs-06; wrists and gripper use the rs-00.
@@ -201,37 +202,20 @@ class RebotB601RSFollower(Robot):
         print(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
-        if self.config.control_mode not in ("pos_vel", "mit"):
-            raise ValueError(
-                f"Unsupported control_mode '{self.config.control_mode}'. Use 'pos_vel' or 'mit'."
-            )
-        if self.config.gripper_control_mode not in ("force_pos", "mit"):
-            raise ValueError(
-                f"Unsupported gripper_control_mode '{self.config.gripper_control_mode}'. "
-                "Use 'force_pos' or 'mit'."
-            )
-        use_mit = self.config.control_mode == "mit"
-        gripper_use_mit = self.config.gripper_control_mode == "mit"
-        # Keep torque off while switching modes, then enable after every motor is
-        # reconfigured (matches the Seeed RS reference: avoids jerk while motors
-        # change control mode).
+        # RobStride motors are MIT-mode only: keep torque off while switching
+        # mode, set every motor (incl. gripper) to MIT, then re-enable (matches
+        # the Seeed RS reference: avoids jerk while motors change control mode).
         self.bus.disable_all()
         for motor_name, motor in self.motors.items():
-            if motor_name == GRIPPER_MOTOR:
-                target_mode = MotorBridgeMode.MIT if gripper_use_mit else MotorBridgeMode.FORCE_POS
-            elif use_mit:
-                target_mode = MotorBridgeMode.MIT
-            else:
-                target_mode = MotorBridgeMode.POS_VEL
             for attempt in range(_ENSURE_MODE_RETRIES + 1):
                 try:
-                    motor.ensure_mode(target_mode)
+                    motor.ensure_mode(MotorBridgeMode.MIT)
                     break
                 except Exception:
                     if attempt == _ENSURE_MODE_RETRIES:
                         raise
                     time.sleep(_SETTLE_SEC)
-            logger.debug(f"{motor_name} mode set to {target_mode}")
+            logger.debug(f"{motor_name} mode set to MIT")
         self.bus.enable_all()
 
     @check_if_not_connected
@@ -372,7 +356,6 @@ class RebotB601RSFollower(Robot):
             goal_present_pos = {key: (g, present_pos.get(key, g)) for key, g in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
-        use_mit = self.config.control_mode == "mit"
         for motor_name, position_deg in goal_pos.items():
             motor = self.motors.get(motor_name)
             if motor is None:
@@ -380,33 +363,18 @@ class RebotB601RSFollower(Robot):
             idx = self.motor_names.index(motor_name)
             pos_rad = math.radians(position_deg)
             if motor_name == GRIPPER_MOTOR:
-                if self.config.gripper_control_mode == "mit":
-                    # Force-limited impedance grasp: drive the gripper purely by a
-                    # clamped feedforward torque (motor kp=0, pos_des=0) so grip
-                    # force stays bounded instead of pushing to the target regardless
-                    # of force (which could overcurrent when closing on an object).
-                    tau_ff = self._gripper_mit_torque(motor, pos_rad)
-                    if tau_ff is None:
-                        tau_ff = 0.0
-                    motor.send_mit(0.0, 0.0, 0.0, _GRIPPER_MIT_DAMPING, tau_ff)
-                else:
-                    vel_deg_s = (
-                        self.config.pos_vel_velocity[idx]
-                        if isinstance(self.config.pos_vel_velocity, list)
-                        else self.config.pos_vel_velocity
-                    )
-                    motor.send_force_pos(pos_rad, math.radians(vel_deg_s), self.config.gripper_torque_ratio)
-            elif use_mit:
+                # Force-limited impedance grasp: drive the gripper purely by a
+                # clamped feedforward torque (motor kp=0, pos_des=0) so grip
+                # force stays bounded instead of pushing to the target regardless
+                # of force (which could overcurrent when closing on an object).
+                tau_ff = self._gripper_mit_torque(motor, pos_rad)
+                if tau_ff is None:
+                    tau_ff = 0.0
+                motor.send_mit(0.0, 0.0, 0.0, _GRIPPER_MIT_DAMPING, tau_ff)
+            else:
                 kp = self.config.mit_kp[idx] if isinstance(self.config.mit_kp, list) else self.config.mit_kp
                 kd = self.config.mit_kd[idx] if isinstance(self.config.mit_kd, list) else self.config.mit_kd
                 motor.send_mit(pos_rad, 0.0, kp, kd, 0.0)
-            else:
-                vel_deg_s = (
-                    self.config.pos_vel_velocity[idx]
-                    if isinstance(self.config.pos_vel_velocity, list)
-                    else self.config.pos_vel_velocity
-                )
-                motor.send_pos_vel(pos_rad, math.radians(vel_deg_s))
 
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 

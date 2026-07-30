@@ -28,18 +28,21 @@ class RebotB601RSFollowerConfig:
     The B601-RS is the 6-DOF + gripper reBot B601 chassis driven by RobStride RS
     CAN motors (the ``rs-06`` base joints and ``rs-00`` wrists/gripper).
     RobStride motors are MIT-mode only; motor communication goes through the
-    ``motorbridge`` package via ``add_robstride_motor``.
+    ``motorbridge`` package via ``add_robstride_motor`` over a CAN bus, reached
+    either through a SocketCAN interface (the default) or a Damiao USB-to-CAN
+    serial bridge (the bridge is transport-agnostic and can carry RobStride
+    frames too). There is no POS_VEL / FORCE_POS path (those are Damiao-only).
     """
 
-    # Communication port. For ``can_adapter="socketcan"`` (the RS default) this
-    # is the CAN channel name (e.g. "can0"); for ``can_adapter="damiao"`` it is
-    # the Damiao serial bridge device (e.g. "/dev/ttyACM0").
+    # Communication port. For ``can_adapter="socketcan"`` this is the CAN channel
+    # name (e.g. "can0"); for ``can_adapter="damiao"`` it is the Damiao USB-to-CAN
+    # serial bridge device (e.g. "/dev/ttyACM0").
     port: str
 
-    # CAN adapter type:
-    #   "socketcan" - SocketCAN based adapters (PCAN, slcan, embedded controllers, ...)
-    #                  RobStride motors talk CAN directly, so this is the default.
-    #   "damiao"    - Damiao dedicated serial bridge (for a Damiao-bridged setup).
+    # CAN transport. RobStride motors talk CAN directly, so either transport works:
+    #   "socketcan" - SocketCAN channel (e.g. "can0"); the default.
+    #   "damiao"    - Damiao USB-to-CAN serial bridge (the bridge is transport-
+    #                  agnostic; it can carry RobStride CAN frames too).
     can_adapter: str = "socketcan"
 
     # Baud rate for the Damiao serial bridge (only used when can_adapter="damiao").
@@ -69,28 +72,14 @@ class RebotB601RSFollowerConfig:
         }
     )
 
-    # Max speed (deg/s) per joint for POS_VEL arms and FORCE_POS gripper (motor order).
-    # Unused when control_mode="mit" / gripper_control_mode="mit" (the RS defaults).
-    pos_vel_velocity: float | list[float] = field(
-        default_factory=lambda: [150.0, 150.0, 150.0, 150.0, 150.0, 150.0, 900.0]
-    )
-
-    # Arm control: "mit" or "pos_vel". RobStride motors are MIT-mode only.
-    control_mode: str = "mit"
-
-    # MIT kp/kd per arm joint (motor order). Unused when control_mode="pos_vel".
+    # MIT kp/kd per arm joint (motor order: shoulder_pan..gripper). The gripper
+    # entry is unused — the gripper is driven by the impedance torque below.
     mit_kp: float | list[float] = field(
         default_factory=lambda: [50.0, 150.0, 150.0, 50.0, 50.0, 50.0, 12.0]
     )
     mit_kd: float | list[float] = field(
         default_factory=lambda: [3.0, 10.0, 10.0, 5.0, 4.0, 4.0, 0.05]
     )
-
-    # Gripper control: "force_pos" or "mit". RobStride gripper is MIT-mode only.
-    gripper_control_mode: str = "mit"
-
-    # FORCE_POS only: max grip force, in [0, 1]. Unused when gripper_control_mode="mit".
-    gripper_torque_ratio: float = 0.07
 
     # MIT impedance gripper: Kp/Kd of the external impedance torque
     #   tau = Kp*(pos_target - pos) + Kd*(target_vel - vel),

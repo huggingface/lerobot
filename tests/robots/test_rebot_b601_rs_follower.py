@@ -125,13 +125,13 @@ def test_send_action_clips_to_joint_limits(follower):
     # Asserting +145 (not -145) also proves the direction flip runs before clipping.
     returned = follower.send_action({"shoulder_pan.pos": -999.0})
     assert returned["shoulder_pan.pos"] == 145.0
-    # control_mode is "mit", so arm joints are driven via send_mit.
+    # Arm joints are MIT-only, driven via send_mit.
     follower.motors["shoulder_pan"].send_mit.assert_called_once()
 
 
 def test_send_action_routes_gripper_to_mit(follower):
-    # RS gripper_control_mode is "mit": the gripper (rs-00) must be driven via
-    # send_mit, never send_force_pos (a Damiao-only mode).
+    # The RS gripper (rs-00) is MIT-only (force-limited impedance): it must be
+    # driven via send_mit, never the Damiao-only send_force_pos/send_pos_vel.
     follower.send_action({"gripper.pos": -10.0})
     follower.motors["gripper"].send_mit.assert_called_once()
     follower.motors["gripper"].send_force_pos.assert_not_called()
@@ -192,3 +192,186 @@ def test_bimanual_forwards_rs_specific_config_fields():
     assert robot.right_arm.config.joint_directions["gripper"] == -1.0
     assert robot.right_arm.config.gripper_mit_torque_limit == 3.5
     assert robot.right_arm.config.gripper_mit_hold_torque_limit == 1.0
+
+
+# --------------------------------------------------------------------------- #
+# Must-have coverage (guards real regressions / safety, previously untested)  #
+# --------------------------------------------------------------------------- #
+
+
+def test_make_robot_from_config_returns_rs():
+    # Guards the utils.py registration edit: the two RS `elif` branches must
+    # dispatch the registered types to the RS classes.
+    from lerobot.robots.utils import make_robot_from_config
+
+    with patch(f"{_MODULE}.require_package", lambda *a, **kw: None):
+        robot = make_robot_from_config(RebotB601RSFollowerRobotConfig(port="can0"))
+        bi_robot = make_robot_from_config(
+            BiRebotB601RSFollowerConfig(
+                left_arm_config=RebotB601RSFollowerConfig(port="can0"),
+                right_arm_config=RebotB601RSFollowerConfig(port="can1"),
+            )
+        )
+    assert isinstance(robot, RebotB601RSFollower)
+    assert robot.name == "rebot_b601_rs_follower"
+    assert isinstance(bi_robot, BiRebotB601RSFollower)
+    assert bi_robot.name == "bi_rebot_b601_rs_follower"
+
+
+def test_configure_sets_mit_all_joints_and_order():
+    # Guards the Seeed-parity configure change: torque must be disabled while
+    # switching modes, then every motor (incl. gripper) set to MIT, then enabled.
+    order: list[str] = []
+    mit_modes: list = []
+    bus = MagicMock(name="bus")
+    bus.disable_all.side_effect = lambda *a, **k: order.append("disable_all")
+    bus.enable_all.side_effect = lambda *a, **k: order.append("enable_all")
+
+    def _add_motor(_send_id, _recv_id, _model):
+        motor = _make_motor_mock()
+
+        def _ensure(*a, **k):
+            mit_modes.append(a[0] if a else k.get("mode"))
+            order.append("ensure_mode")
+
+        motor.ensure_mode.side_effect = _ensure
+        return motor
+
+    bus.add_robstride_motor.side_effect = _add_motor
+
+    with (
+        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
+        patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
+        patch(f"{_MODULE}.MotorBridgeMode") as mode,
+    ):
+        controller_cls.return_value = bus
+        robot = RebotB601RSFollower(RebotB601RSFollowerRobotConfig(port="can0"))
+        robot.connect(calibrate=False)
+
+    assert len(mit_modes) == 7
+    assert all(m is mode.MIT for m in mit_modes)  # arm + gripper all MIT
+    assert order[0] == "disable_all"
+    assert order[-1] == "enable_all"
+    assert order.index("disable_all") < order.index("enable_all")
+
+
+def test_calibrate_sets_zero_and_uses_joint_limits_range(tmp_path):
+    # Guards calibration: every motor is zeroed and the MotorCalibration range
+    # comes from the physical joint_limits (gripper 0..270), not a hardcoded ±90.
+    bus = _make_bus_mock()
+    with (
+        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
+        patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
+        patch(f"{_MODULE}.MotorBridgeMode", MagicMock()),
+        patch("builtins.input", side_effect=["c", ""]),  # force re-cal, then ENTER
+    ):
+        controller_cls.return_value = bus
+        cfg = RebotB601RSFollowerRobotConfig(id="test_rs", port="can0", calibration_dir=tmp_path)
+        robot = RebotB601RSFollower(cfg)
+        robot.connect(calibrate=False)
+        robot.calibrate()
+
+    for motor in robot.motors.values():
+        motor.set_zero_position.assert_called_once()
+    for name, cal in robot.calibration.items():
+        lo, hi = cfg.joint_limits[name]
+        assert cal.range_min == int(lo)
+        assert cal.range_max == int(hi)
+    # Spot-check the asymmetric physical ranges that differ from DM/±90.
+    assert robot.calibration["gripper"].range_min == 0
+    assert robot.calibration["gripper"].range_max == 270
+    assert robot.calibration["elbow_flex"].range_max == 200
+    assert robot.is_calibrated
+
+
+def test_send_action_autofills_missing_wrist_yaw(follower):
+    # A 6-DOF leader (e.g. SO-100) omits wrist_yaw; the follower must hold it at
+    # 0 instead of raising.
+    follower.send_action({"shoulder_pan.pos": 0.0})
+    follower.motors["wrist_yaw"].send_mit.assert_called_once()
+    pos_rad = follower.motors["wrist_yaw"].send_mit.call_args.args[0]
+    assert pos_rad == pytest.approx(0.0)
+
+
+def test_send_action_caps_relative_target():
+    # max_relative_target is the safety valve against large single-step moves:
+    # a far target must be capped near the present position, not sent as-is.
+    bus = _make_bus_mock()
+    with (
+        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
+        patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
+        patch(f"{_MODULE}.MotorBridgeMode", MagicMock()),
+    ):
+        controller_cls.return_value = bus
+        cfg = RebotB601RSFollowerRobotConfig(port="can0", max_relative_target=10.0)
+        robot = RebotB601RSFollower(cfg)
+        robot.connect(calibrate=False)
+        # Present shoulder_pan position = 0 deg.
+        robot.motors["shoulder_pan"].get_state.return_value.pos = 0.0
+        returned = robot.send_action({"shoulder_pan.pos": 999.0})
+
+    # Without the cap, direction flip + clip would land at -145; with the cap the
+    # relative move is bounded to ±max_relative_target around the present 0.
+    assert abs(returned["shoulder_pan.pos"]) <= 10.0
+    assert abs(returned["shoulder_pan.pos"]) < 145.0
+
+
+@pytest.fixture
+def bi_follower():
+    bus = _make_bus_mock()
+    with (
+        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
+        patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
+        patch(f"{_MODULE}.MotorBridgeMode", MagicMock()),
+    ):
+        controller_cls.return_value = bus
+        cfg = BiRebotB601RSFollowerConfig(
+            left_arm_config=RebotB601RSFollowerConfig(port="can0"),
+            right_arm_config=RebotB601RSFollowerConfig(port="can1"),
+        )
+        robot = BiRebotB601RSFollower(cfg)
+        robot.connect(calibrate=False)
+        yield robot
+        if robot.is_connected:
+            robot.disconnect()
+
+
+def test_bimanual_send_action_routes_prefixes(bi_follower):
+    # Guards bimanual safety: left_/right_ actions must route to the correct arm,
+    # and the returned action must re-prefix each key.
+    returned = bi_follower.send_action(
+        {"left_shoulder_pan.pos": 30.0, "right_gripper.pos": -10.0}
+    )
+    # Routed to the right arms.
+    bi_follower.left_arm.motors["shoulder_pan"].send_mit.assert_called_once()
+    bi_follower.right_arm.motors["gripper"].send_mit.assert_called_once()
+    # Not cross-routed.
+    bi_follower.left_arm.motors["gripper"].send_mit.assert_not_called()
+    bi_follower.right_arm.motors["shoulder_pan"].send_mit.assert_not_called()
+    # Returned keys are re-prefixed.
+    assert "left_shoulder_pan.pos" in returned
+    assert "right_gripper.pos" in returned
+
+
+def test_gripper_impedance_uses_move_limit_on_motion(follower):
+    # On the first call the estimated state velocity is 0 (hold limit, 1.0).
+    # On the second call, move the measured position a lot so |est_vel| > 0.25,
+    # which must switch to the larger moving torque limit (3.5) — proving the
+    # move/hold switching of the impedance force limit (GAP B) works.
+    gripper = follower.motors["gripper"]
+    state = gripper.get_state.return_value
+    state.pos = 0.0
+    follower.send_action({"gripper.pos": -100.0})  # 1st frame: hold limit
+
+    state.pos = 1.0  # large delta -> est_vel = (1.0 - 0) / 0.02 >> 0.25
+    follower.send_action({"gripper.pos": -100.0})  # 2nd frame: move limit
+
+    _pos_des, _vel_des, _kp, _kd, tau_ff = gripper.send_mit.call_args.args
+    # Impedance torque (-32.9 here) is large enough to exceed the hold limit,
+    # so |tau_ff| > 1.0 proves the move-limit path was taken (capped to 3.5).
+    assert (
+        follower.config.gripper_mit_hold_torque_limit
+        < abs(tau_ff)
+        <= follower.config.gripper_mit_torque_limit
+    )
+
