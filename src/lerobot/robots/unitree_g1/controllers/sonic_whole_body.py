@@ -44,8 +44,8 @@ from ..g1_utils import (
     G1_29_JointIndex,
     compute_pd_gains,
     get_gravity_orientation,
-    lowstate_to_obs,
 )
+from ..unitree_g1 import lowstate_to_obs
 
 logger = logging.getLogger(__name__)
 
