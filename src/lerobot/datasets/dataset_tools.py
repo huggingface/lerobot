@@ -1444,8 +1444,9 @@ def modify_tasks(
     2. Set specific tasks for specific episodes (using `episode_tasks`)
     3. Replace existing task strings wherever they appear (using `task_replacements`)
 
-    You can combine all of them: `new_task` sets the default, while `episode_tasks` and
-    `task_replacements` override specific episodes, with `episode_tasks` taking precedence.
+    Per episode, the task is resolved with precedence:
+    `episode_tasks` > `task_replacements` > `new_task` > original task. An episode that ends
+    up with no task (none of the above apply and it had no original task) raises an error.
 
     The dataset is modified in-place, updating only the task-related files:
     - meta/tasks.parquet
@@ -1455,11 +1456,14 @@ def modify_tasks(
 
     Args:
         dataset: The source LeRobotDataset to modify.
-        new_task: A single task string to apply to all episodes. If None and episode_tasks
-            is also None, raises an error.
-        episode_tasks: Optional dict mapping episode indices to their task strings.
-            Overrides `new_task` for specific episodes.
+        new_task: Default task applied to any episode not covered by `episode_tasks` or a
+            matching `task_replacements` entry.
+        episode_tasks: Optional dict mapping episode indices to task strings. Takes precedence
+            over both `task_replacements` and `new_task`.
+        task_replacements: Optional dict mapping existing task strings to new ones. Applied to
+            episodes whose current task matches a key. Every key must be an existing task.
 
+    At least one of `new_task`, `episode_tasks`, or `task_replacements` must be provided.
 
     Examples:
         Set a single task for all episodes:
