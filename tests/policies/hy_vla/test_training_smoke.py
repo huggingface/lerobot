@@ -16,8 +16,11 @@
 
 """Hy-VLA action-training smoke tests."""
 
+import pytest
 import torch
 from torch import nn
+
+pytest.importorskip("transformers", reason="Hy-VLA requires the `hy_vla` extra (transformers)")
 
 from lerobot.policies.hy_vla.configuration_hy_vla import HyVLAConfig
 from lerobot.policies.hy_vla.modeling_hy_vla import HyVLAPolicy
