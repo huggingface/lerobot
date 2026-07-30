@@ -16,9 +16,10 @@
 
 """Tailored LeKiwi data-collection entrypoint.
 
-Prerequisite: the host must be running on the LeKiwi (matching `REMOTE_IP` below):
+Prerequisite: the host must be running on the LeKiwi (matching `REMOTE_IP` below).
+Enable the Orbbec camera pan/tilt on the host too (`--robot.use_camera_head=true`):
 
-    python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi
+    python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi --robot.use_camera_head=true
 
 Then run this script on your laptop (with the leader arm connected):
 
@@ -27,6 +28,7 @@ Then run this script on your laptop (with the leader arm connected):
 Controls while recording (keyboard focus on this terminal / rerun window):
   - Leader arm drives the follower arm.
   - w/a/s/d move the base, z/x rotate, r/f change speed.
+  - i/k tilt the Orbbec camera up/down, j/l pan left/right (recorded into the dataset).
   - Right arrow: end the current episode early.
   - Left arrow: re-record the current episode.
   - Esc: stop recording and upload.
@@ -45,7 +47,7 @@ from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
 # ─── Session settings — edit these ──────────────────────────────────────────
-HF_REPO_ID = "alexzai/lekiwi_v1"
+HF_REPO_ID = "alexzai/lekiwi_20260729"
 TASK_DESCRIPTION = "My task description"  # <- describe the task you are collecting
 
 REMOTE_IP = "192.168.50.187"  # LeKiwi host IP
@@ -65,7 +67,9 @@ def main():
     # Camera shapes come from the shared `lekiwi_cameras_config()` in config_lekiwi.py, so the host
     # capture and the client/dataset declarations stay in sync from a single source on this branch.
     # Create the robot and teleoperator configurations
-    robot_config = LeKiwiClientConfig(remote_ip=REMOTE_IP, id=ROBOT_ID)
+    # use_camera_head=True adds camera_pan/camera_tilt to the recorded action/state; the host must
+    # run with --robot.use_camera_head=true so its motor bus and features match.
+    robot_config = LeKiwiClientConfig(remote_ip=REMOTE_IP, id=ROBOT_ID, use_camera_head=True)
     leader_arm_config = SO101LeaderConfig(port=LEADER_PORT, id=LEADER_ID)
     keyboard_config = KeyboardTeleopConfig()
 

@@ -19,9 +19,10 @@
 Same controls as `record_mytask.py`, but nothing is saved to a dataset — use this
 to test/drive the robot freely.
 
-Prerequisite: the host must be running on the LeKiwi (matching `REMOTE_IP` below):
+Prerequisite: the host must be running on the LeKiwi (matching `REMOTE_IP` below).
+Enable the Orbbec camera pan/tilt on the host too (`--robot.use_camera_head=true`):
 
-    python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi
+    python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi --robot.use_camera_head=true
 
 Then run this script on your laptop (with the leader arm connected):
 
@@ -30,6 +31,7 @@ Then run this script on your laptop (with the leader arm connected):
 Controls (keyboard focus on this terminal / rerun window):
   - Leader arm drives the follower arm.
   - w/a/s/d move the base, z/x rotate, r/f change speed.
+  - i/k tilt the Orbbec camera up/down, j/l pan left/right.
   - Esc: stop teleoperation.
 """
 
@@ -54,7 +56,9 @@ CHUNK_SEC = 2  # how often to check for the Esc key (drive is continuous across 
 
 
 def main():
-    robot_config = LeKiwiClientConfig(remote_ip=REMOTE_IP, id=ROBOT_ID)
+    # use_camera_head=True adds the Orbbec camera pan/tilt to the action/state; the host must run
+    # with --robot.use_camera_head=true so its motor bus and features match.
+    robot_config = LeKiwiClientConfig(remote_ip=REMOTE_IP, id=ROBOT_ID, use_camera_head=True)
     leader_arm_config = SO101LeaderConfig(port=LEADER_PORT, id=LEADER_ID)
     keyboard_config = KeyboardTeleopConfig()
 

@@ -74,6 +74,11 @@ class LeKiwiConfig(RobotConfig):
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = True
 
+    # Enable the Orbbec camera pan/tilt servos (`camera_pan` id 10, `camera_tilt` id 11),
+    # daisy-chained after the base wheels. Leave `False` for a stock LeKiwi (arm 1-6 + wheels 7-9);
+    # otherwise connect/calibration would fail pinging the absent camera motors.
+    use_camera_head: bool = False
+
 
 @dataclass
 class LeKiwiHostConfig:
@@ -120,10 +125,28 @@ class LeKiwiClientConfig(RobotConfig):
             "speed_down": "f",
             # quit teleop
             "quit": "q",
+            # Orbbec camera pan/tilt. i/k/j/l chosen to avoid the base drive keys
+            # (w/a/s/d/z/x/r/f) and the recorder's reserved left/right arrows + n/r/q.
+            "camera_pan_left": "j",
+            "camera_pan_right": "l",
+            "camera_tilt_up": "i",
+            "camera_tilt_down": "k",
         }
     )
 
     cameras: dict[str, CameraConfig] = field(default_factory=lekiwi_cameras_config)
+
+    # Must match the host `LeKiwiConfig.use_camera_head` so the client's state/action features
+    # include the `camera_pan`/`camera_tilt` positions.
+    use_camera_head: bool = False
+
+    # Orbbec camera pan/tilt teleop tuning (only used when `use_camera_head=True`). Positions are
+    # in degrees (matching the host's `use_degrees` default). `camera_step_deg` is added per control
+    # tick while a key is held; the target is clamped to the *_range_deg values to avoid winding up
+    # past the mechanical range (the servo firmware also clamps to the calibrated limits).
+    camera_step_deg: float = 1.5
+    camera_pan_range_deg: float = 90.0
+    camera_tilt_range_deg: float = 45.0
 
     polling_timeout_ms: int = 15
     connect_timeout_s: int = 5

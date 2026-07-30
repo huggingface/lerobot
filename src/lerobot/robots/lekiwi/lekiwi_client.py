@@ -68,6 +68,11 @@ class LeKiwiClient(Robot):
 
         self.last_remote_state = {}
 
+        # Orbbec camera pan/tilt targets in degrees. Lazily initialized from the first observed
+        # camera position so teleop doesn't snap the camera on the first key press.
+        self.camera_pan_target: float | None = None
+        self.camera_tilt_target: float | None = None
+
         # Define three speed levels and a current index
         self.speed_levels = [
             {"xy": 0.1, "theta": 30},  # slow
@@ -81,20 +86,17 @@ class LeKiwiClient(Robot):
 
     @cached_property
     def _state_ft(self) -> dict[str, type]:
-        return dict.fromkeys(
-            (
-                "arm_shoulder_pan.pos",
-                "arm_shoulder_lift.pos",
-                "arm_elbow_flex.pos",
-                "arm_wrist_flex.pos",
-                "arm_wrist_roll.pos",
-                "arm_gripper.pos",
-                "x.vel",
-                "y.vel",
-                "theta.vel",
-            ),
-            float,
+        arm = (
+            "arm_shoulder_pan.pos",
+            "arm_shoulder_lift.pos",
+            "arm_elbow_flex.pos",
+            "arm_wrist_flex.pos",
+            "arm_wrist_roll.pos",
+            "arm_gripper.pos",
         )
+        camera = ("camera_pan.pos", "camera_tilt.pos") if self.config.use_camera_head else ()
+        base = ("x.vel", "y.vel", "theta.vel")
+        return dict.fromkeys((*arm, *camera, *base), float)
 
     @cached_property
     def _state_order(self) -> tuple[str, ...]:
@@ -301,11 +303,48 @@ class LeKiwiClient(Robot):
             theta_cmd += theta_speed
         if self.teleop_keys["rotate_right"] in pressed_keys:
             theta_cmd -= theta_speed
-        return {
+
+        base_action = {
             "x.vel": x_cmd,
             "y.vel": y_cmd,
             "theta.vel": theta_cmd,
         }
+        # Merge Orbbec camera pan/tilt targets so keyboard camera control flows through the same
+        # teleop/record path (record_loop merges this method's output into the action).
+        base_action.update(self._from_keyboard_to_camera_action(pressed_keys))
+        return base_action
+
+    def _from_keyboard_to_camera_action(self, pressed_keys: np.ndarray) -> dict[str, float]:
+        """Turn held pan/tilt keys into absolute `camera_pan.pos` / `camera_tilt.pos` targets (degrees).
+
+        Returns an empty dict when the camera pan/tilt is disabled. Targets accumulate while a key is
+        held and are clamped to the configured ranges.
+        """
+        if not self.config.use_camera_head:
+            return {}
+
+        # Lazy-init from the latest observed camera position to avoid a jump on the first command.
+        if self.camera_pan_target is None:
+            self.camera_pan_target = float(self.last_remote_state.get("camera_pan.pos", 0.0) or 0.0)
+        if self.camera_tilt_target is None:
+            self.camera_tilt_target = float(self.last_remote_state.get("camera_tilt.pos", 0.0) or 0.0)
+
+        step = self.config.camera_step_deg
+        if self.teleop_keys.get("camera_pan_left") in pressed_keys:
+            self.camera_pan_target += step
+        if self.teleop_keys.get("camera_pan_right") in pressed_keys:
+            self.camera_pan_target -= step
+        if self.teleop_keys.get("camera_tilt_up") in pressed_keys:
+            self.camera_tilt_target += step
+        if self.teleop_keys.get("camera_tilt_down") in pressed_keys:
+            self.camera_tilt_target -= step
+
+        pan_range = self.config.camera_pan_range_deg
+        tilt_range = self.config.camera_tilt_range_deg
+        self.camera_pan_target = max(-pan_range, min(pan_range, self.camera_pan_target))
+        self.camera_tilt_target = max(-tilt_range, min(tilt_range, self.camera_tilt_target))
+
+        return {"camera_pan.pos": self.camera_pan_target, "camera_tilt.pos": self.camera_tilt_target}
 
     def configure(self):
         pass

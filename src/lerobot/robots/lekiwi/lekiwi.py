@@ -53,25 +53,34 @@ class LeKiwi(Robot):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
+        motors = {
+            # arm
+            "arm_shoulder_pan": Motor(1, "sts3215", norm_mode_body),
+            "arm_shoulder_lift": Motor(2, "sts3215", norm_mode_body),
+            "arm_elbow_flex": Motor(3, "sts3215", norm_mode_body),
+            "arm_wrist_flex": Motor(4, "sts3215", norm_mode_body),
+            "arm_wrist_roll": Motor(5, "sts3215", norm_mode_body),
+            "arm_gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
+            # base
+            "base_left_wheel": Motor(7, "sts3215", MotorNormMode.RANGE_M100_100),
+            "base_back_wheel": Motor(8, "sts3215", MotorNormMode.RANGE_M100_100),
+            "base_right_wheel": Motor(9, "sts3215", MotorNormMode.RANGE_M100_100),
+        }
+        if config.use_camera_head:
+            # Orbbec camera pan/tilt, daisy-chained after the base wheels. Position-controlled
+            # like the arm joints (not velocity like the wheels).
+            motors["camera_pan"] = Motor(10, "sts3215", norm_mode_body)
+            motors["camera_tilt"] = Motor(11, "sts3215", norm_mode_body)
         self.bus = FeetechMotorsBus(
             port=self.config.port,
-            motors={
-                # arm
-                "arm_shoulder_pan": Motor(1, "sts3215", norm_mode_body),
-                "arm_shoulder_lift": Motor(2, "sts3215", norm_mode_body),
-                "arm_elbow_flex": Motor(3, "sts3215", norm_mode_body),
-                "arm_wrist_flex": Motor(4, "sts3215", norm_mode_body),
-                "arm_wrist_roll": Motor(5, "sts3215", norm_mode_body),
-                "arm_gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
-                # base
-                "base_left_wheel": Motor(7, "sts3215", MotorNormMode.RANGE_M100_100),
-                "base_back_wheel": Motor(8, "sts3215", MotorNormMode.RANGE_M100_100),
-                "base_right_wheel": Motor(9, "sts3215", MotorNormMode.RANGE_M100_100),
-            },
+            motors=motors,
             calibration=self.calibration,
         )
         self.arm_motors = [motor for motor in self.bus.motors if motor.startswith("arm")]
         self.base_motors = [motor for motor in self.bus.motors if motor.startswith("base")]
+        self.camera_motors = [motor for motor in self.bus.motors if motor.startswith("camera")]
+        # Arm + camera pan/tilt are both position-controlled; grouped for calibration / configure / IO.
+        self.position_motors = self.arm_motors + self.camera_motors
         depth_cameras = [name for name, cfg in config.cameras.items() if getattr(cfg, "use_depth", False)]
         if depth_cameras:
             raise NotImplementedError(
@@ -82,20 +91,17 @@ class LeKiwi(Robot):
 
     @property
     def _state_ft(self) -> dict[str, type]:
-        return dict.fromkeys(
-            (
-                "arm_shoulder_pan.pos",
-                "arm_shoulder_lift.pos",
-                "arm_elbow_flex.pos",
-                "arm_wrist_flex.pos",
-                "arm_wrist_roll.pos",
-                "arm_gripper.pos",
-                "x.vel",
-                "y.vel",
-                "theta.vel",
-            ),
-            float,
+        arm = (
+            "arm_shoulder_pan.pos",
+            "arm_shoulder_lift.pos",
+            "arm_elbow_flex.pos",
+            "arm_wrist_flex.pos",
+            "arm_wrist_roll.pos",
+            "arm_gripper.pos",
         )
+        camera = ("camera_pan.pos", "camera_tilt.pos") if self.config.use_camera_head else ()
+        base = ("x.vel", "y.vel", "theta.vel")
+        return dict.fromkeys((*arm, *camera, *base), float)
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -146,14 +152,14 @@ class LeKiwi(Robot):
                 return
         logger.info(f"\nRunning calibration of {self}")
 
-        motors = self.arm_motors + self.base_motors
+        motors = self.position_motors + self.base_motors
 
-        self.bus.disable_torque(self.arm_motors)
-        for name in self.arm_motors:
+        self.bus.disable_torque(self.position_motors)
+        for name in self.position_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
 
         input("Move robot to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.bus.set_half_turn_homings(self.arm_motors)
+        homing_offsets = self.bus.set_half_turn_homings(self.position_motors)
 
         homing_offsets.update(dict.fromkeys(self.base_motors, 0))
 
@@ -185,13 +191,65 @@ class LeKiwi(Robot):
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
 
+    def calibrate_camera_head(self) -> None:
+        """Calibrate only the Orbbec camera pan/tilt servos (`camera_pan`=10, `camera_tilt`=11).
+
+        The existing arm/base calibration is preserved: only the camera entries are (re)computed
+        and merged back into the calibration file, and only the camera registers are written to the
+        motors. Requires `use_camera_head=True` and that the arm/base have already been calibrated.
+        """
+        if not self.camera_motors:
+            raise RuntimeError(
+                "Camera pan/tilt motors are not enabled. Set `use_camera_head=True` on the LeKiwiConfig "
+                "to calibrate them."
+            )
+
+        missing = [m for m in (self.arm_motors + self.base_motors) if m not in self.calibration]
+        if missing:
+            logger.warning(
+                f"No existing calibration found for {missing}. Run a full `calibrate()` first if you "
+                "also need to calibrate the arm/base; continuing with camera-only calibration."
+            )
+
+        logger.info(f"\nRunning Orbbec camera pan/tilt calibration of {self}")
+
+        self.bus.disable_torque(self.camera_motors)
+        for name in self.camera_motors:
+            self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
+
+        input("Move the camera pan/tilt to the middle of its range of motion and press ENTER....")
+        homing_offsets = self.bus.set_half_turn_homings(self.camera_motors)
+
+        print(
+            "Move the camera pan/tilt through its entire range of motion.\n"
+            "Recording positions. Press ENTER to stop..."
+        )
+        range_mins, range_maxes = self.bus.record_ranges_of_motion(self.camera_motors)
+
+        for name in self.camera_motors:
+            self.calibration[name] = MotorCalibration(
+                id=self.bus.motors[name].id,
+                drive_mode=0,
+                homing_offset=homing_offsets[name],
+                range_min=range_mins[name],
+                range_max=range_maxes[name],
+            )
+
+        # Write only the camera registers (arm/base untouched), but keep the bus' cached calibration
+        # in sync with the full merged dict so normalization stays correct for every motor.
+        camera_calibration = {name: self.calibration[name] for name in self.camera_motors}
+        self.bus.write_calibration(camera_calibration, cache=False)
+        self.bus.calibration = self.calibration
+        self._save_calibration()
+        print("Camera pan/tilt calibration merged and saved to", self.calibration_fpath)
+
     def configure(self):
         # Set-up arm actuators (position mode)
         # We assume that at connection time, arm is in a rest position,
         # and torque can be safely disabled to run calibration.
         self.bus.disable_torque()
         self.bus.configure_motors()
-        for name in self.arm_motors:
+        for name in self.position_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
             # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
             self.bus.write("P_Coefficient", name, 16)
@@ -205,7 +263,9 @@ class LeKiwi(Robot):
         self.bus.enable_torque()
 
     def setup_motors(self) -> None:
-        for motor in chain(reversed(self.arm_motors), reversed(self.base_motors)):
+        for motor in chain(
+            reversed(self.arm_motors), reversed(self.base_motors), reversed(self.camera_motors)
+        ):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
@@ -347,7 +407,7 @@ class LeKiwi(Robot):
     def get_observation(self) -> RobotObservation:
         # Read actuators position for arm and vel for base
         start = time.perf_counter()
-        arm_pos = self.bus.sync_read("Present_Position", self.arm_motors)
+        arm_pos = self.bus.sync_read("Present_Position", self.position_motors)
         base_wheel_vel = self.bus.sync_read("Present_Velocity", self.base_motors)
 
         base_vel = self._wheel_raw_to_body(
@@ -393,7 +453,7 @@ class LeKiwi(Robot):
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if arm_goal_pos and self.config.max_relative_target is not None:
-            present_pos = self.bus.sync_read("Present_Position", self.arm_motors)
+            present_pos = self.bus.sync_read("Present_Position", self.position_motors)
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in arm_goal_pos.items()}
             arm_safe_goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
             arm_goal_pos = arm_safe_goal_pos
