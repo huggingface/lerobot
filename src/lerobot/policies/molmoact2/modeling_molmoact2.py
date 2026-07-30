@@ -43,10 +43,21 @@ from torch.distributions import Beta
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
-from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
+from lerobot.utils.import_utils import (
+    _peft_available,
+    _scipy_available,
+    _transformers_available,
+    require_package,
+)
 
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_molmoact2 import MolmoAct2Config
+
+if TYPE_CHECKING or _peft_available:
+    from peft import LoraConfig, get_peft_model
+else:
+    LoraConfig = None
+    get_peft_model = None
 
 logger = logging.getLogger(__name__)
 
@@ -1731,13 +1742,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     def _build_inner_lora_config(self):
         require_package("peft", extra="molmoact2")
-        from peft import LoraConfig
 
         return LoraConfig(**self._get_inner_peft_targets())
 
     def _apply_lora_adapters(self) -> None:
         require_package("peft", extra="molmoact2")
-        from peft import get_peft_model
 
         peft_config = self._build_inner_lora_config()
         self._validate_peft_config(peft_config)
