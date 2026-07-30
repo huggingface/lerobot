@@ -63,13 +63,21 @@ _RTC_JOIN_TIMEOUT_S: float = 3.0
 # ---------------------------------------------------------------------------
 
 
-def supports_rtc_inference_kwargs(policy: PreTrainedPolicy) -> bool:
-    """Whether a policy accepts the extra context passed by RTC inference."""
-    parameters = inspect.signature(policy.predict_action_chunk).parameters
-    return any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()) or {
-        "inference_delay",
-        "prev_chunk_left_over",
-    }.issubset(parameters)
+def supports_rtc_inference(policy: PreTrainedPolicy) -> bool:
+    """Whether a policy declares RTC support and accepts the RTC call shape."""
+    supports_rtc = getattr(policy, "supports_rtc", None)
+    if not callable(supports_rtc) or not supports_rtc():
+        return False
+
+    try:
+        inspect.signature(policy.predict_action_chunk).bind(
+            object(),
+            inference_delay=0,
+            prev_chunk_left_over=None,
+        )
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int) -> torch.Tensor:
