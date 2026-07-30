@@ -34,7 +34,6 @@ from .config_unitree_g1 import UnitreeG1Config
 from .g1_kinematics import G1_29_ArmIK
 from .g1_utils import (
     REMOTE_AXES,
-    REMOTE_KEYS,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
     default_remote_input,
@@ -156,16 +155,6 @@ class UnitreeG1(Robot):
         self.controller_input = default_remote_input()
         self.controller_output = {}
 
-    @property
-    def _sonic_token(self) -> bool:
-        """Whether the SONIC whole-body decoder is active.
-
-        A SONIC controller consumes a 64-D latent motion token as its action and echoes
-        the last commanded token as ``observation.state``. Keyed purely off the selected
-        controller so the token interface is implicit -- no separate config flag.
-        """
-        return self.config.controller == "SonicWholeBodyController"
-
     def _subscribe_lowstate(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
             start_time = time.time()
@@ -240,22 +229,11 @@ class UnitreeG1(Robot):
                 features[f"{cam}_depth"] = (cfg.height, cfg.width, 1)
         return features
 
-    @property
-    def _token_state_ft(self) -> dict[str, type]:
-        """64-D SONIC latent-token proprio state (``motion_token_state.{i}.pos``).
-
-        Exposed only when a SONIC whole-body controller is active; aggregated by the
-        rollout into a 64-D ``observation.state`` (the last token the policy commanded).
-        """
-        if not self._sonic_token:
-            return {}
-        from .controllers.sonic_whole_body import TOKEN_DIM, token_state_key
-
-        return {token_state_key(i): float for i in range(TOKEN_DIM)}
-
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._motors_ft, **self._token_state_ft, **self._cameras_ft}
+        # Controllers may contribute their own proprio features (e.g. SONIC's token state).
+        controller_ft = getattr(self.controller, "observation_features", {})
+        return {**self._motors_ft, **controller_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -263,13 +241,10 @@ class UnitreeG1(Robot):
         if self.controller is None:
             return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
 
-        # Token-output VLA (SONIC decoder): advertise a 64-D latent-token action space
-        # (``motion_token.{i}.pos``) so ``lerobot-rollout`` maps a 64-D policy output
-        # straight onto the decoder, bypassing the encoder.
-        if self._sonic_token:
-            from .controllers.sonic_whole_body import TOKEN_DIM, token_action_key
-
-            return {token_action_key(i): float for i in range(TOKEN_DIM)}
+        # Controllers may define their own action space (e.g. SONIC's 64-D latent token).
+        controller_ft = getattr(self.controller, "action_features", None)
+        if controller_ft is not None:
+            return dict(controller_ft)
 
         # Locomotion controllers (GR00T / Holosoma): arm joint targets + joystick axes.
         arm_features = {f"{G1_29_JointArmIndex(motor).name}.q": float for motor in G1_29_JointArmIndex}
@@ -504,16 +479,10 @@ class UnitreeG1(Robot):
         if lowstate.wireless_remote:
             obs["wireless_remote"] = lowstate.wireless_remote
 
-        # Token mode: echo the token the SONIC controller last decoded as observation.state
-        # so a token-output VLA closes the loop on its own previous token.
-        if self._sonic_token:
-            from .controllers.sonic_whole_body import TOKEN_DIM, token_state_key
-
-            token = self.controller._last_token
-            if token is None:
-                token = np.zeros(TOKEN_DIM, dtype=np.float32)
-            for i, v in enumerate(token):
-                obs[token_state_key(i)] = float(v)
+        # Controller-contributed observation (e.g. SONIC echoes its last decoded token as
+        # observation.state so a token-output VLA closes the loop on its own previous token).
+        if self.controller is not None and hasattr(self.controller, "observation_state"):
+            obs.update(self.controller.observation_state())
 
         # Cameras - read images from ZMQ cameras
         for cam_name, cam in self._cameras.items():
@@ -563,20 +532,14 @@ class UnitreeG1(Robot):
         return action
 
     def _update_controller_action(self, action: RobotAction) -> None:
-        """Update controller input state from an incoming teleop action.
+        """Forward incoming teleop action values into ``controller_input``.
 
-        Locomotion controllers (GR00T / Holosoma) read the ``remote.*`` joystick axes;
-        the SONIC whole-body controller reads the 64-D ``motion_token.*`` latent. Both are
-        forwarded into ``controller_input`` for the controller thread to consume.
+        Every value-carrying key is forwarded verbatim; each controller reads only the keys
+        it understands (``remote.*`` axes for locomotion, ``motion_token.*`` for SONIC).
         """
-        from .controllers.sonic_whole_body import TOKEN_ACTION_PREFIX
-
         with self._controller_action_lock:
-            for key in REMOTE_KEYS:
-                if key in action:
-                    self.controller_input[key] = action[key]
             for key, value in action.items():
-                if isinstance(key, str) and value is not None and key.startswith(TOKEN_ACTION_PREFIX):
+                if isinstance(key, str) and value is not None:
                     self.controller_input[key] = value
 
     @property

@@ -306,6 +306,29 @@ class SonicWholeBodyController:
 
         logger.info("SONIC ready (decoder, 64-D token command path)")
 
+    @property
+    def action_features(self) -> dict[str, type]:
+        """64-D latent-token action space (``motion_token.{i}.pos``).
+
+        ``lerobot-rollout`` maps a 64-D policy output straight onto these keys, which the
+        decoder consumes with the encoder bypassed.
+        """
+        return {token_action_key(i): float for i in range(TOKEN_DIM)}
+
+    @property
+    def observation_features(self) -> dict[str, type]:
+        """64-D latent-token proprio state (``motion_token_state.{i}.pos``).
+
+        Aggregated by the rollout into a 64-D ``observation.state`` (the last token decoded).
+        """
+        return {token_state_key(i): float for i in range(TOKEN_DIM)}
+
+    def observation_state(self) -> dict[str, float]:
+        """Echo the last decoded token as ``observation.state`` so a token-output VLA closes
+        the loop on its own previous token."""
+        token = self._last_token if self._last_token is not None else np.zeros(TOKEN_DIM, dtype=np.float32)
+        return {token_state_key(i): float(v) for i, v in enumerate(token)}
+
     def _startup_blend(self, obs: dict, out: dict) -> dict:
         """Ease into policy control at startup: for the first ``INIT_RAMP_S`` seconds,
         interpolate between the robot's pose captured on the first tick and the policy's
