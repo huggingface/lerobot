@@ -20,8 +20,8 @@ Pure-Python/ONNX re-implementation of the *decode* half of NVIDIA's SONIC deploy
 The encoder is intentionally absent: a token-output VLA (e.g. ``nepyope/sonic_walk``)
 supplies the 64-D latent ``motion_token`` directly each tick, and the SONIC **decoder**
 maps ``token + recent proprioception history`` to a residual action that is scaled and
-added onto ``DEFAULT_ANGLES`` to produce 50 Hz joint-position targets for the robot's PD
-controller.
+added onto the standing pose (``default_angles``) to produce 50 Hz joint-position targets
+for the robot's PD controller.
 
 Index spaces: joints exist in two orderings — **IsaacLab** (policy/training order) and
 **MuJoCo** (deploy order). ``ISAACLAB_TO_MUJOCO`` / ``MUJOCO_TO_ISAACLAB`` (in g1_utils)
@@ -30,19 +30,18 @@ convert between them. Quaternions are scalar-first ``(w, x, y, z)``.
 
 from __future__ import annotations
 
+import json
 import logging
 
 import numpy as np
+import onnx
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
 from ..g1_utils import (
     ISAACLAB_TO_MUJOCO,
-    MOTOR_ARMATURE,
     MUJOCO_TO_ISAACLAB,
-    NATURAL_FREQ,
     G1_29_JointIndex,
-    compute_pd_gains,
     get_gravity_orientation,
 )
 from ..unitree_g1 import lowstate_to_obs
@@ -53,61 +52,43 @@ logger = logging.getLogger(__name__)
 CONTROL_DT = 0.02  # 50 Hz control period (s)
 TOKEN_DIM = 64  # decoder latent size
 
-# Nominal standing pose (rad), 29 joints in IsaacLab order. Decoder actions are residuals
-# added on top of this.
-DEFAULT_ANGLES = np.array(
-    [
-        -0.312,
-        0.0,
-        0.0,
-        0.669,
-        -0.363,
-        0.0,
-        -0.312,
-        0.0,
-        0.0,
-        0.669,
-        -0.363,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.2,
-        0.2,
-        0.0,
-        0.6,
-        0.0,
-        0.0,
-        0.0,
-        0.2,
-        -0.2,
-        0.0,
-        0.6,
-        0.0,
-        0.0,
-        0.0,
-    ],
-    dtype=np.float32,
-)
-
-# Per-motor torque limits (N·m), used only for SONIC's residual-action scaling. The
-# armature / bandwidth constants and the PD-gain formula are shared (see g1_utils).
-EFFORT = {"5020": 25.0, "7520_14": 88.0, "7520_22": 139.0, "4010": 5.0}
+# SONIC decoder checkpoint: NVIDIA's decoder ONNX re-packaged with its deploy constants
+# (kp/kd PD gains, the standing pose default_angles, and the residual action_scale) embedded
+# in the ONNX metadata; see upload_sonic_decoder.py for provisioning. The runtime loads the
+# model *and* all of these straight from the checkpoint (the Holosoma convention), so no
+# motor-physics math happens at deploy time.
+DEFAULT_SONIC_REPO_ID = "lerobot/sonic_decoder"
+DECODER_FILENAME = "model_decoder.onnx"
+DECODER_INPUT_DIM = 994  # token(64) + 10-frame proprio history + gravity
 
 
-def _action_scale(k):
-    """Per-motor residual-action scale (maps policy output to joint-angle delta)."""
-    return 0.25 * EFFORT[k] / (MOTOR_ARMATURE[k] * NATURAL_FREQ**2)
+def load_sonic_decoder(repo_id: str = DEFAULT_SONIC_REPO_ID):
+    """Load the SONIC decoder ONNX and its baked-in deploy constants from the checkpoint.
 
+    Returns ``(decoder_session, kp, kd, default_angles, action_scale, neutral_token)``. The
+    gains/pose/scale are (29,) float32 in IsaacLab joint order and ``neutral_token`` is the
+    (64,) float32 idle latent -- all read from the ONNX ``metadata_props`` rather than
+    recomputed/hardcoded at deploy time (mirrors ``holosoma_locomotion.load_policy``).
+    """
+    decoder_path = hf_hub_download(repo_id=repo_id, filename=DECODER_FILENAME)
+    so = ort.SessionOptions()
+    so.log_severity_level = 3  # quiet ORT logs
+    session = ort.InferenceSession(decoder_path, sess_options=so)
+    dec_dim = int(session.get_inputs()[0].shape[1])
+    if dec_dim != DECODER_INPUT_DIM:
+        raise RuntimeError(f"Unexpected decoder input dim {dec_dim} (expected {DECODER_INPUT_DIM})")
 
-# Per-joint motor model (IsaacLab order): legs, waist, then arms. Single source of truth
-# for both ACTION_SCALE and compute_kp_kd().
-MOTOR_MODELS = (
-    ["7520_22", "7520_22", "7520_14", "7520_22", "5020", "5020"] * 2
-    + ["7520_14", "5020", "5020"]
-    + ["5020", "5020", "5020", "5020", "5020", "4010", "4010"] * 2
-)
-ACTION_SCALE = np.array([_action_scale(k) for k in MOTOR_MODELS], dtype=np.float32)  # (29,) IsaacLab
+    meta = {p.key: p.value for p in onnx.load(decoder_path, load_external_data=False).metadata_props}
+    required = ("kp", "kd", "default_angles", "action_scale", "neutral_token")
+    missing = [k for k in required if k not in meta]
+    if missing:
+        raise ValueError(
+            f"SONIC decoder ONNX at {repo_id} is missing metadata {missing}; "
+            "re-run upload_sonic_decoder.py to (re)provision the checkpoint."
+        )
+    arr = {k: np.array(json.loads(meta[k]), dtype=np.float32) for k in required}
+    logger.info("Loaded SONIC deploy constants from %s (%d joints)", repo_id, len(arr["kp"]))
+    return session, arr["kp"], arr["kd"], arr["default_angles"], arr["action_scale"], arr["neutral_token"]
 
 
 def _to_mujoco(a):
@@ -119,18 +100,6 @@ def _to_mujoco(a):
     rename toward the opposite direction without re-validating on hardware.
     """
     return a[MUJOCO_TO_ISAACLAB]
-
-
-DEFAULT_ANGLES_MUJOCO = _to_mujoco(DEFAULT_ANGLES)
-
-
-# Ankle + waist joint indices (IsaacLab order) that get a x2 stiffness/damping factor.
-_SONIC_DOUBLE = {4, 5, 10, 11, 13, 14}
-
-
-def compute_kp_kd():
-    """SONIC per-joint PD gains (kp, kd), (29,) float32 in IsaacLab joint order."""
-    return compute_pd_gains(MOTOR_MODELS, _SONIC_DOUBLE)
 
 
 # Action-feature prefix for the latent-token interface (see _extract_token_from_action).
@@ -159,83 +128,6 @@ def token_state_key(i: int) -> str:
 # eases in without a snap on the first command.
 INIT_RAMP_S = 3.0
 
-# Neutral ("zero pose") SONIC token, held by token_mode until the first real token arrives.
-# Captured from the encoder's own output while the robot stood idle in sim: the encoder is
-# an FSQ bottleneck (~5 bit/dim, Div(16)), so its tokens live on the 1/16 grid. We store the
-# integer FSQ codes and rescale by 1/16, giving an exact on-grid token -- unlike the literal
-# all-zero token, which is off the learned manifold and decodes to a slightly goofy stance.
-# This one decodes to a stable, natural standing pose.
-_NEUTRAL_TOKEN_CODES = np.array(
-    [
-        -1,
-        3,
-        1,
-        -1,
-        1,
-        -3,
-        6,
-        1,
-        1,
-        1,
-        -2,
-        -4,
-        -2,
-        0,
-        -3,
-        -1,
-        2,
-        -1,
-        -3,
-        -5,
-        3,
-        1,
-        1,
-        -4,
-        -1,
-        -1,
-        1,
-        -7,
-        0,
-        1,
-        2,
-        -2,
-        5,
-        -2,
-        -2,
-        -4,
-        0,
-        -1,
-        3,
-        -1,
-        0,
-        -5,
-        -1,
-        0,
-        -4,
-        0,
-        0,
-        -1,
-        -1,
-        2,
-        -2,
-        1,
-        3,
-        3,
-        1,
-        0,
-        0,
-        6,
-        0,
-        -7,
-        3,
-        0,
-        2,
-        -2,
-    ],
-    dtype=np.float32,
-)
-NEUTRAL_TOKEN = _NEUTRAL_TOKEN_CODES / 16.0  # FSQ Div(16): integer codes -> on-grid token
-
 
 def _extract_token_from_action(action: dict | None) -> np.ndarray | None:
     """Reassemble a dense (64,) latent token from ``motion_token.{i}`` keys, or None.
@@ -256,16 +148,17 @@ class SonicDecoder:
     """Runs the SONIC decoder ONNX model and owns the proprioception history.
 
     Each tick it appends the latest robot state to 10-frame history buffers, then maps the
-    supplied 64-D ``token`` + that history to a residual action added onto
-    ``DEFAULT_ANGLES``. The encoder is bypassed entirely (token supplied by the policy).
+    supplied 64-D ``token`` + that history to a residual action added onto ``default_angles``.
+    The encoder is bypassed entirely (token supplied by the policy). ``default_angles`` and
+    ``action_scale`` are (29,) float32 in IsaacLab order, loaded from the checkpoint.
     """
 
-    def __init__(self, decoder):
+    def __init__(self, decoder, default_angles, action_scale):
         self.decoder = decoder
         self.decoder_input = decoder.get_inputs()[0].name
-        dec_dim = int(decoder.get_inputs()[0].shape[1])
-        if dec_dim != 994:
-            raise RuntimeError(f"Unexpected decoder input dim {dec_dim} (expected 994)")
+        self.default_angles = np.asarray(default_angles, np.float32)
+        self.action_scale = np.asarray(action_scale, np.float32)
+        self.default_angles_mj = _to_mujoco(self.default_angles)
         self.token = np.zeros(TOKEN_DIM, np.float32)
         self.last_action_mj = np.zeros(29, np.float32)
         self.h_q_mj = [np.zeros(29, np.float32)] * 10
@@ -293,7 +186,7 @@ class SonicDecoder:
         quat = quat / (np.linalg.norm(quat) + 1e-8)
         q_mj = _to_mujoco(q)
         dq_mj = _to_mujoco(dq)
-        self.h_q_mj = [q_mj - DEFAULT_ANGLES_MUJOCO] + self.h_q_mj[:-1]
+        self.h_q_mj = [q_mj - self.default_angles_mj] + self.h_q_mj[:-1]
         self.h_dq_mj = [dq_mj] + self.h_dq_mj[:-1]
         self.h_ang = [ang.copy()] + self.h_ang[:-1]
         self.h_act_mj = [self.last_action_mj.copy()] + self.h_act_mj[:-1]
@@ -335,7 +228,7 @@ class SonicDecoder:
         jnames = [m.name for m in G1_29_JointIndex]
         q = np.array(
             [
-                robot_obs.get(f"{n}.q", DEFAULT_ANGLES[m.value])
+                robot_obs.get(f"{n}.q", self.default_angles[m.value])
                 for m, n in zip(G1_29_JointIndex, jnames, strict=False)
             ],
             np.float32,
@@ -358,7 +251,7 @@ class SonicDecoder:
             .astype(np.float32)
         )
         self.last_action_mj = action_mj.copy()
-        target = DEFAULT_ANGLES + action_mj[ISAACLAB_TO_MUJOCO] * ACTION_SCALE
+        target = self.default_angles + action_mj[ISAACLAB_TO_MUJOCO] * self.action_scale
         if debug:
             delta = target - q
             logger.debug(
@@ -379,14 +272,10 @@ class SonicRuntime:
     """
 
     def __init__(self):
-        decoder_path = hf_hub_download(repo_id="nvidia/GEAR-SONIC", filename="model_decoder.onnx")
-
-        so = ort.SessionOptions()
-        so.log_severity_level = 3  # quiet ORT logs
-        decoder_sess = ort.InferenceSession(decoder_path, sess_options=so)
-
-        self.kp, self.kd = compute_kp_kd()
-        self.controller = SonicDecoder(decoder_sess)
+        decoder_sess, self.kp, self.kd, default_angles, action_scale, neutral_token = load_sonic_decoder()
+        self.default_angles = default_angles
+        self.neutral_token = neutral_token
+        self.controller = SonicDecoder(decoder_sess, default_angles, action_scale)
 
     @property
     def pipeline(self):
@@ -411,6 +300,8 @@ class SonicWholeBodyController:
         self.kp = self._runtime.kp
         self.kd = self._runtime.kd
         self.controller = self._runtime.controller
+        self._default_angles = self._runtime.default_angles
+        self._neutral_token = self._runtime.neutral_token
 
         # Startup blend: ease from the robot's initial pose into the first commanded policy
         # targets over INIT_RAMP_S (captured on the first control tick).
@@ -442,7 +333,7 @@ class SonicWholeBodyController:
         if self._init_step == 0:
             # Capture the robot's actual pose as the interpolation start point.
             self._start_pose = {
-                f"{m.name}.q": float(obs.get(f"{m.name}.q", DEFAULT_ANGLES[m.value]))
+                f"{m.name}.q": float(obs.get(f"{m.name}.q", self._default_angles[m.value]))
                 for m in G1_29_JointIndex
             }
         self._init_step += 1
@@ -466,9 +357,9 @@ class SonicWholeBodyController:
         if token is not None:
             self._last_token = token
         elif self._last_token is None and self.token_mode:
-            # Token-driven deploy, but no token has arrived yet: hold the captured neutral
-            # token (NEUTRAL_TOKEN), which the decoder maps to a stable, natural standing pose.
-            self._last_token = NEUTRAL_TOKEN.copy()
+            # Token-driven deploy, but no token has arrived yet: hold the checkpoint's neutral
+            # token, which the decoder maps to a stable, natural standing pose.
+            self._last_token = self._neutral_token.copy()
         if self._last_token is None:
             # No token yet and not in token_mode: hold (keep last target).
             return {}
