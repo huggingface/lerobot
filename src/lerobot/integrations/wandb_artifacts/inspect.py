@@ -30,6 +30,7 @@ from typing import Any
 import datasets
 import pandas as pd
 
+from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
 from lerobot.datasets.feature_utils import get_hf_features_from_features
 from lerobot.datasets.io_utils import load_episodes, load_info, load_nested_dataset, load_stats, load_tasks
 from lerobot.datasets.utils import (
@@ -39,6 +40,7 @@ from lerobot.datasets.utils import (
     INFO_PATH,
     STATS_PATH,
     DatasetInfo,
+    check_version_compatibility,
 )
 from lerobot.utils.constants import DEFAULT_FEATURES
 
@@ -127,9 +129,13 @@ def inspect_dataset_directory(root: Path | str) -> DatasetDirectoryMetadata:
 
 def _read_info(root: Path) -> DatasetInfo:
     try:
-        return load_info(root)
+        info = load_info(root)
+        check_version_compatibility(str(root), info.codebase_version, CODEBASE_VERSION)
     except Exception as e:
-        raise DatasetDirectoryError(f"{root}/{INFO_PATH} could not be read as dataset info: {e}") from e
+        raise DatasetDirectoryError(
+            f"{root}/{INFO_PATH} could not be read as compatible dataset info: {e}"
+        ) from e
+    return info
 
 
 def _frame_features(root: Path, info: DatasetInfo) -> datasets.Features:
