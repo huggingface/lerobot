@@ -34,6 +34,7 @@ from .config_unitree_g1 import UnitreeG1Config
 from .g1_kinematics import G1_29_ArmIK
 from .g1_utils import (
     REMOTE_AXES,
+    REMOTE_KEYS,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
     default_remote_input,
@@ -534,12 +535,17 @@ class UnitreeG1(Robot):
     def _update_controller_action(self, action: RobotAction) -> None:
         """Forward incoming teleop action values into ``controller_input``.
 
-        Every value-carrying key is forwarded verbatim; each controller reads only the keys
-        it understands (``remote.*`` axes for locomotion, ``motion_token.*`` for SONIC).
+        Locomotion controllers read the ``remote.*`` joystick axes; the SONIC whole-body
+        controller reads the 64-D ``motion_token.*`` latent.
         """
+        from .controllers.sonic_whole_body import TOKEN_ACTION_PREFIX
+
         with self._controller_action_lock:
+            for key in REMOTE_KEYS:
+                if key in action:
+                    self.controller_input[key] = action[key]
             for key, value in action.items():
-                if isinstance(key, str) and value is not None:
+                if isinstance(key, str) and value is not None and key.startswith(TOKEN_ACTION_PREFIX):
                     self.controller_input[key] = value
 
     @property
