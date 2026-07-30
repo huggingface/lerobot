@@ -532,6 +532,18 @@ class LanceDBDataset(torch.utils.data.Dataset):
         # windows and compute padding masks without a per-row lookup.
         self._ep_from = np.asarray(self.meta.episodes["dataset_from_index"], dtype=np.int64)
         self._ep_to = np.asarray(self.meta.episodes["dataset_to_index"], dtype=np.int64)
+        # Integrity: episode ranges must tile [0, total_frames) exactly.
+        # Public datasets ship broken meta more often than you'd hope (droid:
+        # 44% orphan rows; berkeley: truncated tails; agibot: empty episodes).
+        if len(self._ep_from) and (
+            int(self._ep_from[0]) != 0
+            or int(self._ep_to[-1]) != self.meta.total_frames
+            or (self._ep_from[1:] != self._ep_to[:-1]).any()
+        ):
+            raise ValueError(
+                "Episode boundaries in meta do not tile [0, total_frames) contiguously; "
+                "the dataset metadata is inconsistent."
+            )
 
         # Row position in the frames table == absolute frame index. When a
         # subset of episodes is selected, __getitem__ indices are relative and
@@ -611,6 +623,15 @@ class LanceDBDataset(torch.utils.data.Dataset):
             self._decode_pool = ThreadPoolExecutor(max_workers=16)
         db = _connect(self._db_uri, self._storage_options)
         table = db.open_table(FRAMES_TABLE)
+        # Integrity: row position == absolute frame index requires exactly
+        # total_frames rows. Catches truncated or over-appended tables at
+        # open instead of as silently wrong samples.
+        n_rows = table.count_rows()
+        if n_rows != self.meta.total_frames:
+            raise ValueError(
+                f"frames table has {n_rows} rows but meta declares "
+                f"{self.meta.total_frames} frames; the dataset is truncated or corrupt."
+            )
         self._frames_perm = (
             Permutation.identity(table).select_columns(self._fetch_columns).with_format("arrow")
         )
