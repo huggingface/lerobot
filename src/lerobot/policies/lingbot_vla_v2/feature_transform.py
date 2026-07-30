@@ -78,9 +78,9 @@ class FeatureTransform:
         model_config,
         processor,
         disabled_image_features=False,
-        do_nomalize=True,
+        do_normalize=True,
         chunk_size=50,
-        return_item_befor_padding=False,
+        return_item_before_padding=False,
         norm_stats_path=None,
         use_depth_align=False,
         image_augment=False,
@@ -100,7 +100,7 @@ class FeatureTransform:
         if getattr(data_config, "joints", None) is not None:
             self.feature_config.update_info(data_config)
 
-        if not return_item_befor_padding:
+        if not return_item_before_padding:
             self.check_robot_config(robot_config)
 
         self.model_config = model_config
@@ -108,7 +108,7 @@ class FeatureTransform:
         self.processor = processor
 
         self.chunk_size = chunk_size
-        self.return_item_befor_padding = return_item_befor_padding
+        self.return_item_before_padding = return_item_before_padding
 
         # disabled_image_features: keep the image features or not when getting lerobot item
         self.disabled_image_features = disabled_image_features
@@ -137,10 +137,10 @@ class FeatureTransform:
 
         self.org_features = org_features
 
-        self.normalizer = self.get_normalizer(norm_stats_path, do_nomalize, data_config)
+        self.normalizer = self.get_normalizer(norm_stats_path, do_normalize, data_config)
 
-    def get_normalizer(self, norm_stats_path, do_nomalize, data_config):
-        if not do_nomalize:
+    def get_normalizer(self, norm_stats_path, do_normalize, data_config):
+        if not do_normalize:
             return None
 
         action_state_norm_type = {k: v for d in data_config.norm_type for k, v in ast.literal_eval(d).items()}
@@ -456,7 +456,7 @@ class FeatureTransform:
         if self.normalizer is not None:
             item = self.normalizer.normalize(item)
 
-        if self.return_item_befor_padding:
+        if self.return_item_before_padding:
             return item
 
         batch_dict = self.pad_and_concat(item, w_action)
@@ -559,7 +559,7 @@ class FeatureTransform:
         return batch_dict
 
     def unapply(self, item):
-        if not self.return_item_befor_padding:
+        if not self.return_item_before_padding:
             item = self.reverse_pad_and_concat(item)
 
         if self.normalizer is not None:

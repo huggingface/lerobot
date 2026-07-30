@@ -83,24 +83,24 @@ def build_moe_load_balance_hook(
 
         # Stack all tokens_per_expert into [num_layers, num_experts] and
         # do a single all-reduce instead of 36 sequential ones.
-        all_tpe = torch.stack([b.tokens_per_expert for b in moe_blocks])
+        all_tokens_per_expert = torch.stack([b.tokens_per_expert for b in moe_blocks])
 
         if dist.is_initialized() and dist.get_world_size(group) > 1:
-            dist.all_reduce(all_tpe, op=dist.ReduceOp.SUM, group=group)
+            dist.all_reduce(all_tokens_per_expert, op=dist.ReduceOp.SUM, group=group)
 
         for i, block in enumerate(moe_blocks):
-            tpe = all_tpe[i]
+            tokens_per_expert = all_tokens_per_expert[i]
 
             # Snapshot global load for monitoring BEFORE zeroing.
             # The monitoring path (compute_loss) reads last_tokens_per_expert
             # to report the true biased, top_k, all-reduced expert load.
             if hasattr(block, "last_tokens_per_expert"):
-                block.last_tokens_per_expert.copy_(tpe)
+                block.last_tokens_per_expert.copy_(tokens_per_expert)
 
             # Sign-based update (DeepSeek-V3 style):
             # overloaded experts get bias decreased, underloaded get increased
-            mean_load = tpe.float().mean()
-            deviation = (tpe.float() - mean_load).sign()
+            mean_load = tokens_per_expert.float().mean()
+            deviation = (tokens_per_expert.float() - mean_load).sign()
             block.e_score_correction_bias.add_(-coeff * deviation)
 
             # Optional centering: pin sum(bias)=0 to prevent cumulative drift.

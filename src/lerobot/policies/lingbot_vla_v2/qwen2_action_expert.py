@@ -518,7 +518,7 @@ class Qwen2DecoderLayer(GradientCheckpointingLayer):
 
         else:
             raise ValueError(
-                f"Invaild Operation compute_kqv={compute_kqv} and output_atten={output_atten} with Qwen2DecoderLayer in LingBot-VLA"
+                f"Invalid Operation compute_kqv={compute_kqv} and output_atten={output_atten} with Qwen2DecoderLayer in LingBot-VLA"
             )
 
 

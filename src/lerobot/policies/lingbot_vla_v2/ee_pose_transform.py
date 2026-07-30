@@ -129,7 +129,7 @@ def absolute_pose_quaternion(
 def matrix_to_quat(R: Tensor) -> Tensor:
     """Convert rotation matrix (..., 3, 3) to quaternion (..., 4) in xyzw format.
 
-    Uses Shepperd's method for numerical stability.
+    Uses Shepherd's method for numerical stability.
     """
     batch_shape = R.shape[:-2]
     m00, m01, m02 = R[..., 0, 0], R[..., 0, 1], R[..., 0, 2]
