@@ -246,7 +246,10 @@ class G05Config(PreTrainedConfig):
                 raise ValueError("normalization_clip must be an increasing (minimum, maximum) pair.")
         self.relative_exclude_joints = tuple(self.relative_exclude_joints)
         self.action_feature_names = tuple(self.action_feature_names)
-        if not self.camera_sizes and self.embodiment in G05_CAMERA_SIZE_PROFILES:
+        if self.embodiment in G05_CAMERA_SIZE_PROFILES and set(self.camera_sizes) != set(self.camera_order):
+            # Switching embodiment on a packaged checkpoint keeps the previous
+            # embodiment's camera entries (config-file/CLI dict values merge
+            # instead of replacing); rebuild sizes from the named profile.
             self.camera_sizes = G05_CAMERA_SIZE_PROFILES[self.embodiment].copy()
         if self.num_input_images == 0:
             self.num_input_images = len(self.camera_order) * self.n_obs_steps
