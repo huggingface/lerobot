@@ -1,0 +1,131 @@
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""``lerobot-wandb``: move LeRobot datasets to/from W&B Artifacts. Never touches the Hub.
+
+Deliberately ``argparse``-based rather than wired into the central Draccus config parser,
+consistent with this repo's existing precedent for small standalone scripts.
+
+Examples:
+
+```shell
+lerobot-wandb dataset upload --root ./my-dataset --entity my-team --project my-project \
+    --name pick-cube --alias raw
+
+lerobot-wandb dataset download --ref my-team/my-project/pick-cube:latest --root ./materialized
+```
+"""
+
+import argparse
+from pathlib import Path
+
+import wandb
+
+from lerobot.utils.utils import init_logging
+
+from .inspect import inspect_dataset_directory, validate_dataset_directory
+from .refs import parse_artifact_ref
+from .store import download_artifact, upload_directory
+
+DATASET_ARTIFACT_TYPE = "dataset"
+
+
+def cmd_dataset_upload(args: argparse.Namespace) -> None:
+    # Validate — and pay any local, no-network cost of a bad directory — before a run ever starts.
+    metadata = inspect_dataset_directory(args.root)
+    aliases = args.aliases or ["latest"]
+
+    run = wandb.init(entity=args.entity, project=args.project, job_type="dataset_upload", mode=args.mode)
+    try:
+        result = upload_directory(
+            run,
+            args.root,
+            name=args.name,
+            artifact_type=DATASET_ARTIFACT_TYPE,
+            aliases=aliases,
+            metadata=metadata.to_wandb_metadata(),
+        )
+    finally:
+        run.finish()
+
+    print(f"Uploaded dataset artifact: {result.resolved_ref}")
+    print(f"Aliases applied: {', '.join(aliases)}")
+
+
+def cmd_dataset_download(args: argparse.Namespace) -> None:
+    # Fail fast on a malformed ref before a run ever starts.
+    parsed = parse_artifact_ref(args.ref)
+
+    run = wandb.init(
+        entity=parsed.entity, project=parsed.project, job_type="dataset_download", mode=args.mode
+    )
+    try:
+        result = download_artifact(run, parsed, expected_type=DATASET_ARTIFACT_TYPE, download_root=args.root)
+    finally:
+        run.finish()
+
+    validate_dataset_directory(result.local_path)
+
+    print(f"Downloaded dataset artifact {result.resolved_ref} to: {result.local_path}")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="lerobot-wandb", description="Move LeRobot datasets to/from W&B Artifacts."
+    )
+    resource_subparsers = parser.add_subparsers(dest="resource", required=True)
+
+    dataset_parser = resource_subparsers.add_parser("dataset", help="Upload/download a dataset artifact.")
+    action_subparsers = dataset_parser.add_subparsers(dest="action", required=True)
+
+    upload_parser = action_subparsers.add_parser(
+        "upload", help="Validate and upload a local dataset directory as a versioned W&B Artifact."
+    )
+    upload_parser.add_argument("--root", type=Path, required=True, help="Local dataset directory to upload.")
+    upload_parser.add_argument(
+        "--entity", default=None, help="W&B entity. Defaults to your W&B default entity."
+    )
+    upload_parser.add_argument("--project", required=True, help="W&B project to upload into.")
+    upload_parser.add_argument("--name", required=True, help="Artifact collection name.")
+    upload_parser.add_argument(
+        "--alias", dest="aliases", action="append", default=[], help="Repeatable. Defaults to ['latest']."
+    )
+    upload_parser.add_argument("--mode", choices=["online", "offline", "disabled"], default=None)
+    upload_parser.set_defaults(func=cmd_dataset_upload)
+
+    download_parser = action_subparsers.add_parser(
+        "download", help="Download a dataset Artifact into a local, LeRobotDataset-ready directory."
+    )
+    download_parser.add_argument(
+        "--ref", required=True, help="Artifact reference: entity/project/name:version_or_alias"
+    )
+    download_parser.add_argument(
+        "--root", type=Path, required=True, help="Local directory to materialize the dataset into."
+    )
+    download_parser.add_argument("--mode", choices=["online", "offline", "disabled"], default=None)
+    download_parser.set_defaults(func=cmd_dataset_download)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    init_logging()
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
