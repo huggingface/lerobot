@@ -170,6 +170,21 @@ def make_pre_post_processors(
     Raises:
         ValueError: If no processor factory exists for the given policy configuration type.
     """
+    if (
+        pretrained_path
+        and kwargs.get("dataset_stats") is not None
+        and policy_cfg.should_rebuild_pretrained_processors()
+    ):
+        logging.info(
+            "Building processor pipelines from the active policy config instead of loading them from %s.",
+            pretrained_path,
+        )
+        return _make_processors_from_policy_config(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_meta=kwargs.get("dataset_meta"),
+        )
+
     if pretrained_path:
         if policy_cfg.type == "being_h05" and getattr(policy_cfg, "recipe_path", None):
             from lerobot.processor import (

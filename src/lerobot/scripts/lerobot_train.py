@@ -47,7 +47,7 @@ from lerobot.common.train_utils import (
     update_last_checkpoint,
 )
 from lerobot.common.wandb_utils import WandBLogger
-from lerobot.configs import JobConfig, NormalizationMode, parser
+from lerobot.configs import JobConfig, parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
@@ -326,21 +326,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     active_cfg = cfg.trainable_config
     processor_pretrained_path = active_cfg.pretrained_path
-    being_h05_uses_training_processors = cfg.policy.type == "being_h05" and (
-        getattr(active_cfg, "recipe_path", None)
-        or any(
-            active_cfg.normalization_mapping.get(feature, NormalizationMode.IDENTITY)
-            != NormalizationMode.IDENTITY
-            for feature in ("STATE", "ACTION")
-        )
-    )
-    if being_h05_uses_training_processors and processor_pretrained_path is not None and not cfg.resume:
-        logging.warning(
-            "being_h05 is loading pretrained weights from %s, but building processors from the current "
-            "Being-H0.5 config so the requested training transforms are applied.",
-            processor_pretrained_path,
-        )
-        processor_pretrained_path = None
 
     processor_kwargs = {}
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:

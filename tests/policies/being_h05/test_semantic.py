@@ -266,10 +266,25 @@ def test_quantile_normalization_round_trips_continuous_and_binary_actions(tmp_pa
         },
         ACTION: {"q01": action_q01, "q99": action_q99},
     }
-    preprocessor, postprocessor = make_being_h05_pre_post_processors(config, dataset_stats)
+    checkpoint_config = BeingH05Config(
+        input_features=config.input_features,
+        output_features=config.output_features,
+    )
+    preprocessor, postprocessor = make_being_h05_pre_post_processors(checkpoint_config)
     preprocessor.save_pretrained(tmp_path)
     postprocessor.save_pretrained(tmp_path)
-    preprocessor, postprocessor = make_pre_post_processors(config, pretrained_path=str(tmp_path))
+    preprocessor, postprocessor = make_pre_post_processors(
+        config,
+        pretrained_path=str(tmp_path),
+        dataset_stats=dataset_stats,
+    )
+    trained_checkpoint = tmp_path / "trained"
+    preprocessor.save_pretrained(trained_checkpoint)
+    postprocessor.save_pretrained(trained_checkpoint)
+    preprocessor, postprocessor = make_pre_post_processors(
+        config,
+        pretrained_path=str(trained_checkpoint),
+    )
     assert isinstance(preprocessor.steps[1], BeingH05BinaryActionStep)
     assert isinstance(preprocessor.steps[2], NormalizerProcessorStep)
     assert isinstance(preprocessor.steps[3], BeingH05BinaryActionStep)
