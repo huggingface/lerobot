@@ -67,7 +67,15 @@ class BiSOLeader(BimanualMixin, Teleoperator):
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
-        return {}
+        # Bimanual teleop has feedback (can be actuated for handover).
+        # Return the same structure as action_features for consistency with left/right arms.
+        left_arm_features = self.left_arm.feedback_features
+        right_arm_features = self.right_arm.feedback_features
+
+        return {
+            **{f"left_{k}": v for k, v in left_arm_features.items()},
+            **{f"right_{k}": v for k, v in right_arm_features.items()},
+        }
 
     def setup_motors(self) -> None:
         self.left_arm.setup_motors()
@@ -87,6 +95,43 @@ class BiSOLeader(BimanualMixin, Teleoperator):
 
         return action_dict
 
+    def enable_torque(self) -> None:
+        """Enable torque on both leader arms for smooth handover."""
+        self.left_arm.enable_torque()
+        self.right_arm.enable_torque()
+
+    def disable_torque(self) -> None:
+        """Disable torque on both leader arms to allow human control."""
+        self.left_arm.disable_torque()
+        self.right_arm.disable_torque()
+
+    @check_if_not_connected
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        # TODO: Implement force feedback
-        raise NotImplementedError
+        """Route bimanual feedback to left and right arms with proper prefix stripping.
+
+        Receives feedback dict with keys like: left_shoulder_pan.pos, right_shoulder_pan.pos, ...
+        Splits and routes to each arm by removing the prefix.
+
+        This enables DAgger smooth handover: when transitioning from policy control to human
+        intervention, both leader arms are commanded to the follower's current pose to avoid
+        discontinuities.
+        """
+        # Split feedback by arm prefix
+        left_feedback = {}
+        right_feedback = {}
+
+        for key, value in feedback.items():
+            if key.startswith("left_"):
+                # Strip "left_" prefix and pass to left arm
+                stripped_key = key[5:]  # len("left_") == 5
+                left_feedback[stripped_key] = value
+            elif key.startswith("right_"):
+                # Strip "right_" prefix and pass to right arm
+                stripped_key = key[6:]  # len("right_") == 6
+                right_feedback[stripped_key] = value
+
+        # Send to each arm
+        if left_feedback:
+            self.left_arm.send_feedback(left_feedback)
+        if right_feedback:
+            self.right_arm.send_feedback(right_feedback)
