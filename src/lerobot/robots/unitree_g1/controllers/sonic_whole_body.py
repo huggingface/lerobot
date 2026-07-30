@@ -254,44 +254,23 @@ class SonicDecoder:
         return {f"{m.name}.q": float(target[m.value]) for m in G1_29_JointIndex}
 
 
-class SonicRuntime:
-    """Loads the SONIC decoder ONNX model and owns the decode controller.
+class SonicWholeBodyController:
+    """Full-body SONIC controller for UnitreeG1's background controller thread.
 
     Token-only deploy: the encoder is bypassed; each tick the decoder consumes a 64-D
     latent token supplied directly by the policy.
     """
-
-    def __init__(self):
-        decoder_sess, self.kp, self.kd, default_angles, action_scale, neutral_token = load_sonic_decoder()
-        self.default_angles = default_angles
-        self.neutral_token = neutral_token
-        self.controller = SonicDecoder(decoder_sess, default_angles, action_scale)
-
-    @property
-    def pipeline(self):
-        return self.controller
-
-    def reset(self):
-        self.controller.reset()
-
-    def shutdown(self):
-        pass
-
-
-class SonicWholeBodyController:
-    """Full-body SONIC controller for UnitreeG1's background controller thread."""
 
     control_dt = CONTROL_DT
     full_body = True
 
     def __init__(self):
         logger.info("Loading SONIC whole-body controller...")
-        self._runtime = SonicRuntime()
-        self.kp = self._runtime.kp
-        self.kd = self._runtime.kd
-        self.controller = self._runtime.controller
-        self._default_angles = self._runtime.default_angles
-        self._neutral_token = self._runtime.neutral_token
+        decoder_sess, self.kp, self.kd, default_angles, action_scale, self._neutral_token = (
+            load_sonic_decoder()
+        )
+        self._default_angles = default_angles
+        self.controller = SonicDecoder(decoder_sess, default_angles, action_scale)
 
         # Startup blend: ease from the robot's initial pose into the first commanded policy
         # targets over INIT_RAMP_S (captured on the first control tick).
@@ -373,11 +352,8 @@ class SonicWholeBodyController:
         return self._startup_blend(obs, self.controller.step(obs, self._last_token))
 
     def reset(self):
-        self._runtime.reset()
+        self.controller.reset()
         self._init_step = 0  # re-run the startup blend after a reset
         self._start_pose = {}
         # Drop the held token so the neutral token is re-seeded after a reset.
         self._last_token = None
-
-    def shutdown(self):
-        self._runtime.shutdown()
