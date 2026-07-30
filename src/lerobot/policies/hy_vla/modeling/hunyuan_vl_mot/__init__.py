@@ -29,6 +29,8 @@ same pattern as the upstream parent package ``hunyuan_vla/__init__.py``.
 
 from contextlib import suppress
 
+from transformers import AutoConfig, AutoModel, AutoModelForImageTextToText
+
 from .configuration_hunyuan_vl_mot import (
     HunYuanVLMoTConfig,
     HunYuanVLMoTTextConfig,
@@ -49,12 +51,6 @@ def _register_hunyuan_vl_mot() -> None:
     which is the documented way to make these helpers re-entrant under
     Jupyter autoreload, DDP fork-children, and other re-import scenarios.
     """
-    from transformers import (
-        AutoConfig,
-        AutoModel,
-        AutoModelForImageTextToText,
-    )
-
     # AutoConfig is keyed by the ``model_type`` string in ``config.json``.
     # HunYuanVLMoTConfig.model_type == "hunyuan_vl_mot".
     with suppress(ValueError):

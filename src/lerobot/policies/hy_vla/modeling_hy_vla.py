@@ -17,13 +17,15 @@ from typing import Any
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
+from transformers import AutoTokenizer
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
-from lerobot.utils.import_utils import require_package
 
 from .configuration_hy_vla import HyVLAConfig
+from .modeling.modeling_hy_vla import HyVLAFlowMatching
+from .modeling.space_time_attention import apply_video_encoder_patch
 
 
 def _resize_with_pad(image: Tensor, height: int, width: int, pad_value: float = 0) -> Tensor:
@@ -64,14 +66,8 @@ class HyVLAPolicy(PreTrainedPolicy):
     name = "hy_vla"
 
     def __init__(self, config: HyVLAConfig, **_: Any):
-        require_package("transformers", extra="hy_vla")
         super().__init__(config)
         config.validate_features()
-
-        # Heavy imports stay behind the optional dependency checks.
-        from transformers import AutoTokenizer
-
-        from .modeling.modeling_hy_vla import HyVLAFlowMatching
 
         tokenizer_source = getattr(config, "_tokenizer_source", None) or config.vlm_model_path
         self.language_tokenizer = AutoTokenizer.from_pretrained(
@@ -168,8 +164,6 @@ class HyVLAPolicy(PreTrainedPolicy):
     def enable_video_encoder_if_needed(self) -> None:
         if not self.config.use_video_encoder:
             return
-        from .modeling.space_time_attention import apply_video_encoder_patch
-
         apply_video_encoder_patch(
             self.model.dual_tower.vlm.model.visual,
             spacetime_layer_stride=self.config.spacetime_layer_stride,

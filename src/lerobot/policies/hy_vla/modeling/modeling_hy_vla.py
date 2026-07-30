@@ -261,9 +261,7 @@ class HyVLAFlowMatching(nn.Module):
         # ``proj_width``. Released ckpt: ``hidden_size=1024`` (vs the VLM's
         # 2048) and ``intermediate_size=2048``; everything else (layers,
         # heads, vocab, rope) is shared with the VLM.
-        import copy as _copy
-
-        expert_inner_config = _copy.deepcopy(vlm_inner_config)
+        expert_inner_config = copy.deepcopy(vlm_inner_config)
         expert_inner_config.hidden_size = self.config.proj_width
         expert_inner_config.intermediate_size = 2048
         if hasattr(expert_inner_config, "dense_list"):

@@ -26,6 +26,8 @@ mlp}``, plus the MoT extensions ``input_layernorm_v`` /
 ``mlp_v`` for the modality-aware variant) can be dropped in.
 """
 
+import types
+
 import torch
 from torch import nn
 from transformers import AutoConfig, PretrainedConfig, PreTrainedModel
@@ -293,9 +295,7 @@ class HyDualTower(PreTrainedModel):
                 image_features = [image_features.reshape(-1, C)]
             return image_features
 
-        import types as _types
-
-        visual_module.forward = _types.MethodType(_forward_with_grad, visual_module)
+        visual_module.forward = types.MethodType(_forward_with_grad, visual_module)
 
     def to_bfloat16_like_physical_intelligence(self):
         """Mirror the openpi-style precision policy.
