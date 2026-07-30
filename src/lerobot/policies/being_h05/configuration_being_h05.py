@@ -42,6 +42,7 @@ class BeingH05Config(PreTrainedConfig):
     optimizer_weight_decay: float = 0.0
     scheduler_warmup_steps: int = 1000
     scheduler_decay_steps: int = 100000
+    scheduler_decay_lr: float = 2e-6
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
@@ -77,6 +78,8 @@ class BeingH05Config(PreTrainedConfig):
 
     def get_scheduler_preset(self):
         return CosineDecayWithWarmupSchedulerConfig(
+            peak_lr=self.optimizer_lr,
+            decay_lr=self.scheduler_decay_lr,
             num_warmup_steps=self.scheduler_warmup_steps,
             num_decay_steps=self.scheduler_decay_steps,
         )

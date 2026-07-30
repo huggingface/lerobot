@@ -6,6 +6,7 @@ pytest.importorskip("transformers")
 from transformers import Qwen3Config
 from transformers.models.qwen3.modeling_qwen3 import Qwen3Attention, Qwen3MLP
 
+from lerobot.policies.being_h05.configuration_being_h05 import BeingH05Config
 from lerobot.policies.being_h05.modeling_being_h05 import (
     ActionEncoder,
     BeingH05Qwen3ForCausalLM,
@@ -70,3 +71,12 @@ def test_released_zero_strength_mpg_is_noop():
     actions = torch.randn(1, 4, 8)
 
     assert module(observations, actions) is observations
+
+
+def test_scheduler_preset_supplies_peak_and_decay_lr():
+    config = BeingH05Config(device="cpu")
+
+    preset = config.get_scheduler_preset()
+
+    assert preset.peak_lr == config.optimizer_lr
+    assert preset.decay_lr == config.scheduler_decay_lr
