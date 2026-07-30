@@ -91,17 +91,6 @@ def load_sonic_decoder(repo_id: str = DEFAULT_SONIC_REPO_ID):
     return session, arr["kp"], arr["kd"], arr["default_angles"], arr["action_scale"], arr["neutral_token"]
 
 
-def _to_mujoco(a):
-    """Apply the ``MUJOCO_TO_ISAACLAB`` gather to a 29-vector (deploy-order reorder).
-
-    NOTE: this returns ``a[MUJOCO_TO_ISAACLAB]``. The ``_mj`` suffixes and the exact
-    permutation direction are a fixed convention validated against the deployed SONIC ONNX
-    policy (the decoder consumes vectors in this order). Do not "correct" the table or
-    rename toward the opposite direction without re-validating on hardware.
-    """
-    return a[MUJOCO_TO_ISAACLAB]
-
-
 # Action-feature prefix for the latent-token interface (see _extract_token_from_action).
 TOKEN_ACTION_PREFIX = "motion_token"  # nosec B105 - feature-key prefix, not a secret
 # Proprio-state prefix for the token interface: the robot echoes the last commanded token
@@ -158,7 +147,7 @@ class SonicDecoder:
         self.decoder_input = decoder.get_inputs()[0].name
         self.default_angles = np.asarray(default_angles, np.float32)
         self.action_scale = np.asarray(action_scale, np.float32)
-        self.default_angles_mj = _to_mujoco(self.default_angles)
+        self.default_angles_mj = self.default_angles[MUJOCO_TO_ISAACLAB]
         self.token = np.zeros(TOKEN_DIM, np.float32)
         self.last_action_mj = np.zeros(29, np.float32)
         self.h_q_mj = [np.zeros(29, np.float32)] * 10
@@ -184,8 +173,10 @@ class SonicDecoder:
     def update_history(self, q, dq, ang, quat):
         """Push the latest proprioception (pos/vel/gyro/orientation) into the 10-frame buffers."""
         quat = quat / (np.linalg.norm(quat) + 1e-8)
-        q_mj = _to_mujoco(q)
-        dq_mj = _to_mujoco(dq)
+        # Reorder IsaacLab-order state into the MuJoCo order the decoder consumes. This
+        # permutation direction is validated against the deployed SONIC ONNX; don't flip it.
+        q_mj = q[MUJOCO_TO_ISAACLAB]
+        dq_mj = dq[MUJOCO_TO_ISAACLAB]
         self.h_q_mj = [q_mj - self.default_angles_mj] + self.h_q_mj[:-1]
         self.h_dq_mj = [dq_mj] + self.h_dq_mj[:-1]
         self.h_ang = [ang.copy()] + self.h_ang[:-1]
