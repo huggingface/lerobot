@@ -284,6 +284,10 @@ Notes:
   for image datasets.
 - Views judged unusable are only flagged by default (still renamed). Pass
   `--drop_unusable=true` (local path) to remove them.
+- When two cameras get the same label (e.g. two `wrist` views), the tool first
+  tries to disambiguate from each camera's **original key** — a `..._left`
+  source becomes `left_wrist`, `..._right` becomes `right_wrist`. Only labels
+  still colliding after that fall back to `--on_collision` (`error` or `suffix`).
 
 Key options: `--mode`, `--branch`, `--n_frames`, `--view_vocabulary`,
 `--allow_combos`, `--on_collision`, `--drop_unusable`, and the shared

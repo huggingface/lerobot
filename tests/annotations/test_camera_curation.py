@@ -150,6 +150,32 @@ def test_build_name_mapping_and_collision():
         build_name_mapping(clash, {"observation.images.cam_0": {}, "observation.images.cam_1": {}}, cfg)
 
 
+def test_build_name_mapping_disambiguates_two_wrists_from_source_names():
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, allow_combos=True)
+    existing = {"observation.images.cam_left": {}, "observation.images.cam_right": {}}
+    verdicts = [
+        CameraVerdict("observation.images.cam_left", usable=True, view_label="wrist"),
+        CameraVerdict("observation.images.cam_right", usable=True, view_label="wrist"),
+    ]
+    mapping = build_name_mapping(verdicts, existing, cfg)
+    assert mapping == {
+        "observation.images.cam_left": "observation.images.left_wrist",
+        "observation.images.cam_right": "observation.images.right_wrist",
+    }
+
+
+def test_build_name_mapping_conflict_without_hint_still_errors():
+    # Source keys carry no directional vocab word -> cannot disambiguate -> error.
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, allow_combos=True)
+    existing = {"observation.images.cam_0": {}, "observation.images.cam_1": {}}
+    verdicts = [
+        CameraVerdict("observation.images.cam_0", usable=True, view_label="wrist"),
+        CameraVerdict("observation.images.cam_1", usable=True, view_label="wrist"),
+    ]
+    with pytest.raises(ValueError, match="collision"):
+        build_name_mapping(verdicts, existing, cfg)
+
+
 def test_write_report(tmp_path):
     _make_min_meta(tmp_path, "observation.images.cam_0", dtype="video")
     cfg = CameraCurationConfig(repo_id="user/ds", view_vocabulary=VOCAB)

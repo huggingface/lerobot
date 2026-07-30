@@ -25,6 +25,8 @@ those frames from the dataset's first episode.
 from __future__ import annotations
 
 import logging
+import re
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -161,16 +163,21 @@ def build_name_mapping(
     """Compute ``{old_key: observation.images.<label>}`` for labeled cameras.
 
     Cameras without a valid label (or already at their canonical name) are
-    skipped. Collisions are resolved with ``cfg.on_collision`` and the resolved
+    skipped. When several cameras share a label (e.g. two ``wrist`` views), we
+    first try to disambiguate each from a distinguishing vocabulary word found in
+    its *original* key (``..._left`` + ``wrist`` → ``left_wrist``); only labels
+    still colliding after that fall through to ``cfg.on_collision``. The resolved
     target is written back onto each verdict's ``proposed_new_key``.
     """
+    label_by_cam = {v.camera_key: v.view_label for v in verdicts if v.view_label is not None}
+    if cfg.allow_combos:
+        label_by_cam = _disambiguate_from_source_names(label_by_cam, cfg.view_vocabulary)
+
     desired: dict[str, str] = {}
-    for v in verdicts:
-        if v.view_label is None:
-            continue
-        target = f"{OBS_IMAGE_PREFIX}{v.view_label}"
-        if target != v.camera_key:
-            desired[v.camera_key] = target
+    for cam, label in label_by_cam.items():
+        target = f"{OBS_IMAGE_PREFIX}{label}"
+        if target != cam:
+            desired[cam] = target
 
     if not desired:
         return {}
@@ -180,6 +187,57 @@ def build_name_mapping(
     for old, new in resolved.items():
         by_key[old].proposed_new_key = new
     return resolved
+
+
+def _extract_vocab_tokens(camera_key: str, vocabulary: tuple[str, ...]) -> list[str]:
+    """Vocabulary words present in a camera key, in vocabulary order.
+
+    Splits on non-alphanumeric boundaries so ``observation.images.cam_left`` →
+    ``["left"]`` and ``left_wrist_0_rgb`` → ``["wrist", "left"]``.
+    """
+    parts = set(re.split(r"[^a-z0-9]+", camera_key.lower()))
+    return [tok for tok in vocabulary if tok in parts]
+
+
+def _order_combo(tokens: list[str], vocabulary: tuple[str, ...]) -> str:
+    """Join vocab tokens into a combo label, ``wrist`` last, else vocab order.
+
+    Keeps the mount word (``wrist``) as the suffix so directional words read
+    first — ``{wrist, left}`` → ``left_wrist``.
+    """
+    uniq = list(dict.fromkeys(tokens))
+
+    def sort_key(tok: str) -> tuple[bool, int]:
+        return (tok == "wrist", vocabulary.index(tok) if tok in vocabulary else len(vocabulary))
+
+    return "_".join(sorted(uniq, key=sort_key))
+
+
+def _disambiguate_from_source_names(
+    label_by_cam: dict[str, str], vocabulary: tuple[str, ...]
+) -> dict[str, str]:
+    """When several cameras share a label, enrich each from its source-key words.
+
+    Only labels shared by 2+ cameras are touched; a distinguishing vocab word is
+    pulled from the camera's original key and combined with the label (kept only
+    if the result is a valid ≤2-word combo). Anything still colliding afterwards
+    is left for the caller's collision policy.
+    """
+    counts = Counter(label_by_cam.values())
+    out = dict(label_by_cam)
+    for cam, label in label_by_cam.items():
+        if counts[label] < 2:
+            continue  # unique label — leave the VLM's clean single word alone
+        label_tokens = label.split("_")
+        extra = next(
+            (tok for tok in _extract_vocab_tokens(cam, vocabulary) if tok not in label_tokens), None
+        )
+        if extra is None:
+            continue
+        combined = _order_combo([*label_tokens, extra], vocabulary)
+        if is_valid_view_label(combined, vocabulary, allow_combos=True):
+            out[cam] = combined
+    return out
 
 
 def build_report(
