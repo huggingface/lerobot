@@ -177,6 +177,10 @@ and fixed inputs/noise):
 - The Qwen3-VL backbone and Qwen2 action expert are adapted from HuggingFace Transformers and
   the upstream `Robbyant/lingbot-vla-v2` repository, kept close to source with scoped ruff
   per-file-ignores.
+- The implementation reuses the Transformers Qwen configs/model builders where they match the
+  released checkpoint. The LeRobot wrapper keeps custom forward/piping code for the LingBot
+  dual-stream action expert, cached visual-language prefix, action/time-conditioned suffix,
+  sparse-MoE routing/load-balancing, and flow-matching action head.
 - Inference action postprocessing inverts the normalization and canonical slot mapping via
   `FeatureTransform.unapply`, so `select_action` / `predict_action_chunk` return raw dataset
   action keys after the policy postprocessing path.
