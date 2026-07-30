@@ -45,6 +45,17 @@ def _fake_run():
     return run
 
 
+def _materialized_upload_result():
+    return MaterializedArtifact(
+        requested_ref="my-team/my-project/pick-cube",
+        resolved_ref="my-team/my-project/pick-cube:v0",
+        local_path=Path("/tmp/does-not-matter"),
+        version="v0",
+        digest="digest",
+        metadata={},
+    )
+
+
 def test_dataset_upload_validates_before_touching_wandb(tmp_path, monkeypatch):
     init_calls = []
     monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: init_calls.append(kwargs) or _fake_run())
@@ -65,17 +76,6 @@ def test_dataset_upload_validates_before_touching_wandb(tmp_path, monkeypatch):
     assert upload_calls == []
 
 
-def _materialized_upload_result():
-    return MaterializedArtifact(
-        requested_ref="my-team/my-project/pick-cube",
-        resolved_ref="my-team/my-project/pick-cube:v0",
-        local_path=Path("/tmp/does-not-matter"),
-        version="v0",
-        digest="digest",
-        metadata={},
-    )
-
-
 def test_dataset_upload_happy_path(tmp_path, monkeypatch, capsys):
     dataset_root = tmp_path / "dataset"
     dataset_root.mkdir()
@@ -84,7 +84,6 @@ def test_dataset_upload_happy_path(tmp_path, monkeypatch, capsys):
     run = _fake_run()
     init_calls = []
     monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: init_calls.append(kwargs) or run)
-
     upload_calls = []
 
     def _fake_upload(passed_run, directory, *, name, artifact_type, aliases=(), metadata=None):
@@ -123,6 +122,7 @@ def test_dataset_upload_happy_path(tmp_path, monkeypatch, capsys):
 
     assert init_calls[0]["project"] == "my-project"
     assert init_calls[0]["entity"] == "my-team"
+    assert init_calls[0]["mode"] == "online"
     run.finish.assert_called_once()
 
     assert len(upload_calls) == 1
@@ -157,6 +157,40 @@ def test_dataset_upload_finishes_run_even_on_upload_failure(tmp_path, monkeypatc
     run.finish.assert_called_once()
 
 
+def test_transfer_commands_do_not_expose_offline_or_disabled_modes(tmp_path):
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "dataset",
+                "upload",
+                "--root",
+                str(tmp_path),
+                "--project",
+                "p",
+                "--name",
+                "n",
+                "--mode",
+                "offline",
+            ]
+        )
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "dataset",
+                "download",
+                "--ref",
+                "e/p/n:v0",
+                "--root",
+                str(tmp_path / "dataset"),
+                "--mode",
+                "disabled",
+            ]
+        )
+
+
 def test_dataset_download_rejects_malformed_ref_before_touching_wandb(tmp_path, monkeypatch):
     init_calls = []
     monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: init_calls.append(kwargs) or _fake_run())
@@ -173,9 +207,12 @@ def test_dataset_download_happy_path(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: init_calls.append(kwargs) or run)
 
     dest = tmp_path / "materialized"
+    validator_calls = []
 
-    def _fake_download(passed_run, ref, *, expected_type, download_root):
+    def _fake_download(passed_run, ref, *, expected_type, download_root, validator=None):
         _write_minimal_dataset(Path(download_root))
+        validator_calls.append(validator)
+        validator(Path(download_root))
         return MaterializedArtifact(
             requested_ref=str(ref),
             resolved_ref="my-team/my-project/pick-cube:v3",
@@ -191,6 +228,8 @@ def test_dataset_download_happy_path(tmp_path, monkeypatch, capsys):
 
     assert init_calls[0]["entity"] == "my-team"
     assert init_calls[0]["project"] == "my-project"
+    assert init_calls[0]["mode"] == "online"
+    assert validator_calls == [cli.validate_dataset_directory]
     run.finish.assert_called_once()
 
     out = capsys.readouterr().out
@@ -199,8 +238,7 @@ def test_dataset_download_happy_path(tmp_path, monkeypatch, capsys):
 
 
 def test_dataset_download_allows_logging_the_run_in_a_different_project(tmp_path, monkeypatch):
-    """A caller with only read access to the artifact's own project must still be able to log
-    the lineage run somewhere they can write to, without changing which artifact gets fetched."""
+    """A read-only source project must not also be the mandatory lineage-run destination."""
     run = _fake_run()
     init_calls = []
     monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: init_calls.append(kwargs) or run)
@@ -208,9 +246,10 @@ def test_dataset_download_allows_logging_the_run_in_a_different_project(tmp_path
     dest = tmp_path / "materialized"
     download_calls = []
 
-    def _fake_download(passed_run, ref, *, expected_type, download_root):
+    def _fake_download(passed_run, ref, *, expected_type, download_root, validator=None):
         download_calls.append(str(ref))
         _write_minimal_dataset(Path(download_root))
+        validator(Path(download_root))
         return MaterializedArtifact(
             requested_ref=str(ref),
             resolved_ref="source-team/source-project/pick-cube:v3",
@@ -239,7 +278,7 @@ def test_dataset_download_allows_logging_the_run_in_a_different_project(tmp_path
 
     assert init_calls[0]["entity"] == "my-own-team"
     assert init_calls[0]["project"] == "my-own-project"
-    # The fully qualified source ref must reach download_artifact unchanged.
+    assert init_calls[0]["mode"] == "online"
     assert download_calls == ["source-team/source-project/pick-cube:latest"]
 
 
@@ -249,18 +288,14 @@ def test_dataset_download_rejects_result_missing_required_files(tmp_path, monkey
 
     dest = tmp_path / "materialized"
 
-    def _fake_download_incomplete(passed_run, ref, *, expected_type, download_root):
-        Path(download_root).mkdir(parents=True, exist_ok=True)  # no meta/info.json etc.
-        return MaterializedArtifact(
-            requested_ref=str(ref),
-            resolved_ref="my-team/my-project/pick-cube:v3",
-            local_path=Path(download_root),
-            version="v3",
-            digest="digest",
-            metadata={},
-        )
+    def _fake_download_incomplete(passed_run, ref, *, expected_type, download_root, validator=None):
+        Path(download_root).mkdir(parents=True, exist_ok=True)
+        validator(Path(download_root))
+        raise AssertionError("validator should have rejected the incomplete directory")
 
     monkeypatch.setattr(cli, "download_artifact", _fake_download_incomplete)
 
     with pytest.raises(DatasetDirectoryError):
         cli.main(["dataset", "download", "--ref", "my-team/my-project/pick-cube:latest", "--root", str(dest)])
+
+    run.finish.assert_called_once()
