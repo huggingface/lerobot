@@ -18,7 +18,8 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
-from lerobot.runtime.cli import _build_rollout_runtime_io, _parse_args
+from lerobot.runtime.cli import _ask_runtime, _build_rollout_runtime_io, _parse_args
+from lerobot.runtime.language_runtime import RuntimeState
 
 
 def test_parse_args_preserves_rollout_robot_overrides():
@@ -73,3 +74,27 @@ def test_rollout_runtime_io_uses_context_processors():
 
     assert observation["observation.state"].shape == (1, 1)
     robot.send_action.assert_called_once_with({"joint.pos": 2.0})
+
+
+def test_ask_runtime_pauses_and_routes_current_observation(capsys):
+    adapter = MagicMock()
+    adapter.generate_text.return_value = "The mug is beside the bowl."
+    runtime = SimpleNamespace(
+        state=RuntimeState(mode="action"),
+        policy_adapter=adapter,
+        _current_observation=lambda: {"image": "current"},
+    )
+    runtime.state.action_queue.extend([1, 2])
+
+    answer = _ask_runtime(runtime, "What is beside the bowl?")
+
+    assert answer == "The mug is beside the bowl."
+    assert runtime.state.mode == "paused"
+    assert not runtime.state.action_queue
+    adapter.generate_text.assert_called_once_with(
+        "vqa",
+        {"image": "current"},
+        runtime.state,
+        user_text="What is beside the bowl?",
+    )
+    assert "[policy] The mug is beside the bowl." in capsys.readouterr().out

@@ -520,6 +520,7 @@ def _print_runtime_help() -> None:
         "  /action            resume the robot on the current task\n"
         "  /action <seconds>  run the robot for N seconds, then auto-pause\n"
         "  /pause             pause the action loop — robot holds position\n"
+        "  /ask <question>    pause and ask the policy about the current view\n"
         "  /help              show this help\n"
         "  stop | quit | exit end the session",
         flush=True,
@@ -552,6 +553,33 @@ def _clear_action_queue(runtime: Any) -> None:
             queue.clear()
 
 
+def _ask_runtime(runtime: Any, question: str) -> str:
+    """Pause action dispatch and ask the adapter a grounded VQA question."""
+    question = question.strip()
+    if not question:
+        print("[runtime] usage: /ask <question>", flush=True)
+        return ""
+    runtime.state["mode"] = "paused"
+    runtime.state["action_deadline"] = None
+    _clear_action_queue(runtime)
+    generate_text = getattr(runtime.policy_adapter, "generate_text", None)
+    if not callable(generate_text):
+        print("[runtime] this policy adapter does not support text generation", flush=True)
+        return ""
+    observation = runtime._current_observation()
+    try:
+        answer = generate_text("vqa", observation, runtime.state, user_text=question)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("VQA generation failed: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG))
+        print(f"[runtime] VQA failed: {type(exc).__name__}: {exc}", flush=True)
+        return ""
+    if not answer:
+        print("[runtime] the policy returned no answer", flush=True)
+        return ""
+    print(f"[policy] {answer}", flush=True)
+    return answer
+
+
 def _handle_slash_command(runtime: Any, line: str) -> bool:
     """Dispatch the runtime slash commands.
 
@@ -560,6 +588,7 @@ def _handle_slash_command(runtime: Any, line: str) -> bool:
                             (seconds), no argument resumes the current
                             task.
       ``/pause``            pause the action loop — the robot holds.
+      ``/ask <question>``   pause and ask about the current observation.
       ``/help``             print the command reference.
 
     Returns ``True`` when ``line`` was a recognised command (consumed).
@@ -608,6 +637,10 @@ def _handle_slash_command(runtime: Any, line: str) -> bool:
         runtime.state["action_deadline"] = None
         _clear_action_queue(runtime)
         print("[runtime] paused — robot holding position", flush=True)
+        return True
+
+    if cmd in {"/ask", "/vqa"}:
+        _ask_runtime(runtime, rest)
         return True
 
     if cmd in {"/help", "/?"}:
@@ -994,6 +1027,8 @@ def _run_sim_interactive(
                             if hasattr(runtime.policy, "reset"):
                                 runtime.policy.reset()
                             print("[reset] new kitchen scene", flush=True)
+                        elif low.startswith(("/ask ", "/vqa ")):
+                            _ask_runtime(runtime, cmd.partition(" ")[2])
                         else:
                             # Clear queued actions and rearm generation for a new command.
                             runtime.set_task(cmd)
@@ -1094,6 +1129,8 @@ def _run_robot_interactive(
             elif low in {"/resume", "resume", "/run"}:
                 runtime.state["mode"] = "action"
                 print("[running]", flush=True)
+            elif low.startswith(("/ask ", "/vqa ")):
+                _ask_runtime(runtime, line.partition(" ")[2])
             else:
                 # New command: switch task/subtask immediately and regenerate.
                 runtime.set_task(line)
