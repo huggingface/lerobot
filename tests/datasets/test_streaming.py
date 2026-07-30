@@ -13,12 +13,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import numpy as np
 import pytest
 import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import lerobot.datasets.streaming_dataset as streaming_dataset_module
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.datasets.utils import safe_shard
 from lerobot.utils.constants import ACTION
@@ -69,6 +73,40 @@ def get_frames_expected_order(streaming_ds: StreamingLeRobotDataset) -> list[int
     expected_indices.extend(frames_buffer)
 
     return expected_indices
+
+
+@pytest.mark.parametrize("token", ["hf_test_token", True, False])
+@pytest.mark.parametrize("from_local", [False, True])
+def test_streaming_dataset_forwards_hub_token_only_for_remote_data(tmp_path, monkeypatch, token, from_local):
+    requested_root = tmp_path / "local" if from_local else None
+    metadata = SimpleNamespace(
+        root=requested_root or tmp_path / "snapshot",
+        revision=streaming_dataset_module.CODEBASE_VERSION,
+        _version=streaming_dataset_module.CODEBASE_VERSION,
+        features={},
+        depth_keys=[],
+        image_keys=[],
+        rescale_depth_stats=Mock(),
+    )
+    metadata_cls = Mock(return_value=metadata)
+    load_dataset = Mock(return_value=SimpleNamespace(num_shards=1))
+    monkeypatch.setattr(streaming_dataset_module, "LeRobotDatasetMetadata", metadata_cls)
+    monkeypatch.setattr(streaming_dataset_module, "load_dataset", load_dataset)
+
+    dataset = StreamingLeRobotDataset(DUMMY_REPO_ID, root=requested_root, token=token)
+
+    metadata_cls.assert_called_once_with(
+        DUMMY_REPO_ID,
+        requested_root,
+        streaming_dataset_module.CODEBASE_VERSION,
+        force_cache_sync=False,
+        token=token,
+    )
+    if from_local:
+        assert "token" not in load_dataset.call_args.kwargs
+    else:
+        assert load_dataset.call_args.kwargs["token"] is token
+    assert not hasattr(dataset, "_token")
 
 
 def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
@@ -212,6 +250,54 @@ def test_frames_order_with_shards(tmp_path, lerobot_dataset_factory, shuffle):
             assert not frames_match
         else:
             assert frames_match
+
+
+def test_iter_raises_on_frame_error(tmp_path, lerobot_dataset_factory, monkeypatch):
+    """Video decode failures must propagate instead of being silently ignored."""
+    ds_num_frames = 20
+    ds_num_episodes = 2
+    buffer_size = 10
+
+    local_path = tmp_path / "test"
+    repo_id = f"{DUMMY_REPO_ID}"
+
+    lerobot_dataset_factory(
+        root=local_path,
+        repo_id=repo_id,
+        total_episodes=ds_num_episodes,
+        total_frames=ds_num_frames,
+    )
+
+    streaming_ds = StreamingLeRobotDataset(repo_id=repo_id, root=local_path, buffer_size=buffer_size)
+
+    def broken_video_decode(*args, **kwargs):
+        raise RuntimeError("Could not load libtorchcodec")
+
+    monkeypatch.setattr(streaming_dataset_module, "decode_video_frames_torchcodec", broken_video_decode)
+
+    with pytest.raises(RuntimeError, match="libtorchcodec"):
+        next(iter(streaming_ds))
+
+
+def test_iter_raises_on_nested_generator_error(tmp_path, lerobot_dataset_factory, monkeypatch):
+    """PEP 479 errors below frame construction must not be mistaken for shard exhaustion."""
+    local_path = tmp_path / "test"
+    repo_id = DUMMY_REPO_ID
+
+    lerobot_dataset_factory(root=local_path, repo_id=repo_id, total_episodes=2, total_frames=20)
+    streaming_ds = StreamingLeRobotDataset(repo_id=repo_id, root=local_path, buffer_size=10)
+
+    def broken_frame_generator():
+        raise StopIteration("decoder internal failure")
+        yield
+
+    def broken_video_decode(*args, **kwargs):
+        return next(broken_frame_generator())
+
+    monkeypatch.setattr(streaming_dataset_module, "decode_video_frames_torchcodec", broken_video_decode)
+
+    with pytest.raises(RuntimeError, match="generator raised StopIteration"):
+        next(iter(streaming_ds))
 
 
 @pytest.mark.parametrize(
