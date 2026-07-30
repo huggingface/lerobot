@@ -178,6 +178,12 @@ def make_pre_post_processors(
         ValueError: If no processor factory exists for the given policy configuration type.
     """
     if pretrained_path:
+        module_path = policy_cfg.__class__.__module__.replace("configuration_", "processor_")
+        try:
+            importlib.import_module(module_path)
+        except ModuleNotFoundError as e:
+            if e.name != module_path:
+                raise
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
 
