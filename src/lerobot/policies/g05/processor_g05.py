@@ -679,6 +679,11 @@ def _project_stats(
         projected_stats: dict[str, torch.Tensor] = {}
         for stat_name, raw_value in stats.items():
             value = torch.as_tensor(raw_value)
+            if stat_name == "count":
+                # LeRobot dataset stats carry a scalar sample count that is not
+                # a per-dimension statistic; pass it through unprojected.
+                projected_stats[stat_name] = value
+                continue
             if value.shape[-1] != len(index_maps[feature_name]):
                 raise ValueError(
                     f"{feature_name}.{stat_name} has width {value.shape[-1]}, "
