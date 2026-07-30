@@ -475,7 +475,15 @@ Each vector field needs, where applicable:
 
 ### Proposed `DatasetToPolicyContractProcessor`
 
-The single public processor should **compile** a deterministic pipeline:
+The public adapter should have two parts:
+
+- `DatasetToPolicyContractResolver` runs once during setup. It reads the
+  dataset/robot contract and the checkpoint's `PolicyIOContract`, validates
+  them, and produces a frozen `ResolvedPolicyIOMapping`.
+- `DatasetToPolicyContractProcessor` executes that frozen mapping for every
+  sample. It does not repeat fuzzy matching or infer semantics at runtime.
+
+The processor should compile this deterministic pipeline:
 
 ```text
 dataset keys
@@ -507,6 +515,61 @@ joints.” Six values can be SO-101 motor targets, EEF `xyz + axis-angle`, mobil
 base plus gripper, or an arbitrary learned latent. Shape is a validation
 signal, not semantic evidence.
 
+### What is serialized
+
+Yes: `PolicyIOContract` should be serialized with the policy and read by the
+resolver that configures `DatasetToPolicyContractProcessor`. The distinction
+between model-facing and run-specific metadata is important:
+
+| Artifact                      | Meaning                                                                                                                       | Stored where                                                             |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `policy_io_contract.json`     | Ordered model input/output slots, camera roles, semantics, units, frames, references, padding, and normalization requirements | Every base and fine-tuned checkpoint                                     |
+| Dataset I/O contract          | Ordered source features and their physical meaning                                                                            | Dataset metadata; robot/environment adapters can produce the same schema |
+| `policy_io_mapping.json`      | Frozen source → model slot mapping and every conversion selected for one training or deployment source                        | Training output and fine-tuned checkpoint                                |
+| `policy_io_report.json`       | Human-readable validation report, warnings, dropped fields, padding, fingerprints, and provenance                             | Training output; optionally checkpoint and evaluation artifact           |
+| Processor configs and weights | Exact executable preprocessing/postprocessing graph and fitted normalization statistics                                       | Checkpoint, as today                                                     |
+
+The checkpoint contract describes what the weights expect. It is inherited
+unchanged during fine-tuning unless the model's input/output projection is
+intentionally changed. The resolved mapping describes how one source reaches
+that contract. A fine-tuned checkpoint therefore stores both the inherited
+model-facing contract and the mapping used for its training dataset, including
+the base checkpoint ID/revision, dataset revision or fingerprint, contract
+fingerprints, and newly fitted normalization statistics.
+
+For old datasets that only expose unnamed vectors such as
+`observation.state[0:6]`, an explicit mapping is required once. After it is
+accepted, the named dataset contract and resolved mapping are persisted so
+future runs do not need to guess again.
+
+### Fine-tuning lifecycle
+
+Before the first training batch, LeRobot should:
+
+1. Load the base checkpoint and its `PolicyIOContract`.
+2. Load or derive the dataset contract from dataset features and metadata.
+3. Resolve each dataset field and camera into a model slot.
+4. Print and write the proposed mapping, including drops, masks, padding,
+   conversions, and ambiguities.
+5. Fail on an incomplete or ambiguous required mapping unless the user supplies
+   an explicit override.
+6. Freeze the accepted `ResolvedPolicyIOMapping`.
+7. Fit action/state statistics **after semantic conversion into model space**
+   and serialize those statistics with the processor.
+8. Train, save, resume, and evaluate with the same frozen mapping.
+
+For example, six named joint positions can map to six known right-arm slots
+only when joint names, side, units, controller mode, and order agree. They must
+not be mapped merely because the widths are both six. Likewise, `head`,
+`left_wrist`, and `right_wrist` camera roles are assigned semantically before
+they are packed into the checkpoint's ordered image slots.
+
+At deployment, a robot or environment produces a source contract and the same
+resolver builds a mapping to the fine-tuned checkpoint. When the deployment
+contract fingerprint matches the saved training-source contract, LeRobot can
+reuse the exact saved mapping. Otherwise it must validate a new mapping rather
+than silently reusing dataset key order.
+
 ### Suggested user surface
 
 ```bash
@@ -528,29 +591,108 @@ The report should contain:
 - non-invertible transforms;
 - warnings requiring explicit acceptance.
 
-`--rename_map` can remain as a lightweight observation-key override, but the
-contract adapter should supersede it for action fields, vector order, cameras,
-units, and embodiment conversion.
+### Policy migration coverage
 
-### Migration plan
+All existing policies should use the same contract boundary, but they do not
+all need the same adapter implementation:
 
-1. Add `PolicyIOContract` and a validator without changing inference.
-2. Generate contracts for current benchmark checkpoints from their serialized
-   configs and processors; fail CI if documented camera/action layouts drift.
-3. Add named vector metadata to LeRobot datasets and robot recordings.
-4. Implement generic pack/unpack, camera-role, unit, rotation, and
-   absolute/relative steps.
-5. Migrate the explicit adapters first: X-VLA, LingBot-VA, MolmoAct2, G0.5,
-   Being-H0.5, and Hy-VLA.
-6. Keep policy-specific transforms only for genuinely model-specific work
-   such as tokenization, image normalization, ActionCodec, or semantic-slot
-   architecture.
-7. Enable automatic mapping only when the resolver produces one unambiguous,
-   fully validated plan.
+| Migration group                 | Policies                                                                                     | Work required                                                                                                                                                                                                       |
+| ------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dataset-defined vectors         | ACT, Diffusion, TD-MPC, VQ-BeT, Multitask DiT, Gaussian actor, EO-1, EVO1, SmolVLA, VLA-JEPA | Derive contracts from ordered checkpoint features and training dataset metadata. Mark legacy unnamed vector fields as opaque and require exact order or an explicit mapping instead of inventing semantics.         |
+| Padded VLA vectors              | π0, π0.5, π0-FAST, WALL-X, Wall-OSS-0.5                                                      | Record active fields separately from capacity/padding. Backfill only semantics supported by checkpoint evidence; a generic 32D or 26D base vector remains opaque where its slot meanings are not published.         |
+| Embodiment/profile registries   | GR00T N1.7, X-VLA, LingBot-VA, MolmoAct2, G0.5, Being-H0.5, Hy-VLA                           | Convert existing embodiment/profile metadata into contract factories and generic conversion steps. Keep registries for authoritative robot definitions, but expose the resolved result through the common contract. |
+| Special camera/history behavior | FastWAM and any policy in the groups above with temporal images                              | Replace implicit lexicographic or fallback ordering with serialized role, side, order, history, and mask fields. Preserve required temporal encoders as model-specific transforms.                                  |
+
+The pending Wall-OSS-0.5, G0.5, Being-H0.5, and Hy-VLA integrations should
+ship their base and benchmark contracts from their first release rather than
+requiring a later backfill.
+
+Policy-specific transforms remain appropriate for genuinely model-specific
+work such as tokenization, image normalization, ActionCodec, flow-matching
+inputs, or semantic-slot architectures. The shared layer owns physical
+meaning, ordering, validation, and generic invertible conversions.
+
+### Backfilling existing checkpoints
+
+Backfilling must be evidence-based. A migration command can inspect checkpoint
+configs, saved processors, dataset metadata, policy adapters, and published
+model cards, then emit a proposed contract with provenance on every field:
+
+- `declared`: explicitly serialized by the original checkpoint;
+- `derived`: deterministically reconstructed from an authoritative config or
+  dataset revision;
+- `curated`: reviewed against policy or benchmark documentation;
+- `opaque`: width and order are known, but physical semantics are not.
+
+Legacy checkpoints remain loadable while contracts are populated. Automatic
+mapping is allowed only for fully compatible declared, derived, or curated
+fields. Opaque slots support exact-order compatibility and explicit mapping,
+but never semantic auto-conversion. Curated backfills should be published as a
+new checkpoint revision; loaders must not pretend that a local inference was
+part of an older immutable revision.
+
+### Replacing `rename_map`
+
+The separate `rename_map` API can eventually be removed, but key aliasing
+itself is still needed. It becomes the first, simple repack step in a resolved
+contract rather than a parallel preprocessing system:
+
+1. Accept existing `rename_map` values as explicit resolver overrides and
+   include them in `policy_io_mapping.json`.
+2. Migrate training, evaluation, recording, robot, and benchmark entry points
+   to the contract adapter, with parity tests for every existing rename-map
+   use.
+3. Deprecate `--rename_map` after all maintained policies and checkpoint
+   workflows can express the same behavior through `--io_adapter.mapping`.
+4. Remove the top-level option in a major release. Retain a generic
+   `RepackKeysStep` inside the processor pipeline because contract execution
+   still has to move source keys to target keys.
+
+Removing `rename_map` immediately would break legacy datasets and solve only
+image/observation names, not vector order or physical semantics. The safe end
+state removes the duplicate public configuration path, not the underlying
+rename capability.
+
+### Implementation plan
+
+| Phase                       | Scope                                                                                                                                                         | Exit criterion                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| 1. Schema                   | Add versioned `PolicyIOContract`, dataset/source contract, resolved mapping, JSON serialization, fingerprints, validator, and provenance. No behavior change. | Round-trip/schema tests and compatibility rules are stable.                                             |
+| 2. Resolution               | Add the setup-time resolver, explicit mapping format, dry-run/report command, strict ambiguity failures, and camera-role matching.                            | A user can validate a dataset against a checkpoint without loading training batches.                    |
+| 3. Execution                | Add generic repack, select, pack/pad, unit, frame, rotation, absolute/relative, normalize, and inverse action steps.                                          | Pre/postprocessor round trips meet per-field tolerances and non-invertible steps are reported.          |
+| 4. Dataset-defined policies | Migrate ACT, Diffusion, TD-MPC, VQ-BeT, Multitask DiT, Gaussian actor, EO-1, EVO1, SmolVLA, and VLA-JEPA.                                                     | Saved/reloaded outputs match the existing processors on golden samples.                                 |
+| 5. Padded VLAs              | Migrate π0, π0.5, π0-FAST, WALL-X, and Wall-OSS-0.5, preserving active masks and unknown base slots.                                                          | Base and fine-tuned checkpoints reject unsafe slot assumptions and preserve current numerical behavior. |
+| 6. Embodiments and cameras  | Migrate GR00T, X-VLA, FastWAM, LingBot-VA, MolmoAct2, G0.5, Being-H0.5, and Hy-VLA; land pending policies with contracts.                                     | Registry/profile and camera/history adapters compile to the common pipeline with parity fixtures.       |
+| 7. Checkpoint rollout       | Backfill maintained base and benchmark checkpoints, publish reviewed revisions, and require contracts for newly pushed or fine-tuned checkpoints.             | The checkpoint/benchmark matrix on this page is generated or CI-checked from serialized contracts.      |
+| 8. CLI cleanup              | Translate legacy rename maps, migrate examples and integrations, warn on the old flag, then remove it at the next major-version boundary.                     | No maintained workflow depends on the separate `rename_map` path.                                       |
+
+From phase 7 onward, `save_pretrained()` and Hub uploads should fail validation
+for a newly fine-tuned checkpoint if its contract, resolved training mapping,
+processor graph, or normalization-stat references are missing. A narrowly
+scoped legacy escape hatch can warn and mark the checkpoint contract
+incomplete, but must not publish guessed semantics as authoritative.
+
+### Verification and acceptance criteria
+
+CI should cover:
+
+- schema migrations and JSON round trips for every contract version;
+- golden resolver outputs for every maintained base and benchmark checkpoint;
+- preprocessing and postprocessing parity against existing policy adapters;
+- save/reload/resume parity for fine-tuned checkpoints;
+- correct camera role, side, order, history, masking, and missing-view errors;
+- unit, frame, rotation-order, absolute/relative, joint/EEF, gripper, and
+  mobile-base conversion round trips;
+- failures for duplicate semantic IDs, ambiguous aliases, unknown units,
+  incompatible controllers, and unapproved dropped action fields;
+- matching normalization fingerprints and statistics fitted in model space;
+- benchmark smoke tests using serialized contracts rather than hand-maintained
+  key order.
 
 This gives LeRobot one front door for custom datasets while preserving the
 checkpoint-specific processors that are already necessary. The unification
-target is the **contract and resolver**, not one unsafe universal vector guesser.
+target is the **contract, resolver, and serialized resolved mapping**, not one
+unsafe universal vector guesser.
 
 ## Sources
 
