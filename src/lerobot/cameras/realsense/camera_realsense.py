@@ -365,11 +365,12 @@ class RealSenseCamera(Camera):
         return self._async_read(timeout_ms=10000, read_depth=read_depth)
 
     def _get_color_sensor(self) -> "rs.sensor":
-        """Returns the sensor that controls the color stream.
+        """Returns the dedicated "RGB Camera" sensor that controls the color stream.
 
-        Most RealSense cameras expose "RGB Camera" for color. The D405 has no
-        separate RGB module — its color stream comes from "Stereo Module".
-        We try RGB Camera first, then fall back to Stereo Module.
+        Manual color controls are only applied to a dedicated RGB module. Cameras
+        without one (e.g. the D405, whose color stream comes from the shared
+        "Stereo Module") are unsupported, so we never fall back to another sensor
+        to avoid altering the depth stream.
         """
         if self.rs_profile is None:
             raise RuntimeError(f"{self}: rs_profile must be initialized before use.")
@@ -377,12 +378,14 @@ class RealSenseCamera(Camera):
         device = self.rs_profile.get_device()
         sensors = {s.get_info(rs.camera_info.name): s for s in device.query_sensors()}
 
-        for name in ("RGB Camera", "Stereo Module"):
-            if name in sensors:
-                return sensors[name]
+        if "RGB Camera" in sensors:
+            return sensors["RGB Camera"]
 
         available = list(sensors.keys())
-        raise RuntimeError(f"{self}: no color sensor found. Available sensors: {available}")
+        raise RuntimeError(
+            f"{self}: manual color controls require a dedicated 'RGB Camera' module, which this camera does not have. ",
+            f"Available sensors: {available}."
+        )
 
     def _set_sensor_option(self, sensor: "rs.sensor", option: "rs.option", value: float, label: str) -> None:
         """Sets a sensor option, re-raising range errors with actionable diagnostics."""
