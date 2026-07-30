@@ -78,6 +78,7 @@ class HyVLAPolicy(PreTrainedPolicy):
             tokenizer_source,
             trust_remote_code=False,
             revision=getattr(config, "_tokenizer_revision", None),
+            fix_mistral_regex=True,
         )
         self.model = HyVLAFlowMatching(config, self.language_tokenizer)
         # The action expert consumes injected action/state embeddings and never
