@@ -14,16 +14,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 import torch
+from packaging.version import Version
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from datasets import Dataset  # noqa: E402
 from huggingface_hub import DatasetCard
 
+import lerobot.datasets.utils as dataset_utils
 from lerobot.datasets.io_utils import hf_transform_to_torch
-from lerobot.datasets.utils import create_lerobot_dataset_card
+from lerobot.datasets.utils import create_lerobot_dataset_card, get_repo_versions, get_safe_version
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.feature_utils import combine_feature_dicts
 
@@ -55,6 +60,30 @@ def test_default_parameters():
             "data_files": "data/*/*.parquet",
         }
     ]
+
+
+@pytest.mark.parametrize("token", ["hf_test_token", True, False])
+def test_get_repo_versions_forwards_token(monkeypatch, token):
+    api = Mock()
+    api.list_repo_refs.return_value = SimpleNamespace(
+        branches=[SimpleNamespace(name="v3.0")],
+        tags=[],
+    )
+    hf_api = Mock(return_value=api)
+    monkeypatch.setattr(dataset_utils, "HfApi", hf_api)
+
+    assert get_repo_versions("private/repo", token=token) == [Version("3.0")]
+    hf_api.assert_called_once_with(token=token)
+    api.list_repo_refs.assert_called_once_with("private/repo", repo_type="dataset")
+
+
+@pytest.mark.parametrize("token", ["hf_test_token", True, False])
+def test_get_safe_version_forwards_token(monkeypatch, token):
+    get_versions = Mock(return_value=[Version("3.0")])
+    monkeypatch.setattr(dataset_utils, "get_repo_versions", get_versions)
+
+    assert get_safe_version("private/repo", "v3.0", token=token) == "v3.0"
+    get_versions.assert_called_once_with("private/repo", token=token)
 
 
 def test_with_tags():
