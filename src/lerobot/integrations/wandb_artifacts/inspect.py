@@ -76,11 +76,9 @@ def validate_dataset_directory(root: Path | str) -> DatasetInfo:
     """Validate that ``root`` has the on-disk shape a LeRobot dataset requires.
 
     Checks the required top-level files/directories first, then — only once ``meta/info.json``
-    is known to be readable — cross-checks the task/episode metadata files against the counts
-    ``info.json`` itself declares. A dataset can pass the top-level check (info/stats/data all
-    present) while still being missing ``meta/tasks.parquet`` or ``meta/episodes/``, which is
-    exactly the case that causes ``LeRobotDatasetMetadata`` to fail deep inside metadata loading;
-    catching it here gives a single, clear error instead.
+    is known to be readable — cross-checks the task/episode/data files against the counts
+    ``info.json`` itself declares. The parquet discovery rule deliberately matches
+    ``load_nested_dataset()`` exactly: one chunk directory below the corresponding root.
 
     Returns:
         The loaded ``DatasetInfo``, so callers that go on to extract metadata don't re-read it.
@@ -111,15 +109,13 @@ def validate_dataset_directory(root: Path | str) -> DatasetInfo:
             f"{DEFAULT_TASKS_PATH} is missing."
         )
 
-    if info.total_episodes > 0:
-        episodes_dir = root / EPISODES_DIR
-        if not episodes_dir.is_dir() or not any(episodes_dir.rglob("*.parquet")):
-            raise DatasetDirectoryError(
-                f"{root} declares total_episodes={info.total_episodes} in {INFO_PATH} but "
-                f"{EPISODES_DIR}/ has no episode metadata parquet files."
-            )
+    if info.total_episodes > 0 and not _has_chunked_parquet(root / EPISODES_DIR):
+        raise DatasetDirectoryError(
+            f"{root} declares total_episodes={info.total_episodes} in {INFO_PATH} but "
+            f"{EPISODES_DIR}/ has no episode metadata parquet files."
+        )
 
-    if info.total_frames > 0 and not any((root / DATA_DIR).rglob("*.parquet")):
+    if info.total_frames > 0 and not _has_chunked_parquet(root / DATA_DIR):
         raise DatasetDirectoryError(
             f"{root} declares total_frames={info.total_frames} in {INFO_PATH} but "
             f"{DATA_DIR}/ has no data parquet files."
@@ -154,18 +150,46 @@ def inspect_dataset_directory(root: Path | str) -> DatasetDirectoryMetadata:
     )
 
 
+def _has_chunked_parquet(root: Path) -> bool:
+    """Return whether ``root`` contains a parquet exactly one chunk directory below it."""
+    return any(root.glob("*/*.parquet"))
+
+
 def _current_git_commit() -> str | None:
-    """Best-effort git commit of the running LeRobot checkout; ``None`` when unavailable."""
+    """Best-effort commit of the LeRobot checkout; ``None`` for wheel/site-packages installs."""
+    package_dir = Path(__file__).resolve().parents[2]
+
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=Path(__file__).resolve().parent,
+        root_result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=package_dir,
             capture_output=True,
             text=True,
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    if result.returncode != 0:
+
+    if root_result.returncode != 0:
         return None
-    return result.stdout.strip() or None
+
+    repo_root = Path(root_result.stdout.strip()).resolve()
+    if (repo_root / "src" / "lerobot").resolve() != package_dir:
+        # An installed package may sit inside another repository's virtualenv. That repository's
+        # HEAD is not LeRobot provenance and must not be reported as such.
+        return None
+
+    try:
+        commit_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    if commit_result.returncode != 0:
+        return None
+    return commit_result.stdout.strip() or None
