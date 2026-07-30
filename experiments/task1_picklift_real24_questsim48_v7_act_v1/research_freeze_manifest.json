@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "freeze_id": "task1_picklift_quest_remote_mujoco_sim48_v7_20260730_r1_freeze_v1_9b6e62cf0108",
+  "status": "eligible_for_controlled_real24_plus_sim48_training_with_frozen_caveats",
+  "freeze_date": "2026-07-30",
+  "dataset": {
+    "dataset_id": "task1_picklift_quest_remote_mujoco_sim48_v7_v1",
+    "plan_id": "task1-picklift-quest-remote-sim48-v7-collection-v1",
+    "formal_root": "/home/ubuntu24/SO101QuestRemote-data/formal/task1_picklift_quest_remote_mujoco_sim48_v7_20260730_r1",
+    "evidence_root": "/home/ubuntu24/SO101QuestRemote-data/evidence/task1_picklift_quest_remote_mujoco_sim48_v7_20260730_r1/freeze_v1",
+    "episodes": 48,
+    "frames": 6357,
+    "fps": 20,
+    "canonical_rgb": "640x480",
+    "highres_frames": 6357,
+    "wrist_camera": false
+  },
+  "raw_freeze": {
+    "inventory_algorithm": "sorted POSIX relative path inventory of file_sha256, decimal bytes, and path",
+    "excluded_files": [
+      ".mujoco_sim48_v7_v1.recording.lock"
+    ],
+    "excluded_lock_bytes": 0,
+    "included_files": 243,
+    "included_bytes": 302784720,
+    "raw_tree_sha256": "9b6e62cf01084f6c965fc787f28b3ec129f0e9cfef476c71ce93be2a59c646cc",
+    "pre_post_and_independent_recalculation_match": true,
+    "raw_modified_by_qa": false
+  },
+  "accepted_subset": {
+    "episodes": 48,
+    "accepted_subset_sha256": "317bc3bb239e32d9e47f0ddf875ffcd8e265bc41c3bdd0be2407a9d65c9e1aa1",
+    "discarded_or_invalid_episodes_included": 0
+  },
+  "required_stack": {
+    "sealed_stack": "task1_picklift_quest_remote_collection_stack_v1",
+    "alignment": "task1_picklift_real_y_reflection_zero_mirror_alignment_v2",
+    "task_frame_mapping": "picklift_real_task_to_mujoco_y_reflection_v1",
+    "joint_geometry": "picklift_real_to_mujoco_joint_geometry_v1",
+    "camera": "picklift_real_task_y_reflection_zero_mirror_camera_v7",
+    "controller_semantics": "picklift_remote_live_xr_controller_semantics_v1"
+  },
+  "qa": {
+    "critical_findings": 0,
+    "high_findings": 0,
+    "official_lerobot_0_6_1_loader": "passed",
+    "state_action": "float32[6], finite, correct joint order, actual-sent Real dataset units",
+    "canonical_and_highres_decode": "6357/6357 each",
+    "frame_timestamp_cycle_env_step_checks": "passed",
+    "plan_pose_seed_order_checks": "passed",
+    "success_hold_steps": 25,
+    "success_and_atomic_save_checks": "passed",
+    "coverage": {
+      "cells": "12 x 4",
+      "quadrants": "12 each",
+      "yaw_0_degrees": 24,
+      "yaw_45_degrees": 24
+    },
+    "adjacent_identical_decoded_frame_pairs": 98,
+    "adjacent_frame_pairs": 6309,
+    "adjacent_identical_decoded_frame_rate": 0.0155333650340783,
+    "longest_identical_frame_run": 5
+  },
+  "evidence": {
+    "freeze_manifest_sha256": "8bd07a8914ea3a17451243ebe4a07d685cd219d1feda6b293615df484010ea93",
+    "qa_summary_sha256": "93e817487676b98a0b418ca7bc2681bb35ac48cdd0a58843432307a64340fbcb",
+    "hashes_file_sha256": "17da96138db448d7eb44f69043f7436f35e0a816dfb007eab5e0007058d4cb81",
+    "hashes_sha256_check": "passed",
+    "qa_source_commit": "48c415b",
+    "qa_source_commit_pushed": false
+  },
+  "known_non_data_boundary": {
+    "ubuntu_owning_git_contains_plan_overlay_commit": false,
+    "missing_commit_object": "fef15b59cb2d31f9d43a36f2401ce85306f4d15a",
+    "impact": "QA source commit is based on the existing Ubuntu branch and contains only QA script/result index; deployed plan files and dataset provenance were independently hash-verified."
+  },
+  "research_classification": {
+    "confirmed_engineering_fact": "The frozen Sim48 v7 dataset passed loader, identity, coverage, timing, image, state/action, success-window, and immutable-inventory checks.",
+    "research_hypothesis": "Adding this human simulation dataset to Real24 may improve real-robot generalization on off-center and yaw variations.",
+    "unresolved_choice": "The downstream effect size and optimal Real-to-Sim sampling ratio remain unresolved.",
+    "requires_pilot_evidence": "A controlled ACT training run and frozen real-robot evaluation are required before making a paper claim."
+  },
+  "authorization": {
+    "controlled_real24_plus_sim48_training": true,
+    "paper_effect_claim": false,
+    "raw_dataset_rewrite": false,
+    "reuse_of_v6_quarantine": false
+  }
+}
