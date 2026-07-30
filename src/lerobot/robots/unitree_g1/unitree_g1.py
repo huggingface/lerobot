@@ -34,7 +34,6 @@ from .config_unitree_g1 import UnitreeG1Config
 from .g1_kinematics import G1_29_ArmIK
 from .g1_utils import (
     REMOTE_AXES,
-    REMOTE_KEYS,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
     default_remote_input,
@@ -355,9 +354,6 @@ class UnitreeG1(Robot):
 
         self.kp = np.array(self.config.kp, dtype=np.float32)
         self.kd = np.array(self.config.kd, dtype=np.float32)
-        if self.controller is not None and hasattr(self.controller, "kp"):
-            self.kp = np.array(self.controller.kp, dtype=np.float32)
-            self.kd = np.array(self.controller.kd, dtype=np.float32)
 
         for joint in G1_29_JointIndex:
             self.msg.motor_cmd[joint].mode = 1
@@ -405,10 +401,6 @@ class UnitreeG1(Robot):
             self._controller_thread.join(timeout=2.0)
             if self._controller_thread.is_alive():
                 logger.warning("Controller thread did not stop cleanly")
-
-        # Release controller resources (e.g. SONIC decoder sessions).
-        if self.controller is not None and hasattr(self.controller, "shutdown"):
-            self.controller.shutdown()
 
         # Close simulation environment
         if self.config.is_simulation and self.sim_env is not None:
@@ -533,19 +525,11 @@ class UnitreeG1(Robot):
         return action
 
     def _update_controller_action(self, action: RobotAction) -> None:
-        """Forward incoming teleop action values into ``controller_input``.
-
-        Locomotion controllers read the ``remote.*`` joystick axes; the SONIC whole-body
-        controller reads the 64-D ``motion_token.*`` latent.
-        """
-        from .controllers.sonic_whole_body import TOKEN_ACTION_PREFIX
-
+        """Forward incoming teleop action values into ``controller_input``; each controller
+        reads only the keys it understands."""
         with self._controller_action_lock:
-            for key in REMOTE_KEYS:
-                if key in action:
-                    self.controller_input[key] = action[key]
             for key, value in action.items():
-                if isinstance(key, str) and value is not None and key.startswith(TOKEN_ACTION_PREFIX):
+                if isinstance(key, str) and value is not None:
                     self.controller_input[key] = value
 
     @property
