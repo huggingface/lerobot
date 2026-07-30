@@ -41,6 +41,9 @@ from lerobot.utils.import_utils import _transformers_available, require_package
 from .configuration_being_h05 import BeingH05Config
 
 if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoTokenizer, Qwen3Config
+    from transformers.models.internvl.configuration_internvl import InternVLVisionConfig
+    from transformers.models.internvl.modeling_internvl import InternVLVisionModel
     from transformers.models.qwen3.modeling_qwen3 import (
         Qwen3Attention,
         Qwen3MLP,
@@ -50,6 +53,10 @@ if TYPE_CHECKING or _transformers_available:
     )
 else:
     # Keep the policy package importable without its optional Transformers extra.
+    AutoTokenizer = None
+    InternVLVisionConfig = None
+    InternVLVisionModel = None
+    Qwen3Config = None
     Qwen3Attention = nn.Module
     Qwen3MLP = None
     Qwen3RMSNorm = None
@@ -792,9 +799,6 @@ class BeingH05Policy(PreTrainedPolicy):
         **kwargs: Any,
     ):
         require_package("transformers", extra="being_h05")
-        from transformers import AutoTokenizer, Qwen3Config
-        from transformers.models.internvl.configuration_internvl import InternVLVisionConfig
-        from transformers.models.internvl.modeling_internvl import InternVLVisionModel
 
         super().__init__(config)
         config.validate_features()
