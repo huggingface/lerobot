@@ -43,6 +43,16 @@ immutable under the predecessor plan.
 - The fixed checkpoint, pose order, ACT queue reset, tick-0 observation,
   30-second policy window, and success definition are unchanged.
 
+## Placement-invalid evidence
+
+If the operator confirms after a completed window that the cube was placed at
+a different pose than the frozen trial, the original video and per-tick
+evidence remain immutable and are not scored as a policy failure. The
+`mark_placement_invalid.py` helper writes a separate marker bound to the
+original evidence SHA. The runner then permits exactly one `--replacement`
+using the same frozen pose, model, and order. It refuses a marker created after
+an operator success/failure label already exists.
+
 ## Placement and pre-action evidence
 
 Every trial has one Chinese placement prompt with an integer-centimetre

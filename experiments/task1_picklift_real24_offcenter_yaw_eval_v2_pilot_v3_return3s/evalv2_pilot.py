@@ -669,7 +669,7 @@ def software_dry_run(plan: dict) -> dict:
 
 def write_software_evidence(plan: dict, dry_run: dict) -> dict:
     evidence_root = Path(plan["evidence_root"])
-    software_root = evidence_root / "software_preparation_return3s_v1"
+    software_root = evidence_root / "software_preparation_return3s_replacement_support_v1"
     software_root.mkdir(parents=True, exist_ok=True)
     plan_copy = software_root / "evaluation_plan.json"
     research_copy = software_root / "research_identity_verification.json"
@@ -748,6 +748,14 @@ def original_evidence_path(plan: dict, trial: dict) -> Path:
     return Path(plan["evidence_root"]) / "trials" / f"{trial['spawn_region']}.json"
 
 
+def infrastructure_invalid_marker_path(plan: dict, trial: dict) -> Path:
+    return (
+        Path(plan["evidence_root"])
+        / "trials"
+        / f"{trial['spawn_region']}.infrastructure_invalid.json"
+    )
+
+
 def validate_execution_order(
     plan: dict,
     trial: dict,
@@ -773,10 +781,27 @@ def validate_execution_order(
     if not original_path.exists():
         raise RuntimeError("Replacement requires preserved original evidence.")
     original = json.loads(original_path.read_text(encoding="utf-8"))
-    infrastructure_invalid = (
+    engine_infrastructure_invalid = (
         original.get("status") == "aborted_with_error"
         or original.get("termination") == "hardware_or_runtime_error"
     )
+    marker_path = infrastructure_invalid_marker_path(plan, trial)
+    placement_infrastructure_invalid = False
+    if marker_path.exists():
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        placement_infrastructure_invalid = (
+            marker.get("status") == "infrastructure_invalid"
+            and marker.get("reason") == "operator_placement_mismatch"
+            and marker.get("scored_trial") is False
+            and marker.get("replacement_allowed") is True
+            and marker.get("trial_id") == trial["trial_id"]
+            and marker.get("artifact_stem") == trial["spawn_region"]
+            and marker.get("original_evidence", {}).get("sha256")
+            == sha256_file(original_path)
+        )
+        if not placement_infrastructure_invalid:
+            raise RuntimeError("Infrastructure-invalid marker is malformed or does not bind original evidence.")
+    infrastructure_invalid = engine_infrastructure_invalid or placement_infrastructure_invalid
     if not infrastructure_invalid:
         raise RuntimeError("Replacement is allowed only for infrastructure-invalid trials.")
     replacement_stem = f"{trial['spawn_region']}__replacement1"

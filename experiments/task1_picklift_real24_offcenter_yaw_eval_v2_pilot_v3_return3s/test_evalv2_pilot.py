@@ -345,6 +345,54 @@ def test_continuation_order_accepts_trial5_after_four_immutable_predecessors(
     assert link is None
 
 
+def test_operator_placement_mismatch_allows_one_linked_replacement(
+    tmp_path: Path,
+) -> None:
+    plan = copy.deepcopy(evaluator.load_frozen_plan())
+    plan["evidence_root"] = str(tmp_path)
+    trial = plan["trials"][7]
+    original = evaluator.original_evidence_path(plan, trial)
+    original.parent.mkdir(parents=True, exist_ok=True)
+    original.write_text(
+        json.dumps(
+            {
+                "status": "completed_pending_operator_annotation",
+                "termination": "maximum_duration",
+            }
+        ),
+        encoding="utf-8",
+    )
+    marker_path = evaluator.infrastructure_invalid_marker_path(plan, trial)
+    marker_path.write_text(
+        json.dumps(
+            {
+                "status": "infrastructure_invalid",
+                "reason": "operator_placement_mismatch",
+                "scored_trial": False,
+                "replacement_allowed": True,
+                "trial_id": trial["trial_id"],
+                "artifact_stem": trial["spawn_region"],
+                "original_evidence": {
+                    "sha256": evaluator.sha256_file(original),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    replacement_stem, link = evaluator.validate_execution_order(
+        plan,
+        trial,
+        replacement=True,
+    )
+    assert replacement_stem == f"{trial['spawn_region']}__replacement1"
+    assert link == trial["spawn_region"]
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["original_evidence"]["sha256"] = "0" * 64
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="marker is malformed"):
+        evaluator.validate_execution_order(plan, trial, replacement=True)
+
+
 def test_gripper_nuisance_does_not_modify_action_contract() -> None:
     plan = evaluator.load_frozen_plan()
     assert plan["gripper_nuisance"] == {
