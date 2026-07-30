@@ -60,40 +60,9 @@ ISAACLAB_TO_MUJOCO = np.array(
     ],
     dtype=np.int32,
 )
-MUJOCO_TO_ISAACLAB = np.array(
-    [
-        0,
-        6,
-        12,
-        1,
-        7,
-        13,
-        2,
-        8,
-        14,
-        3,
-        9,
-        15,
-        22,
-        4,
-        10,
-        16,
-        23,
-        5,
-        11,
-        17,
-        24,
-        18,
-        25,
-        19,
-        26,
-        20,
-        27,
-        21,
-        28,
-    ],
-    dtype=np.int32,
-)
+# The two orderings are inverses of each other, so derive one from the other (argsort) to
+# guarantee they can never drift out of sync.
+MUJOCO_TO_ISAACLAB = np.argsort(ISAACLAB_TO_MUJOCO).astype(np.int32)
 
 REMOTE_AXES = ("remote.lx", "remote.ly", "remote.rx", "remote.ry")
 REMOTE_BUTTONS = tuple(f"remote.button.{i}" for i in range(16))
@@ -113,35 +82,6 @@ def get_gravity_orientation(quaternion: list[float] | np.ndarray) -> np.ndarray:
     gravity_orientation[1] = -2 * (qz * qy + qw * qx)
     gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
     return gravity_orientation
-
-
-# Unitree motor-model parameters shared by the controllers that derive their PD gains
-# from motor physics rather than hand-tuning (SONIC decoder, Holosoma). NATURAL_FREQ is
-# the target closed-loop stiffness bandwidth (rad/s); MOTOR_ARMATURE is per-model rotor
-# inertia (keys are Unitree motor model names). From these: kp = armature * w**2 and
-# kd = 4 * armature * w, with an optional x2 factor on stiff joints (ankles/waist).
-NATURAL_FREQ = 10.0 * 2.0 * np.pi
-MOTOR_ARMATURE = {"5020": 0.003609725, "7520_14": 0.010177520, "7520_22": 0.025101925, "4010": 0.00425}
-
-
-def compute_pd_gains(motor_models, double_indices=()) -> tuple[np.ndarray, np.ndarray]:
-    """Derive per-joint PD gains (kp, kd) from motor armature and target bandwidth.
-
-    ``motor_models`` is a per-joint sequence of Unitree motor model names (in the
-    controller's own joint order); joints whose index is in ``double_indices`` get a
-    x2 stiffness/damping factor. Returns two (N,) float32 arrays in that same order.
-    """
-    double = set(double_indices)
-
-    def s(k):
-        return MOTOR_ARMATURE[k] * NATURAL_FREQ**2
-
-    def d(k):
-        return 4.0 * MOTOR_ARMATURE[k] * NATURAL_FREQ
-
-    kp = np.array([2 * s(k) if i in double else s(k) for i, k in enumerate(motor_models)], dtype=np.float32)
-    kd = np.array([2 * d(k) if i in double else d(k) for i, k in enumerate(motor_models)], dtype=np.float32)
-    return kp, kd
 
 
 class G1_29_JointArmIndex(IntEnum):
