@@ -68,7 +68,7 @@ dependencies = [
 
     # Config & Hub
     "draccus>=0.11.6,<0.12.0",
-    "huggingface-hub>=1.0.0,<2.0.0",
+    "huggingface-hub>=1.6.0,<2.0.0",
     "requests>=2.32.0,<3.0.0",
 
     # Environments
@@ -95,7 +95,7 @@ dependencies = [
 
 # ── Feature-scoped extras ──────────────────────────────────
 dataset = [
-    "datasets>=4.7.0,<5.0.0",
+    "datasets>=4.8.0,<5.0.0",
     "pandas>=2.0.0,<3.0.0", # NOTE: Transitive dependency of datasets
     "pyarrow>=21.0.0,<30.0.0", # NOTE: Transitive dependency of datasets
     "lerobot[av-dep]",
