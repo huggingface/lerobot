@@ -239,6 +239,56 @@ Every module is on by default and can be toggled independently (set to
 | `--vqa.restrict_to_default_camera`              | `false` | Ground VQA only on `--vlm.camera_key` (else every camera). |
 | `--executor.episode_parallelism`                | `16`    | Episodes processed concurrently within each phase.         |
 
+## Camera-view curation
+
+`lerobot-curate-cameras` is a separate, lightweight command that uses the same
+VLM backend for a **dataset-filtering / curation** pass. It downloads only the
+**first episode**, then for each camera view asks the VLM to:
+
+1. **flag** whether the view is blurry / unusable, and
+2. **label** the view with a canonical name from a closed vocabulary
+   (`top`, `wrist`, `front`, `bottom`, `left`, `right`, plus two-word combos
+   like `left_wrist`).
+
+It runs in one of two modes:
+
+- `--mode=report` (default) — write the labels + verdicts into `meta/`
+  (`meta/camera_curation.json` and a `curation` block on each camera in
+  `meta/info.json`). Nothing is moved; this is the cheap triage pass and works
+  for any dataset.
+- `--mode=rename` — apply the labels by renaming each camera key to
+  `observation.images.<label>`. For **video** datasets this is a
+  **download-free, server-side Hub commit**: the `videos/<key>/` files are moved
+  with the Hub's LFS copy/delete (no video is downloaded or re-encoded), and only
+  the small `meta/` files are edited.
+
+```bash
+# Cheap, mutation-free triage (writes meta/camera_curation.json):
+uv run lerobot-curate-cameras --repo_id=user/dataset --mode=report
+
+# Apply the labels by renaming camera keys on a new branch (keeps `main` intact):
+uv run lerobot-curate-cameras --repo_id=user/dataset --mode=rename --branch=curated
+
+# Run the VLM decision on a GPU via HF Jobs (same --job.* flags as above):
+uv run lerobot-curate-cameras --repo_id=user/dataset --mode=rename --job.target=h200
+```
+
+Notes:
+
+- The Hub rename is **in place** on the source repo — the Hub does not support
+  cross-repo LFS copies. Use `--branch` to commit to a branch so `main` is
+  preserved.
+- **Image** datasets store frames inside the data parquet, so their rename can't
+  avoid touching the data; the rename falls back to a local rewrite (via
+  [`rename_features`](./using_dataset_tools#rename-features)). Prefer `--mode=report`
+  for image datasets.
+- Views judged unusable are only flagged by default (still renamed). Pass
+  `--drop_unusable=true` (local path) to remove them.
+
+Key options: `--mode`, `--branch`, `--n_frames`, `--view_vocabulary`,
+`--allow_combos`, `--on_collision`, `--drop_unusable`, and the shared
+`--vlm.*` / `--job.*` flags documented above.
+
 ## Contributing new modules
 
 The pipeline is built to grow, and **contributions are very welcome** —

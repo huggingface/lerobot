@@ -89,6 +89,28 @@ lerobot-edit-dataset \
     --operation.feature_names "['observation.images.top']"
 ```
 
+#### Rename Features
+
+Rename feature keys — typically to canonicalize camera views (e.g.
+`observation.images.cam_0` → `observation.images.left_wrist`). A rename changes
+no pixel data, so it is a cheap key-remap: it rewrites `meta/` (info features,
+episode `videos/*` and `stats/*` columns, `stats.json`), moves the
+`videos/<key>/` directory, and — for image datasets — renames the embedded
+image column. Videos are **not** re-encoded.
+
+```bash
+# Rename one or more camera keys
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type rename_features \
+    --operation.name_mapping '{"observation.images.cam_0": "observation.images.left_wrist"}'
+```
+
+If two targets collide (e.g. two cameras both labeled `top`), the operation
+raises by default; pass `--operation.on_collision suffix` to disambiguate
+deterministically (`top`, `top_2`, …). To label camera views automatically with
+a VLM, see the [Annotation Pipeline](./annotation_pipeline#camera-view-curation).
+
 #### Convert to Video
 
 Convert an image-based dataset to video format, creating a new LeRobotDataset where images are stored as videos. This is useful for reducing storage requirements and improving data loading performance. The new dataset will have the exact same structure as the original, but with images encoded as MP4 videos in the proper LeRobot format.

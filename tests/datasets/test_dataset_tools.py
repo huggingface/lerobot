@@ -23,6 +23,7 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import pandas as pd  # noqa: E402
 
 from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
@@ -34,9 +35,11 @@ from lerobot.datasets.dataset_tools import (
     modify_tasks,
     reencode_dataset,
     remove_feature,
+    rename_features,
     split_dataset,
 )
-from lerobot.datasets.io_utils import load_info
+from lerobot.datasets.dataset_tools import _resolve_rename_collisions
+from lerobot.datasets.io_utils import load_info, load_stats
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
 from tests.fixtures.constants import DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY
 from tests.fixtures.dataset_factories import add_frames
@@ -1492,3 +1495,162 @@ def test_reencode_dataset_multi_key_multiprocessing(
     for vk in dataset.meta.video_keys:
         persisted_encoder = RGBEncoderConfig.from_video_info(persisted_info.features[vk].get("info", {}))
         assert persisted_encoder == target_cfg
+
+
+# ----------------------------- rename_features -----------------------------
+
+
+def _mock_hub(tmp_path):
+    """Context managers that stop dataset reload from hitting the Hub."""
+    return (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version", return_value="v3.0"),
+        patch(
+            "lerobot.datasets.dataset_metadata.snapshot_download",
+            side_effect=lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path)),
+        ),
+    )
+
+
+@pytest.fixture
+def two_camera_image_dataset(tmp_path, empty_lerobot_dataset_factory):
+    """An image dataset with two camera views (for collision tests)."""
+    features = {
+        "action": {"dtype": "float32", "shape": (6,), "names": None},
+        "observation.images.cam_0": {"dtype": "image", "shape": (32, 32, 3), "names": None},
+        "observation.images.cam_1": {"dtype": "image", "shape": (32, 32, 3), "names": None},
+    }
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "two_cam", features=features)
+    for _ in range(2):
+        for _ in range(4):
+            dataset.add_frame(
+                {
+                    "action": np.random.randn(6).astype(np.float32),
+                    "observation.images.cam_0": np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8),
+                    "observation.images.cam_1": np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8),
+                    "task": "t",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+    return dataset
+
+
+def test_resolve_rename_collisions_error_and_suffix():
+    features = {"a": {}, "b": {}, "c": {}}
+    # many-to-one
+    with pytest.raises(ValueError, match="same target"):
+        _resolve_rename_collisions({"a": "top", "b": "top"}, features, "error")
+    # target collides with an untouched key
+    with pytest.raises(ValueError, match="existing feature"):
+        _resolve_rename_collisions({"a": "c"}, features, "error")
+    # suffix disambiguates deterministically
+    resolved = _resolve_rename_collisions({"a": "top", "b": "top"}, features, "suffix")
+    assert set(resolved.values()) == {"top", "top_2"}
+    assert resolved["a"] == "top"  # sorted-source order keeps the first
+
+
+def test_rename_image_feature(sample_dataset, tmp_path):
+    old, new = "observation.images.top", "observation.images.wrist"
+    m1, m2 = _mock_hub(tmp_path)
+    with m1, m2:
+        renamed = rename_features(sample_dataset, {old: new}, output_dir=tmp_path / "renamed")
+
+    assert new in renamed.meta.features
+    assert old not in renamed.meta.features
+    assert renamed.meta.features[new]["dtype"] == "image"
+    # the frame still decodes under the new key
+    item = renamed[0]
+    assert new in item and old not in item
+    # stats moved to the new key
+    stats = load_stats(renamed.root)
+    assert new in stats and old not in stats
+
+
+@require_h264
+def test_rename_video_feature_no_reencode(tmp_path, empty_lerobot_dataset_factory, features_factory):
+    features = features_factory(use_videos=True)  # observation.images.{laptop,phone}
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "vid", features=features, use_videos=True)
+    add_frames(dataset, num_frames=4)
+    dataset.save_episode()
+    dataset.finalize()
+
+    old, new = "laptop", "observation.images.top"  # features_factory uses bare camera keys
+    old_bytes = (dataset.root / dataset.meta.get_video_file_path(0, old)).read_bytes()
+
+    m1, m2 = _mock_hub(tmp_path)
+    with m1, m2:
+        renamed = rename_features(dataset, {old: new}, output_dir=tmp_path / "renamed")
+
+    assert new in renamed.meta.features and old not in renamed.meta.features
+    new_mp4 = renamed.root / renamed.meta.get_video_file_path(0, new)
+    assert new_mp4.exists()
+    # a rename must not re-encode: the mp4 is byte-identical.
+    assert new_mp4.read_bytes() == old_bytes
+    # episodes metadata columns were remapped.
+    ep_parquet = next((renamed.root / "meta" / "episodes").glob("*/*.parquet"))
+    cols = pd.read_parquet(ep_parquet).columns
+    assert f"videos/{new}/from_timestamp" in cols
+    assert f"videos/{old}/from_timestamp" not in cols
+    # the video still decodes under the new key.
+    assert new in renamed[0]
+
+
+def test_rename_collision_raises(two_camera_image_dataset, tmp_path):
+    m1, m2 = _mock_hub(tmp_path)
+    with m1, m2, pytest.raises(ValueError, match="collision"):
+        rename_features(
+            two_camera_image_dataset,
+            {
+                "observation.images.cam_0": "observation.images.top",
+                "observation.images.cam_1": "observation.images.top",
+            },
+            output_dir=tmp_path / "out",
+        )
+
+
+def test_rename_collision_suffix(two_camera_image_dataset, tmp_path):
+    m1, m2 = _mock_hub(tmp_path)
+    with m1, m2:
+        renamed = rename_features(
+            two_camera_image_dataset,
+            {
+                "observation.images.cam_0": "observation.images.top",
+                "observation.images.cam_1": "observation.images.top",
+            },
+            output_dir=tmp_path / "out",
+            on_collision="suffix",
+        )
+    keys = set(renamed.meta.features)
+    assert {"observation.images.top", "observation.images.top_2"} <= keys
+
+
+def test_rename_identity_only_raises(sample_dataset, tmp_path):
+    with pytest.raises(ValueError, match="identity"):
+        rename_features(
+            sample_dataset,
+            {"observation.images.top": "observation.images.top"},
+            output_dir=tmp_path / "out",
+        )
+
+
+def test_rename_missing_key_raises(sample_dataset, tmp_path):
+    with pytest.raises(ValueError, match="not found"):
+        rename_features(
+            sample_dataset,
+            {"observation.images.nope": "observation.images.top"},
+            output_dir=tmp_path / "out",
+        )
+
+
+def test_rename_required_feature_raises(sample_dataset, tmp_path):
+    with pytest.raises(ValueError, match="required"):
+        rename_features(sample_dataset, {"timestamp": "t2"}, output_dir=tmp_path / "out")
+
+
+def test_rename_slash_in_target_raises(sample_dataset, tmp_path):
+    with pytest.raises(ValueError, match="'/'"):
+        rename_features(
+            sample_dataset,
+            {"observation.images.top": "observation/images/top"},
+            output_dir=tmp_path / "out",
+        )

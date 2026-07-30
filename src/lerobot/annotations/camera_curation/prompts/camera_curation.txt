@@ -1,0 +1,28 @@
+You are inspecting frames from ONE camera of a robot manipulation dataset. All
+frames come from the same fixed camera during a single episode; use them
+together to judge the camera, not any single moment.
+
+Do two things and return them as one JSON object.
+
+1. QUALITY. Decide whether this camera view is usable for training a policy.
+   Mark it UNUSABLE if it is blurry / out of focus, badly over- or
+   under-exposed, mostly occluded, static/frozen, corrupted, or otherwise does
+   not clearly show the scene. Otherwise it is usable.
+
+2. VIEW LABEL. Choose the single best label for where this camera is mounted /
+   what it looks at, using ONLY this closed vocabulary:
+
+     {vocabulary}
+
+   {combo_rule}Pick the label that best matches the viewpoint (e.g. a
+   downward overhead shot is "top"; a camera on the robot's gripper/hand that
+   moves with the arm is "wrist"). Do not invent words outside the vocabulary.
+
+Output strictly valid JSON, no prose, no code fences, with exactly these keys:
+
+  {{
+    "usable": true or false,
+    "blur_reason": "<short reason if unusable, else null>",
+    "view_label": "<one label from the vocabulary, combos joined by '_'>",
+    "confidence": <number between 0 and 1>
+  }}

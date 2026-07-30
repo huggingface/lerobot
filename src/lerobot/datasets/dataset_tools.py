@@ -47,6 +47,7 @@ from lerobot.configs import (
 )
 from lerobot.configs.video import DEPTH_ENCODER_INFO_FIELD_NAMES
 from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
+from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.utils import flatten_dict
 
 from .aggregate import aggregate_datasets
@@ -60,6 +61,8 @@ from .image_writer import write_image
 from .io_utils import (
     get_parquet_file_size_in_mb,
     load_episodes,
+    load_info,
+    to_parquet_one_row_group_per_episode,
     write_info,
     write_stats,
     write_tasks,
@@ -72,7 +75,9 @@ from .utils import (
     DEFAULT_DATA_PATH,
     DEFAULT_EPISODES_PATH,
     DEPTH_FILE_PATTERN,
+    EPISODES_DIR,
     IMAGE_FILE_PATTERN,
+    STATS_PATH,
     VIDEO_DIR,
     update_chunk_file_indices,
 )
@@ -482,6 +487,250 @@ def remove_feature(
         output_dir=output_dir,
         repo_id=repo_id,
     )
+
+
+# Columns in ``meta/episodes/*.parquet`` are namespaced by feature key under
+# these prefixes (e.g. ``videos/observation.images.top/from_timestamp`` and
+# ``stats/observation.images.top/mean``). Renaming a feature means rewriting the
+# middle ``<key>`` segment of every such column. Note ``stats/*`` columns are
+# invisible via ``meta.episodes`` (``load_episodes`` drops them), so we operate
+# on the raw parquet.
+_EPISODE_KEY_PREFIXES = ("videos", "stats")
+
+# Features that must never be renamed (or become a rename target): the dataset
+# indexing/bookkeeping columns.
+_REQUIRED_FEATURES = frozenset({"timestamp", "frame_index", "episode_index", "index", "task_index"})
+
+
+def _resolve_rename_collisions(
+    name_mapping: dict[str, str],
+    existing_features: dict[str, dict],
+    on_collision: str,
+) -> dict[str, str]:
+    """Validate/disambiguate a ``{old_key: new_key}`` mapping against collisions.
+
+    The post-rename key set is ``(features \\ sources) ∪ targets``. A collision is
+    either two sources mapping to the same target, or a target equal to an
+    untouched existing key. Swaps/cycles between sources are *not* collisions
+    (handled downstream). ``on_collision="error"`` raises listing every offending
+    pair; ``"suffix"`` disambiguates deterministically (``top`` → ``top_2`` → …)
+    in sorted-source order.
+    """
+    if on_collision not in ("error", "suffix"):
+        raise ValueError(f"on_collision must be 'error' or 'suffix', got {on_collision!r}")
+
+    sources = set(name_mapping)
+    untouched = set(existing_features) - sources
+    targets = list(name_mapping.values())
+    duplicate_targets = {t for t in targets if targets.count(t) > 1}
+    untouched_collisions = set(targets) & untouched
+
+    if on_collision == "error":
+        problems = []
+        if duplicate_targets:
+            problems.append(f"multiple cameras map to the same target(s): {sorted(duplicate_targets)}")
+        if untouched_collisions:
+            problems.append(
+                f"target(s) collide with existing feature(s) not being renamed: "
+                f"{sorted(untouched_collisions)}"
+            )
+        if problems:
+            raise ValueError(
+                "rename_features collision(s): "
+                + "; ".join(problems)
+                + ". Resolve the labels (e.g. use combos like 'left_wrist') or pass "
+                "on_collision='suffix'."
+            )
+        return dict(name_mapping)
+
+    # suffix mode: greedily de-collide in a deterministic (sorted) order.
+    used = set(untouched)
+    resolved: dict[str, str] = {}
+    for src in sorted(name_mapping):
+        target = name_mapping[src]
+        if target in used:
+            base, i = target, 2
+            while target in used:
+                target = f"{base}_{i}"
+                i += 1
+        resolved[src] = target
+        used.add(target)
+    return resolved
+
+
+def _remap_camera_key_in_meta(root: Path, name_mapping: dict[str, str]) -> None:
+    """Rename feature keys across the dataset's ``meta/`` files (no file moves).
+
+    Touches: ``meta/info.json`` ``features`` (key renamed, feature dict carried
+    verbatim so codec ``info`` / depth params survive), every
+    ``meta/episodes/*/*.parquet`` (``videos/<old>/*`` and ``stats/<old>/*``
+    columns), and ``meta/stats.json`` (top-level ``<old>`` key). All three are
+    simultaneous relabels, so swaps/cycles are safe here.
+    """
+    # info.json — rebuild features preserving insertion order.
+    info = load_info(root)
+    info.features = {name_mapping.get(key, key): ft for key, ft in info.features.items()}
+    write_info(info, root)
+
+    # episodes parquet — rename namespaced columns by prefix.
+    def _rename_column(col: str) -> str:
+        for prefix in _EPISODE_KEY_PREFIXES:
+            head = f"{prefix}/"
+            if col.startswith(head):
+                rest = col[len(head) :]
+                for old, new in name_mapping.items():
+                    if rest == old or rest.startswith(f"{old}/"):
+                        return f"{head}{new}{rest[len(old) :]}"
+        return col
+
+    for path in sorted((root / EPISODES_DIR).glob("*/*.parquet")):
+        df = pd.read_parquet(path)
+        col_map = {c: _rename_column(c) for c in df.columns if _rename_column(c) != c}
+        if col_map:
+            df = df.rename(columns=col_map)
+            to_parquet_one_row_group_per_episode(df, path)
+
+    # stats.json — remap top-level feature keys.
+    stats_path = root / STATS_PATH
+    if stats_path.exists():
+        stats = load_json(stats_path)
+        if isinstance(stats, dict):
+            stats = {name_mapping.get(key, key): value for key, value in stats.items()}
+            write_json(stats, stats_path)
+
+
+def _move_camera_key_dirs(root: Path, name_mapping: dict[str, str]) -> None:
+    """Move ``videos/<old>`` and ``images/<old>`` trees to their new key names.
+
+    Two-phase (source → sentinel → target) so a swap like ``{a: b, b: a}`` cannot
+    clobber. Missing source dirs are skipped (a key may be stored one way only).
+    """
+    for subdir in (VIDEO_DIR, "images"):
+        base = root / subdir
+        if not base.exists():
+            continue
+        # Phase 1: move every source to a unique sentinel.
+        sentinels: dict[str, Path] = {}
+        for i, old in enumerate(name_mapping):
+            src = base / old
+            if src.exists():
+                sentinel = base / f".__rename_tmp_{i}__"
+                shutil.move(str(src), str(sentinel))
+                sentinels[old] = sentinel
+        # Phase 2: sentinel → final target.
+        for old, sentinel in sentinels.items():
+            shutil.move(str(sentinel), str(base / name_mapping[old]))
+
+
+def _rename_image_data_columns(root: Path, name_mapping: dict[str, str]) -> None:
+    """Rename image-feature columns inside ``data/*.parquet`` at the Arrow level.
+
+    Image datasets embed frames as HF ``Image()`` columns in the data parquet.
+    We rename the Arrow field *and* the matching key in the schema-level
+    ``huggingface`` metadata (which references columns by name), so no pixel
+    bytes are decoded or re-embedded and ``datasets`` still types the column as
+    an image after the rename.
+    """
+    import json
+
+    data_dir = root / DATA_DIR
+    if not data_dir.exists():
+        return
+    for path in sorted(data_dir.glob("*/*.parquet")):
+        table = pq.read_table(path)
+        col_map = {c: name_mapping[c] for c in table.column_names if c in name_mapping}
+        if not col_map:
+            continue
+        table = table.rename_columns([col_map.get(c, c) for c in table.column_names])
+        metadata = dict(table.schema.metadata or {})
+        hf_key = b"huggingface"
+        if hf_key in metadata:
+            hf_meta = json.loads(metadata[hf_key])
+            features = hf_meta.get("info", {}).get("features")
+            if isinstance(features, dict):
+                for old, new in col_map.items():
+                    if old in features:
+                        features[new] = features.pop(old)
+                metadata[hf_key] = json.dumps(hf_meta).encode()
+                table = table.replace_schema_metadata(metadata)
+        pq.write_table(table, str(path))
+
+
+def rename_features(
+    dataset: LeRobotDataset,
+    name_mapping: dict[str, str],
+    output_dir: str | Path | None = None,
+    repo_id: str | None = None,
+    *,
+    on_collision: str = "error",
+) -> LeRobotDataset:
+    """Rename dataset feature keys without re-encoding any pixel data.
+
+    A rename changes zero frame content, so this does a cheap key-remap rather
+    than the full-copy ``modify_features`` path (which would re-embed images and
+    byte-copy videos). It rewrites ``meta/`` (info features, episodes
+    ``videos/*``+``stats/*`` columns, stats.json keys), moves the physical
+    ``videos/<key>/`` (and ``images/<key>/``) directories, and — for image
+    datasets — renames the embedded ``data/*.parquet`` image column at the Arrow
+    level. Feature ``info`` dicts (video codec params, depth ``is_depth_map``) are
+    carried verbatim.
+
+    Args:
+        dataset: The source LeRobotDataset.
+        name_mapping: ``{old_feature_key: new_feature_key}``. Identity pairs are
+            ignored. Typically used to canonicalize camera keys, e.g.
+            ``{"observation.images.cam_0": "observation.images.left_wrist"}``.
+        output_dir: Where the renamed dataset is written. Defaults to
+            ``$HF_LEROBOT_HOME/repo_id``. When it equals ``dataset.root`` the
+            rename is applied in place.
+        repo_id: Identifier for the renamed dataset (default ``<repo_id>_renamed``).
+        on_collision: ``"error"`` (default) raises on colliding targets;
+            ``"suffix"`` disambiguates deterministically (``top`` → ``top_2``).
+
+    Returns:
+        The renamed LeRobotDataset.
+    """
+    if not name_mapping:
+        raise ValueError("name_mapping must be a non-empty {old_key: new_key} dict")
+
+    features = dataset.meta.features
+    mapping = {old: new for old, new in name_mapping.items() if old != new}
+    if not mapping:
+        raise ValueError("name_mapping only contains identity renames (old == new); nothing to do")
+
+    missing = [old for old in mapping if old not in features]
+    if missing:
+        raise ValueError(f"Feature(s) not found in dataset: {missing}")
+
+    bad_required = sorted(
+        {name for pair in mapping.items() for name in pair if name in _REQUIRED_FEATURES}
+    )
+    if bad_required:
+        raise ValueError(f"Cannot rename to/from required features: {bad_required}")
+
+    bad_names = [new for new in mapping.values() if "/" in new]
+    if bad_names:
+        raise ValueError(f"Target feature name(s) cannot contain '/': {bad_names}")
+
+    mapping = _resolve_rename_collisions(mapping, features, on_collision)
+
+    if repo_id is None:
+        repo_id = f"{dataset.repo_id}_renamed"
+    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
+
+    in_place = output_dir.resolve() == Path(dataset.root).resolve()
+    if not in_place:
+        shutil.copytree(dataset.root, output_dir)
+
+    image_keys = set(dataset.meta.image_keys)
+
+    _remap_camera_key_in_meta(output_dir, mapping)
+    _move_camera_key_dirs(output_dir, mapping)
+    image_mapping = {old: new for old, new in mapping.items() if old in image_keys}
+    if image_mapping:
+        _rename_image_data_columns(output_dir, image_mapping)
+
+    return LeRobotDataset(repo_id=repo_id, root=output_dir)
 
 
 def _fractions_to_episode_indices(
