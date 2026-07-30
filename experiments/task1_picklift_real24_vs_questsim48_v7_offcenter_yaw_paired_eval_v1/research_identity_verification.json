@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "verified_at_utc": "2026-07-31T00:00:00Z",
+  "repository": "G:/PhysicalAI/IAmRobotTrainerResearch",
+  "head_commit": "8dd171b7bc8f2b43262849eb094643d345d50382",
+  "working_tree_status": "clean",
+  "verification_scope": "Read-only verification for the fresh off-center/yaw paired real-evaluation software plan.",
+  "files": {
+    "training_run_manifest": {
+      "path": "manifests/task1-picklift-real24-questsim48-v7-act100k-run-v1.json",
+      "sha256": "5c14038a175453d9e10e13cf24584a189ea84b29969a4fd09a3e9f086bc5778d",
+      "match": true
+    },
+    "training_decision": {
+      "path": "decision-log/2026-07-31-task1-picklift-real24-questsim48-v7-act-v1.md",
+      "sha256": "1baec368f8c9b487e5154c0737a83c9ce67f31a9276977a3598ea4f195228c7a",
+      "match": true
+    },
+    "protocol": {
+      "path": "experiment-design/task1-picklift-offcenter-yaw-eval-v2-pilot-v2.json",
+      "sha256": "1a5605878778506502b9d7d06e2445ce9aa509aa82f6523d646bf4a0b195eb97",
+      "match": true
+    },
+    "pose_manifest": {
+      "path": "manifests/task1-picklift-offcenter-yaw-eval-v2-pilot-poses-v2.json",
+      "sha256": "9acfcb7c49e6ff03f9de7b03008c204342e7e846a741a7676c795c8f14043200",
+      "match": true
+    },
+    "validation_manifest": {
+      "path": "manifests/task1-picklift-offcenter-yaw-eval-v2-pilot-validation-v2.json",
+      "sha256": "609d6934c1afca811622821821265762a1d483224ab9ffa8dc1a988eb844b5c3",
+      "match": true
+    },
+    "alignment_manifest": {
+      "path": "manifests/task1-picklift-sim-real-geometry-alignment-v1.json",
+      "sha256": "14b01f42045865a477d764037f512559461d5c8e364d6ab75fe1d1509d0b92a1",
+      "match": true
+    },
+    "return_amendment": {
+      "path": "experiment-design/task1-picklift-offcenter-yaw-eval-v2-pilot-return3s-amendment-v1.json",
+      "sha256": "c32c8f7e8040309b06b6bbb717299945f6bd06f8eb1f72b5b0860edc758e3fae",
+      "match": true
+    }
+  },
+  "hardware_access": {
+    "serial": false,
+    "camera": false,
+    "robot": false,
+    "torque": false,
+    "rollout": false
+  }
+}
