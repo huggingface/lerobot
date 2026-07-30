@@ -53,6 +53,8 @@
     title: Streaming Video Encoding
   title: "Datasets"
 - sections:
+  - local: policy_io_and_checkpoints
+    title: Policy I/O and Checkpoints
   - local: act
     title: ACT
   - local: smolvla

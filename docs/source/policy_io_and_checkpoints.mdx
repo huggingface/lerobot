@@ -1,0 +1,564 @@
+# Policy Inputs, Outputs, Checkpoints, and Action Representations
+
+This page is the central reference for the data contract between a LeRobot
+dataset or environment, a policy checkpoint, and a robot controller. It covers
+the policy types registered on `main`, public LeRobot-compatible checkpoints,
+and four policy integrations that are still under review.
+
+Research snapshot: **July 30, 2026**.
+
+<Warning>
+
+A policy class does not, by itself, define what every vector element means.
+For many policies, `observation.state=[6]` and `action=[6]` only describe
+shapes. The checkpoint, training dataset, robot driver, and environment
+adapter define whether those values are joint angles, Cartesian poses, mobile
+base commands, gripper commands, degrees, radians, meters, or normalized motor
+units. Never infer semantics from the vector width alone.
+
+</Warning>
+
+## How to read this reference
+
+There are three separate contracts:
+
+1. **Architecture contract**: tensor shapes, action horizon, padding capacity,
+   model-side normalization, and whether the policy can consume images,
+   language, or state.
+2. **Checkpoint contract**: ordered feature keys, camera roles, active vector
+   dimensions, saved normalization statistics, and any embodiment-specific
+   packing.
+3. **Controller contract**: joint or end-effector control, coordinate frame,
+   rotation convention, units, absolute or relative commands, gripper
+   convention, control frequency, and physical limits.
+
+All three must agree. A shape-compatible checkpoint is not necessarily
+controller-compatible.
+
+### “Relative” has two meanings
+
+Keep these two axes separate:
+
+- **Controller-relative**: the environment consumes a delta end-effector
+  command, such as LIBERO's `delta xyz + delta axis-angle + gripper`.
+- **Chunk-relative**: a processor subtracts the state at prediction time from
+  selected action channels. In LeRobot this is controlled by
+  `RelativeActionsProcessorStep` / `use_relative_actions`.
+
+A LIBERO policy can use controller-relative EEF commands while
+`use_relative_actions=false`: its dataset already contains EEF deltas, so no
+second state-subtraction transform should be applied. See
+[Action Representations](./action_representations) for absolute, relative
+trajectory, and sequential-delta definitions.
+
+### Meaning of “unknown”
+
+**Unknown** means the semantic information is not encoded in the LeRobot
+checkpoint/configuration or its maintained documentation. It does not mean
+that the original dataset authors never specified it. Treat an unknown as a
+required migration decision, not as permission to guess.
+
+## Policy architecture matrix
+
+The “I/O semantics” column describes what the policy implementation fixes.
+“Dataset-defined” means the dataset/checkpoint supplies the ordered state and
+action vectors.
+
+| Policy type      | Status                                                       | Model-side input → output                                                                                                 | I/O semantics fixed by policy?                                                                      | Default normalization                                         |
+| ---------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `act`            | `main`                                                       | State or environment state; ordered images → continuous action chunk, default 100 steps                                   | No; dataset-defined joint, EEF, mobile-base, or mixed vectors                                       | mean/std                                                      |
+| `diffusion`      | `main`                                                       | Two observation steps of state and optional ordered images → continuous diffusion action sequence; executes 32 by default | No; dataset-defined                                                                                 | state/action min-max                                          |
+| `tdmpc`          | `main`                                                       | State or pixels plus optional environment state → one continuous action                                                   | No; environment-defined; action is expected in `[-1, 1]` after processing                           | action min-max; other inputs identity                         |
+| `vqbet`          | `main`                                                       | Five observation steps of state or images → quantized behavior action sequence                                            | No; dataset-defined                                                                                 | state/action min-max                                          |
+| `multi_task_dit` | `main`                                                       | Two observation steps, ordered images, state, task text → 32-step diffusion/flow sequence; executes 24                    | No; dataset-defined                                                                                 | state/action min-max                                          |
+| `gaussian_actor` | `main`                                                       | State/environment state and images → one Gaussian actor action                                                            | No; online RL environment-defined                                                                   | state/env/action min-max                                      |
+| `pi0`            | `main`                                                       | Ordered images, task text, state padded to 32D → 50 × 32D flow output, cropped to checkpoint action width                 | No canonical 32D meaning is serialized; optional chunk-relative conversion                          | checkpoint-specific; default mean/std                         |
+| `pi05`           | `main`                                                       | Ordered images, task text, state padded to 32D → 50 × 32D flow output, cropped to checkpoint action width                 | No canonical 32D meaning is serialized; optional chunk-relative conversion                          | checkpoint-specific; default q01/q99                          |
+| `pi0_fast`       | `main`                                                       | Ordered images, task text, state padded to 32D → tokenized action chunk, cropped to checkpoint action width               | No canonical 32D meaning is serialized; optional chunk-relative conversion                          | checkpoint-specific; default mean/std                         |
+| `smolvla`        | `main`                                                       | Ordered images, task text, state/action padded to 32D → 50-step flow chunk                                                | No; active state/action meaning is checkpoint/dataset-defined                                       | mean/std                                                      |
+| `groot`          | `main`                                                       | Checkpoint-defined camera streams, language, embodiment, state up to 132D → action up to 132D                             | Yes when the NVIDIA checkpoint metadata declares an embodiment transform; otherwise adapter-defined | checkpoint processor metadata                                 |
+| `xvla`           | `main`                                                       | Ordered images, language, optional state → 30-step action, commonly padded to 20D                                         | Yes for registered `action_mode`; `auto` only pads/crops and does not infer semantics               | checkpoint-specific                                           |
+| `wall_x`         | `main`                                                       | Ordered images, text, state up to 20D → 32 × 20D continuous or tokenized action                                           | Only capacity is fixed; the current config does not name all 20 channels                            | checkpoint-specific; default mean/std                         |
+| `eo1`            | `main`                                                       | Ordered images, language, state padded to 32D → 8 × 32D flow output, cropped to active width                              | No; dataset-defined                                                                                 | mean/std                                                      |
+| `evo1`           | `main`                                                       | Up to the configured number of ordered images, language, state padded to 24D → 50 × 24D flow output                       | No; dataset-defined                                                                                 | min-max                                                       |
+| `fastwam`        | `main`                                                       | Lexicographically sorted image keys, language, optional state → 32-step world-action-model output                         | No; checkpoint/dataset-defined                                                                      | mean/std                                                      |
+| `lingbot_va`     | `main`                                                       | Ordered camera clips and language → fixed 30D semantic EEF/joint/gripper space                                            | Yes; see the LingBot table below                                                                    | checkpoint processors; released actions use q01/q99 on output |
+| `molmoact2`      | `main`                                                       | Explicit `image_keys`, language, state → continuous, discrete, or both action paths                                       | Controller mode, image order, and stats are checkpoint `norm_tag` metadata                          | usually q01/q99                                               |
+| `vla_jepa`       | `main`                                                       | Ordered images, language, optional state → 7-step flow action; optional world-model loss during training                  | Width is checkpoint-specific; semantics are dataset-defined                                         | state mean/std; action min-max                                |
+| `wall_oss_05`    | [PR #4200](https://github.com/huggingface/lerobot/pull/4200) | `face_view`, `right_wrist_view`, task, canonical 26D state → 32 × 26D flow actions or text                                | Canonical width is fixed, but the published LeRobot config does not name the 26 channels            | q01/q99                                                       |
+| `g05`            | [PR #4195](https://github.com/huggingface/lerobot/pull/4195) | Ordered temporal cameras, text, mapped state → 32-step continuous flow or discrete ActionCodec output                     | Yes; checkpoint profile selects a named 20D or 27D layout                                           | profile-specific                                              |
+| `being_h05`      | [PR #4193](https://github.com/huggingface/lerobot/pull/4193) | Three ordered images, named state fields, language → fixed semantic 200D model space → native action                      | Yes; named fields are packed into semantic slots                                                    | checkpoint metadata                                           |
+| `hy_vla`         | [PR #4196](https://github.com/huggingface/lerobot/pull/4196) | Three cameras plus history, language, native 16D bimanual pose → 20D model pose padded to 32D                             | Yes; UMI and RoboTwin profiles are explicit                                                         | checkpoint geometry/statistics                                |
+
+RTC is an inference wrapper, not a separate action representation. Reward
+models such as SARM, ROBOMETER, and TOPReward are also outside this policy
+matrix because they do not emit robot actions.
+
+## Checkpoint catalog
+
+This catalog lists maintained LeRobot checkpoints and directly supported author
+checkpoints. Experimental user fine-tunes are intentionally excluded.
+
+| Policy            | Available checkpoints                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Contract summary                                                                                                   |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| ACT               | [`lerobot/act_aloha_sim_transfer_cube_human`](https://huggingface.co/lerobot/act_aloha_sim_transfer_cube_human), [`lerobot/act_aloha_sim_insertion_human`](https://huggingface.co/lerobot/act_aloha_sim_insertion_human)                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | ALOHA Sim, top camera, 14D state/action                                                                            |
+| Diffusion         | [`lerobot/diffusion_pusht`](https://huggingface.co/lerobot/diffusion_pusht), [`lerobot/diffusion_pusht_keypoints`](https://huggingface.co/lerobot/diffusion_pusht_keypoints)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | PushT pixel or keypoint observations, 2D target action                                                             |
+| TD-MPC            | None maintained                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Train against the target environment                                                                               |
+| VQ-BeT            | [`lerobot/vqbet_pusht`](https://huggingface.co/lerobot/vqbet_pusht)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | PushT, 2D action                                                                                                   |
+| Multitask DiT     | None maintained                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Train from the architecture/VLM initialization                                                                     |
+| Gaussian actor    | None maintained                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Online RL policy; train per environment                                                                            |
+| π0                | [`lerobot/pi0_base`](https://huggingface.co/lerobot/pi0_base), [`lerobot/pi0_libero_base`](https://huggingface.co/lerobot/pi0_libero_base), [`lerobot/pi0_libero_finetuned_v044`](https://huggingface.co/lerobot/pi0_libero_finetuned_v044)                                                                                                                                                                                                                                                                                                                                                                                                                                               | Base 32D capacity and LIBERO 7D variants                                                                           |
+| π0.5              | [`lerobot/pi05_base`](https://huggingface.co/lerobot/pi05_base), [`lerobot/pi05_libero_base`](https://huggingface.co/lerobot/pi05_libero_base), [`lerobot/pi05-libero`](https://huggingface.co/lerobot/pi05-libero), [`lerobot/pi05_droid`](https://huggingface.co/lerobot/pi05_droid), [`lerobot/pi05_robocasa`](https://huggingface.co/lerobot/pi05_robocasa), [`nvidia/pi05-arena-gr1-microwave`](https://huggingface.co/nvidia/pi05-arena-gr1-microwave)                                                                                                                                                                                                                              | Base, LIBERO, DROID, RoboCasa, and GR1 Arena contracts                                                             |
+| π0-FAST           | [`lerobot/pi0fast-base`](https://huggingface.co/lerobot/pi0fast-base), [`lerobot/pi0fast-libero`](https://huggingface.co/lerobot/pi0fast-libero)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Base 32D capacity and LIBERO 7D                                                                                    |
+| SmolVLA           | [`base`](https://huggingface.co/lerobot/smolvla_base), [`LIBERO`](https://huggingface.co/lerobot/smolvla_libero), [`Meta-World`](https://huggingface.co/lerobot/smolvla_metaworld), [`RoboCasa`](https://huggingface.co/lerobot/smolvla_robocasa), [`VLABench`](https://huggingface.co/lerobot/smolvla_vlabench), [`RoboCerebra`](https://huggingface.co/lerobot/smolvla_robocerebra), [`LIBERO-plus`](https://huggingface.co/lerobot/smolvla_libero_plus), [`RoboTwin`](https://huggingface.co/lerobot/smolvla_robotwin), [`RoboMME`](https://huggingface.co/lerobot/smolvla_robomme), [`nvidia/smolvla-arena-gr1-microwave`](https://huggingface.co/nvidia/smolvla-arena-gr1-microwave) | Base plus the integrated benchmark family                                                                          |
+| GR00T N1.7        | [`nvidia/GR00T-N1.7-3B`](https://huggingface.co/nvidia/GR00T-N1.7-3B), [`spatial`](https://huggingface.co/nvidia/gr00t17-lerobot-libero_spatial-640), [`object`](https://huggingface.co/nvidia/gr00t17-lerobot-libero_object-640), [`goal`](https://huggingface.co/nvidia/gr00t17-lerobot-libero_goal-640), [`LIBERO-10`](https://huggingface.co/nvidia/gr00t17-lerobot-libero_10-640)                                                                                                                                                                                                                                                                                                    | Base plus one checkpoint per LIBERO suite; embodiment metadata is authoritative                                    |
+| X-VLA             | [`base`](https://huggingface.co/lerobot/xvla-base), [`LIBERO`](https://huggingface.co/lerobot/xvla-libero), [`WidowX`](https://huggingface.co/lerobot/xvla-widowx), [`Google robot`](https://huggingface.co/lerobot/xvla-google-robot), [`AGIBOT World`](https://huggingface.co/lerobot/xvla-agibot-world), [`folding`](https://huggingface.co/lerobot/xvla-folding)                                                                                                                                                                                                                                                                                                                      | Common 20D model action space; select the checkpoint's `action_mode` and `domain_id`                               |
+| WALL-X / WALL-OSS | [`x-square-robot/wall-oss-flow`](https://huggingface.co/x-square-robot/wall-oss-flow)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Base model for `wall_x`; not the Wall-OSS-0.5 architecture                                                         |
+| EO-1              | None maintained                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | The configured Qwen VLM is an initializer, not a robot-action checkpoint                                           |
+| EVO1              | No maintained LeRobot policy checkpoint                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | An upstream LIBERO artifact exists, but the mainline docs do not claim direct weight-preserving load compatibility |
+| FastWAM           | [`lerobot/fastwam_base`](https://huggingface.co/lerobot/fastwam_base), [`lerobot/fastwam_libero_uncond_2cam224`](https://huggingface.co/lerobot/fastwam_libero_uncond_2cam224), [`lerobot/fastwam_robotwin_uncond_3cam_384`](https://huggingface.co/lerobot/fastwam_robotwin_uncond_3cam_384)                                                                                                                                                                                                                                                                                                                                                                                             | Base, LIBERO 7D, RoboTwin 14D                                                                                      |
+| LingBot-VA        | [`lerobot/lingbot_va_base`](https://huggingface.co/lerobot/lingbot_va_base), [`lerobot/lingbot_va_libero_long`](https://huggingface.co/lerobot/lingbot_va_libero_long), [`lerobot/lingbot_va_robotwin`](https://huggingface.co/lerobot/lingbot_va_robotwin)                                                                                                                                                                                                                                                                                                                                                                                                                               | Base, LIBERO-Long, RoboTwin                                                                                        |
+| MolmoAct2         | [`LIBERO`](https://huggingface.co/lerobot/MolmoAct2-LIBERO-LeRobot), [`Think-LIBERO`](https://huggingface.co/lerobot/MolmoAct2-Think-LIBERO-LeRobot), [`Bimanual YAM`](https://huggingface.co/lerobot/MolmoAct2-BimanualYAM-LeRobot), [`DROID`](https://huggingface.co/lerobot/MolmoAct2-DROID-LeRobot), [`SO-100/101`](https://huggingface.co/lerobot/MolmoAct2-SO100_101-LeRobot), plus original [`allenai/MolmoAct2`](https://huggingface.co/allenai/MolmoAct2) checkpoints through `checkpoint_path`                                                                                                                                                                                  | Each repository has a different camera, state, action, and `norm_tag` contract                                     |
+| VLA-JEPA          | [`lerobot/VLA-JEPA-Pretrain`](https://huggingface.co/lerobot/VLA-JEPA-Pretrain), [`lerobot/VLA-JEPA-LIBERO`](https://huggingface.co/lerobot/VLA-JEPA-LIBERO), [`lerobot/VLA-JEPA-SimplerEnv`](https://huggingface.co/lerobot/VLA-JEPA-SimplerEnv)                                                                                                                                                                                                                                                                                                                                                                                                                                         | DROID pretrain, LIBERO, and SimplerEnv                                                                             |
+| Wall-OSS-0.5      | [`lerobot/wall-oss-0.5`](https://huggingface.co/lerobot/wall-oss-0.5)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Pending PR; base 4B, canonical 26D                                                                                 |
+| G0.5              | `lerobot/g05_base`, `lerobot/g05_libero`, `lerobot/g05_robotwin20`, `lerobot/g05_so101`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Pending PR; private/gated and non-commercial                                                                       |
+| Being-H0.5        | [`lerobot/being_h05_base`](https://huggingface.co/lerobot/being_h05_base), [`lerobot/being_h05_robocasa`](https://huggingface.co/lerobot/being_h05_robocasa)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Pending PR; base and RoboCasa                                                                                      |
+| Hy-VLA            | [`lerobot/hy_vla_umi`](https://huggingface.co/lerobot/hy_vla_umi), [`lerobot/hy_vla_robotwin`](https://huggingface.co/lerobot/hy_vla_robotwin)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Pending PR; UMI and RoboTwin                                                                                       |
+
+Published `lerobot/pi052_*` repositories are not included as mainline policy
+checkpoints because `pi052` is not a registered policy type on `main` at this
+snapshot. A Hub repository can exist before its loader is available in a
+released LeRobot version.
+
+## Exact checkpoint and controller contracts
+
+### Common benchmark controller layouts
+
+These are environment/controller layouts. A policy processor may reorder them
+before the model and invert that mapping afterward.
+
+| Environment or robot | Raw state                                                                                                           | Raw action                                                                            | Absolute/relative and units                                                                                                                                                                                        | Native cameras                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| PushT                | 2D agent position                                                                                                   | 2D target position                                                                    | Absolute 2D simulator/pixel coordinates                                                                                                                                                                            | `observation.image`                                  |
+| LIBERO               | Checkpoint-dependent proprio; common checkpoints use 8D                                                             | `[dx, dy, dz, dRx, dRy, dRz, gripper]`                                                | EEF delta controller by default; rotation is a 3D incremental orientation command. `control_mode=absolute` selects an absolute controller. Do not add chunk-relative subtraction unless the checkpoint requires it | agent/exterior view, then robot eye-in-hand/wrist    |
+| RoboTwin joint mode  | 14D: left 7, right 7                                                                                                | 14D: left 7, right 7                                                                  | Joint-space controller, values constrained by the simulator adapter; the LeRobot config does not attach per-joint names or units                                                                                   | head, left wrist, right wrist                        |
+| RoboTwin EEF mode    | The current mainline wrapper still reports 14D joint state                                                          | 16D: left `[xyz, qx, qy, qz, qw, gripper]`, then right in the same order              | EEF pose delta composed with the episode's initial pose; quaternion order is `xyzw`; the pending Hy-VLA PR also adds the checkpoint's absolute-EEF path                                                            | head, left wrist, right wrist                        |
+| RoboCasa             | `base_position(3), base_quaternion(4), EEF_position_relative(3), EEF_quaternion_relative(4), gripper_qpos(2)` = 16D | `base_motion(4), control_mode(1), EEF_position(3), EEF_rotation(3), gripper(1)` = 12D | Mixed mobile-base + EEF controller. The wrapper does not declare SI units for every field; preserve the environment's native values and stats                                                                      | left agent view, eye-in-hand wrist, right agent view |
+| Meta-World           | 4D agent state in the LeRobot adapter                                                                               | 4D environment action                                                                 | Native Meta-World action in `[-1, 1]`; exact Cartesian/gripper interpretation belongs to Meta-World                                                                                                                | corner camera                                        |
+| VLABench             | 7D agent state                                                                                                      | 7D EEF action by default                                                              | `action_mode=eef`; exact units and rotation convention are upstream-environment-defined                                                                                                                            | primary, secondary, wrist                            |
+| RoboMME              | 8D state                                                                                                            | 8D joint-angle or 7D EEF pose                                                         | Selected by `action_space`; upstream-environment units                                                                                                                                                             | exterior, wrist                                      |
+| SO-100 / SO-101      | Six named motor positions in dataset metadata                                                                       | Six named target motor positions                                                      | Joint control. Current `SOFollowerConfig.use_degrees=true` by default; it can instead use calibration-scaled `[-100, 100]`. A checkpoint trained under one mode is not interchangeable with the other              | User-defined; no universal physical camera role      |
+
+### Camera ordering rules
+
+For most policies, image order is the insertion order of visual
+`input_features` in the serialized `config.json`. It is not alphabetical unless
+the implementation explicitly says so.
+
+| Policy/checkpoint family                                                | Authoritative order                                                                 |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| ACT, Diffusion, π0 family, SmolVLA, X-VLA, EO-1, EVO1, WALL-X, VLA-JEPA | Visual `input_features` order in checkpoint `config.json`                           |
+| FastWAM                                                                 | **Lexicographic key order** in the current implementation                           |
+| LingBot-VA                                                              | Explicit `obs_cam_keys` order                                                       |
+| MolmoAct2                                                               | Explicit `image_keys`; if absent, checkpoint metadata, then sorted fallback         |
+| GR00T                                                                   | Checkpoint embodiment metadata/camera mapping; do not substitute sorted keys        |
+| G0.5                                                                    | Explicit `camera_order`                                                             |
+| Being-H0.5                                                              | Explicit `image_keys`                                                               |
+| Hy-VLA                                                                  | `top_head`, `hand_left`, `hand_right`                                               |
+| Wall-OSS-0.5                                                            | `camera_key_mapping` order; released base uses `face_view`, then `right_wrist_view` |
+
+Camera names are only trustworthy when their physical roles are documented.
+Names such as `camera1` are slots, not intrinsic meanings:
+
+| Checkpoint                   | Slot order and physical role                                                                                                        |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| SmolVLA LIBERO / LIBERO-plus | `camera1` = agentview/exterior, `camera2` = wrist, remaining slots masked                                                           |
+| SmolVLA Meta-World           | `camera1` = corner view, remaining slots masked                                                                                     |
+| SmolVLA RoboTwin             | `camera1` = head, `camera2` = left wrist, `camera3` = right wrist                                                                   |
+| SmolVLA RoboCasa             | `camera1` = left exterior, `camera2` = eye-in-hand wrist, `camera3` = right exterior                                                |
+| SmolVLA RoboCerebra          | `camera1` = agentview, `camera2` = wrist, remaining slot masked                                                                     |
+| SmolVLA RoboMME              | `camera1` = exterior, `camera2` = wrist, remaining slots masked                                                                     |
+| SmolVLA VLABench             | `camera1` = primary, `camera2` = secondary, `camera3` = wrist                                                                       |
+| π base checkpoints           | `base_0_rgb`, `left_wrist_0_rgb`, `right_wrist_0_rgb`; these are fixed slots, but the 32D state/action semantics remain unspecified |
+| π LIBERO checkpoints         | exterior/agentview first, wrist second, optional third camera masked                                                                |
+| VLA-JEPA LIBERO              | `image` = agentview, `image2` = wrist                                                                                               |
+| VLA-JEPA pretrain            | `exterior_1_left`, then `exterior_2_left`                                                                                           |
+| MolmoAct2 LIBERO             | `image` = exterior, `wrist_image` = wrist                                                                                           |
+| MolmoAct2 Bimanual YAM       | `top`, `left`, `right`                                                                                                              |
+| MolmoAct2 DROID              | `exterior_1_left`, `exterior_2_left`, `wrist_left`                                                                                  |
+| LingBot-VA RoboTwin          | `head_camera`, `left_camera`, `right_camera`                                                                                        |
+| LingBot-VA LIBERO            | `image` = exterior, `image2` = wrist                                                                                                |
+
+### Fixed semantic model layouts
+
+#### X-VLA
+
+| `action_mode`    | Model-facing order                                                                                         | Returned order            |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `ee6d`           | left `[xyz(3), rotation-6D(6), gripper]`, right in the same order = 20D                                    | 20D; grippers at 9 and 19 |
+| `joint`          | left joints then gripper at 6; right joints then gripper at 13 = 14D                                       | 14D                       |
+| `franka_joint7`  | First 7 active channels, then 13 zero pads                                                                 | First 7 channels          |
+| `so101_bimanual` | left `[shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper]`, then right, then 8 pads | First 12 channels         |
+| `auto`           | First `real_dim` channels, then zero padding to `max_dim`                                                  | First `real_dim` channels |
+
+`auto` adapts shape only. It does not detect joint names, degrees versus
+radians, arm side, coordinate frame, or gripper semantics.
+
+#### LingBot-VA
+
+The model always uses this 30D space:
+
+| Channels | Meaning                                          |
+| -------- | ------------------------------------------------ |
+| `0:7`    | Left-arm EEF pose                                |
+| `7:14`   | Right-arm EEF pose                               |
+| `14:21`  | Left-arm joints; unused by released checkpoints  |
+| `21:28`  | Right-arm joints; unused by released checkpoints |
+| `28`     | Left gripper                                     |
+| `29`     | Right gripper                                    |
+
+- LIBERO activates `0:7`: EEF delta `xyz + rotation(3) + gripper`.
+- RoboTwin activates `[0:7, 28, 7:14, 29]`: left
+  `xyz + quaternion(xyzw) + gripper`, then right. The environment executes the
+  poses through IK; the policy does not predict joint angles.
+
+#### G0.5 (pending)
+
+The shared 20D layout is
+`left_control(9), left_gripper(1), right_control(9), right_gripper(1)`.
+The 27D base adds `lower_body(7)`.
+
+| Profile        | Raw input/output mapped into active policy slots                           | Camera order                                    | Chunk transform                                                    |
+| -------------- | -------------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------ |
+| Base / R1 Lite | Released R1 joint groups in the 27D whole-body layout                      | head, left wrist, right wrist; six-step history | Checkpoint-selected flow or ActionCodec; 32 predicted, 16 executed |
+| LIBERO         | Raw 7D right EEF delta + gripper → policy slots `10:16, 19`                | exterior, right wrist                           | Controller-relative EEF; 32 predicted, 10 executed                 |
+| RoboTwin       | Raw 14D dual-arm 6D pose + grippers → slots `0:6, 9, 10:16, 19`            | head, left wrist, right wrist                   | 32 predicted, 8 executed                                           |
+| SO-101         | Raw six right-arm joint channels → slots `10:16`; left wrist may be masked | exterior, optional left wrist, right wrist      | Joint control; 32 predicted, 16 executed                           |
+
+The base uses z-score-tail normalization with q01/q99 grippers. LIBERO,
+RoboTwin, and SO-101 use step-indexed q01/q99 statistics.
+
+#### Hy-VLA (pending)
+
+Native UMI/RoboTwin state and action are 16D:
+
+```text
+left xyz(3), quaternion xyzw(4), gripper(1),
+right xyz(3), quaternion xyzw(4), gripper(1)
+```
+
+The processor converts each arm to
+`xyz(3), rotation-6D rows(6), gripper(1)`, producing a 20D bimanual model
+layout, then pads it to 32D.
+
+| Checkpoint        | Representation                                                                                                    | History and execution                                                   |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `hy_vla_umi`      | 50 poses relative to the first state in the chunk                                                                 | One frame; returns the 50-step physical chunk                           |
+| `hy_vla_robotwin` | 20 relative tokens followed by 20 absolute tokens; postprocessor pairs them into 20 physical absolute-EEF actions | Six frames at five-environment-step intervals; executes 7, then replans |
+
+#### Being-H0.5 (pending)
+
+The model uses a 200D semantic space with validity masks:
+
+| Signal                                       | Semantic slots    |
+| -------------------------------------------- | ----------------- |
+| State EEF position / axis-angle rotation     | `0:3` / `3:6`     |
+| State gripper joints                         | `44:46`           |
+| State mobile-base position / rotation        | `70:73` / `73:76` |
+| Action EEF translation / axis-angle rotation | `0:3` / `3:6`     |
+| Action gripper                               | `18:19`           |
+| Action mobile-base command / control mode    | `70:74` / `74:75` |
+
+The native RoboCasa action exposed to LeRobot is 12D in this order:
+`EEF translation(3), EEF rotation(3), gripper(1), base motion(4),
+control mode(1)`. The Being processor maps it to semantic slots and maps the
+model output back to the environment layout. EEF/base actions are relative;
+gripper and control mode are absolute/binary. The state uses named absolute
+fields. Base rotation is quaternion metadata, while the current serialized
+RoboCasa input feature exposes three base-rotation values; this mismatch should
+remain explicitly validated rather than inferred by width.
+
+#### Wall-OSS-0.5 (pending)
+
+The base checkpoint fixes 26D state/action capacity, 32-step chunks, q01/q99
+normalization, `face_view`, and `right_wrist_view`. It does **not** publish
+field names for the 26 positions in LeRobot's `config.json`. The integration
+therefore requires an already-canonical 26D dataset and intentionally does not
+adapt arbitrary robots.
+
+## Absolute, relative, joint, EEF, and units by checkpoint family
+
+| Family                                                                               | Joint or EEF?                                            | Absolute or relative?                                                                                                                                 | Rotation                                       | Mobile base                                                     | Units/range                                                          |
+| ------------------------------------------------------------------------------------ | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------- |
+| ACT, Diffusion, VQ-BeT, Multitask DiT, Gaussian actor, EO-1, EVO1, SmolVLA, VLA-JEPA | Dataset/checkpoint-defined                               | Dataset/checkpoint-defined; no implicit relative transform                                                                                            | Unknown unless dataset metadata says           | Allowed as ordinary channels, but not semantically named        | Dataset/driver-defined                                               |
+| π family                                                                             | Dataset/checkpoint-defined                               | Packaged processor is authoritative. Base checkpoints commonly have chunk-relative conversion disabled; it can be enabled for selected named channels | Dataset-defined                                | Possible inside padded vector, not named by the base checkpoint | Dataset/driver-defined; do not assume 32D OpenPI ordering            |
+| GR00T                                                                                | Embodiment metadata-defined                              | Embodiment transform-defined                                                                                                                          | Metadata-defined                               | Embodiment-defined                                              | Checkpoint `statistics.json` and transforms                          |
+| X-VLA                                                                                | Registered mode: joint, EEF rotation-6D, or padding-only | Dataset/controller-defined                                                                                                                            | 6D for `ee6d`; none for joint modes            | Not a built-in `ee6d` field                                     | Dataset stats; no universal physical range                           |
+| WALL-X                                                                               | Checkpoint/dataset-defined                               | Checkpoint/dataset-defined                                                                                                                            | Unknown in generic config                      | Unknown                                                         | Saved stats if present                                               |
+| FastWAM                                                                              | Checkpoint/dataset-defined                               | LIBERO checkpoint uses controller-relative EEF; RoboTwin checkpoint is 14D checkpoint-defined                                                         | Benchmark-defined                              | No fixed generic field                                          | Saved stats                                                          |
+| LingBot-VA                                                                           | EEF for released checkpoints                             | LIBERO EEF delta; RoboTwin pose delta composed by the adapter                                                                                         | LIBERO 3D rotation; RoboTwin quaternion `xyzw` | No                                                              | q01/q99 output stats; upstream physical units                        |
+| MolmoAct2                                                                            | `control_mode`-defined                                   | LIBERO `delta end-effector pose`; DROID/YAM/SO checkpoints declare `absolute joint pose`                                                              | Checkpoint metadata                            | Dataset-defined                                                 | `norm_tag` q01/q99 or mean/std; source dataset units                 |
+| G0.5                                                                                 | Profile-defined joint/EEF/whole body                     | LIBERO controller-relative; optional state-relative joint transform only when serialized                                                              | Profile-defined                                | Base lower-body group                                           | Profile statistics                                                   |
+| Hy-VLA                                                                               | Dual-arm EEF                                             | UMI relative; RoboTwin relative + absolute paired decode                                                                                              | Native quaternion `xyzw`; model rotation-6D    | No                                                              | Saved encoder/decoder statistics; source pose units                  |
+| Being-H0.5                                                                           | EEF + mobile base                                        | Relative EEF/base actions; absolute named state, gripper, and control mode                                                                            | Axis-angle EEF; base rotation metadata         | Yes                                                             | Metadata includes min/max/mean/std/q01/q99; source environment units |
+| Wall-OSS-0.5                                                                         | Unknown 26D canonical schema                             | Unknown at field level                                                                                                                                | Unknown                                        | Unknown                                                         | Saved q01/q99 statistics; semantics not encoded                      |
+
+### Hardware ranges and grippers
+
+Normalization statistics are empirical dataset ranges, not robot safety limits.
+A q01/q99 normalizer does not prove that a motor can safely travel to those
+values.
+
+- For LeRobot SO followers, the default driver exposes degrees, while an
+  alternative calibration mode exposes `[-100, 100]`. Gripper is another named
+  motor channel in that same configured unit.
+- Simulator grippers often use binary or bounded controller commands such as
+  `[-1, 1]` or `[0, 1]`, while state may contain two physical finger-joint
+  positions. Those are not interchangeable.
+- EEF position is often meters and joint rotation often radians in MuJoCo or
+  SAPIEN, but this page only labels units when the LeRobot adapter or checkpoint
+  contract makes that guarantee.
+- Robot hard limits, velocity limits, collision limits, controller gains, and
+  emergency-stop behavior belong to the robot/controller configuration, not
+  the learned policy's normalization file.
+
+## Inspect the exact serialized contract
+
+The checkpoint files are more authoritative than this snapshot. Inspect the
+config and processor order before deployment:
+
+```python
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.policies.factory import make_pre_post_processors
+from lerobot.processor.normalize_processor import (
+    NormalizerProcessorStep,
+    UnnormalizerProcessorStep,
+)
+
+checkpoint = "lerobot/pi05-libero"
+config = PreTrainedConfig.from_pretrained(checkpoint)
+preprocessor, postprocessor = make_pre_post_processors(
+    config,
+    pretrained_path=checkpoint,
+)
+
+print("input order:", list(config.input_features or {}))
+print("output order:", list(config.output_features or {}))
+
+for pipeline in (preprocessor, postprocessor):
+    for step in pipeline.steps:
+        print(type(step).__name__, step.get_config())
+        if isinstance(step, (NormalizerProcessorStep, UnnormalizerProcessorStep)):
+            for feature, stats in step.stats.items():
+                print(feature, {name: value.tolist() for name, value in stats.items()})
+```
+
+Also inspect dataset feature names:
+
+```python
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+
+metadata = LeRobotDatasetMetadata("your-org/your-dataset")
+print(metadata.features["observation.state"].get("names"))
+print(metadata.features["action"].get("names"))
+print(metadata.stats)
+```
+
+If `names`, units, frames, or controller semantics are missing, the dataset is
+not self-describing enough for safe automatic adaptation.
+
+## Integrated benchmark × checkpoint matrix
+
+This matrix answers a narrow question: “Does a loadable or pending
+LeRobot-format checkpoint exist for this integrated benchmark?” It does not
+claim paper-result provenance. `CI` means the checkpoint is already exercised
+by `.github/workflows/benchmark_tests.yml`; `available` means a documented
+checkpoint exists but is not in that weekly matrix; `PR` means the loader is
+still under review.
+
+| Policy         | ALOHA Sim | PushT     | LIBERO                                       | Meta-World | RoboCasa  | VLABench | IsaacLab / RoboCerebra | LIBERO+               | RoboTwin  | RoboMME |
+| -------------- | --------- | --------- | -------------------------------------------- | ---------- | --------- | -------- | ---------------------- | --------------------- | --------- | ------- |
+| ACT            | available | —         | —                                            | —          | —         | —        | —                      | —                     | —         | —       |
+| Diffusion      | —         | available | —                                            | —          | —         | —        | —                      | —                     | —         | —       |
+| TD-MPC         | —         | —         | —                                            | —          | —         | —        | —                      | —                     | —         | —       |
+| VQ-BeT         | —         | available | —                                            | —          | —         | —        | —                      | —                     | —         | —       |
+| Multitask DiT  | —         | —         | —                                            | —          | —         | —        | —                      | —                     | —         | —       |
+| Gaussian actor | —         | —         | —                                            | —          | —         | —        | —                      | —                     | —         | —       |
+| π0             | —         | —         | available                                    | —          | —         | —        | —                      | —                     | —         | —       |
+| π0.5           | —         | —         | available                                    | —          | available | —        | available (Arena)      | —                     | —         | —       |
+| π0-FAST        | —         | —         | available                                    | —          | —         | —        | —                      | —                     | —         | —       |
+| SmolVLA        | —         | —         | **CI**                                       | **CI**     | **CI**    | **CI**   | **CI**                 | **CI**                | **CI**    | **CI**  |
+| GR00T N1.7     | —         | —         | available                                    | —          | —         | —        | —                      | —                     | —         | —       |
+| X-VLA          | —         | —         | available                                    | —          | —         | —        | —                      | —                     | —         | —       |
+| WALL-X         | —         | —         | —                                            | —          | —         | —        | —                      | —                     | —         | —       |
+| EO-1           | —         | —         | —                                            | —          | —         | —        | —                      | —                     | —         | —       |
+| EVO1           | —         | —         | upstream artifact; conversion not documented | —          | —         | —        | —                      | —                     | —         | —       |
+| FastWAM        | —         | —         | available                                    | —          | —         | —        | —                      | —                     | available | —       |
+| LingBot-VA     | —         | —         | available                                    | —          | —         | —        | —                      | —                     | available | —       |
+| MolmoAct2      | —         | —         | available                                    | —          | —         | —        | —                      | —                     | —         | —       |
+| VLA-JEPA       | —         | —         | available                                    | —          | —         | —        | —                      | available (zero-shot) | —         | —       |
+| Wall-OSS-0.5   | —         | —         | base only; no benchmark checkpoint           | —          | —         | —        | —                      | —                     | —         | —       |
+| G0.5           | —         | —         | **PR**                                       | —          | —         | —        | —                      | —                     | **PR**    | —       |
+| Being-H0.5     | —         | —         | —                                            | —          | **PR**    | —        | —                      | —                     | —         | —       |
+| Hy-VLA         | —         | —         | —                                            | —          | —         | —        | —                      | —                     | **PR**    | —       |
+
+The current weekly benchmark workflow is broad but policy-narrow: its
+performance smoke rows use SmolVLA. Other “available” entries need pinned
+checkpoint revisions, camera/action contracts, episode protocols, and
+degradation thresholds before becoming reliable regression gates.
+
+## Proposal: one contract-driven dataset adapter
+
+LeRobot already has the right execution primitive:
+serializable `PolicyProcessorPipeline` steps. What is missing is one
+machine-readable I/O contract shared across policies and checkpoints. OpenPI's
+training configuration makes a useful separation between **repack transforms**
+(dataset-only key remapping), **data transforms** (robot/embodiment conversions
+used for training and inference), and **model transforms** (tokenization,
+resize, pad). LeRobot should adopt that separation in its contract, without
+putting every embodiment into one giant policy-specific function.
+
+### Proposed serialized `PolicyIOContract`
+
+Every maintained checkpoint should include a versioned contract with:
+
+```yaml
+version: 1
+cameras:
+  - slot: exterior
+    feature: observation.images.image
+    aliases: [agentview, head, top]
+    role: exterior
+    side: center
+    order: 0
+    history: { frames: 1, stride: 1 }
+    required: true
+state:
+  fields:
+    - {
+        name: shoulder_pan,
+        semantic: joint.position,
+        side: right,
+        unit: degree,
+      }
+action:
+  fields:
+    - {
+        name: shoulder_pan,
+        semantic: joint.position,
+        side: right,
+        unit: degree,
+      }
+  reference: absolute
+  controller: joint_position
+  horizon: 50
+  execute: 10
+normalization:
+  mode: quantiles
+  stats_source: policy_preprocessor_step_3_normalizer_processor.safetensors
+```
+
+Each vector field needs, where applicable:
+
+- semantic type: joint position/velocity/torque, EEF translation/rotation,
+  gripper, mobile-base translation/rotation, or controller mode;
+- robot side and ordered joint name;
+- unit and valid physical range;
+- coordinate frame;
+- rotation representation and component order (`axis_angle`, `rpy`,
+  quaternion `xyzw`/`wxyz`, or rotation-6D);
+- absolute/relative/sequential-delta reference and the state field used as the
+  origin;
+- model slot and raw dataset slot;
+- required, optional, masked, or padded status;
+- gripper open/close convention and hardware range.
+
+### Proposed `DatasetToPolicyContractProcessor`
+
+The single public processor should **compile** a deterministic pipeline:
+
+```text
+dataset keys
+  → exact/alias key repack
+  → camera-role assignment and history sampling
+  → named state/action field selection
+  → unit/frame/rotation/controller conversion
+  → absolute/relative conversion
+  → semantic slot packing and padding
+  → checkpoint normalization
+  → model-specific token/image transforms
+```
+
+Postprocessing applies the invertible steps in reverse before dispatching an
+action to the environment or robot.
+
+Resolution should follow this order:
+
+1. Exact semantic ID and side, for example
+   `joint.position/right/shoulder_pan`.
+2. An explicit user override stored with the run.
+3. A unique checkpoint alias.
+4. A high-confidence name match only when semantic type, side, unit, and width
+   also agree.
+5. Otherwise fail with a diagnostic and a generated candidate mapping.
+
+The processor must never silently decide that “the first six values look like
+joints.” Six values can be SO-101 motor targets, EEF `xyz + axis-angle`, mobile
+base plus gripper, or an arbitrary learned latent. Shape is a validation
+signal, not semantic evidence.
+
+### Suggested user surface
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your-org/custom-data \
+  --policy.path=lerobot/pi05_base \
+  --io_adapter.auto=true \
+  --io_adapter.mapping=io_mappings/my_robot_to_pi05.yaml \
+  --io_adapter.write_report=outputs/io_contract_report.json
+```
+
+The report should contain:
+
+- every source → target feature and vector-field mapping;
+- camera role/order/history and any masked views;
+- every unit, frame, rotation, and absolute/relative conversion;
+- action/state channels that were padded, dropped, or left unmapped;
+- source and target normalization-stat fingerprints;
+- non-invertible transforms;
+- warnings requiring explicit acceptance.
+
+`--rename_map` can remain as a lightweight observation-key override, but the
+contract adapter should supersede it for action fields, vector order, cameras,
+units, and embodiment conversion.
+
+### Migration plan
+
+1. Add `PolicyIOContract` and a validator without changing inference.
+2. Generate contracts for current benchmark checkpoints from their serialized
+   configs and processors; fail CI if documented camera/action layouts drift.
+3. Add named vector metadata to LeRobot datasets and robot recordings.
+4. Implement generic pack/unpack, camera-role, unit, rotation, and
+   absolute/relative steps.
+5. Migrate the explicit adapters first: X-VLA, LingBot-VA, MolmoAct2, G0.5,
+   Being-H0.5, and Hy-VLA.
+6. Keep policy-specific transforms only for genuinely model-specific work
+   such as tokenization, image normalization, ActionCodec, or semantic-slot
+   architecture.
+7. Enable automatic mapping only when the resolver produces one unambiguous,
+   fully validated plan.
+
+This gives LeRobot one front door for custom datasets while preserving the
+checkpoint-specific processors that are already necessary. The unification
+target is the **contract and resolver**, not one unsafe universal vector guesser.
+
+## Sources
+
+- [LeRobot action representations](./action_representations)
+- [LeRobot processor introduction](./introduction_processors)
+- [Rename maps and empty cameras](./rename_map)
+- [OpenPI training/data configuration](https://github.com/Physical-Intelligence/openpi/blob/main/src/openpi/training/config.py)
+- [Wall-OSS-0.5 integration PR](https://github.com/huggingface/lerobot/pull/4200)
+- [Hy-VLA integration PR](https://github.com/huggingface/lerobot/pull/4196)
+- [G0.5 integration PR](https://github.com/huggingface/lerobot/pull/4195)
+- [Being-H0.5 integration PR](https://github.com/huggingface/lerobot/pull/4193)
