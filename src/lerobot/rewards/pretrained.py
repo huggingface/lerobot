@@ -28,6 +28,7 @@ from safetensors.torch import load_model as load_model_as_safetensor, save_model
 from torch import Tensor, nn
 
 from lerobot.configs.rewards import RewardModelConfig
+from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
 
 if TYPE_CHECKING:
@@ -128,7 +129,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
     @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
         missing_keys, unexpected_keys = load_model_as_safetensor(
-            model, model_file, strict=strict, device=map_location
+            model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
         )
         if missing_keys:
             logging.warning(f"Missing key(s) when loading model: {missing_keys}")

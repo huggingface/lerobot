@@ -37,16 +37,25 @@ def auto_select_torch_device() -> torch.device:
 
 # TODO(Steven): Remove log. log shouldn't be an argument, this should be handled by the logger level
 def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
-    """Given a string, return a torch.device with checks on whether the device is available."""
+    """Given a string, return a torch.device with checks on whether the device is available.
+
+    Raises:
+        ValueError: If the requested device family is known but not available on
+            this machine (``AssertionError`` was previously used and is easy to
+            mistake for a programmer bug under ``python -O`` where asserts vanish).
+    """
     try_device = str(try_device)
     if try_device.startswith("cuda"):
-        assert torch.cuda.is_available()
+        if not torch.cuda.is_available():
+            raise ValueError(f"Requested device {try_device!r} but CUDA is not available.")
         device = torch.device(try_device)
     elif try_device == "mps":
-        assert torch.backends.mps.is_available()
+        if not torch.backends.mps.is_available():
+            raise ValueError("Requested device 'mps' but MPS is not available.")
         device = torch.device("mps")
     elif try_device == "xpu":
-        assert torch.xpu.is_available()
+        if not torch.xpu.is_available():
+            raise ValueError("Requested device 'xpu' but XPU is not available.")
         device = torch.device("xpu")
     elif try_device == "cpu":
         device = torch.device("cpu")
@@ -57,6 +66,20 @@ def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
         if log:
             logging.warning(f"Using custom {try_device} device.")
     return device
+
+
+def resolve_safetensors_device(map_location: str | torch.device) -> str:
+    """Resolve a device string for a safetensors load, working around a device-mapping quirk.
+
+    safetensors' load maps the bare string "cuda" to cuda:0 regardless of the current device
+    (unlike torch's .to("cuda"), which honors torch.cuda.current_device()). Under multi-GPU
+    accelerate/FSDP every rank would then load its weights onto GPU 0, OOMing it before sharding.
+    Resolve "cuda" to the concrete current-device index so each rank loads onto its own GPU.
+    """
+    map_location = str(map_location)
+    if map_location == "cuda" and torch.cuda.is_available():
+        return f"cuda:{torch.cuda.current_device()}"
+    return map_location
 
 
 def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):

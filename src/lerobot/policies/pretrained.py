@@ -32,14 +32,23 @@ from torch import Tensor, nn
 from lerobot.__version__ import __version__
 from lerobot.configs import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
+from lerobot.utils.import_utils import _peft_available, require_package
 
 from .utils import log_model_loading_keys
 
-T = TypeVar("T", bound="PreTrainedPolicy")
+if TYPE_CHECKING or _peft_available:
+    from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType, get_peft_model
+else:
+    PEFT_TYPE_TO_CONFIG_MAPPING = None
+    PeftType = None
+    get_peft_model = None
 
 if TYPE_CHECKING:
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+
+T = TypeVar("T", bound="PreTrainedPolicy")
 
 
 def _build_card_context(
@@ -220,7 +229,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
         missing_keys, unexpected_keys = load_model_as_safetensor(
-            model, model_file, strict=strict, device=map_location
+            model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
         )
         log_model_loading_keys(missing_keys, unexpected_keys)
         return model
@@ -239,6 +248,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         Does things like clearing caches.
         """
         raise NotImplementedError
+
+    def supports_rtc(self) -> bool:
+        """Whether this policy implements Real-Time Chunking inference semantics."""
+        return False
 
     # TODO(aliberts, rcadene): split into 'forward' and 'compute_loss'?
     @abc.abstractmethod
@@ -383,7 +396,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             peft_cli_overrides: Optional dict of CLI overrides (method_type, target_modules, r, etc.)
                 These are merged with policy defaults to build the final config.
         """
-        from peft import get_peft_model
+        require_package("peft", extra="peft")
 
         # If user provided a complete config, use it directly (with overrides)
         if peft_config is not None:
@@ -454,7 +467,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         Returns:
             Preprocessed dict with renamed keys and init_type mapped to method-specific key.
         """
-        from peft import PeftType
+        require_package("peft", extra="peft")
 
         cli_overrides = cli_overrides.copy()
 
@@ -479,7 +492,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     def _build_peft_config(self, cli_overrides: dict):
         """Build a PEFT config from policy defaults and CLI overrides."""
-        from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType
+        require_package("peft", extra="peft")
 
         # Determine PEFT method type (default to LORA)
         method_type_str = cli_overrides.get("method_type") or "lora"
@@ -506,7 +519,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     def _apply_peft_cli_overrides(self, peft_config, cli_overrides: dict):
         """Apply CLI overrides to an existing PEFT config."""
-        from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType
+        require_package("peft", extra="peft")
 
         # Get method type from existing config or CLI override
         method_type_str = cli_overrides.get("method_type")
