@@ -232,7 +232,6 @@ def serve_onboard_controller(
         dds_interface=dds_interface,
         release_motion_control=not sim,
         physical_remote=not sim,
-        sonic_token_action=sonic_token_action,
         cameras={},
     )
 
