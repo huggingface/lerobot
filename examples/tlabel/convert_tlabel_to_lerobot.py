@@ -484,7 +484,7 @@ def convert(
 
             dataset.add_frame(frame)
 
-        dataset.save_episode(task=task)
+        dataset.save_episode()
 
     dataset.finalize()
     print(f"\nDataset saved to: {root}/{repo_id}")

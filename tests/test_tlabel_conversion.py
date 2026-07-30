@@ -427,9 +427,9 @@ class TestRoundTrip:
         """Round-trip test without images (paxini sensor)."""
         pytest.importorskip("lerobot")
         pytest.importorskip("av")
-        from lerobot.datasets import LeRobotDataset
-
         from convert_tlabel_to_lerobot import convert
+
+        from lerobot.datasets import LeRobotDataset
 
         output_dir = str(tmp_path / "output")
         convert(
@@ -456,14 +456,14 @@ class TestRoundTrip:
         """Round-trip test with numpy array images (gelsight sensor)."""
         pytest.importorskip("lerobot")
         pytest.importorskip("av")
-        from lerobot.datasets import LeRobotDataset
-
         from convert_tlabel_to_lerobot import (
             _load_manual,
             build_features,
             detect_image_dimensions,
             extract_tactile_features,
         )
+
+        from lerobot.datasets import LeRobotDataset
 
         json_file = sample_data / "tlabel_export.json"
         json_file.write_text(
@@ -501,7 +501,7 @@ class TestRoundTrip:
             use_videos=True,
         )
 
-        for ep_idx, frames in sorted(episodes.items()):
+        for _, frames in sorted(episodes.items()):
             for frame_data in frames:
                 frame = {}
                 tactile = extract_tactile_features(frame_data, "gelsight")
@@ -509,7 +509,7 @@ class TestRoundTrip:
                 frame["task"] = "test"
                 frame["observation.images.tactile"] = frame_data["tactile_image"]
                 dataset.add_frame(frame)
-            dataset.save_episode(task="test")
+            dataset.save_episode()
 
         dataset.finalize()
 
@@ -521,10 +521,10 @@ class TestRoundTrip:
         """End-to-end round-trip: file-backed images go through convert()."""
         pytest.importorskip("lerobot")
         pytest.importorskip("av")
-        from lerobot.datasets import LeRobotDataset
+        from convert_tlabel_to_lerobot import convert
         from PIL import Image
 
-        from convert_tlabel_to_lerobot import convert
+        from lerobot.datasets import LeRobotDataset
 
         img_dir = tmp_path / "images"
         img_dir.mkdir()
