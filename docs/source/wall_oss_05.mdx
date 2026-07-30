@@ -39,6 +39,7 @@ dataset before deployment.
 - Standard `policy.type=wall_oss_05` configuration and Hub checkpoint loading.
 - Native Qwen2.5-VL vision-language processing and Wall action experts.
 - Continuous x-prediction flow training and 10-step Euler sampling.
+- Recipe-driven text cross-entropy and joint text/action fine-tuning.
 - Native text generation for VQA, grounding, captions, and language subtasks.
 - An adapter for LeRobot's interactive language runtime.
 - Canonical 26D state and action inputs using LeRobot q01/q99 processors.
@@ -173,15 +174,53 @@ Start with a small batch size because Wall-OSS-0.5 is a 4B-parameter model.
 Increase it according to available GPU memory, or use gradient accumulation
 through your distributed training configuration.
 
+### Train with language annotations
+
+Set `recipe_path` to train from LeRobot's optional language columns. For
+example, the joint subtask recipe supervises the assistant's subtask response
+and the continuous action chunk in one causal sequence:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your-org/your-language-annotated-dataset \
+  --policy.type=wall_oss_05 \
+  --policy.pretrained_name_or_path=lerobot/wall-oss-0.5 \
+  --policy.recipe_path=recipes/subtask_joint.yaml \
+  --policy.text_loss_weight=0.01 \
+  --policy.flow_loss_weight=1.0 \
+  --policy.device=cuda \
+  --batch_size=1 \
+  --steps=20000
+```
+
+Recipe streams determine which objectives run for each sample:
+
+- a targeted assistant turn receives next-token text cross-entropy;
+- a `low_level` turn receives continuous flow-action supervision; and
+- a `low_level` recipe with a targeted assistant turn receives both losses,
+  with the action tokens attending to the supervised text.
+
+Only the targeted assistant payload and its `<|im_end|>` token are used as
+language labels. User prompts, padding, images, proprioception, and continuous
+action-query tokens are masked from text cross-entropy. If `recipe_path` is
+unset, training follows the original action-only path.
+
+See [Language columns and recipes](./language_and_recipes) for the annotation
+schema and available recipes.
+
 ## Key Configuration Parameters
 
-| Parameter                 | Default                    | Description                                            |
-| ------------------------- | -------------------------- | ------------------------------------------------------ |
-| `pretrained_name_or_path` | `lerobot/wall-oss-0.5`     | Base or fine-tuned checkpoint                          |
-| `chunk_size`              | `32`                       | Number of actions predicted per chunk                  |
-| `n_action_steps`          | `32`                       | Number of predicted actions executed before replanning |
-| `camera_key_mapping`      | face and right-wrist views | Associates image feature keys with model camera slots  |
-| `device`                  | auto                       | Use `cuda` for Wall-OSS-0.5                            |
+| Parameter                 | Default                    | Description                                                  |
+| ------------------------- | -------------------------- | ------------------------------------------------------------ |
+| `pretrained_name_or_path` | `lerobot/wall-oss-0.5`     | Base or fine-tuned checkpoint                                |
+| `chunk_size`              | `32`                       | Number of actions predicted per chunk                        |
+| `n_action_steps`          | `32`                       | Number of predicted actions executed before replanning       |
+| `camera_key_mapping`      | face and right-wrist views | Associates image feature keys with model camera slots        |
+| `recipe_path`             | `None`                     | Enables recipe-driven text and per-sample action supervision |
+| `text_loss_weight`        | `0.01`                     | Weight for supervised assistant-token cross-entropy          |
+| `flow_loss_weight`        | `1.0`                      | Weight for continuous flow-action loss                       |
+| `tokenizer_max_length`    | `1000`                     | Maximum joint vision-language-action token sequence length   |
+| `device`                  | auto                       | Use `cuda` for Wall-OSS-0.5                                  |
 
 ## Evaluation and Inference
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 from safetensors import safe_open
@@ -86,6 +87,78 @@ class _TinyTiedAuthorModel(nn.Module):
         self.lm_head.weight = self.model.embed_tokens.weight
 
 
+class _TinyJointAuthorModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.flow_scale = nn.Parameter(torch.tensor(2.0))
+        self.text_scale = nn.Parameter(torch.tensor(3.0))
+
+    def forward(self, flow_loss_mask, text_labels=None, **kwargs):
+        del kwargs
+        flow_loss = self.flow_scale.square() if flow_loss_mask.any() else None
+        text_loss = (
+            self.text_scale.square() if text_labels is not None and (text_labels != -100).any() else None
+        )
+        losses = [value for value in (flow_loss, text_loss) if value is not None]
+        return SimpleNamespace(
+            loss=sum(losses) if losses else None,
+            flow_loss=flow_loss,
+            text_loss=text_loss,
+        )
+
+
+class _CharTokenizer:
+    pad_token_id = 0
+    eos_token_id = 2
+
+    def __call__(
+        self,
+        texts,
+        *,
+        return_tensors,
+        padding,
+        padding_side,
+        truncation,
+        max_length,
+        return_offsets_mapping,
+    ):
+        del return_tensors, padding, truncation
+        assert padding_side == "left"
+        texts = [texts] if isinstance(texts, str) else texts
+        encoded = []
+        offsets = []
+        for text in texts:
+            chars = text[:max_length]
+            encoded.append([ord(char) % 251 + 1 for char in chars])
+            offsets.append([(index, index + 1) for index in range(len(chars))])
+        width = max(len(row) for row in encoded)
+        attention_mask = []
+        for index in range(len(encoded)):
+            pad = width - len(encoded[index])
+            encoded[index] = [self.pad_token_id] * pad + encoded[index]
+            offsets[index] = [(0, 0)] * pad + offsets[index]
+            attention_mask.append([0] * pad + [1] * (width - pad))
+        output = {
+            "input_ids": torch.tensor(encoded, dtype=torch.long),
+            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+        }
+        if return_offsets_mapping:
+            output["offset_mapping"] = torch.tensor(offsets, dtype=torch.long)
+        return output
+
+
+class _FakeImageProcessor:
+    merge_size = 2
+
+    @staticmethod
+    def __call__(images, return_tensors):
+        del return_tensors
+        return {
+            "pixel_values": torch.zeros(len(images), 3, 2, 2),
+            "image_grid_thw": torch.tensor([[1, 2, 2]] * len(images)),
+        }
+
+
 def _batch(batch_size=2):
     return {
         OBS_STATE: torch.arange(batch_size * 26, dtype=torch.float32).reshape(batch_size, 26),
@@ -115,6 +188,39 @@ def test_lerobot_processors_match_wall_quantile_normalization_and_clipping():
     torch.testing.assert_close(processed[OBS_STATE][0, :3], torch.tensor([-1.0, 0.0, 1.0]))
     torch.testing.assert_close(processed[ACTION], torch.full((1, 32, 26), -0.5))
     torch.testing.assert_close(postprocessor(processed[ACTION]), batch[ACTION])
+
+
+def test_recipe_processor_renders_joint_text_and_action_supervision():
+    pytest.importorskip("datasets", reason="language recipes require lerobot[dataset]")
+
+    config = _config(recipe_path="recipes/subtask_joint.yaml")
+    preprocessor, _ = make_pre_post_processors(config, dataset_stats=_stats())
+    batch = _batch(batch_size=1)
+    batch.update(
+        {
+            "timestamp": torch.tensor([0.0]),
+            "index": torch.tensor([7]),
+            "language_persistent": [
+                [
+                    {
+                        "role": "assistant",
+                        "content": "pick up the red block",
+                        "style": "subtask",
+                        "timestamp": 0.0,
+                        "camera": None,
+                        "tool_calls": None,
+                    }
+                ]
+            ],
+            "language_events": [[]],
+        }
+    )
+
+    processed = preprocessor(batch)
+
+    assert processed["messages"][0][-1]["content"] == "pick up the red block"
+    assert processed["message_streams"] == [["low_level", "low_level"]]
+    assert processed["target_message_indices"] == [[1]]
 
 
 def test_native_prompt_and_image_token_expansion_preserve_the_contract():
@@ -148,6 +254,91 @@ def test_native_text_prompts_cover_subtask_and_vqa_contracts():
     assert "Question: Where is the cup?" in vqa
     assert "front view:" in vqa
     assert vqa.endswith("<|im_start|>assistant\n")
+
+
+def test_recipe_prompt_marks_only_target_text_and_can_append_actions():
+    pytest.importorskip("transformers")
+
+    policy = WallOSS05Policy(_config(), load_model=False)
+    prefix, postfix, predict_actions = policy._format_recipe_prompt(
+        [
+            {"role": "user", "content": "sort the blocks"},
+            {"role": "assistant", "content": "pick up the red block"},
+        ],
+        ["low_level", "low_level"],
+        [1],
+        "sort the blocks",
+    )
+    clean_prompt, spans = policy._extract_text_target_spans(prefix + postfix)
+
+    assert predict_actions
+    assert postfix.count("<|action|>") == policy.config.chunk_size
+    assert len(spans) == 1
+    start, end = spans[0]
+    assert clean_prompt[start:end] == "pick up the red block<|im_end|>"
+    assert "Proprioception: <|propri|>" in clean_prompt
+
+
+def test_native_input_builder_creates_assistant_only_text_labels():
+    pytest.importorskip("transformers")
+
+    policy = WallOSS05Policy(_config(tokenizer_max_length=2000), load_model=False)
+    policy.processor = SimpleNamespace(
+        tokenizer=_CharTokenizer(),
+        image_processor=_FakeImageProcessor(),
+    )
+    policy.model = nn.Module()
+    policy.model.anchor = nn.Parameter(torch.ones(1))
+    policy.model.action_token_id = 999
+    observation = {
+        "proprioception": np.zeros((1, 1, 26), dtype=np.float32),
+        "agent_pos_mask": np.ones((1, 1, 26), dtype=bool),
+        "dof_mask": np.ones((1, 32, 26), dtype=bool),
+        "face_view": np.zeros((16, 16, 3), dtype=np.uint8),
+        "right_wrist_view": np.zeros((16, 16, 3), dtype=np.uint8),
+    }
+    prefix, postfix, _ = policy._format_recipe_prompt(
+        [
+            {"role": "user", "content": "Where is the cup?"},
+            {"role": "assistant", "content": "on the left"},
+        ],
+        ["high_level", "high_level"],
+        [1],
+        "find the cup",
+    )
+
+    inputs = policy._construct_model_input([observation], [prefix], [postfix])
+    labels = inputs["text_labels"][0]
+    supervised_ids = labels[labels != -100]
+    expected = torch.tensor(
+        [ord(char) % 251 + 1 for char in "on the left<|im_end|>"],
+        dtype=torch.long,
+    )
+
+    torch.testing.assert_close(supervised_ids.cpu(), expected)
+    assert not (inputs["input_ids"] == 999).any()
+
+
+def test_masked_text_cross_entropy_uses_next_token_targets_only():
+    pytest.importorskip("transformers")
+
+    model = WallOSS05Model.__new__(WallOSS05Model)
+    nn.Module.__init__(model)
+    model.lm_head = nn.Linear(3, 5, bias=False)
+    hidden_states = torch.randn(1, 4, 3, requires_grad=True)
+    labels = torch.tensor([[-100, 2, -100, 4]])
+
+    loss = model._text_cross_entropy(hidden_states, labels)
+    expected = torch.nn.functional.cross_entropy(
+        model.lm_head(hidden_states[:, :-1][torch.tensor([[True, False, True]])]),
+        torch.tensor([2, 4]),
+    )
+
+    assert loss is not None
+    torch.testing.assert_close(loss, expected)
+    loss.backward()
+    assert hidden_states.grad is not None
+    assert torch.isfinite(hidden_states.grad).all()
 
 
 def test_policy_text_generation_decodes_native_model_tokens():
@@ -365,6 +556,45 @@ def test_forward_backward_update_is_finite_and_tiny_batch_overfits():
 
     final_loss, _ = policy(batch)
     assert final_loss.item() < initial_loss * 0.05
+
+
+@pytest.mark.parametrize(
+    ("predict_actions", "expect_flow"),
+    [(False, False), (True, True)],
+    ids=["text-only", "joint-text-action"],
+)
+def test_recipe_training_routes_text_and_optional_action_losses(predict_actions, expect_flow):
+    config = _config(flow_loss_weight=2.0, text_loss_weight=0.5)
+    policy = WallOSS05Policy(config, load_model=False)
+    policy.processor = object()
+    policy.model = _TinyJointAuthorModel()
+    action_mask = torch.ones(1, 32, 26, dtype=torch.bool)
+    policy._build_recipe_model_inputs = lambda batch: (
+        {
+            "input_ids": torch.zeros(1, 4, dtype=torch.long),
+            "attention_mask": torch.ones(1, 4, dtype=torch.long),
+            "text_labels": torch.tensor([[-100, 1, 2, -100]]),
+        },
+        torch.ones(1, 26, dtype=torch.bool),
+        action_mask,
+        ["sort blocks"],
+        torch.tensor([predict_actions]),
+    )
+    batch = _batch(batch_size=1)
+    batch["messages"] = [[{"role": "assistant", "content": "pick red"}]]
+
+    loss, metrics = policy(batch)
+    loss.backward()
+
+    expected_loss = 0.5 * 9.0 + (2.0 * 4.0 if expect_flow else 0.0)
+    assert loss.item() == pytest.approx(expected_loss)
+    assert metrics["text_loss"] == pytest.approx(9.0)
+    assert ("flow_loss" in metrics) is expect_flow
+    assert policy.model.text_scale.grad is not None
+    if expect_flow:
+        assert policy.model.flow_scale.grad is not None
+    else:
+        assert policy.model.flow_scale.grad is None
 
 
 def test_save_preserves_tied_embedding_key_contract_and_vlm_config(tmp_path):

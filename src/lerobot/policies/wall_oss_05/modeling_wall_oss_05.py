@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import shutil
 from collections import deque
@@ -50,6 +51,8 @@ from .configuration_wall_oss_05 import WallOSS05Config
 _ACTION_TOKEN = "<|action|>"  # nosec B105
 _IMAGE_TOKEN = "<|image_pad|>"  # nosec B105
 _PROPRIO_TOKEN = "<|propri|>"  # nosec B105
+_TEXT_TARGET_START = "<|wall_text_target_start|>"  # nosec B105
+_TEXT_TARGET_END = "<|wall_text_target_end|>"  # nosec B105
 _CAMERA_LABELS = {
     "face_view": "front view",
     "right_wrist_view": "right wrist view",
@@ -61,6 +64,7 @@ _CAMERA_LABELS = {
 class WallOSS05Output:
     loss: Tensor | None = None
     flow_loss: Tensor | None = None
+    text_loss: Tensor | None = None
 
 
 class WallOSS05RMSNorm(nn.Module):
@@ -468,6 +472,12 @@ class WallOSS05Model(nn.Module):
         if action_mask.any():
             if action_embeddings is None:
                 raise ValueError("Action-token inputs require action embeddings.")
+            expected = int(action_mask.sum())
+            available = action_embeddings.numel() // action_embeddings.shape[-1]
+            if expected != available:
+                raise ValueError(
+                    f"Action token/embedding mismatch: {expected} tokens and {available} embeddings."
+                )
             embeddings = embeddings.masked_scatter(
                 action_mask.unsqueeze(-1).expand_as(embeddings),
                 action_embeddings.to(embeddings.dtype),
@@ -578,6 +588,21 @@ class WallOSS05Model(nn.Module):
 
         return torch.stack(generated, dim=1)
 
+    def _text_cross_entropy(self, hidden_states: Tensor, labels: Tensor) -> Tensor | None:
+        """Compute next-token CE only for supervised positions to avoid full-vocabulary logits."""
+        if labels.shape != hidden_states.shape[:2]:
+            raise ValueError(
+                f"Text labels must match input sequence shape {tuple(hidden_states.shape[:2])}, "
+                f"got {tuple(labels.shape)}."
+            )
+        shifted_labels = labels[:, 1:].contiguous()
+        loss_mask = shifted_labels != -100
+        if not loss_mask.any():
+            return None
+        shifted_hidden = hidden_states[:, :-1, : self.lm_head.in_features]
+        logits = self.lm_head(shifted_hidden[loss_mask]).float()
+        return functional.cross_entropy(logits, shifted_labels[loss_mask].to(logits.device))
+
     def forward(
         self,
         *,
@@ -586,15 +611,40 @@ class WallOSS05Model(nn.Module):
         pixel_values: Tensor | None = None,
         image_grid_thw: Tensor | None = None,
         moe_token_types: Tensor,
-        action_chunk: Tensor,
-        dof_mask: Tensor,
-        sample_time: Tensor,
+        action_chunk: Tensor | None = None,
+        dof_mask: Tensor | None = None,
+        sample_time: Tensor | None = None,
         flow_loss_mask: Tensor | None = None,
+        text_labels: Tensor | None = None,
         **_: Any,
     ) -> WallOSS05Output:
-        action_embeddings, noisy_actions, _ = self.action_preprocessor.noisy_training_input(
-            action_chunk, sample_time, dof_mask
-        )
+        action_token_mask = input_ids == self.action_token_id
+        action_rows = action_token_mask.any(dim=-1)
+        action_embeddings = None
+        noisy_actions = None
+        active_action_chunk = None
+        active_dof_mask = None
+        active_sample_time = None
+        if action_rows.any():
+            if action_chunk is None or dof_mask is None or sample_time is None:
+                raise ValueError("Action-token inputs require actions, dof_mask, and sample_time.")
+            token_counts = action_token_mask.sum(dim=-1)
+            expected_horizon = action_chunk.shape[1]
+            if not torch.equal(
+                token_counts[action_rows],
+                torch.full_like(token_counts[action_rows], expected_horizon),
+            ):
+                raise ValueError(
+                    "Each action-supervised row must contain exactly one action token per horizon step."
+                )
+            active_action_chunk = action_chunk[action_rows]
+            active_dof_mask = dof_mask[action_rows]
+            active_sample_time = sample_time[action_rows]
+            action_embeddings, noisy_actions, _ = self.action_preprocessor.noisy_training_input(
+                active_action_chunk,
+                active_sample_time,
+                active_dof_mask,
+            )
         hidden_states = self._hidden_states(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -603,16 +653,27 @@ class WallOSS05Model(nn.Module):
             moe_token_types=moe_token_types,
             action_embeddings=action_embeddings,
         )
-        action_hidden = hidden_states[input_ids == self.action_token_id, : self.config.action_hidden_size]
-        velocity = self.action_preprocessor.action_proj_back(action_hidden.float())
-        expanded_time = sample_time[:, None, None].expand_as(action_chunk).reshape(-1, 26)
-        prediction = (1 - expanded_time) * velocity + noisy_actions.reshape(-1, 26)
-        loss = (prediction - action_chunk.reshape(-1, 26).float()).square()
-        loss = loss * dof_mask.reshape(-1, 26).float()
-        if flow_loss_mask is not None:
-            loss = loss * flow_loss_mask.reshape(-1, 1).float()
-        flow_loss = loss.mean()
-        return WallOSS05Output(loss=flow_loss, flow_loss=flow_loss)
+        text_loss = self._text_cross_entropy(hidden_states, text_labels) if text_labels is not None else None
+
+        flow_loss = None
+        if action_rows.any():
+            assert active_action_chunk is not None
+            assert active_dof_mask is not None
+            assert active_sample_time is not None
+            assert noisy_actions is not None
+            action_hidden = hidden_states[action_token_mask, : self.config.action_hidden_size]
+            velocity = self.action_preprocessor.action_proj_back(action_hidden.float())
+            expanded_time = active_sample_time[:, None, None].expand_as(active_action_chunk).reshape(-1, 26)
+            prediction = (1 - expanded_time) * velocity + noisy_actions.reshape(-1, 26)
+            loss = (prediction - active_action_chunk.reshape(-1, 26).float()).square()
+            loss = loss * active_dof_mask.reshape(-1, 26).float()
+            if flow_loss_mask is not None:
+                loss = loss * flow_loss_mask[action_rows].reshape(-1, 1).float()
+            flow_loss = loss.mean()
+
+        losses = [value for value in (flow_loss, text_loss) if value is not None]
+        total_loss = sum(losses) if losses else None
+        return WallOSS05Output(loss=total_loss, flow_loss=flow_loss, text_loss=text_loss)
 
     @torch.no_grad()
     def generate_flow_action(
@@ -785,6 +846,133 @@ class WallOSS05Policy(PreTrainedPolicy):
         return prompt + "<|im_end|>\n<|im_start|>assistant\n"
 
     @staticmethod
+    def _message_content(message: dict[str, Any]) -> str:
+        content = message.get("content", "")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text = "\n".join(
+                str(block.get("text", ""))
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        elif content is None:
+            text = ""
+        else:
+            text = str(content)
+
+        tool_calls = message.get("tool_calls")
+        if tool_calls:
+            say_texts = []
+            for call in tool_calls:
+                function = call.get("function", {}) if isinstance(call, dict) else {}
+                if function.get("name") != "say":
+                    continue
+                arguments = function.get("arguments", {})
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except (TypeError, ValueError):
+                        arguments = {}
+                if isinstance(arguments, dict) and arguments.get("text"):
+                    say_texts.append(str(arguments["text"]))
+            suffix = "".join(f"<say>{value}</say>" for value in say_texts)
+            if suffix:
+                text = f"{text}\n{suffix}" if text else suffix
+        return text
+
+    def _observation_prompt(self) -> str:
+        prompt = "Observation:"
+        for camera_name in self.config.camera_key_mapping.values():
+            label = _CAMERA_LABELS.get(camera_name, camera_name.replace("_", " "))
+            prompt += f" {label}: <|vision_start|>{_IMAGE_TOKEN}<|vision_end|>"
+        return prompt
+
+    def _format_recipe_prompt(
+        self,
+        messages: list[dict[str, Any]],
+        message_streams: list[str | None],
+        target_message_indices: list[int],
+        task: str,
+    ) -> tuple[str, str, bool]:
+        if len(messages) != len(message_streams):
+            raise ValueError("Recipe messages and message_streams must have equal length.")
+        invalid_targets = [index for index in target_message_indices if not 0 <= index < len(messages)]
+        if invalid_targets:
+            raise ValueError(f"Recipe target indices are out of range: {invalid_targets}.")
+
+        predict_actions = any(stream == "low_level" for stream in message_streams)
+        if predict_actions and not target_message_indices:
+            prefix, postfix = self._get_flow_prompt(task)
+            return prefix, postfix, True
+
+        target_indices = set(target_message_indices)
+        prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+        observation_injected = False
+        for index, message in enumerate(messages):
+            role = str(message.get("role", "user"))
+            content = self._message_content(message)
+            if _TEXT_TARGET_START in content or _TEXT_TARGET_END in content:
+                raise ValueError("Recipe content contains a reserved Wall text-target marker.")
+            if role == "user" and not observation_injected:
+                content = f"{self._observation_prompt()}\n{content}"
+                observation_injected = True
+
+            prompt += f"<|im_start|>{role}\n"
+            if index in target_indices:
+                prompt += f"{_TEXT_TARGET_START}{content}<|im_end|>{_TEXT_TARGET_END}\n"
+            else:
+                prompt += f"{content}<|im_end|>\n"
+
+        if not observation_injected:
+            prompt = (
+                "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+                f"<|im_start|>user\n{self._observation_prompt()}<|im_end|>\n"
+                + prompt.removeprefix("<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n")
+            )
+
+        postfix = ""
+        if predict_actions:
+            prompt += (
+                "<|im_start|>user\n"
+                f"Instruction: {task}\n"
+                f"Predict the next action in robot action.\nProprioception: {_PROPRIO_TOKEN}\n"
+                "<|im_end|>\n<|im_start|>assistant\n"
+            )
+            postfix = _ACTION_TOKEN * self.config.chunk_size
+        return prompt, postfix, predict_actions
+
+    @staticmethod
+    def _extract_text_target_spans(text: str) -> tuple[str, list[tuple[int, int]]]:
+        clean_parts: list[str] = []
+        spans: list[tuple[int, int]] = []
+        cursor = 0
+        clean_length = 0
+        while True:
+            start = text.find(_TEXT_TARGET_START, cursor)
+            if start < 0:
+                suffix = text[cursor:]
+                clean_parts.append(suffix)
+                clean_length += len(suffix)
+                break
+            prefix = text[cursor:start]
+            clean_parts.append(prefix)
+            clean_length += len(prefix)
+            payload_start = start + len(_TEXT_TARGET_START)
+            end = text.find(_TEXT_TARGET_END, payload_start)
+            if end < 0:
+                raise ValueError("Wall text-target start marker has no matching end marker.")
+            payload = text[payload_start:end]
+            span_start = clean_length
+            clean_parts.append(payload)
+            clean_length += len(payload)
+            spans.append((span_start, clean_length))
+            cursor = end + len(_TEXT_TARGET_END)
+        if _TEXT_TARGET_END in "".join(clean_parts):
+            raise ValueError("Wall text-target end marker has no matching start marker.")
+        return "".join(clean_parts), spans
+
+    @staticmethod
     def _resize_image(image: np.ndarray, target: int = 448) -> Image.Image:
         pil_image = Image.fromarray(image)
         width, height = pil_image.size
@@ -843,16 +1031,24 @@ class WallOSS05Policy(PreTrainedPolicy):
             prefix_list[index] = prefix_list[index].replace(_PROPRIO_TOKEN, state_text)
 
         texts = [prefix + postfix for prefix, postfix in zip(prefix_list, postfix_list, strict=True)]
+        target_spans: list[list[tuple[int, int]]] = []
+        clean_texts = []
+        for text in texts:
+            clean_text, spans = self._extract_text_target_spans(text)
+            clean_texts.append(clean_text)
+            target_spans.append(spans)
+        has_text_targets = any(target_spans)
         text_inputs = self.processor.tokenizer(
-            texts,
+            clean_texts,
             return_tensors="pt",
             padding=True,
             padding_side="left",
             truncation=True,
-            max_length=1000,
+            max_length=self.config.tokenizer_max_length,
+            return_offsets_mapping=has_text_targets,
         )
         input_ids = text_inputs["input_ids"]
-        return {
+        model_inputs = {
             "input_ids": input_ids.to(device),
             "attention_mask": text_inputs["attention_mask"].to(device),
             "pixel_values": image_inputs["pixel_values"].to(device),
@@ -860,6 +1056,22 @@ class WallOSS05Policy(PreTrainedPolicy):
             "moe_token_types": (input_ids == self.model.action_token_id).to(device),
             "dof_mask": dof_mask.to(device),
         }
+        if has_text_targets:
+            offsets = text_inputs["offset_mapping"]
+            labels = torch.full_like(input_ids, -100)
+            for batch_index, spans in enumerate(target_spans):
+                for span_start, span_end in spans:
+                    token_overlap = (
+                        (offsets[batch_index, :, 1] > span_start)
+                        & (offsets[batch_index, :, 0] < span_end)
+                        & text_inputs["attention_mask"][batch_index].bool()
+                    )
+                    labels[batch_index, token_overlap] = input_ids[batch_index, token_overlap]
+            labels[labels == self.model.action_token_id] = -100
+            if self.processor.tokenizer.pad_token_id is not None:
+                labels[labels == self.processor.tokenizer.pad_token_id] = -100
+            model_inputs["text_labels"] = labels.to(device)
+        return model_inputs
 
     def reset(self) -> None:
         self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
@@ -937,6 +1149,62 @@ class WallOSS05Policy(PreTrainedPolicy):
         inputs = self._construct_model_input(observations, prefix_list, postfix_list)
         return inputs, state_mask, action_mask, tasks
 
+    @staticmethod
+    def _batched_recipe_field(value: Any, batch_size: int, field_name: str) -> list[list[Any]]:
+        if not isinstance(value, list):
+            raise TypeError(f"{field_name} must be a list.")
+        if len(value) == batch_size and all(isinstance(row, list) for row in value):
+            return value
+        if batch_size == 1:
+            return [value]
+        raise ValueError(f"Expected {field_name} for exactly {batch_size} samples.")
+
+    def _build_recipe_model_inputs(
+        self,
+        batch: dict[str, Any],
+    ) -> tuple[dict[str, Any], Tensor, Tensor, list[str], Tensor]:
+        observations, state_mask, action_mask, tasks = self._build_observations(batch)
+        batch_size = len(observations)
+        messages_batch = self._batched_recipe_field(batch["messages"], batch_size, "messages")
+        streams_batch = self._batched_recipe_field(
+            batch.get("message_streams", []),
+            batch_size,
+            "message_streams",
+        )
+        targets_batch = self._batched_recipe_field(
+            batch.get("target_message_indices", []),
+            batch_size,
+            "target_message_indices",
+        )
+
+        prefix_list = []
+        postfix_list = []
+        predict_actions = []
+        for messages, streams, targets, task in zip(
+            messages_batch,
+            streams_batch,
+            targets_batch,
+            tasks,
+            strict=True,
+        ):
+            prefix, postfix, predicts_action = self._format_recipe_prompt(
+                messages,
+                streams,
+                targets,
+                task,
+            )
+            prefix_list.append(prefix)
+            postfix_list.append(postfix)
+            predict_actions.append(predicts_action)
+        inputs = self._construct_model_input(observations, prefix_list, postfix_list)
+        return (
+            inputs,
+            state_mask,
+            action_mask,
+            tasks,
+            torch.tensor(predict_actions, device=action_mask.device, dtype=torch.bool),
+        )
+
     def _build_text_model_inputs(
         self,
         batch: dict[str, Any],
@@ -974,7 +1242,15 @@ class WallOSS05Policy(PreTrainedPolicy):
         return sample_time * scale
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, float]]:
-        inputs, _, action_mask, _ = self._build_model_inputs(batch)
+        if "messages" in batch:
+            inputs, _, action_mask, _, predict_actions = self._build_recipe_model_inputs(batch)
+        else:
+            inputs, _, action_mask, _ = self._build_model_inputs(batch)
+            predict_actions = torch.ones(
+                action_mask.shape[0],
+                device=action_mask.device,
+                dtype=torch.bool,
+            )
         actions = batch[ACTION]
         if actions.ndim != 3 or actions.shape[-1] != self.config.max_action_dim:
             raise ValueError(f"Expected canonical actions shaped (B,H,26), got {tuple(actions.shape)}.")
@@ -993,6 +1269,7 @@ class WallOSS05Policy(PreTrainedPolicy):
         inputs["sample_time"] = self._sample_time(actions.shape[0], actions.device)
 
         flow_loss_mask = action_mask.any(dim=-1)
+        flow_loss_mask &= predict_actions[:, None].to(flow_loss_mask.device)
         action_is_pad = batch.get("action_is_pad")
         if action_is_pad is not None:
             valid = ~action_is_pad.to(flow_loss_mask.device, dtype=torch.bool)
@@ -1003,15 +1280,27 @@ class WallOSS05Policy(PreTrainedPolicy):
             flow_loss_mask=flow_loss_mask.to(actions.device),
             mode="train",
         )
-        loss = outputs.loss
+        flow_loss = outputs.flow_loss
+        text_loss = getattr(outputs, "text_loss", None)
+        loss = None
+        if flow_loss is not None:
+            loss = self.config.flow_loss_weight * flow_loss
+        if text_loss is not None:
+            weighted_text_loss = self.config.text_loss_weight * text_loss
+            loss = weighted_text_loss if loss is None else loss + weighted_text_loss
+        if loss is None:
+            raise RuntimeError(
+                "Wall-OSS-0.5 batch produced neither action nor text supervision. "
+                "Check the selected recipe and target annotations."
+            )
         if loss is None or not torch.isfinite(loss):
             raise FloatingPointError("Wall-OSS-0.5 produced a non-finite training loss.")
-        return loss, {
-            "loss": float(loss.detach()),
-            "flow_loss": float(outputs.flow_loss.detach())
-            if outputs.flow_loss is not None
-            else float(loss.detach()),
-        }
+        metrics = {"loss": float(loss.detach())}
+        if flow_loss is not None:
+            metrics["flow_loss"] = float(flow_loss.detach())
+        if text_loss is not None:
+            metrics["text_loss"] = float(text_loss.detach())
+        return loss, metrics
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:

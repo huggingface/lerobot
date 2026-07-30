@@ -49,6 +49,10 @@ class WallOSS05Config(PreTrainedConfig):
     max_state_dim: int = 26
     num_inference_timesteps: int = 10
     action_branch: str = "flow"
+    recipe_path: str | None = None
+    tokenizer_max_length: int = 1000
+    flow_loss_weight: float = 1.0
+    text_loss_weight: float = 0.01
 
     # LeRobot image key -> model camera slot. Insertion order is prompt order.
     camera_key_mapping: dict[str, str] = field(
@@ -88,6 +92,12 @@ class WallOSS05Config(PreTrainedConfig):
             )
         if self.num_inference_timesteps != 10:
             raise ValueError("The checkpoint uses exactly 10 Euler flow steps.")
+        if self.tokenizer_max_length < self.chunk_size + 1:
+            raise ValueError("tokenizer_max_length must leave room for the action chunk.")
+        if self.flow_loss_weight < 0 or self.text_loss_weight < 0:
+            raise ValueError("Wall loss weights must be non-negative.")
+        if self.flow_loss_weight == 0 and self.text_loss_weight == 0:
+            raise ValueError("At least one Wall training loss must be enabled.")
 
     @property
     def vlm_backbone_config(self) -> Qwen2_5_VLConfig:

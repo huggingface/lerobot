@@ -16,9 +16,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.configs import PipelineFeatureType, PolicyFeature, recipe as recipe_module
+from lerobot.configs.recipe import TrainingRecipe
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
     PolicyAction,
@@ -28,6 +30,7 @@ from lerobot.processor import (
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
+from lerobot.processor.render_messages_processor import RenderMessagesStep
 from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import OBS_STATE
 
@@ -76,6 +79,15 @@ class WallOSS05ClampNormalizedProcessorStep(ProcessorStep):
         return features
 
 
+def _load_recipe(path_str: str) -> TrainingRecipe:
+    path = Path(path_str)
+    if not path.is_absolute() and not path.exists():
+        candidate = Path(recipe_module.__file__).resolve().parent / path
+        if candidate.exists():
+            path = candidate
+    return TrainingRecipe.from_yaml(path)
+
+
 def make_wall_oss_05_pre_post_processors(
     config: WallOSS05Config,
     dataset_stats: dict | None = None,
@@ -86,6 +98,9 @@ def make_wall_oss_05_pre_post_processors(
     """Build the serializable Wall input/output pipelines."""
 
     steps = make_default_policy_processor_steps(config, dataset_stats)
+    language_steps = []
+    if config.recipe_path:
+        language_steps.append(RenderMessagesStep(recipe=_load_recipe(config.recipe_path)))
     return make_policy_processor_pipelines(
         input_steps=[
             steps.rename_observations,
@@ -93,6 +108,7 @@ def make_wall_oss_05_pre_post_processors(
             WallOSS05TaskPassthrough(),
             steps.normalize,
             WallOSS05ClampNormalizedProcessorStep(),
+            *language_steps,
             steps.to_device,
         ],
         output_steps=[steps.unnormalize, steps.to_cpu],
