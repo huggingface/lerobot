@@ -29,10 +29,24 @@ from lerobot.jobs.hf import (
     _poll_until_done,
     build_remote_config_file,
     build_repo_id,
+    follow_job,
     resolve_job_tags,
     resolve_wandb_api_key,
     submit_to_hf,
 )
+
+
+def test_follow_job_detach_returns_without_watching(monkeypatch):
+    """`detach` must short-circuit before any polling or log streaming starts."""
+
+    def _boom(*a, **kw):
+        raise AssertionError("detach must not touch the job")
+
+    monkeypatch.setattr("lerobot.jobs.hf.inspect_job", _boom)
+    monkeypatch.setattr("lerobot.jobs.hf.fetch_job_logs", _boom)
+    # False = "stopped watching without a verdict", so callers stay quiet rather than
+    # claiming success for a job that is still running.
+    assert follow_job("job-1", detach=True) is False
 
 
 def test_resolve_job_tags_always_includes_lerobot_and_dedups():
