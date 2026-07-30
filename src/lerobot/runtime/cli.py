@@ -201,10 +201,17 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         type=int,
         default=8010,
         help=(
-            "Port for the live MJPEG viewer (default: 8010; 0 disables). "
+            "Port for the LeRobot Playground and live MJPEG viewer (default: 8010; 0 disables). "
             "Open http://localhost:<port> in a browser; over SSH forward it with "
             "ssh -L <port>:localhost:<port> <host>."
         ),
+    )
+    p.add_argument(
+        "--sim.blog_url",
+        dest="sim_blog_url",
+        type=str,
+        default="https://lerobot-language-conditioned-policies.hf.space/blog/",
+        help="Optional article URL shown in the Playground's collapsible Blog panel.",
     )
     p.add_argument(
         "--chunk_hz",
@@ -553,7 +560,7 @@ def _clear_action_queue(runtime: Any) -> None:
             queue.clear()
 
 
-def _ask_runtime(runtime: Any, question: str) -> str:
+def _ask_runtime(runtime: Any, question: str, *, image_url: str | None = None) -> str:
     """Pause action dispatch and ask the adapter a grounded VQA question."""
     question = question.strip()
     if not question:
@@ -567,6 +574,10 @@ def _ask_runtime(runtime: Any, question: str) -> str:
         print("[runtime] this policy adapter does not support text generation", flush=True)
         return ""
     observation = runtime._current_observation()
+    if image_url:
+        from .playground import replace_observation_image_from_url  # noqa: PLC0415
+
+        observation = replace_observation_image_from_url(observation, image_url)
     try:
         answer = generate_text("vqa", observation, runtime.state, user_text=question)
     except Exception as exc:  # noqa: BLE001
@@ -578,6 +589,65 @@ def _ask_runtime(runtime: Any, question: str) -> str:
         return ""
     print(f"[policy] {answer}", flush=True)
     return answer
+
+
+def _process_playground_commands(
+    controller: Any,
+    runtime: Any,
+    sim_backend: Any,
+    *,
+    direct_subtask: bool,
+) -> None:
+    """Run queued browser commands on the simulator's main thread."""
+    while (command := controller.next_command()) is not None:
+        payload = command.payload
+        try:
+            if command.kind == "pause":
+                runtime.state["mode"] = "paused"
+                runtime.state["action_deadline"] = None
+                _clear_action_queue(runtime)
+                controller.finish(command, result={"mode": "paused"})
+                continue
+            if command.kind == "reset":
+                sim_backend.reset_scene()
+                _clear_action_queue(runtime)
+                runtime.state.set_context("subtask", None)
+                if hasattr(runtime.policy, "reset"):
+                    runtime.policy.reset()
+                controller.finish(command, result={"reset": True})
+                continue
+            text = str(payload.get("text") or "").strip()
+            if not text:
+                raise ValueError("message text cannot be empty")
+            if command.kind == "action":
+                runtime.set_task(text)
+                runtime.state.set_context("subtask", text if direct_subtask else None)
+                _clear_action_queue(runtime)
+                adapter = getattr(runtime, "policy_adapter", None)
+                if adapter is not None and hasattr(adapter, "_chunks_until_regen"):
+                    adapter._chunks_until_regen = 0
+                runtime._language_gate.rearm()
+                runtime.state["mode"] = "action"
+                controller.add_message("user", text, kind="action")
+                controller.finish(command, result={"mode": "action", "task": text})
+                continue
+            image_url = str(payload.get("image_url") or "").strip() or None
+            controller.add_message("user", text, image_url=image_url, kind=command.kind)
+            if command.kind == "planner":
+                planner_prompt = str(payload.get("planner_prompt") or "").strip()
+                if planner_prompt:
+                    text = f"{planner_prompt}\n\nHigh-level goal: {text}\nReturn the next subtask only."
+            answer = _ask_runtime(runtime, text, image_url=image_url)
+            controller.add_message("assistant", answer or "The policy returned no answer.", kind=command.kind)
+            if command.kind == "planner" and answer:
+                runtime.state.set_context("subtask", answer)
+                _clear_action_queue(runtime)
+                runtime._language_gate.rearm()
+                runtime.state["mode"] = "action"
+            controller.finish(command, result={"answer": answer})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("playground command failed: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG))
+            controller.finish(command, error=f"{type(exc).__name__}: {exc}")
 
 
 def _handle_slash_command(runtime: Any, line: str) -> bool:
@@ -789,15 +859,23 @@ def run(
     sim_obs = None
     sim_stream_server = None
     sim_holder: dict[str, Any] = {"backend": None}
+    playground_controller = None
     if sim_mode:
-        from lerobot.runtime.sim_robocasa import create_sim_env, start_mjpeg_server  # noqa: PLC0415
+        from lerobot.runtime.playground import PlaygroundController, start_playground_server  # noqa: PLC0415
+        from lerobot.runtime.sim_robocasa import create_sim_env  # noqa: PLC0415
 
         # Start the live viewer first so the port listens during the ~60s model
         # load (browsers get a loading page instead of connection-refused).
         if args.sim_stream_port:
-            sim_stream_server = start_mjpeg_server(
+            playground_controller = PlaygroundController(
+                policy_path=args.policy_path,
+                benchmark="robocasa",
+                blog_url=args.sim_blog_url,
+            )
+            sim_stream_server = start_playground_server(
                 args.sim_stream_port,
                 lambda: sim_holder["backend"]._latest_frame if sim_holder["backend"] else None,
+                playground_controller,
             )
         print(
             f"[runtime] starting RoboCasa sim scene={args.sim_task!r} split={args.sim_split!r}",
@@ -928,6 +1006,8 @@ def run(
     # Let the sim backend read live task/subtask/memory for the video overlay.
     if sim_backend is not None:
         sim_backend.bind_runtime(runtime)
+        if playground_controller is not None:
+            playground_controller.attach(runtime, sim_backend)
         # Keep EGL rendering on the main thread.
         return _run_sim_interactive(
             runtime,
@@ -936,6 +1016,7 @@ def run(
             max_ticks=args.max_ticks,
             panel_label=panel_label,
             direct_subtask=_direct_subtask_enabled(args),
+            playground_controller=playground_controller,
         )
 
     if autonomous_mode:
@@ -963,6 +1044,7 @@ def _run_sim_interactive(
     max_ticks: int | None,
     panel_label: str = "Runtime",
     direct_subtask: bool = False,
+    playground_controller: Any | None = None,
 ) -> int:
     """Keep RoboCasa rendering on the main thread while polling stdin."""
     import select  # noqa: PLC0415
@@ -1001,6 +1083,13 @@ def _run_sim_interactive(
     stdin_open = True
     try:
         while True:
+            if playground_controller is not None:
+                _process_playground_commands(
+                    playground_controller,
+                    runtime,
+                    sim_backend,
+                    direct_subtask=direct_subtask,
+                )
             # Non-blocking stdin: a full line (canonical-mode terminal) is read
             # only when Enter is pressed, so line editing works normally.
             if stdin_open and select.select([sys.stdin], [], [], 0)[0]:

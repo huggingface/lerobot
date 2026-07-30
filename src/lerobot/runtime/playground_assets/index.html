@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>LeRobot Playground</title>
+    <link rel="stylesheet" href="/playground.css" />
+  </head>
+  <body>
+    <div class="app-shell" data-chat-open="true" data-blog-open="false">
+      <header class="topbar">
+        <a class="brand" href="https://github.com/huggingface/lerobot" target="_blank" rel="noreferrer">
+          <span class="brand-mark">L</span>
+          <span><strong>LeRobot</strong><small>Playground</small></span>
+        </a>
+        <div class="selectors">
+          <label>Policy
+            <select id="policy">
+              <option value="runtime">Connected checkpoint</option>
+              <option value="pi05">π0.5</option>
+              <option value="smolvla">SmolVLA</option>
+              <option value="molmoact2">MolmoAct2</option>
+              <option value="groot">GR00T N1.7</option>
+            </select>
+          </label>
+          <label>Benchmark
+            <select id="benchmark">
+              <option value="robocasa">RoboCasa</option>
+              <option value="libero">LIBERO · coming next</option>
+              <option value="robotwin">RoboTwin · coming next</option>
+            </select>
+          </label>
+          <label>Scene
+            <select id="task">
+              <option>CloseFridge</option>
+              <option>OpenDrawer</option>
+              <option>LoadDishwasher</option>
+              <option>TurnOnSinkFaucet</option>
+              <option>PickPlaceCounterToCabinet</option>
+            </select>
+          </label>
+        </div>
+        <div class="header-actions">
+          <button id="blog-toggle" class="ghost" aria-expanded="false">Blog</button>
+          <button id="chat-toggle" class="ghost" aria-expanded="true">Chat</button>
+        </div>
+      </header>
+
+      <main class="stage">
+        <section class="viewer" aria-label="Robot simulation">
+          <img id="stream" src="/stream" alt="Live robot simulation" />
+          <div class="viewer-gradient"></div>
+          <div class="viewer-head">
+            <div class="live-pill"><span></span><b id="connection">Connecting</b></div>
+            <div class="camera-tabs">
+              <button class="active">Composite</button><button>Left</button><button>Wrist</button><button>Right</button>
+            </div>
+          </div>
+          <div class="runtime-card">
+            <p class="eyebrow">Runtime</p>
+            <div><span>Task</span><b id="active-task">No task selected</b></div>
+            <div><span>Subtask</span><b id="subtask">Waiting for policy</b></div>
+            <div><span>Memory</span><b id="memory">No observations yet</b></div>
+          </div>
+          <div class="transport">
+            <button id="pause" class="transport-button" title="Pause">Ⅱ</button>
+            <div class="prompt-wrap">
+              <input id="prompt" value="Close the refrigerator door" readonly />
+              <button id="unfreeze" class="mini-button">Unfreeze</button>
+            </div>
+            <button id="run" class="run-button">Run policy <span>→</span></button>
+            <button id="reset" class="transport-button" title="Reset scene">↻</button>
+          </div>
+        </section>
+
+        <aside class="chat-panel">
+          <div class="panel-header">
+            <div><p class="eyebrow">Language runtime</p><h2>Ask, steer, inspect</h2></div>
+            <button id="chat-close" class="icon-button" aria-label="Collapse chat">×</button>
+          </div>
+          <div class="planner-card">
+            <div>
+              <span class="planner-icon">✦</span>
+              <div><b>High-level planner</b><small>Qwen/Qwen3.5-2B · every <input id="planner-rate" type="number" value="1" min=".1" max="60" step=".1" />s</small></div>
+            </div>
+            <label class="switch"><input id="planner-enabled" type="checkbox" /><span></span></label>
+            <textarea id="planner-prompt">You are a high-level robot planner. Inspect the current camera image and goal, then emit only the next concrete subtask for the low-level VLA.</textarea>
+          </div>
+          <div id="messages" class="messages">
+            <article class="message assistant">
+              <span>LR</span><div><b>LeRobot</b><p>I’m connected to the live rollout. Ask about the current view, attach an image URL for VQA, or send a new instruction.</p></div>
+            </article>
+          </div>
+          <form id="chat-form" class="composer">
+            <div id="image-preview" class="image-preview" hidden><img alt="" /><span></span><button type="button">×</button></div>
+            <div id="image-row" class="image-row" hidden>
+              <input id="image-url" type="url" placeholder="https://…/image.jpg" />
+              <button id="attach-url" type="button">Attach</button>
+            </div>
+            <div class="composer-main">
+              <button id="image-button" type="button" class="icon-button" title="Add image from the internet">＋</button>
+              <textarea id="chat-input" rows="1" placeholder="Ask about the scene or steer the policy…"></textarea>
+              <select id="chat-mode" aria-label="Message mode"><option value="vqa">Ask</option><option value="action">Act</option></select>
+              <button class="send-button" aria-label="Send">↑</button>
+            </div>
+          </form>
+        </aside>
+
+        <aside class="blog-panel">
+          <div class="panel-header">
+            <div><p class="eyebrow">Deep dive</p><h2>Language-conditioned policies</h2></div>
+            <button id="blog-close" class="icon-button" aria-label="Collapse blog">×</button>
+          </div>
+          <iframe id="blog-frame" title="LeRobot language policy article"></iframe>
+        </aside>
+      </main>
+      <div id="toast" role="status"></div>
+    </div>
+    <script type="module" src="/playground.js"></script>
+  </body>
+</html>

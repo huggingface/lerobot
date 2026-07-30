@@ -237,9 +237,19 @@ MUJOCO_GL=egl lerobot-rollout \
     --mode=action --ctrl_hz=20
 ```
 
-Open `http://localhost:8010` for the live simulator view. Add
-`--sim.direct_subtask` to bypass the language planner and make each typed prompt
-the action policy's current subtask.
+Open `http://localhost:8010` for **LeRobot Playground**, a full-screen live
+simulator with task controls and a collapsible chat panel. The chat can pause or
+steer the rollout, ask the policy grounded questions about the current view,
+and attach a public image URL as the visual input for VQA. Its optional
+high-level planner periodically turns the current goal and view into the next
+subtask. The Blog button embeds the language-policy article; override its URL
+with `--sim.blog_url`.
+
+Add `--sim.direct_subtask` to bypass the language planner and make each typed
+prompt the action policy's current subtask. The initial browser UI supports the
+same RoboCasa runtime as the terminal. LIBERO and RoboTwin are shown as the next
+benchmark adapters but remain disabled until their persistent-environment
+backends implement this runtime contract.
 
 ---
 
