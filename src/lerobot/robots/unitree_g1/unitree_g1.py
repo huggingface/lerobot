@@ -156,16 +156,6 @@ class UnitreeG1(Robot):
         self.controller_input = default_remote_input()
         self.controller_output = {}
 
-        # Token-mode state: last 64-D SONIC latent token commanded by the policy,
-        # echoed back as ``observation.state`` so a token-output VLA closes the loop
-        # on its own previous token. Implicit whenever the SONIC whole-body controller
-        # is active. Seeded to zeros; the controller's startup blend eases joints in.
-        self._last_token: np.ndarray | None = None
-        if self._sonic_token:
-            from .controllers.sonic_whole_body import TOKEN_DIM
-
-            self._last_token = np.zeros(TOKEN_DIM, dtype=np.float32)
-
     @property
     def _sonic_token(self) -> bool:
         """Whether the SONIC whole-body decoder is active.
@@ -182,17 +172,7 @@ class UnitreeG1(Robot):
 
             # Step simulation if in simulation mode
             if self.config.is_simulation and self.sim_env is not None:
-                try:
-                    self.sim_env.step()
-                except ValueError as e:
-                    # Startup race: the sim thread can step once before reset() has
-                    # written a valid base pose, giving a zero-norm pelvis quaternion
-                    # (scipy>=1.11 raises instead of normalizing). Skip and retry so
-                    # the thread survives instead of dying and freezing the sim.
-                    if "zero norm" not in str(e).lower():
-                        raise
-                    time.sleep(self.control_dt)
-                    continue
+                self.sim_env.step()
 
             msg = self.lowstate_subscriber.Read()
             if msg is not None:
@@ -524,12 +504,14 @@ class UnitreeG1(Robot):
         if lowstate.wireless_remote:
             obs["wireless_remote"] = lowstate.wireless_remote
 
-        # Token mode: echo the last commanded latent token as observation.state so a
-        # token-output VLA closes the loop on its own previous token.
+        # Token mode: echo the token the SONIC controller last decoded as observation.state
+        # so a token-output VLA closes the loop on its own previous token.
         if self._sonic_token:
-            from .controllers.sonic_whole_body import token_state_key
+            from .controllers.sonic_whole_body import TOKEN_DIM, token_state_key
 
-            token = self._last_token if self._last_token is not None else []
+            token = self.controller._last_token
+            if token is None:
+                token = np.zeros(TOKEN_DIM, dtype=np.float32)
             for i, v in enumerate(token):
                 obs[token_state_key(i)] = float(v)
 
@@ -545,15 +527,8 @@ class UnitreeG1(Robot):
     def send_action(self, action: RobotAction) -> RobotAction:
         action_to_publish = action
         if self.controller is not None:
-            # SONIC decoder: pull the 64-D latent token out of the action and remember it
-            # for the observation.state echo. The controller thread reads it back from
-            # controller_input (populated below) and decodes it into a 29-DoF command.
-            if self._sonic_token:
-                from .controllers.sonic_whole_body import _extract_token_from_action
-
-                token = _extract_token_from_action(action)
-                if token is not None:
-                    self._last_token = token
+            # Forward joystick axes / SONIC token keys to the controller thread, which
+            # extracts and decodes them.
             self._update_controller_action(action)
             # Full-body controllers (SONIC) own the whole 29-DoF command; nothing to
             # publish here (the controller thread is the sole publisher).
