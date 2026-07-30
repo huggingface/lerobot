@@ -9,19 +9,12 @@ from torchvision.transforms import InterpolationMode, functional as tvf
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
-    AddBatchDimensionProcessorStep,
-    DeviceProcessorStep,
-    PolicyAction,
-    PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
+    make_default_policy_processor_steps,
+    make_policy_processor_pipelines,
 )
-from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.types import EnvTransition, TransitionKey
-from lerobot.utils.constants import (
-    POLICY_POSTPROCESSOR_DEFAULT_NAME,
-    POLICY_PREPROCESSOR_DEFAULT_NAME,
-)
 
 from .configuration_being_h05 import BeingH05Config
 
@@ -55,44 +48,6 @@ def pack_named(named: dict[str, torch.Tensor], slots: dict[str, tuple[int, int]]
         packed[..., start:end] = value
         valid[..., start:end] = True
     return packed, valid
-
-
-def normalize(value: torch.Tensor, mode: str, stats: dict[str, list[float]]) -> torch.Tensor:
-    tensors = {
-        key: torch.as_tensor(item, dtype=value.dtype, device=value.device) for key, item in stats.items()
-    }
-    if mode == "binary":
-        return (value > 0.5).to(value.dtype)
-    if mode == "q99":
-        low, high = tensors["q01"], tensors["q99"]
-    elif mode == "min_max":
-        low, high = tensors["min"], tensors["max"]
-    elif mode == "mean_std":
-        mean, std = tensors["mean"], tensors["std"]
-        return torch.where(std != 0, (value - mean) / torch.where(std != 0, std, 1), value)
-    else:
-        raise ValueError(f"Unknown Being-H normalization mode: {mode}")
-    nonconstant = low != high
-    scaled = 2 * (value - low) / torch.where(nonconstant, high - low, torch.ones_like(high)) - 1
-    constant = value if mode == "q99" else torch.zeros_like(value)
-    return torch.where(nonconstant, scaled, constant).clamp(-1, 1)
-
-
-def inverse_normalize(value: torch.Tensor, mode: str, stats: dict[str, list[float]]) -> torch.Tensor:
-    if mode == "binary":
-        return (value > 0.5).to(value.dtype)
-    tensors = {
-        key: torch.as_tensor(item, dtype=value.dtype, device=value.device) for key, item in stats.items()
-    }
-    if mode == "q99":
-        low, high = tensors["q01"], tensors["q99"]
-        return (value + 1) / 2 * (high - low) + low
-    if mode == "min_max":
-        low, high = tensors["min"], tensors["max"]
-        return (value + 1) / 2 * (high - low) + low
-    if mode == "mean_std":
-        return value * tensors["std"] + tensors["mean"]
-    raise ValueError(f"Unknown Being-H normalization mode: {mode}")
 
 
 def unpack_action(packed: torch.Tensor) -> dict[str, torch.Tensor]:
@@ -251,24 +206,24 @@ class BeingH05SemanticUnpackStep(ProcessorStep):
 
 def make_being_h05_pre_post_processors(
     config: BeingH05Config,
-    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,  # noqa: ARG001
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ):
+    steps = make_default_policy_processor_steps(config, dataset_stats)
     semantic_step = BeingH05SemanticPackStep(
         image_keys=config.image_keys,
         prompt_template=config.prompt_template,
         chunk_size=config.chunk_size,
     )
-    pre = PolicyProcessorPipeline(
-        steps=[AddBatchDimensionProcessorStep(), semantic_step, DeviceProcessorStep(config.device)],
-        name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-    )
-    post = PolicyProcessorPipeline[PolicyAction, PolicyAction](
-        steps=[
-            BeingH05SemanticUnpackStep(),
-            DeviceProcessorStep("cpu"),
+    return make_policy_processor_pipelines(
+        input_steps=[
+            steps.add_batch_dim,
+            steps.normalize,
+            semantic_step,
+            steps.to_device,
         ],
-        name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-        to_transition=policy_action_to_transition,
-        to_output=transition_to_policy_action,
+        output_steps=[
+            BeingH05SemanticUnpackStep(),
+            steps.unnormalize,
+            steps.to_cpu,
+        ],
     )
-    return pre, post

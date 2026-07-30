@@ -1,4 +1,3 @@
-import pytest
 import torch
 
 from lerobot.configs import FeatureType, PolicyFeature
@@ -7,12 +6,11 @@ from lerobot.policies.being_h05.processor_being_h05 import (
     ACTION_SLOTS,
     STATE_SLOTS,
     BeingH05SemanticPackStep,
-    inverse_normalize,
     make_being_h05_pre_post_processors,
-    normalize,
     pack_named,
 )
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
+from lerobot.processor import NormalizerProcessorStep, UnnormalizerProcessorStep
 from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION
 
@@ -32,22 +30,6 @@ def test_semantic_slots_and_missing_modality_masks():
     assert state_valid[0, :3].all() and state_valid.sum() == 3
     assert action[0, 74] == 1 and action_valid.sum() == 1
     assert not state_valid[0, 3:].any()
-
-
-@pytest.mark.parametrize(
-    ("mode", "stats", "expected"),
-    [
-        ("q99", {"q01": [2.0], "q99": [2.0]}, 1.0),
-        ("mean_std", {"mean": [2.0], "std": [0.0]}, 3.0),
-        ("min_max", {"min": [2.0], "max": [2.0]}, 0.0),
-    ],
-)
-def test_author_constant_dimension_normalization(mode, stats, expected):
-    value = torch.tensor([[3.0]])
-    result = normalize(value, mode, stats)
-    assert result.item() == expected
-    if mode != "q99":
-        assert torch.isfinite(inverse_normalize(result, mode, stats)).all()
 
 
 def test_raw_task_reaches_audit_hook_unchanged_and_all_cameras():
@@ -111,8 +93,10 @@ def test_config_and_factories_are_wired_without_importing_author_dependencies():
     assert isinstance(config, BeingH05Config)
     assert get_policy_class("being_h05").name == "being_h05"
     preprocessor, postprocessor = make_pre_post_processors(config)
-    assert isinstance(preprocessor.steps[1], BeingH05SemanticPackStep)
+    assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)
+    assert isinstance(preprocessor.steps[2], BeingH05SemanticPackStep)
     assert postprocessor.steps[0].get_config() == {}
+    assert isinstance(postprocessor.steps[1], UnnormalizerProcessorStep)
 
 
 def test_processor_pipeline_save_reload(tmp_path):
@@ -134,6 +118,8 @@ def test_processor_pipeline_save_reload(tmp_path):
     post.save_pretrained(tmp_path)
     loaded_pre, loaded_post = make_pre_post_processors(config, pretrained_path=str(tmp_path))
     assert any(isinstance(step, BeingH05SemanticPackStep) for step in loaded_pre.steps)
+    assert any(isinstance(step, NormalizerProcessorStep) for step in loaded_pre.steps)
+    assert any(isinstance(step, UnnormalizerProcessorStep) for step in loaded_post.steps)
     assert loaded_post.name == "policy_postprocessor"
     semantic_action = torch.zeros(1, 200)
     semantic_action[:, 0:3] = torch.tensor([0.1, 0.2, 0.3])
