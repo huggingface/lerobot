@@ -377,8 +377,11 @@ class LiberoEnv(gym.Env):
             }
         )
         observation = self._format_raw_obs(raw_obs)
-        if terminated:
-            self.reset()
+        # No reset here. `observation` above is the terminal observation, so a reset's
+        # return value would be discarded -- and Gymnasium's vector envs default to
+        # AutoresetMode.NEXT_STEP, which resets this sub-env on the following step
+        # anyway. Resetting here made every termination pay two full resets and
+        # advance `init_state_id` twice, skipping an initial state per episode.
         truncated = False
         return observation, reward, terminated, truncated, info
 
