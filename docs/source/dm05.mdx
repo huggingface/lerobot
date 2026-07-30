@@ -1,0 +1,203 @@
+# DM05
+
+DM05, also released as DM0.5, is Dexmal's Vision-Language-Action model for
+open-world robot control. It builds on the native embodied modeling direction
+introduced by DM0 and extends it for open-ended language instructions,
+long-horizon manipulation, dynamic disturbances, and multi-embodiment robot
+control.
+
+For model details, see
+the [DM0.5 technical blog](https://www.dexmal.com/blog/dm0.5/index_en.html),
+the [OpenDM repository](https://github.com/dexmal/OpenDM), and the public
+[Dexmal/DM05](https://huggingface.co/Dexmal/DM05) model release.
+
+## Model Overview
+
+DM0.5 follows the VLA architecture described in the technical blog: a Gemma3 4B
+Vision-Language Model backbone processes observations and language instructions,
+and a 680M Action Expert generates continuous robot actions with Flow Matching.
+
+In LeRobot, the DM05-specific model wrapper, tokenizer, normalization, checkpoint compatibility, and
+action conversion code stays under `lerobot.policies.dm05`; shared LeRobot dataset and training APIs
+are reused without adding DM05-specific behavior to the common code path. The LeRobot SFT path
+preserves the public DM05 model interface and focuses on dataset integration, checkpoint layout,
+normalization, and native `lerobot-train` / `lerobot-eval` workflows.
+
+### LeRobot Integration
+
+DM05 integrates with the same surfaces used by other LeRobot policies:
+
+- `policy.type=dm05` for training and evaluation configuration.
+- `DM05Policy.from_pretrained()` for loading local or Hub checkpoints.
+- `lerobot-train` for supervised fine-tuning on LeRobot datasets.
+- `lerobot-eval` for native simulation rollouts, including LIBERO.
+
+### Architecture and Approach
+
+The LeRobot adapter keeps the DM05 core model and the robot-specific input/output contract separate:
+
+- **Vision-language-action inference**: DM05 consumes camera observations, robot state, and language
+  task text, then predicts action chunks with the DM05 action expert.
+- **Task processing**: `DM05TaskProcessor` converts LeRobot task strings into the prompt format used
+  by the DM05 tokenizer/processor stack.
+- **Raw state/action adaptation**: DM05 trains on the LeRobot dataset's raw state/action layout and
+  pads model inputs/targets internally when needed.
+- **Model-side normalization**: DM05 keeps state/action normalization in the policy converter rather
+  than relying only on LeRobot's generic normalization processors.
+
+## Installation Requirements
+
+1. Install LeRobot by following our [Installation Guide](./installation).
+2. Install DM05 dependencies by running:
+
+```bash
+pip install -e ".[dm05]"
+```
+
+For training on LeRobot datasets, also install the training extra:
+
+```bash
+pip install -e ".[training,dm05]"
+```
+
+For LIBERO simulation evaluation, the environment also needs LIBERO and MuJoCo/EGL dependencies:
+
+```bash
+pip install -e ".[libero,dm05]"
+export MUJOCO_GL=egl
+```
+
+<Tip warning={true}>
+  DM05 and the shared LeRobot VLA stack are being aligned on the Transformers
+  runtime line. Validate the installed `transformers` and `huggingface_hub`
+  versions before running long training or benchmark jobs.
+</Tip>
+
+## Training Data and Capabilities
+
+DM05 can be fine-tuned through LeRobot on datasets that provide the policy inputs it expects:
+
+- image observations from one or more cameras
+- `observation.state` with the dataset's raw robot state
+- `action` values compatible with the selected DM05 `action_mode`
+- language task descriptions
+
+Video-backed LeRobot datasets follow the same DM05 path as image-backed datasets. For example,
+ALOHA video datasets can be trained with `--dataset.video_backend=pyav`; LeRobot decodes frames into
+`observation.images.*` tensors before the DM05 batch converter builds the model input. If a dataset
+contains several visual keys and you need a fixed camera order, set `policy.image_keys` to the
+ordered list of `observation.images.*` keys to consume.
+
+Custom datasets, including simulator exports such as RoboTwin-style data, should first be converted
+to the standard LeRobot dataset schema. DM05 does not add dataset-specific readers; once the dataset
+provides the fields above, it uses the same training path as LIBERO or ALOHA.
+
+## Usage
+
+To use DM05 in LeRobot, specify the policy type as:
+
+```bash
+--policy.type=dm05
+```
+
+## Training
+
+A standard LeRobot training command from the public DM05 base model has the same
+shape as other policies. Set `--policy.pretrained_name_or_path` explicitly for
+every training run; use `Dexmal/DM05` for the public base model, or replace it
+with another DM05 core checkpoint or local self-contained `pretrained_model`
+directory:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --dataset.video_backend=pyav \
+  --policy.type=dm05 \
+  --policy.pretrained_name_or_path=Dexmal/DM05 \
+  --policy.action_mode=absolute \
+  --policy.chunk_size=10 \
+  --policy.n_action_steps=10 \
+  --output_dir=outputs/train/dm05-libero \
+  --steps=50000 \
+  --batch_size=8 \
+  --policy.device=cuda
+```
+
+### Key Training Parameters
+
+- **`--policy.pretrained_name_or_path`**: Base DM05 checkpoint, or a
+  self-contained LeRobot DM05 checkpoint. Set it explicitly in training commands.
+- **`--policy.action_mode=absolute`**: Trains the policy to predict dataset actions directly.
+- **`--policy.action_mode=relative`**: Trains the policy to predict state-relative actions.
+- **`--policy.chunk_size=10`** and **`--policy.n_action_steps=10`**: Match the current LIBERO action
+  chunking setup.
+- **`--policy.use_absolute_action=true`**: Converts predicted relative actions back to absolute
+  actions during inference. Use this only with `action_mode=relative`.
+
+`--policy.path` loads a complete saved LeRobot policy configuration. Keep it for cases where you
+intentionally want that saved policy config; from-base and from-checkpoint SFT examples should use
+`--policy.type=dm05` plus `--policy.pretrained_name_or_path` instead.
+
+### Training Parameters Explained
+
+| Parameter                 | Typical LIBERO value                   | Description                                                                 |
+| ------------------------- | -------------------------------------- | --------------------------------------------------------------------------- |
+| `pretrained_name_or_path` | `Dexmal/DM05` or local DM05 checkpoint | DM05 model weights, core configuration, and colocated tokenizer assets      |
+| `action_mode`             | `absolute`                             | `absolute` learns dataset actions; `relative` learns state-relative actions |
+| `use_absolute_action`     | `false`                                | Converts predicted relative actions to absolute actions at inference time   |
+| `chunk_size`              | `10`                                   | Number of actions generated per policy chunk                                |
+| `n_action_steps`          | `10`                                   | Number of actions consumed from each predicted chunk                        |
+
+## Action Representation
+
+DM05 checkpoints encode the expected action contract in their policy configuration.
+`action_mode=absolute` means the policy learns and predicts the dataset `action` field directly.
+`action_mode=relative` means the policy learns state-relative offsets. If the environment expects
+absolute actions, set `use_absolute_action=true` so the postprocessor returns absolute actions.
+
+## Evaluation
+
+Native LeRobot evaluation uses `lerobot-eval`. Evaluation commonly uses `--policy.path` because it
+loads the self-contained checkpoint produced by a training run:
+
+```bash
+MUJOCO_GL=egl lerobot-eval \
+  --policy.path=/path/to/checkpoint/pretrained_model \
+  --env.type=libero \
+  --env.task=libero_spatial \
+  --policy.device=cuda
+```
+
+For full LIBERO benchmarking, increase `--eval.n_episodes` and run each target suite:
+
+```bash
+--env.task=libero_spatial
+--env.task=libero_object
+--env.task=libero_goal
+--env.task=libero_10
+```
+
+## Checkpoint Layout
+
+A self-contained DM05 checkpoint should contain at least:
+
+```text
+config.json
+model.safetensors
+policy_preprocessor.json
+policy_postprocessor.json
+norm_stats.json
+tokenizer.json
+tokenizer_config.json
+processor_config.json
+chat_template.jinja
+```
+
+`chat_template.jinja` is required by the Transformers processor for prompt rendering. DM05 includes
+this file in its policy-specific Hub upload allow list.
+
+## License
+
+The DM05 LeRobot source code in this repository is licensed under Apache-2.0. DM05 model weights
+and checkpoints follow the license terms attached to the corresponding DM05 model card or release.
+Confirm those terms before publishing fine-tuned DM05 checkpoints to the Hugging Face Hub.
