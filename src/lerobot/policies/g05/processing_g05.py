@@ -23,6 +23,7 @@ from typing import Any
 
 import torch
 from torch import Tensor
+from transformers import AutoTokenizer
 
 IGNORE_INDEX = -100
 
@@ -68,8 +69,6 @@ class G05Tokenizer:
     _PLACEHOLDER = re.compile(r"<([^<>|]+)>")
 
     def __init__(self, processor_path: str | Path, model_config: dict[str, Any]) -> None:
-        from transformers import AutoTokenizer
-
         self.processor_path = Path(processor_path)
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.processor_path,

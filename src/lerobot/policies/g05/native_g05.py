@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import itertools
+import json
 import math
 import time
 from collections.abc import Mapping
@@ -25,6 +27,17 @@ from typing import Any
 import torch
 import torch.nn.functional as functional
 from torch import Tensor, nn
+from transformers import DynamicCache
+from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig, Qwen3_5VisionConfig
+from transformers.models.qwen3_5.modeling_qwen3_5 import (
+    Qwen3_5Attention,
+    Qwen3_5DecoderLayer,
+    Qwen3_5MLP,
+    Qwen3_5RMSNorm,
+    Qwen3_5TextRotaryEmbedding,
+    Qwen3_5VisionModel,
+    apply_rotary_pos_emb_vision,
+)
 
 from lerobot.policies.pi_gemma import PiGemmaRMSNorm
 from lerobot.utils.constants import ACTION
@@ -37,8 +50,6 @@ G05_RUNTIME_PREDICT_COT = "g05_runtime_predict_cot"
 
 def _qwen_text_config(values: Mapping[str, Any], *, vocab_size: int | None = None):
     """Translate the serialized G0.5 Qwen config into a Transformers config."""
-
-    from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig
 
     return Qwen3_5TextConfig(
         vocab_size=int(vocab_size if vocab_size is not None else values.get("vocab_size", 1)),
@@ -66,8 +77,6 @@ def _qwen_text_config(values: Mapping[str, Any], *, vocab_size: int | None = Non
 
 def _qwen_vision_config(values: Mapping[str, Any]):
     """Translate the serialized G0.5 vision config into Transformers."""
-
-    from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5VisionConfig
 
     config = Qwen3_5VisionConfig(
         depth=int(values["depth"]),
@@ -112,11 +121,6 @@ class G05QwenTextModel(nn.Module):
 
     def __init__(self, values: Mapping[str, Any], *, vocab_size: int) -> None:
         super().__init__()
-        from transformers.models.qwen3_5.modeling_qwen3_5 import (
-            Qwen3_5DecoderLayer,
-            Qwen3_5RMSNorm,
-            Qwen3_5TextRotaryEmbedding,
-        )
 
         self.config = _qwen_text_config(values, vocab_size=vocab_size)
         self.input_proj = nn.Embedding(vocab_size, self.config.hidden_size, self.config.pad_token_id)
@@ -144,8 +148,6 @@ class G05QwenTextModel(nn.Module):
         position_ids: Tensor,
         cache=None,
     ) -> tuple[Tensor, Any]:
-        from transformers import DynamicCache
-
         if cache is None:
             cache = DynamicCache(config=self.config)
         position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
@@ -172,7 +174,6 @@ class G05ActionDecoderLayer(nn.Module):
 
     def __init__(self, config, layer_idx: int) -> None:
         super().__init__()
-        from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5Attention, Qwen3_5MLP
 
         if config.layer_types[layer_idx] != "full_attention":
             raise ValueError("The released G0.5 action expert requires full-attention layers.")
@@ -227,7 +228,6 @@ class G05ActionExpert(nn.Module):
 
     def __init__(self, values: Mapping[str, Any]) -> None:
         super().__init__()
-        from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5TextRotaryEmbedding
 
         self.config = _qwen_text_config(values)
         input_dim = int(values["input_dim"])
@@ -297,7 +297,6 @@ class G05NativeModel(nn.Module):
 
     def __init__(self, model_config: Mapping[str, Any], *, vocab_size: int) -> None:
         super().__init__()
-        from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5VisionModel
 
         self.vision_tower = Qwen3_5VisionModel(_qwen_vision_config(model_config["vision"]))
         self.vlm = G05QwenTextModel(model_config["vlm"], vocab_size=vocab_size)
@@ -463,7 +462,6 @@ class G05NativeBackend(nn.Module):
         tokenizer_config = processor_path / "tokenizer_config.json"
         if not tokenizer_config.is_file():
             raise FileNotFoundError(f"G0.5 tokenizer config not found: {tokenizer_config}")
-        import json
 
         tokenizer_metadata = json.loads(tokenizer_config.read_text())
         added = tokenizer_metadata.get("added_tokens_decoder") or {}
@@ -513,8 +511,6 @@ class G05NativeBackend(nn.Module):
         temporal_pe: Tensor,
         temporal_mask: Tensor,
     ) -> Tensor:
-        from transformers.models.qwen3_5.modeling_qwen3_5 import apply_rotary_pos_emb_vision
-
         total, hidden_size = hidden_states.shape
         num_heads = block.attn.num_heads
         head_dim = block.attn.head_dim
@@ -703,8 +699,6 @@ class G05NativeBackend(nn.Module):
         return embeddings
 
     def _mrope_positions(self, token_types: Tensor) -> Tensor:
-        import itertools
-
         batch_size, sequence_length = token_types.shape
         positions = torch.zeros(
             3,
@@ -894,8 +888,6 @@ class G05NativeBackend(nn.Module):
         return generated_ids, cache, last_hidden, token_types, positions
 
     def _action_cache(self, vlm_cache, prefix_length: int, *, repeats: int = 1):
-        from transformers import DynamicCache
-
         cache = DynamicCache(config=self.model.action_expert.config)
         layer_types = self.model.vlm.config.layer_types
         for layer_index, layer_type in enumerate(layer_types):

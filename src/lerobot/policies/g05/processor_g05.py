@@ -17,6 +17,8 @@ from typing import Any
 import torch
 import torchvision.transforms.functional as vision_functional
 
+from lerobot.configs import recipe as recipe_module
+from lerobot.configs.recipe import TrainingRecipe
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
@@ -38,6 +40,7 @@ from lerobot.processor.converters import (
     transition_to_policy_action,
 )
 from lerobot.processor.relative_action_processor import to_relative_actions
+from lerobot.processor.render_messages_processor import RenderMessagesStep
 from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     ACTION,
@@ -52,12 +55,8 @@ from .configuration_g05 import G05_EMBODIMENT_MAPPINGS, G05_POLICY_PARTS, G05Con
 def _load_recipe(path_str: str) -> Any:
     """Load an absolute recipe path or one relative to ``lerobot/configs``."""
 
-    from lerobot.configs.recipe import TrainingRecipe
-
     path = Path(path_str)
     if not path.is_absolute() and not path.exists():
-        from lerobot.configs import recipe as recipe_module
-
         candidate = Path(recipe_module.__file__).resolve().parent / path
         if candidate.exists():
             path = candidate
@@ -740,8 +739,6 @@ def make_g05_pre_post_processors(
     )
     steps: list[ProcessorStep] = [RenameObservationsProcessorStep(rename_map={})]
     if config.recipe_path:
-        from lerobot.processor.render_messages_processor import RenderMessagesStep
-
         steps.extend(
             [
                 G05BBoxImageSizeStep(camera_key=config.cot_bbox_camera or config.camera_order[0]),

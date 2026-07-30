@@ -16,8 +16,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from lerobot.policies.g05.inference.g05_adapter import G05PolicyAdapter
 from lerobot.runtime import LanguageConditionedRuntime, RuntimeState
 from lerobot.runtime.adapter import GenerationConfig
+from lerobot.runtime.registry import get_language_adapter_factory
 
 
 class FakeG05Policy:
@@ -36,15 +38,10 @@ class FakeG05Policy:
 
 
 def test_registry_lazily_resolves_g05_adapter():
-    from lerobot.policies.g05.inference.g05_adapter import G05PolicyAdapter
-    from lerobot.runtime.registry import get_language_adapter_factory
-
     assert get_language_adapter_factory("g05") is G05PolicyAdapter
 
 
 def test_system1_passes_exact_runtime_task_without_mutating_observation():
-    from lerobot.policies.g05.inference.g05_adapter import G05PolicyAdapter
-
     policy = FakeG05Policy()
     adapter = G05PolicyAdapter(policy)
     original = {"task": "stale generated subtask", "observation.state": "state"}
@@ -58,8 +55,6 @@ def test_system1_passes_exact_runtime_task_without_mutating_observation():
 
 
 def test_system2_surfaces_same_pass_cot_and_action():
-    from lerobot.policies.g05.inference.g05_adapter import G05PolicyAdapter
-
     class ReasoningPolicy(FakeG05Policy):
         def __init__(self):
             super().__init__(predict_cot=True, continuous_action=True)
@@ -90,8 +85,6 @@ def test_system2_surfaces_same_pass_cot_and_action():
 
 
 def test_system2_accepts_batch_safe_tuple_metadata():
-    from lerobot.policies.g05.inference.g05_adapter import G05PolicyAdapter
-
     class ReasoningPolicy(FakeG05Policy):
         def __init__(self):
             super().__init__(predict_cot=True)
@@ -108,8 +101,6 @@ def test_system2_accepts_batch_safe_tuple_metadata():
 
 
 def test_system2_reasoning_does_not_invalidate_same_pass_action_chunk():
-    from lerobot.policies.g05.inference.g05_adapter import G05PolicyAdapter
-
     class ReasoningPolicy(FakeG05Policy):
         def __init__(self):
             super().__init__(predict_cot=True)
@@ -133,30 +124,22 @@ def test_system2_reasoning_does_not_invalidate_same_pass_action_chunk():
 
 
 def test_system2_rejects_checkpoint_without_predict_cot():
-    from lerobot.policies.g05.inference.g05_adapter import G05PolicyAdapter
-
     with pytest.raises(ValueError, match="predict_cot=True"):
         G05PolicyAdapter(FakeG05Policy(predict_cot=False), system_mode="system2")
 
 
 def test_system1_rejects_checkpoint_without_an_action_head():
-    from lerobot.policies.g05.inference.g05_adapter import G05PolicyAdapter
-
     with pytest.raises(ValueError, match="both discrete_action=False and continuous_action=False"):
         G05PolicyAdapter(FakeG05Policy(predict_cot=True, discrete_action=False, continuous_action=False))
 
 
 def test_system2_requires_structured_single_pass_hook():
-    from lerobot.policies.g05.inference.g05_adapter import G05PolicyAdapter
-
     adapter = G05PolicyAdapter(FakeG05Policy(predict_cot=True))
     with pytest.raises(RuntimeError, match="predict_action_chunk_with_runtime"):
         adapter.select_action({}, RuntimeState(task="pick"))
 
 
 def test_direct_subtask_selects_system1_on_system2_checkpoint():
-    from lerobot.policies.g05.inference.g05_adapter import G05PolicyAdapter
-
     class SwitchablePolicy(FakeG05Policy):
         def __init__(self):
             super().__init__(predict_cot=True, continuous_action=True)
