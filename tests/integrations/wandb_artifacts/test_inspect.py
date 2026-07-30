@@ -14,6 +14,7 @@
 
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,6 +23,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.datasets.io_utils import write_info
 from lerobot.datasets.utils import DEFAULT_TASKS_PATH, EPISODES_DIR, STATS_PATH, DatasetInfo
+from lerobot.integrations.wandb_artifacts import inspect as inspect_module
 from lerobot.integrations.wandb_artifacts.inspect import (
     DatasetDirectoryError,
     inspect_dataset_directory,
@@ -52,7 +54,7 @@ def _write_minimal_dataset(
 
 def test_validate_accepts_minimal_dataset(tmp_path):
     _write_minimal_dataset(tmp_path)
-    validate_dataset_directory(tmp_path)  # must not raise
+    validate_dataset_directory(tmp_path)
 
 
 def test_validate_rejects_missing_info_json(tmp_path):
@@ -89,41 +91,55 @@ def test_validate_requires_tasks_file_when_total_tasks_nonzero(tmp_path):
 
     (tmp_path / DEFAULT_TASKS_PATH).parent.mkdir(parents=True, exist_ok=True)
     (tmp_path / DEFAULT_TASKS_PATH).write_bytes(b"")
-    validate_dataset_directory(tmp_path)  # must not raise now
+    validate_dataset_directory(tmp_path)
 
 
-def test_validate_requires_episodes_dir_when_total_episodes_nonzero(tmp_path):
-    # total_frames=100 also requires data shards (separately tested below); satisfy both here so
-    # this test isolates the episodes-directory requirement's own pass/fail transition.
-    _write_minimal_dataset(tmp_path, total_episodes=3, total_frames=100)
+def test_validate_requires_loader_visible_episode_shards(tmp_path):
+    _write_minimal_dataset(tmp_path, total_episodes=3)
     with pytest.raises(DatasetDirectoryError):
         validate_dataset_directory(tmp_path)
 
-    data_chunk = tmp_path / "data" / "chunk-000"
-    data_chunk.mkdir(parents=True, exist_ok=True)
-    (data_chunk / "file-000.parquet").write_bytes(b"")
+    too_deep = tmp_path / EPISODES_DIR / "chunk-000" / "nested"
+    too_deep.mkdir(parents=True, exist_ok=True)
+    (too_deep / "file-000.parquet").write_bytes(b"")
     with pytest.raises(DatasetDirectoryError):
-        validate_dataset_directory(tmp_path)  # still missing episode metadata
+        validate_dataset_directory(tmp_path)
 
-    episodes_chunk = tmp_path / EPISODES_DIR / "chunk-000"
-    episodes_chunk.mkdir(parents=True, exist_ok=True)
-    (episodes_chunk / "file-000.parquet").write_bytes(b"")
-    validate_dataset_directory(tmp_path)  # must not raise now
+    (too_deep.parent / "file-000.parquet").write_bytes(b"")
+    validate_dataset_directory(tmp_path)
 
 
-def test_validate_requires_data_shards_when_total_frames_nonzero(tmp_path):
+def test_validate_requires_loader_visible_data_shards(tmp_path):
     _write_minimal_dataset(tmp_path, total_frames=100)
     with pytest.raises(DatasetDirectoryError):
         validate_dataset_directory(tmp_path)
 
+    too_deep = tmp_path / "data" / "chunk-000" / "nested"
+    too_deep.mkdir(parents=True, exist_ok=True)
+    (too_deep / "file-000.parquet").write_bytes(b"")
+    with pytest.raises(DatasetDirectoryError):
+        validate_dataset_directory(tmp_path)
+
+    (too_deep.parent / "file-000.parquet").write_bytes(b"")
+    validate_dataset_directory(tmp_path)
+
+
+def test_validate_cross_checks_episode_and_data_counts_independently(tmp_path):
+    _write_minimal_dataset(tmp_path, total_episodes=3, total_frames=100)
+
     data_chunk = tmp_path / "data" / "chunk-000"
     data_chunk.mkdir(parents=True, exist_ok=True)
     (data_chunk / "file-000.parquet").write_bytes(b"")
-    validate_dataset_directory(tmp_path)  # must not raise now
+    with pytest.raises(DatasetDirectoryError):
+        validate_dataset_directory(tmp_path)
+
+    episodes_chunk = tmp_path / EPISODES_DIR / "chunk-000"
+    episodes_chunk.mkdir(parents=True, exist_ok=True)
+    (episodes_chunk / "file-000.parquet").write_bytes(b"")
+    validate_dataset_directory(tmp_path)
 
 
 def test_validate_top_level_check_passes_but_metadata_loading_would_still_fail_without_episodes(tmp_path):
-    """Top-level structure (info/stats/data) can be present while episode metadata is still missing."""
     _write_minimal_dataset(tmp_path, total_episodes=1, total_frames=0)
     assert (tmp_path / STATS_PATH).is_file()
     assert (tmp_path / "data").is_dir()
@@ -153,17 +169,32 @@ def test_inspect_extracts_metadata(tmp_path):
     assert metadata.source_path == tmp_path.resolve()
 
 
-def test_inspect_git_commit_matches_actual_repo_head_or_is_none(tmp_path):
+def test_inspect_git_commit_matches_lerobot_checkout_head(tmp_path):
     _write_minimal_dataset(tmp_path)
     metadata = inspect_dataset_directory(tmp_path)
 
+    repo_root = Path(__file__).resolve().parents[3]
     expected = subprocess.run(
-        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=Path(__file__).parent
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=repo_root
     )
-    if expected.returncode == 0:
+    if expected.returncode == 0 and (repo_root / "src" / "lerobot").is_dir():
         assert metadata.git_commit == expected.stdout.strip()
     else:
         assert metadata.git_commit is None
+
+
+def test_git_commit_ignores_an_enclosing_unrelated_repository(monkeypatch):
+    unrelated_root = Path(inspect_module.__file__).resolve().parents[4]
+    calls = []
+
+    def _fake_run(*args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout=f"{unrelated_root}\n")
+
+    monkeypatch.setattr(inspect_module.subprocess, "run", _fake_run)
+
+    assert inspect_module._current_git_commit() is None
+    assert len(calls) == 1
 
 
 def test_inspect_raises_on_invalid_directory(tmp_path):
@@ -177,6 +208,6 @@ def test_to_wandb_metadata_is_json_safe(tmp_path):
     _write_minimal_dataset(tmp_path)
     metadata = inspect_dataset_directory(tmp_path)
     payload = metadata.to_wandb_metadata()
-    json.dumps(payload)  # must not raise
+    json.dumps(payload)
     assert payload["source_path"] == str(tmp_path.resolve())
     assert isinstance(payload["camera_keys"], list)
