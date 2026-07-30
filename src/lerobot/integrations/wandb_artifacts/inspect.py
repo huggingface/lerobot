@@ -13,10 +13,9 @@
 # limitations under the License.
 """Lightweight structural validation and metadata extraction for local dataset directories.
 
-Deliberately shallow: this never loads model weights or decodes a single frame. It only checks
-the on-disk shape ``LeRobotDataset`` expects (``meta/info.json``, ``meta/stats.json``, ``data/``,
-plus ``meta/tasks.parquet`` / ``meta/episodes/`` when the dataset's own info declares nonzero
-counts for them) and reads ``meta/info.json`` for self-describing metadata.
+Deliberately shallow: this never loads model weights or decodes a single frame. It checks the
+on-disk shape ``LeRobotDataset`` expects and verifies that every data, episode-metadata, and
+video file referenced by that metadata is locally materialized.
 """
 
 from __future__ import annotations
@@ -26,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from lerobot.datasets.io_utils import load_info
+from lerobot.datasets.io_utils import load_episodes, load_info
 from lerobot.datasets.utils import (
     DATA_DIR,
     DEFAULT_TASKS_PATH,
@@ -73,18 +72,19 @@ class DatasetDirectoryMetadata:
 
 
 def validate_dataset_directory(root: Path | str) -> DatasetInfo:
-    """Validate that ``root`` has the on-disk shape a LeRobot dataset requires.
+    """Validate that ``root`` has the complete on-disk shape a LeRobot dataset requires.
 
-    Checks the required top-level files/directories first, then — only once ``meta/info.json``
-    is known to be readable — cross-checks the task/episode/data files against the counts
-    ``info.json`` itself declares. The parquet discovery rule deliberately matches
-    ``load_nested_dataset()`` exactly: one chunk directory below the corresponding root.
+    Checks required top-level files first, then cross-checks task, episode, data, and video payloads
+    against ``meta/info.json`` and episode metadata. Parquet discovery deliberately matches
+    ``load_nested_dataset()`` exactly: one chunk directory below the corresponding root. Video
+    validation derives the same paths as ``LeRobotDatasetMetadata.get_video_file_path()`` without
+    decoding media.
 
     Returns:
         The loaded ``DatasetInfo``, so callers that go on to extract metadata don't re-read it.
 
     Raises:
-        DatasetDirectoryError: ``root`` doesn't have the required structure.
+        DatasetDirectoryError: ``root`` is incomplete or its metadata cannot describe local files.
     """
     root = Path(root)
     if not root.is_dir():
@@ -121,6 +121,7 @@ def validate_dataset_directory(root: Path | str) -> DatasetInfo:
             f"{DATA_DIR}/ has no data parquet files."
         )
 
+    _validate_video_files(root, info)
     return info
 
 
@@ -153,6 +154,58 @@ def inspect_dataset_directory(root: Path | str) -> DatasetDirectoryMetadata:
 def _has_chunked_parquet(root: Path) -> bool:
     """Return whether ``root`` contains a parquet exactly one chunk directory below it."""
     return any(root.glob("*/*.parquet"))
+
+
+def _validate_video_files(root: Path, info: DatasetInfo) -> None:
+    """Require every video path referenced by episode metadata to be materialized locally."""
+    video_keys = tuple(key for key, feature in info.features.items() if feature["dtype"] == "video")
+    if info.total_episodes == 0 or not video_keys:
+        return
+    if info.video_path is None:
+        raise DatasetDirectoryError(
+            f"{root}/{INFO_PATH} declares video features but does not define a video_path template."
+        )
+
+    try:
+        episodes = load_episodes(root)
+    except Exception as e:
+        raise DatasetDirectoryError(
+            f"{root}/{EPISODES_DIR} could not be read to validate referenced video files: {e}"
+        ) from e
+
+    if len(episodes) < info.total_episodes:
+        raise DatasetDirectoryError(
+            f"{root} declares total_episodes={info.total_episodes} in {INFO_PATH} but episode "
+            f"metadata contains only {len(episodes)} row(s)."
+        )
+
+    missing: set[Path] = set()
+    try:
+        for episode_index in range(info.total_episodes):
+            episode = episodes[episode_index]
+            for video_key in video_keys:
+                relative_path = Path(
+                    info.video_path.format(
+                        video_key=video_key,
+                        chunk_index=episode[f"videos/{video_key}/chunk_index"],
+                        file_index=episode[f"videos/{video_key}/file_index"],
+                    )
+                )
+                if not (root / relative_path).is_file():
+                    missing.add(relative_path)
+    except (IndexError, KeyError, TypeError, ValueError) as e:
+        raise DatasetDirectoryError(
+            f"{root}/{EPISODES_DIR} cannot resolve every declared video path from episode metadata: {e}"
+        ) from e
+
+    if missing:
+        missing_paths = sorted(missing)
+        preview = ", ".join(str(path) for path in missing_paths[:3])
+        remainder = f", and {len(missing_paths) - 3} more" if len(missing_paths) > 3 else ""
+        raise DatasetDirectoryError(
+            f"{root} is missing {len(missing_paths)} video file(s) referenced by episode metadata: "
+            f"{preview}{remainder}."
+        )
 
 
 def _current_git_commit() -> str | None:
