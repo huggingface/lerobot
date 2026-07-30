@@ -489,15 +489,13 @@ class UnitreeG1(Robot):
     def send_action(self, action: RobotAction) -> RobotAction:
         action_to_publish = action
         if self.controller is not None:
-            # Forward joystick axes / SONIC token keys to the controller thread, which
-            # extracts and decodes them.
-            self._update_controller_action(action)
-            # Full-body controllers (SONIC) own the whole 29-DoF command; nothing to
-            # publish here (the controller thread is the sole publisher).
-            if getattr(self.controller, "full_body", False):
-                return action
             # Controller thread owns legs/waist. Here we only update joystick inputs
             # and publish arm targets from the teleoperator.
+            self._update_controller_action(action)
+            # Full-body controllers (SONIC) own the whole 29-DoF command; the controller
+            # thread is the sole publisher, so there is nothing to publish here.
+            if getattr(self.controller, "full_body", False):
+                return action
             arm_prefixes = tuple(j.name for j in G1_29_JointArmIndex)
             action_to_publish = {
                 key: value
