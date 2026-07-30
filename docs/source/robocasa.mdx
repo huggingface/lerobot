@@ -82,6 +82,8 @@ By default the env samples objects only from the `lightwheel` registry (what `--
 
 All eval snippets below mirror the CI command (see `.github/workflows/benchmark_tests.yml`). The `--rename_map` argument maps RoboCasa's native camera keys (`robot0_agentview_left` / `robot0_eye_in_hand` / `robot0_agentview_right`) onto the three-camera (`camera1` / `camera2` / `camera3`) input layout the released `smolvla_robocasa` policy was trained on.
 
+By default, each task uses the rollout horizon registered by RoboCasa. Set `--env.episode_length=<steps>` to apply the same explicit horizon to every selected task.
+
 ### Single-task evaluation (recommended for quick iteration)
 
 ```bash
