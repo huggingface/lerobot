@@ -36,6 +36,7 @@ from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.__version__ import __version__
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.rewards import RewardModelConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.distributed.checkpoint import (
     is_sharded_module,
@@ -60,7 +61,7 @@ from lerobot.utils.constants import (
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
-from lerobot.utils.hub import DCP_ARTIFACT_PATTERNS, HubMixin, find_latest_hub_checkpoint
+from lerobot.utils.hub import find_latest_hub_checkpoint
 from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.random_utils import load_rng_state, save_rng_state
 
@@ -68,6 +69,7 @@ if TYPE_CHECKING:
     from accelerate import Accelerator
 
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+    from lerobot.rewards.pretrained import PreTrainedRewardModel
 
 
 def get_step_identifier(step: int, total_steps: int) -> str:
@@ -606,7 +608,7 @@ def resolve_resume_checkpoint(repo_id: str, output_dir: Path) -> Path:
 
 def publish_trained_model(
     cfg: TrainPipelineConfig,
-    model: HubMixin,
+    model: "PreTrainedPolicy | PreTrainedRewardModel",
     preprocessor: PolicyProcessorPipeline | None,
     postprocessor: PolicyProcessorPipeline | None,
     dataset_meta: "LeRobotDatasetMetadata | None",
@@ -620,14 +622,14 @@ def publish_trained_model(
     `HubMixin.push_to_hub` and here). Commits, in order: (1) the model (skipped for PEFT —
     adapters replace full weights), (2) the preprocessor, (3) the postprocessor, (4) the bundle
     sidecar: README.md model card + train_config.json (+ adapter weights and the wrapped
-    policy's config in the PEFT case). Published repos carry safetensors only — DCP resume
-    artifacts are filtered from every upload.
+    policy's config in the PEFT case). Every commit uploads a freshly assembled directory, so
+    a published repo carries only the distributable artifacts.
 
     Args:
         cfg (TrainPipelineConfig): The training config; saved as `train_config.json` and used
             to render the model card.
-        model (HubMixin): The trained model to publish; its config supplies the target repo id,
-            visibility, license, and tags.
+        model (PreTrainedPolicy | PreTrainedRewardModel): The trained model to publish; its
+            config supplies the target repo id, visibility, license, and tags.
         preprocessor (PolicyProcessorPipeline | None): The preprocessor pipeline to publish
             alongside the model, if any.
         postprocessor (PolicyProcessorPipeline | None): The postprocessor pipeline to publish
@@ -644,7 +646,7 @@ def publish_trained_model(
     repo_id = model_cfg.repo_id
     if not repo_id:
         raise ValueError("Publishing requires a repo id (--policy.repo_id).")
-    ignore = ["*.tmp", "*.log", *DCP_ARTIFACT_PATTERNS]
+    ignore = ["*.tmp", "*.log"]
 
     if peft_model is None:
         # Calls are made on the exact objects that own each method (never through PEFT's
@@ -664,14 +666,7 @@ def publish_trained_model(
             if peft_model is not None:
                 peft_model.save_pretrained(saved_path)  # adapter weights + adapter config
                 model.config.save_pretrained(saved_path)  # PEFT cannot write the policy config
-            if hasattr(type(model), "generate_model_card"):
-                # Model families with their own card template (reward models) render it
-                # themselves; policies use the shared template below.
-                card = model.generate_model_card(
-                    cfg.dataset.repo_id, model_cfg.type, model_cfg.license, model_cfg.tags
-                )
-            else:
-                card = generate_model_card(model_cfg, cfg=cfg, dataset_meta=dataset_meta)
+            card = generate_model_card(model_cfg, cfg=cfg, dataset_meta=dataset_meta)
             card.save(str(saved_path / "README.md"))
             cfg.save_pretrained(saved_path)  # train_config.json
             commit_info = api.upload_folder(
@@ -764,19 +759,21 @@ def build_card_context(
 
 
 def generate_model_card(
-    model_cfg: PreTrainedConfig,
+    model_cfg: PreTrainedConfig | RewardModelConfig,
     cfg: TrainPipelineConfig | None = None,
     dataset_meta: "LeRobotDatasetMetadata | None" = None,
 ) -> ModelCard:
-    """Render the LeRobot model card for a trained model.
+    """Render the LeRobot model card for a trained policy or reward model.
 
-    A free function on purpose: every template variable comes from arguments —
-    the model config, the training config, and the dataset metadata — none from a live model.
-    Reward-model configs without feature declarations degrade to empty sections.
+    A free function on purpose: every template variable comes from arguments — the model
+    config, the training config, and the dataset metadata — none from a live model, so a card
+    can also be rendered from a checkpoint's `config.json` alone (see `lerobot-convert-dcp`).
+    The config type selects the template: reward models get the reward-model card, policies the
+    policy card with the training/dataset sections.
 
     Args:
-        model_cfg (PreTrainedConfig): The policy config providing type, license, tags, repo id,
-            and feature declarations.
+        model_cfg (PreTrainedConfig | RewardModelConfig): The model config providing type,
+            license, tags, repo id, and — for policies — the feature declarations.
         cfg (TrainPipelineConfig | None, optional): The training config for the training and
             dataset card sections. Defaults to None.
         dataset_meta (LeRobotDatasetMetadata | None, optional): Dataset metadata for the
@@ -786,28 +783,34 @@ def generate_model_card(
         ModelCard: The rendered and validated LeRobot model card.
     """
     model_type = model_cfg.type
+    base_model = _BASE_MODEL_MAPPING.get(model_type)
+
+    if isinstance(model_cfg, RewardModelConfig):
+        tags = {"robotics", "lerobot", "reward-model", model_type}
+        template_card = (
+            files("lerobot.templates")
+            .joinpath("lerobot_rewardmodel_modelcard_template.md")
+            .read_text("utf-8")
+        )
+        context: dict[str, Any] = {}  # the reward template renders from card_data alone
+    else:
+        tags = {"robotics", "lerobot", model_type}
+        template_card = (
+            files("lerobot.templates").joinpath("lerobot_modelcard_template.md").read_text("utf-8")
+        )
+        context = build_card_context(cfg, dataset_meta, model_cfg.input_features, model_cfg.output_features)
+        # Used by the template to pre-fill commands and the "Fine-tuned from" line.
+        context["policy_repo_id"] = model_cfg.repo_id
+        context["base_model"] = base_model
+
     card_data = ModelCardData(
         license=model_cfg.license or "apache-2.0",
         library_name="lerobot",
         pipeline_tag="robotics",
-        tags=list(set(model_cfg.tags or []).union({"robotics", "lerobot", model_type})),
+        tags=list(tags.union(model_cfg.tags or [])),
         model_name=model_type,
         datasets=cfg.dataset.repo_id if cfg is not None else None,
-        base_model=_BASE_MODEL_MAPPING.get(model_type),
-    )
-
-    context = build_card_context(
-        cfg,
-        dataset_meta,
-        getattr(model_cfg, "input_features", None),
-        getattr(model_cfg, "output_features", None),
-    )
-    # Used by the template to pre-fill commands and the "Fine-tuned from" line.
-    context["policy_repo_id"] = getattr(model_cfg, "repo_id", None)
-    context["base_model"] = _BASE_MODEL_MAPPING.get(model_type)
-
-    template_card = (
-        files("lerobot.templates").joinpath("lerobot_modelcard_template.md").read_text(encoding="utf-8")
+        base_model=base_model,
     )
     card = ModelCard.from_template(card_data, template_str=template_card, **context)
     card.validate()

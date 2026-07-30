@@ -18,8 +18,9 @@ import builtins
 import dataclasses
 import logging
 import os
+import warnings
 from pathlib import Path
-from typing import Any, ClassVar, TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, Unpack
 
 from huggingface_hub import hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
@@ -32,6 +33,10 @@ from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
 
 from .utils import log_model_loading_keys
+
+if TYPE_CHECKING:
+    from lerobot.configs.train import TrainPipelineConfig
+    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 
 T = TypeVar("T", bound="PreTrainedPolicy")
 
@@ -228,6 +233,46 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         with caching.
         """
         raise NotImplementedError
+
+    def push_model_to_hub(
+        self,
+        cfg: TrainPipelineConfig,
+        peft_model=None,
+        state_dict: dict[str, Tensor] | None = None,
+        dataset_meta: LeRobotDatasetMetadata | None = None,
+    ) -> None:
+        """Publish this policy to the Hub.
+
+        Deprecated: use :func:`lerobot.common.train_utils.publish_trained_model` instead, which
+        also publishes the pre/post-processors alongside the model.
+
+        Args:
+            cfg (TrainPipelineConfig): The training config; saved as `train_config.json` and
+                used to render the model card.
+            peft_model: The PEFT wrapper when training adapters, whose weights replace the full
+                model weights in the published repo. Defaults to None.
+            state_dict (dict[str, Tensor] | None): Ignored; weights are now gathered internally
+                when the policy is sharded. Defaults to None.
+            dataset_meta (LeRobotDatasetMetadata | None): Dataset metadata for the model card,
+                if available. Defaults to None.
+        """
+        from lerobot.common.train_utils import publish_trained_model
+
+        warnings.warn(
+            "PreTrainedPolicy.push_model_to_hub is deprecated and will be removed in a future "
+            "version. Use lerobot.common.train_utils.publish_trained_model(cfg, model, "
+            "preprocessor, postprocessor, dataset_meta) instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        if state_dict is not None:
+            warnings.warn(
+                "The `state_dict` argument is ignored: sharded weights are gathered internally "
+                "when the policy is saved.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        publish_trained_model(cfg, self, None, None, dataset_meta, peft_model=peft_model)
 
     def wrap_with_peft(
         self,

@@ -24,18 +24,10 @@ from .constants import CHECKPOINTS_DIR
 
 T = TypeVar("T", bound="HubMixin")
 
+
 # Sharded-training resume artifacts (torch DCP shard dirs + shard files). Published model repos
 # carry safetensors only, so publishing uploads exclude these — checkpoint pushes (which exist
 # for resume, not distribution) deliberately do not.
-DCP_ARTIFACT_PATTERNS = (
-    "pytorch_model_fsdp*",
-    "pytorch_model_fsdp*/**",
-    "optimizer_*/**",
-    "*.distcp",
-    "**/.metadata",
-)
-
-
 def find_latest_hub_checkpoint(
     repo_id: str,
     *,

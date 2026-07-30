@@ -38,7 +38,6 @@ from huggingface_hub import HfApi
 from lerobot.configs import parser
 from lerobot.distributed.checkpoint import dcp_to_safetensors
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
-from lerobot.utils.hub import DCP_ARTIFACT_PATTERNS
 from lerobot.utils.utils import init_logging
 
 
@@ -126,7 +125,9 @@ def _publish_converted(pretrained_dir: Path, repo_id: str, private: bool | None)
         folder_path=str(pretrained_dir),
         commit_message="Upload converted policy (DCP -> safetensors)",
         allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
-        ignore_patterns=["*.tmp", "*.log", *DCP_ARTIFACT_PATTERNS],
+        # The checkpoint keeps its DCP shard directory unless --delete_dcp was passed; the
+        # allow list above admits neither `.distcp` shards nor their `.metadata` sidecar.
+        ignore_patterns=["*.tmp", "*.log"],
     )
     logging.info(f"Model pushed to {commit_info.repo_url.url}")
 

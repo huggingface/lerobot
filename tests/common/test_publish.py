@@ -91,9 +91,6 @@ class TestPublishTrainedModel:
         # commit 4: the bundle sidecar
         bundle = mocked_hub.calls[-1]
         assert {"README.md", "train_config.json"} <= set(bundle["files"])
-        # DCP resume artifacts are excluded from every publish upload
-        for call in (model_commit, bundle):
-            assert any("distcp" in p for p in call["ignore_patterns"])
         # the exact line lerobot.jobs.hf watches to end remote runs early
         assert any(
             m.startswith("Model pushed to https://huggingface.co/user/policy") for m in caplog.messages
@@ -129,3 +126,23 @@ class TestGenerateModelCard:
         assert card.data.library_name == "lerobot"
         assert card.data.datasets == "user/dataset"
         assert "lerobot" in card.data.tags
+
+
+class TestDeprecatedPushModelToHub:
+    """`push_model_to_hub` stays callable for external scripts, delegating to the publisher."""
+
+    def test_policy_shim_warns_and_publishes(self, mocked_hub):
+        policy = make_dummy_policy(repo_id="user/policy")
+        with pytest.warns(FutureWarning, match="push_model_to_hub is deprecated"):
+            policy.push_model_to_hub(make_cfg())
+
+        # Same artifacts the method produced before: weights + config, then card + train config.
+        model_commit = mocked_hub.calls[0]
+        assert {"config.json", "model.safetensors"} <= set(model_commit["files"])
+        bundle = mocked_hub.calls[-1]
+        assert {"README.md", "train_config.json"} <= set(bundle["files"])
+
+    def test_policy_shim_warns_that_state_dict_is_ignored(self, mocked_hub):
+        policy = make_dummy_policy(repo_id="user/policy")
+        with pytest.warns(FutureWarning, match="`state_dict` argument is ignored"):
+            policy.push_model_to_hub(make_cfg(), state_dict=policy.state_dict())

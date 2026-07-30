@@ -16,11 +16,11 @@ import abc
 import builtins
 import logging
 import os
-from importlib.resources import files
+import warnings
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
-from huggingface_hub import ModelCard, ModelCardData, hf_hub_download
+from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor, save_model as save_model_as_safetensor
@@ -29,6 +29,9 @@ from torch import Tensor, nn
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
+
+if TYPE_CHECKING:
+    from lerobot.configs.train import TrainPipelineConfig
 
 T = TypeVar("T", bound="PreTrainedRewardModel")
 
@@ -187,23 +190,22 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
         """
         return type(self).forward is not PreTrainedRewardModel.forward
 
-    def generate_model_card(
-        self, dataset_repo_id: str, model_type: str, license: str | None, tags: list[str] | None
-    ) -> ModelCard:
-        card_data = ModelCardData(
-            license=license or "apache-2.0",
-            library_name="lerobot",
-            pipeline_tag="robotics",
-            tags=list(set(tags or []).union({"robotics", "lerobot", "reward-model", model_type})),
-            model_name=model_type,
-            datasets=dataset_repo_id,
-        )
+    def push_model_to_hub(self, cfg: "TrainPipelineConfig") -> None:
+        """Publish this reward model to the Hub.
 
-        template_card = (
-            files("lerobot.templates")
-            .joinpath("lerobot_rewardmodel_modelcard_template.md")
-            .read_text(encoding="utf-8")
+        Deprecated: use :func:`lerobot.common.train_utils.publish_trained_model` instead.
+
+        Args:
+            cfg (TrainPipelineConfig): The training config; saved as `train_config.json` and
+                used to render the model card.
+        """
+        from lerobot.common.train_utils import publish_trained_model
+
+        warnings.warn(
+            "PreTrainedRewardModel.push_model_to_hub is deprecated and will be removed in a "
+            "future version. Use lerobot.common.train_utils.publish_trained_model(cfg, model, "
+            "preprocessor, postprocessor, dataset_meta) instead.",
+            FutureWarning,
+            stacklevel=2,
         )
-        card = ModelCard.from_template(card_data, template_str=template_card)
-        card.validate()
-        return card
+        publish_trained_model(cfg, self, None, None, None)

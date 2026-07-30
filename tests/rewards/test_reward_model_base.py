@@ -22,6 +22,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from lerobot.common.train_utils import generate_model_card
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.rewards.pretrained import PreTrainedRewardModel
@@ -336,6 +337,13 @@ def _make_dummy_reward_model(**config_kwargs):
     return _DummyHubReward(_DummyHubRewardConfig(**config_kwargs)), _DummyHubRewardConfig
 
 
+def _make_train_cfg(dataset_repo_id: str):
+    from lerobot.configs.default import DatasetConfig
+    from lerobot.configs.train import TrainPipelineConfig
+
+    return TrainPipelineConfig(dataset=DatasetConfig(repo_id=dataset_repo_id))
+
+
 @pytest.fixture
 def _offline_model_card(monkeypatch):
     """``ModelCard.validate`` does a live ``POST`` to huggingface.co — bypass it
@@ -353,12 +361,7 @@ def test_reward_model_generate_model_card_renders_expected_fields(_offline_model
         tags=["robot", "sim"],
     )
 
-    card = model.generate_model_card(
-        dataset_repo_id="user/my_dataset",
-        model_type=model.config.type,
-        license=model.config.license,
-        tags=model.config.tags,
-    )
+    card = generate_model_card(model.config, cfg=_make_train_cfg("user/my_dataset"))
 
     # Metadata (YAML header) — ModelCardData fields.
     assert card.data.license == "mit"
@@ -380,12 +383,7 @@ def test_reward_model_generate_model_card_uses_default_license(_offline_model_ca
     """When config.license is None the card falls back to apache-2.0."""
     model, _ = _make_dummy_reward_model()
 
-    card = model.generate_model_card(
-        dataset_repo_id="user/my_dataset",
-        model_type=model.config.type,
-        license=model.config.license,
-        tags=None,
-    )
+    card = generate_model_card(model.config, cfg=_make_train_cfg("user/my_dataset"))
 
     assert card.data.license == "apache-2.0"
 
@@ -474,3 +472,36 @@ def test_save_pretrained_writes_nothing_off_main_rank(tmp_path, monkeypatch):
     monkeypatch.setattr(dist_utils, "is_main_process", lambda: False)
     model.save_pretrained(tmp_path)
     assert not any(tmp_path.iterdir())
+
+
+def test_reward_model_push_model_to_hub_shim_warns_and_publishes(monkeypatch, _offline_model_card):
+    """The deprecated ``push_model_to_hub`` stays callable, delegating to the publisher."""
+    from huggingface_hub.constants import CONFIG_NAME
+
+    import lerobot.common.train_utils as train_utils
+    import lerobot.utils.hub as hub_module
+    from lerobot.configs.train import TRAIN_CONFIG_NAME
+
+    all_files: set[str] = set()
+
+    class _FakeHfApi:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def create_repo(self, repo_id, private=None, exist_ok=False, **kwargs):
+            return SimpleNamespace(repo_id=repo_id)
+
+        def upload_folder(self, *, repo_id, folder_path, **_kwargs):
+            all_files.update(p.name for p in Path(folder_path).iterdir())
+            return SimpleNamespace(repo_url=SimpleNamespace(url=f"https://huggingface.co/{repo_id}"))
+
+    monkeypatch.setattr(train_utils, "HfApi", _FakeHfApi)
+    monkeypatch.setattr(hub_module, "HfApi", _FakeHfApi)
+
+    model, _ = _make_dummy_reward_model(repo_id="user/my_reward")
+    with pytest.warns(FutureWarning, match="push_model_to_hub is deprecated"):
+        model.push_model_to_hub(_make_train_cfg("user/my_dataset"))
+
+    assert CONFIG_NAME in all_files
+    assert TRAIN_CONFIG_NAME in all_files
+    assert "README.md" in all_files

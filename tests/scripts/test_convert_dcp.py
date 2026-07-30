@@ -85,10 +85,10 @@ class TestPublishGracefulDegradation:
             def create_repo(self, repo_id, private=None, exist_ok=False):
                 return SimpleNamespace(repo_id=repo_id)
 
-            def upload_folder(self, *, repo_id, folder_path, ignore_patterns, **kwargs):
+            def upload_folder(self, *, repo_id, folder_path, allow_patterns, **kwargs):
                 calls["repo_id"] = repo_id
                 calls["files"] = sorted(p.name for p in Path(folder_path).iterdir())
-                calls["ignore_patterns"] = ignore_patterns
+                calls["allow_patterns"] = allow_patterns
                 return SimpleNamespace(repo_url=SimpleNamespace(url=f"https://huggingface.co/{repo_id}"))
 
         import lerobot.scripts.lerobot_convert_dcp as mod
@@ -104,7 +104,9 @@ class TestPublishGracefulDegradation:
             _publish_converted(pretrained, "user/converted", private=None)
         assert any("train_config.json missing" in m for m in caplog.messages)
         assert "model.safetensors" in calls["files"]
-        assert any("distcp" in p for p in calls["ignore_patterns"])
+        # The DCP shard directory is still on disk (--delete_dcp defaults to False) but the
+        # allow list admits neither `.distcp` shards nor their `.metadata` sidecar.
+        assert set(calls["allow_patterns"]) == {"*.safetensors", "*.json", "*.yaml", "*.md"}
         # config.json is not parseable as a policy config here -> card skipped with a warning
         assert any("model card" in m for m in caplog.messages)
 
