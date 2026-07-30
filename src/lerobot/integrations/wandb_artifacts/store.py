@@ -11,12 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Thin wrapper around the W&B operations this integration needs: uploading a local directory as
-a versioned Artifact, and downloading a named Artifact into a local directory.
+"""Thin W&B wrappers for uploading and transactionally downloading versioned Artifacts.
 
-Every call returns a :class:`MaterializedArtifact` carrying both the requested and the resolved
+Every operation returns a :class:`MaterializedArtifact` carrying both the requested and resolved
 (immutable) reference — see the "requested ref" / "resolved ref" entries in ``CONTEXT.md`` — never
-only one or the other.
+only one or the other. Importing this module does not require W&B; the optional SDK is checked only
+when an upload or download is actually attempted.
 """
 
 from __future__ import annotations
@@ -26,12 +26,18 @@ import shutil
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from importlib.metadata import version
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import wandb
+from packaging.version import Version
+
+from lerobot.utils.import_utils import require_package
 
 from .refs import ArtifactRef, parse_artifact_ref
+
+if TYPE_CHECKING:
+    import wandb
 
 
 class ArtifactTypeMismatchError(ValueError):
@@ -61,6 +67,20 @@ class MaterializedArtifact:
     metadata: dict[str, Any]
 
 
+def _wandb_sdk() -> Any:
+    """Return a supported W&B SDK, raising only when an SDK operation is requested."""
+    require_package("wandb", extra="training")
+
+    import wandb
+
+    if Version(version("wandb")) < Version("0.24.1"):
+        raise RuntimeError(
+            "lerobot-wandb requires wandb>=0.24.1 because wandb 0.24.0 can silently fail to upload "
+            "run data. Upgrade the training extra before using artifact transfers."
+        )
+    return wandb
+
+
 def upload_directory(
     run: wandb.sdk.wandb_run.Run,
     directory: Path | str,
@@ -78,6 +98,7 @@ def upload_directory(
     """
     directory = Path(directory)
     requested_ref = f"{run.entity}/{run.project}/{name}"
+    wandb = _wandb_sdk()
 
     artifact = wandb.Artifact(name=name, type=artifact_type, metadata=dict(metadata) if metadata else None)
     artifact.add_dir(str(directory))
@@ -129,6 +150,7 @@ def download_artifact(
             )
         destination_was_empty = True
 
+    _wandb_sdk()
     artifact = run.use_artifact(str(parsed))
     if artifact.type != expected_type:
         raise ArtifactTypeMismatchError(
