@@ -51,7 +51,7 @@ In addition to these instructions, you need to install the Feetech SDK & ZeroMQ 
 pip install -e ".[lekiwi]"
 ```
 
-Great :hugs:! You are now done installing LeRobot, and we can begin assembling the SO100/SO101 arms and the mobile base :robot:.
+Great 🤗! You are now done installing LeRobot, and we can begin assembling the SO100/SO101 arms and the mobile base 🤖.
 Every time you now want to use LeRobot, you can go to the `~/lerobot` folder where we installed LeRobot and run one of the commands.
 
 # Step-by-Step Assembly Instructions

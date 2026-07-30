@@ -45,7 +45,14 @@ from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file, save_file
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.types import EnvAction, EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
+from lerobot.lerobot_types import (
+    EnvAction,
+    EnvTransition,
+    PolicyAction,
+    RobotAction,
+    RobotObservation,
+    TransitionKey,
+)
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.hub import HubMixin
 
