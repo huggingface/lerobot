@@ -44,11 +44,18 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 from lerobot.utils.feature_utils import dataset_to_policy_features
+from lerobot.utils.import_utils import _peft_available, require_package
 
 from .evo1.configuration_evo1 import Evo1Config
 from .groot.configuration_groot import GrootConfig
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
+
+if TYPE_CHECKING or _peft_available:
+    from peft import PeftConfig, PeftModel
+else:
+    PeftConfig = None
+    PeftModel = None
 
 
 def _reconnect_relative_absolute_steps(
@@ -177,6 +184,7 @@ def make_pre_post_processors(
             return make_groot_pre_post_processors_from_pretrained(
                 config=policy_cfg,
                 pretrained_path=pretrained_path,
+                revision=pretrained_revision,
                 dataset_stats=kwargs.get("dataset_stats"),
                 dataset_meta=kwargs.get("dataset_meta"),
                 preprocessor_overrides=kwargs.get("preprocessor_overrides"),
@@ -333,12 +341,15 @@ def make_policy(
         # Load a pretrained PEFT model on top of the policy. The pretrained path points to the folder/repo
         # of the adapter and the adapter's config contains the path to the base policy. So we need the
         # adapter config first, then load the correct policy and then apply PEFT.
-        from peft import PeftConfig, PeftModel
+        require_package("peft", extra="peft")
 
         logging.info("Loading policy's PEFT adapter.")
 
         peft_pretrained_path = str(cfg.pretrained_path)
-        peft_config = PeftConfig.from_pretrained(peft_pretrained_path)
+        peft_config = PeftConfig.from_pretrained(
+            peft_pretrained_path,
+            revision=cfg.pretrained_revision,
+        )
 
         kwargs["pretrained_name_or_path"] = peft_config.base_model_name_or_path
         if not kwargs["pretrained_name_or_path"]:
@@ -349,9 +360,14 @@ def make_policy(
                 "the adapter was trained."
             )
 
+        kwargs["revision"] = peft_config.revision
         policy = policy_cls.from_pretrained(**kwargs)
         policy = PeftModel.from_pretrained(
-            policy, peft_pretrained_path, config=peft_config, is_trainable=True
+            policy,
+            peft_pretrained_path,
+            config=peft_config,
+            revision=cfg.pretrained_revision,
+            is_trainable=True,
         )
 
     else:
