@@ -33,6 +33,7 @@ Examples:
   uv run lerobot-curate-cameras --repo_id=user/dataset --mode=rename --job.target=h200
 """
 
+import json
 import logging
 import shutil
 import tempfile
@@ -228,6 +229,13 @@ def curate_cameras(cfg: CameraCurationConfig) -> None:
     report_path = curator.write_report(dataset.root, verdicts, mapping, cfg)
     logger.info("curate-cameras: report written to %s", report_path)
     logger.info("curate-cameras: proposed rename mapping: %s", mapping or "(none)")
+
+    # Print the full report to stdout so results survive in the job logs even
+    # when the pod's filesystem (and meta/camera_curation.json) is discarded.
+    report = curator.build_report(verdicts, mapping, cfg)
+    print("===== camera curation report =====", flush=True)
+    print(json.dumps(report, indent=2), flush=True)
+    print("===== end camera curation report =====", flush=True)
 
     if cfg.mode == "rename":
         if not mapping:
