@@ -382,6 +382,7 @@ def test_add_features_with_callable(sample_dataset, tmp_path):
     assert first_frame["frame_index"] == 0
     assert float(first_frame["reward"]) == 0.0
 
+
 def test_add_existing_feature(sample_dataset, tmp_path):
     """Test error when adding an existing feature."""
     feature_info = {"dtype": "float32", "shape": (1,)}
