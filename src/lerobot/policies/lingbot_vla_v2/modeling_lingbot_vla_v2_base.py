@@ -5,7 +5,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch import Tensor, nn
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, Union
+from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
+from collections.abc import Callable
 from functools import partial
 import math
 from .configuration_lingbot_vla_v2_internal import LingbotVLAConfig
@@ -26,7 +27,7 @@ from transformers.utils import (
 
 
 class LossKwargs(TypedDict, total=False):
-    labels: Optional[torch.LongTensor]
+    labels: torch.LongTensor | None
 
 
 from transformers.utils.deprecation import deprecate_kwarg
@@ -48,8 +49,8 @@ try:
         dinov3_vits16plus,
         dinov3_vitb16,
     )
-except:
-    pass
+except ImportError:
+    dinov3_vits16 = dinov3_vits16plus = dinov3_vitb16 = None
 from .utils import (
     create_sinusoidal_pos_embedding,
     make_att_2d_masks,

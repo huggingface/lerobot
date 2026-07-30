@@ -35,8 +35,8 @@ try:
         dinov3_vits16plus,
         dinov3_vitb16,
     )
-except:
-    pass
+except ImportError:
+    dinov3_vits16 = dinov3_vits16plus = dinov3_vitb16 = None
 
 
 def _update_moe_runtime_stats(block, routing_weights, selected_experts):
@@ -464,14 +464,14 @@ class Qwen2DecoderLayer(GradientCheckpointingLayer):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        att_output: Optional[torch.Tensor] = None,
-        start: Optional[int] = 0,
-        end: Optional[int] = 0,
+        att_output: torch.Tensor | None = None,
+        start: int | None = 0,
+        end: int | None = 0,
         compute_kqv: bool = False,
         output_atten: bool = False,
-        ada_cond: Optional[torch.Tensor] = None,
+        ada_cond: torch.Tensor | None = None,
         **kwargs: Unpack[FlashAttentionKwargs],
-    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
+    ) -> tuple[torch.FloatTensor, tuple[torch.FloatTensor, torch.FloatTensor] | None]:
         # Ensure input dtypes match weight dtype (needed for gradient checkpointing
         # recomputation where autocast context is lost)
         param_dtype = self.self_attn.q_proj.weight.dtype

@@ -39,7 +39,7 @@ def test_raw_upstream_checkpoint_builds_fresh_processors(monkeypatch):
 
 def test_saved_checkpoint_imports_processor_module_before_pipeline_load(monkeypatch):
     imported_modules = []
-    loaded_configs = []
+    loaded_calls = []
 
     real_import_module = factory.importlib.import_module
 
@@ -51,7 +51,7 @@ def test_saved_checkpoint_imports_processor_module_before_pipeline_load(monkeypa
         steps = []
 
     def fake_from_pretrained(**kwargs):
-        loaded_configs.append(kwargs["config_filename"])
+        loaded_calls.append((kwargs["config_filename"], kwargs["overrides"]))
         return DummyPipeline()
 
     monkeypatch.setattr(factory.importlib, "import_module", import_module_spy)
@@ -60,9 +60,24 @@ def test_saved_checkpoint_imports_processor_module_before_pipeline_load(monkeypa
     preprocessor, postprocessor = factory.make_pre_post_processors(
         LingbotVLAV2Config(),
         pretrained_path="/tmp/saved_lingbot_vla_v2_checkpoint",
+        preprocessor_overrides={
+            "device_processor": {"device": "cuda"},
+            "normalizer_processor": {"stats": {}},
+            "rename_observations_processor": {"rename_map": {}},
+        },
+        postprocessor_overrides={"unnormalizer_processor": {"stats": {}}},
     )
 
     assert isinstance(preprocessor, DummyPipeline)
     assert isinstance(postprocessor, DummyPipeline)
     assert "lerobot.policies.lingbot_vla_v2.processor_lingbot_vla_v2" in imported_modules
-    assert loaded_configs == ["policy_preprocessor.json", "policy_postprocessor.json"]
+    assert loaded_calls == [
+        (
+            "policy_preprocessor.json",
+            {
+                "device_processor": {"device": "cuda"},
+                "rename_observations_processor": {"rename_map": {}},
+            },
+        ),
+        ("policy_postprocessor.json", {"device_processor": {"device": "cuda"}}),
+    ]

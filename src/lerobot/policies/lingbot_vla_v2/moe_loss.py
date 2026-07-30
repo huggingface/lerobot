@@ -18,11 +18,11 @@ from typing import List, Optional, Tuple, Union
 
 
 def load_balancing_loss_func(
-    gate_logits: Union[torch.Tensor, Tuple[torch.Tensor], None],
-    num_experts: Optional[int] = None,
+    gate_logits: torch.Tensor | tuple[torch.Tensor] | None,
+    num_experts: int | None = None,
     top_k=2,
-    attention_mask: Optional[torch.Tensor] = None,
-) -> Union[torch.Tensor, int]:
+    attention_mask: torch.Tensor | None = None,
+) -> torch.Tensor | int:
     r"""
     Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
 
@@ -108,7 +108,7 @@ def load_balancing_loss_func(
 def sequence_wise_balance_loss(
     router_logits_list: tuple,
     top_k: int,
-    seq_lengths: Optional[List[int]] = None,
+    seq_lengths: list[int] | None = None,
     padding_len: int = 0,
     score_func: str = "softmax",
 ):

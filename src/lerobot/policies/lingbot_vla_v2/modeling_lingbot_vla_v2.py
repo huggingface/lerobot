@@ -320,9 +320,9 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         key_states: torch.Tensor,
         value_states: torch.Tensor,
         layer_idx: int,
-        past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None,
-        use_cache: Optional[bool] = None,
-        fill_kv_cache: Optional[bool] = None,
+        past_key_values: list[torch.FloatTensor] | Cache | None = None,
+        use_cache: bool | None = None,
+        fill_kv_cache: bool | None = None,
     ):
         if use_cache:
             if past_key_values is None:
@@ -349,16 +349,16 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
 
     def forward(
         self,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        vlm_position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None,
-        inputs_embeds: List[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = None,
-        fill_kv_cache: Optional[bool] = None,
-        ada_cond: List[torch.FloatTensor] = None,
-        visual_pos_masks: Optional[torch.Tensor] = None,
-        deepstack_visual_embeds: Optional[list[torch.Tensor]] = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        vlm_position_ids: torch.LongTensor | None = None,
+        past_key_values: list[torch.FloatTensor] | Cache | None = None,
+        inputs_embeds: list[torch.FloatTensor] = None,
+        use_cache: bool | None = None,
+        fill_kv_cache: bool | None = None,
+        ada_cond: list[torch.FloatTensor] = None,
+        visual_pos_masks: torch.Tensor | None = None,
+        deepstack_visual_embeds: list[torch.Tensor] | None = None,
     ):
         models = [self.qwenvl.model.language_model, self.qwen_expert.model]
         num_layers = self.qwenvl.config.text_config.num_hidden_layers
@@ -1691,7 +1691,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         image_grid_thw = batch.get("image_grid_thw")
         return images, img_masks, lang_tokens, lang_masks, state, image_grid_thw
 
-    def forward(self, batch: dict) -> Tuple[Tensor, dict]:
+    def forward(self, batch: dict) -> tuple[Tensor, dict]:
         """Training forward pass returning the flow-matching loss (lerobot convention)."""
         images, img_masks, lang_tokens, lang_masks, state, image_grid_thw = self._extract_model_inputs(batch)
         actions = batch[ACTION].to(dtype=state.dtype)

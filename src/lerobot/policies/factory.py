@@ -203,12 +203,29 @@ def make_pre_post_processors(
                 ),
             )
 
+        preprocessor_overrides = kwargs.get("preprocessor_overrides", {})
+        postprocessor_overrides = kwargs.get("postprocessor_overrides", {})
+        if getattr(policy_cfg, "type", None) == "lingbot_vla_v2":
+            preprocessor_overrides = {
+                key: value
+                for key, value in preprocessor_overrides.items()
+                if key in {"device_processor", "rename_observations_processor"}
+            }
+            postprocessor_overrides = {
+                key: value for key, value in postprocessor_overrides.items() if key == "device_processor"
+            }
+            if (
+                "device_processor" not in postprocessor_overrides
+                and "device_processor" in preprocessor_overrides
+            ):
+                postprocessor_overrides["device_processor"] = preprocessor_overrides["device_processor"]
+
         preprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
             config_filename=kwargs.get(
                 "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
             ),
-            overrides=kwargs.get("preprocessor_overrides", {}),
+            overrides=preprocessor_overrides,
             to_transition=batch_to_transition,
             to_output=transition_to_batch,
             revision=pretrained_revision,
@@ -218,7 +235,7 @@ def make_pre_post_processors(
             config_filename=kwargs.get(
                 "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
             ),
-            overrides=kwargs.get("postprocessor_overrides", {}),
+            overrides=postprocessor_overrides,
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
             revision=pretrained_revision,

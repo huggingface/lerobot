@@ -1,7 +1,8 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from typing import Callable, Optional, Tuple
+from typing import Optional, Tuple
+from collections.abc import Callable
 
 from transformers.generation import GenerationMixin
 from transformers.modeling_layers import GradientCheckpointingLayer
@@ -61,9 +62,9 @@ class Qwen3VLVisionAttention(nn.Module):
         self,
         hidden_states: torch.Tensor,
         cu_seqlens: torch.Tensor,
-        rotary_pos_emb: Optional[torch.Tensor] = None,
-        position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
-        max_seqlen: Optional[int] = None,
+        rotary_pos_emb: torch.Tensor | None = None,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
+        max_seqlen: int | None = None,
         **kwargs,
     ) -> torch.Tensor:
         seq_length = hidden_states.shape[0]
@@ -146,8 +147,8 @@ class Qwen3VLVisionBlock(GradientCheckpointingLayer):
         self,
         hidden_states: torch.Tensor,
         cu_seqlens: torch.Tensor,
-        rotary_pos_emb: Optional[torch.Tensor] = None,
-        position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
+        rotary_pos_emb: torch.Tensor | None = None,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
         **kwargs,
     ) -> torch.Tensor:
         hidden_states = hidden_states + self.attn(
@@ -173,13 +174,13 @@ class Qwen3VLTextDecoderLayer(GradientCheckpointingLayer):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        att_output: Optional[torch.Tensor] = None,
-        start: Optional[int] = 0,
-        end: Optional[int] = 0,
+        att_output: torch.Tensor | None = None,
+        start: int | None = 0,
+        end: int | None = 0,
         compute_kqv: bool = False,
         output_atten: bool = False,
         **kwargs: Unpack[FlashAttentionKwargs],
-    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
+    ) -> tuple[torch.FloatTensor, tuple[torch.FloatTensor, torch.FloatTensor] | None]:
         param_dtype = self.self_attn.q_proj.weight.dtype
         hidden_states = hidden_states.to(param_dtype)
         if att_output is not None:
@@ -287,10 +288,10 @@ def forward_without_grid_thw(
     self,
     hidden_states: torch.Tensor,
     grid_thw: torch.Tensor = None,
-    pos_embeds: Optional[torch.Tensor] = None,
-    position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
-    cu_seqlens: Optional[torch.Tensor] = None,
-    max_seqlen: Optional[int] = None,
+    pos_embeds: torch.Tensor | None = None,
+    position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
+    cu_seqlens: torch.Tensor | None = None,
+    max_seqlen: int | None = None,
     **kwargs,
 ) -> torch.Tensor:
     hidden_states = self.patch_embed(hidden_states)

@@ -43,8 +43,8 @@ def dict_apply(func, d):
 class Normalizer:
     def __init__(
         self,
-        norm_stats: Dict[str, Dict[str, np.ndarray]],
-        norm_type: Dict[str, str] | None = None,
+        norm_stats: dict[str, dict[str, np.ndarray]],
+        norm_type: dict[str, str] | None = None,
     ):
         self.norm_stats = dict_apply(lambda x: np.array(x), norm_stats)
         self.norm_type = norm_type or {}
@@ -78,7 +78,7 @@ class Normalizer:
 
         return stat
 
-    def normalize(self, data: Dict[str, np.ndarray]) -> Dict[str, torch.Tensor]:
+    def normalize(self, data: dict[str, np.ndarray]) -> dict[str, torch.Tensor]:
         normalized_data = {}
         for key, value in data.items():
             if key in self.norm_stats:
@@ -137,7 +137,7 @@ class Normalizer:
                 normalized_data[key] = value
         return normalized_data
 
-    def unnormalize(self, data: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    def unnormalize(self, data: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         """
         Unnormalize the given data using stored normalization statistics.
 

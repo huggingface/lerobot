@@ -5,7 +5,8 @@ import torch
 import numpy as np
 from collections import defaultdict, OrderedDict
 from pydantic import BaseModel
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Literal
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Literal
+from collections.abc import Callable
 
 import ast
 import torch.nn.functional as F
@@ -47,8 +48,8 @@ def compute_image_token_count(images, image_grid_thw=None, merge_size=2, use_vis
 
 
 class FeatureInfo(BaseModel):
-    joints: List[str] | None = None
-    images: List[str] | None = None
+    joints: list[str] | None = None
+    images: list[str] | None = None
     joints_max_dim: dict | None = None
 
     def update_info(self, data_config):
@@ -85,9 +86,8 @@ class FeatureTransform:
         image_augment=False,
         use_future_image=False,
     ):
-
         assert os.path.exists(robot_config_path), f"{robot_config_path} does not exist."
-        with open(robot_config_path, "r") as f:
+        with open(robot_config_path) as f:
             robot_config = yaml.safe_load(f)
         f.close()
 
@@ -119,16 +119,14 @@ class FeatureTransform:
             self.image_augment = image_augment
 
         # keep the self.feature_to_keep in lerobot item when convert to new item
-        self.feature_to_keep = set(
-            [
-                "timestamp",
-                "frame_index",
-                "episode_index",
-                "task_index",
-                "action_is_pad",
-                "task",
-            ]
-        )
+        self.feature_to_keep = {
+            "timestamp",
+            "frame_index",
+            "episode_index",
+            "task_index",
+            "action_is_pad",
+            "task",
+        }
 
         target_features = {"states": [], "actions": [], "images": []}
         org_features = {"states": set(), "actions": set(), "images": set()}
@@ -142,7 +140,6 @@ class FeatureTransform:
         self.normalizer = self.get_normalizer(norm_stats_path, do_nomalize, data_config)
 
     def get_normalizer(self, norm_stats_path, do_nomalize, data_config):
-
         if not do_nomalize:
             return None
 
@@ -175,7 +172,6 @@ class FeatureTransform:
         return normalizer
 
     def check_robot_config(self, robot_config):
-
         for feature_category, features_convert_info in robot_config.items():
             assert isinstance(features_convert_info, list)
             for feature_convert_info in features_convert_info:
