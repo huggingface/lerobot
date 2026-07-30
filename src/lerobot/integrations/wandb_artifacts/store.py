@@ -21,7 +21,10 @@ only one or the other.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import os
+import shutil
+import tempfile
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -36,12 +39,7 @@ class ArtifactTypeMismatchError(ValueError):
 
 
 class DownloadDestinationNotEmptyError(ValueError):
-    """A download was asked to materialize into a directory that already has content.
-
-    A previous artifact version's leftover files (e.g. extra data shards a newer version dropped)
-    would otherwise silently survive alongside the new download and get picked up by anything that
-    globs the directory — see ``lerobot.datasets.io_utils.load_nested_dataset``.
-    """
+    """A download destination contains content that must not be overwritten."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,30 +101,33 @@ def download_artifact(
     *,
     expected_type: str,
     download_root: Path | str,
+    validator: Callable[[Path], object] | None = None,
 ) -> MaterializedArtifact:
-    """Declare ``ref`` as an input to ``run`` and download it into ``download_root``.
+    """Declare ``ref`` as a run input and transactionally materialize it at ``download_root``.
 
-    Declaring it as a run input (rather than fetching it out-of-band via the public API) is what
-    gives the run lineage back to the exact artifact version it consumed. ``download_root`` must
-    be empty or not yet exist: the W&B SDK's ``download()`` only ever writes/overwrites files that
-    are part of the artifact's manifest, so a nonempty destination could carry leftover files from
-    a previously downloaded, different version — files a naive caller (or ``load_nested_dataset``,
-    which globs everything under ``data/``) would silently pick up alongside the new download.
+    The artifact is downloaded into a temporary sibling directory. If supplied, ``validator`` runs
+    against that staged directory. Only a complete, valid result is atomically promoted to the final
+    destination, so interrupted downloads and validation failures never poison the caller-visible
+    path. A pre-existing empty directory is accepted; any file, symlink, or nonempty directory is
+    rejected and never modified.
 
     Raises:
-        DownloadDestinationNotEmptyError: ``download_root`` already has content.
+        DownloadDestinationNotEmptyError: ``download_root`` is not absent or an empty directory.
         ArtifactTypeMismatchError: the fetched artifact's declared type isn't ``expected_type``.
             Raised before any download happens.
+        Exception: Any download or validation failure, after cleaning up the private staging path.
     """
     parsed = ref if isinstance(ref, ArtifactRef) else parse_artifact_ref(ref)
     download_root = Path(download_root)
 
-    if download_root.exists() and any(download_root.iterdir()):
-        raise DownloadDestinationNotEmptyError(
-            f"{download_root} already has content; a stale file from a previously downloaded "
-            "artifact version could silently survive alongside this download. Point at an empty "
-            "or nonexistent directory."
-        )
+    destination_was_empty = False
+    if download_root.exists() or download_root.is_symlink():
+        if download_root.is_symlink() or not download_root.is_dir() or any(download_root.iterdir()):
+            raise DownloadDestinationNotEmptyError(
+                f"{download_root} already contains or points to local content. Point at an empty "
+                "directory or a path that does not exist."
+            )
+        destination_was_empty = True
 
     artifact = run.use_artifact(str(parsed))
     if artifact.type != expected_type:
@@ -134,12 +135,35 @@ def download_artifact(
             f"Expected an artifact of type {expected_type!r} but {parsed} is of type {artifact.type!r}."
         )
 
-    local_path = artifact.download(root=str(download_root))
+    download_root.parent.mkdir(parents=True, exist_ok=True)
+    staging_root = Path(
+        tempfile.mkdtemp(prefix=f".{download_root.name}.download-", dir=download_root.parent)
+    )
+    removed_empty_destination = False
+
+    try:
+        staged_path = Path(artifact.download(root=str(staging_root)))
+        if validator is not None:
+            validator(staged_path)
+
+        if destination_was_empty:
+            # rmdir is deliberately race-safe: it fails rather than removing newly-created content.
+            download_root.rmdir()
+            removed_empty_destination = True
+
+        os.replace(staged_path, download_root)
+    except Exception:
+        if removed_empty_destination and not download_root.exists():
+            download_root.mkdir()
+        raise
+    finally:
+        if staging_root.exists():
+            shutil.rmtree(staging_root)
 
     return MaterializedArtifact(
         requested_ref=str(parsed),
         resolved_ref=artifact.qualified_name,
-        local_path=Path(local_path),
+        local_path=download_root,
         version=artifact.version,
         digest=artifact.digest,
         metadata=dict(artifact.metadata or {}),
