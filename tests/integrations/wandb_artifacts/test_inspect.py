@@ -13,16 +13,20 @@
 # limitations under the License.
 
 import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 
-pytest.importorskip("wandb", reason="wandb is required (install lerobot[training])")
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.datasets.io_utils import write_info
-from lerobot.datasets.utils import DEFAULT_TASKS_PATH, EPISODES_DIR, STATS_PATH, DatasetInfo
+from datasets import Dataset
+
+from lerobot.datasets.io_utils import write_episodes, write_info, write_tasks
+from lerobot.datasets.utils import DATA_DIR, DEFAULT_EPISODES_PATH, STATS_PATH, DatasetInfo
 from lerobot.integrations.wandb_artifacts import inspect as inspect_module
 from lerobot.integrations.wandb_artifacts.inspect import (
     DatasetDirectoryError,
@@ -31,124 +35,219 @@ from lerobot.integrations.wandb_artifacts.inspect import (
 )
 
 
-def _write_minimal_dataset(
-    root: Path, *, features=None, total_episodes=0, total_frames=0, total_tasks=0
+def _write_info_and_stats(
+    root: Path,
+    *,
+    features=None,
+    total_episodes: int = 0,
+    total_frames: int = 0,
+    total_tasks: int = 0,
 ) -> None:
-    info = DatasetInfo(
-        codebase_version="v3.0",
-        fps=30,
-        features=features
-        or {
-            "action": {"dtype": "float32", "shape": (6,), "names": None},
-        },
-        total_episodes=total_episodes,
-        total_frames=total_frames,
-        total_tasks=total_tasks,
-        robot_type="so101",
+    write_info(
+        DatasetInfo(
+            codebase_version="v3.0",
+            fps=30,
+            features=features
+            or {
+                "action": {"dtype": "float32", "shape": (6,), "names": None},
+            },
+            total_episodes=total_episodes,
+            total_frames=total_frames,
+            total_tasks=total_tasks,
+            robot_type="so101",
+        ),
+        root,
     )
-    write_info(info, root)
-    (root / STATS_PATH).parent.mkdir(parents=True, exist_ok=True)
     (root / STATS_PATH).write_text("{}")
-    (root / "data").mkdir(parents=True, exist_ok=True)
+    (root / DATA_DIR).mkdir(parents=True, exist_ok=True)
 
 
-def test_validate_accepts_minimal_dataset(tmp_path):
-    _write_minimal_dataset(tmp_path)
+def _write_data_shard(
+    root: Path,
+    episode_indices: list[int],
+    *,
+    chunk_index: int = 0,
+    file_index: int = 0,
+) -> Path:
+    path = root / DATA_DIR / f"chunk-{chunk_index:03d}" / f"file-{file_index:03d}.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Dataset.from_dict(
+        {
+            "index": list(range(len(episode_indices))),
+            "episode_index": episode_indices,
+        }
+    ).to_parquet(path)
+    return path
+
+
+def _write_episode_metadata(root: Path, rows: list[dict]) -> Path:
+    write_episodes(Dataset.from_list(rows), root)
+    return root / DEFAULT_EPISODES_PATH.format(chunk_index=0, file_index=0)
+
+
+def _episode_row(
+    episode_index: int,
+    *,
+    data_file_index: int = 0,
+    video_key: str | None = None,
+    video_file_index: int | None = None,
+) -> dict:
+    row = {
+        "episode_index": episode_index,
+        "data/chunk_index": 0,
+        "data/file_index": data_file_index,
+    }
+    if video_key is not None:
+        row[f"videos/{video_key}/chunk_index"] = 0
+        row[f"videos/{video_key}/file_index"] = (
+            episode_index if video_file_index is None else video_file_index
+        )
+    return row
+
+
+def test_validate_accepts_minimal_empty_dataset(tmp_path):
+    _write_info_and_stats(tmp_path)
     validate_dataset_directory(tmp_path)
 
 
-def test_validate_rejects_missing_info_json(tmp_path):
-    (tmp_path / "meta").mkdir()
-    (tmp_path / STATS_PATH).write_text("{}")
-    (tmp_path / "data").mkdir()
+@pytest.mark.parametrize("missing", ["info", "stats", "data"])
+def test_validate_rejects_missing_required_structure(tmp_path, missing):
+    _write_info_and_stats(tmp_path)
+    if missing == "info":
+        (tmp_path / "meta" / "info.json").unlink()
+    elif missing == "stats":
+        (tmp_path / STATS_PATH).unlink()
+    else:
+        (tmp_path / DATA_DIR).rmdir()
+
     with pytest.raises(DatasetDirectoryError):
         validate_dataset_directory(tmp_path)
 
 
-def test_validate_rejects_missing_stats_json(tmp_path):
-    _write_minimal_dataset(tmp_path)
-    (tmp_path / STATS_PATH).unlink()
-    with pytest.raises(DatasetDirectoryError):
+def test_validate_parses_stats_metadata(tmp_path):
+    _write_info_and_stats(tmp_path)
+    (tmp_path / STATS_PATH).write_text("")
+
+    with pytest.raises(DatasetDirectoryError, match="could not be read as dataset stats"):
         validate_dataset_directory(tmp_path)
 
 
-def test_validate_rejects_missing_data_dir(tmp_path):
-    _write_minimal_dataset(tmp_path)
-    (tmp_path / "data").rmdir()
-    with pytest.raises(DatasetDirectoryError):
+def test_validate_parses_and_counts_task_metadata(tmp_path):
+    _write_info_and_stats(tmp_path, total_tasks=2)
+
+    with pytest.raises(DatasetDirectoryError, match="task metadata"):
         validate_dataset_directory(tmp_path)
 
-
-def test_validate_rejects_nonexistent_directory(tmp_path):
-    with pytest.raises(DatasetDirectoryError):
-        validate_dataset_directory(tmp_path / "does-not-exist")
-
-
-def test_validate_requires_tasks_file_when_total_tasks_nonzero(tmp_path):
-    _write_minimal_dataset(tmp_path, total_tasks=2)
-    with pytest.raises(DatasetDirectoryError):
+    write_tasks(pd.DataFrame({"task_index": [0]}), tmp_path)
+    with pytest.raises(DatasetDirectoryError, match=r"contains 1 row"):
         validate_dataset_directory(tmp_path)
 
-    (tmp_path / DEFAULT_TASKS_PATH).parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / DEFAULT_TASKS_PATH).write_bytes(b"")
+    write_tasks(pd.DataFrame({"task_index": [0, 1]}), tmp_path)
     validate_dataset_directory(tmp_path)
 
 
-def test_validate_requires_loader_visible_episode_shards(tmp_path):
-    _write_minimal_dataset(tmp_path, total_episodes=3)
-    with pytest.raises(DatasetDirectoryError):
+def test_validate_reads_episode_metadata_for_non_video_dataset(tmp_path):
+    _write_info_and_stats(tmp_path, total_episodes=1, total_frames=1)
+    _write_data_shard(tmp_path, [0])
+
+    episode_path = tmp_path / DEFAULT_EPISODES_PATH.format(chunk_index=0, file_index=0)
+    episode_path.parent.mkdir(parents=True, exist_ok=True)
+    episode_path.write_bytes(b"")
+
+    with pytest.raises(DatasetDirectoryError, match="could not be read as episode metadata"):
         validate_dataset_directory(tmp_path)
 
-    too_deep = tmp_path / EPISODES_DIR / "chunk-000" / "nested"
-    too_deep.mkdir(parents=True, exist_ok=True)
-    (too_deep / "file-000.parquet").write_bytes(b"")
-    with pytest.raises(DatasetDirectoryError):
-        validate_dataset_directory(tmp_path)
-
-    (too_deep.parent / "file-000.parquet").write_bytes(b"")
+    episode_path.unlink()
+    _write_episode_metadata(tmp_path, [_episode_row(0)])
     validate_dataset_directory(tmp_path)
 
 
-def test_validate_requires_loader_visible_data_shards(tmp_path):
-    _write_minimal_dataset(tmp_path, total_frames=100)
-    with pytest.raises(DatasetDirectoryError):
+def test_validate_requires_each_episode_index_exactly_once(tmp_path):
+    _write_info_and_stats(tmp_path, total_episodes=2, total_frames=2)
+    _write_data_shard(tmp_path, [0, 1])
+    _write_episode_metadata(tmp_path, [_episode_row(0), _episode_row(0)])
+
+    with pytest.raises(DatasetDirectoryError, match="each episode_index"):
         validate_dataset_directory(tmp_path)
 
-    too_deep = tmp_path / "data" / "chunk-000" / "nested"
-    too_deep.mkdir(parents=True, exist_ok=True)
-    (too_deep / "file-000.parquet").write_bytes(b"")
-    with pytest.raises(DatasetDirectoryError):
+
+def test_validate_requires_every_episode_referenced_data_shard(tmp_path):
+    _write_info_and_stats(tmp_path, total_episodes=2, total_frames=2)
+    _write_episode_metadata(
+        tmp_path,
+        [_episode_row(0, data_file_index=0), _episode_row(1, data_file_index=1)],
+    )
+    _write_data_shard(tmp_path, [0], file_index=0)
+
+    with pytest.raises(DatasetDirectoryError, match=r"missing 1 data file"):
         validate_dataset_directory(tmp_path)
 
-    (too_deep.parent / "file-000.parquet").write_bytes(b"")
+    _write_data_shard(tmp_path, [1], file_index=1)
     validate_dataset_directory(tmp_path)
 
 
-def test_validate_cross_checks_episode_and_data_counts_independently(tmp_path):
-    _write_minimal_dataset(tmp_path, total_episodes=3, total_frames=100)
+def test_validate_uses_loader_visible_data_layout(tmp_path):
+    _write_info_and_stats(tmp_path, total_episodes=1, total_frames=1)
+    _write_episode_metadata(tmp_path, [_episode_row(0)])
 
-    data_chunk = tmp_path / "data" / "chunk-000"
-    data_chunk.mkdir(parents=True, exist_ok=True)
-    (data_chunk / "file-000.parquet").write_bytes(b"")
+    too_deep = tmp_path / DATA_DIR / "chunk-000" / "nested" / "file-000.parquet"
+    too_deep.parent.mkdir(parents=True)
+    Dataset.from_dict({"index": [0], "episode_index": [0]}).to_parquet(too_deep)
+
     with pytest.raises(DatasetDirectoryError):
         validate_dataset_directory(tmp_path)
 
-    episodes_chunk = tmp_path / EPISODES_DIR / "chunk-000"
-    episodes_chunk.mkdir(parents=True, exist_ok=True)
-    (episodes_chunk / "file-000.parquet").write_bytes(b"")
+
+def test_validate_cross_checks_total_frame_rows(tmp_path):
+    _write_info_and_stats(tmp_path, total_episodes=1, total_frames=2)
+    _write_episode_metadata(tmp_path, [_episode_row(0)])
+    _write_data_shard(tmp_path, [0])
+
+    with pytest.raises(DatasetDirectoryError, match=r"contains 1 row"):
+        validate_dataset_directory(tmp_path)
+
+
+def test_validate_cross_checks_data_episode_coverage(tmp_path):
+    _write_info_and_stats(tmp_path, total_episodes=2, total_frames=2)
+    _write_episode_metadata(tmp_path, [_episode_row(0), _episode_row(1)])
+    _write_data_shard(tmp_path, [0, 0])
+
+    with pytest.raises(DatasetDirectoryError, match="covers episode_index"):
+        validate_dataset_directory(tmp_path)
+
+
+def test_validate_requires_every_referenced_video_file(tmp_path):
+    video_key = "observation.image.front"
+    _write_info_and_stats(
+        tmp_path,
+        features={
+            "action": {"dtype": "float32", "shape": (6,), "names": None},
+            video_key: {"dtype": "video", "shape": (3, 224, 224), "names": None},
+        },
+        total_episodes=2,
+        total_frames=2,
+    )
+    _write_episode_metadata(
+        tmp_path,
+        [_episode_row(0, video_key=video_key), _episode_row(1, video_key=video_key)],
+    )
+    _write_data_shard(tmp_path, [0, 1])
+
+    with pytest.raises(DatasetDirectoryError, match=r"missing 2 video file"):
+        validate_dataset_directory(tmp_path)
+
+    video_dir = tmp_path / "videos" / video_key / "chunk-000"
+    video_dir.mkdir(parents=True)
+    (video_dir / "file-000.mp4").write_bytes(b"video")
+    with pytest.raises(DatasetDirectoryError, match=r"missing 1 video file"):
+        validate_dataset_directory(tmp_path)
+
+    (video_dir / "file-001.mp4").write_bytes(b"video")
     validate_dataset_directory(tmp_path)
-
-
-def test_validate_top_level_check_passes_but_metadata_loading_would_still_fail_without_episodes(tmp_path):
-    _write_minimal_dataset(tmp_path, total_episodes=1, total_frames=0)
-    assert (tmp_path / STATS_PATH).is_file()
-    assert (tmp_path / "data").is_dir()
-    with pytest.raises(DatasetDirectoryError):
-        validate_dataset_directory(tmp_path)
 
 
 def test_inspect_extracts_metadata(tmp_path):
-    _write_minimal_dataset(
+    _write_info_and_stats(
         tmp_path,
         features={
             "action": {"dtype": "float32", "shape": (6,), "names": None},
@@ -170,7 +269,7 @@ def test_inspect_extracts_metadata(tmp_path):
 
 
 def test_inspect_git_commit_matches_lerobot_checkout_head(tmp_path):
-    _write_minimal_dataset(tmp_path)
+    _write_info_and_stats(tmp_path)
     metadata = inspect_dataset_directory(tmp_path)
 
     repo_root = Path(__file__).resolve().parents[3]
@@ -197,6 +296,42 @@ def test_git_commit_ignores_an_enclosing_unrelated_repository(monkeypatch):
     assert len(calls) == 1
 
 
+def test_inspection_imports_without_wandb():
+    preamble = textwrap.dedent(
+        """
+        import builtins
+        real_import = builtins.__import__
+
+        def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "wandb" or name.startswith("wandb."):
+                raise ModuleNotFoundError(name + " deliberately unavailable")
+            return real_import(name, globals, locals, fromlist, level)
+
+        builtins.__import__ = guarded_import
+        """
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            preamble
+            + textwrap.dedent(
+                """
+                from lerobot.integrations.wandb_artifacts import (
+                    inspect_dataset_directory,
+                    validate_dataset_directory,
+                )
+                assert callable(inspect_dataset_directory)
+                assert callable(validate_dataset_directory)
+                """
+            ),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_inspect_raises_on_invalid_directory(tmp_path):
     with pytest.raises(DatasetDirectoryError):
         inspect_dataset_directory(tmp_path / "missing")
@@ -205,7 +340,7 @@ def test_inspect_raises_on_invalid_directory(tmp_path):
 def test_to_wandb_metadata_is_json_safe(tmp_path):
     import json
 
-    _write_minimal_dataset(tmp_path)
+    _write_info_and_stats(tmp_path)
     metadata = inspect_dataset_directory(tmp_path)
     payload = metadata.to_wandb_metadata()
     json.dumps(payload)
