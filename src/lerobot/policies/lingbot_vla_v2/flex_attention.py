@@ -69,8 +69,7 @@ def flex_attention_forward(
 
         return mask_mod
 
-    b_mask, h_mask, q_len, kv_len = causal_mask.shape  # The shape of your mask
-    # ipdb.set_trace()
+    b_mask, h_mask, q_len, kv_len = causal_mask.shape
     block_size = FLEX_SPARSE_BLOCK_SIZE
     q_len_rounded = _round_up_to_multiple(q_len, block_size)
     kv_len_rounded = _round_up_to_multiple(kv_len, block_size)

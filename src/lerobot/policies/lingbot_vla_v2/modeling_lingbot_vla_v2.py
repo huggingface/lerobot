@@ -60,7 +60,7 @@ from .qwen2_action_expert import (
 
 try:
     from dinov3.hub.backbones import dinov3_vitb16
-except Exception:
+except ImportError:
     dinov3_vitb16 = None
 
 
@@ -127,11 +127,13 @@ class QwenvlWithExpertV2Config(PretrainedConfig):
             use_sliding_window=False,
             vocab_size=151936,
         )
-        print(
-            "=====Action Expert V2 init "
-            f"{num_layers} Layers, hidden={expert_hidden_size}, "
-            f"q_heads={action_num_attention_heads}, kv_heads={action_num_key_value_heads}, "
-            f"head_dim={action_head_dim}.====="
+        logger.debug(
+            "Initializing Action Expert V2: layers=%s, hidden=%s, q_heads=%s, kv_heads=%s, head_dim=%s",
+            num_layers,
+            expert_hidden_size,
+            action_num_attention_heads,
+            action_num_key_value_heads,
+            action_head_dim,
         )
         super().__init__(**kwargs)
 
@@ -454,15 +456,15 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
 
     def get_attention_interface(self):
         if self.config.attention_implementation == "flex":
-            print("=====Using Flex Attn=====")
+            logger.debug("Using Flex attention")
             return flex_attention_forward
         if self.config.attention_implementation == "flex_cached":
-            print("=====Using Flex Cached (prebuilt BlockMask) Attn=====")
+            logger.debug("Using Flex Cached attention with prebuilt BlockMask")
             return flex_attention_forward
         if self.config.attention_implementation == "sdpa":
             return our_sdpa_attention_forward
         if self.config.attention_implementation == "eager":
-            print("=====Using Eager Attn=====")
+            logger.debug("Using Eager attention")
             return our_eager_attention_forward
         raise ValueError(f"Invalid attention implementation: {self.config.attention_implementation}")
 
@@ -1053,7 +1055,7 @@ class FlowMatchingV2(FlowMatchingV1):
 
             x_t += dt * v_t
             time += dt
-        print(f"Denoise {count} steps")
+        logger.debug("Denoised %s steps", count)
         return x_t
 
     def predict_velocity(

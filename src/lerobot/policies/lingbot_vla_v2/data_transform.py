@@ -496,7 +496,6 @@ def prepare_language(config, language_tokenizer, observation: dict[str, Tensor])
 
 
 def expert_visual_transform(config, observation: dict[str, Tensor], image_keys=None):
-    # TODO： pad for redundant views
     image_keys = image_keys if image_keys is not None else IMAGE_KEYS
     images = []
     image_dict = {}

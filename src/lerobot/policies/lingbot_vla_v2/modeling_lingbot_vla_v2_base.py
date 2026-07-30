@@ -136,8 +136,6 @@ class FixAdaRMSNorm(nn.Module):
         return hidden_states.to(input_dtype)
 
 
-# HACK: show directly use this norm during initialization
-# TODO: clear the logics
 def replace_lnorm_with_adanorm(module, hidden_size, cond_dim, final_norm_adanorm):
     for name, child in module.named_children():
         if final_norm_adanorm:
@@ -781,7 +779,7 @@ class FlowMatching(nn.Module):
             # Euler step
             x_t += dt * v_t
             time += dt
-        print(f"Denoise {count} steps")
+        logger.debug("Denoised %s steps", count)
         return x_t
 
     def predict_velocity(self, state, prefix_pad_masks, past_key_values, x_t, timestep):
